@@ -1,5 +1,4 @@
 using AzureBank.Api.Services.Interfaces;
-using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
@@ -150,23 +149,6 @@ public class AuthController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Success(new { verified = true }, "PIN verified"));
-    }
-
-    /// <summary>
-    /// Admin-only test endpoint to verify role-based authorization.
-    /// </summary>
-    /// <returns>Success message if user has Admin role</returns>
-    [EndpointSummary("Admin test endpoint")]
-    [HttpGet("admin/test")]
-    [Authorize(Roles = Roles.Admin)]
-    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    public ActionResult<ApiResponse<object>> AdminTest()
-    {
-        var userId = GetCurrentUserId();
-        return Ok(ApiResponse<object>.Success(
-            new { message = "Admin access granted", userId },
-            "You have admin privileges"));
     }
 
     /// <summary>

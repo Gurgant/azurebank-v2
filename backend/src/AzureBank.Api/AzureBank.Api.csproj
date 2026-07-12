@@ -8,6 +8,13 @@
     Note: EF Core packages moved to AzureBank.Infrastructure (except Design - see below)
   -->
 
+  <PropertyGroup Label="Local secrets">
+    <!-- Enables `dotnet user-secrets` for Jwt:Secret and the connection string in
+         Development (loaded automatically by WebApplication.CreateBuilder).
+         See the root README "Secrets" section. Nothing secret is committed. -->
+    <UserSecretsId>azurebank-api</UserSecretsId>
+  </PropertyGroup>
+
   <ItemGroup Label="Entity Framework Core (Design-Time Only)">
     <!--
       REQUIRED for EF Core Tools (migrations) even though DbContext is in Infrastructure.
