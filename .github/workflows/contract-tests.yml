@@ -1,0 +1,153 @@
+# Contract tests against a live API + SQL Server.
+# Manual trigger only (workflow_dispatch): heavier than CI and not part of the
+# push gate. Adapted from the January 2026 workflow; the API now needs the
+# Seeder to create/seed the database (no auto-migration at startup) and a JWT
+# secret via environment (appsettings.Development.json is not committed).
+name: Contract tests (manual)
+
+on:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  # CI-only throwaway values; the database and API live only for this job.
+  CONNECTION_STRING: "Server=localhost,1433;Database=AzureBankTest;User Id=sa;Password=YourStrong@Passw0rd123;TrustServerCertificate=true"
+  JWT_SECRET: "ci-only-throwaway-signing-key-0123456789abcdef0123456789abcdef"
+
+jobs:
+  schemathesis:
+    name: Schemathesis (OpenAPI contract)
+    runs-on: ubuntu-latest
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          SA_PASSWORD: YourStrong@Passw0rd123
+          ACCEPT_EULA: Y
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd123 -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Schemathesis
+        run: pip install schemathesis
+
+      - name: Create and seed database
+        working-directory: backend
+        env:
+          ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+        run: |
+          dotnet run --project tools/AzureBank.Seeder -- reset --confirm
+          dotnet run --project tools/AzureBank.Seeder -- seed
+
+      - name: Start API
+        working-directory: backend/src/AzureBank.Api
+        env:
+          ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+          Jwt__Secret: ${{ env.JWT_SECRET }}
+          ASPNETCORE_ENVIRONMENT: Development
+        run: |
+          dotnet run --urls "http://localhost:5068" &
+          sleep 20
+
+      - name: Run Schemathesis
+        run: |
+          schemathesis run ./docs/api/openapiv1.json \
+            --url http://localhost:5068 \
+            --workers 1 \
+            --max-examples 50 \
+            --junit-xml=schemathesis-results.xml \
+            || true  # report, don't gate
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: schemathesis-results
+          path: schemathesis-results.xml
+
+  bruno:
+    name: Bruno collection
+    runs-on: ubuntu-latest
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          SA_PASSWORD: YourStrong@Passw0rd123
+          ACCEPT_EULA: Y
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd123 -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install Bruno CLI
+        run: npm install -g @usebruno/cli
+
+      - name: Create and seed database
+        working-directory: backend
+        env:
+          ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+        run: |
+          dotnet run --project tools/AzureBank.Seeder -- reset --confirm
+          dotnet run --project tools/AzureBank.Seeder -- seed
+
+      - name: Start API
+        working-directory: backend/src/AzureBank.Api
+        env:
+          ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+          Jwt__Secret: ${{ env.JWT_SECRET }}
+          ASPNETCORE_ENVIRONMENT: Development
+        run: |
+          dotnet run --urls "http://localhost:5068" &
+          sleep 20
+
+      - name: Run Bruno tests
+        working-directory: tests/api-collection
+        run: |
+          bru run . --env local \
+            --reporter-junit ../../bruno-results.xml \
+            || true  # report, don't gate
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bruno-results
+          path: bruno-results.xml
