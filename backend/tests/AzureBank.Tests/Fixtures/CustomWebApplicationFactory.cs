@@ -36,6 +36,13 @@ namespace AzureBank.Tests.Fixtures;
 /// </summary>
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
+    /// <summary>
+    /// Test-only HMAC key for idempotency request fingerprinting (ADR-0009).
+    /// Public so tests can recompute fingerprints when seeding records directly.
+    /// </summary>
+    public const string IdempotencyHashKey =
+        "integration-tests-only-idempotency-hmac-key-0123456789abcdef";
+
     private string? _connectionString;
 
     // One database per factory instance. The name and root are fixed fields so that
@@ -62,8 +69,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef");
 
         // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
-        builder.UseSetting("Idempotency:HashKey",
-            "integration-tests-only-idempotency-hmac-key-0123456789abcdef");
+        builder.UseSetting("Idempotency:HashKey", IdempotencyHashKey);
 
         builder.ConfigureServices(services =>
         {

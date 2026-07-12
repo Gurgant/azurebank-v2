@@ -148,10 +148,16 @@ public class IdempotencyService : IIdempotencyService
                     {
                         throw IdempotencyException.KeyReuse();
                     }
-                    // The operation committed but its response was never
-                    // stored (crash/error after commit). Never re-execute,
-                    // never guess a response.
-                    throw IdempotencyException.ResultUnknown();
+                    // The operation committed but its response is not stored
+                    // (yet). Fresh: the original request is still finishing —
+                    // "in flight", retry shortly and get the replay. Stale:
+                    // it died post-commit and the response will never come.
+                    // Either way: never re-execute, never guess a response.
+                    if (existing.CreatedAt + _options.ProcessingStaleAfter <= now)
+                    {
+                        throw IdempotencyException.ResultUnknown();
+                    }
+                    throw IdempotencyException.InFlight();
 
                 case IdempotencyStatus.Processing:
                     if (existing.RequestHash != requestHash)
