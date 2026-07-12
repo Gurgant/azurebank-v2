@@ -1,0 +1,67 @@
+meta {
+  name: Deposit
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/transactions/deposit
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "accountId": "{{accountId}}",
+    "amount": 1000.00,
+    "description": "Test deposit"
+  }
+}
+
+vars:post-response {
+  transactionId: res.body.data.transaction.id
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.transaction.type: eq 0
+  res.body.data.transaction.amount: eq 1000
+}
+
+tests {
+  test("Status is 201 Created", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("Transaction type is Deposit (0)", function() {
+    expect(res.body.data.transaction.type).to.equal(0);
+  });
+
+  test("Amount matches request", function() {
+    expect(res.body.data.transaction.amount).to.equal(1000);
+  });
+
+  test("New balance is returned", function() {
+    expect(res.body.data.newBalance).to.be.a('number');
+    expect(res.body.data.newBalance).to.be.greaterThanOrEqual(1000);
+  });
+
+  test("Transaction has all required properties", function() {
+    const tx = res.body.data.transaction;
+    expect(tx).to.have.property('id');
+    expect(tx).to.have.property('transactionNumber');
+    expect(tx).to.have.property('type');
+    expect(tx).to.have.property('amount');
+    expect(tx).to.have.property('balanceAfter');
+    expect(tx).to.have.property('status');
+    expect(tx).to.have.property('createdAt');
+  });
+}

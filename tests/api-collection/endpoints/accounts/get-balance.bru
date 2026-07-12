@@ -1,0 +1,44 @@
+meta {
+  name: Get Balance
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/accounts/{{accountId}}/balance
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.accountId: isString
+  res.body.data.balance: isNumber
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Balance response has required properties", function() {
+    const data = res.body.data;
+    expect(data).to.have.property('accountId');
+    expect(data).to.have.property('balance');
+    expect(data).to.have.property('currency');
+    expect(data).to.have.property('asOf');
+    expect(data).to.have.property('isHistorical');
+  });
+
+  test("Currency is EUR", function() {
+    expect(res.body.data.currency).to.equal("EUR");
+  });
+
+  test("Is not historical query", function() {
+    expect(res.body.data.isHistorical).to.equal(false);
+  });
+}

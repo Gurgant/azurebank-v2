@@ -1,0 +1,21 @@
+# Schemathesis v4.8.0 - Minimal Valid Config
+
+hooks = "hooks"
+workers = 1
+seed = 42
+request-timeout = 30
+continue-on-failure = true
+tls-verify = false
+
+[generation]
+max-examples = 100
+mode = "positive"
+deterministic = true
+
+[checks]
+# STRICT MODE: Only accept success responses
+# All 4xx cases must be filtered by hooks
+# If tests fail with 4xx, it indicates either:
+#   1. Schema is too loose (needs tighter constraints)
+#   2. Hooks need to filter more invalid combinations
+positive_data_acceptance.expected-statuses = [200, 201, 204]

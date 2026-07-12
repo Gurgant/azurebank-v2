@@ -1,0 +1,35 @@
+meta {
+  name: Get Me
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/auth/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.userId: isString
+  res.body.data.email: isString
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Response contains user data", function() {
+    expect(res.body.data).to.have.property('userId');
+    expect(res.body.data).to.have.property('email');
+    expect(res.body.data).to.have.property('azureTag');
+    expect(res.body.data).to.have.property('firstName');
+    expect(res.body.data).to.have.property('lastName');
+  });
+}

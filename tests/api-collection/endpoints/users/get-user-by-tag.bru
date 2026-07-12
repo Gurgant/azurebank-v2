@@ -1,0 +1,33 @@
+meta {
+  name: Get User by AzureTag
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/users/test.user
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isDefined
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Response contains user lookup result", function() {
+    const data = res.body.data;
+    expect(data).to.have.property('azureTag');
+    expect(data).to.have.property('displayName');
+    expect(data).to.have.property('exists');
+  });
+}

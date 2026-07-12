@@ -1,0 +1,76 @@
+# Schemathesis v4 Configuration for AzureBank API
+# Run from backend folder: schemathesis run ./openapiv1.json
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GLOBAL SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Colored output
+color = true
+
+# Seed for reproducible tests
+seed = 42
+
+# Maximum failures before stopping
+max-failures = 10
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PROJECT CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+[[project]]
+# Base URL for the API under test
+base-url = "http://localhost:5068"
+
+# Number of concurrent workers
+workers = 1
+
+# Continue running after failures
+continue-on-failure = true
+
+# Wait for schema to become available (seconds)
+wait-for-schema = 30
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST PHASES
+# ═══════════════════════════════════════════════════════════════════════════
+
+[phases]
+# Enable all test phases
+enabled = ["examples", "coverage", "fuzzing"]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DATA GENERATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+[generation]
+# Maximum examples per operation
+max-examples = 100
+
+# Generation mode: positive, negative, or all
+mode = "all"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NETWORK SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════
+
+[network]
+# Request timeout in seconds
+timeout = 30
+
+# Disable TLS verification for localhost
+tls-verify = false
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CHECKS
+# ═══════════════════════════════════════════════════════════════════════════
+
+[checks]
+# Enable response schema validation
+response_schema_conformance.enabled = true
+
+# Enable status code validation
+status_code_conformance.enabled = true
+
+# Enable content type validation
+content_type_conformance.enabled = true

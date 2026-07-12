@@ -1,0 +1,51 @@
+meta {
+  name: Internal Transfer
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/transfers/internal
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "fromAccountId": "{{accountId}}",
+    "toAccountId": "{{secondAccountId}}",
+    "amount": 100.00,
+    "description": "Internal transfer test"
+  }
+}
+
+assert {
+  res.status: in [201, 400, 404]
+}
+
+tests {
+  test("Status is valid response", function() {
+    expect([201, 400, 404]).to.include(res.status);
+  });
+
+  test("Response contains transfer details on success", function() {
+    if (res.status === 201) {
+      const data = res.body.data;
+      expect(data).to.have.property('transferId');
+      expect(data).to.have.property('transactionNumber');
+      expect(data).to.have.property('fromAccountId');
+      expect(data).to.have.property('toAccountId');
+      expect(data).to.have.property('amount');
+      expect(data).to.have.property('fromAccountNewBalance');
+      expect(data).to.have.property('toAccountNewBalance');
+    }
+  });
+}

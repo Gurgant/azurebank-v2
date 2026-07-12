@@ -1,0 +1,55 @@
+# Schemathesis Configuration for AzureBank API
+# Run: schemathesis run --config tests/contract/schemathesis.yaml
+
+# OpenAPI Specification
+schema:
+  location: "../../openapiv1.json"
+
+# Base URL for API requests
+url: "http://localhost:5068"
+
+# Enable OpenAPI 3.1 experimental support
+experimental:
+  - openapi-3.1
+
+# Test generation settings
+generation:
+  # Maximum examples per endpoint
+  max_examples: 100
+  # Seed for reproducible tests
+  seed: 42
+
+# Hypothesis settings for property-based testing
+hypothesis:
+  # Maximum time per test in milliseconds
+  deadline: 15000
+  # Suppress health checks for faster execution
+  suppress_health_check:
+    - too_slow
+    - filter_too_much
+
+# Request settings
+request:
+  # Timeout for each request in seconds
+  timeout: 30
+  # TLS certificate verification (disable for localhost)
+  tls_verify: false
+
+# Output settings
+output:
+  # Show all test cases (not just failures)
+  verbosity: 1
+  # Output format
+  format: "short"
+
+# Hooks file for authentication
+hooks: "hooks.py"
+
+# Endpoints to exclude (if any)
+# exclude:
+#   - "/api/health"
+
+# Test only specific endpoints (optional)
+# include:
+#   - "/api/auth/*"
+#   - "/api/accounts/*"

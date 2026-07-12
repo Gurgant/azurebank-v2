@@ -1,0 +1,58 @@
+meta {
+  name: Register
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/auth/register
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "azureTag": "{{testAzureTag}}{{$timestamp}}",
+    "email": "test.{{$timestamp}}@example.com",
+    "password": "{{testPassword}}",
+    "firstName": "{{testFirstName}}",
+    "lastName": "{{testLastName}}"
+  }
+}
+
+vars:post-response {
+  authToken: res.body.data.token.accessToken
+  accountId: res.body.data.account.id
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.user.azureTag: isString
+  res.body.data.token.accessToken: isString
+  res.body.data.account.id: isString
+}
+
+tests {
+  test("Status is 201 Created", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("Response contains token", function() {
+    expect(res.body.data.token.accessToken).to.be.a('string');
+    expect(res.body.data.token.accessToken.length).to.be.greaterThan(0);
+  });
+
+  test("Response contains user info", function() {
+    expect(res.body.data.user.email).to.be.a('string');
+    expect(res.body.data.user.firstName).to.equal("Test");
+  });
+
+  test("Primary account was created", function() {
+    expect(res.body.data.account.isPrimary).to.equal(true);
+    expect(res.body.data.account.balance).to.equal(0);
+  });
+}

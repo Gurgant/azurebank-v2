@@ -1,0 +1,41 @@
+meta {
+  name: Get Account
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/accounts/{{accountId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.id: eq {{accountId}}
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Account ID matches requested", function() {
+    expect(res.body.data.id).to.be.a('string');
+  });
+
+  test("Account has all required properties", function() {
+    const account = res.body.data;
+    expect(account).to.have.property('id');
+    expect(account).to.have.property('accountNumber');
+    expect(account).to.have.property('name');
+    expect(account).to.have.property('type');
+    expect(account).to.have.property('balance');
+    expect(account).to.have.property('isPrimary');
+    expect(account).to.have.property('createdAt');
+  });
+}

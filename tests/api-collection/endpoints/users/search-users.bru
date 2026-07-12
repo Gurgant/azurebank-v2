@@ -1,0 +1,38 @@
+meta {
+  name: Search Users
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/users/search?azureTag=test
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Response contains users array", function() {
+    expect(res.body.data).to.be.an('array');
+  });
+
+  test("Users have required properties", function() {
+    if (res.body.data.length > 0) {
+      const user = res.body.data[0];
+      expect(user).to.have.property('azureTag');
+      expect(user).to.have.property('displayName');
+    }
+  });
+}

@@ -1,0 +1,54 @@
+meta {
+  name: Create Account
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/accounts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Test Savings Account",
+    "type": 1
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.name: eq "Test Savings Account"
+  res.body.data.type: eq 1
+}
+
+tests {
+  test("Status is 201 Created", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("Account name matches request", function() {
+    expect(res.body.data.name).to.equal("Test Savings Account");
+  });
+
+  test("Account type is Savings (1)", function() {
+    expect(res.body.data.type).to.equal(1);
+  });
+
+  test("New account starts with zero balance", function() {
+    expect(res.body.data.balance).to.equal(0);
+  });
+
+  test("New account is not primary", function() {
+    expect(res.body.data.isPrimary).to.equal(false);
+  });
+}

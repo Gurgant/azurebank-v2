@@ -1,0 +1,37 @@
+meta {
+  name: Get Transaction
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/transactions/{{transactionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.id: isString
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Transaction has all required properties", function() {
+    const tx = res.body.data;
+    expect(tx).to.have.property('id');
+    expect(tx).to.have.property('transactionNumber');
+    expect(tx).to.have.property('type');
+    expect(tx).to.have.property('amount');
+    expect(tx).to.have.property('balanceAfter');
+    expect(tx).to.have.property('status');
+    expect(tx).to.have.property('createdAt');
+  });
+}

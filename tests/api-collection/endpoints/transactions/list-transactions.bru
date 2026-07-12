@@ -1,0 +1,46 @@
+meta {
+  name: List Transactions
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/transactions?Page=1&PageSize=20
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.data: isArray
+  res.body.pagination: isDefined
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Response contains transactions array", function() {
+    expect(res.body.data).to.be.an('array');
+  });
+
+  test("Response contains pagination", function() {
+    const pagination = res.body.pagination;
+    expect(pagination).to.have.property('page');
+    expect(pagination).to.have.property('pageSize');
+    expect(pagination).to.have.property('totalItems');
+    expect(pagination).to.have.property('totalPages');
+    expect(pagination).to.have.property('hasNextPage');
+    expect(pagination).to.have.property('hasPreviousPage');
+  });
+
+  test("Pagination values are correct", function() {
+    expect(res.body.pagination.page).to.equal(1);
+    expect(res.body.pagination.pageSize).to.equal(20);
+  });
+}

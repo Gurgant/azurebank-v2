@@ -1,0 +1,40 @@
+meta {
+  name: Update Account
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/accounts/{{accountId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Updated Account Name"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.data.name: eq "Updated Account Name"
+}
+
+tests {
+  test("Status is 200 OK", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("Account name was updated", function() {
+    expect(res.body.data.name).to.equal("Updated Account Name");
+  });
+}

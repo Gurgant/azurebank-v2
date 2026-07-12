@@ -1,0 +1,52 @@
+meta {
+  name: Withdraw
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/transactions/withdraw
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "accountId": "{{accountId}}",
+    "amount": 100.00,
+    "pin": "123456",
+    "description": "Test withdrawal"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.transaction.type: eq 1
+  res.body.data.transaction.amount: eq 100
+}
+
+tests {
+  test("Status is 201 Created", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("Transaction type is Withdrawal (1)", function() {
+    expect(res.body.data.transaction.type).to.equal(1);
+  });
+
+  test("Amount matches request", function() {
+    expect(res.body.data.transaction.amount).to.equal(100);
+  });
+
+  test("New balance is returned", function() {
+    expect(res.body.data.newBalance).to.be.a('number');
+  });
+}
