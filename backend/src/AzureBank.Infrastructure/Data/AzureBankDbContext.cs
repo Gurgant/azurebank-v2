@@ -46,17 +46,35 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// <summary>
     /// Enforce immutability on Transaction entities.
     /// Transactions are financial records and cannot be modified or deleted.
+    ///
+    /// Single exception (write-once): RelatedTransactionId may go from null
+    /// to a value. Transfer pairs reference EACH OTHER, and two mutually
+    /// referencing inserts are a circular FK dependency no relational
+    /// provider can order (EF throws "circular dependency was detected") —
+    /// so the pair is inserted one-directional and the back-link is written
+    /// once afterwards, inside the same database transaction. All financial
+    /// fields remain immutable; an already-set link cannot change.
     /// </summary>
     private void EnforceTransactionImmutability()
     {
         var invalidOperations = ChangeTracker.Entries<Transaction>()
-            .Where(e => e.State is EntityState.Modified or EntityState.Deleted);
+            .Where(e => e.State == EntityState.Deleted
+                || (e.State == EntityState.Modified && !IsWriteOnceLinkUpdate(e)));
 
         if (invalidOperations.Any())
         {
             throw new InvalidOperationException(
                 "Transactions are immutable. Financial records cannot be modified or deleted.");
         }
+    }
+
+    private static bool IsWriteOnceLinkUpdate(
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<Transaction> entry)
+    {
+        var modified = entry.Properties.Where(p => p.IsModified).ToList();
+        return modified.Count == 1
+            && modified[0].Metadata.Name == nameof(Transaction.RelatedTransactionId)
+            && entry.Property(t => t.RelatedTransactionId).OriginalValue is null;
     }
 
     /// <summary>

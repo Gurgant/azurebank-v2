@@ -42,36 +42,53 @@ public class TransactionService : ITransactionService
     {
         var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.AccountId, userId);
 
-        var balanceBefore = account.Balance;
-        var balanceAfter = balanceBefore + request.Amount;
-
-        var transaction = new Transaction
+        // Optimistic-concurrency retry: a parallel operation on the SAME
+        // account bumps its RowVersion between our read and commit; the
+        // loser reloads and recomputes instead of surfacing a 500.
+        for (var attempt = 1; ; attempt++)
         {
-            Id = Guid.CreateVersion7(),
-            TransactionNumber = IdGenerator.GenerateTransactionNumber(),
-            AccountId = account.Id,
-            Account = account,
-            Type = TransactionType.Deposit,
-            Amount = request.Amount,
-            BalanceBefore = balanceBefore,
-            BalanceAfter = balanceAfter,
-            Description = request.Description,
-            Status = TransactionStatus.Completed,
-            CreatedAt = DateTime.UtcNow
-        };
+            var balanceBefore = account.Balance;
+            var balanceAfter = balanceBefore + request.Amount;
 
-        // Update account balance
-        account.Balance = balanceAfter;
-        account.UpdatedAt = DateTime.UtcNow;
+            var transaction = new Transaction
+            {
+                Id = Guid.CreateVersion7(),
+                TransactionNumber = IdGenerator.GenerateTransactionNumber(),
+                AccountId = account.Id,
+                Account = account,
+                Type = TransactionType.Deposit,
+                Amount = request.Amount,
+                BalanceBefore = balanceBefore,
+                BalanceAfter = balanceAfter,
+                Description = request.Description,
+                Status = TransactionStatus.Completed,
+                CreatedAt = DateTime.UtcNow
+            };
 
-        _context.Transactions.Add(transaction);
-        await _context.SaveChangesAsync();
+            // Update account balance
+            account.Balance = balanceAfter;
+            account.UpdatedAt = DateTime.UtcNow;
 
-        _logger.LogInformation(
-            "Deposit of {Amount:C} to account {AccountId}. New balance: {Balance:C}",
-            request.Amount, account.Id, balanceAfter);
+            _context.Transactions.Add(transaction);
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
+            {
+                _logger.LogInformation(
+                    "Concurrency conflict on deposit to account {AccountId} (attempt {Attempt}); retrying",
+                    account.Id, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
+                continue;
+            }
 
-        return _mapper.ToDepositResponse(transaction, balanceAfter);
+            _logger.LogInformation(
+                "Deposit of {Amount:C} to account {AccountId}. New balance: {Balance:C}",
+                request.Amount, account.Id, balanceAfter);
+
+            return _mapper.ToDepositResponse(transaction, balanceAfter);
+        }
     }
 
     /// <inheritdoc />
@@ -91,42 +108,59 @@ public class TransactionService : ITransactionService
             throw new AuthenticationException("Invalid PIN.", "INVALID_PIN");
         }
 
-        // Check sufficient funds
-        if (account.Balance < request.Amount)
+        // Optimistic-concurrency retry: see DepositAsync. The funds check
+        // runs INSIDE the loop — a reloaded balance may no longer cover the
+        // withdrawal.
+        for (var attempt = 1; ; attempt++)
         {
-            throw new InsufficientFundsException(account.Balance, request.Amount);
+            // Check sufficient funds
+            if (account.Balance < request.Amount)
+            {
+                throw new InsufficientFundsException(account.Balance, request.Amount);
+            }
+
+            var balanceBefore = account.Balance;
+            var balanceAfter = balanceBefore - request.Amount;
+
+            var transaction = new Transaction
+            {
+                Id = Guid.CreateVersion7(),
+                TransactionNumber = IdGenerator.GenerateTransactionNumber(),
+                AccountId = account.Id,
+                Account = account,
+                Type = TransactionType.Withdrawal,
+                Amount = request.Amount,
+                BalanceBefore = balanceBefore,
+                BalanceAfter = balanceAfter,
+                Description = request.Description,
+                Status = TransactionStatus.Completed,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            // Update account balance
+            account.Balance = balanceAfter;
+            account.UpdatedAt = DateTime.UtcNow;
+
+            _context.Transactions.Add(transaction);
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
+            {
+                _logger.LogInformation(
+                    "Concurrency conflict on withdrawal from account {AccountId} (attempt {Attempt}); retrying",
+                    account.Id, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
+                continue;
+            }
+
+            _logger.LogInformation(
+                "Withdrawal of {Amount:C} from account {AccountId}. New balance: {Balance:C}",
+                request.Amount, account.Id, balanceAfter);
+
+            return _mapper.ToWithdrawResponse(transaction, balanceAfter);
         }
-
-        var balanceBefore = account.Balance;
-        var balanceAfter = balanceBefore - request.Amount;
-
-        var transaction = new Transaction
-        {
-            Id = Guid.CreateVersion7(),
-            TransactionNumber = IdGenerator.GenerateTransactionNumber(),
-            AccountId = account.Id,
-            Account = account,
-            Type = TransactionType.Withdrawal,
-            Amount = request.Amount,
-            BalanceBefore = balanceBefore,
-            BalanceAfter = balanceAfter,
-            Description = request.Description,
-            Status = TransactionStatus.Completed,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        // Update account balance
-        account.Balance = balanceAfter;
-        account.UpdatedAt = DateTime.UtcNow;
-
-        _context.Transactions.Add(transaction);
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation(
-            "Withdrawal of {Amount:C} from account {AccountId}. New balance: {Balance:C}",
-            request.Amount, account.Id, balanceAfter);
-
-        return _mapper.ToWithdrawResponse(transaction, balanceAfter);
     }
 
     /// <inheritdoc />

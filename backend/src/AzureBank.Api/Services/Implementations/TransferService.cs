@@ -72,94 +72,122 @@ public class TransferService : ITransferService
             throw new BusinessRuleException("Recipient does not have an active account.", "RECIPIENT_NO_ACCOUNT");
         }
 
-        // Check sufficient funds
-        if (fromAccount.Balance < request.Amount)
-        {
-            throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
-        }
-
-        // Use transaction for atomicity
+        // Use transaction for atomicity; retry optimistic-concurrency
+        // conflicts on the accounts (see ConcurrencyRetry).
         var strategy = _context.Database.CreateExecutionStrategy();
 
-        return await strategy.ExecuteAsync(async () =>
+        for (var attempt = 1; ; attempt++)
         {
-            await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+            // Check sufficient funds (inside the loop: a reloaded balance
+            // may no longer cover the transfer)
+            if (fromAccount.Balance < request.Amount)
+            {
+                throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
+            }
 
             try
             {
-                var transactionNumber = IdGenerator.GenerateTransactionNumber();
-                var now = DateTime.UtcNow;
-
-                // Create outgoing transaction (sender)
-                var outgoingTransaction = new Transaction
+                return await strategy.ExecuteAsync(async () =>
                 {
-                    Id = Guid.CreateVersion7(),
-                    TransactionNumber = transactionNumber,
-                    AccountId = fromAccount.Id,
-                    Account = fromAccount,
-                    Type = TransactionType.TransferOut,
-                    Amount = request.Amount,
-                    BalanceBefore = fromAccount.Balance,
-                    BalanceAfter = fromAccount.Balance - request.Amount,
-                    Description = request.Description ?? $"Transfer to @{recipient.AzureTag}",
-                    RecipientAzureTag = recipient.AzureTag,
-                    Status = TransactionStatus.Completed,
-                    CreatedAt = now
-                };
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
 
-                // Create incoming transaction (recipient)
-                var incomingTransaction = new Transaction
-                {
-                    Id = Guid.CreateVersion7(),
-                    TransactionNumber = $"{transactionNumber}-R",
-                    AccountId = recipientAccount.Id,
-                    Account = recipientAccount,
-                    Type = TransactionType.TransferIn,
-                    Amount = request.Amount,
-                    BalanceBefore = recipientAccount.Balance,
-                    BalanceAfter = recipientAccount.Balance + request.Amount,
-                    Description = request.Description ?? $"Transfer from @{senderUser.AzureTag}",
-                    SenderAzureTag = senderUser.AzureTag,
-                    RelatedTransactionId = outgoingTransaction.Id,
-                    Status = TransactionStatus.Completed,
-                    CreatedAt = now
-                };
+                    try
+                    {
+                        var transactionNumber = IdGenerator.GenerateTransactionNumber();
+                        var now = DateTime.UtcNow;
 
-                // Link transactions
-                outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
+                        // Create outgoing transaction (sender).
+                        // RelatedTransactionId stays null for now: the pair
+                        // references each other, and two mutually referencing
+                        // INSERTs are a circular FK dependency SQL Server
+                        // cannot order. The back-link is written once below,
+                        // inside this same transaction.
+                        var outgoingTransaction = new Transaction
+                        {
+                            Id = Guid.CreateVersion7(),
+                            TransactionNumber = transactionNumber,
+                            AccountId = fromAccount.Id,
+                            Account = fromAccount,
+                            Type = TransactionType.TransferOut,
+                            Amount = request.Amount,
+                            BalanceBefore = fromAccount.Balance,
+                            BalanceAfter = fromAccount.Balance - request.Amount,
+                            Description = request.Description ?? $"Transfer to @{recipient.AzureTag}",
+                            RecipientAzureTag = recipient.AzureTag,
+                            Status = TransactionStatus.Completed,
+                            CreatedAt = now
+                        };
 
-                // Update balances
-                fromAccount.Balance -= request.Amount;
-                fromAccount.UpdatedAt = now;
-                recipientAccount.Balance += request.Amount;
-                recipientAccount.UpdatedAt = now;
+                        // Create incoming transaction (recipient)
+                        var incomingTransaction = new Transaction
+                        {
+                            Id = Guid.CreateVersion7(),
+                            // Own number in the documented TXN-YYYYMMDD-XXXXXX
+                            // format: the old "-R" suffix exceeded the column's
+                            // max length (20) — SQL Server rejected EVERY
+                            // transfer with a truncation error. The pair is
+                            // linked by RelatedTransactionId.
+                            TransactionNumber = IdGenerator.GenerateTransactionNumber(),
+                            AccountId = recipientAccount.Id,
+                            Account = recipientAccount,
+                            Type = TransactionType.TransferIn,
+                            Amount = request.Amount,
+                            BalanceBefore = recipientAccount.Balance,
+                            BalanceAfter = recipientAccount.Balance + request.Amount,
+                            Description = request.Description ?? $"Transfer from @{senderUser.AzureTag}",
+                            SenderAzureTag = senderUser.AzureTag,
+                            RelatedTransactionId = outgoingTransaction.Id,
+                            Status = TransactionStatus.Completed,
+                            CreatedAt = now
+                        };
 
-                // Save
-                _context.Transactions.Add(outgoingTransaction);
-                _context.Transactions.Add(incomingTransaction);
-                await _context.SaveChangesAsync();
-                await dbTransaction.CommitAsync();
+                        // Update balances
+                        fromAccount.Balance -= request.Amount;
+                        fromAccount.UpdatedAt = now;
+                        recipientAccount.Balance += request.Amount;
+                        recipientAccount.UpdatedAt = now;
 
-                _logger.LogInformation(
-                    "Transfer of {Amount:C} from {SenderTag} to {RecipientTag} completed. Transaction: {TransactionNumber}",
-                    request.Amount, senderUser.AzureTag, recipient.AzureTag, transactionNumber);
+                        // Save (one-directional link only)
+                        _context.Transactions.Add(outgoingTransaction);
+                        _context.Transactions.Add(incomingTransaction);
+                        await _context.SaveChangesAsync();
 
-                return new TransferResponse
-                {
-                    TransactionNumber = transactionNumber,
-                    Amount = request.Amount,
-                    NewBalance = fromAccount.Balance,
-                    RecipientAzureTag = recipient.AzureTag,
-                    RecipientName = $"{recipient.FirstName} {recipient.LastName[0]}.",
-                    ProcessedAt = now
-                };
+                        // Write-once back-link (permitted by the immutability
+                        // guard: RelatedTransactionId null -> value only)
+                        outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
+                        await _context.SaveChangesAsync();
+
+                        await dbTransaction.CommitAsync();
+
+                        _logger.LogInformation(
+                            "Transfer of {Amount:C} from {SenderTag} to {RecipientTag} completed. Transaction: {TransactionNumber}",
+                            request.Amount, senderUser.AzureTag, recipient.AzureTag, transactionNumber);
+
+                        return new TransferResponse
+                        {
+                            TransactionNumber = transactionNumber,
+                            Amount = request.Amount,
+                            NewBalance = fromAccount.Balance,
+                            RecipientAzureTag = recipient.AzureTag,
+                            RecipientName = $"{recipient.FirstName} {recipient.LastName[0]}.",
+                            ProcessedAt = now
+                        };
+                    }
+                    catch
+                    {
+                        await dbTransaction.RollbackAsync();
+                        throw;
+                    }
+                });
             }
-            catch
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
             {
-                await dbTransaction.RollbackAsync();
-                throw;
+                _logger.LogInformation(
+                    "Concurrency conflict on transfer from account {AccountId} (attempt {Attempt}); retrying",
+                    fromAccount.Id, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
             }
-        });
+        }
     }
 
     /// <inheritdoc />
@@ -175,94 +203,115 @@ public class TransferService : ITransferService
             throw new BusinessRuleException("Cannot transfer to the same account.", "SAME_ACCOUNT_TRANSFER");
         }
 
-        // Check sufficient funds
-        if (fromAccount.Balance < request.Amount)
-        {
-            throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
-        }
-
-        // Use transaction for atomicity
+        // Use transaction for atomicity; retry optimistic-concurrency
+        // conflicts on the accounts (see ConcurrencyRetry).
         var strategy = _context.Database.CreateExecutionStrategy();
 
-        return await strategy.ExecuteAsync(async () =>
+        for (var attempt = 1; ; attempt++)
         {
-            await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+            // Check sufficient funds (inside the loop: a reloaded balance
+            // may no longer cover the transfer)
+            if (fromAccount.Balance < request.Amount)
+            {
+                throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
+            }
 
             try
             {
-                var transactionNumber = IdGenerator.GenerateTransactionNumber();
-                var now = DateTime.UtcNow;
-
-                // Create outgoing transaction
-                var outgoingTransaction = new Transaction
+                return await strategy.ExecuteAsync(async () =>
                 {
-                    Id = Guid.CreateVersion7(),
-                    TransactionNumber = transactionNumber,
-                    AccountId = fromAccount.Id,
-                    Account = fromAccount,
-                    Type = TransactionType.TransferOut,
-                    Amount = request.Amount,
-                    BalanceBefore = fromAccount.Balance,
-                    BalanceAfter = fromAccount.Balance - request.Amount,
-                    Description = request.Description ?? $"Internal transfer to {toAccount.Name}",
-                    Status = TransactionStatus.Completed,
-                    CreatedAt = now
-                };
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
 
-                // Create incoming transaction
-                var incomingTransaction = new Transaction
-                {
-                    Id = Guid.CreateVersion7(),
-                    TransactionNumber = $"{transactionNumber}-I",
-                    AccountId = toAccount.Id,
-                    Account = toAccount,
-                    Type = TransactionType.TransferIn,
-                    Amount = request.Amount,
-                    BalanceBefore = toAccount.Balance,
-                    BalanceAfter = toAccount.Balance + request.Amount,
-                    Description = request.Description ?? $"Internal transfer from {fromAccount.Name}",
-                    RelatedTransactionId = outgoingTransaction.Id,
-                    Status = TransactionStatus.Completed,
-                    CreatedAt = now
-                };
+                    try
+                    {
+                        var transactionNumber = IdGenerator.GenerateTransactionNumber();
+                        var now = DateTime.UtcNow;
 
-                // Link transactions
-                outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
+                        // Create outgoing transaction. RelatedTransactionId
+                        // stays null: mutual references cannot be inserted in
+                        // one shot (circular FK); back-link written below.
+                        var outgoingTransaction = new Transaction
+                        {
+                            Id = Guid.CreateVersion7(),
+                            TransactionNumber = transactionNumber,
+                            AccountId = fromAccount.Id,
+                            Account = fromAccount,
+                            Type = TransactionType.TransferOut,
+                            Amount = request.Amount,
+                            BalanceBefore = fromAccount.Balance,
+                            BalanceAfter = fromAccount.Balance - request.Amount,
+                            Description = request.Description ?? $"Internal transfer to {toAccount.Name}",
+                            Status = TransactionStatus.Completed,
+                            CreatedAt = now
+                        };
 
-                // Update balances
-                fromAccount.Balance -= request.Amount;
-                fromAccount.UpdatedAt = now;
-                toAccount.Balance += request.Amount;
-                toAccount.UpdatedAt = now;
+                        // Create incoming transaction
+                        var incomingTransaction = new Transaction
+                        {
+                            Id = Guid.CreateVersion7(),
+                            // Own number (documented format; the old "-I"
+                            // suffix exceeded the column max length, see above)
+                            TransactionNumber = IdGenerator.GenerateTransactionNumber(),
+                            AccountId = toAccount.Id,
+                            Account = toAccount,
+                            Type = TransactionType.TransferIn,
+                            Amount = request.Amount,
+                            BalanceBefore = toAccount.Balance,
+                            BalanceAfter = toAccount.Balance + request.Amount,
+                            Description = request.Description ?? $"Internal transfer from {fromAccount.Name}",
+                            RelatedTransactionId = outgoingTransaction.Id,
+                            Status = TransactionStatus.Completed,
+                            CreatedAt = now
+                        };
 
-                // Save
-                _context.Transactions.Add(outgoingTransaction);
-                _context.Transactions.Add(incomingTransaction);
-                await _context.SaveChangesAsync();
-                await dbTransaction.CommitAsync();
+                        // Update balances
+                        fromAccount.Balance -= request.Amount;
+                        fromAccount.UpdatedAt = now;
+                        toAccount.Balance += request.Amount;
+                        toAccount.UpdatedAt = now;
 
-                _logger.LogInformation(
-                    "Internal transfer of {Amount:C} from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
-                    request.Amount, fromAccount.Id, toAccount.Id, transactionNumber);
+                        // Save (one-directional link only)
+                        _context.Transactions.Add(outgoingTransaction);
+                        _context.Transactions.Add(incomingTransaction);
+                        await _context.SaveChangesAsync();
 
-                return new InternalTransferResponse
-                {
-                    TransferId = outgoingTransaction.Id,
-                    TransactionNumber = transactionNumber,
-                    FromAccountId = fromAccount.Id,
-                    ToAccountId = toAccount.Id,
-                    Amount = request.Amount,
-                    Description = request.Description,
-                    FromAccountNewBalance = fromAccount.Balance,
-                    ToAccountNewBalance = toAccount.Balance,
-                    ProcessedAt = now
-                };
+                        // Write-once back-link (see immutability guard)
+                        outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
+                        await _context.SaveChangesAsync();
+
+                        await dbTransaction.CommitAsync();
+
+                        _logger.LogInformation(
+                            "Internal transfer of {Amount:C} from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
+                            request.Amount, fromAccount.Id, toAccount.Id, transactionNumber);
+
+                        return new InternalTransferResponse
+                        {
+                            TransferId = outgoingTransaction.Id,
+                            TransactionNumber = transactionNumber,
+                            FromAccountId = fromAccount.Id,
+                            ToAccountId = toAccount.Id,
+                            Amount = request.Amount,
+                            Description = request.Description,
+                            FromAccountNewBalance = fromAccount.Balance,
+                            ToAccountNewBalance = toAccount.Balance,
+                            ProcessedAt = now
+                        };
+                    }
+                    catch
+                    {
+                        await dbTransaction.RollbackAsync();
+                        throw;
+                    }
+                });
             }
-            catch
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
             {
-                await dbTransaction.RollbackAsync();
-                throw;
+                _logger.LogInformation(
+                    "Concurrency conflict on internal transfer from account {AccountId} (attempt {Attempt}); retrying",
+                    fromAccount.Id, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
             }
-        });
+        }
     }
 }
