@@ -1,0 +1,359 @@
+{
+  "screen": {
+    "name": "Dashboard - Mobile",
+    "device": "iPhone 13/14",
+    "dimensions": { "width": 375, "height": 812 },
+    "background": "#F7F8FA"
+  },
+  "layout": {
+    "type": "VERTICAL",
+    "alignment": "STRETCH"
+  },
+  "elements": [
+    {
+      "id": "header",
+      "type": "FRAME",
+      "name": "Header",
+      "position": { "x": 0, "y": 0 },
+      "dimensions": { "width": 375, "height": 56 },
+      "styles": {
+        "background": "#FFFFFF",
+        "borderBottom": { "width": 1, "color": "#E5E7EB" }
+      },
+      "autoLayout": {
+        "mode": "HORIZONTAL",
+        "primaryAxisAlign": "SPACE_BETWEEN",
+        "counterAxisAlign": "CENTER",
+        "padding": { "left": 16, "right": 16 }
+      },
+      "children": [
+        {
+          "id": "logo",
+          "type": "TEXT",
+          "content": "AzureBank",
+          "styles": { "fontSize": 20, "fontWeight": 700, "color": "#006DE2" }
+        },
+        {
+          "id": "profile-avatar",
+          "type": "ELLIPSE",
+          "dimensions": { "width": 36, "height": 36 },
+          "styles": { "background": "#E6F0FC" },
+          "children": [
+            {
+              "type": "TEXT",
+              "content": "JD",
+              "styles": { "fontSize": 14, "fontWeight": 600, "color": "#006DE2" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "content",
+      "type": "FRAME",
+      "name": "Content",
+      "position": { "x": 0, "y": 56 },
+      "dimensions": { "width": 375, "height": 684 },
+      "styles": { "background": "transparent" },
+      "autoLayout": {
+        "mode": "VERTICAL",
+        "primaryAxisAlign": "MIN",
+        "counterAxisAlign": "STRETCH",
+        "padding": { "top": 16, "bottom": 16, "left": 16, "right": 16 },
+        "itemSpacing": 20
+      },
+      "children": [
+        {
+          "id": "greeting-section",
+          "type": "FRAME",
+          "name": "GreetingSection",
+          "autoLayout": { "mode": "VERTICAL", "itemSpacing": 4 },
+          "children": [
+            {
+              "type": "TEXT",
+              "content": "Good morning,",
+              "styles": { "fontSize": 14, "fontWeight": 400, "color": "#6B7280" }
+            },
+            {
+              "type": "TEXT",
+              "content": "John Doe",
+              "styles": { "fontSize": 24, "fontWeight": 600, "color": "#1F2937" }
+            }
+          ]
+        },
+        {
+          "id": "balance-card",
+          "type": "FRAME",
+          "name": "BalanceCard",
+          "dimensions": { "width": "fill", "height": 180 },
+          "styles": {
+            "background": "linear-gradient(135deg, #006DE2 0%, #004DA0 100%)",
+            "borderRadius": 16,
+            "shadow": { "color": "rgba(0, 109, 226, 0.3)", "offset": { "x": 0, "y": 8 }, "blur": 24 }
+          },
+          "autoLayout": {
+            "mode": "VERTICAL",
+            "primaryAxisAlign": "SPACE_BETWEEN",
+            "padding": { "top": 24, "bottom": 24, "left": 24, "right": 24 }
+          },
+          "children": [
+            {
+              "id": "account-info",
+              "type": "FRAME",
+              "autoLayout": { "mode": "VERTICAL", "itemSpacing": 4 },
+              "children": [
+                {
+                  "type": "TEXT",
+                  "content": "Primary Account",
+                  "styles": { "fontSize": 14, "color": "rgba(255,255,255,0.8)" }
+                },
+                {
+                  "type": "TEXT",
+                  "content": "•••• •••• •••• 4521",
+                  "styles": { "fontSize": 14, "fontFamily": "monospace", "color": "rgba(255,255,255,0.9)", "letterSpacing": "0.05em" }
+                }
+              ]
+            },
+            {
+              "id": "balance-info",
+              "type": "FRAME",
+              "autoLayout": { "mode": "VERTICAL", "itemSpacing": 4 },
+              "children": [
+                {
+                  "type": "TEXT",
+                  "content": "AVAILABLE BALANCE",
+                  "styles": { "fontSize": 11, "fontWeight": 500, "color": "rgba(255,255,255,0.7)", "letterSpacing": "0.1em" }
+                },
+                {
+                  "type": "TEXT",
+                  "content": "$12,450.00",
+                  "styles": { "fontSize": 36, "fontWeight": 700, "color": "#FFFFFF", "letterSpacing": "-0.02em" }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "quick-actions",
+          "type": "FRAME",
+          "name": "QuickActions",
+          "dimensions": { "width": "fill", "height": "hug" },
+          "autoLayout": {
+            "mode": "HORIZONTAL",
+            "primaryAxisAlign": "SPACE_BETWEEN",
+            "itemSpacing": 12
+          },
+          "children": [
+            {
+              "id": "deposit-action",
+              "type": "FRAME",
+              "dimensions": { "width": 100, "height": 80 },
+              "styles": { "background": "#FFFFFF", "borderRadius": 12, "shadow": "sm" },
+              "autoLayout": { "mode": "VERTICAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER", "itemSpacing": 8 },
+              "children": [
+                { "type": "ICON", "icon": "ArrowDownload", "size": 24, "color": "#34A853" },
+                { "type": "TEXT", "content": "Deposit", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#1F2937" } }
+              ]
+            },
+            {
+              "id": "withdraw-action",
+              "type": "FRAME",
+              "dimensions": { "width": 100, "height": 80 },
+              "styles": { "background": "#FFFFFF", "borderRadius": 12, "shadow": "sm" },
+              "autoLayout": { "mode": "VERTICAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER", "itemSpacing": 8 },
+              "children": [
+                { "type": "ICON", "icon": "ArrowUpload", "size": 24, "color": "#EA4335" },
+                { "type": "TEXT", "content": "Withdraw", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#1F2937" } }
+              ]
+            },
+            {
+              "id": "transfer-action",
+              "type": "FRAME",
+              "dimensions": { "width": 100, "height": 80 },
+              "styles": { "background": "#FFFFFF", "borderRadius": 12, "shadow": "sm" },
+              "autoLayout": { "mode": "VERTICAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER", "itemSpacing": 8 },
+              "children": [
+                { "type": "ICON", "icon": "ArrowSwap", "size": 24, "color": "#006DE2" },
+                { "type": "TEXT", "content": "Transfer", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#1F2937" } }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "transactions-section",
+          "type": "FRAME",
+          "name": "TransactionsSection",
+          "dimensions": { "width": "fill", "height": "hug" },
+          "autoLayout": { "mode": "VERTICAL", "itemSpacing": 12 },
+          "children": [
+            {
+              "id": "transactions-header",
+              "type": "FRAME",
+              "autoLayout": { "mode": "HORIZONTAL", "primaryAxisAlign": "SPACE_BETWEEN" },
+              "children": [
+                { "type": "TEXT", "content": "Recent Transactions", "styles": { "fontSize": 18, "fontWeight": 600, "color": "#1F2937" } },
+                { "type": "TEXT", "content": "See all", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#006DE2" } }
+              ]
+            },
+            {
+              "id": "transactions-list",
+              "type": "FRAME",
+              "name": "TransactionsList",
+              "dimensions": { "width": "fill" },
+              "styles": { "background": "#FFFFFF", "borderRadius": 12 },
+              "autoLayout": { "mode": "VERTICAL" },
+              "children": [
+                {
+                  "id": "transaction-1",
+                  "type": "FRAME",
+                  "name": "TransactionItem",
+                  "dimensions": { "width": "fill", "height": 72 },
+                  "styles": { "borderBottom": { "width": 1, "color": "#F3F4F6" } },
+                  "autoLayout": { "mode": "HORIZONTAL", "primaryAxisAlign": "SPACE_BETWEEN", "counterAxisAlign": "CENTER", "padding": { "left": 16, "right": 16 } },
+                  "children": [
+                    {
+                      "type": "FRAME",
+                      "autoLayout": { "mode": "HORIZONTAL", "itemSpacing": 12, "counterAxisAlign": "CENTER" },
+                      "children": [
+                        {
+                          "type": "ELLIPSE",
+                          "dimensions": { "width": 40, "height": 40 },
+                          "styles": { "background": "#E6F4EA" },
+                          "children": [{ "type": "ICON", "icon": "ArrowDown", "size": 20, "color": "#34A853" }]
+                        },
+                        {
+                          "type": "FRAME",
+                          "autoLayout": { "mode": "VERTICAL", "itemSpacing": 2 },
+                          "children": [
+                            { "type": "TEXT", "content": "Salary Deposit", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                            { "type": "TEXT", "content": "Dec 15, 2025", "styles": { "fontSize": 12, "color": "#6B7280" } }
+                          ]
+                        }
+                      ]
+                    },
+                    { "type": "TEXT", "content": "+$3,500.00", "styles": { "fontSize": 16, "fontWeight": 600, "fontFamily": "monospace", "color": "#137333" } }
+                  ]
+                },
+                {
+                  "id": "transaction-2",
+                  "type": "FRAME",
+                  "dimensions": { "width": "fill", "height": 72 },
+                  "styles": { "borderBottom": { "width": 1, "color": "#F3F4F6" } },
+                  "autoLayout": { "mode": "HORIZONTAL", "primaryAxisAlign": "SPACE_BETWEEN", "counterAxisAlign": "CENTER", "padding": { "left": 16, "right": 16 } },
+                  "children": [
+                    {
+                      "type": "FRAME",
+                      "autoLayout": { "mode": "HORIZONTAL", "itemSpacing": 12, "counterAxisAlign": "CENTER" },
+                      "children": [
+                        {
+                          "type": "ELLIPSE",
+                          "dimensions": { "width": 40, "height": 40 },
+                          "styles": { "background": "#FCE8E6" },
+                          "children": [{ "type": "ICON", "icon": "ArrowUp", "size": 20, "color": "#EA4335" }]
+                        },
+                        {
+                          "type": "FRAME",
+                          "autoLayout": { "mode": "VERTICAL", "itemSpacing": 2 },
+                          "children": [
+                            { "type": "TEXT", "content": "ATM Withdrawal", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                            { "type": "TEXT", "content": "Dec 14, 2025", "styles": { "fontSize": 12, "color": "#6B7280" } }
+                          ]
+                        }
+                      ]
+                    },
+                    { "type": "TEXT", "content": "-$200.00", "styles": { "fontSize": 16, "fontWeight": 600, "fontFamily": "monospace", "color": "#C5221F" } }
+                  ]
+                },
+                {
+                  "id": "transaction-3",
+                  "type": "FRAME",
+                  "dimensions": { "width": "fill", "height": 72 },
+                  "autoLayout": { "mode": "HORIZONTAL", "primaryAxisAlign": "SPACE_BETWEEN", "counterAxisAlign": "CENTER", "padding": { "left": 16, "right": 16 } },
+                  "children": [
+                    {
+                      "type": "FRAME",
+                      "autoLayout": { "mode": "HORIZONTAL", "itemSpacing": 12, "counterAxisAlign": "CENTER" },
+                      "children": [
+                        {
+                          "type": "ELLIPSE",
+                          "dimensions": { "width": 40, "height": 40 },
+                          "styles": { "background": "#FEF3E2" },
+                          "children": [{ "type": "ICON", "icon": "ArrowRight", "size": 20, "color": "#F59E0B" }]
+                        },
+                        {
+                          "type": "FRAME",
+                          "autoLayout": { "mode": "VERTICAL", "itemSpacing": 2 },
+                          "children": [
+                            { "type": "TEXT", "content": "Transfer to Savings", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                            { "type": "TEXT", "content": "Dec 12, 2025", "styles": { "fontSize": 12, "color": "#6B7280" } }
+                          ]
+                        }
+                      ]
+                    },
+                    { "type": "TEXT", "content": "-$500.00", "styles": { "fontSize": 16, "fontWeight": 600, "fontFamily": "monospace", "color": "#B45309" } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bottom-nav",
+      "type": "FRAME",
+      "name": "BottomNav",
+      "position": { "x": 0, "y": 740 },
+      "dimensions": { "width": 375, "height": 72 },
+      "styles": {
+        "background": "#FFFFFF",
+        "borderTop": { "width": 1, "color": "#E5E7EB" },
+        "shadow": { "color": "rgba(0,0,0,0.05)", "offset": { "x": 0, "y": -2 }, "blur": 4 }
+      },
+      "autoLayout": {
+        "mode": "HORIZONTAL",
+        "primaryAxisAlign": "SPACE_AROUND",
+        "counterAxisAlign": "CENTER",
+        "padding": { "bottom": 20 }
+      },
+      "children": [
+        {
+          "id": "nav-home",
+          "type": "FRAME",
+          "autoLayout": { "mode": "VERTICAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER", "itemSpacing": 4 },
+          "children": [
+            { "type": "ICON", "icon": "Home", "size": 24, "color": "#006DE2" },
+            { "type": "TEXT", "content": "Home", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#006DE2" } }
+          ]
+        },
+        {
+          "id": "nav-accounts",
+          "type": "FRAME",
+          "autoLayout": { "mode": "VERTICAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER", "itemSpacing": 4 },
+          "children": [
+            { "type": "ICON", "icon": "Wallet", "size": 24, "color": "#6B7280" },
+            { "type": "TEXT", "content": "Accounts", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#6B7280" } }
+          ]
+        },
+        {
+          "id": "nav-transfer",
+          "type": "FRAME",
+          "autoLayout": { "mode": "VERTICAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER", "itemSpacing": 4 },
+          "children": [
+            { "type": "ICON", "icon": "ArrowSwap", "size": 24, "color": "#6B7280" },
+            { "type": "TEXT", "content": "Transfer", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#6B7280" } }
+          ]
+        },
+        {
+          "id": "nav-history",
+          "type": "FRAME",
+          "autoLayout": { "mode": "VERTICAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER", "itemSpacing": 4 },
+          "children": [
+            { "type": "ICON", "icon": "History", "size": 24, "color": "#6B7280" },
+            { "type": "TEXT", "content": "History", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#6B7280" } }
+          ]
+        }
+      ]
+    }
+  ]
+}

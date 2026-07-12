@@ -1,0 +1,72 @@
+/* Global Reset for FluentUI */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system,
+    BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Remove default margins */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin: 0;
+}
+
+/* Remove default list styles */
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Reset anchor styles - FluentUI will handle styling */
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* Reset button styles - FluentUI will handle styling */
+button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* Remove input default styles */
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* Ensure images don't overflow */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}

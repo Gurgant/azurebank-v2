@@ -1,0 +1,206 @@
+{
+  "screen": {
+    "name": "Register - Mobile",
+    "device": "iPhone 13/14",
+    "dimensions": { "width": 375, "height": 812 },
+    "background": "#F7F8FA"
+  },
+  "layout": {
+    "type": "VERTICAL",
+    "alignment": "CENTER",
+    "padding": { "top": 60, "bottom": 40, "left": 16, "right": 16 }
+  },
+  "elements": [
+    {
+      "id": "register-card",
+      "type": "FRAME",
+      "name": "RegisterCard",
+      "dimensions": { "width": 343, "height": "hug" },
+      "styles": {
+        "background": "#FFFFFF",
+        "borderRadius": 16,
+        "shadow": { "type": "DROP_SHADOW", "color": "rgba(0, 0, 0, 0.1)", "offset": { "x": 0, "y": 8 }, "blur": 24 }
+      },
+      "autoLayout": {
+        "mode": "VERTICAL",
+        "primaryAxisAlign": "MIN",
+        "counterAxisAlign": "CENTER",
+        "padding": { "top": 32, "bottom": 32, "left": 24, "right": 24 },
+        "itemSpacing": 20
+      },
+      "children": [
+        {
+          "id": "logo",
+          "type": "TEXT",
+          "content": "AzureBank",
+          "styles": { "fontSize": 28, "fontWeight": 700, "color": "#006DE2" }
+        },
+        {
+          "id": "header-section",
+          "type": "FRAME",
+          "autoLayout": { "mode": "VERTICAL", "itemSpacing": 4, "counterAxisAlign": "CENTER" },
+          "children": [
+            { "type": "TEXT", "content": "Create Account", "styles": { "fontSize": 22, "fontWeight": 600, "color": "#1F2937" } },
+            { "type": "TEXT", "content": "Join AzureBank today", "styles": { "fontSize": 14, "color": "#6B7280" } }
+          ]
+        },
+        {
+          "id": "form-section",
+          "type": "FRAME",
+          "dimensions": { "width": "fill" },
+          "autoLayout": { "mode": "VERTICAL", "itemSpacing": 14 },
+          "children": [
+            {
+              "id": "name-row",
+              "type": "FRAME",
+              "autoLayout": { "mode": "HORIZONTAL", "itemSpacing": 12 },
+              "children": [
+                {
+                  "id": "first-name-field",
+                  "type": "FRAME",
+                  "dimensions": { "width": 140 },
+                  "autoLayout": { "mode": "VERTICAL", "itemSpacing": 6 },
+                  "children": [
+                    { "type": "TEXT", "content": "First Name", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                    {
+                      "type": "FRAME",
+                      "dimensions": { "width": "fill", "height": 44 },
+                      "styles": { "background": "#FFFFFF", "border": { "width": 1, "color": "#D1D5DB" }, "borderRadius": 8 },
+                      "autoLayout": { "mode": "HORIZONTAL", "counterAxisAlign": "CENTER", "padding": { "left": 12, "right": 12 } },
+                      "children": [
+                        { "type": "TEXT", "content": "John", "styles": { "fontSize": 14, "color": "#9CA3AF" } }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "last-name-field",
+                  "type": "FRAME",
+                  "dimensions": { "width": 140 },
+                  "autoLayout": { "mode": "VERTICAL", "itemSpacing": 6 },
+                  "children": [
+                    { "type": "TEXT", "content": "Last Name", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                    {
+                      "type": "FRAME",
+                      "dimensions": { "width": "fill", "height": 44 },
+                      "styles": { "background": "#FFFFFF", "border": { "width": 1, "color": "#D1D5DB" }, "borderRadius": 8 },
+                      "autoLayout": { "mode": "HORIZONTAL", "counterAxisAlign": "CENTER", "padding": { "left": 12, "right": 12 } },
+                      "children": [
+                        { "type": "TEXT", "content": "Doe", "styles": { "fontSize": 14, "color": "#9CA3AF" } }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "email-field",
+              "type": "FRAME",
+              "autoLayout": { "mode": "VERTICAL", "itemSpacing": 6 },
+              "children": [
+                { "type": "TEXT", "content": "Email", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                {
+                  "type": "FRAME",
+                  "dimensions": { "width": "fill", "height": 44 },
+                  "styles": { "background": "#FFFFFF", "border": { "width": 1, "color": "#D1D5DB" }, "borderRadius": 8 },
+                  "autoLayout": { "mode": "HORIZONTAL", "counterAxisAlign": "CENTER", "padding": { "left": 12, "right": 12 } },
+                  "children": [
+                    { "type": "TEXT", "content": "john.doe@example.com", "styles": { "fontSize": 14, "color": "#9CA3AF" } }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "password-field",
+              "type": "FRAME",
+              "autoLayout": { "mode": "VERTICAL", "itemSpacing": 6 },
+              "children": [
+                { "type": "TEXT", "content": "Password", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                {
+                  "type": "FRAME",
+                  "dimensions": { "width": "fill", "height": 44 },
+                  "styles": { "background": "#FFFFFF", "border": { "width": 1, "color": "#D1D5DB" }, "borderRadius": 8 },
+                  "autoLayout": { "mode": "HORIZONTAL", "primaryAxisAlign": "SPACE_BETWEEN", "counterAxisAlign": "CENTER", "padding": { "left": 12, "right": 12 } },
+                  "children": [
+                    { "type": "TEXT", "content": "••••••••", "styles": { "fontSize": 14, "color": "#1F2937" } },
+                    { "type": "ICON", "icon": "EyeOff", "size": 20, "color": "#9CA3AF" }
+                  ]
+                },
+                {
+                  "id": "password-requirements",
+                  "type": "FRAME",
+                  "autoLayout": { "mode": "VERTICAL", "itemSpacing": 4 },
+                  "children": [
+                    { "type": "TEXT", "content": "Password must contain:", "styles": { "fontSize": 12, "color": "#6B7280" } },
+                    { "type": "TEXT", "content": "✓ At least 8 characters", "styles": { "fontSize": 12, "color": "#34A853" } },
+                    { "type": "TEXT", "content": "✓ One uppercase letter", "styles": { "fontSize": 12, "color": "#34A853" } },
+                    { "type": "TEXT", "content": "○ One number", "styles": { "fontSize": 12, "color": "#9CA3AF" } }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "confirm-password-field",
+              "type": "FRAME",
+              "autoLayout": { "mode": "VERTICAL", "itemSpacing": 6 },
+              "children": [
+                { "type": "TEXT", "content": "Confirm Password", "styles": { "fontSize": 14, "fontWeight": 500, "color": "#1F2937" } },
+                {
+                  "type": "FRAME",
+                  "dimensions": { "width": "fill", "height": 44 },
+                  "styles": { "background": "#FFFFFF", "border": { "width": 1, "color": "#D1D5DB" }, "borderRadius": 8 },
+                  "autoLayout": { "mode": "HORIZONTAL", "counterAxisAlign": "CENTER", "padding": { "left": 12, "right": 12 } },
+                  "children": [
+                    { "type": "TEXT", "content": "Confirm your password", "styles": { "fontSize": 14, "color": "#9CA3AF" } }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "terms-checkbox",
+          "type": "FRAME",
+          "autoLayout": { "mode": "HORIZONTAL", "itemSpacing": 8, "counterAxisAlign": "MIN" },
+          "children": [
+            {
+              "type": "FRAME",
+              "dimensions": { "width": 20, "height": 20 },
+              "styles": { "background": "#FFFFFF", "border": { "width": 1, "color": "#D1D5DB" }, "borderRadius": 4 }
+            },
+            {
+              "type": "FRAME",
+              "autoLayout": { "mode": "HORIZONTAL", "layoutWrap": "WRAP" },
+              "dimensions": { "width": 260 },
+              "children": [
+                { "type": "TEXT", "content": "I agree to the ", "styles": { "fontSize": 12, "color": "#6B7280" } },
+                { "type": "TEXT", "content": "Terms of Service", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#006DE2" } },
+                { "type": "TEXT", "content": " and ", "styles": { "fontSize": 12, "color": "#6B7280" } },
+                { "type": "TEXT", "content": "Privacy Policy", "styles": { "fontSize": 12, "fontWeight": 500, "color": "#006DE2" } }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "register-button",
+          "type": "FRAME",
+          "dimensions": { "width": "fill", "height": 48 },
+          "styles": { "background": "#006DE2", "borderRadius": 8 },
+          "autoLayout": { "mode": "HORIZONTAL", "primaryAxisAlign": "CENTER", "counterAxisAlign": "CENTER" },
+          "children": [
+            { "type": "TEXT", "content": "Create Account", "styles": { "fontSize": 16, "fontWeight": 600, "color": "#FFFFFF" } }
+          ]
+        },
+        {
+          "id": "login-link",
+          "type": "FRAME",
+          "autoLayout": { "mode": "HORIZONTAL", "primaryAxisAlign": "CENTER", "itemSpacing": 4 },
+          "children": [
+            { "type": "TEXT", "content": "Already have an account?", "styles": { "fontSize": 14, "color": "#6B7280" } },
+            { "type": "TEXT", "content": "Sign In", "styles": { "fontSize": 14, "fontWeight": 600, "color": "#006DE2" } }
+          ]
+        }
+      ]
+    }
+  ]
+}

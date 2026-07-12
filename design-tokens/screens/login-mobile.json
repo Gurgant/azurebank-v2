@@ -1,0 +1,463 @@
+{
+  "screen": {
+    "name": "Login - Mobile",
+    "device": "iPhone 13/14",
+    "dimensions": {
+      "width": 375,
+      "height": 812
+    },
+    "background": "#F7F8FA"
+  },
+  "layout": {
+    "type": "VERTICAL",
+    "alignment": "CENTER",
+    "padding": {
+      "top": 80,
+      "bottom": 40,
+      "left": 16,
+      "right": 16
+    }
+  },
+  "elements": [
+    {
+      "id": "login-card",
+      "type": "FRAME",
+      "name": "LoginCard",
+      "position": { "x": 16, "y": 80 },
+      "dimensions": { "width": 343, "height": "hug" },
+      "styles": {
+        "background": "#FFFFFF",
+        "borderRadius": 16,
+        "shadow": {
+          "type": "DROP_SHADOW",
+          "color": "rgba(0, 0, 0, 0.1)",
+          "offset": { "x": 0, "y": 8 },
+          "blur": 24,
+          "spread": 0
+        }
+      },
+      "autoLayout": {
+        "mode": "VERTICAL",
+        "primaryAxisAlign": "MIN",
+        "counterAxisAlign": "CENTER",
+        "padding": { "top": 40, "bottom": 40, "left": 24, "right": 24 },
+        "itemSpacing": 24
+      },
+      "children": [
+        {
+          "id": "logo-section",
+          "type": "FRAME",
+          "name": "LogoSection",
+          "dimensions": { "width": "fill", "height": "hug" },
+          "autoLayout": {
+            "mode": "VERTICAL",
+            "primaryAxisAlign": "CENTER",
+            "counterAxisAlign": "CENTER",
+            "itemSpacing": 8
+          },
+          "styles": { "background": "transparent" },
+          "children": [
+            {
+              "id": "logo",
+              "type": "TEXT",
+              "name": "Logo",
+              "content": "AzureBank",
+              "styles": {
+                "fontSize": 32,
+                "fontWeight": 700,
+                "fontFamily": "Segoe UI",
+                "color": "#006DE2",
+                "textAlign": "CENTER"
+              }
+            },
+            {
+              "id": "tagline",
+              "type": "TEXT",
+              "name": "Tagline",
+              "content": "Your trusted banking partner",
+              "styles": {
+                "fontSize": 14,
+                "fontWeight": 400,
+                "fontFamily": "Segoe UI",
+                "color": "#6B7280",
+                "textAlign": "CENTER"
+              }
+            }
+          ]
+        },
+        {
+          "id": "header-section",
+          "type": "FRAME",
+          "name": "HeaderSection",
+          "dimensions": { "width": "fill", "height": "hug" },
+          "autoLayout": {
+            "mode": "VERTICAL",
+            "primaryAxisAlign": "CENTER",
+            "counterAxisAlign": "CENTER",
+            "itemSpacing": 4
+          },
+          "styles": { "background": "transparent" },
+          "children": [
+            {
+              "id": "title",
+              "type": "TEXT",
+              "name": "Title",
+              "content": "Welcome Back",
+              "styles": {
+                "fontSize": 24,
+                "fontWeight": 600,
+                "fontFamily": "Segoe UI",
+                "color": "#1F2937",
+                "textAlign": "CENTER"
+              }
+            },
+            {
+              "id": "subtitle",
+              "type": "TEXT",
+              "name": "Subtitle",
+              "content": "Sign in to your account",
+              "styles": {
+                "fontSize": 14,
+                "fontWeight": 400,
+                "fontFamily": "Segoe UI",
+                "color": "#6B7280",
+                "textAlign": "CENTER"
+              }
+            }
+          ]
+        },
+        {
+          "id": "form-section",
+          "type": "FRAME",
+          "name": "FormSection",
+          "dimensions": { "width": "fill", "height": "hug" },
+          "autoLayout": {
+            "mode": "VERTICAL",
+            "primaryAxisAlign": "MIN",
+            "counterAxisAlign": "STRETCH",
+            "itemSpacing": 16
+          },
+          "styles": { "background": "transparent" },
+          "children": [
+            {
+              "id": "email-field",
+              "type": "FRAME",
+              "name": "EmailField",
+              "dimensions": { "width": "fill", "height": "hug" },
+              "autoLayout": {
+                "mode": "VERTICAL",
+                "primaryAxisAlign": "MIN",
+                "counterAxisAlign": "STRETCH",
+                "itemSpacing": 6
+              },
+              "styles": { "background": "transparent" },
+              "children": [
+                {
+                  "id": "email-label",
+                  "type": "TEXT",
+                  "name": "EmailLabel",
+                  "content": "Email",
+                  "styles": {
+                    "fontSize": 14,
+                    "fontWeight": 500,
+                    "color": "#1F2937"
+                  }
+                },
+                {
+                  "id": "email-input",
+                  "type": "FRAME",
+                  "name": "EmailInput",
+                  "dimensions": { "width": "fill", "height": 48 },
+                  "styles": {
+                    "background": "#FFFFFF",
+                    "border": { "width": 1, "color": "#D1D5DB" },
+                    "borderRadius": 8
+                  },
+                  "autoLayout": {
+                    "mode": "HORIZONTAL",
+                    "primaryAxisAlign": "MIN",
+                    "counterAxisAlign": "CENTER",
+                    "padding": { "top": 12, "bottom": 12, "left": 16, "right": 16 }
+                  },
+                  "children": [
+                    {
+                      "id": "email-placeholder",
+                      "type": "TEXT",
+                      "name": "EmailPlaceholder",
+                      "content": "Enter your email",
+                      "styles": {
+                        "fontSize": 16,
+                        "fontWeight": 400,
+                        "color": "#9CA3AF"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "password-field",
+              "type": "FRAME",
+              "name": "PasswordField",
+              "dimensions": { "width": "fill", "height": "hug" },
+              "autoLayout": {
+                "mode": "VERTICAL",
+                "primaryAxisAlign": "MIN",
+                "counterAxisAlign": "STRETCH",
+                "itemSpacing": 6
+              },
+              "styles": { "background": "transparent" },
+              "children": [
+                {
+                  "id": "password-label",
+                  "type": "TEXT",
+                  "name": "PasswordLabel",
+                  "content": "Password",
+                  "styles": {
+                    "fontSize": 14,
+                    "fontWeight": 500,
+                    "color": "#1F2937"
+                  }
+                },
+                {
+                  "id": "password-input",
+                  "type": "FRAME",
+                  "name": "PasswordInput",
+                  "dimensions": { "width": "fill", "height": 48 },
+                  "styles": {
+                    "background": "#FFFFFF",
+                    "border": { "width": 1, "color": "#D1D5DB" },
+                    "borderRadius": 8
+                  },
+                  "autoLayout": {
+                    "mode": "HORIZONTAL",
+                    "primaryAxisAlign": "SPACE_BETWEEN",
+                    "counterAxisAlign": "CENTER",
+                    "padding": { "top": 12, "bottom": 12, "left": 16, "right": 16 }
+                  },
+                  "children": [
+                    {
+                      "id": "password-placeholder",
+                      "type": "TEXT",
+                      "name": "PasswordPlaceholder",
+                      "content": "Enter your password",
+                      "styles": {
+                        "fontSize": 16,
+                        "fontWeight": 400,
+                        "color": "#9CA3AF"
+                      }
+                    },
+                    {
+                      "id": "password-toggle",
+                      "type": "ICON",
+                      "name": "PasswordToggle",
+                      "icon": "EyeOff",
+                      "size": 20,
+                      "color": "#9CA3AF"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "forgot-password",
+              "type": "TEXT",
+              "name": "ForgotPassword",
+              "content": "Forgot password?",
+              "styles": {
+                "fontSize": 14,
+                "fontWeight": 500,
+                "color": "#006DE2",
+                "textAlign": "RIGHT"
+              }
+            }
+          ]
+        },
+        {
+          "id": "action-section",
+          "type": "FRAME",
+          "name": "ActionSection",
+          "dimensions": { "width": "fill", "height": "hug" },
+          "autoLayout": {
+            "mode": "VERTICAL",
+            "primaryAxisAlign": "MIN",
+            "counterAxisAlign": "STRETCH",
+            "itemSpacing": 16
+          },
+          "styles": { "background": "transparent" },
+          "children": [
+            {
+              "id": "sign-in-button",
+              "type": "FRAME",
+              "name": "SignInButton",
+              "dimensions": { "width": "fill", "height": 52 },
+              "styles": {
+                "background": "#006DE2",
+                "borderRadius": 8
+              },
+              "autoLayout": {
+                "mode": "HORIZONTAL",
+                "primaryAxisAlign": "CENTER",
+                "counterAxisAlign": "CENTER"
+              },
+              "children": [
+                {
+                  "id": "sign-in-text",
+                  "type": "TEXT",
+                  "name": "SignInText",
+                  "content": "Sign In",
+                  "styles": {
+                    "fontSize": 16,
+                    "fontWeight": 600,
+                    "color": "#FFFFFF"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "divider-section",
+              "type": "FRAME",
+              "name": "DividerSection",
+              "dimensions": { "width": "fill", "height": 20 },
+              "autoLayout": {
+                "mode": "HORIZONTAL",
+                "primaryAxisAlign": "CENTER",
+                "counterAxisAlign": "CENTER",
+                "itemSpacing": 16
+              },
+              "styles": { "background": "transparent" },
+              "children": [
+                {
+                  "id": "divider-left",
+                  "type": "RECTANGLE",
+                  "name": "DividerLeft",
+                  "dimensions": { "width": 100, "height": 1 },
+                  "styles": { "background": "#E5E7EB" }
+                },
+                {
+                  "id": "divider-text",
+                  "type": "TEXT",
+                  "name": "DividerText",
+                  "content": "or",
+                  "styles": {
+                    "fontSize": 14,
+                    "fontWeight": 400,
+                    "color": "#9CA3AF"
+                  }
+                },
+                {
+                  "id": "divider-right",
+                  "type": "RECTANGLE",
+                  "name": "DividerRight",
+                  "dimensions": { "width": 100, "height": 1 },
+                  "styles": { "background": "#E5E7EB" }
+                }
+              ]
+            },
+            {
+              "id": "register-link",
+              "type": "FRAME",
+              "name": "RegisterLink",
+              "dimensions": { "width": "fill", "height": "hug" },
+              "autoLayout": {
+                "mode": "HORIZONTAL",
+                "primaryAxisAlign": "CENTER",
+                "counterAxisAlign": "CENTER",
+                "itemSpacing": 4
+              },
+              "styles": { "background": "transparent" },
+              "children": [
+                {
+                  "id": "register-text",
+                  "type": "TEXT",
+                  "name": "RegisterText",
+                  "content": "Don't have an account?",
+                  "styles": {
+                    "fontSize": 14,
+                    "fontWeight": 400,
+                    "color": "#6B7280"
+                  }
+                },
+                {
+                  "id": "register-action",
+                  "type": "TEXT",
+                  "name": "RegisterAction",
+                  "content": "Register",
+                  "styles": {
+                    "fontSize": 14,
+                    "fontWeight": 600,
+                    "color": "#006DE2"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "states": {
+    "loading": {
+      "description": "Sign in button shows loading spinner",
+      "changes": [
+        {
+          "elementId": "sign-in-button",
+          "styles": { "opacity": 0.7 }
+        },
+        {
+          "elementId": "sign-in-text",
+          "content": "Signing in...",
+          "showSpinner": true
+        }
+      ]
+    },
+    "error": {
+      "description": "Form validation errors shown",
+      "changes": [
+        {
+          "elementId": "email-input",
+          "styles": {
+            "border": { "width": 2, "color": "#EA4335" }
+          }
+        },
+        {
+          "newElement": {
+            "type": "TEXT",
+            "content": "Please enter a valid email address",
+            "insertAfter": "email-input",
+            "styles": {
+              "fontSize": 12,
+              "fontWeight": 400,
+              "color": "#C5221F"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "interactions": [
+    {
+      "trigger": "tap",
+      "element": "sign-in-button",
+      "action": "navigate",
+      "destination": "Dashboard"
+    },
+    {
+      "trigger": "tap",
+      "element": "register-action",
+      "action": "navigate",
+      "destination": "Register"
+    },
+    {
+      "trigger": "tap",
+      "element": "forgot-password",
+      "action": "navigate",
+      "destination": "ForgotPassword"
+    },
+    {
+      "trigger": "tap",
+      "element": "password-toggle",
+      "action": "toggleVisibility"
+    }
+  ]
+}
