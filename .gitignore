@@ -1,0 +1,33 @@
+# ─── .NET ────────────────────────────────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+TestResults/
+artifacts/
+*.binlog
+
+# ─── Local secrets & environment (use user-secrets / env vars instead) ──────
+**/appsettings.Development.json
+!**/appsettings.Development.json.example
+*.pfx
+.env
+.env.*
+
+# ─── Node / frontend ─────────────────────────────────────────────────────────
+node_modules/
+dist/
+*.local
+
+# ─── Python (schemathesis hooks) ─────────────────────────────────────────────
+__pycache__/
+*.pyc
+.hypothesis/
+
+# ─── Tooling / editor ────────────────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.log
+cookies*.txt
+graphify-out/
