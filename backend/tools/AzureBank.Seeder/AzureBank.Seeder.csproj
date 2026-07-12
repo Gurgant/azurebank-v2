@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AzureBank.Seeder: Console Tool for Database Seeding
+
+    This tool lives OUTSIDE the main architecture and can reference ALL projects.
+    It handles seeding operations independent of the Api layer.
+
+    Benefits:
+    * Clean Architecture: No hidden circular dependencies
+    * Portable: Run seeding independently of Api
+    * CI/CD Ready: Integrate into deployment pipelines
+    * Testable: Easy to test seeders in isolation
+
+    Usage:
+      dotnet run [project tools/AzureBank.Seeder] seed
+      dotnet run [project tools/AzureBank.Seeder] reset [confirm]
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AzureBank.Seeder</RootNamespace>
+    <AssemblyName>azurebank-seeder</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Project References: Can reference ALL projects (tool is external to architecture) -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AzureBank.Infrastructure\AzureBank.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\AzureBank.Shared\AzureBank.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- Package References (versions from Directory.Packages.props) -->
+  <ItemGroup>
+    <!-- CLI framework -->
+    <PackageReference Include="System.CommandLine" />
+
+    <!-- Hosting and DI -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+
+    <!-- Logging -->
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+
+    <!-- Identity (for UserManager, RoleManager) -->
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <!-- Configuration files -->
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Development.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

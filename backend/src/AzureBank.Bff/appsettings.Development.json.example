@@ -1,0 +1,20 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+
+  "Session": {
+    "CookieName": ".AzureBank.Session",
+    "InactivityTimeoutMinutes": 10,
+    "AbsoluteTimeoutMinutes": 20
+  },
+
+  "Security": {
+    "PinValidityMinutes": 10,
+    "MaxPinAttempts": 10,
+    "LockoutMinutes": 1
+  }
+}

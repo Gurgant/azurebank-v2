@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AzureBank.Shared - Class Library
+    Contains: Entities, DTOs, Constants, Interfaces
+    Note: TargetFramework, Nullable, ImplicitUsings inherited from Directory.Build.props
+    Note: Package versions managed centrally in Directory.Packages.props
+  -->
+
+  <ItemGroup>
+    <!-- Identity stores for IdentityUser base class -->
+    <PackageReference Include="Microsoft.Extensions.Identity.Stores" />
+    <!-- Argon2id password hashing (OWASP recommended) -->
+    <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
+  </ItemGroup>
+
+</Project>

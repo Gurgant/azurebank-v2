@@ -1,0 +1,6 @@
+@AzureBank.Bff_HostAddress = http://localhost:5142
+
+GET {{AzureBank.Bff_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

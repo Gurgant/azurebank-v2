@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    AzureBank.Bff - Backend-For-Frontend Gateway
+    Contains: YARP Reverse Proxy, Rate Limiting, CORS
+    Note: TargetFramework, Nullable, ImplicitUsings inherited from Directory.Build.props
+    Note: Package versions managed centrally in Directory.Packages.props
+  -->
+
+  <ItemGroup Label="BFF Gateway">
+    <!-- YARP Reverse Proxy -->
+    <PackageReference Include="Yarp.ReverseProxy" />
+  </ItemGroup>
+
+  <ItemGroup Label="API">
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+
+  <ItemGroup Label="Logging">
+    <PackageReference Include="Serilog.AspNetCore" />
+  </ItemGroup>
+
+  <ItemGroup Label="Project References">
+    <ProjectReference Include="..\AzureBank.Shared\AzureBank.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

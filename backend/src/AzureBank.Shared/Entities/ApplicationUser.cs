@@ -1,0 +1,54 @@
+﻿using Microsoft.AspNetCore.Identity;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace AzureBank.Shared.Entities;
+
+public class ApplicationUser : IdentityUser<Guid>
+{
+    /// <summary>
+    /// Public username for transfers (e.g., "@johnsmith")
+    /// Stored lowercase, IMMUTABLE after registration
+    /// Note: Maps to UserName in Identity
+    /// </summary>
+    [Required]
+    public required string AzureTag { get; set; }
+    /// <summary>
+    /// 6-digit PIN hash for step-up authentication (transfers, sensitive operations)
+    /// </summary>
+    public string? PinHash { get; set; }
+    [Required]
+    public required string FirstName { get; set; }
+    [Required]
+    public required string LastName { get; set; }
+
+    [NotMapped]
+    public string FullName => $"{FirstName} {LastName}";
+    // TODO: ProfilePictureUrl?
+
+    /// <summary>
+    /// Timestamp when the user was created. Set automatically by DbContext.UpdateTimestamps().
+    /// </summary>
+    public DateTime CreatedAt { get; set; } 
+
+    public DateTime? UpdatedAt { get; set; }
+
+    public ICollection<Account> Accounts { get; set; } = [];
+}
+
+// Note: IdentityUser<Guid> provides these properties automatically:
+// - Id (Guid)
+// - UserName (string)
+// - NormalizedUserName (string)
+// - Email (string)
+// - NormalizedEmail (string)
+// - EmailConfirmed (bool)
+// - PasswordHash (string) - handled by Identity's password hasher
+// - SecurityStamp (string)
+// - ConcurrencyStamp (string)
+// - PhoneNumber (string)
+// - PhoneNumberConfirmed (bool)
+// - TwoFactorEnabled (bool)
+// - LockoutEnd (DateTimeOffset?)
+// - LockoutEnabled (bool)
+// - AccessFailedCount (int)

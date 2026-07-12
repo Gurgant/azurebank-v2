@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/AzureBank.Api/AzureBank.Api.csproj" />
+    <Project Path="src/AzureBank.Bff/AzureBank.Bff.csproj" />
+    <Project Path="src/AzureBank.Infrastructure/AzureBank.Infrastructure.csproj" />
+    <Project Path="src/AzureBank.Shared/AzureBank.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AzureBank.Tests/AzureBank.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/AzureBank.Seeder/AzureBank.Seeder.csproj" />
+  </Folder>
+</Solution>

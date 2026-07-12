@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AzureBank.Tests - Unit & Integration Tests
+    Contains: Unit tests, Integration tests, Test fixtures
+    Note: TargetFramework, Nullable, ImplicitUsings inherited from Directory.Build.props
+    Note: Package versions managed centrally in Directory.Packages.props
+  -->
+
+  <PropertyGroup>
+    <!-- Test projects should not be packaged -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup Label="Testing Framework">
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testing Utilities">
+    <PackageReference Include="Moq" />
+    <PackageReference Include="FluentAssertions" />
+  </ItemGroup>
+
+  <ItemGroup Label="Integration Testing">
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testcontainers">
+    <PackageReference Include="Testcontainers" />
+    <PackageReference Include="Testcontainers.MsSql" />
+  </ItemGroup>
+
+  <ItemGroup Label="Architecture Testing">
+    <!-- Architecture/dependency rule testing (Enhanced Edition - actively maintained fork) -->
+    <PackageReference Include="NetArchTest.eNhancedEdition" />
+  </ItemGroup>
+
+  <ItemGroup Label="Global Usings">
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup Label="Project References">
+    <ProjectReference Include="..\..\src\AzureBank.Shared\AzureBank.Shared.csproj" />
+    <ProjectReference Include="..\..\src\AzureBank.Api\AzureBank.Api.csproj" />
+    <ProjectReference Include="..\..\src\AzureBank.Infrastructure\AzureBank.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

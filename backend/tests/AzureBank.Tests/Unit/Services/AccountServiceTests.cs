@@ -1,0 +1,528 @@
+using AzureBank.Api.Mappers;
+using AzureBank.Api.Services.Implementations;
+using AzureBank.Api.Services.Interfaces;
+using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.DTOs.Account;
+using AzureBank.Shared.Entities;
+using AzureBank.Shared.Enums;
+using AzureBank.Shared.Exceptions;
+using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Moq;
+
+namespace AzureBank.Tests.Unit.Services;
+
+/// <summary>
+/// Unit tests for AccountService.
+/// Uses in-memory database for DbContext and mocks for other dependencies.
+/// </summary>
+public class AccountServiceTests : IDisposable
+{
+    private readonly AzureBankDbContext _context;
+    private readonly Mock<IAccountAccessService> _accountAccessMock;
+    private readonly AccountMapper _mapper;
+    private readonly Mock<ILogger<AccountService>> _loggerMock;
+    private readonly AccountService _sut; // System Under Test
+
+    public AccountServiceTests()
+    {
+        // Setup in-memory database
+        var options = new DbContextOptionsBuilder<AzureBankDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        _context = new AzureBankDbContext(options);
+        _accountAccessMock = new Mock<IAccountAccessService>();
+        _mapper = new AccountMapper();
+        _loggerMock = new Mock<ILogger<AccountService>>();
+
+        _sut = new AccountService(
+            _context,
+            _accountAccessMock.Object,
+            _mapper,
+            _loggerMock.Object);
+    }
+
+    public void Dispose()
+    {
+        _context.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    #region GetUserAccountsAsync Tests
+
+    [Fact]
+    public async Task GetUserAccountsAsync_WithExistingAccounts_ReturnsAccountList()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetUserAccountsAsync(userId);
+
+        // Assert
+        result.Should().HaveCount(1);
+        result.First().IsPrimary.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetUserAccountsAsync_WithNoAccounts_ReturnsEmptyList()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+
+        // Act
+        var result = await _sut.GetUserAccountsAsync(userId);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetUserAccountsAsync_ExcludesDeletedAccounts()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var activeAccount = CreateTestAccount(userId, isPrimary: true);
+        var deletedAccount = CreateTestAccount(userId, isPrimary: false);
+        deletedAccount.IsDeleted = true;
+        deletedAccount.DeletedAt = DateTime.UtcNow;
+
+        _context.Accounts.AddRange(activeAccount, deletedAccount);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetUserAccountsAsync(userId);
+
+        // Assert
+        result.Should().HaveCount(1);
+        result.First().Id.Should().Be(activeAccount.Id);
+    }
+
+    [Fact]
+    public async Task GetUserAccountsAsync_OrdersByPrimaryFirst()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var secondaryAccount = CreateTestAccount(userId, isPrimary: false);
+        secondaryAccount.CreatedAt = DateTime.UtcNow.AddHours(-1); // Created first
+        var primaryAccount = CreateTestAccount(userId, isPrimary: true);
+        primaryAccount.CreatedAt = DateTime.UtcNow; // Created second
+
+        _context.Accounts.AddRange(secondaryAccount, primaryAccount);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetUserAccountsAsync(userId);
+
+        // Assert
+        result.Should().HaveCount(2);
+        result.First().IsPrimary.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetUserAccountsAsync_DoesNotReturnOtherUsersAccounts()
+    {
+        // Arrange
+        var userId1 = Guid.NewGuid();
+        var userId2 = Guid.NewGuid();
+        var account1 = CreateTestAccount(userId1, isPrimary: true);
+        var account2 = CreateTestAccount(userId2, isPrimary: true);
+
+        _context.Accounts.AddRange(account1, account2);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetUserAccountsAsync(userId1);
+
+        // Assert
+        result.Should().HaveCount(1);
+        result.First().Id.Should().Be(account1.Id);
+    }
+
+    #endregion
+
+    #region CreateAccountAsync Tests
+
+    // NOTE: CreateAccountAsync tests require SQL Server for RowVersion auto-generation.
+    // These tests should be run as integration tests with Testcontainers.
+    // See: tests/AzureBank.Tests/Integration/ for full database tests.
+
+    [Fact(Skip = "Requires SQL Server - RowVersion is auto-generated by DB. Move to integration tests.")]
+    public async Task CreateAccountAsync_WithValidRequest_CreatesAccount()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var request = new CreateAccountRequest
+        {
+            Name = "Test Savings Account",
+            Type = AccountType.Savings
+        };
+
+        // Act
+        var result = await _sut.CreateAccountAsync(userId, request);
+
+        // Assert
+        result.Name.Should().Be("Test Savings Account");
+        result.Type.Should().Be(AccountType.Savings);
+        result.Balance.Should().Be(0);
+        result.IsPrimary.Should().BeFalse();
+    }
+
+    [Fact(Skip = "Requires SQL Server - RowVersion is auto-generated by DB. Move to integration tests.")]
+    public async Task CreateAccountAsync_GeneratesUniqueAccountNumber()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var request = new CreateAccountRequest
+        {
+            Name = "Test Account",
+            Type = AccountType.Checking
+        };
+
+        // Act
+        var result = await _sut.CreateAccountAsync(userId, request);
+
+        // Assert
+        result.AccountNumber.Should().MatchRegex(@"^AB-\d{4}-\d{4}-\d{2}$");
+    }
+
+    [Fact(Skip = "Requires SQL Server - RowVersion is auto-generated by DB. Move to integration tests.")]
+    public async Task CreateAccountAsync_PersistsAccountToDatabase()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var request = new CreateAccountRequest
+        {
+            Name = "Persisted Account",
+            Type = AccountType.Checking
+        };
+
+        // Act
+        var result = await _sut.CreateAccountAsync(userId, request);
+
+        // Assert
+        var savedAccount = await _context.Accounts.FindAsync(result.Id);
+        savedAccount.Should().NotBeNull();
+        savedAccount!.Name.Should().Be("Persisted Account");
+    }
+
+    [Fact(Skip = "Requires SQL Server - RowVersion is auto-generated by DB. Move to integration tests.")]
+    public async Task CreateAccountAsync_NewAccountIsNotPrimary()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var request = new CreateAccountRequest
+        {
+            Name = "New Account",
+            Type = AccountType.Savings
+        };
+
+        // Act
+        var result = await _sut.CreateAccountAsync(userId, request);
+
+        // Assert
+        result.IsPrimary.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region UpdateAccountAsync Tests
+
+    [Fact]
+    public async Task UpdateAccountAsync_WithValidRequest_UpdatesAccountName()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        account.Id = accountId;
+        account.Name = "Original Name";
+
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        var request = new UpdateAccountRequest { Name = "Updated Name" };
+
+        // Act
+        var result = await _sut.UpdateAccountAsync(accountId, userId, request);
+
+        // Assert
+        result.Name.Should().Be("Updated Name");
+    }
+
+    [Fact]
+    public async Task UpdateAccountAsync_SetsUpdatedAtTimestamp()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        account.Id = accountId;
+        var originalUpdatedAt = account.UpdatedAt;
+
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        var request = new UpdateAccountRequest { Name = "New Name" };
+
+        // Act
+        await _sut.UpdateAccountAsync(accountId, userId, request);
+
+        // Assert
+        account.UpdatedAt.Should().BeOnOrAfter(originalUpdatedAt);
+    }
+
+    #endregion
+
+    #region DeleteAccountAsync Tests
+
+    [Fact]
+    public async Task DeleteAccountAsync_WithNonZeroBalance_ThrowsBusinessRuleException()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        account.Id = accountId;
+        account.Balance = 100m;
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        var act = () => _sut.DeleteAccountAsync(accountId, userId);
+
+        // Assert
+        await act.Should()
+            .ThrowAsync<BusinessRuleException>()
+            .WithMessage("*non-zero balance*");
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_WithPrimaryAccount_ThrowsBusinessRuleException()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        account.Id = accountId;
+        account.Balance = 0;
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        var act = () => _sut.DeleteAccountAsync(accountId, userId);
+
+        // Assert
+        await act.Should()
+            .ThrowAsync<BusinessRuleException>()
+            .WithMessage("*primary account*");
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_WithValidAccount_SoftDeletes()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        account.Id = accountId;
+        account.Balance = 0;
+
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        await _sut.DeleteAccountAsync(accountId, userId);
+
+        // Assert
+        var deletedAccount = await _context.Accounts.FindAsync(accountId);
+        deletedAccount!.IsDeleted.Should().BeTrue();
+        deletedAccount.DeletedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_WithNegativeBalance_ThrowsBusinessRuleException()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        account.Id = accountId;
+        account.Balance = -50m; // Negative balance
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        var act = () => _sut.DeleteAccountAsync(accountId, userId);
+
+        // Assert
+        await act.Should()
+            .ThrowAsync<BusinessRuleException>()
+            .WithMessage("*non-zero balance*");
+    }
+
+    #endregion
+
+    #region GetBalanceAsync Tests
+
+    [Fact]
+    public async Task GetBalanceAsync_WithNullAtTime_ReturnsCurrentBalance()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        account.Id = accountId;
+        account.Balance = 500m;
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        var result = await _sut.GetBalanceAsync(accountId, userId, atTime: null);
+
+        // Assert
+        result.Balance.Should().Be(500m);
+        result.IsHistorical.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetBalanceAsync_WithFutureDate_ReturnsCurrentBalance()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        account.Id = accountId;
+        account.Balance = 1000m;
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        var futureDate = DateTime.UtcNow.AddDays(1);
+
+        // Act
+        var result = await _sut.GetBalanceAsync(accountId, userId, atTime: futureDate);
+
+        // Assert
+        result.Balance.Should().Be(1000m);
+        result.IsHistorical.Should().BeFalse();
+    }
+
+    [Fact(Skip = "Requires SQL Server - complex DB operations with transactions. Move to integration tests.")]
+    public async Task GetBalanceAsync_WithHistoricalDate_ReturnsHistoricalBalance()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        account.Id = accountId;
+        account.Balance = 1000m;
+
+        // Create historical transaction
+        var historicalDate = DateTime.UtcNow.AddDays(-1);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            AccountId = accountId,
+            Account = account,
+            TransactionNumber = "TXN-TEST-001",
+            Type = TransactionType.Deposit,
+            Amount = 500m,
+            BalanceBefore = 0,
+            BalanceAfter = 500m,
+            Status = TransactionStatus.Completed,
+            CreatedAt = historicalDate.AddHours(-1) // Before the query time
+        };
+
+        _context.Accounts.Add(account);
+        _context.Transactions.Add(transaction);
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        var result = await _sut.GetBalanceAsync(accountId, userId, atTime: historicalDate);
+
+        // Assert
+        result.Balance.Should().Be(500m);
+        result.IsHistorical.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBalanceAsync_WithNoTransactions_ReturnsZeroHistoricalBalance()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        account.Id = accountId;
+        account.Balance = 1000m;
+
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        var historicalDate = DateTime.UtcNow.AddDays(-30);
+
+        // Act
+        var result = await _sut.GetBalanceAsync(accountId, userId, atTime: historicalDate);
+
+        // Assert
+        result.Balance.Should().Be(0);
+        result.IsHistorical.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Helper Methods
+
+    private static Account CreateTestAccount(Guid userId, bool isPrimary)
+    {
+        return new Account
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            AccountNumber = $"AB-{Random.Shared.Next(1000, 9999)}-{Random.Shared.Next(1000, 9999)}-{Random.Shared.Next(10, 99)}",
+            Name = "Test Account",
+            Type = AccountType.Checking,
+            Balance = 0,
+            IsPrimary = isPrimary,
+            CreatedAt = DateTime.UtcNow,
+            RowVersion = [0, 0, 0, 0, 0, 0, 0, 1], // Mock row version for in-memory DB
+            User = null! // Navigation property not needed for unit tests
+        };
+    }
+
+    #endregion
+}

@@ -1,0 +1,52 @@
+<Project>
+  <!-- ============================================
+       SHARED BUILD PROPERTIES
+       Common MSBuild properties for all projects in the solution.
+       This file is automatically imported by all projects.
+       ============================================ -->
+
+  <PropertyGroup Label="Build Settings">
+    <!-- Target Framework - All projects use .NET 10 -->
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- Language Features -->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Treat warnings as errors in Release builds -->
+    <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
+
+    <!-- Enable latest C# language features -->
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Assembly Info">
+    <!-- Company and Product Info -->
+    <Company>AzureBank</Company>
+    <Product>AzureBank - Bank Account Management System</Product>
+    <Copyright>Copyright © AzureBank 2026</Copyright>
+
+    <!-- Version Info (can be overridden by CI/CD) -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Build Output">
+    <!-- Deterministic builds for reproducibility -->
+    <Deterministic>true</Deterministic>
+
+    <!-- Generate documentation XML -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Suppress missing XML comment warnings (optional, remove for strict docs) -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Analysis">
+    <!-- Enable .NET analyzers -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+  </PropertyGroup>
+
+</Project>

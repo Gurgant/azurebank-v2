@@ -1,0 +1,136 @@
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
+
+namespace AzureBank.Tests.Fixtures;
+
+/// <summary>
+/// Custom WebApplicationFactory that supports both in-memory and SQL Server testing.
+///
+/// Default: Uses in-memory database for fast unit-style integration tests.
+/// With Testcontainers: Call SetConnectionString() to use real SQL Server.
+///
+/// Usage (in-memory):
+///   public class MyTests : IClassFixture&lt;CustomWebApplicationFactory&gt;
+///   {
+///       public MyTests(CustomWebApplicationFactory factory) => _factory = factory;
+///   }
+///
+/// Usage (SQL Server):
+///   [Collection("SqlServer")]
+///   public class MyTests : IClassFixture&lt;CustomWebApplicationFactory&gt;
+///   {
+///       public MyTests(SqlServerContainerFixture dbFixture, CustomWebApplicationFactory factory)
+///       {
+///           factory.SetConnectionString(dbFixture.ConnectionString);
+///       }
+///   }
+/// </summary>
+public class CustomWebApplicationFactory : WebApplicationFactory<Program>
+{
+    private string? _connectionString;
+
+    // One database per factory instance. The name and root are fixed fields so that
+    // the temporary provider built below and the application's own provider resolve
+    // the SAME in-memory store (a name generated inside the options lambda would
+    // yield a different database on every options build).
+    private readonly string _databaseName = $"TestDb_{Guid.NewGuid():N}";
+    private readonly InMemoryDatabaseRoot _databaseRoot = new();
+
+    /// <summary>
+    /// Sets the connection string for real SQL Server testing.
+    /// Must be called before CreateClient() if using Testcontainers.
+    /// </summary>
+    public void SetConnectionString(string connectionString)
+    {
+        _connectionString = connectionString;
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        // The Testing environment has no appsettings.Testing.json, so the required
+        // JWT signing secret is supplied here. Test-only value - NOT a real secret.
+        builder.UseSetting("Jwt:Secret",
+            "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef");
+
+        builder.ConfigureServices(services =>
+        {
+            // Remove the real database context registration.
+            // EF Core 9+ breaking change: AddDbContext registers the provider setup as
+            // IDbContextOptionsConfiguration<T>, which re-applies SQL Server on top of
+            // any provider added below. Both registrations must be removed, otherwise
+            // the host fails at startup with a SqlServer+InMemory provider collision.
+            services.RemoveAll(typeof(DbContextOptions<AzureBankDbContext>));
+            services.RemoveAll(typeof(IDbContextOptionsConfiguration<AzureBankDbContext>));
+
+            if (!string.IsNullOrEmpty(_connectionString))
+            {
+                // Use real SQL Server from Testcontainers
+                services.AddDbContext<AzureBankDbContext>(options =>
+                {
+                    options.UseSqlServer(_connectionString);
+                });
+            }
+            else
+            {
+                // Fallback to in-memory for fast unit-style integration tests
+                services.AddDbContext<AzureBankDbContext>(options =>
+                {
+                    options.UseInMemoryDatabase(_databaseName, _databaseRoot);
+
+                    // Transfers wrap their work in BeginTransactionAsync; InMemory
+                    // throws on transactions by default. Ignore (non-atomic is fine
+                    // for these tests; real transactional behavior is covered by
+                    // the SQL Server path).
+                    options.ConfigureWarnings(w =>
+                        w.Ignore(InMemoryEventId.TransactionIgnoredWarning));
+
+                    // Downgrade SQL Server rowversion columns (see class docs).
+                    options.ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>();
+                });
+            }
+
+            // Build service provider and initialize database
+            var sp = services.BuildServiceProvider();
+            using var scope = sp.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+            if (!string.IsNullOrEmpty(_connectionString))
+            {
+                // Apply migrations for real database
+                db.Database.Migrate();
+            }
+            else
+            {
+                // Just create schema for in-memory
+                db.Database.EnsureCreated();
+            }
+
+            // Seed Identity roles: registration assigns Roles.Default via
+            // AddToRoleAsync, which fails if the role rows do not exist.
+            // (In real environments the AzureBank.Seeder tool creates them.)
+            var roleManager = scope.ServiceProvider
+                .GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+
+            foreach (var roleName in Roles.All)
+            {
+                if (!roleManager.RoleExistsAsync(roleName).GetAwaiter().GetResult())
+                {
+                    roleManager.CreateAsync(new IdentityRole<Guid>(roleName))
+                        .GetAwaiter().GetResult();
+                }
+            }
+        });
+
+        // Set environment to Testing
+        builder.UseEnvironment("Testing");
+    }
+}
