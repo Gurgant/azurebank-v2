@@ -40,7 +40,7 @@ public class TransferEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transfers", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transfers", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -69,7 +69,7 @@ public class TransferEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transfers", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transfers", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -93,7 +93,7 @@ public class TransferEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transfers", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transfers", request);
 
         // Assert - business-rule violations are 422 per contract (BusinessRuleException)
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
@@ -130,7 +130,7 @@ public class TransferEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transfers/internal", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transfers/internal", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -160,7 +160,7 @@ public class TransferEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transfers/internal", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transfers/internal", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -183,7 +183,7 @@ public class TransferEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transfers/internal", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transfers/internal", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);

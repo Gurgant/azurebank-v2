@@ -100,7 +100,10 @@ try
                     "https://localhost:5173")
                 .AllowCredentials()
                 .AllowAnyHeader()
-                .AllowAnyMethod();
+                .AllowAnyMethod()
+                // Proxied API responses may carry the idempotency replay
+                // marker; browsers hide response headers unless exposed.
+                .WithExposedHeaders(AzureBank.Shared.Constants.IdempotencyConstants.ReplayedHeaderName);
         });
 
         // Development: More permissive
@@ -109,7 +112,8 @@ try
             policy.SetIsOriginAllowed(_ => true)
                 .AllowCredentials()
                 .AllowAnyHeader()
-                .AllowAnyMethod();
+                .AllowAnyMethod()
+                .WithExposedHeaders(AzureBank.Shared.Constants.IdempotencyConstants.ReplayedHeaderName);
         });
     });
 

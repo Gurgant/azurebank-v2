@@ -61,6 +61,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         builder.UseSetting("Jwt:Secret",
             "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef");
 
+        // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
+        builder.UseSetting("Idempotency:HashKey",
+            "integration-tests-only-idempotency-hmac-key-0123456789abcdef");
+
         builder.ConfigureServices(services =>
         {
             // Remove the real database context registration.

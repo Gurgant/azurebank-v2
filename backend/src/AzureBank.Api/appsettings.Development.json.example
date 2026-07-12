@@ -3,6 +3,7 @@
   // or use .NET user-secrets instead:
   //   dotnet user-secrets init
   //   dotnet user-secrets set "Jwt:Secret" "<random string, 64+ chars>"
+  //   dotnet user-secrets set "Idempotency:HashKey" "<random string, 32+ chars>"
   //   dotnet user-secrets set "ConnectionStrings:DefaultConnection" "<connection string>"
   "ConnectionStrings": {
     "DefaultConnection": "Server=(localdb)\\MSSQLLocalDB;Database=AzureBank;Trusted_Connection=True;TrustServerCertificate=True"
@@ -10,6 +11,12 @@
 
   "Jwt": {
     "Secret": "<GENERATE-A-RANDOM-SECRET-AT-LEAST-64-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
+  },
+
+  "Idempotency": {
+    // HMAC key for request fingerprinting (ADR-0009). Server-side only,
+    // never stored in the database. Generate a random string, 32+ chars.
+    "HashKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
   },
 
   "SeedData": {

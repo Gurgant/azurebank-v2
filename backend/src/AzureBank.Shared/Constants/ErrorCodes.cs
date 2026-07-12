@@ -37,6 +37,13 @@ public static class ErrorCodes
     public const string SelfTransferNotAllowed = "SELF_TRANSFER_NOT_ALLOWED";
     public const string SameAccountTransfer = "SAME_ACCOUNT_TRANSFER";
 
+    // Idempotency (monetary operations)
+    public const string IdempotencyKeyMissing = "IDEMPOTENCY_KEY_MISSING";
+    public const string IdempotencyKeyInvalid = "IDEMPOTENCY_KEY_INVALID";
+    public const string IdempotencyKeyReuse = "IDEMPOTENCY_KEY_REUSE";
+    public const string IdempotencyInFlight = "IDEMPOTENCY_IN_FLIGHT";
+    public const string IdempotencyResultUnknown = "IDEMPOTENCY_RESULT_UNKNOWN";
+
     // System
     public const string InternalError = "INTERNAL_ERROR";
     public const string RateLimitExceeded = "RATE_LIMIT_EXCEEDED";
