@@ -32,7 +32,16 @@ the original private repositories and backup archives, not in this repo.
 ```bash
 cd backend
 dotnet build AzureBank.slnx
-dotnet test                     # 337 passing, 14 SQL-Server-only skips
+dotnet test                     # 383 passing, 17 SQL-Server-only skips
+```
+
+The SQL-Server-gated proofs (idempotency single-execution under 24 parallel
+requests, balance concurrency) run when `AZUREBANK_TEST_SQLSERVER` points to a
+real database (LocalDB works; CI uses a mssql container):
+
+```bash
+AZUREBANK_TEST_SQLSERVER="Server=(localdb)\\MSSQLLocalDB;Database=AzureBankProofs;Trusted_Connection=True;TrustServerCertificate=True" \
+  dotnet test --filter "Category=SqlServer"
 ```
 
 Local run requires SQL Server (LocalDB works) and a JWT signing secret — see
@@ -67,16 +76,44 @@ No real secrets are committed. Local configuration goes in per-project
 cd backend/src/AzureBank.Api
 dotnet user-secrets init
 dotnet user-secrets set "Jwt:Secret" "<random string, 64+ chars>"
+dotnet user-secrets set "Idempotency:HashKey" "<random string, 32+ chars>"
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=(localdb)\\MSSQLLocalDB;Database=AzureBank;Trusted_Connection=True;TrustServerCertificate=True"
 ```
 
 The Seeder reads the same connection string from its `appsettings.json` or the
 `ConnectionStrings__DefaultConnection` environment variable.
 
+## Idempotent monetary operations
+
+Every mutating monetary endpoint (`POST /api/transactions/deposit`,
+`/api/transactions/withdraw`, `/api/transfers`, `/api/transfers/internal`)
+requires a client-generated **`Idempotency-Key`** header (UUID) and is
+guaranteed to execute **at most once** per (user, endpoint, key) — under
+client retries, concurrent duplicates, process crashes and database-retry
+replays ([ADR-0009](docs/adr/0009-idempotency-monetary-operations.md)):
+
+- Retry with the same key + same payload → the stored response is replayed
+  byte-identically with `Idempotency-Replayed: true`.
+- Same key + different payload → `422 IDEMPOTENCY_KEY_REUSE`.
+- Duplicate still running → `409 IDEMPOTENCY_IN_FLIGHT` (retry shortly).
+- Executed but the response was lost (crash) → `409 IDEMPOTENCY_RESULT_UNKNOWN`
+  (verify via `GET /api/transactions`; never re-executed, never guessed).
+- Errors (validation, insufficient funds, wrong PIN) release the key: fixing
+  the payload and retrying the same key works.
+- Keys are scoped per user and per endpoint; the idempotency window is 24h.
+
+The guarantee is proven by tests: 24 byte-identical parallel requests with one
+key → exactly one execution, balances mathematically exact, on EF InMemory
+and on real SQL Server (3 deterministic rounds per run, also in CI).
+
 ## Honest status
 
-- Backend: builds clean; full test suite green (337 pass / 14 explicit
-  SQL-Server-only skips). Both auth modes (JWT and BFF cookie) verified live.
-- Frontend: builds and renders; **not yet wired** to the backend API.
-- Known gaps tracked in `docs/design/`: idempotency keys, refresh tokens,
-  persistent BFF session store, frontend/API contract reconciliation.
+- Backend: builds clean (0 warnings); full test suite green (383 pass / 17
+  explicit SQL-Server-gated skips, which pass against a real database and in
+  the CI SQL job). Both auth modes (JWT and BFF cookie) verified live.
+  Monetary operations are idempotent and concurrency-safe (ADR-0009).
+- Frontend: builds and renders; **not yet wired** to the backend API. The
+  wiring must generate an `Idempotency-Key` per user intent (retries reuse it).
+- Known gaps tracked in `docs/design/`: refresh tokens, persistent BFF
+  session store, frontend/API contract reconciliation, API-side PIN attempt
+  limiting, BFF rate-limiter attachment.

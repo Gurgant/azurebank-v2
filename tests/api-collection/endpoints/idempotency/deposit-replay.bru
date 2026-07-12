@@ -1,0 +1,46 @@
+meta {
+  name: Idempotency 2 - Deposit retry (replay, no second execution)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/transactions/deposit
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{idemScenarioKey}}
+}
+
+body:json {
+  {
+    "accountId": "{{accountId}}",
+    "amount": 12.34,
+    "description": "Idempotency scenario"
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+tests {
+  test("Replay preserves the original 201", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("Response is marked as a replay", function() {
+    expect(res.headers['idempotency-replayed']).to.equal('true');
+  });
+
+  test("Replayed body is identical to the original", function() {
+    expect(JSON.stringify(res.body)).to.equal(bru.getVar('idemScenarioBody'));
+  });
+}

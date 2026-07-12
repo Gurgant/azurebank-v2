@@ -1,0 +1,43 @@
+meta {
+  name: Idempotency 5 - Malformed key (400)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/transactions/deposit
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: not-a-uuid
+}
+
+body:json {
+  {
+    "accountId": "{{accountId}}",
+    "amount": 5.00,
+    "description": "Malformed idempotency key"
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.errorCode: eq IDEMPOTENCY_KEY_INVALID
+}
+
+tests {
+  test("Malformed Idempotency-Key is rejected", function() {
+    expect(res.status).to.equal(400);
+  });
+
+  test("ProblemDetails carries the dedicated errorCode", function() {
+    expect(res.body.errorCode).to.equal('IDEMPOTENCY_KEY_INVALID');
+  });
+}
