@@ -23,6 +23,13 @@
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
   </ItemGroup>
 
+  <ItemGroup Label="Security patches">
+    <!-- Direct reference to lift a vulnerable transitive dependency
+         (EF SqlServer -> Microsoft.Data.SqlClient -> System.Security.Cryptography.Xml 9.0.0,
+         NU1903). Version pinned centrally in Directory.Packages.props. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" />
+  </ItemGroup>
+
   <ItemGroup Label="Hosting and Logging">
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
