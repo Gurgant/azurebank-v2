@@ -17,6 +17,7 @@ namespace AzureBank.Tests.Integration;
 /// migrates the database and seeds the Identity roles.
 /// </summary>
 [Trait("Category", "SqlServer")]
+[Collection(SqlServerProofsCollection.Name)]
 public sealed class IdempotencySqlServerConcurrencyTests : IDisposable
 {
     private const int Parallelism = 24;

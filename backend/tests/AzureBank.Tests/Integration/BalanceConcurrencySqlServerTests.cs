@@ -26,6 +26,7 @@ namespace AzureBank.Tests.Integration;
 /// tokens, so conflicts never occur there.
 /// </summary>
 [Trait("Category", "SqlServer")]
+[Collection(SqlServerProofsCollection.Name)]
 public sealed class BalanceConcurrencySqlServerTests : IDisposable
 {
     private const int Parallelism = 6;
