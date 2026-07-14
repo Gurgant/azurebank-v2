@@ -56,5 +56,15 @@ public interface IPasswordHasher
     /// <returns>True if the PIN matches the hash</returns>
     bool VerifyPin(string hash, string pin);
 
+    /// <summary>
+    /// True when a stored PIN hash was produced by an OLDER pepper key — or by no
+    /// pepper at all — compared with the currently active pepper (ADR-0011). The
+    /// caller should transparently re-hash the PIN on the next SUCCESSFUL verify
+    /// (rehash-on-use migration). Always false when PIN peppering is not configured.
+    /// </summary>
+    /// <param name="hash">The stored Argon2id PIN hash</param>
+    /// <returns>True if the PIN should be re-hashed with the active pepper</returns>
+    bool PinNeedsRehash(string hash);
+
     #endregion
 }

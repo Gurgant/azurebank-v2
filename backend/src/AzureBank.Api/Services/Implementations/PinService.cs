@@ -72,6 +72,13 @@ public sealed class PinService : IPinVerifier
             {
                 await ResetLockoutAsync(db, user);
             }
+            // Transparent pepper migration (ADR-0011): if the stored hash predates the
+            // active pepper key, re-hash the PIN now that we hold the plaintext and
+            // persist it — in this service's own scope, like the lockout bookkeeping.
+            if (_passwordHasher.PinNeedsRehash(user.PinHash))
+            {
+                await UpgradePinHashAsync(db, user, pin);
+            }
             _logger.LogInformation("PIN verified successfully for user {UserId}", userId);
             return true;
         }
@@ -142,6 +149,28 @@ public sealed class PinService : IPinVerifier
         }
         await db.SaveChangesAsync();
         return user.PinLockoutEnd;
+    }
+
+    /// <summary>
+    /// Re-hashes the PIN with the currently active pepper and persists it
+    /// (rehash-on-use migration, ADR-0011). Runs in this service's own scope; the
+    /// hash column is not part of any concurrency-sensitive counter, so a single
+    /// set-based update is sufficient.
+    /// </summary>
+    private async Task UpgradePinHashAsync(AzureBankDbContext db, ApplicationUser user, string pin)
+    {
+        var newHash = _passwordHasher.HashPin(pin);
+        if (db.Database.IsRelational())
+        {
+            await db.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.PinHash, newHash));
+        }
+        else
+        {
+            user.PinHash = newHash;
+            await db.SaveChangesAsync();
+        }
+        _logger.LogInformation("Upgraded PIN hash to the active pepper for user {UserId}", user.Id);
     }
 
     private static async Task ResetLockoutAsync(AzureBankDbContext db, ApplicationUser user)

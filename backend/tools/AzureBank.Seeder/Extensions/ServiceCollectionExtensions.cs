@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Seeder.Extensions;
 
@@ -44,8 +45,18 @@ public static class ServiceCollectionExtensions
         .AddEntityFrameworkStores<Infrastructure.Data.AzureBankDbContext>()
         .AddDefaultTokenProviders();
 
-        // Add PasswordHasher (from Shared layer)
-        services.AddScoped<IPasswordHasher, PasswordHasher>();
+        // PIN-hash pepper (ADR-0011). MUST match the API's Security:PinPepper, else
+        // seeded PINs won't verify. Validated on first use (when the hasher is built).
+        services.AddOptions<PinHashingOptions>()
+            .Bind(configuration.GetSection(PinHashingOptions.SectionName))
+            .Validate(
+                o => !string.IsNullOrWhiteSpace(o.PinPepper) && o.PinPepper.Length >= 32,
+                "Security:PinPepper must be configured (>= 32 chars) and match the API's pepper.")
+            .Validate(o => o.PinPepperKeyId >= 1, "Security:PinPepperKeyId must be >= 1");
+
+        // Add PasswordHasher (from Shared layer) - built with the PIN pepper.
+        services.AddScoped<IPasswordHasher>(sp =>
+            new PasswordHasher(sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
 
         // Add Seed Data Options
         services.Configure<SeedDataOptions>(

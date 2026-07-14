@@ -157,6 +157,42 @@ public class PinServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task VerifyPinAsync_CorrectPin_WhenHashNeedsRehash_UpgradesStoredHash()
+    {
+        var user = SeedUser(pinHash: "legacy-hash");
+        _hasherMock.Setup(x => x.VerifyPin("legacy-hash", "123456")).Returns(true);
+        _hasherMock.Setup(x => x.PinNeedsRehash("legacy-hash")).Returns(true);
+        _hasherMock.Setup(x => x.HashPin("123456")).Returns("peppered-hash-v2");
+
+        var result = await _sut.VerifyPinAsync(user.Id, "123456");
+
+        result.Should().BeTrue();
+        _hasherMock.Verify(x => x.HashPin("123456"), Times.Once);
+
+        // The upgraded hash is persisted (rehash-on-use), proven by a fresh reload.
+        _context.ChangeTracker.Clear();
+        (await _context.Users.SingleAsync(u => u.Id == user.Id))
+            .PinHash.Should().Be("peppered-hash-v2");
+    }
+
+    [Fact]
+    public async Task VerifyPinAsync_CorrectPin_WhenHashCurrent_DoesNotRehash()
+    {
+        var user = SeedUser(pinHash: "current-hash");
+        _hasherMock.Setup(x => x.VerifyPin("current-hash", "123456")).Returns(true);
+        _hasherMock.Setup(x => x.PinNeedsRehash("current-hash")).Returns(false);
+
+        var result = await _sut.VerifyPinAsync(user.Id, "123456");
+
+        result.Should().BeTrue();
+        _hasherMock.Verify(x => x.HashPin(It.IsAny<string>()), Times.Never);
+
+        _context.ChangeTracker.Clear();
+        (await _context.Users.SingleAsync(u => u.Id == user.Id))
+            .PinHash.Should().Be("current-hash");
+    }
+
+    [Fact]
     public async Task VerifyPinAsync_ExpiredLock_AllowsFreshAttempt()
     {
         var user = SeedUser(lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(-1)); // already expired

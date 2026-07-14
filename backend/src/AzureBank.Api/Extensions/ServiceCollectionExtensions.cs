@@ -16,6 +16,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AzureBank.Api.Extensions;
@@ -108,13 +109,28 @@ public static class ServiceCollectionExtensions
                 "Idempotency timespans must be positive")
             .ValidateOnStart();
 
+        // PIN-hash pepper (ADR-0011). PinPepper is a server-side secret kept OUT of
+        // the DB (user-secrets/env/Key Vault): fail fast at startup rather than
+        // silently hashing PINs without it. Must match the Seeder's pepper.
+        services.AddOptions<PinHashingOptions>()
+            .Bind(configuration.GetSection(PinHashingOptions.SectionName))
+            .Validate(
+                o => !string.IsNullOrWhiteSpace(o.PinPepper) && o.PinPepper.Length >= 32,
+                "Security:PinPepper must be configured with at least 32 characters " +
+                "(dotnet user-secrets in development; Key Vault in production; see README)")
+            .Validate(o => o.PinPepperKeyId >= 1, "Security:PinPepperKeyId must be >= 1")
+            .ValidateOnStart();
+
         // Mappers (Mapperly source-generated, stateless - singleton is optimal)
         services.AddSingleton<AccountMapper>();
         services.AddSingleton<TransactionMapper>();
         services.AddSingleton<UserMapper>();
 
         // Core services
-        services.AddScoped<IPasswordHasher, Shared.Services.Implementations.PasswordHasher>();
+        // PasswordHasher needs the PIN pepper (ADR-0011), so build it from options.
+        services.AddScoped<IPasswordHasher>(sp =>
+            new Shared.Services.Implementations.PasswordHasher(
+                sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<IAuthService, AuthService>();
         // PIN attempt-limiting lives in one place; withdrawals depend on the narrow

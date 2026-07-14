@@ -38,6 +38,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string IdempotencyHashKey =
         "integration-tests-only-idempotency-hmac-key-0123456789abcdef";
 
+    /// <summary>
+    /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
+    /// PasswordHasher when recomputing hashes directly. NOT a real secret.
+    /// </summary>
+    public const string PinPepper =
+        "integration-tests-only-pin-pepper-0123456789abcdef0123456789";
+
     private string? _connectionString;
     private bool _enableSqlRetryOnFailure;
     private readonly List<IInterceptor> _interceptors = new();
@@ -87,6 +94,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
         builder.UseSetting("Idempotency:HashKey", IdempotencyHashKey);
+
+        // PIN-hash pepper (ADR-0011). Test-only value.
+        builder.UseSetting("Security:PinPepper", PinPepper);
 
         builder.ConfigureServices(services =>
         {
