@@ -106,10 +106,13 @@ try
                 .WithExposedHeaders(AzureBank.Shared.Constants.IdempotencyConstants.ReplayedHeaderName);
         });
 
-        // Development: More permissive
+        // Development: allow any LOOPBACK origin (any localhost port) but never
+        // an external origin. Reflecting an arbitrary origin together with
+        // AllowCredentials is a cross-site footgun even in development.
         options.AddPolicy("Development", policy =>
         {
-            policy.SetIsOriginAllowed(_ => true)
+            policy.SetIsOriginAllowed(origin =>
+                    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback)
                 .AllowCredentials()
                 .AllowAnyHeader()
                 .AllowAnyMethod()
