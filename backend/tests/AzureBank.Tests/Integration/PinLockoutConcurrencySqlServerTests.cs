@@ -57,6 +57,49 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
             "exactly MaxPinAttempts parallel wrong PINs must lock the account (atomic counter, no lost updates)");
     }
 
+    [SqlServerFact]
+    public async Task BurstOverThreshold_StaysLocked_NoRaceBypass()
+    {
+        const string pin = "123456";
+        var client = CreateSqlClient();
+
+        // A fresh user each round exercises the unlocked -> burst -> locked path.
+        // Firing 3x the threshold in parallel would, before the single-statement
+        // atomic fix, let a late increment clear a just-applied lock and leave the
+        // account UNLOCKED. It must stay locked every round.
+        for (var round = 0; round < 3; round++)
+        {
+            var token = await RegisterAsync(client);
+            await SetPinAsync(client, token, pin);
+
+            await Task.WhenAll(Enumerable.Range(0, ValidationRules.MaxPinAttempts * 3)
+                .Select(_ => VerifyPinAsync(client, token, "000000")));
+
+            (await VerifyPinAsync(client, token, pin)).Should().Be(HttpStatusCode.TooManyRequests,
+                $"round {round}: a burst of parallel wrong PINs must leave the account LOCKED, never bypassed");
+        }
+    }
+
+    [SqlServerFact]
+    public async Task CorrectPinAfterFailures_ResetsWindow_OnSqlServer()
+    {
+        const string pin = "123456";
+        var client = CreateSqlClient();
+        var token = await RegisterAsync(client);
+        await SetPinAsync(client, token, pin);
+
+        // (Max-1) wrong PINs stay under the threshold; a correct PIN then resets the
+        // counter (proving the relational ResetLockoutAsync ExecuteUpdate persists),
+        // so a subsequent wrong PIN is only attempt #1 and does NOT lock (429).
+        for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
+        {
+            (await VerifyPinAsync(client, token, "000000")).Should().Be(HttpStatusCode.OK);
+        }
+        (await VerifyPinAsync(client, token, pin)).Should().Be(HttpStatusCode.OK, "correct PIN resets the window");
+        (await VerifyPinAsync(client, token, "000000")).Should().Be(HttpStatusCode.OK,
+            "after a reset the next wrong PIN is attempt #1, not a lockout");
+    }
+
     private HttpClient CreateSqlClient()
     {
         _factory = new CustomWebApplicationFactory();

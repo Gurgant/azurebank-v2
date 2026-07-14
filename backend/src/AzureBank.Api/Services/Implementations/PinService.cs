@@ -76,64 +76,72 @@ public sealed class PinService : IPinVerifier
             return true;
         }
 
-        // Wrong PIN. Increment ATOMICALLY (a set-based UPDATE, not read-modify-write)
-        // so concurrent wrong attempts cannot lose updates and slip past the
-        // threshold; also clear any now-expired lock. Because crossing the
-        // threshold resets the counter to 0, a fresh window after an expired lock
-        // starts naturally at 1 — no special case needed.
-        var failures = await IncrementFailureAsync(db, user);
+        // Wrong PIN. Increment the counter and — if it crosses the threshold —
+        // apply the lock in ONE atomic set-based statement. Doing both in a single
+        // UPDATE (rather than increment-then-separately-lock) removes the window in
+        // which a concurrent late increment could clear a just-applied lock and let
+        // a burst of parallel wrong PINs slip past the threshold.
+        var until = now.AddMinutes(ValidationRules.PinLockoutMinutes);
+        var lockoutEnd = await IncrementAndMaybeLockAsync(db, user, now, until);
 
-        if (failures >= ValidationRules.MaxPinAttempts)
+        if (lockoutEnd is { } enforcedUntil && enforcedUntil > now)
         {
-            var until = now.AddMinutes(ValidationRules.PinLockoutMinutes);
-            await ApplyLockAsync(db, user, until);
-            _logger.LogWarning("PIN locked for user {UserId} until {Until} after {Max} wrong attempts",
-                userId, until, ValidationRules.MaxPinAttempts);
-            throw PinLockedException.Until(until, now);
+            _logger.LogWarning("PIN locked for user {UserId} until {Until} after too many wrong attempts",
+                userId, enforcedUntil);
+            throw PinLockedException.Until(enforcedUntil, now);
         }
 
-        _logger.LogWarning("Invalid PIN attempt {Count}/{Max} for user {UserId}",
-            failures, ValidationRules.MaxPinAttempts, userId);
+        _logger.LogWarning("Invalid PIN attempt for user {UserId}", userId);
         return false;
     }
 
     // ---- Atomic lockout-state writers ----
     // ExecuteUpdate issues a single set-based SQL UPDATE (no read-modify-write, so
     // no lost updates under concurrency). It is relational-only, so the InMemory
-    // test provider falls back to a tracked write (single-threaded there anyway).
+    // test provider falls back to an equivalent tracked write (single-threaded there).
 
-    private static async Task<int> IncrementFailureAsync(AzureBankDbContext db, ApplicationUser user)
+    /// <summary>
+    /// One atomic wrong-PIN transition: increment the failure counter, and when it
+    /// crosses <see cref="ValidationRules.MaxPinAttempts"/> set the lock and reset the
+    /// counter — all evaluated against the row's CURRENT value in a single statement.
+    /// An EXPIRED lock is cleared, but a FUTURE lock (e.g. one a concurrent request
+    /// just applied) is never cleared, so the threshold cannot be bypassed by a burst
+    /// of parallel wrong PINs. Returns the resulting PinLockoutEnd.
+    /// </summary>
+    private static async Task<DateTimeOffset?> IncrementAndMaybeLockAsync(
+        AzureBankDbContext db, ApplicationUser user, DateTimeOffset now, DateTimeOffset until)
     {
+        var max = ValidationRules.MaxPinAttempts;
+
         if (db.Database.IsRelational())
         {
             await db.Users.Where(u => u.Id == user.Id)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(u => u.PinAccessFailedCount, u => u.PinAccessFailedCount + 1)
-                    .SetProperty(u => u.PinLockoutEnd, (DateTimeOffset?)null));
+                    .SetProperty(u => u.PinAccessFailedCount,
+                        u => u.PinAccessFailedCount + 1 >= max ? 0 : u.PinAccessFailedCount + 1)
+                    .SetProperty(u => u.PinLockoutEnd,
+                        u => u.PinAccessFailedCount + 1 >= max
+                            ? (DateTimeOffset?)until
+                            : (u.PinLockoutEnd != null && u.PinLockoutEnd < now ? (DateTimeOffset?)null : u.PinLockoutEnd)));
             return await db.Users.Where(u => u.Id == user.Id)
-                .Select(u => u.PinAccessFailedCount).FirstAsync();
+                .Select(u => u.PinLockoutEnd).FirstAsync();
         }
 
-        user.PinAccessFailedCount += 1;
-        user.PinLockoutEnd = null;
-        await db.SaveChangesAsync();
-        return user.PinAccessFailedCount;
-    }
-
-    private static async Task ApplyLockAsync(AzureBankDbContext db, ApplicationUser user, DateTimeOffset until)
-    {
-        if (db.Database.IsRelational())
+        if (user.PinAccessFailedCount + 1 >= max)
         {
-            await db.Users.Where(u => u.Id == user.Id)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(u => u.PinLockoutEnd, until)
-                    .SetProperty(u => u.PinAccessFailedCount, 0));
-            return;
+            user.PinAccessFailedCount = 0;   // the lock window is now authoritative
+            user.PinLockoutEnd = until;
         }
-
-        user.PinLockoutEnd = until;      // the lock window is now authoritative
-        user.PinAccessFailedCount = 0;
+        else
+        {
+            user.PinAccessFailedCount += 1;
+            if (user.PinLockoutEnd is { } expired && expired < now)
+            {
+                user.PinLockoutEnd = null;
+            }
+        }
         await db.SaveChangesAsync();
+        return user.PinLockoutEnd;
     }
 
     private static async Task ResetLockoutAsync(AzureBankDbContext db, ApplicationUser user)

@@ -91,10 +91,12 @@ intent already declared (but unused) in the BFF `SecurityOptions`
 - **Integration**: `/pin/verify` locks after the threshold and refuses even the
   correct PIN (429 `PIN_LOCKED` + `Retry-After`); a locked-PIN withdrawal returns
   429 and **creates no transaction / moves no money**. Green on InMemory and SQL.
-- **Concurrency proof** (`[SqlServerFact]`): exactly `MaxPinAttempts` wrong PINs
-  fired in PARALLEL still lock the account — proving the counter increment is
-  atomic (set-based `ExecuteUpdate`), so lost updates cannot let an attacker slip
-  past the threshold.
+- **Concurrency proof** (`[SqlServerFact]`): the wrong-PIN transition (increment +
+  threshold-lock) is a SINGLE atomic set-based `ExecuteUpdate` — so it never loses
+  updates and a late increment can never clear a just-applied lock. Proven by
+  firing up to `3× MaxPinAttempts` wrong PINs in PARALLEL (repeated): the account
+  always ends locked, never bypassed. A separate proof drives wrong→correct(reset)
+  →wrong and asserts the window restarts at 1 (reset persists on SQL Server).
 
 ## Related
 
