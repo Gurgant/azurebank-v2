@@ -29,18 +29,25 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
         modelBuilder.Entity<Account>().HasQueryFilter(a => !a.IsDeleted);
     }
 
-    public override int SaveChanges()
+    // Override the EF Core funnel overloads (the ones every other
+    // SaveChanges/SaveChangesAsync entry point ultimately delegates to) so no
+    // call path — including a direct SaveChanges(acceptAllChangesOnSuccess: false)
+    // — can bypass the immutability guard or timestamping. The parameterless and
+    // CancellationToken overloads are NOT overridden: their base implementations
+    // delegate to these funnels, so the guard still runs exactly once per save.
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         EnforceTransactionImmutability();
         UpdateTimestamps();
-        return base.SaveChanges();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override async Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         EnforceTransactionImmutability();
         UpdateTimestamps();
-        return await base.SaveChangesAsync(cancellationToken);
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
     /// <summary>
