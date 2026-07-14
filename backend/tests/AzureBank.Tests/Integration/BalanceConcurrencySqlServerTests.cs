@@ -8,6 +8,7 @@ using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
+using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit.Abstractions;
@@ -79,6 +80,104 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         // Correctness: NO lost updates
         (await GetBalanceAsync(client, token, accountId)).Should().Be(
             amount * successes, "every successful deposit must be reflected in the balance");
+    }
+
+    [SqlServerFact]
+    public async Task ParallelWithdrawalsWithDistinctKeys_NeverOverdraw()
+    {
+        const int parallelism = 24;
+        const decimal amount = 100m;
+        const string pin = "123456";
+
+        var client = CreateSqlClient();
+        var (token, accountId) = await RegisterAsync(client);
+        await SetPinAsync(client, token, pin);
+        // Fund with EXACTLY enough for ONE withdrawal.
+        await DepositAsync(client, token, accountId, amount);
+
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, parallelism).Select(async i =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, "/api/transactions/withdraw")
+                {
+                    Content = JsonContent.Create(new WithdrawRequest
+                    {
+                        AccountId = accountId,
+                        Amount = amount,
+                        Pin = pin,
+                        Description = $"Parallel withdrawal {i}"
+                    }, options: Json)
+                };
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+                var response = await client.SendAsync(request);
+                return (response.StatusCode, Body: await response.Content.ReadAsStringAsync());
+            }));
+
+        var successes = responses.Count(r => r.StatusCode == HttpStatusCode.Created);
+        var rejected = responses.Where(r => r.StatusCode == HttpStatusCode.UnprocessableEntity).ToArray();
+        _output.WriteLine($"successes: {successes}/{parallelism}, rejected: {rejected.Length}");
+
+        // Safety: a balance that covers ONE withdrawal must permit EXACTLY one.
+        // Each loser's RowVersion conflict reloads a 0 balance and fails the funds
+        // check (InsufficientFunds) — it must NEVER surface as a 500.
+        successes.Should().Be(1,
+            "a balance covering one withdrawal must permit exactly one; unexpected non-201/422 responses: " +
+            string.Join(" | ", responses
+                .Where(r => r.StatusCode is not HttpStatusCode.Created and not HttpStatusCode.UnprocessableEntity)
+                .Select(r => $"{(int)r.StatusCode}: {r.Body[..Math.Min(150, r.Body.Length)]}")));
+
+        rejected.Should().HaveCount(parallelism - 1, "every loser reloads a 0 balance and is refused");
+        rejected.Should().OnlyContain(
+            r => r.Body.Contains(ErrorCodes.InsufficientFunds, StringComparison.Ordinal),
+            "losing withdrawals must fail as InsufficientFunds, not any other error");
+
+        // Correctness: the balance settled at EXACTLY 0 and never went negative.
+        (await GetBalanceAsync(client, token, accountId)).Should().Be(
+            0m, "one withdrawal of the full balance must leave 0 - never negative");
+
+        // Exactly ONE withdrawal transaction row was persisted.
+        (await CountWithdrawalsAsync(client, token, accountId)).Should().Be(
+            1, "only the single successful withdrawal may persist a transaction row");
+    }
+
+    private static async Task SetPinAsync(HttpClient client, string token, string pin)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin")
+        {
+            Content = JsonContent.Create(new SetPinRequest { Pin = pin }, options: Json)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task DepositAsync(HttpClient client, string token, Guid accountId, decimal amount)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/transactions/deposit")
+        {
+            Content = JsonContent.Create(new DepositRequest
+            {
+                AccountId = accountId,
+                Amount = amount,
+                Description = "Funding"
+            }, options: Json)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<int> CountWithdrawalsAsync(HttpClient client, string token, Guid accountId)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, $"/api/transactions?accountId={accountId}&pageSize=50");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(Json);
+        return result!.Data.Count(t => t.Type == TransactionType.Withdrawal);
     }
 
     private HttpClient CreateSqlClient()
