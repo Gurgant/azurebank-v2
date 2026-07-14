@@ -68,6 +68,8 @@ design — see Notes).
 - Same key after the operation committed but its response was provably
   lost (record stuck `Executed` past the staleness window) → **409
   `IDEMPOTENCY_RESULT_UNKNOWN`** ("verify via GET /api/transactions").
+- Request body larger than 32 KB → **413 `IDEMPOTENCY_PAYLOAD_TOO_LARGE`**,
+  rejected before any buffering/hashing/claim (see Placement & limits).
 - **Key scope**: per user, per logical endpoint. Cross-user and
   cross-endpoint reuse of the same UUID are independent operations.
 - **Window (TTL): 24h.** After it, a key is forgotten (a retry would
@@ -130,8 +132,14 @@ design — see Notes).
 - Middleware sits **after `UseAuthorization`** (401/403 never create
   records) and before the endpoints; its 400/409/422 are thrown as
   `IdempotencyException : AppException` → uniform ProblemDetails.
-- `[RequestSizeLimit(32768)]` on the four endpoints (legit bodies < 2 KB)
-  caps hashing/buffering work.
+- Body size is capped at **32 KB** (legit bodies < 2 KB). `[RequestSizeLimit(32768)]`
+  on the four endpoints is an MVC resource filter that runs only once the action
+  executes — *after* this middleware has already buffered and HMAC-hashed the body.
+  So the middleware itself rejects `Content-Length > 32768` with **413
+  `IDEMPOTENCY_PAYLOAD_TOO_LARGE`** *before* buffering/hashing/claiming (closing an
+  authenticated hash-amplification DoS), caps chunked reads at the same limit via
+  `IHttpMaxRequestBodySizeFeature`, and raises `EnableBuffering`'s threshold to 32 KB
+  so an accepted body (PIN included) is never spooled to disk.
 - The BFF needs no changes: YARP forwards `Idempotency-Key` and
   `Idempotency-Replayed` by default (verified; its transform only adds
   `Authorization`).
@@ -187,6 +195,58 @@ guesswork into a provable state machine.
   container in CI).
 - Schemathesis strict mode against the updated spec (required header
   documented via operation transformer).
+
+## Post-merge hardening (deep review)
+
+A second adversarial deep review (3 read-only reviewers over the whole PR) found
+**no new double-execution path** — the fencing / three-state machine held under
+tracing. It surfaced a set of bounded issues, resolved as follows.
+
+**Fixed**
+
+- **Transfer retry double-execution (critical).** `EnableRetryOnFailure` re-runs
+  the transfer delegate against the shared request DbContext on a transient fault;
+  the failed attempt's Added transactions / already-mutated balances were
+  re-applied (Case A), or an already-committed transfer re-executed after a lost
+  commit ack (Case B). Fixed by resetting the tracked work **and** re-reading the
+  idempotency record from database truth at the top of every attempt (→ 409
+  `RESULT_UNKNOWN` when already `Executed`/`Completed`). The regression test injects
+  a one-shot transient on a *retrying* context — it fails on pre-fix code (double
+  debit / 500) and passes after (single execution).
+- **Money scale.** Amounts are validated to ≤ 2 decimals (columns are
+  `DECIMAL(19,4)`); previously `10.12345` passed and the response echoed a
+  precision the store silently rounds away. Mirrored in the OpenAPI schema
+  (`multipleOf: 0.01`) so the Schemathesis contract stays 1:1.
+- **Hash-amplification DoS + PIN disk-spool.** The 413 body guard above.
+- **Stored-response cap.** A > 64 KB 2xx is not persisted for replay (a retry then
+  gets 409 `RESULT_UNKNOWN`); bounds the stored row and the replay buffer.
+- **`IsDuplicateKey` narrowing.** Only an InMemory duplicate-PK `ArgumentException`
+  (matched by message) is treated as a lost claim race; any other `ArgumentException`
+  now propagates instead of being masked as a false 409.
+- **Immutability guard on the SaveChanges funnels.** Moved onto `SaveChanges(bool)`
+  / `SaveChangesAsync(bool, ct)` so a direct bool-overload call can no longer bypass
+  the write-once Transaction guard.
+- **Dev CORS.** The development policy now reflects only **loopback** origins (any
+  localhost port) instead of any origin + credentials.
+- **Coverage.** Added an N=24 parallel *withdrawal* overdraft proof (exactly one
+  success, balance never negative) alongside the existing deposit/transfer proofs.
+
+**Documented / accepted (by design, not defects)**
+
+- **TTL re-execution.** After the 24 h window a forgotten key re-executes — a retry
+  then moves money twice. Standard TTL semantics; the correctness-over-availability
+  trade-off is deliberate (see Consequences / Window).
+- **Replay restores status + body + content-type only.** Any app-set response
+  header (a future `Location` on a 201, an `X-*` header) is **not** replayed. Latent
+  today: the monetary 201s carry no such header, pinned by
+  `Monetary201_CarriesNoLocationHeader`. **Follow-up if a header is ever added**:
+  persist a header allowlist in the record and re-emit it on replay.
+- **Claim INSERT precedes model validation.** An invalid body does an
+  INSERT-then-fenced-DELETE (the key stays reusable). Correct outcome; the minor
+  table churn under a burst of invalid payloads is accepted.
+- **Minor, accepted**: fixed retry jitter (no exponential backoff); Guid-leading
+  clustered PK (insert fragmentation, offset by per-user lookup locality); the
+  immutability guard's coupling to the `Transaction` entity.
 
 ## Related
 

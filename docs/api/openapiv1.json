@@ -914,6 +914,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1019,6 +1027,42 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1065,6 +1109,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1170,6 +1222,42 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1216,6 +1304,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1321,6 +1417,42 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1367,6 +1499,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1455,6 +1595,42 @@
                     "status": {
                       "type": "integer",
                       "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
                     },
                     "detail": {
                       "type": "string",
@@ -1967,6 +2143,7 @@
             "format": "uuid"
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
@@ -2019,6 +2196,7 @@
             "format": "uuid"
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
@@ -2443,6 +2621,7 @@
             "description": "Must start with a letter and contain only lowercase letters, numbers, and underscores."
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
@@ -2593,6 +2772,7 @@
             "format": "uuid"
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
