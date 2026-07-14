@@ -170,7 +170,7 @@ public class TransactionEndpointTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Withdraw_WhenPinLocked_Returns423_AndMovesNoMoney()
+    public async Task Withdraw_WhenPinLocked_Returns429_AndMovesNoMoney()
     {
         var (token, _, accountId) = await RegisterTestUserAsync();
         await SetPinAsync(token, "123456");
@@ -185,12 +185,13 @@ public class TransactionEndpointTests : IntegrationTestBase
                 .Should().Be(HttpStatusCode.Unauthorized);
         }
         (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
-            .Should().Be(HttpStatusCode.Locked);
+            .Should().Be(HttpStatusCode.TooManyRequests);
 
-        // A CORRECT-PIN withdrawal is now blocked (423) - before any money moves.
+        // A CORRECT-PIN withdrawal is now blocked (429) - before any money moves.
         var correct = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "123456", Description = "x" };
         var blocked = await PostMonetaryAsync("/api/transactions/withdraw", correct);
-        blocked.StatusCode.Should().Be(HttpStatusCode.Locked);
+        blocked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        blocked.Headers.RetryAfter.Should().NotBeNull("a lockout must advertise Retry-After");
         (await blocked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PinLocked);
 
         // No withdrawal transaction was created: the lock precedes the money movement.

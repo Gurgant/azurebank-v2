@@ -114,7 +114,7 @@ public class PinServiceTests : IDisposable
         var act = () => _sut.VerifyPinAsync(user.Id, "000000");
 
         var ex = (await act.Should().ThrowAsync<PinLockedException>()).Which;
-        ex.StatusCode.Should().Be(423);
+        ex.StatusCode.Should().Be(429);
         ex.ErrorCode.Should().Be(ErrorCodes.PinLocked);
         user.PinLockoutEnd.Should().NotBeNull();
         user.PinLockoutEnd!.Value.Should().BeAfter(DateTimeOffset.UtcNow);

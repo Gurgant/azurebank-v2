@@ -4,14 +4,14 @@ namespace AzureBank.Shared.Exceptions;
 
 /// <summary>
 /// Thrown when a user's step-up PIN is temporarily locked after too many wrong
-/// attempts (ValidationRules.MaxPinAttempts). Rendered as HTTP 423 Locked +
-/// errorCode PIN_LOCKED, with the unlock time surfaced via Details
-/// (retryAfterSeconds, lockedUntil) so clients can back off precisely.
+/// attempts (ValidationRules.MaxPinAttempts). Rendered as HTTP 429 Too Many
+/// Requests + errorCode PIN_LOCKED + a Retry-After header, with the unlock time
+/// surfaced via Details (retryAfterSeconds, lockedUntil) so clients back off precisely.
 /// </summary>
 public sealed class PinLockedException : AppException
 {
     private PinLockedException(string message, int retryAfterSeconds, DateTimeOffset lockedUntil)
-        : base(message, ErrorCodes.PinLocked, 423)
+        : base(message, ErrorCodes.PinLocked, 429)
     {
         Details = new Dictionary<string, object>
         {

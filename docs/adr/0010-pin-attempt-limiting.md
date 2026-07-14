@@ -59,9 +59,11 @@ intent already declared (but unused) in the BFF `SecurityOptions`
   committing the withdrawal's pending idempotency flip — the key is released and
   stays reusable, exactly as ADR-0009 intends.
 - **Wire contract**: while locked (or on the attempt that crosses the threshold),
-  the verifier throws `PinLockedException` → **HTTP 423 Locked**, `errorCode
-  PIN_LOCKED`, with `retryAfterSeconds` + `lockedUntil` in the ProblemDetails
-  `Details`. A wrong PIN under the threshold keeps its existing contract
+  the verifier throws `PinLockedException` → **HTTP 429 Too Many Requests** + a
+  standard **`Retry-After`** header (RFC 9110 §10.2.3), `errorCode PIN_LOCKED`,
+  with `retryAfterSeconds` + `lockedUntil` also in the ProblemDetails `Details`.
+  (429 over the WebDAV-specific 423, which intermediaries downgrade to 400.)
+  A wrong PIN under the threshold keeps its existing contract
   (`/pin/verify` → 200 `{verified:false}`; withdraw → 401 `INVALID_PIN`).
 
 ## Consequences
@@ -74,7 +76,7 @@ intent already declared (but unused) in the BFF `SecurityOptions`
 
 ### Negative
 - One extra small write per failed attempt (in its own scope).
-- 423 is a new status on `/pin/verify` and `/withdraw` (documented in the spec).
+- 429 + `Retry-After` is a new response on `/pin/verify` and `/withdraw` (in the spec).
 
 ### Neutral
 - New migration `AddPinLockout` (two nullable/defaulted columns; no data change).
@@ -87,8 +89,12 @@ intent already declared (but unused) in the BFF `SecurityOptions`
   crossing attempt, refuse-while-locked without hashing, reset on success,
   expired-lock fresh window.
 - **Integration**: `/pin/verify` locks after the threshold and refuses even the
-  correct PIN (423 `PIN_LOCKED`); a locked-PIN withdrawal returns 423 and
-  **creates no transaction / moves no money**. Green on InMemory and SQL Server.
+  correct PIN (429 `PIN_LOCKED` + `Retry-After`); a locked-PIN withdrawal returns
+  429 and **creates no transaction / moves no money**. Green on InMemory and SQL.
+- **Concurrency proof** (`[SqlServerFact]`): exactly `MaxPinAttempts` wrong PINs
+  fired in PARALLEL still lock the account — proving the counter increment is
+  atomic (set-based `ExecuteUpdate`), so lost updates cannot let an attacker slip
+  past the threshold.
 
 ## Related
 

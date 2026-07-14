@@ -240,7 +240,7 @@ public class AuthEndpointTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task VerifyPin_AfterMaxWrongAttempts_Returns423PinLocked()
+    public async Task VerifyPin_AfterMaxWrongAttempts_Returns429PinLocked()
     {
         var (token, _, _) = await RegisterTestUserAsync();
         await SetPinAsync(token, "123456");
@@ -256,13 +256,14 @@ public class AuthEndpointTests : IntegrationTestBase
         // The attempt that crosses the threshold locks the PIN -> 423 PIN_LOCKED.
         var locked = await Client.PostAsJsonAsync("/api/auth/pin/verify",
             new VerifyPinRequest { Pin = "654321" }, JsonOptions);
-        locked.StatusCode.Should().Be(HttpStatusCode.Locked);
+        locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        locked.Headers.RetryAfter.Should().NotBeNull("a lockout must advertise Retry-After");
         (await locked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PinLocked);
 
         // Even the CORRECT PIN is refused while locked.
         var stillLocked = await Client.PostAsJsonAsync("/api/auth/pin/verify",
             new VerifyPinRequest { Pin = "123456" }, JsonOptions);
-        stillLocked.StatusCode.Should().Be(HttpStatusCode.Locked);
+        stillLocked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
     }
 
     #endregion
