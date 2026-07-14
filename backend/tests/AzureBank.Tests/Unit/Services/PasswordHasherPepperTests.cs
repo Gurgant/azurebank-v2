@@ -14,9 +14,18 @@ public class PasswordHasherPepperTests
 {
     private const string PepperA = "unit-tests-pin-pepper-A-0123456789abcdef0123456789";
     private const string PepperB = "unit-tests-pin-pepper-B-9876543210fedcba9876543210";
+    private const string PepperC = "unit-tests-pin-pepper-C-abcdefabcdefabcdefabcdef01";
 
     private static PasswordHasher Peppered(string pepper = PepperA, int keyId = 1)
         => new(new PinHashingOptions { PinPepper = pepper, PinPepperKeyId = keyId });
+
+    private static PasswordHasher Rotated(string activePepper, int activeKeyId, Dictionary<int, string> previous)
+        => new(new PinHashingOptions
+        {
+            PinPepper = activePepper,
+            PinPepperKeyId = activeKeyId,
+            PreviousPinPeppers = previous,
+        });
 
     private static PasswordHasher Legacy() => new(); // no pepper configured
 
@@ -125,6 +134,62 @@ public class PasswordHasherPepperTests
         v2Hash.Should().Contain("keyid=1");
         sut.VerifyPin(v2Hash, "123456").Should().BeTrue();
         sut.PinNeedsRehash(v2Hash).Should().BeFalse();
+    }
+
+    [Fact]
+    public void VerifyPin_AfterRotation_OldKeyIdHash_StillVerifies()
+    {
+        // A hash minted with pepper A / keyid 1 ...
+        var oldHash = Peppered(PepperA, keyId: 1).HashPin("123456");
+
+        // ... after rotating the active pepper to B / keyid 2 while RETAINING A in the ring.
+        var rotated = Rotated(PepperB, activeKeyId: 2, previous: new() { [1] = PepperA });
+
+        rotated.VerifyPin(oldHash, "123456").Should().BeTrue(
+            "the retired pepper stays in the keyring, so old-keyid hashes keep verifying (zero-downtime rotation)");
+        rotated.PinNeedsRehash(oldHash).Should().BeTrue();
+
+        // Rehash-on-use drains it to the active key.
+        var upgraded = rotated.HashPin("123456");
+        upgraded.Should().Contain("keyid=2");
+        rotated.VerifyPin(upgraded, "123456").Should().BeTrue();
+        rotated.PinNeedsRehash(upgraded).Should().BeFalse();
+    }
+
+    [Fact]
+    public void VerifyPin_AfterRotation_WithoutRetainingOldPepper_FailsClosed()
+    {
+        var oldHash = Peppered(PepperA, keyId: 1).HashPin("123456");
+
+        // Active rotated to keyid 2 but the old pepper was NOT retained in the ring.
+        var rotated = Peppered(PepperB, keyId: 2);
+
+        rotated.VerifyPin(oldHash, "123456").Should().BeFalse(
+            "dropping a pepper before its hashes are drained bricks them — retire only after drain");
+        rotated.PinPepperMissingFor(oldHash).Should().BeTrue();
+    }
+
+    [Fact]
+    public void PinPepperMissingFor_ReflectsKeyringMembership()
+    {
+        var hasher = Rotated(PepperB, activeKeyId: 2, previous: new() { [1] = PepperA });
+
+        hasher.PinPepperMissingFor(Peppered(PepperA, keyId: 1).HashPin("123456"))
+            .Should().BeFalse("keyid 1 is retained in the ring");
+        hasher.PinPepperMissingFor(Peppered(PepperC, keyId: 9).HashPin("123456"))
+            .Should().BeTrue("keyid 9 is not in the ring");
+        hasher.PinPepperMissingFor(Legacy().HashPin("123456"))
+            .Should().BeFalse("a legacy hash carries no keyid");
+    }
+
+    [Fact]
+    public void VerifyPin_WithAbsurdCostParameters_ReturnsFalse()
+    {
+        // A tampered hash claiming a ~2 GiB memory cost must be rejected by the bounds
+        // check, not acted upon (valid Base64 salt/hash so it reaches the bounds gate).
+        const string absurd = "$argon2id$v=19$m=2000000000,t=2,p=4$c2FsdHNhbHQ=$aGFzaGhhc2g=";
+        Peppered().VerifyPin(absurd, "123456").Should().BeFalse();
+        Legacy().VerifyPin(absurd, "123456").Should().BeFalse();
     }
 
     [Fact]

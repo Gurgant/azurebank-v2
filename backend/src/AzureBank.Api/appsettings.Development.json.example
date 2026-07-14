@@ -21,11 +21,18 @@
   },
 
   "Security": {
-    // PIN-hash pepper (ADR-0011): a server-side secret mixed into the Argon2id
-    // PIN hash so a stolen database can't brute-force the low-entropy PIN space.
-    // Never stored in the database. Generate a random string, 32+ chars. The
-    // Seeder must be given the SAME pepper, or seeded PINs won't verify.
-    "PinPepper": "<GENERATE-A-RANDOM-PEPPER-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
+    // PIN-hash pepper keyring (ADR-0011): a server-side secret mixed into the
+    // Argon2id PIN hash so a stolen database can't brute-force the low-entropy PIN
+    // space. Use a CRYPTO-RANDOM value (e.g. `openssl rand -base64 48`), 32+ chars;
+    // "PinPepper" here is the ACTIVE pepper. Never stored in the database. The
+    // Seeder must be given the SAME active pepper, or seeded PINs won't verify.
+    "PinPepper": "<GENERATE-A-RANDOM-PEPPER-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>",
+    // "PinPepperKeyId": 1,
+    // Rotation only — retired peppers kept so old hashes still verify while they
+    // drain to the active key. Keep the WHOLE ring in ONE secret provider
+    // (user-secrets/Key Vault), NEVER here in appsettings (config merges dictionaries
+    // across providers, so a value left here can never be removed and leaks a secret).
+    // "PreviousPinPeppers": { "1": "<the-previous-pepper-being-rotated-out>" }
   },
 
   "SeedData": {

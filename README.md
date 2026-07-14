@@ -84,6 +84,10 @@ dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=(localdb)\
 `Security:PinPepper` is a server-side secret mixed into the Argon2id PIN hash so a
 stolen database can't brute-force the low-entropy PIN space
 ([ADR-0011](docs/adr/0011-pin-hash-pepper.md)); the API fails to start without it.
+Use a cryptographically-random value (e.g. `openssl rand -base64 48`), not a typed
+phrase. It supports zero-downtime rotation via a keyring
+(`Security:PreviousPinPeppers`); when rotating, keep the **whole ring** (active +
+previous) in a single secret provider — never in `appsettings.json`.
 
 The Seeder reads the same connection string from its `appsettings.json` or the
 `ConnectionStrings__DefaultConnection` environment variable, and must be given the

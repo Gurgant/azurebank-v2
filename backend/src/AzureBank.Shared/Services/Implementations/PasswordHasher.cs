@@ -68,23 +68,43 @@ public class PasswordHasher : IPasswordHasher
 
     #endregion
 
-    #region Pepper (ADR-0011)
+    #region Pepper keyring (ADR-0011)
 
-    private readonly byte[]? _pinPepper;
-    private readonly int _pinPepperKeyId;
+    // The keyring: every pepper we hold, indexed by key id. The ACTIVE key is used
+    // for new hashes; RETAINED keys are kept so older hashes still verify and drain
+    // to the active key via rehash-on-use. Built once in the ctor and never mutated,
+    // so the hasher is safe to share across threads.
+    private readonly IReadOnlyDictionary<int, byte[]> _pinPepperRing;
+    private readonly int _pinActiveKeyId;
+    private readonly bool _peppered;
 
     /// <summary>
     /// Creates a hasher. When <paramref name="options"/> supplies a non-empty
-    /// <see cref="PinHashingOptions.PinPepper"/>, PIN hashing/verification uses it
-    /// (mechanism: Argon2id <c>KnownSecret</c>) and new PIN hashes are tagged with
-    /// the pepper key id. With no options — or an empty pepper — the hasher behaves
-    /// exactly as the legacy un-peppered hasher (no <c>keyid</c>, no secret).
+    /// <see cref="PinHashingOptions.PinPepper"/>, PIN hashing/verification uses the
+    /// pepper keyring (mechanism: Argon2id <c>KnownSecret</c>): new PIN hashes are
+    /// tagged with the active key id, and any <see cref="PinHashingOptions.PreviousPinPeppers"/>
+    /// are retained so hashes carrying an older key id still verify. With no options —
+    /// or an empty active pepper — the hasher behaves exactly as the legacy
+    /// un-peppered hasher (no <c>keyid</c>, no secret).
     /// </summary>
     public PasswordHasher(PinHashingOptions? options = null)
     {
-        var pepper = options?.PinPepper;
-        _pinPepper = string.IsNullOrEmpty(pepper) ? null : Encoding.UTF8.GetBytes(pepper);
-        _pinPepperKeyId = options?.PinPepperKeyId ?? 0;
+        var ring = new Dictionary<int, byte[]>();
+        if (options is not null && !string.IsNullOrEmpty(options.PinPepper))
+        {
+            // Active first, so it always wins any key-id collision with a retired entry.
+            ring[options.PinPepperKeyId] = Encoding.UTF8.GetBytes(options.PinPepper);
+            foreach (var (keyId, pepper) in options.PreviousPinPeppers)
+            {
+                if (!string.IsNullOrEmpty(pepper) && !ring.ContainsKey(keyId))
+                {
+                    ring[keyId] = Encoding.UTF8.GetBytes(pepper);
+                }
+            }
+            _pinActiveKeyId = options.PinPepperKeyId;
+            _peppered = true;
+        }
+        _pinPepperRing = ring;
     }
 
     #endregion
@@ -114,8 +134,9 @@ public class PasswordHasher : IPasswordHasher
         ArgumentException.ThrowIfNullOrEmpty(pin);
         // Peppered PIN hashes are tagged with the active key id; un-peppered ones
         // stay in the legacy format so they remain recognizable as pre-pepper.
-        return Hash(pin, PinMemorySize, PinIterations,
-            _pinPepper, _pinPepper is null ? null : _pinPepperKeyId);
+        return _peppered
+            ? Hash(pin, PinMemorySize, PinIterations, _pinPepperRing[_pinActiveKeyId], _pinActiveKeyId)
+            : Hash(pin, PinMemorySize, PinIterations, pepper: null, keyId: null);
     }
 
     /// <inheritdoc />
@@ -128,12 +149,23 @@ public class PasswordHasher : IPasswordHasher
     public bool PinNeedsRehash(string hash)
     {
         // No pepper configured → nothing to migrate to.
-        if (_pinPepper is null || string.IsNullOrEmpty(hash))
+        if (!_peppered || string.IsNullOrEmpty(hash))
             return false;
 
         // A legacy hash (no keyid) or one tagged with an older key id should be
         // upgraded to the currently active pepper on next successful use.
-        return TryReadKeyId(hash) != _pinPepperKeyId;
+        return TryReadKeyId(hash) != _pinActiveKeyId;
+    }
+
+    /// <inheritdoc />
+    public bool PinPepperMissingFor(string hash)
+    {
+        // True only when the hash is peppered with a key id we do NOT hold — i.e. a
+        // pepper was retired while hashes still carried its id. A legacy hash (no
+        // keyid) and a resolvable keyid both return false.
+        if (string.IsNullOrEmpty(hash))
+            return false;
+        return TryReadKeyId(hash) is { } keyId && !_pinPepperRing.ContainsKey(keyId);
     }
 
     #endregion
@@ -191,6 +223,16 @@ public class PasswordHasher : IPasswordHasher
             var iterations = int.Parse(parameters["t"]);
             var parallelism = int.Parse(parameters["p"]);
 
+            // Sanity-bound the cost parameters read from the stored hash. They come from
+            // a trusted store, but a tampered PinHash with an absurd m (e.g. 2^31) would
+            // otherwise drive a huge allocation/CPU cost — reject rather than act on it.
+            if (memory is < 8 or > 1_048_576         // 8 KiB .. 1 GiB
+                || iterations is < 1 or > 64
+                || parallelism is < 1 or > 64)
+            {
+                return false;
+            }
+
             var salt = Convert.FromBase64String(parts[4]);
             var storedHash = Convert.FromBase64String(parts[5]);
 
@@ -225,9 +267,9 @@ public class PasswordHasher : IPasswordHasher
         }
     }
 
-    /// <summary>Returns the pepper for <paramref name="keyId"/>, or null if we don't hold it.</summary>
+    /// <summary>Returns the pepper for <paramref name="keyId"/> from the keyring, or null if we don't hold it.</summary>
     private byte[]? ResolvePepper(int keyId)
-        => _pinPepper is not null && keyId == _pinPepperKeyId ? _pinPepper : null;
+        => _pinPepperRing.TryGetValue(keyId, out var pepper) ? pepper : null;
 
     /// <summary>Reads the <c>keyid</c> from a PHC hash, or null if legacy/malformed.</summary>
     private static int? TryReadKeyId(string hash)

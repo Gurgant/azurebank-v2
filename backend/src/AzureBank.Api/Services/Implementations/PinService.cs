@@ -83,6 +83,17 @@ public sealed class PinService : IPinVerifier
             return true;
         }
 
+        // A verify can fail for two very different reasons: a genuinely wrong PIN, or
+        // a stored hash whose pepper key the keyring no longer holds (a pepper retired
+        // before its hashes were drained — ADR-0011). The latter fails closed here and
+        // is indistinguishable to the counter, so surface it as an operator diagnostic.
+        if (_passwordHasher.PinPepperMissingFor(user.PinHash))
+        {
+            _logger.LogWarning(
+                "PIN verification for user {UserId} failed because the stored hash references a pepper key " +
+                "not in the keyring — a pepper may have been retired before its hashes were migrated.", userId);
+        }
+
         // Wrong PIN. Increment the counter and — if it crosses the threshold —
         // apply the lock in ONE atomic set-based statement. Doing both in a single
         // UPDATE (rather than increment-then-separately-lock) removes the window in

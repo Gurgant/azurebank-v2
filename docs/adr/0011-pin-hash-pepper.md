@@ -70,18 +70,40 @@ this hasher (the password profile has no non-test call site).
   pepper (and a `keyid` we do not hold **fails closed**); a hash **without** one
   is a **legacy** hash verified **without** a pepper. Still six `$`-segments, so
   the format stays backward-compatible.
-- **Config & fail-fast**: the pepper is `Security:PinPepper` (≥ 32 chars), a
-  server-side secret in **user-secrets** (dev) / **Key Vault** (prod), **never**
-  committed and **never** stored in the DB. It is validated with
-  `ValidateOnStart` — the API refuses to start without it — exactly like
-  `Idempotency:HashKey`. The **Seeder shares the same pepper** (else seeded PINs
-  cannot be verified).
+- **Pepper keyring (rotation)**: verification resolves the pepper by the hash's
+  `keyid` from a **keyring** — the **active** pepper (`Security:PinPepper` /
+  `PinPepperKeyId`) plus a map of **retained** peppers
+  (`Security:PreviousPinPeppers` = `keyid → pepper`). `HashPin` always stamps the
+  active id; `ResolvePepper` looks the incoming `keyid` up in the ring and **fails
+  closed** for a key it does not hold. This is the JWT-`kid` / ASP.NET Data
+  Protection key-ring pattern: one key for writes, all non-retired keys kept for
+  reads. A single-pepper config (no `PreviousPinPeppers`) is the common case and
+  needs no ring.
+- **Config & fail-fast**: the peppers are `Security:*` secrets, ≥ 32 chars each,
+  in **user-secrets** (dev) / **Key Vault** (prod), **never** committed and
+  **never** stored in the DB. Keep the **whole ring** (active + previous) in a
+  **single** secret provider — configuration merges dictionaries across providers,
+  so a previous pepper left in `appsettings.json` could never be removed and would
+  leak a live secret. One shared `PinHashingOptionsValidator` (used by the API and
+  Seeder) enforces: each pepper ≥ 32, key ids ≥ 1, the active id absent from the
+  retained map, and all pepper values distinct. The API validates with
+  `ValidateOnStart`; the **Seeder** (a CLI that never starts the host, so
+  `ValidateOnStart` alone would not fire) invokes the startup validator explicitly
+  in `Program.cs` so **both `seed` and `reset` fail fast before any DB work**. The
+  Seeder shares the same active pepper (else seeded PINs cannot be verified).
 - **Rehash-on-use migration**: `IPasswordHasher.PinNeedsRehash` reports whether a
-  stored hash predates the active pepper key. On a **successful** verify,
-  `PinService` re-hashes the PIN with the active pepper and persists it — in the
-  service's **own DbContext scope**, consistent with the lockout isolation of
-  ADR-0010. New peppers rotate by bumping `PinPepperKeyId`; older hashes keep
-  verifying and upgrade on use.
+  stored hash predates the active key. On a **successful** verify, `PinService`
+  re-hashes the PIN with the active pepper and persists it — in the service's
+  **own DbContext scope**, consistent with the lockout isolation of ADR-0010.
+- **Rotation procedure** (`add → activate → drain → retire`): (1) **add** the new
+  pepper to `PreviousPinPeppers` on every node so all nodes can verify it; (2)
+  **activate** it — promote it to `PinPepper` / `PinPepperKeyId`; the old pepper
+  moves into `PreviousPinPeppers`; (3) **drain** — old-keyid hashes verify with the
+  retained pepper and self-upgrade to the active key on next use; (4) **retire** —
+  once no stored hash still carries the old key id, drop it from the ring. This is
+  true zero-downtime rotation. If a `keyid` the keyring no longer holds is seen at
+  verify time, `PinService` logs a distinct operator diagnostic (it is otherwise
+  indistinguishable from a wrong PIN and would accrue lockout).
 
 ## Consequences
 
@@ -89,15 +111,22 @@ this hasher (the password profile has no non-test call site).
 - A stolen `PinHash` is useless without the pepper — offline brute-force of the
   10^6 PIN space is defeated.
 - Progressive, zero-downtime migration; no forced PIN reset.
-- Rotation-ready by design (versioned `keyid`).
+- **Genuinely** rotation-ready: retained peppers keep old hashes verifying while
+  they drain to the active key (not just a version marker).
 
 ### Negative
 - A **new required secret** (`Security:PinPepper`): the API and the Seeder both
   fail fast without it. Documented in the README and the example config.
+- Rotation drains **on use**: dormant accounts keep an old `keyid` until they next
+  authenticate, so a retired pepper must stay in the ring until its rows reach
+  zero. To retire a **compromised** pepper *instantly* (without waiting for logins)
+  one would need the **encrypt-the-hash** variant (store `AEAD_pepper(argon2(pin))`
+  so a background job can re-wrap every row offline) — out of scope here, recorded
+  as the known alternative.
 
 ### Neutral
 - The account-password path is unchanged (never peppered).
-- No schema change: the pepper lives only in the hash string's parameters.
+- No schema change: the pepper key id lives only in the hash string's parameters.
 
 ## Validation
 
@@ -105,9 +134,17 @@ this hasher (the password profile has no non-test call site).
   round-trips; a **wrong pepper** fails; a peppered hash **cannot** be verified by
   a hasher that holds no pepper (**fail closed**); a legacy hash still verifies;
   `PinNeedsRehash` is true for legacy/older keys and false for the active key; a
-  full v1 → v2 upgrade re-verifies. Password hashes are never peppered.
+  full legacy → peppered upgrade re-verifies. **Rotation**: a hash minted under
+  pepper A / keyid 1 still verifies under a rotated hasher whose active is B / keyid
+  2 and whose ring retains A, then rehash-on-use drains it to keyid 2; dropping A
+  before draining **fails closed** (documenting retire-after-drain). Password hashes
+  are never peppered; an absurd cost parameter is rejected.
+- **Unit** (`PinHashingOptionsValidatorTests`): the keyring rules — length,
+  key-id, active-not-in-retained, distinct values — accept valid rings and reject
+  each violation.
 - **Unit** (`PinServiceTests`): a correct PIN on a legacy hash triggers exactly
-  one re-hash and persists the upgraded hash; a current hash triggers none.
+  one re-hash and persists; a current hash triggers none; an **unresolvable
+  keyid** counts as a failed attempt and can lock (with the operator diagnostic).
 - **SQL Server** (`PinPepperMigrationSqlServerTests`): a real legacy row verifies
   and is upgraded **in place** to a peppered hash via the relational
   `ExecuteUpdate` path, then keeps verifying.

@@ -109,17 +109,14 @@ public static class ServiceCollectionExtensions
                 "Idempotency timespans must be positive")
             .ValidateOnStart();
 
-        // PIN-hash pepper (ADR-0011). PinPepper is a server-side secret kept OUT of
-        // the DB (user-secrets/env/Key Vault): fail fast at startup rather than
-        // silently hashing PINs without it. Must match the Seeder's pepper.
+        // PIN-hash pepper keyring (ADR-0011). The pepper is a server-side secret kept
+        // OUT of the DB (user-secrets/env/Key Vault): fail fast at startup rather than
+        // silently hashing PINs without it. The validation rules live in ONE shared
+        // validator so the API and Seeder cannot drift; the Seeder shares the pepper.
         services.AddOptions<PinHashingOptions>()
             .Bind(configuration.GetSection(PinHashingOptions.SectionName))
-            .Validate(
-                o => !string.IsNullOrWhiteSpace(o.PinPepper) && o.PinPepper.Length >= 32,
-                "Security:PinPepper must be configured with at least 32 characters " +
-                "(dotnet user-secrets in development; Key Vault in production; see README)")
-            .Validate(o => o.PinPepperKeyId >= 1, "Security:PinPepperKeyId must be >= 1")
             .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<PinHashingOptions>, PinHashingOptionsValidator>();
 
         // Mappers (Mapperly source-generated, stateless - singleton is optimal)
         services.AddSingleton<AccountMapper>();

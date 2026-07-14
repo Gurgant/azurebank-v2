@@ -26,11 +26,23 @@ public class PinHashingOptions
     public string PinPepper { get; set; } = string.Empty;
 
     /// <summary>
-    /// Identifies which pepper produced a hash. Stamped into new PIN hashes as
-    /// <c>keyid=N</c> so verification is self-describing and the pepper can be
-    /// rotated: bump the id, keep verifying older hashes, and re-hash them on next
-    /// use (rehash-on-use). A stored hash WITHOUT a keyid is a legacy (un-peppered)
-    /// hash. Default: 1.
+    /// The ACTIVE pepper key id, stamped into new PIN hashes as <c>keyid=N</c> so
+    /// verification is self-describing. A stored hash WITHOUT a keyid is a legacy
+    /// (un-peppered) hash. Default: 1.
     /// </summary>
     public int PinPepperKeyId { get; set; } = 1;
+
+    /// <summary>
+    /// RETIRED peppers kept for verification only, as <c>keyid → pepper</c>
+    /// (ADR-0011 keyring). Rotation is <c>add → activate → drain → retire</c>:
+    /// add the new pepper here on every node first, then promote it to
+    /// <see cref="PinPepper"/> / <see cref="PinPepperKeyId"/> — the OLD pepper moves
+    /// into this map so hashes still tagged with its id keep verifying and are
+    /// re-hashed to the active pepper on next successful use. Remove an entry only
+    /// once no stored hash still carries its key id (dropping a pepper still in use
+    /// permanently bricks those PINs). These are LIVE secrets — keep the WHOLE ring
+    /// (active + previous) in a single secret provider (user-secrets / Key Vault),
+    /// never in appsettings.json. Defaults to empty (no rotation in flight).
+    /// </summary>
+    public Dictionary<int, string> PreviousPinPeppers { get; set; } = new();
 }
