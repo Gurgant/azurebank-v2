@@ -310,7 +310,7 @@ public class IdempotencyService : IIdempotencyService
         // Narrowed on review: ANY OTHER DbUpdateException (a real write, data,
         // or timeout error) must propagate. Swallowing it here as a "lost race"
         // would spin the claim loop and mask genuine failures.
-        ex is ArgumentException
+        (ex is ArgumentException ae && IsInMemoryDuplicateKey(ae))
         || (ex is DbUpdateException && HasUniqueConstraintViolation(ex));
 
     private static bool HasUniqueConstraintViolation(Exception ex)
@@ -335,4 +335,14 @@ public class IdempotencyService : IIdempotencyService
         sql.Number is SqlPrimaryKeyViolation or SqlUniqueIndexViolation
         || sql.Errors.Cast<SqlError>().Any(
             e => e.Number is SqlPrimaryKeyViolation or SqlUniqueIndexViolation);
+
+    // EF Core's InMemory provider surfaces a duplicate composite PK as a raw
+    // System.ArgumentException carrying the BCL dictionary "duplicate key"
+    // message (verified on EF Core 10). Matching that signature - not the bare
+    // exception type - lets an unrelated ArgumentException propagate instead of
+    // being mistaken for a lost claim race and spun into a false 409.
+    private static bool IsInMemoryDuplicateKey(ArgumentException ex) =>
+        ex.Message.Contains(
+            "An item with the same key has already been added",
+            StringComparison.Ordinal);
 }
