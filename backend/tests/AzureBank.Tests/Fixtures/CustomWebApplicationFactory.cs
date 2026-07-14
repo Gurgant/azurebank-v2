@@ -24,15 +24,10 @@ namespace AzureBank.Tests.Fixtures;
 ///       public MyTests(CustomWebApplicationFactory factory) => _factory = factory;
 ///   }
 ///
-/// Usage (SQL Server):
-///   [Collection("SqlServer")]
-///   public class MyTests : IClassFixture&lt;CustomWebApplicationFactory&gt;
-///   {
-///       public MyTests(SqlServerContainerFixture dbFixture, CustomWebApplicationFactory factory)
-///       {
-///           factory.SetConnectionString(dbFixture.ConnectionString);
-///       }
-///   }
+/// Usage (SQL Server): gate the test with [SqlServerFact], serialize it via
+/// [Collection(SqlServerProofsCollection.Name)], and point the factory at the
+/// external SQL Server from AZUREBANK_TEST_SQLSERVER:
+///   factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
 /// </summary>
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
