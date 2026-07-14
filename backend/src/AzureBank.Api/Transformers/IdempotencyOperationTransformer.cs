@@ -79,6 +79,39 @@ public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransform
                 }
             }
         };
+        operation.Responses["413"] = new OpenApiResponse
+        {
+            Description =
+                "Payload Too Large - the request body exceeds the 32 KB limit for these " +
+                "idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected " +
+                "before any hashing or claim.",
+            Content = new Dictionary<string, OpenApiMediaType>
+            {
+                ["application/json"] = new OpenApiMediaType
+                {
+                    Schema = CreateProblemDetailsSchema(statusCode: 413)
+                }
+            }
+        };
+
+        // Document the Idempotency-Replayed response header on the success
+        // responses so the spec is 1:1 with the middleware: a replay carries
+        // 'Idempotency-Replayed: true' (ADR-0009).
+        foreach (var kvp in operation.Responses)
+        {
+            if (kvp.Key.StartsWith("2", StringComparison.Ordinal)
+                && kvp.Value is OpenApiResponse successResponse)
+            {
+                successResponse.Headers ??= new Dictionary<string, IOpenApiHeader>();
+                successResponse.Headers[IdempotencyConstants.ReplayedHeaderName] = new OpenApiHeader
+                {
+                    Description =
+                        "Set to 'true' when this response is a byte-identical replay of a " +
+                        "previously executed idempotent request (absent on first execution).",
+                    Schema = new OpenApiSchema { Type = JsonSchemaType.String }
+                };
+            }
+        }
 
         return Task.CompletedTask;
     }

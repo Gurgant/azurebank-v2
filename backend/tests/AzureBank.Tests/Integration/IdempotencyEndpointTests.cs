@@ -379,6 +379,42 @@ public class IdempotencyEndpointTests : IntegrationTestBase
 
     #endregion
 
+    #region Payload size
+
+    [Fact]
+    public async Task MonetaryEndpoint_OversizedBody_Returns413_AndInsertsNoRecord()
+    {
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        var key = Guid.NewGuid();
+
+        // ~40 KB body (> the 32 KB MaxRequestBodyBytes). StringContent sets a
+        // real Content-Length, so the middleware's fast-path 413 guard fires
+        // BEFORE any buffering, HMAC hashing, or claim INSERT.
+        var oversized = RawJson(new DepositRequest
+        {
+            AccountId = accountId,
+            Amount = 10m,
+            Description = new string('x', 40_000)
+        });
+
+        var response = await PostRawAsync("/api/transactions/deposit", oversized, key);
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        var problem = await ReadProblemAsync(response);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.IdempotencyPayloadTooLarge);
+        problem.TryGetProperty("traceId", out _).Should().BeTrue();
+
+        // The 413 short-circuits before TryAcquireAsync: no claim row, no money moved.
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        db.IdempotencyRecords.Count(r => r.UserId == userId && r.Key == key)
+            .Should().Be(0, "the 413 short-circuits before any claim INSERT");
+        (await GetBalanceAsync(accountId)).Should().Be(0m);
+    }
+
+    #endregion
+
     #region Helpers
 
     private static DepositRequest NewDeposit(Guid accountId, decimal amount) => new()

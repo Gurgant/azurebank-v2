@@ -40,4 +40,9 @@ public class IdempotencyException(string message, string errorCode, int statusCo
         "Verify the operation outcome via GET /api/transactions before retrying with a new key.",
         ErrorCodes.IdempotencyResultUnknown,
         409);
+
+    public static IdempotencyException PayloadTooLarge() => new(
+        "The request body exceeds the 32 KB limit for this endpoint.",
+        ErrorCodes.IdempotencyPayloadTooLarge,
+        413);
 }

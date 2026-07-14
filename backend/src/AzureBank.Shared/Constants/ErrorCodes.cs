@@ -43,6 +43,7 @@ public static class ErrorCodes
     public const string IdempotencyKeyReuse = "IDEMPOTENCY_KEY_REUSE";
     public const string IdempotencyInFlight = "IDEMPOTENCY_IN_FLIGHT";
     public const string IdempotencyResultUnknown = "IDEMPOTENCY_RESULT_UNKNOWN";
+    public const string IdempotencyPayloadTooLarge = "IDEMPOTENCY_PAYLOAD_TOO_LARGE";
 
     // System
     public const string InternalError = "INTERNAL_ERROR";
