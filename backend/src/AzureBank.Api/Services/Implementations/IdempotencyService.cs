@@ -6,6 +6,7 @@ using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -290,10 +291,48 @@ public class IdempotencyService : IIdempotencyService
         }
     }
 
+    // SQL Server unique-violation error numbers:
+    // 2627 = PRIMARY KEY / UNIQUE constraint, 2601 = duplicate row in a unique
+    // index. These are the only numbers that mean "someone already holds this
+    // claim" (the composite PK is the distributed lock).
+    private const int SqlPrimaryKeyViolation = 2627;
+    private const int SqlUniqueIndexViolation = 2601;
+
     private static bool IsDuplicateKey(Exception ex) =>
-        // SQL Server surfaces unique violations as DbUpdateException
-        // (SqlException 2627/2601 inside); the InMemory provider throws a
-        // raw ArgumentException ("An item with the same key has already been
-        // added") — verified empirically on EF Core 10.
-        ex is DbUpdateException or ArgumentException;
+        // A lost claim race (or our own resiliently-retried INSERT) surfaces
+        // differently per provider:
+        //  • EF InMemory throws a raw ArgumentException ("An item with the same
+        //    key has already been added") on the duplicate composite PK —
+        //    verified empirically on EF Core 10.
+        //  • SQL Server wraps a Microsoft.Data.SqlClient.SqlException inside a
+        //    DbUpdateException, with error number 2627 (PK) or 2601 (unique
+        //    index).
+        // Narrowed on review: ANY OTHER DbUpdateException (a real write, data,
+        // or timeout error) must propagate. Swallowing it here as a "lost race"
+        // would spin the claim loop and mask genuine failures.
+        ex is ArgumentException
+        || (ex is DbUpdateException && HasUniqueConstraintViolation(ex));
+
+    private static bool HasUniqueConstraintViolation(Exception ex)
+    {
+        // The SqlException can sit several levels down the InnerException chain
+        // (DbUpdateException → SqlException, and the resilient execution strategy
+        // may nest it deeper), so walk the whole chain, not just InnerException.
+        for (var current = ex.InnerException; current is not null; current = current.InnerException)
+        {
+            if (current is SqlException sql && IsUniqueViolationNumber(sql))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsUniqueViolationNumber(SqlException sql) =>
+        // A single SqlException can carry several SqlError entries and .Number
+        // only reflects the first, so scan the whole collection too.
+        sql.Number is SqlPrimaryKeyViolation or SqlUniqueIndexViolation
+        || sql.Errors.Cast<SqlError>().Any(
+            e => e.Number is SqlPrimaryKeyViolation or SqlUniqueIndexViolation);
 }
