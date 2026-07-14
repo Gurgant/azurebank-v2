@@ -77,8 +77,11 @@ public sealed class PinService : IPinVerifier
             return true;
         }
 
-        // Wrong PIN. An expired lock (cleared here) starts a fresh window at #1.
-        var failures = user.PinLockoutEnd is not null ? 1 : user.PinAccessFailedCount + 1;
+        // Wrong PIN. A non-null PinLockoutEnd here can only be an EXPIRED lock
+        // (an active one already threw in the pre-check above), so it starts a
+        // fresh failure window at attempt #1; otherwise accumulate.
+        var hadExpiredLock = user.PinLockoutEnd is not null;
+        var failures = hadExpiredLock ? 1 : user.PinAccessFailedCount + 1;
         user.PinLockoutEnd = null;
 
         if (failures >= ValidationRules.MaxPinAttempts)
