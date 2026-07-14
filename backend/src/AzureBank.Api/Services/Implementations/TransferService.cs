@@ -89,6 +89,20 @@ public class TransferService : ITransferService
             {
                 return await strategy.ExecuteAsync(async () =>
                 {
+                    // EnableRetryOnFailure re-runs this whole delegate on a
+                    // transient fault against the SAME DbContext. Make each
+                    // attempt idempotent: discard the failed attempt's tracked
+                    // work (Case A) and never re-execute an already-committed
+                    // transfer (Case B). See PrepareTransferAttemptAsync.
+                    await PrepareTransferAttemptAsync(fromAccount, recipientAccount);
+
+                    // Funds re-check against the reloaded balance: a transient
+                    // retry may run after a concurrent debit moved the balance.
+                    if (fromAccount.Balance < request.Amount)
+                    {
+                        throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
+                    }
+
                     await using var dbTransaction = await _context.Database.BeginTransactionAsync();
 
                     try
@@ -175,7 +189,12 @@ public class TransferService : ITransferService
                     }
                     catch
                     {
-                        await dbTransaction.RollbackAsync();
+                        // Preserve the ORIGINAL fault (e.g. the transient the
+                        // execution strategy must see to retry): rolling back a
+                        // transaction whose connection/commit already failed can
+                        // itself throw and would otherwise mask it.
+                        try { await dbTransaction.RollbackAsync(); }
+                        catch { /* best effort: the transaction may already be gone */ }
                         throw;
                     }
                 });
@@ -220,6 +239,20 @@ public class TransferService : ITransferService
             {
                 return await strategy.ExecuteAsync(async () =>
                 {
+                    // EnableRetryOnFailure re-runs this whole delegate on a
+                    // transient fault against the SAME DbContext. Make each
+                    // attempt idempotent: discard the failed attempt's tracked
+                    // work (Case A) and never re-execute an already-committed
+                    // transfer (Case B). See PrepareTransferAttemptAsync.
+                    await PrepareTransferAttemptAsync(fromAccount, toAccount);
+
+                    // Funds re-check against the reloaded balance: a transient
+                    // retry may run after a concurrent debit moved the balance.
+                    if (fromAccount.Balance < request.Amount)
+                    {
+                        throw new InsufficientFundsException(fromAccount.Balance, request.Amount);
+                    }
+
                     await using var dbTransaction = await _context.Database.BeginTransactionAsync();
 
                     try
@@ -300,7 +333,12 @@ public class TransferService : ITransferService
                     }
                     catch
                     {
-                        await dbTransaction.RollbackAsync();
+                        // Preserve the ORIGINAL fault (e.g. the transient the
+                        // execution strategy must see to retry): rolling back a
+                        // transaction whose connection/commit already failed can
+                        // itself throw and would otherwise mask it.
+                        try { await dbTransaction.RollbackAsync(); }
+                        catch { /* best effort: the transaction may already be gone */ }
                         throw;
                     }
                 });
@@ -313,5 +351,61 @@ public class TransferService : ITransferService
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
             }
         }
+    }
+
+    /// <summary>
+    /// Idempotent reset run at the TOP of every transfer execution attempt.
+    /// The EF execution strategy (EnableRetryOnFailure, production only) re-runs
+    /// the delegate on a transient fault against the SAME shared DbContext, so
+    /// each attempt must rebuild the same state from scratch.
+    ///
+    /// Case A — the fault hit before/at the business SaveChanges (nothing
+    /// committed): <see cref="ConcurrencyRetry.ResetToStoreAsync"/> detaches the
+    /// leftover Added/Unchanged Transaction rows and reloads the accounts, so a
+    /// fresh attempt does not double the transactions or the balance mutations.
+    ///
+    /// Case B — the fault hit after the transaction actually committed (commit
+    /// ack lost): the idempotency record is already Executed/Completed in the
+    /// DATABASE. Re-executing would post a SECOND real transfer, so we re-read
+    /// the record fresh and signal the documented "committed, response unknown"
+    /// path (409 IDEMPOTENCY_RESULT_UNKNOWN) instead of creating new rows.
+    ///
+    /// If the record is still Processing (nothing committed), we realign the
+    /// tracked record to database truth and re-apply the pending Executed flip
+    /// (rotating the fencing token) so it rides THIS attempt's SaveChanges even
+    /// if a prior attempt's AcceptAllChanges had already marked it Unchanged.
+    ///
+    /// The idempotency step is a no-op when no record is tracked (e.g. a direct
+    /// service-level call outside the middleware): there is nothing to guard.
+    /// </summary>
+    private async Task PrepareTransferAttemptAsync(params Account[] accounts)
+    {
+        await ConcurrencyRetry.ResetToStoreAsync(_context, accounts);
+
+        var entry = _context.ChangeTracker.Entries<IdempotencyRecord>().FirstOrDefault();
+        if (entry is null)
+        {
+            return;
+        }
+
+        // Fresh database truth for this claim. ReloadAsync also refreshes the
+        // tracked ORIGINAL values, so the flip re-applied below emits a fenced
+        // UPDATE (WHERE ClaimId = <db value>) that rides this attempt's commit.
+        await entry.ReloadAsync();
+
+        if (entry.State == EntityState.Detached
+            || entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
+        {
+            // Detached: the row was deleted under us (stale takeover/cleanup) —
+            // we cannot prove nothing committed. Executed/Completed: a prior
+            // attempt already committed this transfer. Either way, refuse to
+            // execute again; the middleware surfaces this as 409 RESULT_UNKNOWN.
+            throw IdempotencyException.ResultUnknown();
+        }
+
+        // Processing: nothing committed yet. Re-arm the pending Executed flip so
+        // it travels atomically with this attempt's business commit.
+        entry.Entity.Status = IdempotencyStatus.Executed;
+        entry.Entity.ClaimId = Guid.NewGuid();
     }
 }

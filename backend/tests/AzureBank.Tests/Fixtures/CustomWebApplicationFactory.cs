@@ -44,6 +44,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         "integration-tests-only-idempotency-hmac-key-0123456789abcdef";
 
     private string? _connectionString;
+    private bool _enableSqlRetryOnFailure;
+    private readonly List<IInterceptor> _interceptors = new();
 
     // One database per factory instance. The name and root are fixed fields so that
     // the temporary provider built below and the application's own provider resolve
@@ -59,6 +61,26 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public void SetConnectionString(string connectionString)
     {
         _connectionString = connectionString;
+    }
+
+    /// <summary>
+    /// Enables EF's SQL Server retrying execution strategy (EnableRetryOnFailure),
+    /// mirroring the production wiring. Opt-in: only the transient-retry proof
+    /// needs it, so the default SQL path stays non-retrying (a transient injected
+    /// there would surface instead of being retried). SQL Server path only.
+    /// </summary>
+    public void EnableSqlRetryOnFailure()
+    {
+        _enableSqlRetryOnFailure = true;
+    }
+
+    /// <summary>
+    /// Registers an EF interceptor on the test DbContext (e.g. to inject a
+    /// one-shot transient fault). Must be called before CreateClient().
+    /// </summary>
+    public void AddInterceptor(IInterceptor interceptor)
+    {
+        _interceptors.Add(interceptor);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -86,7 +108,25 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 // Use real SQL Server from Testcontainers
                 services.AddDbContext<AzureBankDbContext>(options =>
                 {
-                    options.UseSqlServer(_connectionString);
+                    options.UseSqlServer(_connectionString, sql =>
+                    {
+                        if (_enableSqlRetryOnFailure)
+                        {
+                            // Mirror production (ServiceCollectionExtensions):
+                            // the retrying strategy re-runs the transfer delegate
+                            // on a transient fault, which is exactly what the
+                            // transient-retry proof needs to exercise.
+                            sql.EnableRetryOnFailure(
+                                maxRetryCount: 3,
+                                maxRetryDelay: TimeSpan.FromSeconds(5),
+                                errorNumbersToAdd: null);
+                        }
+                    });
+
+                    if (_interceptors.Count > 0)
+                    {
+                        options.AddInterceptors(_interceptors);
+                    }
                 });
             }
             else
