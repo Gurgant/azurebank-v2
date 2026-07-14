@@ -68,16 +68,17 @@ public class IdempotencyCleanupService : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
         var now = DateTime.UtcNow;
-        var expired = await db.IdempotencyRecords
-            .Where(r => r.ExpiresAt <= now)
+
+        // Reconciliation signal (read-only, AsNoTracking): expired rows still in
+        // Executed committed their business operation but never stored a response.
+        // Log them BEFORE the bulk delete removes them. Filtered to Executed only,
+        // so this stays cheap even though the delete below is set-based.
+        var executedExpired = await db.IdempotencyRecords
+            .AsNoTracking()
+            .Where(r => r.ExpiresAt <= now && r.Status == IdempotencyStatus.Executed)
             .ToListAsync(cancellationToken);
 
-        if (expired.Count == 0)
-        {
-            return;
-        }
-
-        foreach (var record in expired.Where(r => r.Status == IdempotencyStatus.Executed))
+        foreach (var record in executedExpired)
         {
             _logger.LogWarning(
                 "Cleaning up EXECUTED idempotency record {Endpoint}/{Key} (user {UserId}): " +
@@ -85,16 +86,45 @@ public class IdempotencyCleanupService : BackgroundService
                 record.Endpoint, record.Key, record.UserId);
         }
 
-        db.IdempotencyRecords.RemoveRange(expired);
         try
         {
-            await db.SaveChangesAsync(cancellationToken);
-            _logger.LogInformation("Idempotency cleanup removed {Count} expired records", expired.Count);
+            int removed;
+            if (db.Database.IsRelational())
+            {
+                // Set-based bulk delete: one round-trip, nothing loaded or tracked,
+                // and no whole-batch failure if a single row races a takeover.
+                // ExecuteDelete does NOT apply the ClaimId optimistic token, but the
+                // "ExpiresAt <= now" predicate is self-fencing: reads treat expired
+                // rows as absent, so no live claimant depends on one, and a concurrent
+                // takeover re-inserts a fresh row with a FUTURE ExpiresAt that this
+                // predicate cannot match.
+                removed = await db.IdempotencyRecords
+                    .Where(r => r.ExpiresAt <= now)
+                    .ExecuteDeleteAsync(cancellationToken);
+            }
+            else
+            {
+                // ExecuteDelete is relational-only; the EF InMemory provider throws
+                // on it. Fall back to load + RemoveRange so InMemory-backed test hosts
+                // (which register this BackgroundService) behave identically. Guarding
+                // on IsRelational() rather than IsInMemory() keeps the InMemory provider
+                // package out of the production API.
+                var expired = await db.IdempotencyRecords
+                    .Where(r => r.ExpiresAt <= now)
+                    .ToListAsync(cancellationToken);
+                db.IdempotencyRecords.RemoveRange(expired);
+                removed = await db.SaveChangesAsync(cancellationToken);
+            }
+
+            if (removed > 0)
+            {
+                _logger.LogInformation("Idempotency cleanup removed {Count} expired records", removed);
+            }
         }
         catch (DbUpdateConcurrencyException)
         {
-            // A row changed between read and delete (takeover race).
-            // Leave it for the next sweep.
+            // A row changed between read and delete on the tracked (InMemory) path
+            // (takeover race). Leave it for the next sweep.
             _logger.LogDebug("Idempotency cleanup raced a concurrent claim; deferring to next sweep");
         }
     }
