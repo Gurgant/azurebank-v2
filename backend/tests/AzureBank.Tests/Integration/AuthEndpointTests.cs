@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
@@ -236,6 +237,32 @@ public class AuthEndpointTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"verified\":false");
+    }
+
+    [Fact]
+    public async Task VerifyPin_AfterMaxWrongAttempts_Returns423PinLocked()
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token, "123456");
+
+        // The first MaxPinAttempts-1 wrong attempts stay soft (200 { verified: false }).
+        for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
+        {
+            var soft = await Client.PostAsJsonAsync("/api/auth/pin/verify",
+                new VerifyPinRequest { Pin = "654321" }, JsonOptions);
+            soft.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+
+        // The attempt that crosses the threshold locks the PIN -> 423 PIN_LOCKED.
+        var locked = await Client.PostAsJsonAsync("/api/auth/pin/verify",
+            new VerifyPinRequest { Pin = "654321" }, JsonOptions);
+        locked.StatusCode.Should().Be(HttpStatusCode.Locked);
+        (await locked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PinLocked);
+
+        // Even the CORRECT PIN is refused while locked.
+        var stillLocked = await Client.PostAsJsonAsync("/api/auth/pin/verify",
+            new VerifyPinRequest { Pin = "123456" }, JsonOptions);
+        stillLocked.StatusCode.Should().Be(HttpStatusCode.Locked);
     }
 
     #endregion

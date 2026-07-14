@@ -6,7 +6,6 @@ using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
-using AzureBank.Shared.Services.Interfaces;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -22,7 +21,7 @@ public class TransactionServiceTests : IDisposable
 {
     private readonly AzureBankDbContext _context;
     private readonly Mock<IAccountAccessService> _accountAccessMock;
-    private readonly Mock<IPasswordHasher> _passwordHasherMock;
+    private readonly Mock<IPinVerifier> _pinVerifierMock;
     private readonly TransactionMapper _mapper;
     private readonly Mock<ILogger<TransactionService>> _loggerMock;
     private readonly TransactionService _sut;
@@ -35,14 +34,14 @@ public class TransactionServiceTests : IDisposable
 
         _context = new AzureBankDbContext(options);
         _accountAccessMock = new Mock<IAccountAccessService>();
-        _passwordHasherMock = new Mock<IPasswordHasher>();
+        _pinVerifierMock = new Mock<IPinVerifier>();
         _mapper = new TransactionMapper();
         _loggerMock = new Mock<ILogger<TransactionService>>();
 
         _sut = new TransactionService(
             _context,
             _accountAccessMock.Object,
-            _passwordHasherMock.Object,
+            _pinVerifierMock.Object,
             _mapper,
             _loggerMock.Object);
     }
@@ -293,9 +292,9 @@ public class TransactionServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _passwordHasherMock
-            .Setup(x => x.VerifyPin("hashedPin", "123456"))
-            .Returns(true);
+        _pinVerifierMock
+            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "123456"))
+            .ReturnsAsync(true);
 
         var request = new WithdrawRequest
         {
@@ -331,9 +330,9 @@ public class TransactionServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _passwordHasherMock
-            .Setup(x => x.VerifyPin("hashedPin", "123456"))
-            .Returns(true);
+        _pinVerifierMock
+            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "123456"))
+            .ReturnsAsync(true);
 
         var request = new WithdrawRequest
         {
@@ -366,9 +365,9 @@ public class TransactionServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _passwordHasherMock
-            .Setup(x => x.VerifyPin("hashedPin", "123456"))
-            .Returns(true);
+        _pinVerifierMock
+            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "123456"))
+            .ReturnsAsync(true);
 
         var request = new WithdrawRequest
         {
@@ -400,9 +399,9 @@ public class TransactionServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _passwordHasherMock
-            .Setup(x => x.VerifyPin("hashedPin", "wrongpin"))
-            .Returns(false);
+        _pinVerifierMock
+            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "wrongpin"))
+            .ReturnsAsync(false);
 
         var request = new WithdrawRequest
         {
@@ -468,9 +467,9 @@ public class TransactionServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _passwordHasherMock
-            .Setup(x => x.VerifyPin(It.IsAny<string>(), It.IsAny<string>()))
-            .Returns(true);
+        _pinVerifierMock
+            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), It.IsAny<string>()))
+            .ReturnsAsync(true);
 
         var request = new WithdrawRequest
         {

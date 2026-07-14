@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Enums;
@@ -166,6 +167,37 @@ public class TransactionEndpointTests : IntegrationTestBase
 
         // Assert - business-rule violations are 422 per contract (BusinessRuleException)
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task Withdraw_WhenPinLocked_Returns423_AndMovesNoMoney()
+    {
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token, "123456");
+        await DepositAsync(token, accountId, 1000m);
+
+        var wrong = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "654321", Description = "x" };
+
+        // Wrong PIN is 401 up to the threshold; the crossing attempt locks the PIN (423).
+        for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
+        {
+            (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+                .Should().Be(HttpStatusCode.Unauthorized);
+        }
+        (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+            .Should().Be(HttpStatusCode.Locked);
+
+        // A CORRECT-PIN withdrawal is now blocked (423) - before any money moves.
+        var correct = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "123456", Description = "x" };
+        var blocked = await PostMonetaryAsync("/api/transactions/withdraw", correct);
+        blocked.StatusCode.Should().Be(HttpStatusCode.Locked);
+        (await blocked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PinLocked);
+
+        // No withdrawal transaction was created: the lock precedes the money movement.
+        var list = await Client.GetAsync($"/api/transactions?accountId={accountId}&pageSize=50");
+        list.EnsureSuccessStatusCode();
+        var page = await list.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(JsonOptions);
+        page!.Data.Count(t => t.Type == TransactionType.Withdrawal).Should().Be(0);
     }
 
     #endregion
