@@ -80,4 +80,28 @@ public class AzureBankDbContextImmutabilityTests
         act.Should().NotThrow();
         ctx.Transactions.Count().Should().Be(1);
     }
+
+    [Fact]
+    public void SaveChanges_NoOpModifiedTransaction_DoesNotFalsePositive()
+    {
+        using var ctx = NewContext();
+        var txn = PersistTransaction(ctx);
+
+        // Regression proof for the Gemini review note that a Transaction marked
+        // Modified with zero actually-modified columns might trip a false
+        // immutability violation. It cannot here: forcing Modified and then
+        // clearing every column's IsModified makes EF downgrade the entity to
+        // Unchanged, so EnforceTransactionImmutability never even inspects it.
+        // The guard is already correct; no count==0 special case is needed.
+        var entry = ctx.Entry(txn);
+        entry.State = EntityState.Modified;
+        foreach (var property in entry.Properties)
+        {
+            property.IsModified = false;
+        }
+
+        var act = () => ctx.SaveChanges(acceptAllChangesOnSuccess: true);
+
+        act.Should().NotThrow();
+    }
 }
