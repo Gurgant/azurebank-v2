@@ -34,7 +34,7 @@ public class TransactionEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transactions/deposit", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transactions/deposit", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -60,7 +60,7 @@ public class TransactionEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transactions/deposit", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transactions/deposit", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -84,7 +84,7 @@ public class TransactionEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transactions/deposit", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transactions/deposit", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -111,7 +111,7 @@ public class TransactionEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transactions/withdraw", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transactions/withdraw", request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -139,7 +139,7 @@ public class TransactionEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transactions/withdraw", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transactions/withdraw", request);
 
         // Assert - wrong PIN is a step-up authentication failure (401 per contract)
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -162,7 +162,7 @@ public class TransactionEndpointTests : IntegrationTestBase
         };
 
         // Act
-        var response = await Client.PostAsJsonAsync("/api/transactions/withdraw", request, JsonOptions);
+        var response = await PostMonetaryAsync("/api/transactions/withdraw", request);
 
         // Assert - business-rule violations are 422 per contract (BusinessRuleException)
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
@@ -222,12 +222,12 @@ public class TransactionEndpointTests : IntegrationTestBase
         SetAuthHeader(token);
 
         // Create a transaction
-        var depositResponse = await Client.PostAsJsonAsync("/api/transactions/deposit", new DepositRequest
+        var depositResponse = await PostMonetaryAsync("/api/transactions/deposit", new DepositRequest
         {
             AccountId = accountId,
             Amount = 100m,
             Description = "Test"
-        }, JsonOptions);
+        });
 
         var depositResult = await depositResponse.Content.ReadFromJsonAsync<ApiResponse<DepositResponse>>(JsonOptions);
         var transactionId = depositResult!.Data!.Transaction.Id;

@@ -69,6 +69,7 @@ public class AppExceptionHandler : IExceptionHandler
         403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
+        413 => "Payload Too Large",
         422 => "Unprocessable Entity",
         _ => "Error"
     };

@@ -24,19 +24,23 @@ namespace AzureBank.Tests.Fixtures;
 ///       public MyTests(CustomWebApplicationFactory factory) => _factory = factory;
 ///   }
 ///
-/// Usage (SQL Server):
-///   [Collection("SqlServer")]
-///   public class MyTests : IClassFixture&lt;CustomWebApplicationFactory&gt;
-///   {
-///       public MyTests(SqlServerContainerFixture dbFixture, CustomWebApplicationFactory factory)
-///       {
-///           factory.SetConnectionString(dbFixture.ConnectionString);
-///       }
-///   }
+/// Usage (SQL Server): gate the test with [SqlServerFact], serialize it via
+/// [Collection(SqlServerProofsCollection.Name)], and point the factory at the
+/// external SQL Server from AZUREBANK_TEST_SQLSERVER:
+///   factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
 /// </summary>
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
+    /// <summary>
+    /// Test-only HMAC key for idempotency request fingerprinting (ADR-0009).
+    /// Public so tests can recompute fingerprints when seeding records directly.
+    /// </summary>
+    public const string IdempotencyHashKey =
+        "integration-tests-only-idempotency-hmac-key-0123456789abcdef";
+
     private string? _connectionString;
+    private bool _enableSqlRetryOnFailure;
+    private readonly List<IInterceptor> _interceptors = new();
 
     // One database per factory instance. The name and root are fixed fields so that
     // the temporary provider built below and the application's own provider resolve
@@ -54,12 +58,35 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _connectionString = connectionString;
     }
 
+    /// <summary>
+    /// Enables EF's SQL Server retrying execution strategy (EnableRetryOnFailure),
+    /// mirroring the production wiring. Opt-in: only the transient-retry proof
+    /// needs it, so the default SQL path stays non-retrying (a transient injected
+    /// there would surface instead of being retried). SQL Server path only.
+    /// </summary>
+    public void EnableSqlRetryOnFailure()
+    {
+        _enableSqlRetryOnFailure = true;
+    }
+
+    /// <summary>
+    /// Registers an EF interceptor on the test DbContext (e.g. to inject a
+    /// one-shot transient fault). Must be called before CreateClient().
+    /// </summary>
+    public void AddInterceptor(IInterceptor interceptor)
+    {
+        _interceptors.Add(interceptor);
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // The Testing environment has no appsettings.Testing.json, so the required
         // JWT signing secret is supplied here. Test-only value - NOT a real secret.
         builder.UseSetting("Jwt:Secret",
             "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef");
+
+        // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
+        builder.UseSetting("Idempotency:HashKey", IdempotencyHashKey);
 
         builder.ConfigureServices(services =>
         {
@@ -76,7 +103,25 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 // Use real SQL Server from Testcontainers
                 services.AddDbContext<AzureBankDbContext>(options =>
                 {
-                    options.UseSqlServer(_connectionString);
+                    options.UseSqlServer(_connectionString, sql =>
+                    {
+                        if (_enableSqlRetryOnFailure)
+                        {
+                            // Mirror production (ServiceCollectionExtensions):
+                            // the retrying strategy re-runs the transfer delegate
+                            // on a transient fault, which is exactly what the
+                            // transient-retry proof needs to exercise.
+                            sql.EnableRetryOnFailure(
+                                maxRetryCount: 3,
+                                maxRetryDelay: TimeSpan.FromSeconds(5),
+                                errorNumbersToAdd: null);
+                        }
+                    });
+
+                    if (_interceptors.Count > 0)
+                    {
+                        options.AddInterceptors(_interceptors);
+                    }
                 });
             }
             else

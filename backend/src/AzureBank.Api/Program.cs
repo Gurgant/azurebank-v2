@@ -102,6 +102,11 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
+    // Idempotency for monetary endpoints (ADR-0009).
+    // AFTER auth (401/403 must short-circuit before any record is created),
+    // BEFORE the endpoints it guards.
+    app.UseIdempotency();
+
     app.MapControllers();
 
     // ═══════════════════════════════════════════════════════════════════════════

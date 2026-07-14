@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using AzureBank.Api.Attributes;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transfer;
@@ -38,6 +39,8 @@ public class TransferController : ControllerBase
     /// <returns>Transfer result with new balance</returns>
     [HttpPost]
     [EndpointSummary("Transfer to user")]
+    [RequireIdempotency]
+    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<TransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -60,6 +63,8 @@ public class TransferController : ControllerBase
     /// <returns>Transfer result with both account balances</returns>
     [HttpPost("internal")]
     [EndpointSummary("Internal transfer")]
+    [RequireIdempotency]
+    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<InternalTransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]

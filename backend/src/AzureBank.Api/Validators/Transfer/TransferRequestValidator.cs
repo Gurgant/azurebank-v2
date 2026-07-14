@@ -1,3 +1,4 @@
+using AzureBank.Api.Validation;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Transfer;
 using FluentValidation;
@@ -25,7 +26,8 @@ public class TransferRequestValidator : AbstractValidator<TransferRequest>
             .GreaterThanOrEqualTo(ValidationRules.TransactionMinAmount)
             .WithMessage($"Amount must be at least {ValidationRules.TransactionMinAmount:C}.")
             .LessThanOrEqualTo(ValidationRules.TransactionMaxAmount)
-            .WithMessage($"Amount cannot exceed {ValidationRules.TransactionMaxAmount:C}.");
+            .WithMessage($"Amount cannot exceed {ValidationRules.TransactionMaxAmount:C}.")
+            .ValidMoneyScale();
 
         RuleFor(x => x.Description)
             .MaximumLength(ValidationRules.TransactionDescriptionMaxLength)

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using AzureBank.Api.Attributes;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
@@ -70,6 +71,8 @@ public class TransactionController : ControllerBase
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("deposit")]
     [EndpointSummary("Deposit")]
+    [RequireIdempotency]
+    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<DepositResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -93,6 +96,8 @@ public class TransactionController : ControllerBase
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("withdraw")]
     [EndpointSummary("Withdraw")]
+    [RequireIdempotency]
+    [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<WithdrawResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]

@@ -878,6 +878,18 @@
           "Transaction"
         ],
         "summary": "Deposit money into an account.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Deposit details",
           "content": {
@@ -902,6 +914,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -935,6 +955,114 @@
           },
           "401": {
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+          },
+          "409": {
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -945,6 +1073,18 @@
           "Transaction"
         ],
         "summary": "Withdraw money from an account.\r\nRequires PIN verification.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Withdrawal details including PIN",
           "content": {
@@ -969,6 +1109,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1003,8 +1151,8 @@
           "401": {
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
           },
-          "422": {
-            "description": "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
+          "409": {
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1016,7 +1164,43 @@
                     },
                     "title": {
                       "type": "string",
-                      "description": "A short, human-readable summary (e.g., 'Business Rule Violation')"
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
                     },
                     "status": {
                       "type": "integer",
@@ -1024,11 +1208,47 @@
                     },
                     "detail": {
                       "type": "string",
-                      "description": "A human-readable explanation of the business rule violation"
+                      "description": "A human-readable explanation of the failure"
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
                     },
                     "traceId": {
                       "type": "string",
@@ -1048,6 +1268,18 @@
           "Transfer"
         ],
         "summary": "Transfer money to another user's primary account.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Transfer details",
           "content": {
@@ -1072,6 +1304,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1106,8 +1346,8 @@
           "401": {
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
           },
-          "422": {
-            "description": "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
+          "409": {
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1119,7 +1359,43 @@
                     },
                     "title": {
                       "type": "string",
-                      "description": "A short, human-readable summary (e.g., 'Business Rule Violation')"
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
                     },
                     "status": {
                       "type": "integer",
@@ -1127,11 +1403,47 @@
                     },
                     "detail": {
                       "type": "string",
-                      "description": "A human-readable explanation of the business rule violation"
+                      "description": "A human-readable explanation of the failure"
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
                     },
                     "traceId": {
                       "type": "string",
@@ -1151,6 +1463,18 @@
           "Transfer"
         ],
         "summary": "Transfer money between own accounts.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "description": "Internal transfer details",
           "content": {
@@ -1175,6 +1499,14 @@
         "responses": {
           "201": {
             "description": "Created",
+            "headers": {
+              "Idempotency-Replayed": {
+                "description": "Set to 'true' when this response is a byte-identical replay of a previously executed idempotent request (absent on first execution).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1209,8 +1541,8 @@
           "401": {
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
           },
-          "422": {
-            "description": "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
+          "409": {
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1222,7 +1554,43 @@
                     },
                     "title": {
                       "type": "string",
-                      "description": "A short, human-readable summary (e.g., 'Business Rule Violation')"
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
                     },
                     "status": {
                       "type": "integer",
@@ -1230,11 +1598,47 @@
                     },
                     "detail": {
                       "type": "string",
-                      "description": "A human-readable explanation of the business rule violation"
+                      "description": "A human-readable explanation of the failure"
                     },
                     "errorCode": {
                       "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large - the request body exceeds the 32 KB limit for these idempotent monetary endpoints (IDEMPOTENCY_PAYLOAD_TOO_LARGE); rejected before any hashing or claim.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (413)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
                     },
                     "traceId": {
                       "type": "string",
@@ -1739,6 +2143,7 @@
             "format": "uuid"
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
@@ -1791,6 +2196,7 @@
             "format": "uuid"
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
@@ -2215,6 +2621,7 @@
             "description": "Must start with a letter and contain only lowercase letters, numbers, and underscores."
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
@@ -2365,6 +2772,7 @@
             "format": "uuid"
           },
           "amount": {
+            "multipleOf": 0.01,
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",

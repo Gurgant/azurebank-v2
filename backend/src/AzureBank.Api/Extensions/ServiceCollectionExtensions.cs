@@ -93,6 +93,21 @@ public static class ServiceCollectionExtensions
         services.Configure<SeedDataOptions>(
             configuration.GetSection(SeedDataOptions.SectionName));
 
+        // Idempotency (ADR-0009). HashKey is a secret (user-secrets/env):
+        // fail fast at startup rather than 500 on the first monetary request.
+        services.AddOptions<IdempotencyOptions>()
+            .Bind(configuration.GetSection(IdempotencyOptions.SectionName))
+            .Validate(
+                o => !string.IsNullOrWhiteSpace(o.HashKey) && o.HashKey.Length >= 32,
+                "Idempotency:HashKey must be configured with at least 32 characters " +
+                "(dotnet user-secrets in development; see README)")
+            .Validate(
+                o => o.Ttl > TimeSpan.Zero
+                     && o.ProcessingStaleAfter > TimeSpan.Zero
+                     && o.CleanupInterval > TimeSpan.Zero,
+                "Idempotency timespans must be positive")
+            .ValidateOnStart();
+
         // Mappers (Mapperly source-generated, stateless - singleton is optimal)
         services.AddSingleton<AccountMapper>();
         services.AddSingleton<TransactionMapper>();
@@ -107,6 +122,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ITransactionService, TransactionService>();
         services.AddScoped<ITransferService, TransferService>();
         services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IIdempotencyService, IdempotencyService>();
+
+        // Background sweep of expired idempotency records
+        services.AddHostedService<Services.IdempotencyCleanupService>();
 
         return services;
     }
@@ -335,6 +354,11 @@ public static class ServiceCollectionExtensions
             // cross-field constraints that cannot be expressed in JSON Schema
             // Reference: project-docs/30-business-rule-validation-implementation-plan.md
             options.AddDocumentTransformer<BusinessRulesDocumentTransformer>();
+
+            // Operation transformer: Document the required Idempotency-Key
+            // header + 409/422 responses on [RequireIdempotency] endpoints
+            // (ADR-0009). Keeps spec 1:1 with live and Schemathesis green.
+            options.AddOperationTransformer<IdempotencyOperationTransformer>();
         });
 
         return services;
@@ -384,7 +408,10 @@ public static class ServiceCollectionExtensions
                         "https://localhost:5173")
                     .AllowAnyHeader()
                     .AllowAnyMethod()
-                    .AllowCredentials();
+                    .AllowCredentials()
+                    // Response headers are NOT readable by browser JS unless
+                    // exposed: the frontend must be able to see replays.
+                    .WithExposedHeaders(IdempotencyConstants.ReplayedHeaderName);
             });
 
             // Development: Allow any origin
@@ -393,7 +420,8 @@ public static class ServiceCollectionExtensions
                 policy
                     .AllowAnyOrigin()
                     .AllowAnyHeader()
-                    .AllowAnyMethod();
+                    .AllowAnyMethod()
+                    .WithExposedHeaders(IdempotencyConstants.ReplayedHeaderName);
             });
         });
 

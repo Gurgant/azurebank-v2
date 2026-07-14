@@ -23,6 +23,8 @@ Version: 1.0.0
 """
 
 import re
+import uuid
+
 import schemathesis
 
 
@@ -189,6 +191,38 @@ def _has_extreme_timezone_offset(datetime_str: str) -> bool:
             return True  # Extreme offset - skip
 
     return False
+
+
+# =============================================================================
+# HEADER HOOKS
+# =============================================================================
+
+# Monetary endpoints requiring the Idempotency-Key header (ADR-0009)
+IDEMPOTENT_ENDPOINTS = {
+    ("/api/transactions/deposit", "POST"),
+    ("/api/transactions/withdraw", "POST"),
+    ("/api/transfers", "POST"),
+    ("/api/transfers/internal", "POST"),
+}
+
+
+@schemathesis.hook
+def map_headers(context, headers):
+    """
+    Force a FRESH Idempotency-Key per generated test case.
+
+    The header is documented as required (format: uuid), so Schemathesis
+    generates it - but with a fixed seed and deterministic generation the
+    same UUID can recur across cases with different bodies. The API then
+    correctly answers 422 IDEMPOTENCY_KEY_REUSE, which strict positive mode
+    would report as a failure. A unique key per case keeps positive tests
+    exercising the execute path.
+    """
+    op = context.operation
+    if (op.path, op.method.upper()) in IDEMPOTENT_ENDPOINTS:
+        headers = dict(headers or {})
+        headers["Idempotency-Key"] = str(uuid.uuid4())
+    return headers
 
 
 # =============================================================================

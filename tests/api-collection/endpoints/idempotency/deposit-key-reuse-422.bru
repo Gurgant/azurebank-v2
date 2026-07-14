@@ -1,0 +1,47 @@
+meta {
+  name: Idempotency 3 - Same key, different payload (422)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/transactions/deposit
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{idemScenarioKey}}
+}
+
+body:json {
+  {
+    "accountId": "{{accountId}}",
+    "amount": 999.99,
+    "description": "Different payload, same key"
+  }
+}
+
+assert {
+  res.status: eq 422
+  res.body.errorCode: eq IDEMPOTENCY_KEY_REUSE
+}
+
+tests {
+  test("Key reuse with a different payload is rejected", function() {
+    expect(res.status).to.equal(422);
+  });
+
+  test("ProblemDetails carries the dedicated errorCode", function() {
+    expect(res.body.errorCode).to.equal('IDEMPOTENCY_KEY_REUSE');
+  });
+
+  test("ProblemDetails carries a traceId", function() {
+    expect(res.body.traceId).to.be.a('string');
+  });
+}

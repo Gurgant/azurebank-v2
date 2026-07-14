@@ -16,6 +16,13 @@ auth:bearer {
 
 headers {
   Content-Type: application/json
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+script:pre-request {
+  // Monetary endpoints require a fresh Idempotency-Key per operation (ADR-0009)
+  const { randomUUID } = require('crypto');
+  bru.setVar('idempotencyKey', randomUUID());
 }
 
 body:json {

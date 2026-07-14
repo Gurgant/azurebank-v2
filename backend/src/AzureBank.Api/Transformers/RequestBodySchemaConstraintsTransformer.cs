@@ -99,6 +99,9 @@ public sealed class RequestBodySchemaConstraintsTransformer : IOpenApiDocumentTr
                         System.Globalization.CultureInfo.InvariantCulture);
                     schema.Maximum = ValidationRules.TransactionMaxAmount.ToString(
                         System.Globalization.CultureInfo.InvariantCulture);
+                    // Whole-cent constraint so the documented schema matches the <=2-decimal
+                    // runtime rule (keeps Schemathesis positive cases from generating sub-cents).
+                    schema.MultipleOf = 0.01m;
                     // Remove the string type option for cleaner numeric schema
                     if (schema.Type?.HasFlag(JsonSchemaType.String) == true)
                     {
