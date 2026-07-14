@@ -252,4 +252,28 @@ public class DepositRequestValidatorTests
     }
 
     #endregion
+
+    #region Amount Scale Tests
+
+    [Theory]
+    [InlineData(10.12345)] // 5 decimals -> sub-cent, must be rejected
+    [InlineData(0.011)]    // 3 decimals
+    public void Validate_WithMoreThanTwoDecimalPlaces_ShouldHaveError(decimal amount)
+    {
+        var request = new DepositRequest { AccountId = Guid.NewGuid(), Amount = amount };
+        var result = _validator.TestValidate(request);
+        result.ShouldHaveValidationErrorFor(x => x.Amount);
+    }
+
+    [Theory]
+    [InlineData(10.12)] // exactly 2 decimals
+    [InlineData(0.01)]  // boundary minimum, 2 decimals
+    public void Validate_WithAtMostTwoDecimalPlaces_ShouldNotHaveError(decimal amount)
+    {
+        var request = new DepositRequest { AccountId = Guid.NewGuid(), Amount = amount };
+        var result = _validator.TestValidate(request);
+        result.ShouldNotHaveValidationErrorFor(x => x.Amount);
+    }
+
+    #endregion
 }

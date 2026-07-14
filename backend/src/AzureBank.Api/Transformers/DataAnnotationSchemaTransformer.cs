@@ -181,6 +181,7 @@ public sealed class DataAnnotationSchemaTransformer : IOpenApiSchemaTransformer
                         System.Globalization.CultureInfo.InvariantCulture);
                     schema.Maximum = ValidationRules.TransactionMaxAmount.ToString(
                         System.Globalization.CultureInfo.InvariantCulture);
+                    schema.MultipleOf = 0.01m;
                     schema.Description = $"Amount must be between ${ValidationRules.TransactionMinAmount} and ${ValidationRules.TransactionMaxAmount:N2}.";
                     break;
             }

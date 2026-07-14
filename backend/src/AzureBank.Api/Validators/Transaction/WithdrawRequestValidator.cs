@@ -1,3 +1,4 @@
+using AzureBank.Api.Validation;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Transaction;
 using FluentValidation;
@@ -18,7 +19,8 @@ public class WithdrawRequestValidator : AbstractValidator<WithdrawRequest>
             .GreaterThanOrEqualTo(ValidationRules.TransactionMinAmount)
             .WithMessage($"Amount must be at least {ValidationRules.TransactionMinAmount:C}.")
             .LessThanOrEqualTo(ValidationRules.TransactionMaxAmount)
-            .WithMessage($"Amount cannot exceed {ValidationRules.TransactionMaxAmount:C}.");
+            .WithMessage($"Amount cannot exceed {ValidationRules.TransactionMaxAmount:C}.")
+            .ValidMoneyScale();
 
         RuleFor(x => x.Pin)
             .NotEmpty().WithMessage("PIN is required for withdrawals.")
