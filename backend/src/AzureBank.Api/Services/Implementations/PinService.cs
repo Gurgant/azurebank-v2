@@ -1,6 +1,7 @@
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Entities;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -69,36 +70,85 @@ public sealed class PinService : IPinVerifier
             // Success: clear any accumulated failures / expired lock.
             if (user.PinAccessFailedCount != 0 || user.PinLockoutEnd is not null)
             {
-                user.PinAccessFailedCount = 0;
-                user.PinLockoutEnd = null;
-                await db.SaveChangesAsync();
+                await ResetLockoutAsync(db, user);
             }
             _logger.LogInformation("PIN verified successfully for user {UserId}", userId);
             return true;
         }
 
-        // Wrong PIN. A non-null PinLockoutEnd here can only be an EXPIRED lock
-        // (an active one already threw in the pre-check above), so it starts a
-        // fresh failure window at attempt #1; otherwise accumulate.
-        var hadExpiredLock = user.PinLockoutEnd is not null;
-        var failures = hadExpiredLock ? 1 : user.PinAccessFailedCount + 1;
-        user.PinLockoutEnd = null;
+        // Wrong PIN. Increment ATOMICALLY (a set-based UPDATE, not read-modify-write)
+        // so concurrent wrong attempts cannot lose updates and slip past the
+        // threshold; also clear any now-expired lock. Because crossing the
+        // threshold resets the counter to 0, a fresh window after an expired lock
+        // starts naturally at 1 — no special case needed.
+        var failures = await IncrementFailureAsync(db, user);
 
         if (failures >= ValidationRules.MaxPinAttempts)
         {
             var until = now.AddMinutes(ValidationRules.PinLockoutMinutes);
-            user.PinAccessFailedCount = 0;   // the lock window is now authoritative
-            user.PinLockoutEnd = until;
-            await db.SaveChangesAsync();
+            await ApplyLockAsync(db, user, until);
             _logger.LogWarning("PIN locked for user {UserId} until {Until} after {Max} wrong attempts",
                 userId, until, ValidationRules.MaxPinAttempts);
             throw PinLockedException.Until(until, now);
         }
 
-        user.PinAccessFailedCount = failures;
-        await db.SaveChangesAsync();
         _logger.LogWarning("Invalid PIN attempt {Count}/{Max} for user {UserId}",
             failures, ValidationRules.MaxPinAttempts, userId);
         return false;
+    }
+
+    // ---- Atomic lockout-state writers ----
+    // ExecuteUpdate issues a single set-based SQL UPDATE (no read-modify-write, so
+    // no lost updates under concurrency). It is relational-only, so the InMemory
+    // test provider falls back to a tracked write (single-threaded there anyway).
+
+    private static async Task<int> IncrementFailureAsync(AzureBankDbContext db, ApplicationUser user)
+    {
+        if (db.Database.IsRelational())
+        {
+            await db.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.PinAccessFailedCount, u => u.PinAccessFailedCount + 1)
+                    .SetProperty(u => u.PinLockoutEnd, (DateTimeOffset?)null));
+            return await db.Users.Where(u => u.Id == user.Id)
+                .Select(u => u.PinAccessFailedCount).FirstAsync();
+        }
+
+        user.PinAccessFailedCount += 1;
+        user.PinLockoutEnd = null;
+        await db.SaveChangesAsync();
+        return user.PinAccessFailedCount;
+    }
+
+    private static async Task ApplyLockAsync(AzureBankDbContext db, ApplicationUser user, DateTimeOffset until)
+    {
+        if (db.Database.IsRelational())
+        {
+            await db.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.PinLockoutEnd, until)
+                    .SetProperty(u => u.PinAccessFailedCount, 0));
+            return;
+        }
+
+        user.PinLockoutEnd = until;      // the lock window is now authoritative
+        user.PinAccessFailedCount = 0;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task ResetLockoutAsync(AzureBankDbContext db, ApplicationUser user)
+    {
+        if (db.Database.IsRelational())
+        {
+            await db.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.PinAccessFailedCount, 0)
+                    .SetProperty(u => u.PinLockoutEnd, (DateTimeOffset?)null));
+            return;
+        }
+
+        user.PinAccessFailedCount = 0;
+        user.PinLockoutEnd = null;
+        await db.SaveChangesAsync();
     }
 }
