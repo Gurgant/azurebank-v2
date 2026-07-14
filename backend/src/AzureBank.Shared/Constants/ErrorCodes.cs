@@ -11,6 +11,7 @@ public static class ErrorCodes
     public const string SessionExpired = "SESSION_EXPIRED";
     public const string PinRequired = "PIN_REQUIRED";
     public const string InvalidPin = "INVALID_PIN";
+    public const string PinLocked = "PIN_LOCKED";
 
     // Token Authentication (JWT Bearer)
     public const string TokenMissing = "AUTH_TOKEN_MISSING";

@@ -27,6 +27,7 @@ public class AuthServiceTests : IDisposable
     private readonly UserMapper _userMapper;
     private readonly AccountMapper _accountMapper;
     private readonly Mock<ILogger<AuthService>> _loggerMock;
+    private readonly Mock<IPinVerifier> _pinVerifierMock;
     private readonly AuthService _sut;
 
     public AuthServiceTests()
@@ -47,12 +48,14 @@ public class AuthServiceTests : IDisposable
         _userMapper = new UserMapper();
         _accountMapper = new AccountMapper();
         _loggerMock = new Mock<ILogger<AuthService>>();
+        _pinVerifierMock = new Mock<IPinVerifier>();
 
         _sut = new AuthService(
             _userManagerMock.Object,
             _context,
             _jwtServiceMock.Object,
             _passwordHasherMock.Object,
+            _pinVerifierMock.Object,
             _userMapper,
             _accountMapper,
             _loggerMock.Object);
@@ -389,101 +392,21 @@ public class AuthServiceTests : IDisposable
 
     #region VerifyPinAsync Tests
 
+    // AuthService.VerifyPinAsync delegates to IPinVerifier (PinService), which
+    // owns the PIN verification + attempt-limiting logic and is covered in
+    // PinServiceTests. Here we only assert the delegation.
     [Fact]
-    public async Task VerifyPinAsync_ValidPin_ReturnsTrue()
+    public async Task VerifyPinAsync_DelegatesToPinVerifier()
     {
-        // Arrange
-        var user = CreateTestUser();
-        user.PinHash = "hashed-pin";
+        var userId = Guid.NewGuid();
+        _pinVerifierMock
+            .Setup(x => x.VerifyPinAsync(userId, "123456"))
+            .ReturnsAsync(true);
 
-        _userManagerMock
-            .Setup(x => x.FindByIdAsync(user.Id.ToString()))
-            .ReturnsAsync(user);
+        var result = await _sut.VerifyPinAsync(userId, "123456");
 
-        _passwordHasherMock
-            .Setup(x => x.VerifyPin(user.PinHash, "123456"))
-            .Returns(true);
-
-        // Act
-        var result = await _sut.VerifyPinAsync(user.Id, "123456");
-
-        // Assert
         result.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task VerifyPinAsync_InvalidPin_ReturnsFalse()
-    {
-        // Arrange
-        var user = CreateTestUser();
-        user.PinHash = "hashed-pin";
-
-        _userManagerMock
-            .Setup(x => x.FindByIdAsync(user.Id.ToString()))
-            .ReturnsAsync(user);
-
-        _passwordHasherMock
-            .Setup(x => x.VerifyPin(user.PinHash, "654321"))
-            .Returns(false);
-
-        // Act
-        var result = await _sut.VerifyPinAsync(user.Id, "654321");
-
-        // Assert
-        result.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task VerifyPinAsync_UserNotFound_ReturnsFalse()
-    {
-        // Arrange
-        var nonExistentId = Guid.NewGuid();
-
-        _userManagerMock
-            .Setup(x => x.FindByIdAsync(nonExistentId.ToString()))
-            .ReturnsAsync((ApplicationUser?)null);
-
-        // Act
-        var result = await _sut.VerifyPinAsync(nonExistentId, "123456");
-
-        // Assert
-        result.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task VerifyPinAsync_NoPinSet_ReturnsFalse()
-    {
-        // Arrange
-        var user = CreateTestUser();
-        user.PinHash = null; // No PIN set
-
-        _userManagerMock
-            .Setup(x => x.FindByIdAsync(user.Id.ToString()))
-            .ReturnsAsync(user);
-
-        // Act
-        var result = await _sut.VerifyPinAsync(user.Id, "123456");
-
-        // Assert
-        result.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task VerifyPinAsync_EmptyPinHash_ReturnsFalse()
-    {
-        // Arrange
-        var user = CreateTestUser();
-        user.PinHash = ""; // Empty PIN hash
-
-        _userManagerMock
-            .Setup(x => x.FindByIdAsync(user.Id.ToString()))
-            .ReturnsAsync(user);
-
-        // Act
-        var result = await _sut.VerifyPinAsync(user.Id, "123456");
-
-        // Assert
-        result.Should().BeFalse();
+        _pinVerifierMock.Verify(x => x.VerifyPinAsync(userId, "123456"), Times.Once);
     }
 
     #endregion

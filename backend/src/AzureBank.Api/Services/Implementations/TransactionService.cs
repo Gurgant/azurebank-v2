@@ -1,12 +1,12 @@
 using AzureBank.Api.Mappers;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
-using AzureBank.Shared.Services.Interfaces;
 using AzureBank.Shared.Utilities;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,20 +19,20 @@ public class TransactionService : ITransactionService
 {
     private readonly AzureBankDbContext _context;
     private readonly IAccountAccessService _accountAccess;
-    private readonly IPasswordHasher _passwordHasher;
+    private readonly IPinVerifier _pinVerifier;
     private readonly TransactionMapper _mapper;
     private readonly ILogger<TransactionService> _logger;
 
     public TransactionService(
         AzureBankDbContext context,
         IAccountAccessService accountAccess,
-        IPasswordHasher passwordHasher,
+        IPinVerifier pinVerifier,
         TransactionMapper mapper,
         ILogger<TransactionService> logger)
     {
         _context = context;
         _accountAccess = accountAccess;
-        _passwordHasher = passwordHasher;
+        _pinVerifier = pinVerifier;
         _mapper = mapper;
         _logger = logger;
     }
@@ -100,12 +100,14 @@ public class TransactionService : ITransactionService
         var user = await _context.Users.FindAsync(userId);
         if (user == null || string.IsNullOrEmpty(user.PinHash))
         {
-            throw new BusinessRuleException("PIN must be set before making withdrawals.", "PIN_REQUIRED");
+            throw new BusinessRuleException("PIN must be set before making withdrawals.", ErrorCodes.PinRequired);
         }
 
-        if (!_passwordHasher.VerifyPin(user.PinHash, request.Pin))
+        // Verify the PIN with attempt-limiting: throws 429 PIN_LOCKED if the PIN
+        // is locked (before any money moves), otherwise 401 on a wrong PIN.
+        if (!await _pinVerifier.VerifyPinAsync(userId, request.Pin))
         {
-            throw new AuthenticationException("Invalid PIN.", "INVALID_PIN");
+            throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
         }
 
         // Optimistic-concurrency retry: see DepositAsync. The funds check

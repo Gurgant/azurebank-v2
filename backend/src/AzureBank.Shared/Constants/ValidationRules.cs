@@ -38,6 +38,10 @@ public static class ValidationRules
     // This ensures Schemathesis generates only ASCII digits for contract testing
     public const string PinPattern = @"^[0-9]{6}$";
     public const string PinPatternMessage = "PIN must be exactly 6 digits.";
+    /// <summary>Consecutive wrong PIN attempts before the PIN is temporarily locked.</summary>
+    public const int MaxPinAttempts = 3;
+    /// <summary>How long the PIN stays locked after too many wrong attempts.</summary>
+    public const int PinLockoutMinutes = 15;
 
     // ═══════════════════════════════════════════════════════════════
     // EMAIL

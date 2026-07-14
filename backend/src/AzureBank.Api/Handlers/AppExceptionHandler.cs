@@ -56,6 +56,15 @@ public class AppExceptionHandler : IExceptionHandler
             }
         }
 
+        // Emit a standard Retry-After header when the exception advertises a
+        // back-off (e.g. PIN lockout, HTTP 429) so generic clients and proxies
+        // honor it (RFC 9110 §10.2.3), in addition to the ProblemDetails fields.
+        if (appException.Details is not null
+            && appException.Details.TryGetValue("retryAfterSeconds", out var retryAfter))
+        {
+            httpContext.Response.Headers.RetryAfter = Convert.ToInt32(retryAfter).ToString();
+        }
+
         httpContext.Response.StatusCode = appException.StatusCode;
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
 
@@ -71,6 +80,7 @@ public class AppExceptionHandler : IExceptionHandler
         409 => "Conflict",
         413 => "Payload Too Large",
         422 => "Unprocessable Entity",
+        429 => "Too Many Requests",
         _ => "Error"
     };
 }

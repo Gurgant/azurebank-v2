@@ -117,6 +117,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPasswordHasher, Shared.Services.Implementations.PasswordHasher>();
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<IAuthService, AuthService>();
+        // PIN attempt-limiting lives in one place; withdrawals depend on the narrow
+        // IPinVerifier. PinService persists lockout state in its own DbContext scope.
+        services.AddScoped<IPinVerifier, PinService>();
         services.AddScoped<IAccountAccessService, AccountAccessService>();
         services.AddScoped<IAccountService, AccountService>();
         services.AddScoped<ITransactionService, TransactionService>();
