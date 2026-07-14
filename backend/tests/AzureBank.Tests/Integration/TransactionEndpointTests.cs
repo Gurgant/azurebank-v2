@@ -192,6 +192,9 @@ public class TransactionEndpointTests : IntegrationTestBase
         var blocked = await PostMonetaryAsync("/api/transactions/withdraw", correct);
         blocked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
         blocked.Headers.RetryAfter.Should().NotBeNull("a lockout must advertise Retry-After");
+        blocked.Headers.RetryAfter!.Delta.Should().NotBeNull();
+        blocked.Headers.RetryAfter.Delta!.Value.Should().BeCloseTo(
+            TimeSpan.FromMinutes(ValidationRules.PinLockoutMinutes), TimeSpan.FromSeconds(30));
         (await blocked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PinLocked);
 
         // No withdrawal transaction was created: the lock precedes the money movement.

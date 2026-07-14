@@ -103,6 +103,11 @@ public class PinServiceTests : IDisposable
         result.Should().BeFalse();
         user.PinAccessFailedCount.Should().Be(1);
         user.PinLockoutEnd.Should().BeNull();
+
+        // Prove persistence (not just a tracked-instance mutation): reload fresh.
+        _context.ChangeTracker.Clear();
+        (await _context.Users.SingleAsync(u => u.Id == user.Id))
+            .PinAccessFailedCount.Should().Be(1);
     }
 
     [Fact]
@@ -116,6 +121,8 @@ public class PinServiceTests : IDisposable
         var ex = (await act.Should().ThrowAsync<PinLockedException>()).Which;
         ex.StatusCode.Should().Be(429);
         ex.ErrorCode.Should().Be(ErrorCodes.PinLocked);
+        ((int)ex.Details!["retryAfterSeconds"]).Should().BePositive()
+            .And.BeLessThanOrEqualTo(ValidationRules.PinLockoutMinutes * 60);
         user.PinLockoutEnd.Should().NotBeNull();
         user.PinLockoutEnd!.Value.Should().BeAfter(DateTimeOffset.UtcNow);
     }
@@ -142,6 +149,11 @@ public class PinServiceTests : IDisposable
         result.Should().BeTrue();
         user.PinAccessFailedCount.Should().Be(0);
         user.PinLockoutEnd.Should().BeNull();
+
+        // Prove the reset persisted, not just the tracked instance.
+        _context.ChangeTracker.Clear();
+        (await _context.Users.SingleAsync(u => u.Id == user.Id))
+            .PinAccessFailedCount.Should().Be(0);
     }
 
     [Fact]

@@ -100,10 +100,10 @@ public class TransactionService : ITransactionService
         var user = await _context.Users.FindAsync(userId);
         if (user == null || string.IsNullOrEmpty(user.PinHash))
         {
-            throw new BusinessRuleException("PIN must be set before making withdrawals.", "PIN_REQUIRED");
+            throw new BusinessRuleException("PIN must be set before making withdrawals.", ErrorCodes.PinRequired);
         }
 
-        // Verify the PIN with attempt-limiting: throws 423 PIN_LOCKED if the PIN
+        // Verify the PIN with attempt-limiting: throws 429 PIN_LOCKED if the PIN
         // is locked (before any money moves), otherwise 401 on a wrong PIN.
         if (!await _pinVerifier.VerifyPinAsync(userId, request.Pin))
         {

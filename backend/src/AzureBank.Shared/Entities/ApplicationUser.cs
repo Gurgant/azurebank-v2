@@ -20,8 +20,9 @@ public class ApplicationUser : IdentityUser<Guid>
 
     /// <summary>
     /// Consecutive wrong PIN attempts since the last success. Reset to 0 on a
-    /// correct PIN. Kept separate from Identity's AccessFailedCount (password)
-    /// so PIN and password lockouts never interfere.
+    /// correct PIN, and also when the threshold is crossed and the PIN is locked
+    /// (the lockout window then becomes authoritative). Kept separate from
+    /// Identity's AccessFailedCount (password) so PIN and password lockouts never interfere.
     /// </summary>
     public int PinAccessFailedCount { get; set; }
 

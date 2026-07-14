@@ -12,7 +12,7 @@ public interface IPinVerifier
     /// Verifies the PIN and applies attempt-limiting. Returns <c>true</c> on a
     /// correct PIN (resetting the failure counter), <c>false</c> on a wrong PIN
     /// still under the lockout threshold. Throws
-    /// <see cref="AzureBank.Shared.Exceptions.PinLockedException"/> (HTTP 423)
+    /// <see cref="AzureBank.Shared.Exceptions.PinLockedException"/> (HTTP 429)
     /// when the PIN is already locked or when this attempt crosses the threshold.
     /// </summary>
     Task<bool> VerifyPinAsync(Guid userId, string pin);

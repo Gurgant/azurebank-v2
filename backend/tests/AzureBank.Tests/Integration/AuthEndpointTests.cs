@@ -258,6 +258,9 @@ public class AuthEndpointTests : IntegrationTestBase
             new VerifyPinRequest { Pin = "654321" }, JsonOptions);
         locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
         locked.Headers.RetryAfter.Should().NotBeNull("a lockout must advertise Retry-After");
+        locked.Headers.RetryAfter!.Delta.Should().NotBeNull();
+        locked.Headers.RetryAfter.Delta!.Value.Should().BeCloseTo(
+            TimeSpan.FromMinutes(ValidationRules.PinLockoutMinutes), TimeSpan.FromSeconds(30));
         (await locked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PinLocked);
 
         // Even the CORRECT PIN is refused while locked.
