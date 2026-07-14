@@ -136,6 +136,7 @@ public class AuthController : ControllerBase
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status423Locked)] // PIN_LOCKED (ADR-0010)
     public async Task<ActionResult<ApiResponse<object>>> VerifyPin([FromBody] VerifyPinRequest request)
     {
         await _verifyPinValidator.ValidateAndThrowAsync(request);

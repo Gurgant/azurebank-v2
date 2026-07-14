@@ -24,6 +24,7 @@ public class AuthService : IAuthService
     private readonly AzureBankDbContext _context;
     private readonly IJwtService _jwtService;
     private readonly IPasswordHasher _passwordHasher;
+    private readonly IPinVerifier _pinVerifier;
     private readonly UserMapper _userMapper;
     private readonly AccountMapper _accountMapper;
     private readonly ILogger<AuthService> _logger;
@@ -33,6 +34,7 @@ public class AuthService : IAuthService
         AzureBankDbContext context,
         IJwtService jwtService,
         IPasswordHasher passwordHasher,
+        IPinVerifier pinVerifier,
         UserMapper userMapper,
         AccountMapper accountMapper,
         ILogger<AuthService> logger)
@@ -41,6 +43,7 @@ public class AuthService : IAuthService
         _context = context;
         _jwtService = jwtService;
         _passwordHasher = passwordHasher;
+        _pinVerifier = pinVerifier;
         _userMapper = userMapper;
         _accountMapper = accountMapper;
         _logger = logger;
@@ -164,35 +167,10 @@ public class AuthService : IAuthService
     }
 
     /// <inheritdoc />
-    public async Task<bool> VerifyPinAsync(Guid userId, string pin)
-    {
-        var user = await _userManager.FindByIdAsync(userId.ToString());
-
-        if (user == null)
-        {
-            _logger.LogWarning("PIN verification attempted for non-existent user {UserId}", userId);
-            return false;
-        }
-
-        if (string.IsNullOrEmpty(user.PinHash))
-        {
-            _logger.LogWarning("PIN verification attempted for user {UserId} without PIN set", userId);
-            return false;
-        }
-
-        var isValid = _passwordHasher.VerifyPin(user.PinHash, pin);
-
-        if (isValid)
-        {
-            _logger.LogInformation("PIN verified successfully for user {UserId}", userId);
-        }
-        else
-        {
-            _logger.LogWarning("Invalid PIN attempt for user {UserId}", userId);
-        }
-
-        return isValid;
-    }
+    public Task<bool> VerifyPinAsync(Guid userId, string pin) =>
+        // Delegated to PinService (attempt-limiting + lockout persisted in its own
+        // DbContext scope, so it never rides the caller's transaction/idempotency).
+        _pinVerifier.VerifyPinAsync(userId, pin);
 
     /// <inheritdoc />
     public async Task SetPinAsync(Guid userId, SetPinRequest request)

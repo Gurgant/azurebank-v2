@@ -102,6 +102,7 @@ public class TransactionController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status423Locked)] // PIN_LOCKED (ADR-0010)
     public async Task<ActionResult<ApiResponse<WithdrawResponse>>> Withdraw([FromBody] WithdrawRequest request)
     {
         await _withdrawValidator.ValidateAndThrowAsync(request);

@@ -71,6 +71,7 @@ public class AppExceptionHandler : IExceptionHandler
         409 => "Conflict",
         413 => "Payload Too Large",
         422 => "Unprocessable Entity",
+        423 => "Locked",
         _ => "Error"
     };
 }
