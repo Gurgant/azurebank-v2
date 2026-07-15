@@ -55,7 +55,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IValidateOptions<PinHashingOptions>, PinHashingOptionsValidator>();
 
         // Add PasswordHasher (from Shared layer) - built with the PIN pepper.
-        services.AddScoped<IPasswordHasher>(sp =>
+        // Singleton for the same reasons as the API: immutable, singleton-scoped deps.
+        services.AddSingleton<IPasswordHasher>(sp =>
             new PasswordHasher(sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
 
         // Add Seed Data Options

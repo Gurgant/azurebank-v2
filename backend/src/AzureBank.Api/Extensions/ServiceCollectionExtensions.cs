@@ -125,7 +125,10 @@ public static class ServiceCollectionExtensions
 
         // Core services
         // PasswordHasher needs the PIN pepper (ADR-0011), so build it from options.
-        services.AddScoped<IPasswordHasher>(sp =>
+        // Singleton: it is immutable after construction (the pepper keyring is built
+        // once and never mutated → thread-safe) and its only dependency is the
+        // singleton IOptions, so a per-request scope would just re-allocate the ring.
+        services.AddSingleton<IPasswordHasher>(sp =>
             new Shared.Services.Implementations.PasswordHasher(
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();

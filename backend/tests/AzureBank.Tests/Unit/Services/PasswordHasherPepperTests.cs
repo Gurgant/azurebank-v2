@@ -248,6 +248,23 @@ public class PasswordHasherPepperTests
     }
 
     [Fact]
+    public void Hasher_IsThreadSafe_WhenShared()
+    {
+        // The hasher is registered as a singleton, so a single instance is shared
+        // across all concurrent requests. It must be safe to hash/verify in parallel
+        // (immutable after construction: readonly ring, no shared mutable state).
+        var sut = Peppered();
+        var hash = sut.HashPin("123456");
+
+        Parallel.For(0, 32, _ =>
+        {
+            sut.HashPin("123456").Should().Contain("keyid=1");
+            sut.VerifyPin(hash, "123456").Should().BeTrue();
+            sut.VerifyPin(hash, "000000").Should().BeFalse();
+        });
+    }
+
+    [Fact]
     public void Password_IsNeverPeppered_EvenOnAPepperedHasher()
     {
         var sut = Peppered();
