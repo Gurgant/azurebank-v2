@@ -10,6 +10,7 @@
     <Project Path="src/AzureBank.Shared/AzureBank.Shared.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AzureBank.Bff.Tests/AzureBank.Bff.Tests.csproj" />
     <Project Path="tests/AzureBank.Tests/AzureBank.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

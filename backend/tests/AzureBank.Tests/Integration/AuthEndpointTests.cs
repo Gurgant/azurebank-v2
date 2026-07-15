@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
@@ -74,8 +75,61 @@ public class AuthEndpointTests : IntegrationTestBase
         };
         var response = await Client.PostAsJsonAsync("/api/auth/register", request2, JsonOptions);
 
-        // Assert
+        // Assert - 409, but enumeration-NEUTRAL: no "already registered" / field-specific
+        // wording, and the generic REGISTRATION_FAILED code, so an anonymous caller can't
+        // read that it was specifically the EMAIL that collided (ADR-0013).
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContainEquivalentOf("already registered");
+        body.Should().NotContainEquivalentOf("already taken");
+        body.Should().NotContain(ErrorCodes.DuplicateEmail);
+        body.Should().NotContain(ErrorCodes.DuplicateAzureTag);
+
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RegistrationFailed);
+    }
+
+    [Fact]
+    public async Task Register_DuplicateEmail_And_DuplicateHandle_AreIndistinguishable()
+    {
+        // Arrange - one existing user
+        var existing = new RegisterRequest
+        {
+            AzureTag = $"taken_{Guid.NewGuid().ToString("N")[..8]}",
+            Email = $"taken{Guid.NewGuid():N}@example.com",
+            Password = "SecurePass123!",
+            FirstName = "Taken",
+            LastName = "User"
+        };
+        await Client.PostAsJsonAsync("/api/auth/register", existing, JsonOptions);
+
+        // Act - collide on the EMAIL (fresh handle) vs. collide on the HANDLE (fresh email)
+        var dupEmail = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = $"fresh_{Guid.NewGuid().ToString("N")[..8]}",
+            Email = existing.Email,
+            Password = "SecurePass123!", FirstName = "Alice", LastName = "Anders"
+        }, JsonOptions);
+
+        var dupHandle = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = existing.AzureTag,
+            Email = $"fresh{Guid.NewGuid():N}@example.com",
+            Password = "SecurePass123!", FirstName = "Bob", LastName = "Brown"
+        }, JsonOptions);
+
+        // Assert - identical status + detail + code, so the response can't reveal WHICH
+        // field collided (the residual 409-vs-201 oracle is documented in ADR-0013).
+        dupEmail.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        dupHandle.StatusCode.Should().Be(dupEmail.StatusCode);
+
+        var emailBody = await dupEmail.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        var handleBody = await dupHandle.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        handleBody.GetProperty("detail").GetString()
+            .Should().Be(emailBody.GetProperty("detail").GetString());
+        handleBody.GetProperty("errorCode").GetString()
+            .Should().Be(emailBody.GetProperty("errorCode").GetString());
     }
 
     [Fact]

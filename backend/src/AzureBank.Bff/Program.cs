@@ -1,11 +1,16 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Threading.RateLimiting;
+using AzureBank.Bff;
 using AzureBank.Bff.Middleware;
 using AzureBank.Bff.Options;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using AzureBank.Bff.Services;
 using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Bff.Transforms;
+using AzureBank.Shared.Constants;
 using Serilog;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -77,16 +82,57 @@ try
         .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
         .AddTransforms<BearerTokenTransformProvider>();
 
-    // Rate limiting
+    // Rate limiting (ADR-0013): per-client-IP. A generous GlobalLimiter is the anti-DoS
+    // baseline applied to ALL traffic — including the YARP-proxied /api/* bypass — while a
+    // tight "auth" policy guards login/register against brute-force + enumeration at scale.
+    // Rejections return 429 + Retry-After + a ProblemDetails matching the API's error shape.
+    var rateLimiting = builder.Configuration
+        .GetSection(RateLimitingOptions.SectionName).Get<RateLimitingOptions>() ?? new RateLimitingOptions();
+
+    static string ClientIp(HttpContext context) =>
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
     builder.Services.AddRateLimiter(options =>
     {
-        options.AddFixedWindowLimiter("fixed", config =>
+        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+            RateLimitPartition.GetFixedWindowLimiter(ClientIp(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = rateLimiting.GlobalPermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimiting.GlobalWindowSeconds),
+                QueueLimit = 0,
+            }));
+
+        options.AddPolicy(RateLimitPolicies.Auth, context =>
+            RateLimitPartition.GetFixedWindowLimiter(ClientIp(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = rateLimiting.AuthPermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimiting.AuthWindowSeconds),
+                QueueLimit = 0,
+            }));
+
+        options.OnRejected = async (context, cancellationToken) =>
         {
-            config.PermitLimit = 100;
-            config.Window = TimeSpan.FromMinutes(1);
-            config.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-            config.QueueLimit = 10;
-        });
+            var response = context.HttpContext.Response;
+            response.StatusCode = StatusCodes.Status429TooManyRequests;
+            if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            {
+                response.Headers.RetryAfter =
+                    ((int)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+            }
+
+            var problem = new ProblemDetails
+            {
+                Status = StatusCodes.Status429TooManyRequests,
+                Title = "Too Many Requests",
+                Detail = "Too many requests. Please retry later.",
+                Type = "https://httpstatuses.com/429",
+                Instance = context.HttpContext.Request.Path,
+            };
+            problem.Extensions["errorCode"] = ErrorCodes.RateLimitExceeded;
+            problem.Extensions["traceId"] = Activity.Current?.Id ?? context.HttpContext.TraceIdentifier;
+
+            await response.WriteAsJsonAsync(problem, cancellationToken);
+        };
     });
 
     // CORS for frontend
@@ -172,3 +218,6 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+/// <summary>Exposed so the WebApplicationFactory in AzureBank.Bff.Tests can host the app.</summary>
+public partial class Program { }

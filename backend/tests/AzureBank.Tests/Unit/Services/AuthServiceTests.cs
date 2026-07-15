@@ -414,9 +414,10 @@ public class AuthServiceTests : IDisposable
         var act = () => _sut.RegisterAsync(request);
 
         // Assert
+        // Enumeration-neutral: generic code, no field-specific message (ADR-0013).
         await act.Should()
             .ThrowAsync<ConflictException>()
-            .WithMessage("*Email is already registered*");
+            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
     [Fact]
@@ -446,9 +447,10 @@ public class AuthServiceTests : IDisposable
         var act = () => _sut.RegisterAsync(request);
 
         // Assert
+        // Enumeration-neutral: generic code, no field-specific message (ADR-0013).
         await act.Should()
             .ThrowAsync<ConflictException>()
-            .WithMessage("*AzureTag is already taken*");
+            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
     [Fact]
@@ -477,9 +479,10 @@ public class AuthServiceTests : IDisposable
         var act = () => _sut.RegisterAsync(request);
 
         // Assert
+        // Enumeration-neutral: generic code, no field-specific message (ADR-0013).
         await act.Should()
             .ThrowAsync<ConflictException>()
-            .WithMessage("*AzureTag is already taken*");
+            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
     [Fact]

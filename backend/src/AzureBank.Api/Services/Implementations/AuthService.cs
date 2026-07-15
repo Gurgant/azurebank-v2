@@ -203,17 +203,26 @@ public class AuthService : IAuthService
     /// <inheritdoc />
     public async Task<RegisterResponse> RegisterAsync(RegisterRequest request)
     {
-        // Check for existing email
+        // Reject duplicates with a single enumeration-NEUTRAL response so an anonymous
+        // caller can't read which field (email or handle) collided — the specific reason
+        // is logged server-side only, as a structured SecurityEvent an operator can alert
+        // on (ADR-0013). This is defense-in-depth: it removes the plaintext label, but it
+        // does NOT close the structural oracle (a duplicate returns 409 while a fresh email
+        // returns 201 + a token). Full closure needs the deferred email-confirmation flow.
+        var normalizedAzureTag = request.AzureTag.ToLower();
         if (await _userManager.FindByEmailAsync(request.Email) != null)
         {
-            throw new ConflictException("Email is already registered.", "DUPLICATE_EMAIL");
+            _logger.LogWarning(
+                "SecurityEvent {SecurityEvent}: registration rejected, email already registered ({Email})",
+                "DuplicateRegistration", request.Email);
+            throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
-
-        // Check for existing AzureTag
-        var normalizedAzureTag = request.AzureTag.ToLower();
         if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag))
         {
-            throw new ConflictException("AzureTag is already taken.", "DUPLICATE_AZURE_TAG");
+            _logger.LogWarning(
+                "SecurityEvent {SecurityEvent}: registration rejected, handle already taken ({AzureTag})",
+                "DuplicateRegistration", normalizedAzureTag);
+            throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
 
         var user = new ApplicationUser
