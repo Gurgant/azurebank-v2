@@ -133,6 +133,9 @@ public static class ServiceCollectionExtensions
             new Shared.Services.Implementations.PasswordHasher(
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
+        // Login-timing equalizer (ADR-0012): singleton so the reference hash is computed
+        // once at startup, not per unknown-email request (which would double the hash cost).
+        services.AddSingleton<Security.ILoginTimingEqualizer, Security.LoginTimingEqualizer>();
         services.AddScoped<IAuthService, AuthService>();
         // PIN attempt-limiting lives in one place; withdrawals depend on the narrow
         // IPinVerifier. PinService persists lockout state in its own DbContext scope.

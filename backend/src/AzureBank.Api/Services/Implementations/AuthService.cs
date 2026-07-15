@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
@@ -27,6 +28,7 @@ public class AuthService : IAuthService
     private readonly IPinVerifier _pinVerifier;
     private readonly UserMapper _userMapper;
     private readonly AccountMapper _accountMapper;
+    private readonly ILoginTimingEqualizer _timingEqualizer;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -37,6 +39,7 @@ public class AuthService : IAuthService
         IPinVerifier pinVerifier,
         UserMapper userMapper,
         AccountMapper accountMapper,
+        ILoginTimingEqualizer timingEqualizer,
         ILogger<AuthService> logger)
     {
         _userManager = userManager;
@@ -46,22 +49,8 @@ public class AuthService : IAuthService
         _pinVerifier = pinVerifier;
         _userMapper = userMapper;
         _accountMapper = accountMapper;
+        _timingEqualizer = timingEqualizer;
         _logger = logger;
-    }
-
-    // A throwaway user + lazily-computed hash used to spend the SAME password-hash cost
-    // a real account would when the email is unknown, so account existence can't be told
-    // apart by the dominant (PBKDF2) hash latency. It uses the UserManager's OWN hasher,
-    // so the cost automatically tracks whatever hasher CheckPasswordAsync uses (rather
-    // than hardcoding framework defaults). PasswordHasher ignores the user argument.
-    private static readonly ApplicationUser DummyUser =
-        new() { AzureTag = string.Empty, FirstName = string.Empty, LastName = string.Empty };
-    private string? _dummyHash;
-
-    private void DummyPasswordVerify(string password)
-    {
-        _dummyHash ??= _userManager.PasswordHasher.HashPassword(DummyUser, "timing-equalization-dummy");
-        _userManager.PasswordHasher.VerifyHashedPassword(DummyUser, _dummyHash, password);
     }
 
     /// <inheritdoc />
@@ -74,7 +63,7 @@ public class AuthService : IAuthService
             // an unknown email can't be told apart by that latency; the response body is
             // already identical to a wrong password. A smaller write-latency residual on
             // the account-exists path remains (ADR-0012) — bounded by upstream rate limiting.
-            DummyPasswordVerify(request.Password);
+            _timingEqualizer.SpendVerifyCost(request.Password);
             _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
             throw new AuthenticationException("Invalid email or password.");
         }

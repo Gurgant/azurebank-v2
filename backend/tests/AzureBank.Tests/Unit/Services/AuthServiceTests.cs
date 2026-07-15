@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
@@ -30,6 +31,7 @@ public class AuthServiceTests : IDisposable
     private readonly AccountMapper _accountMapper;
     private readonly Mock<ILogger<AuthService>> _loggerMock;
     private readonly Mock<IPinVerifier> _pinVerifierMock;
+    private readonly Mock<ILoginTimingEqualizer> _timingEqualizerMock;
     private readonly AuthService _sut;
 
     public AuthServiceTests()
@@ -44,8 +46,6 @@ public class AuthServiceTests : IDisposable
         var userStoreMock = new Mock<IUserStore<ApplicationUser>>();
         _userManagerMock = new Mock<UserManager<ApplicationUser>>(
             userStoreMock.Object, null!, null!, null!, null!, null!, null!, null!, null!);
-        // The unknown-user timing-equalization path uses UserManager.PasswordHasher.
-        _userManagerMock.Object.PasswordHasher = new PasswordHasher<ApplicationUser>();
 
         _jwtServiceMock = new Mock<IJwtService>();
         _passwordHasherMock = new Mock<IPasswordHasher>();
@@ -53,6 +53,7 @@ public class AuthServiceTests : IDisposable
         _accountMapper = new AccountMapper();
         _loggerMock = new Mock<ILogger<AuthService>>();
         _pinVerifierMock = new Mock<IPinVerifier>();
+        _timingEqualizerMock = new Mock<ILoginTimingEqualizer>();
 
         _sut = new AuthService(
             _userManagerMock.Object,
@@ -62,6 +63,7 @@ public class AuthServiceTests : IDisposable
             _pinVerifierMock.Object,
             _userMapper,
             _accountMapper,
+            _timingEqualizerMock.Object,
             _loggerMock.Object);
     }
 
@@ -316,6 +318,9 @@ public class AuthServiceTests : IDisposable
         await act.Should()
             .ThrowAsync<AuthenticationException>()
             .WithMessage("Invalid email or password.");
+        // The unknown-email path must spend the equalizing verify cost (anti-enumeration,
+        // ADR-0012) — this pins that the timing mitigation is actually performed.
+        _timingEqualizerMock.Verify(x => x.SpendVerifyCost(request.Password), Times.Once);
     }
 
     [Fact]
