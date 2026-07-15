@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Seeder.Extensions;
 
@@ -44,8 +45,19 @@ public static class ServiceCollectionExtensions
         .AddEntityFrameworkStores<Infrastructure.Data.AzureBankDbContext>()
         .AddDefaultTokenProviders();
 
-        // Add PasswordHasher (from Shared layer)
-        services.AddScoped<IPasswordHasher, PasswordHasher>();
+        // PIN-hash pepper keyring (ADR-0011). MUST match the API's Security:PinPepper,
+        // else seeded PINs won't verify. Same shared validator as the API. Eager
+        // fail-fast is triggered in Program.cs (this CLI never starts the host, so
+        // .ValidateOnStart() alone would not fire — see Program.cs).
+        services.AddOptions<PinHashingOptions>()
+            .Bind(configuration.GetSection(PinHashingOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<PinHashingOptions>, PinHashingOptionsValidator>();
+
+        // Add PasswordHasher (from Shared layer) - built with the PIN pepper.
+        // Singleton for the same reasons as the API: immutable, singleton-scoped deps.
+        services.AddSingleton<IPasswordHasher>(sp =>
+            new PasswordHasher(sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
 
         // Add Seed Data Options
         services.Configure<SeedDataOptions>(

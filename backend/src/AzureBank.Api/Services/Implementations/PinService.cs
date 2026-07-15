@@ -72,8 +72,37 @@ public sealed class PinService : IPinVerifier
             {
                 await ResetLockoutAsync(db, user);
             }
+            // Transparent pepper migration (ADR-0011): if the stored hash predates the
+            // active pepper key, re-hash the PIN now that we hold the plaintext and
+            // persist it — in this service's own scope, like the lockout bookkeeping.
+            // Best-effort: the PIN was already verified, so a transient failure of this
+            // background upgrade must NOT fail the login — it retries on the next use.
+            if (_passwordHasher.PinNeedsRehash(user.PinHash))
+            {
+                try
+                {
+                    await UpgradePinHashAsync(db, user, pin);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Transparent PIN-hash upgrade failed for user {UserId}; the correct PIN still " +
+                        "verified, so the login proceeds and the upgrade retries next time.", userId);
+                }
+            }
             _logger.LogInformation("PIN verified successfully for user {UserId}", userId);
             return true;
+        }
+
+        // A verify can fail for two very different reasons: a genuinely wrong PIN, or
+        // a stored hash whose pepper key the keyring no longer holds (a pepper retired
+        // before its hashes were drained — ADR-0011). The latter fails closed here and
+        // is indistinguishable to the counter, so surface it as an operator diagnostic.
+        if (_passwordHasher.PinPepperMissingFor(user.PinHash))
+        {
+            _logger.LogWarning(
+                "PIN verification for user {UserId} failed because the stored hash references a pepper key " +
+                "not in the keyring — a pepper may have been retired before its hashes were migrated.", userId);
         }
 
         // Wrong PIN. Increment the counter and — if it crosses the threshold —
@@ -142,6 +171,28 @@ public sealed class PinService : IPinVerifier
         }
         await db.SaveChangesAsync();
         return user.PinLockoutEnd;
+    }
+
+    /// <summary>
+    /// Re-hashes the PIN with the currently active pepper and persists it
+    /// (rehash-on-use migration, ADR-0011). Runs in this service's own scope; the
+    /// hash column is not part of any concurrency-sensitive counter, so a single
+    /// set-based update is sufficient.
+    /// </summary>
+    private async Task UpgradePinHashAsync(AzureBankDbContext db, ApplicationUser user, string pin)
+    {
+        var newHash = _passwordHasher.HashPin(pin);
+        if (db.Database.IsRelational())
+        {
+            await db.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.PinHash, newHash));
+        }
+        else
+        {
+            user.PinHash = newHash;
+            await db.SaveChangesAsync();
+        }
+        _logger.LogInformation("Upgraded PIN hash to the active pepper for user {UserId}", user.Id);
     }
 
     private static async Task ResetLockoutAsync(AzureBankDbContext db, ApplicationUser user)

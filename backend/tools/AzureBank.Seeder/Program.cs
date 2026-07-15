@@ -1,7 +1,9 @@
 using System.CommandLine;
 using AzureBank.Seeder.Commands;
 using AzureBank.Seeder.Extensions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 // ============================================
@@ -32,6 +34,12 @@ builder.Services.AddSerilog();
 builder.Services.AddSeederServices(builder.Configuration, builder.Environment);
 
 var host = builder.Build();
+
+// Fail fast on a misconfigured options set (e.g. a missing/short PIN pepper) BEFORE
+// any command runs — `reset` wipes and re-migrates the DB, so late validation would
+// destroy data then throw. This CLI never calls host.StartAsync(), so .ValidateOnStart()
+// alone would never fire; invoking the startup validator here runs it explicitly.
+host.Services.GetService<IStartupValidator>()?.Validate();
 
 // Build CLI with System.CommandLine
 var rootCommand = new RootCommand("AzureBank Database Seeder Tool")

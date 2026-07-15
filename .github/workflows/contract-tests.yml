@@ -15,6 +15,9 @@ env:
   CONNECTION_STRING: "Server=localhost,1433;Database=AzureBankTest;User Id=sa;Password=YourStrong@Passw0rd123;TrustServerCertificate=true"
   JWT_SECRET: "ci-only-throwaway-signing-key-0123456789abcdef0123456789abcdef"
   IDEMPOTENCY_HASH_KEY: "ci-only-throwaway-idempotency-hmac-key-0123456789abcdef"
+  # PIN-hash pepper (ADR-0011). The Seeder and the API MUST share this value,
+  # otherwise seeded demo PINs cannot be verified.
+  PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"
 
 jobs:
   schemathesis:
@@ -56,6 +59,7 @@ jobs:
         working-directory: backend
         env:
           ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+          Security__PinPepper: ${{ env.PIN_PEPPER }}
         run: |
           dotnet run --project tools/AzureBank.Seeder -- reset --confirm
           dotnet run --project tools/AzureBank.Seeder -- seed
@@ -66,6 +70,7 @@ jobs:
           ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
           Jwt__Secret: ${{ env.JWT_SECRET }}
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
+          Security__PinPepper: ${{ env.PIN_PEPPER }}
           ASPNETCORE_ENVIRONMENT: Development
         run: |
           dotnet run --urls "http://localhost:5068" &
@@ -126,6 +131,7 @@ jobs:
         working-directory: backend
         env:
           ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+          Security__PinPepper: ${{ env.PIN_PEPPER }}
         run: |
           dotnet run --project tools/AzureBank.Seeder -- reset --confirm
           dotnet run --project tools/AzureBank.Seeder -- seed
@@ -136,6 +142,7 @@ jobs:
           ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
           Jwt__Secret: ${{ env.JWT_SECRET }}
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
+          Security__PinPepper: ${{ env.PIN_PEPPER }}
           ASPNETCORE_ENVIRONMENT: Development
         run: |
           dotnet run --urls "http://localhost:5068" &
