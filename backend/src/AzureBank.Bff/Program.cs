@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Threading.RateLimiting;
 using AzureBank.Bff;
 using AzureBank.Bff.Middleware;
 using AzureBank.Bff.Options;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using AzureBank.Bff.Services;
@@ -81,6 +83,36 @@ try
     builder.Services.AddReverseProxy()
         .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
         .AddTransforms<BearerTokenTransformProvider>();
+
+    // Forwarded headers (ADR-0013): the rate limiter partitions on the connection IP, which
+    // behind a proxy is the PROXY's IP unless we rewrite it from X-Forwarded-For. Trusting
+    // X-Forwarded-For from ANY source lets an attacker spoof/rotate IPs and defeat the per-IP
+    // limiter (worse than proxy-collapse), so we honour it ONLY when the real proxy IPs are
+    // configured (ForwardedHeaders:KnownProxies). Default — none configured, e.g. local/dev
+    // where the BFF is the edge — do NOT process X-Forwarded-For; partition on the direct
+    // connection IP (fail-safe). Deployments behind a proxy MUST set KnownProxies.
+    var knownProxies = builder.Configuration
+        .GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
+    var trustForwardedFor = knownProxies.Length > 0;
+    if (trustForwardedFor)
+    {
+        var forwardLimit = builder.Configuration.GetValue<int?>("ForwardedHeaders:ForwardLimit") ?? 1;
+        builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+            options.ForwardLimit = forwardLimit;
+            // Drop the loopback-only defaults; trust ONLY the configured proxies.
+            options.KnownProxies.Clear();
+            options.KnownIPNetworks.Clear();
+            foreach (var proxy in knownProxies)
+            {
+                if (IPAddress.TryParse(proxy, out var ip))
+                {
+                    options.KnownProxies.Add(ip);
+                }
+            }
+        });
+    }
 
     // Rate limiting (ADR-0013): per-client-IP. A generous GlobalLimiter is the anti-DoS
     // baseline applied to ALL traffic — including the YARP-proxied /api/* bypass — while a
@@ -175,6 +207,13 @@ try
     // ═══════════════════════════════════════════════════════════════════════════
     // MIDDLEWARE PIPELINE (ORDER MATTERS!)
     // ═══════════════════════════════════════════════════════════════════════════
+
+    // 0. Rewrite RemoteIpAddress from X-Forwarded-For BEFORE anything reads it (logging,
+    // the rate limiter). Only runs when trusted proxies are configured (see above).
+    if (trustForwardedFor)
+    {
+        app.UseForwardedHeaders();
+    }
 
     // 1. Serilog request logging
     app.UseSerilogRequestLogging(options =>

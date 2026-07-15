@@ -44,4 +44,30 @@ public class RateLimiterTests : IClassFixture<WebApplicationFactory<Program>>
         problem.GetProperty("status").GetInt32().Should().Be(429);
         problem.GetProperty("errorCode").GetString().Should().Be("RATE_LIMIT_EXCEEDED");
     }
+
+    [Fact]
+    public async Task SpoofedXForwardedFor_DoesNotCreateSeparatePartitions()
+    {
+        // No trusted proxies are configured, so X-Forwarded-For is NOT honoured. A client
+        // rotating fake XFF values still shares one partition and is still limited — proving
+        // the header can't be used to bypass the per-IP limiter (ADR-0013).
+        var client = _factory
+            .WithWebHostBuilder(builder => builder.UseSetting("RateLimiting:AuthPermitLimit", "2"))
+            .CreateClient();
+
+        var statuses = new List<HttpStatusCode>();
+        for (var i = 0; i < 6; i++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/bff/auth/login")
+            {
+                Content = JsonContent.Create(new { azureTag = "probe", password = "x" })
+            };
+            request.Headers.Add("X-Forwarded-For", $"10.0.0.{i}"); // a different fake IP each call
+            var response = await client.SendAsync(request);
+            statuses.Add(response.StatusCode);
+        }
+
+        statuses.Should().Contain(HttpStatusCode.TooManyRequests,
+            "a spoofed X-Forwarded-For must not create separate rate-limit partitions");
+    }
 }

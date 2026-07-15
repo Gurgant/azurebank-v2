@@ -119,6 +119,23 @@ the posture is documented and standards-accurate; login/register are consistent.
 made noisier to exploit at scale; a determined targeted lookup still succeeds. This is a
 knowingly accepted, time-boxed residual with a concrete deferral trigger.
 
+## Implementation notes (review hardening)
+
+- **Rate-limit partition key & proxies.** The limiter partitions on the connection IP.
+  Behind a proxy/LB that is the proxy's IP, which would collapse all clients into one
+  partition (a DoS). Trusting `X-Forwarded-For` from *any* source is worse — an attacker
+  rotates fake IPs and gets a fresh partition each time. So forwarded-header trust is
+  **opt-in and fail-safe**: `X-Forwarded-For` is honoured only when the real proxy IPs are
+  listed in `ForwardedHeaders:KnownProxies` (loopback defaults cleared; `UseForwardedHeaders`
+  runs before the limiter). With none configured (the BFF is the edge) the header is ignored
+  and the direct connection IP is used. **Any proxied deployment must set `KnownProxies`.**
+- **Registration neutrality under concurrency.** The pre-checks are advisory; the unique
+  index + `RequireUniqueEmail` are authoritative. A duplicate that slips past the pre-checks
+  under a race surfaces either as a `Duplicate*` `IdentityResult` or a `DbUpdateException` at
+  write time — **both** are neutralised to the same `409 REGISTRATION_FAILED` as the
+  pre-check path, and Identity's error descriptions are logged server-side, never returned to
+  the client. Without this, the race path re-opened the very oracle this ADR closes.
+
 ## References
 
 - OWASP ASVS v5.0.0 §6.3.1 (L1 anti-brute-force), §6.3.8 (L3 enumeration).

@@ -235,13 +235,41 @@ public class AuthService : IAuthService
             EmailConfirmed = true // Skip email verification for MVP
         };
 
-        var result = await _userManager.CreateAsync(user, request.Password);
+        IdentityResult result;
+        try
+        {
+            result = await _userManager.CreateAsync(user, request.Password);
+        }
+        catch (DbUpdateException ex)
+        {
+            // The genuine TOCTOU race: a concurrent registration passed the advisory
+            // pre-checks and Identity's validators too, then the unique index rejected this
+            // one at write time. Neutralise it to the SAME response as a pre-check duplicate
+            // so the race can't be used to enumerate accounts (ADR-0013).
+            _logger.LogWarning(ex,
+                "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
+                "DuplicateRegistration");
+            throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
+        }
 
         if (!result.Succeeded)
         {
-            var errors = string.Join(", ", result.Errors.Select(e => e.Description));
-            _logger.LogWarning("User registration failed: {Errors}", errors);
-            throw new BusinessRuleException($"Registration failed: {errors}");
+            // Never echo Identity's error descriptions to the client. A duplicate that slips
+            // past the advisory pre-checks (a race) surfaces here as a Duplicate* code; it
+            // must return the SAME neutral 409 as the pre-check path or the differing
+            // response re-opens the enumeration oracle (ADR-0013). Branch on the stable
+            // error Code, not the localisable Description. Any other failure gets a generic
+            // message (it is not an existence oracle).
+            var codes = string.Join(",", result.Errors.Select(e => e.Code));
+            var isDuplicate = result.Errors.Any(e => e.Code is "DuplicateUserName" or "DuplicateEmail");
+            _logger.LogWarning(
+                "SecurityEvent {SecurityEvent}: registration rejected by Identity ({Codes})",
+                isDuplicate ? "DuplicateRegistration" : "RegistrationRejected", codes);
+            if (isDuplicate)
+            {
+                throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
+            }
+            throw new BusinessRuleException("Registration could not be completed.");
         }
 
         // Assign default role
