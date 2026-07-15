@@ -15,11 +15,12 @@ public sealed class LoginTimingEqualizer : ILoginTimingEqualizer
 
     public LoginTimingEqualizer(IPasswordHasher<ApplicationUser> hasher)
     {
-        // The SAME IPasswordHasher<ApplicationUser> instance UserManager.CheckPasswordAsync
-        // uses (registered as a singleton — it is stateless), so the equalizing cost tracks
-        // it exactly for any hasher type or tuned options, with no drift. Because this type
-        // is a singleton, the (expensive) reference hash below is computed once at startup —
-        // an unknown-email login then does a single verification, never a hash + verify.
+        // The app's registered IPasswordHasher<ApplicationUser> (the same one
+        // UserManager.CheckPasswordAsync uses, handed in by the DI factory), so the
+        // equalizing cost tracks it exactly for any hasher type or tuned options, with no
+        // drift. This type is a singleton, so the (expensive) reference hash below is
+        // computed once at startup — an unknown-email login then does a single
+        // verification, never a hash + verify.
         _hasher = hasher;
         _dummyHash = _hasher.HashPassword(DummyUser, "login-timing-equalization-dummy");
     }

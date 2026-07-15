@@ -16,7 +16,6 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -72,14 +71,6 @@ public static class ServiceCollectionExtensions
         })
         .AddEntityFrameworkStores<AzureBankDbContext>()
         .AddDefaultTokenProviders();
-
-        // Identity registers IPasswordHasher<ApplicationUser> as scoped, but it is
-        // stateless (only PasswordHasherOptions + an RNG). Promote it to a singleton so
-        // the LoginTimingEqualizer (also a singleton) can share the very same instance
-        // UserManager.CheckPasswordAsync uses — guaranteed timing parity, no captive
-        // dependency (ADR-0012). A stateless, singleton-dependency service is naturally
-        // a singleton, so this changes nothing behaviourally.
-        services.Replace(ServiceDescriptor.Singleton<IPasswordHasher<ApplicationUser>, PasswordHasher<ApplicationUser>>());
 
         return services;
     }
@@ -143,8 +134,18 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
         // Login-timing equalizer (ADR-0012): singleton so the reference hash is computed
-        // once at startup, not per unknown-email request (which would double the hash cost).
-        services.AddSingleton<Security.ILoginTimingEqualizer, Security.LoginTimingEqualizer>();
+        // once at startup (not per unknown-email request — that would double the hash cost).
+        // Resolve the app's REGISTERED IPasswordHasher<ApplicationUser> once via a temp
+        // scope and hand it to the equalizer, so it matches UserManager.CheckPasswordAsync
+        // for any hasher type/options — without overriding Identity's registration. Safe to
+        // hold because that hasher is stateless and non-disposable; the singleton factory is
+        // guaranteed to run once on a single thread, so no static cache or lock is needed.
+        services.AddSingleton<Security.ILoginTimingEqualizer>(sp =>
+        {
+            using var scope = sp.CreateScope();
+            return new Security.LoginTimingEqualizer(
+                scope.ServiceProvider.GetRequiredService<IPasswordHasher<ApplicationUser>>());
+        });
         services.AddScoped<IAuthService, AuthService>();
         // PIN attempt-limiting lives in one place; withdrawals depend on the narrow
         // IPinVerifier. PinService persists lockout state in its own DbContext scope.

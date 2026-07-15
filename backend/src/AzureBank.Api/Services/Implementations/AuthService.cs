@@ -154,6 +154,8 @@ public class AuthService : IAuthService
                     .SetProperty(u => u.LockoutEnd,
                         u => u.AccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
                     .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+            // Detach so the tracked (now-stale) user can't be written back by a later save.
+            _context.Entry(user).State = EntityState.Detached;
             return;
         }
 
@@ -174,11 +176,11 @@ public class AuthService : IAuthService
         await _context.SaveChangesAsync();
     }
 
-    // Note: on the relational path ExecuteUpdate bypasses the change tracker, so the
-    // tracked `user` keeps its stale AccessFailedCount/LockoutEnd after this call. That
-    // is intentional and safe here — nothing reads those fields afterwards (the success
-    // path only issues the JWT and maps identity fields), and per EF Core guidance bulk
-    // updates and tracked SaveChanges are kept separate rather than reconciled per-entity.
+    // On the relational path ExecuteUpdate bypasses the change tracker, so the tracked
+    // `user` keeps its stale AccessFailedCount/LockoutEnd. Detach it so a later
+    // SaveChanges in the same request (e.g. a future unit-of-work or audit interceptor)
+    // can't write those stale values back and silently revert the reset. Subsequent reads
+    // (JWT generation, identity mapping) work fine on the detached entity.
     private async Task ResetLoginLockoutAsync(ApplicationUser user)
     {
         if (_context.Database.IsRelational())
@@ -188,6 +190,7 @@ public class AuthService : IAuthService
                     .SetProperty(u => u.AccessFailedCount, 0)
                     .SetProperty(u => u.LockoutEnd, (DateTimeOffset?)null)
                     .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+            _context.Entry(user).State = EntityState.Detached;
             return;
         }
 
