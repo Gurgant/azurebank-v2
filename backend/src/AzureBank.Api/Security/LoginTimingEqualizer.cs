@@ -1,6 +1,5 @@
 using AzureBank.Shared.Entities;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.Extensions.Options;
 
 namespace AzureBank.Api.Security;
 
@@ -14,14 +13,14 @@ public sealed class LoginTimingEqualizer : ILoginTimingEqualizer
     private readonly IPasswordHasher<ApplicationUser> _hasher;
     private readonly string _dummyHash;
 
-    public LoginTimingEqualizer(IOptions<PasswordHasherOptions> passwordHasherOptions)
+    public LoginTimingEqualizer(IPasswordHasher<ApplicationUser> hasher)
     {
-        // Build a hasher from the SAME options ASP.NET Identity's IPasswordHasher uses,
-        // so the equalizing cost tracks UserManager.CheckPasswordAsync (no drift if the
-        // iteration count is ever tuned). Because this type is a singleton, the expensive
-        // reference hash below is computed exactly ONCE for the app lifetime — an
-        // unknown-email login then does a single verification, never a hash + verify.
-        _hasher = new PasswordHasher<ApplicationUser>(passwordHasherOptions);
+        // The SAME IPasswordHasher<ApplicationUser> instance UserManager.CheckPasswordAsync
+        // uses (registered as a singleton — it is stateless), so the equalizing cost tracks
+        // it exactly for any hasher type or tuned options, with no drift. Because this type
+        // is a singleton, the (expensive) reference hash below is computed once at startup —
+        // an unknown-email login then does a single verification, never a hash + verify.
+        _hasher = hasher;
         _dummyHash = _hasher.HashPassword(DummyUser, "login-timing-equalization-dummy");
     }
 

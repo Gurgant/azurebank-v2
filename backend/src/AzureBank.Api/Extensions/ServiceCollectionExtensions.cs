@@ -16,6 +16,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -71,6 +72,14 @@ public static class ServiceCollectionExtensions
         })
         .AddEntityFrameworkStores<AzureBankDbContext>()
         .AddDefaultTokenProviders();
+
+        // Identity registers IPasswordHasher<ApplicationUser> as scoped, but it is
+        // stateless (only PasswordHasherOptions + an RNG). Promote it to a singleton so
+        // the LoginTimingEqualizer (also a singleton) can share the very same instance
+        // UserManager.CheckPasswordAsync uses — guaranteed timing parity, no captive
+        // dependency (ADR-0012). A stateless, singleton-dependency service is naturally
+        // a singleton, so this changes nothing behaviourally.
+        services.Replace(ServiceDescriptor.Singleton<IPasswordHasher<ApplicationUser>, PasswordHasher<ApplicationUser>>());
 
         return services;
     }
