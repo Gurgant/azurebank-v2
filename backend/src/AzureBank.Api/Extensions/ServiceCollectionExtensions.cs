@@ -133,19 +133,11 @@ public static class ServiceCollectionExtensions
             new Shared.Services.Implementations.PasswordHasher(
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
-        // Login-timing equalizer (ADR-0012): singleton so the reference hash is computed
-        // once at startup (not per unknown-email request — that would double the hash cost).
-        // Resolve the app's REGISTERED IPasswordHasher<ApplicationUser> once via a temp
-        // scope and hand it to the equalizer, so it matches UserManager.CheckPasswordAsync
-        // for any hasher type/options — without overriding Identity's registration. Safe to
-        // hold because that hasher is stateless and non-disposable; the singleton factory is
-        // guaranteed to run once on a single thread, so no static cache or lock is needed.
-        services.AddSingleton<Security.ILoginTimingEqualizer>(sp =>
-        {
-            using var scope = sp.CreateScope();
-            return new Security.LoginTimingEqualizer(
-                scope.ServiceProvider.GetRequiredService<IPasswordHasher<ApplicationUser>>());
-        });
+        // Login-timing equalizer (ADR-0012): scoped, so it takes the request's own
+        // IPasswordHasher<ApplicationUser> by normal injection — no captive dependency even
+        // if a custom scoped hasher is registered later. The expensive reference hash is
+        // still computed exactly once, via a process-wide static cache inside the equalizer.
+        services.AddScoped<Security.ILoginTimingEqualizer, Security.LoginTimingEqualizer>();
         services.AddScoped<IAuthService, AuthService>();
         // PIN attempt-limiting lives in one place; withdrawals depend on the narrow
         // IPinVerifier. PinService persists lockout state in its own DbContext scope.

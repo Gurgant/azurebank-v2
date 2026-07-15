@@ -9,7 +9,8 @@ namespace AzureBank.Tests.Unit.Services;
 /// <summary>
 /// Unit tests for the login-timing equalizer (ADR-0012): it performs one real password
 /// verification against a fixed dummy hash so an unknown-email login costs the same as
-/// a real one. Registered as a singleton, so it must be immutable/thread-safe.
+/// a real one. The reference hash is cached in a process-wide static, so the lazy
+/// initialization must be thread-safe.
 /// </summary>
 public class LoginTimingEqualizerTests
 {
@@ -29,7 +30,7 @@ public class LoginTimingEqualizerTests
     [Fact]
     public void SpendVerifyCost_IsSafeToCallConcurrently()
     {
-        // A singleton is shared across all concurrent login requests.
+        // The static dummy-hash cache is initialized under concurrent first-use here.
         var act = () => Parallel.For(0, 16, _ => _sut.SpendVerifyCost("pw"));
 
         act.Should().NotThrow();

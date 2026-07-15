@@ -10,22 +10,30 @@ public sealed class LoginTimingEqualizer : ILoginTimingEqualizer
     private static readonly ApplicationUser DummyUser =
         new() { AzureTag = string.Empty, FirstName = string.Empty, LastName = string.Empty };
 
-    private readonly IPasswordHasher<ApplicationUser> _hasher;
-    private readonly string _dummyHash;
+    // Process-wide, write-once cache of the reference hash. Static (not an instance field)
+    // so it is computed exactly ONCE on the first unknown-email login and reused forever —
+    // never per request. Kept here rather than in a singleton so this service can stay
+    // scoped and take the request's own IPasswordHasher<ApplicationUser> by normal
+    // constructor injection: no captive dependency, and the cost tracks that hasher exactly
+    // for any type or tuned options (ADR-0012). Double-checked locking guarantees a single
+    // computation; volatile guards the lock-free read.
+    private static volatile string? _dummyHash;
+    private static readonly object _dummyHashLock = new();
 
-    public LoginTimingEqualizer(IPasswordHasher<ApplicationUser> hasher)
-    {
-        // The app's registered IPasswordHasher<ApplicationUser> (the same one
-        // UserManager.CheckPasswordAsync uses, handed in by the DI factory), so the
-        // equalizing cost tracks it exactly for any hasher type or tuned options, with no
-        // drift. This type is a singleton, so the (expensive) reference hash below is
-        // computed once at startup — an unknown-email login then does a single
-        // verification, never a hash + verify.
-        _hasher = hasher;
-        _dummyHash = _hasher.HashPassword(DummyUser, "login-timing-equalization-dummy");
-    }
+    private readonly IPasswordHasher<ApplicationUser> _hasher;
+
+    public LoginTimingEqualizer(IPasswordHasher<ApplicationUser> hasher) => _hasher = hasher;
 
     /// <inheritdoc />
     public void SpendVerifyCost(string password)
-        => _hasher.VerifyHashedPassword(DummyUser, _dummyHash, password);
+    {
+        if (_dummyHash is null)
+        {
+            lock (_dummyHashLock)
+            {
+                _dummyHash ??= _hasher.HashPassword(DummyUser, "login-timing-equalization-dummy");
+            }
+        }
+        _hasher.VerifyHashedPassword(DummyUser, _dummyHash, password);
+    }
 }
