@@ -1,0 +1,124 @@
+# ADR-0012: Password/login attempt-limiting (account lockout)
+
+**Status**: Accepted
+
+**Date**: 2026-07-15
+
+**Decision Makers**: Development team (resolves the ADR-0010 follow-up)
+
+---
+
+## Context
+
+`AuthService.LoginAsync` verifies the password with `UserManager.CheckPasswordAsync`,
+which only compares the hash — it never increments `AccessFailedCount`, never checks
+or sets `LockoutEnd`, and never consults `LockoutEnabled`. So although
+`IdentityOptions.Lockout` **is** configured (5 attempts / 15 min, `AllowedForNewUsers
+= true`), it is **inert**: online password brute-force is unbounded. A repo-wide
+search confirms **no** production code calls any Identity lockout API. This is the
+"dormant password/login lockout" tracked as the ADR-0010 follow-up.
+
+`ApplicationUser : IdentityUser<Guid>` already has the native `AccessFailedCount`,
+`LockoutEnd`, `LockoutEnabled` columns (InitialCreate migration), distinct from the
+PIN's dedicated `PinAccessFailedCount` / `PinLockoutEnd` (ADR-0010). LoginAsync also
+has a **deliberate anti-enumeration** property: an unknown user and a wrong password
+return the identical `401 Invalid email or password.` (guarded by a test).
+
+## Decision Drivers
+
+- Bound online password brute-force (defense-in-depth).
+- **Preserve** the existing anti-enumeration guarantee — do not turn lockout into an
+  account-existence oracle.
+- Be **concurrency-correct** under a burst of parallel wrong passwords.
+- Reuse Identity's **native** lockout fields (no new columns / migration).
+- Keep the PIN lockout (ADR-0010) a separate concern.
+
+## Considered Options
+
+**Mechanism**
+1. `SignInManager.CheckPasswordSignInAsync(lockoutOnFailure: true)` — one call, but
+   (a) this is a JWT-only API (SignInManager pulls in cookie schemes), (b) it uses
+   Identity's read-modify-write internally (see below), and (c) it evaluates lockout
+   **before** the password, leaking account existence. Rejected.
+2. `UserManager.AccessFailedAsync` / `IsLockedOutAsync` — a read-modify-write of
+   `AccessFailedCount` guarded by the `ConcurrencyStamp`. Under a parallel burst the
+   `DbUpdateConcurrencyException` is **swallowed** by EF's `UserStore` into
+   `IdentityResult.ConcurrencyFailure` → a **silent lost update**, so the burst can
+   stay under the threshold and never lock. Rejected.
+3. **Atomic set-based `ExecuteUpdate` on the native columns (chosen)** — no
+   read-modify-write, no lost updates; mirrors `PinService` (ADR-0010).
+
+**Wire contract (the enumeration tension)**
+1. `429 ACCOUNT_LOCKED` whenever the account is locked — rejected: regresses
+   anti-enumeration (reveals the email exists and is locked).
+2. Generic `401` always, even when locked — rejected: a legitimate user with the
+   correct password gets a misleading "invalid credentials" and no back-off signal.
+3. **Generic `401` for every wrong password; `429` only when the CORRECT password
+   hits a locked account (chosen)** — the lock is revealed only to someone who has
+   already proven knowledge of the password, so it is not an enumeration oracle.
+
+## Decision
+
+- **Wire the lockout in `AuthService.LoginAsync`** using Identity's **native**
+  `AccessFailedCount` / `LockoutEnd` — no new columns, no migration.
+- **Atomic writes**: increment-and-maybe-lock (and reset-on-success) run as a single
+  set-based `ExecuteUpdateAsync` (relational; an InMemory fallback mirrors it),
+  evaluating the threshold against the row's current value in one statement — so a
+  parallel burst never loses updates and a just-applied lock is never cleared. It
+  runs on the request-scoped `DbContext` (login has no idempotency/monetary
+  transaction to isolate, unlike the PIN path).
+- **Enumeration-safe contract**:
+  - unknown user **or** wrong password → **401** `INVALID_CREDENTIALS`
+    (`Invalid email or password.`), identical in all cases;
+  - **correct** password on a **locked** account → **429** `ACCOUNT_LOCKED` +
+    `Retry-After` (`AccountLockedException`, structurally identical to
+    `PinLockedException`: `retryAfterSeconds` + `lockedUntil` in Details);
+  - a wrong password while **already locked** does **not** extend the window (mirrors
+    the PIN refusing before counting).
+- **Policy**: `ValidationRules.MaxLoginAttempts` (5) / `LoginLockoutMinutes` (15),
+  centralized and shared with the `IdentityOptions.Lockout` configuration.
+
+## Consequences
+
+### Positive
+- Online password brute-force is bounded (5 / 15 min).
+- The anti-enumeration guarantee is **preserved**: a password guesser always sees the
+  same 401 whether the account exists, doesn't, or is locked.
+- Concurrency-correct — proven by a `[SqlServerFact]` parallel-burst lock proof.
+- No schema change (native Identity fields).
+
+### Negative
+- Account lockout inherently enables a **victim-lockout DoS**: an attacker who knows a
+  victim's email can lock it with wrong passwords. This is intrinsic to any lockout;
+  mitigate with per-IP rate limiting (future work), not by removing the lock.
+- A locked account still runs a password hash per attempt — required so the response
+  timing is uniform for wrong passwords (no timing-based lock detection).
+
+### Neutral / known limitations
+- The PIN lockout (ADR-0010) stays a separate mechanism (dedicated columns; it returns
+  429 even on a wrong PIN, which is fine because that path is post-authentication and
+  carries no enumeration concern).
+- The response-**body** anti-enumeration is preserved, but a pre-existing **timing**
+  side-channel remains (an unknown user skips the password hash and returns faster);
+  closing it (hash a dummy for unknown users) is a separate hardening, out of scope.
+
+## Validation
+
+- **Unit** (`AuthServiceTests`): wrong password increments; the threshold attempt
+  locks (while still returning 401); a locked account + correct password → 429
+  `ACCOUNT_LOCKED` with a positive `retryAfterSeconds` and **no token**; a locked
+  account + wrong password → generic 401 **without** extending the window; a correct
+  password resets the counter; an expired lock starts a fresh window. The existing
+  anti-enumeration test still holds.
+- **Integration** (`AuthEndpointTests`): 5 wrong passwords each return 401, then the
+  correct password returns 429 + `Retry-After` ≈ 15 min + `ACCOUNT_LOCKED`.
+- **SQL Server** (`LoginLockoutConcurrencySqlServerTests`): exactly-threshold parallel
+  wrong passwords lock the account, and a 3× burst stays locked with no race bypass —
+  proving the atomic counter beats Identity's lost-update read-modify-write.
+
+## Related
+
+- ADR-0010 (PIN attempt-limiting) — the mirror; **this resolves its follow-up**. We
+  deviate from its "use `SignInManager.CheckPasswordSignInAsync`" note for
+  concurrency-correctness, enumeration control, and the JWT-only fit.
+- ADR-0003 (Argon2id) — account passwords use Identity's own hasher (out of scope here).

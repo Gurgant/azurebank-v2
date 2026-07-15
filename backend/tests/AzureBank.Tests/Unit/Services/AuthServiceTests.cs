@@ -2,6 +2,7 @@ using AzureBank.Api.Mappers;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Exceptions;
@@ -86,6 +87,119 @@ public class AuthServiceTests : IDisposable
             ConcurrencyStamp = Guid.NewGuid().ToString(),
             CreatedAt = DateTime.UtcNow
         };
+    }
+
+    /// <summary>
+    /// Seeds a user into the real InMemory context (so the atomic lockout writers'
+    /// InMemory fallback can mutate + persist it) and wires FindByEmailAsync to it.
+    /// </summary>
+    private ApplicationUser SeedUserInContext(
+        int failed = 0, DateTimeOffset? lockoutEnd = null, string email = "lock@example.com")
+    {
+        var user = CreateTestUser(email, "lockuser");
+        user.AccessFailedCount = failed;
+        user.LockoutEnd = lockoutEnd;
+        _context.Users.Add(user);
+        _context.SaveChanges();
+        _userManagerMock.Setup(x => x.FindByEmailAsync(email)).ReturnsAsync(user);
+        return user;
+    }
+
+    private async Task<ApplicationUser> ReloadAsync(Guid id)
+    {
+        _context.ChangeTracker.Clear();
+        return await _context.Users.SingleAsync(u => u.Id == id);
+    }
+
+    #endregion
+
+    #region Login lockout Tests (ADR-0012)
+
+    [Fact]
+    public async Task LoginAsync_WrongPassword_IncrementsFailureCount()
+    {
+        var user = SeedUserInContext(failed: 0);
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+
+        var act = () => _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" });
+
+        await act.Should().ThrowAsync<AuthenticationException>();
+        (await ReloadAsync(user.Id)).AccessFailedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task LoginAsync_WrongPasswordAtThreshold_LocksAccount()
+    {
+        var user = SeedUserInContext(failed: ValidationRules.MaxLoginAttempts - 1); // one away
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+
+        // Still the generic 401 (lock state is never leaked to a guesser)...
+        await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
+            .Should().ThrowAsync<AuthenticationException>();
+
+        // ...but the account is now locked.
+        var reloaded = await ReloadAsync(user.Id);
+        reloaded.LockoutEnd.Should().NotBeNull();
+        reloaded.LockoutEnd!.Value.Should().BeAfter(DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task LoginAsync_LockedAccount_CorrectPassword_ThrowsAccountLocked()
+    {
+        var user = SeedUserInContext(lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(10));
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+
+        var ex = (await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" }))
+            .Should().ThrowAsync<AccountLockedException>()).Which;
+
+        ex.StatusCode.Should().Be(429);
+        ex.ErrorCode.Should().Be(ErrorCodes.AccountLocked);
+        ((int)ex.Details!["retryAfterSeconds"]).Should().BePositive();
+        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LoginAsync_LockedAccount_WrongPassword_ReturnsGeneric401_WithoutExtending()
+    {
+        var lockUntil = DateTimeOffset.UtcNow.AddMinutes(10);
+        var user = SeedUserInContext(failed: 0, lockoutEnd: lockUntil);
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+
+        // Generic 401 (NOT AccountLockedException) — no enumeration signal for a guesser.
+        await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
+            .Should().ThrowAsync<AuthenticationException>();
+
+        // The window is not extended and the counter is not touched while already locked.
+        var reloaded = await ReloadAsync(user.Id);
+        reloaded.AccessFailedCount.Should().Be(0);
+        reloaded.LockoutEnd.Should().BeCloseTo(lockUntil, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task LoginAsync_CorrectPasswordWithPriorFailures_ResetsCounter()
+    {
+        var user = SeedUserInContext(failed: 3);
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+        _jwtServiceMock.Setup(x => x.GenerateToken(user)).Returns("jwt");
+
+        var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
+
+        result.Token.Should().Be("jwt");
+        (await ReloadAsync(user.Id)).AccessFailedCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task LoginAsync_ExpiredLock_WrongPassword_StartsFreshWindow()
+    {
+        var user = SeedUserInContext(failed: 0, lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(-1)); // expired
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+
+        await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
+            .Should().ThrowAsync<AuthenticationException>();
+
+        var reloaded = await ReloadAsync(user.Id);
+        reloaded.AccessFailedCount.Should().Be(1, "an expired lock restarts the window at 1");
+        reloaded.LockoutEnd.Should().BeNull();
     }
 
     #endregion

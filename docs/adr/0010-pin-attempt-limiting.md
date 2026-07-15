@@ -102,5 +102,7 @@ intent already declared (but unused) in the BFF `SecurityOptions`
 
 - ADR-0003 (Argon2id) — the PIN hashing this protects.
 - ADR-0009 (idempotency) — the reason lockout state is persisted in its own scope.
-- Follow-up (out of scope): wiring the dormant **password/login** lockout
-  (`SignInManager.CheckPasswordSignInAsync(lockoutOnFailure: true)`).
+- Follow-up **(resolved in [ADR-0012](0012-login-attempt-limiting.md))**: wiring the
+  dormant **password/login** lockout — implemented with an atomic `ExecuteUpdate` on
+  Identity's native lockout fields rather than `SignInManager` (see ADR-0012 for the
+  concurrency and enumeration rationale behind that deviation).

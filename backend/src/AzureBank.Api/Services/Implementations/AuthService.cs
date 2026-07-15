@@ -53,24 +53,117 @@ public class AuthService : IAuthService
     public async Task<LoginResponse> LoginAsync(LoginRequest request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-
-        if (user == null || !await _userManager.CheckPasswordAsync(user, request.Password))
+        if (user is null)
         {
-            // Prevent user enumeration - same message for both cases
+            // Unknown user: generic failure, identical to a wrong password (no enumeration).
             _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
             throw new AuthenticationException("Invalid email or password.");
         }
 
-        var token = _jwtService.GenerateToken(user);
+        var now = DateTimeOffset.UtcNow;
+        var passwordOk = await _userManager.CheckPasswordAsync(user, request.Password);
+        var lockedUntil = user.LockoutEnd is { } end && end > now ? end : (DateTimeOffset?)null;
 
-        _logger.LogInformation("User {UserId} logged in successfully", user.Id);
-
-        return new LoginResponse
+        if (passwordOk)
         {
-            Token = token,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(15), // Should come from JWT options
-            User = _userMapper.ToLoginInfo(user)
-        };
+            // Correct password on a locked account: reveal the lock ONLY here — the
+            // caller has proven knowledge of the password, so the signal carries no
+            // enumeration value — and give a precise Retry-After (ADR-0012).
+            if (lockedUntil is { } until)
+            {
+                _logger.LogWarning("Login refused for locked account {UserId} until {Until}", user.Id, until);
+                throw AccountLockedException.Until(until, now);
+            }
+
+            // Success: clear any accumulated failures / expired lock.
+            if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
+            {
+                await ResetLoginLockoutAsync(user);
+            }
+
+            var token = _jwtService.GenerateToken(user);
+            _logger.LogInformation("User {UserId} logged in successfully", user.Id);
+            return new LoginResponse
+            {
+                Token = token,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(15), // Should come from JWT options
+                User = _userMapper.ToLoginInfo(user)
+            };
+        }
+
+        // Wrong password. Count it toward the lockout (but not while already locked, so
+        // a persistent attacker cannot extend the window), then return the SAME generic
+        // 401 as an unknown user — the lock state is never leaked to a password guesser.
+        if (lockedUntil is null)
+        {
+            await IncrementAndMaybeLockLoginAsync(user, now);
+        }
+        _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
+        throw new AuthenticationException("Invalid email or password.");
+    }
+
+    // ---- Atomic login-lockout writers (Identity's native AccessFailedCount / LockoutEnd) ----
+    // A single set-based ExecuteUpdate (no read-modify-write, so no lost updates under a
+    // burst of parallel wrong passwords). Identity's UserManager.AccessFailedAsync would
+    // instead do an optimistic-concurrency read-modify-write whose lost update EF silently
+    // folds into IdentityResult.ConcurrencyFailure — letting a parallel burst stay under
+    // the threshold and never lock. ExecuteUpdate is relational-only, so the InMemory test
+    // provider falls back to an equivalent tracked write (single-threaded there).
+
+    /// <summary>
+    /// One atomic failed-login transition: increment AccessFailedCount, and when it crosses
+    /// <see cref="ValidationRules.MaxLoginAttempts"/> set LockoutEnd and reset the counter —
+    /// all against the row's CURRENT value in a single statement. An EXPIRED lock is cleared;
+    /// a FUTURE lock is never cleared, so the threshold cannot be bypassed by parallel bursts.
+    /// </summary>
+    private async Task IncrementAndMaybeLockLoginAsync(ApplicationUser user, DateTimeOffset now)
+    {
+        var max = ValidationRules.MaxLoginAttempts;
+        var until = now.AddMinutes(ValidationRules.LoginLockoutMinutes);
+
+        if (_context.Database.IsRelational())
+        {
+            await _context.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.AccessFailedCount,
+                        u => u.AccessFailedCount + 1 >= max ? 0 : u.AccessFailedCount + 1)
+                    .SetProperty(u => u.LockoutEnd,
+                        u => u.AccessFailedCount + 1 >= max
+                            ? (DateTimeOffset?)until
+                            : (u.LockoutEnd != null && u.LockoutEnd < now ? (DateTimeOffset?)null : u.LockoutEnd)));
+            return;
+        }
+
+        if (user.AccessFailedCount + 1 >= max)
+        {
+            user.AccessFailedCount = 0;   // the lock window is now authoritative
+            user.LockoutEnd = until;
+        }
+        else
+        {
+            user.AccessFailedCount += 1;
+            if (user.LockoutEnd is { } expired && expired < now)
+            {
+                user.LockoutEnd = null;
+            }
+        }
+        await _context.SaveChangesAsync();
+    }
+
+    private async Task ResetLoginLockoutAsync(ApplicationUser user)
+    {
+        if (_context.Database.IsRelational())
+        {
+            await _context.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.AccessFailedCount, 0)
+                    .SetProperty(u => u.LockoutEnd, (DateTimeOffset?)null));
+            return;
+        }
+
+        user.AccessFailedCount = 0;
+        user.LockoutEnd = null;
+        await _context.SaveChangesAsync();
     }
 
     /// <inheritdoc />

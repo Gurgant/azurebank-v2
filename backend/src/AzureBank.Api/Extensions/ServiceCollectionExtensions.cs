@@ -54,9 +54,10 @@ public static class ServiceCollectionExtensions
             options.Password.RequiredLength = 8;
             options.Password.RequiredUniqueChars = 4;
 
-            // Lockout settings
-            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
-            options.Lockout.MaxFailedAccessAttempts = 5;
+            // Lockout settings (ADR-0012). Single source of truth in ValidationRules;
+            // the login lockout logic in AuthService uses the same constants.
+            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(ValidationRules.LoginLockoutMinutes);
+            options.Lockout.MaxFailedAccessAttempts = ValidationRules.MaxLoginAttempts;
             options.Lockout.AllowedForNewUsers = true;
 
             // User settings
