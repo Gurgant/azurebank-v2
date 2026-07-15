@@ -148,8 +148,9 @@ public class PasswordHasher : IPasswordHasher
     /// <inheritdoc />
     public bool PinNeedsRehash(string hash)
     {
-        // No pepper configured → nothing to migrate to.
-        if (!_peppered || string.IsNullOrEmpty(hash))
+        // No pepper configured, or not a well-formed argon2id hash → nothing to
+        // migrate (a malformed string must NOT be flagged as "needs rehash").
+        if (!_peppered || !IsArgon2idHash(hash))
             return false;
 
         // A legacy hash (no keyid) or one tagged with an older key id should be
@@ -219,9 +220,15 @@ public class PasswordHasher : IPasswordHasher
                 return false;
 
             var parameters = ParseParams(parts[3]);
-            var memory = int.Parse(parameters["m"]);
-            var iterations = int.Parse(parameters["t"]);
-            var parallelism = int.Parse(parameters["p"]);
+            // Parse the cost parameters without throwing on a malformed hash: a missing
+            // or non-numeric m/t/p is treated as an invalid hash (fail closed), not an
+            // exception to catch — cheaper and avoids an exception-as-control-flow path.
+            if (!parameters.TryGetValue("m", out var mText) || !int.TryParse(mText, out var memory) ||
+                !parameters.TryGetValue("t", out var tText) || !int.TryParse(tText, out var iterations) ||
+                !parameters.TryGetValue("p", out var pText) || !int.TryParse(pText, out var parallelism))
+            {
+                return false;
+            }
 
             // Sanity-bound the cost parameters read from the stored hash. They come from
             // a trusted store, but a tampered PinHash with an absurd m (e.g. 2^31) would
@@ -249,7 +256,10 @@ public class PasswordHasher : IPasswordHasher
             // not hold cannot be verified (fail closed). No keyid = legacy = no pepper.
             if (parameters.TryGetValue(KeyIdParam, out var keyIdText))
             {
-                var pepper = ResolvePepper(int.Parse(keyIdText));
+                // A malformed key id is an invalid hash → fail closed (no throw).
+                if (!int.TryParse(keyIdText, out var keyId))
+                    return false;
+                var pepper = ResolvePepper(keyId);
                 if (pepper is null)
                     return false;
                 argon2.KnownSecret = pepper;
@@ -270,6 +280,15 @@ public class PasswordHasher : IPasswordHasher
     /// <summary>Returns the pepper for <paramref name="keyId"/> from the keyring, or null if we don't hold it.</summary>
     private byte[]? ResolvePepper(int keyId)
         => _pinPepperRing.TryGetValue(keyId, out var pepper) ? pepper : null;
+
+    /// <summary>True if the string is shaped like a PHC argon2id hash (6 <c>$</c>-segments, argon2id id).</summary>
+    private static bool IsArgon2idHash(string hash)
+    {
+        if (string.IsNullOrEmpty(hash))
+            return false;
+        var parts = hash.Split('$');
+        return parts.Length == 6 && parts[1] == "argon2id";
+    }
 
     /// <summary>Reads the <c>keyid</c> from a PHC hash, or null if legacy/malformed.</summary>
     private static int? TryReadKeyId(string hash)

@@ -192,6 +192,34 @@ public class PasswordHasherPepperTests
         Legacy().VerifyPin(absurd, "123456").Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("$argon2id$v=19$t=2,p=4$c2FsdHNhbHQ=$aGFzaGhhc2g=")]        // missing m
+    [InlineData("$argon2id$v=19$m=abc,t=2,p=4$c2FsdHNhbHQ=$aGFzaGhhc2g=")]  // non-numeric m
+    [InlineData("$argon2id$v=19$m=19456,p=4$c2FsdHNhbHQ=$aGFzaGhhc2g=")]    // missing t
+    public void VerifyPin_WithMalformedCostParameters_ReturnsFalse(string hash)
+    {
+        // Parsed without throwing: a missing/non-numeric m/t/p is just an invalid hash.
+        Peppered().VerifyPin(hash, "123456").Should().BeFalse();
+        Legacy().VerifyPin(hash, "123456").Should().BeFalse();
+    }
+
+    [Fact]
+    public void VerifyPin_WithMalformedKeyId_ReturnsFalse()
+    {
+        const string hash = "$argon2id$v=19$m=19456,t=2,p=4,keyid=xyz$c2FsdHNhbHQ=$aGFzaGhhc2g=";
+        Peppered().VerifyPin(hash, "123456").Should().BeFalse("a non-numeric keyid is an invalid hash");
+    }
+
+    [Theory]
+    [InlineData("not-a-valid-hash")]
+    [InlineData("")]
+    [InlineData("$pbkdf2$v=19$m=1,t=1,p=1$c2FsdA==$aGFzaA==")] // 6 segments but wrong algorithm id
+    public void PinNeedsRehash_WithMalformedHash_ReturnsFalse(string hash)
+    {
+        // A malformed / non-argon2id string must not be flagged as needing a rehash.
+        Peppered().PinNeedsRehash(hash).Should().BeFalse();
+    }
+
     [Fact]
     public void Password_IsNeverPeppered_EvenOnAPepperedHasher()
     {
