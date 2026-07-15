@@ -133,9 +133,9 @@ public sealed class PinService : IPinVerifier
     /// One atomic wrong-PIN transition: increment the failure counter, and when it
     /// crosses <see cref="ValidationRules.MaxPinAttempts"/> set the lock and reset the
     /// counter — all evaluated against the row's CURRENT value in a single statement.
-    /// An EXPIRED lock is cleared, but a FUTURE lock (e.g. one a concurrent request
-    /// just applied) is never cleared, so the threshold cannot be bypassed by a burst
-    /// of parallel wrong PINs. Returns the resulting PinLockoutEnd.
+    /// The WHERE guard excludes a currently-locked row, so a burst of parallel wrong
+    /// PINs can neither bypass the threshold nor leave a residual count on a just-locked
+    /// account (a late increment updates zero rows). Returns the resulting PinLockoutEnd.
     /// </summary>
     private static async Task<DateTimeOffset?> IncrementAndMaybeLockAsync(
         AzureBankDbContext db, ApplicationUser user, DateTimeOffset now, DateTimeOffset until)
@@ -144,14 +144,14 @@ public sealed class PinService : IPinVerifier
 
         if (db.Database.IsRelational())
         {
-            await db.Users.Where(u => u.Id == user.Id)
+            await db.Users
+                .Where(u => u.Id == user.Id && (u.PinLockoutEnd == null || u.PinLockoutEnd < now))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.PinAccessFailedCount,
                         u => u.PinAccessFailedCount + 1 >= max ? 0 : u.PinAccessFailedCount + 1)
                     .SetProperty(u => u.PinLockoutEnd,
-                        u => u.PinAccessFailedCount + 1 >= max
-                            ? (DateTimeOffset?)until
-                            : (u.PinLockoutEnd != null && u.PinLockoutEnd < now ? (DateTimeOffset?)null : u.PinLockoutEnd)));
+                        u => u.PinAccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
             return await db.Users.Where(u => u.Id == user.Id)
                 .Select(u => u.PinLockoutEnd).FirstAsync();
         }
@@ -202,7 +202,8 @@ public sealed class PinService : IPinVerifier
             await db.Users.Where(u => u.Id == user.Id)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.PinAccessFailedCount, 0)
-                    .SetProperty(u => u.PinLockoutEnd, (DateTimeOffset?)null));
+                    .SetProperty(u => u.PinLockoutEnd, (DateTimeOffset?)null)
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
             return;
         }
 

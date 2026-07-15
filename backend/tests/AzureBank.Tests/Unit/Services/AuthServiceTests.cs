@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Services;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
@@ -180,7 +181,8 @@ public class AuthServiceTests : IDisposable
     {
         var user = SeedUserInContext(failed: 3);
         _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
-        _jwtServiceMock.Setup(x => x.GenerateToken(user)).Returns("jwt");
+        _jwtServiceMock.Setup(x => x.GenerateToken(user))
+            .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
 
         var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
 
@@ -199,6 +201,22 @@ public class AuthServiceTests : IDisposable
 
         var reloaded = await ReloadAsync(user.Id);
         reloaded.AccessFailedCount.Should().Be(1, "an expired lock restarts the window at 1");
+        reloaded.LockoutEnd.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LoginAsync_ExpiredLock_CorrectPassword_LogsInAndClearsLock()
+    {
+        var user = SeedUserInContext(failed: 3, lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(-1)); // expired
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+        _jwtServiceMock.Setup(x => x.GenerateToken(user))
+            .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
+
+        var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
+
+        result.Token.Should().Be("jwt");
+        var reloaded = await ReloadAsync(user.Id);
+        reloaded.AccessFailedCount.Should().Be(0);
         reloaded.LockoutEnd.Should().BeNull();
     }
 
@@ -227,7 +245,7 @@ public class AuthServiceTests : IDisposable
 
         _jwtServiceMock
             .Setup(x => x.GenerateToken(user))
-            .Returns("test-jwt-token");
+            .Returns(new TokenResult("test-jwt-token", DateTime.UtcNow.AddMinutes(15)));
 
         // Act
         var result = await _sut.LoginAsync(request);

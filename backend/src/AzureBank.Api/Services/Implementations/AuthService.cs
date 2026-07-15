@@ -49,13 +49,28 @@ public class AuthService : IAuthService
         _logger = logger;
     }
 
+    // A fixed dummy hash + hasher (Identity's default PBKDF2, same cost as the real
+    // password check) used to equalize latency when the account does not exist, so
+    // account existence cannot be timed. PasswordHasher ignores the user argument.
+    private static readonly ApplicationUser DummyUser =
+        new() { AzureTag = string.Empty, FirstName = string.Empty, LastName = string.Empty };
+    private static readonly PasswordHasher<ApplicationUser> DummyHasher = new();
+    private static readonly string DummyHash =
+        DummyHasher.HashPassword(DummyUser, "timing-equalization-dummy");
+
+    private static void DummyPasswordVerify(string password)
+        => DummyHasher.VerifyHashedPassword(DummyUser, DummyHash, password);
+
     /// <inheritdoc />
     public async Task<LoginResponse> LoginAsync(LoginRequest request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null)
         {
-            // Unknown user: generic failure, identical to a wrong password (no enumeration).
+            // Spend the same password-hash cost a real account would, so an unknown
+            // email can't be distinguished by RESPONSE TIMING — the body is already
+            // identical to a wrong password, this closes the timing oracle (ADR-0012).
+            DummyPasswordVerify(request.Password);
             _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
             throw new AuthenticationException("Invalid email or password.");
         }
@@ -81,12 +96,12 @@ public class AuthService : IAuthService
                 await ResetLoginLockoutAsync(user);
             }
 
-            var token = _jwtService.GenerateToken(user);
+            var tokenResult = _jwtService.GenerateToken(user);
             _logger.LogInformation("User {UserId} logged in successfully", user.Id);
             return new LoginResponse
             {
-                Token = token,
-                ExpiresAt = DateTime.UtcNow.AddMinutes(15), // Should come from JWT options
+                Token = tokenResult.AccessToken,
+                ExpiresAt = tokenResult.ExpiresAt, // single source of truth (the token's exp)
                 User = _userMapper.ToLoginInfo(user)
             };
         }
@@ -123,14 +138,18 @@ public class AuthService : IAuthService
 
         if (_context.Database.IsRelational())
         {
-            await _context.Users.Where(u => u.Id == user.Id)
+            // The WHERE excludes a currently-locked row, so a late concurrent increment
+            // that lands AFTER a peer already latched the lock updates zero rows — no
+            // residual count survives onto the next window. Because a matched row is
+            // therefore always null-or-expired, the LockoutEnd else-branch is just null.
+            await _context.Users
+                .Where(u => u.Id == user.Id && (u.LockoutEnd == null || u.LockoutEnd < now))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.AccessFailedCount,
                         u => u.AccessFailedCount + 1 >= max ? 0 : u.AccessFailedCount + 1)
                     .SetProperty(u => u.LockoutEnd,
-                        u => u.AccessFailedCount + 1 >= max
-                            ? (DateTimeOffset?)until
-                            : (u.LockoutEnd != null && u.LockoutEnd < now ? (DateTimeOffset?)null : u.LockoutEnd)));
+                        u => u.AccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
             return;
         }
 
@@ -150,6 +169,11 @@ public class AuthService : IAuthService
         await _context.SaveChangesAsync();
     }
 
+    // Note: on the relational path ExecuteUpdate bypasses the change tracker, so the
+    // tracked `user` keeps its stale AccessFailedCount/LockoutEnd after this call. That
+    // is intentional and safe here — nothing reads those fields afterwards (the success
+    // path only issues the JWT and maps identity fields), and per EF Core guidance bulk
+    // updates and tracked SaveChanges are kept separate rather than reconciled per-entity.
     private async Task ResetLoginLockoutAsync(ApplicationUser user)
     {
         if (_context.Database.IsRelational())
@@ -157,7 +181,8 @@ public class AuthService : IAuthService
             await _context.Users.Where(u => u.Id == user.Id)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.AccessFailedCount, 0)
-                    .SetProperty(u => u.LockoutEnd, (DateTimeOffset?)null));
+                    .SetProperty(u => u.LockoutEnd, (DateTimeOffset?)null)
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
             return;
         }
 
@@ -219,7 +244,7 @@ public class AuthService : IAuthService
         _context.Accounts.Add(account);
         await _context.SaveChangesAsync();
 
-        var token = _jwtService.GenerateToken(user);
+        var tokenResult = _jwtService.GenerateToken(user);
 
         _logger.LogInformation("User {UserId} registered successfully with account {AccountId}", user.Id, account.Id);
 
@@ -229,10 +254,10 @@ public class AuthService : IAuthService
             Account = _accountMapper.ToResponse(account),
             Token = new Shared.DTOs.Auth.TokenResponse
             {
-                AccessToken = token,
-                ExpiresIn = 15 * 60, // 15 minutes in seconds
+                AccessToken = tokenResult.AccessToken,
+                ExpiresIn = Math.Max(0, (int)(tokenResult.ExpiresAt - DateTime.UtcNow).TotalSeconds),
                 TokenType = "Bearer",
-                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+                ExpiresAt = tokenResult.ExpiresAt
             }
         };
     }

@@ -288,7 +288,7 @@ public class AuthEndpointTests : IntegrationTestBase
             soft.StatusCode.Should().Be(HttpStatusCode.OK);
         }
 
-        // The attempt that crosses the threshold locks the PIN -> 423 PIN_LOCKED.
+        // The attempt that crosses the threshold locks the PIN -> 429 PIN_LOCKED.
         var locked = await Client.PostAsJsonAsync("/api/auth/pin/verify",
             new VerifyPinRequest { Pin = "654321" }, JsonOptions);
         locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);

@@ -178,7 +178,7 @@ public class TransactionEndpointTests : IntegrationTestBase
 
         var wrong = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "654321", Description = "x" };
 
-        // Wrong PIN is 401 up to the threshold; the crossing attempt locks the PIN (423).
+        // Wrong PIN is 401 up to the threshold; the crossing attempt locks the PIN (429).
         for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
         {
             (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode

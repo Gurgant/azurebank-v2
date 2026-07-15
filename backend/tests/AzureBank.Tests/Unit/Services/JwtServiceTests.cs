@@ -58,7 +58,7 @@ public class JwtServiceTests
         var user = CreateTestUser();
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
 
         // Assert
         token.Should().NotBeNullOrEmpty();
@@ -71,7 +71,7 @@ public class JwtServiceTests
         var user = CreateTestUser();
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var parts = token.Split('.');
 
         // Assert - JWT has 3 parts: header.payload.signature
@@ -89,7 +89,7 @@ public class JwtServiceTests
         var user = CreateTestUser(userId);
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
@@ -107,7 +107,7 @@ public class JwtServiceTests
         user.Email = "custom@email.com";
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
@@ -125,7 +125,7 @@ public class JwtServiceTests
         user.AzureTag = "custom.azure.tag";
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
@@ -142,7 +142,7 @@ public class JwtServiceTests
         var user = CreateTestUser();
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
@@ -159,7 +159,7 @@ public class JwtServiceTests
         var user = CreateTestUser();
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
@@ -174,7 +174,7 @@ public class JwtServiceTests
         var user = CreateTestUser();
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
@@ -190,13 +190,26 @@ public class JwtServiceTests
         var beforeGeneration = DateTime.UtcNow;
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
         // Assert - Token expires in ExpirationMinutes from now
         var expectedExpiration = beforeGeneration.AddMinutes(_options.ExpirationMinutes);
         jwt.ValidTo.Should().BeCloseTo(expectedExpiration, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void GenerateToken_ReturnedExpiresAt_EqualsTokenExpClaim()
+    {
+        // The returned ExpiresAt must be the token's real exp (single source of truth,
+        // ADR-0012) — so a client's advertised expiry can never drift from the token.
+        var user = CreateTestUser();
+
+        var result = _sut.GenerateToken(user);
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(result.AccessToken);
+
+        result.ExpiresAt.Should().Be(jwt.ValidTo);
     }
 
     [Fact]
@@ -207,8 +220,8 @@ public class JwtServiceTests
         var user2 = CreateTestUser(Guid.NewGuid());
 
         // Act
-        var token1 = _sut.GenerateToken(user1);
-        var token2 = _sut.GenerateToken(user2);
+        var token1 = _sut.GenerateToken(user1).AccessToken;
+        var token2 = _sut.GenerateToken(user2).AccessToken;
 
         // Assert
         token1.Should().NotBe(token2);
@@ -221,8 +234,8 @@ public class JwtServiceTests
         var user = CreateTestUser();
 
         // Act
-        var token1 = _sut.GenerateToken(user);
-        var token2 = _sut.GenerateToken(user);
+        var token1 = _sut.GenerateToken(user).AccessToken;
+        var token2 = _sut.GenerateToken(user).AccessToken;
 
         // Assert - Different JTI means different tokens
         token1.Should().NotBe(token2);
@@ -236,7 +249,7 @@ public class JwtServiceTests
         user.Email = null;
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 
@@ -256,7 +269,7 @@ public class JwtServiceTests
         // Arrange
         var userId = Guid.NewGuid();
         var user = CreateTestUser(userId);
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
 
         // Act
         var (isValid, extractedUserId) = _sut.ValidateToken(token);
@@ -293,7 +306,7 @@ public class JwtServiceTests
     {
         // Arrange
         var user = CreateTestUser();
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var tamperedToken = token[..^10] + "tampered!!"; // Modify signature
 
         // Act
@@ -335,7 +348,7 @@ public class JwtServiceTests
             _loggerMock.Object);
 
         var user = CreateTestUser();
-        var expiredToken = expiredService.GenerateToken(user);
+        var expiredToken = expiredService.GenerateToken(user).AccessToken;
 
         // Act
         var (isValid, userId) = _sut.ValidateToken(expiredToken);
@@ -362,7 +375,7 @@ public class JwtServiceTests
             _loggerMock.Object);
 
         var user = CreateTestUser();
-        var token = wrongIssuerService.GenerateToken(user);
+        var token = wrongIssuerService.GenerateToken(user).AccessToken;
 
         // Act - Validate with original service (expects correct issuer)
         var (isValid, userId) = _sut.ValidateToken(token);
@@ -389,7 +402,7 @@ public class JwtServiceTests
             _loggerMock.Object);
 
         var user = CreateTestUser();
-        var token = wrongAudienceService.GenerateToken(user);
+        var token = wrongAudienceService.GenerateToken(user).AccessToken;
 
         // Act - Validate with original service (expects correct audience)
         var (isValid, userId) = _sut.ValidateToken(token);
@@ -416,7 +429,7 @@ public class JwtServiceTests
             _loggerMock.Object);
 
         var user = CreateTestUser();
-        var token = wrongSecretService.GenerateToken(user);
+        var token = wrongSecretService.GenerateToken(user).AccessToken;
 
         // Act - Validate with original service (expects correct secret)
         var (isValid, userId) = _sut.ValidateToken(token);
@@ -437,7 +450,7 @@ public class JwtServiceTests
         var user = CreateTestUser();
 
         // Act
-        var token = _sut.GenerateToken(user);
+        var token = _sut.GenerateToken(user).AccessToken;
         var handler = new JwtSecurityTokenHandler();
         var jwt = handler.ReadJwtToken(token);
 

@@ -2,10 +2,13 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
 
 namespace AzureBank.Tests.Integration;
@@ -67,7 +70,20 @@ public sealed class LoginLockoutConcurrencySqlServerTests : IDisposable
 
             (await LoginStatusAsync(client, email, Password)).Should().Be(HttpStatusCode.TooManyRequests,
                 $"round {round}: a burst of parallel wrong passwords must leave the account LOCKED, never bypassed");
+
+            // The atomic WHERE-guard leaves NO residual count on a just-locked account,
+            // so the next window (after expiry) gets a full budget (ADR-0012 F1 fix).
+            (await ReadAccessFailedCountAsync(email)).Should().Be(0,
+                $"round {round}: a late concurrent increment must not survive onto a locked row");
         }
+    }
+
+    private async Task<int> ReadAccessFailedCountAsync(string email)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Users.Where(u => u.Email == email)
+            .Select(u => u.AccessFailedCount).SingleAsync();
     }
 
     private HttpClient CreateSqlClient()

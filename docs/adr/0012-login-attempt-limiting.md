@@ -64,9 +64,19 @@ return the identical `401 Invalid email or password.` (guarded by a test).
 - **Atomic writes**: increment-and-maybe-lock (and reset-on-success) run as a single
   set-based `ExecuteUpdateAsync` (relational; an InMemory fallback mirrors it),
   evaluating the threshold against the row's current value in one statement — so a
-  parallel burst never loses updates and a just-applied lock is never cleared. It
-  runs on the request-scoped `DbContext` (login has no idempotency/monetary
-  transaction to isolate, unlike the PIN path).
+  parallel burst never loses updates and a just-applied lock is never cleared. The
+  increment additionally carries a `WHERE (LockoutEnd IS NULL OR LockoutEnd < now)`
+  guard, so a late concurrent attempt that lands after a peer already latched the lock
+  updates zero rows and leaves **no residual count** — the next window gets a full
+  budget. It runs on the request-scoped `DbContext` (login has no idempotency/monetary
+  transaction to isolate, unlike the PIN path). These set-based writers deliberately
+  bypass Identity's `ConcurrencyStamp` OCC token (which is what makes them race-free);
+  no code path issues a subsequent Identity save on the same tracked instance, and each
+  writer bumps the `UpdatedAt` audit column explicitly (SaveChanges interceptors don't
+  run for `ExecuteUpdate`). The same guard + audit-bump were applied to the PIN lockout.
+- **Token expiry**: `IJwtService.GenerateToken` returns the token together with its
+  exact expiry (read back from the token's `exp`), so `LoginResponse`/`RegisterResponse`
+  never recompute the lifetime — no config drift, no `UtcNow` skew.
 - **Enumeration-safe contract**:
   - unknown user **or** wrong password → **401** `INVALID_CREDENTIALS`
     (`Invalid email or password.`), identical in all cases;
@@ -92,15 +102,18 @@ return the identical `401 Invalid email or password.` (guarded by a test).
   victim's email can lock it with wrong passwords. This is intrinsic to any lockout;
   mitigate with per-IP rate limiting (future work), not by removing the lock.
 - A locked account still runs a password hash per attempt — required so the response
-  timing is uniform for wrong passwords (no timing-based lock detection).
+  timing is uniform for wrong passwords (no timing-based lock detection). This makes a
+  locked account an (attacker-locked) hashing endpoint; bound it with upstream per-IP
+  rate limiting (future work).
 
 ### Neutral / known limitations
 - The PIN lockout (ADR-0010) stays a separate mechanism (dedicated columns; it returns
   429 even on a wrong PIN, which is fine because that path is post-authentication and
   carries no enumeration concern).
-- The response-**body** anti-enumeration is preserved, but a pre-existing **timing**
-  side-channel remains (an unknown user skips the password hash and returns faster);
-  closing it (hash a dummy for unknown users) is a separate hardening, out of scope.
+- Anti-enumeration is now **timing-safe too**: the unknown-user path runs a dummy
+  password verification (Identity's PBKDF2 against a fixed hash) so it spends the same
+  work a real account would — an unknown email cannot be distinguished by response
+  latency, not just by body. (Earlier revisions left this as a known gap.)
 
 ## Validation
 

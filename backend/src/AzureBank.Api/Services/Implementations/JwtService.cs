@@ -25,9 +25,11 @@ public class JwtService : IJwtService
     }
 
     /// <summary>
-    /// Generates a JWT access token for the specified user.
+    /// Generates a JWT access token for the specified user, returning the token AND
+    /// its exact expiry so callers never recompute the lifetime (no config drift, no
+    /// UtcNow skew — the returned expiry is read back from the token's own exp claim).
     /// </summary>
-    public string GenerateToken(ApplicationUser user)
+    public TokenResult GenerateToken(ApplicationUser user)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.Secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -51,9 +53,10 @@ public class JwtService : IJwtService
 
         var accessToken = new JwtSecurityTokenHandler().WriteToken(token);
 
-        _logger.LogInformation("Generated JWT for user {UserId}, expires at {ExpiresAt}", user.Id, expiresAt);
+        // token.ValidTo is the exp claim (whole seconds), i.e. the authoritative expiry.
+        _logger.LogInformation("Generated JWT for user {UserId}, expires at {ExpiresAt}", user.Id, token.ValidTo);
 
-        return accessToken;
+        return new TokenResult(accessToken, token.ValidTo);
     }
 
     /// <summary>
