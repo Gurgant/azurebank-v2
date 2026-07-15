@@ -563,7 +563,7 @@ public class AuthServiceTests : IDisposable
 
     // AuthService.VerifyPinAsync delegates to IPinVerifier (PinService), which
     // owns the PIN verification + attempt-limiting logic and is covered in
-    // PinServiceTests. Here we only assert the delegation.
+    // PinServiceTests. This test only asserts the delegation.
     [Fact]
     public async Task VerifyPinAsync_DelegatesToPinVerifier()
     {

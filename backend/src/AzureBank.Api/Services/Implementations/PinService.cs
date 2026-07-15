@@ -73,7 +73,7 @@ public sealed class PinService : IPinVerifier
                 await ResetLockoutAsync(db, user);
             }
             // Transparent pepper migration (ADR-0011): if the stored hash predates the
-            // active pepper key, re-hash the PIN now that we hold the plaintext and
+            // active pepper key, re-hash the PIN now that the plaintext is available and
             // persist it — in this service's own scope, like the lockout bookkeeping.
             // Best-effort: the PIN was already verified, so a transient failure of this
             // background upgrade must NOT fail the login — it retries on the next use.

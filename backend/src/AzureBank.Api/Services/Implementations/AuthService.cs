@@ -144,7 +144,7 @@ public class AuthService : IAuthService
         // An account exempt from lockout (LockoutEnabled=false) never accrues lock state,
         // preserving the invariant "LockoutEnd non-null => the account was lockout-eligible"
         // that the read gate relies on. (Diverges from Identity's AccessFailedAsync, which
-        // always increments; safe here because our read gate never re-checks the flag mid-count.)
+        // always increments; safe here because the read gate never re-checks the flag mid-count.)
         if (!user.LockoutEnabled)
             return;
 
