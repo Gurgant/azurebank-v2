@@ -14,6 +14,13 @@ public sealed class PinHashingOptionsValidator : IValidateOptions<PinHashingOpti
 
     public ValidateOptionsResult Validate(string? name, PinHashingOptions options)
     {
+        // PreviousPinPeppers is initialized to an empty map by default, but guard
+        // against a caller nulling it — the checks below would otherwise NRE.
+        if (options.PreviousPinPeppers is null)
+        {
+            return ValidateOptionsResult.Fail("Security:PreviousPinPeppers must not be null.");
+        }
+
         var errors = new List<string>();
 
         // Active pepper.

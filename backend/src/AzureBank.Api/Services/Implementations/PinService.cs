@@ -75,9 +75,20 @@ public sealed class PinService : IPinVerifier
             // Transparent pepper migration (ADR-0011): if the stored hash predates the
             // active pepper key, re-hash the PIN now that we hold the plaintext and
             // persist it — in this service's own scope, like the lockout bookkeeping.
+            // Best-effort: the PIN was already verified, so a transient failure of this
+            // background upgrade must NOT fail the login — it retries on the next use.
             if (_passwordHasher.PinNeedsRehash(user.PinHash))
             {
-                await UpgradePinHashAsync(db, user, pin);
+                try
+                {
+                    await UpgradePinHashAsync(db, user, pin);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Transparent PIN-hash upgrade failed for user {UserId}; the correct PIN still " +
+                        "verified, so the login proceeds and the upgrade retries next time.", userId);
+                }
             }
             _logger.LogInformation("PIN verified successfully for user {UserId}", userId);
             return true;

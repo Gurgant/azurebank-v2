@@ -176,6 +176,19 @@ public class PinServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task VerifyPinAsync_WhenRehashFails_StillReturnsTrue()
+    {
+        // The PIN verified correctly; a transient failure of the transparent rehash
+        // (here, HashPin throwing) must NOT block the login — it retries next time.
+        var user = SeedUser(pinHash: "legacy-hash");
+        _hasherMock.Setup(x => x.VerifyPin("legacy-hash", "123456")).Returns(true);
+        _hasherMock.Setup(x => x.PinNeedsRehash("legacy-hash")).Returns(true);
+        _hasherMock.Setup(x => x.HashPin("123456")).Throws(new InvalidOperationException("transient"));
+
+        (await _sut.VerifyPinAsync(user.Id, "123456")).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task VerifyPinAsync_CorrectPin_WhenHashCurrent_DoesNotRehash()
     {
         var user = SeedUser(pinHash: "current-hash");

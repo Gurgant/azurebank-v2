@@ -75,6 +75,13 @@ public class PinHashingOptionsValidatorTests
     }
 
     [Fact]
+    public void NullPreviousPinPeppers_Fails()
+    {
+        IsValid(new PinHashingOptions { PinPepper = P1, PinPepperKeyId = 1, PreviousPinPeppers = null! })
+            .Should().BeFalse();
+    }
+
+    [Fact]
     public void DuplicatePepperValue_Fails()
     {
         IsValid(new PinHashingOptions

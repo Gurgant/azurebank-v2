@@ -182,14 +182,41 @@ public class PasswordHasherPepperTests
             .Should().BeFalse("a legacy hash carries no keyid");
     }
 
-    [Fact]
-    public void VerifyPin_WithAbsurdCostParameters_ReturnsFalse()
+    [Theory]
+    [InlineData(524288)]      // 512 MiB — above the 256 MiB cap (would pass the old 1 GiB bound)
+    [InlineData(2000000000)]  // absurd
+    public void VerifyPin_WithMemoryAboveCap_ReturnsFalse(int memoryKib)
     {
-        // A tampered hash claiming a ~2 GiB memory cost must be rejected by the bounds
-        // check, not acted upon (valid Base64 salt/hash so it reaches the bounds gate).
-        const string absurd = "$argon2id$v=19$m=2000000000,t=2,p=4$c2FsdHNhbHQ=$aGFzaGhhc2g=";
-        Peppered().VerifyPin(absurd, "123456").Should().BeFalse();
-        Legacy().VerifyPin(absurd, "123456").Should().BeFalse();
+        // A tampered hash claiming an oversized memory cost must be rejected by the
+        // bounds check (valid Base64 salt/hash so it reaches the bounds gate).
+        var hash = $"$argon2id$v=19$m={memoryKib},t=2,p=4$c2FsdHNhbHQ=$aGFzaGhhc2g=";
+        Peppered().VerifyPin(hash, "123456").Should().BeFalse();
+        Legacy().VerifyPin(hash, "123456").Should().BeFalse();
+    }
+
+    [Fact]
+    public void PinPepperMissingFor_NonArgon2idHash_ReturnsFalse()
+    {
+        // A 6-segment non-argon2id string with an unheld keyid is an invalid-format
+        // concern, NOT a retired-pepper one — must not raise the orphaned-pepper signal.
+        const string fake = "$pbkdf2$v=19$m=1,t=1,p=1,keyid=9$c2FsdA==$aGFzaA==";
+        Rotated(PepperB, activeKeyId: 2, previous: new() { [1] = PepperA })
+            .PinPepperMissingFor(fake).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Constructor_WithNullPreviousPinPeppers_DoesNotThrow_AndWorks()
+    {
+        var sut = new PasswordHasher(new PinHashingOptions
+        {
+            PinPepper = PepperA,
+            PinPepperKeyId = 1,
+            PreviousPinPeppers = null!,
+        });
+
+        var hash = sut.HashPin("123456");
+        hash.Should().Contain("keyid=1");
+        sut.VerifyPin(hash, "123456").Should().BeTrue();
     }
 
     [Theory]

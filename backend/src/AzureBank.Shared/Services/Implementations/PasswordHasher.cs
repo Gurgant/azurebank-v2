@@ -94,11 +94,14 @@ public class PasswordHasher : IPasswordHasher
         {
             // Active first, so it always wins any key-id collision with a retired entry.
             ring[options.PinPepperKeyId] = Encoding.UTF8.GetBytes(options.PinPepper);
-            foreach (var (keyId, pepper) in options.PreviousPinPeppers)
+            if (options.PreviousPinPeppers is not null)
             {
-                if (!string.IsNullOrEmpty(pepper) && !ring.ContainsKey(keyId))
+                foreach (var (keyId, pepper) in options.PreviousPinPeppers)
                 {
-                    ring[keyId] = Encoding.UTF8.GetBytes(pepper);
+                    if (!string.IsNullOrEmpty(pepper) && !ring.ContainsKey(keyId))
+                    {
+                        ring[keyId] = Encoding.UTF8.GetBytes(pepper);
+                    }
                 }
             }
             _pinActiveKeyId = options.PinPepperKeyId;
@@ -163,8 +166,9 @@ public class PasswordHasher : IPasswordHasher
     {
         // True only when the hash is peppered with a key id we do NOT hold — i.e. a
         // pepper was retired while hashes still carried its id. A legacy hash (no
-        // keyid) and a resolvable keyid both return false.
-        if (string.IsNullOrEmpty(hash))
+        // keyid), a resolvable keyid, and a malformed/non-argon2id string all return
+        // false (a bad format is an invalid-hash concern, not a missing-pepper one).
+        if (!IsArgon2idHash(hash))
             return false;
         return TryReadKeyId(hash) is { } keyId && !_pinPepperRing.ContainsKey(keyId);
     }
@@ -231,9 +235,11 @@ public class PasswordHasher : IPasswordHasher
             }
 
             // Sanity-bound the cost parameters read from the stored hash. They come from
-            // a trusted store, but a tampered PinHash with an absurd m (e.g. 2^31) would
-            // otherwise drive a huge allocation/CPU cost — reject rather than act on it.
-            if (memory is < 8 or > 1_048_576         // 8 KiB .. 1 GiB
+            // a trusted store, but a tampered PinHash with an absurd m would otherwise
+            // drive a huge allocation/CPU cost — reject rather than act on it. The cap
+            // is well above our profiles (password 64 MiB, PIN 19 MiB) yet tight enough
+            // to bound a memory-exhaustion attempt if the column is ever tampered.
+            if (memory is < 8 or > 262_144           // 8 KiB .. 256 MiB
                 || iterations is < 1 or > 64
                 || parallelism is < 1 or > 64)
             {
