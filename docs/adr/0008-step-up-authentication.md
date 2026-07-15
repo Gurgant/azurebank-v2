@@ -4,7 +4,7 @@
 
 **Date**: 2026-01-15
 
-**Decision Makers**: Security Team, Architecture Team
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 

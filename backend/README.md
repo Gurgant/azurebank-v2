@@ -562,8 +562,8 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
   "Jwt": {
     "Issuer": "AzureBank.Api",
     "Audience": "AzureBank.Bff",
-    "AccessTokenExpirationMinutes": 15,
-    "RefreshTokenExpirationMinutes": 60
+    "ExpirationMinutes": 15,
+    "RefreshTokenExpirationDays": 7
   },
   "Serilog": {
     "MinimumLevel": "Information"

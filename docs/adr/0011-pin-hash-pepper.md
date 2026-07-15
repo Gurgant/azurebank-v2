@@ -4,7 +4,7 @@
 
 **Date**: 2026-07-15
 
-**Decision Makers**: Development team (ADR-0003 / ADR-0010 follow-up)
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 
@@ -24,7 +24,7 @@ pepper precisely for low-entropy secrets like PINs.
 
 > This is a different secret from the idempotency `Idempotency:HashKey`
 > (ADR-0009), which keys the HMAC **request fingerprint** — not the stored PIN
-> hash. Here we pepper the **PIN hash** itself.
+> hash. Here the **PIN hash** itself is peppered.
 
 Account **passwords are out of scope**: they are handled by ASP.NET Core Identity
 with its own key-derivation, have higher entropy, and are not verified through
@@ -67,7 +67,7 @@ this hasher (the password profile has no non-test call site).
   the PHC parameter block
   (`$argon2id$v=19$m=..,t=..,p=..,keyid=N$salt$hash`). Verification is driven by
   the stored hash: a hash **with** a `keyid` is verified **with** the matching
-  pepper (and a `keyid` we do not hold **fails closed**); a hash **without** one
+  pepper (and a `keyid` the ring does not hold **fails closed**); a hash **without** one
   is a **legacy** hash verified **without** a pepper. Still six `$`-segments, so
   the format stays backward-compatible.
 - **Pepper keyring (rotation)**: verification resolves the pepper by the hash's

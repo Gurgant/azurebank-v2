@@ -50,7 +50,7 @@
 
 ## Validation
 
-[How will we know if this decision is successful? What metrics or indicators?]
+[How will I know if this decision is successful? What metrics or indicators?]
 
 ## Related
 

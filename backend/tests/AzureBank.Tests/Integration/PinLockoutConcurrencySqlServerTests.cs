@@ -3,11 +3,14 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
 
 namespace AzureBank.Tests.Integration;
@@ -40,7 +43,7 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
     {
         const string pin = "123456";
         var client = CreateSqlClient();
-        var token = await RegisterAsync(client);
+        var (token, _) = await RegisterAsync(client);
         await SetPinAsync(client, token, pin);
 
         // Fire EXACTLY MaxPinAttempts wrong PINs in PARALLEL. With an atomic
@@ -69,7 +72,7 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
         // account UNLOCKED. It must stay locked every round.
         for (var round = 0; round < 3; round++)
         {
-            var token = await RegisterAsync(client);
+            var (token, tag) = await RegisterAsync(client);
             await SetPinAsync(client, token, pin);
 
             await Task.WhenAll(Enumerable.Range(0, ValidationRules.MaxPinAttempts * 3)
@@ -77,6 +80,12 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
 
             (await VerifyPinAsync(client, token, pin)).Should().Be(HttpStatusCode.TooManyRequests,
                 $"round {round}: a burst of parallel wrong PINs must leave the account LOCKED, never bypassed");
+
+            // The atomic WHERE-guard leaves NO residual count on a just-locked account,
+            // so the next window (after expiry) gets a full budget (ADR-0010, symmetric
+            // with the login lockout proof).
+            (await ReadPinAccessFailedCountAsync(tag)).Should().Be(0,
+                $"round {round}: a late concurrent increment must not survive onto a locked row");
         }
     }
 
@@ -85,7 +94,7 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
     {
         const string pin = "123456";
         var client = CreateSqlClient();
-        var token = await RegisterAsync(client);
+        var (token, _) = await RegisterAsync(client);
         await SetPinAsync(client, token, pin);
 
         // (Max-1) wrong PINs stay under the threshold; a correct PIN then resets the
@@ -107,12 +116,13 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
         return _factory.CreateClient();
     }
 
-    private static async Task<string> RegisterAsync(HttpClient client)
+    private static async Task<(string Token, string AzureTag)> RegisterAsync(HttpClient client)
     {
         var uniqueId = Guid.NewGuid().ToString("N")[..8];
+        var azureTag = $"pinlock_{uniqueId}";
         var response = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
-            AzureTag = $"pinlock_{uniqueId}",
+            AzureTag = azureTag,
             Email = $"pinlock{uniqueId}@example.com",
             Password = "TestPass123!",
             FirstName = "Pin",
@@ -120,7 +130,15 @@ public sealed class PinLockoutConcurrencySqlServerTests : IDisposable
         }, Json);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(Json);
-        return result!.Data!.Token.AccessToken;
+        return (result!.Data!.Token.AccessToken, azureTag);
+    }
+
+    private async Task<int> ReadPinAccessFailedCountAsync(string azureTag)
+    {
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await db.Users.Where(u => u.AzureTag == azureTag)
+            .Select(u => u.PinAccessFailedCount).SingleAsync();
     }
 
     private static async Task SetPinAsync(HttpClient client, string token, string pin)

@@ -4,7 +4,7 @@
 
 **Date**: 2026-07-13
 
-**Decision Makers**: Development team (R2 session), adversarial design review
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 
@@ -47,7 +47,7 @@ design — see Notes).
    live record.
 2. **Three-state records + fencing token** (chosen, described below).
 3. **Distributed lock service (Redis) or SQL app locks** — rejected:
-   new infrastructure for a guarantee the primary key already gives us.
+   new infrastructure for a guarantee the primary key already provides.
 
 ## Decision
 

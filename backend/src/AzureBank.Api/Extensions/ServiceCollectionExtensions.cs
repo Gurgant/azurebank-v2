@@ -54,9 +54,10 @@ public static class ServiceCollectionExtensions
             options.Password.RequiredLength = 8;
             options.Password.RequiredUniqueChars = 4;
 
-            // Lockout settings
-            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
-            options.Lockout.MaxFailedAccessAttempts = 5;
+            // Lockout settings (ADR-0012). Single source of truth in ValidationRules;
+            // the login lockout logic in AuthService uses the same constants.
+            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(ValidationRules.LoginLockoutMinutes);
+            options.Lockout.MaxFailedAccessAttempts = ValidationRules.MaxLoginAttempts;
             options.Lockout.AllowedForNewUsers = true;
 
             // User settings
@@ -132,6 +133,11 @@ public static class ServiceCollectionExtensions
             new Shared.Services.Implementations.PasswordHasher(
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
+        // Login-timing equalizer (ADR-0012): scoped, so it takes the request's own
+        // IPasswordHasher<ApplicationUser> by normal injection — no captive dependency even
+        // if a custom scoped hasher is registered later. The expensive reference hash is
+        // still computed exactly once, via a process-wide static cache inside the equalizer.
+        services.AddScoped<Security.ILoginTimingEqualizer, Security.LoginTimingEqualizer>();
         services.AddScoped<IAuthService, AuthService>();
         // PIN attempt-limiting lives in one place; withdrawals depend on the narrow
         // IPinVerifier. PinService persists lockout state in its own DbContext scope.

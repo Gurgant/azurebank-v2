@@ -132,6 +132,10 @@ public class AuthEndpointTests : IntegrationTestBase
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions);
         result!.Data!.Token.Should().NotBeNullOrEmpty();
         result.Data.User.Email.Should().Be(email);
+        // ExpiresAt comes from the token's own exp (JwtOptions.ExpirationMinutes = 15),
+        // not a hardcoded literal — so it tracks the real token lifetime.
+        result.Data.ExpiresAt.Should().BeCloseTo(
+            DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
     }
 
     [Fact]
@@ -146,6 +150,41 @@ public class AuthEndpointTests : IntegrationTestBase
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Login_AfterTooManyWrongPasswords_LocksAccount_Returns429()
+    {
+        var email = $"lockout{Guid.NewGuid():N}@example.com";
+        const string password = "SecurePass123!";
+        await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = $"lock_{Guid.NewGuid().ToString("N")[..8]}",
+            Email = email, Password = password, FirstName = "Lock", LastName = "Out"
+        }, JsonOptions);
+
+        var wrong = new LoginRequest { Email = email, Password = "WrongPass123!" };
+
+        // Every wrong password stays a generic 401 — even the one that crosses the
+        // threshold — so the lock state is never leaked to a password guesser.
+        for (var i = 0; i < ValidationRules.MaxLoginAttempts; i++)
+        {
+            (await Client.PostAsJsonAsync("/api/auth/login", wrong, JsonOptions)).StatusCode
+                .Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        // The CORRECT password is now refused with 429 + Retry-After (account locked).
+        var blocked = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = password }, JsonOptions);
+        blocked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        blocked.Headers.RetryAfter.Should().NotBeNull("a lockout must advertise Retry-After");
+        blocked.Headers.RetryAfter!.Delta!.Value.Should().BeCloseTo(
+            TimeSpan.FromMinutes(ValidationRules.LoginLockoutMinutes), TimeSpan.FromSeconds(30));
+        (await blocked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.AccountLocked);
+
+        // A wrong password while locked is still the generic 401 (no enumeration signal).
+        (await Client.PostAsJsonAsync("/api/auth/login", wrong, JsonOptions)).StatusCode
+            .Should().Be(HttpStatusCode.Unauthorized);
     }
 
     #endregion
@@ -253,7 +292,7 @@ public class AuthEndpointTests : IntegrationTestBase
             soft.StatusCode.Should().Be(HttpStatusCode.OK);
         }
 
-        // The attempt that crosses the threshold locks the PIN -> 423 PIN_LOCKED.
+        // The attempt that crosses the threshold locks the PIN -> 429 PIN_LOCKED.
         var locked = await Client.PostAsJsonAsync("/api/auth/pin/verify",
             new VerifyPinRequest { Pin = "654321" }, JsonOptions);
         locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);

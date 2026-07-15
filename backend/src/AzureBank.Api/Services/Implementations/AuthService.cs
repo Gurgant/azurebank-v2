@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
@@ -27,6 +28,7 @@ public class AuthService : IAuthService
     private readonly IPinVerifier _pinVerifier;
     private readonly UserMapper _userMapper;
     private readonly AccountMapper _accountMapper;
+    private readonly ILoginTimingEqualizer _timingEqualizer;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -37,6 +39,7 @@ public class AuthService : IAuthService
         IPinVerifier pinVerifier,
         UserMapper userMapper,
         AccountMapper accountMapper,
+        ILoginTimingEqualizer timingEqualizer,
         ILogger<AuthService> logger)
     {
         _userManager = userManager;
@@ -46,6 +49,7 @@ public class AuthService : IAuthService
         _pinVerifier = pinVerifier;
         _userMapper = userMapper;
         _accountMapper = accountMapper;
+        _timingEqualizer = timingEqualizer;
         _logger = logger;
     }
 
@@ -53,24 +57,147 @@ public class AuthService : IAuthService
     public async Task<LoginResponse> LoginAsync(LoginRequest request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-
-        if (user == null || !await _userManager.CheckPasswordAsync(user, request.Password))
+        if (user is null)
         {
-            // Prevent user enumeration - same message for both cases
+            // Spend the same DOMINANT (PBKDF2) password-hash cost a real account would, so
+            // an unknown email can't be told apart by that latency; the response body is
+            // already identical to a wrong password. A smaller write-latency residual on
+            // the account-exists path remains (ADR-0012) — bounded by upstream rate limiting.
+            _timingEqualizer.SpendVerifyCost(request.Password);
             _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
             throw new AuthenticationException("Invalid email or password.");
         }
 
-        var token = _jwtService.GenerateToken(user);
+        var now = DateTimeOffset.UtcNow;
+        var passwordOk = await _userManager.CheckPasswordAsync(user, request.Password);
+        // Respect Identity's per-user LockoutEnabled opt-out (matches IsLockedOutAsync):
+        // an exempt account (e.g. a service account) is never treated as locked.
+        var lockedUntil = user.LockoutEnabled && user.LockoutEnd is { } end && end > now
+            ? end
+            : (DateTimeOffset?)null;
 
-        _logger.LogInformation("User {UserId} logged in successfully", user.Id);
-
-        return new LoginResponse
+        if (passwordOk)
         {
-            Token = token,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(15), // Should come from JWT options
-            User = _userMapper.ToLoginInfo(user)
-        };
+            // Correct password on a locked account: reveal the lock ONLY here — the
+            // caller has proven knowledge of the password, so the signal carries no
+            // enumeration value — and give a precise Retry-After (ADR-0012).
+            if (lockedUntil is { } until)
+            {
+                _logger.LogWarning("Login refused for locked account {UserId} until {Until}", user.Id, until);
+                throw AccountLockedException.Until(until, now);
+            }
+
+            // Success: clear any accumulated failures / expired lock.
+            if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
+            {
+                await ResetLoginLockoutAsync(user);
+            }
+
+            var tokenResult = _jwtService.GenerateToken(user);
+            _logger.LogInformation("User {UserId} logged in successfully", user.Id);
+            return new LoginResponse
+            {
+                Token = tokenResult.AccessToken,
+                ExpiresAt = tokenResult.ExpiresAt, // single source of truth (the token's exp)
+                User = _userMapper.ToLoginInfo(user)
+            };
+        }
+
+        // Wrong password. Count it toward the lockout (but not while already locked, so
+        // a persistent attacker cannot extend the window), then return the SAME generic
+        // 401 as an unknown user — the lock state is never leaked to a password guesser.
+        if (lockedUntil is null)
+        {
+            await IncrementAndMaybeLockLoginAsync(user, now);
+        }
+        _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
+        throw new AuthenticationException("Invalid email or password.");
+    }
+
+    // ---- Atomic login-lockout writers (Identity's native AccessFailedCount / LockoutEnd) ----
+    // A single set-based ExecuteUpdate (no read-modify-write, so no lost updates under a
+    // burst of parallel wrong passwords). Identity's UserManager.AccessFailedAsync would
+    // instead do an optimistic-concurrency read-modify-write whose lost update EF silently
+    // folds into IdentityResult.ConcurrencyFailure — letting a parallel burst stay under
+    // the threshold and never lock. ExecuteUpdate is relational-only, so the InMemory test
+    // provider falls back to an equivalent tracked write (single-threaded there).
+
+    /// <summary>
+    /// One atomic failed-login transition: increment AccessFailedCount, and when it crosses
+    /// <see cref="ValidationRules.MaxLoginAttempts"/> set LockoutEnd and reset the counter —
+    /// all against the row's CURRENT value in a single statement. An EXPIRED lock is cleared;
+    /// a FUTURE lock is never cleared, so the threshold cannot be bypassed by parallel bursts.
+    /// </summary>
+    private async Task IncrementAndMaybeLockLoginAsync(ApplicationUser user, DateTimeOffset now)
+    {
+        // An account exempt from lockout (LockoutEnabled=false) never accrues lock state,
+        // preserving the invariant "LockoutEnd non-null => the account was lockout-eligible"
+        // that the read gate relies on. (Diverges from Identity's AccessFailedAsync, which
+        // always increments; safe here because the read gate never re-checks the flag mid-count.)
+        if (!user.LockoutEnabled)
+            return;
+
+        var max = ValidationRules.MaxLoginAttempts;
+        var until = now.AddMinutes(ValidationRules.LoginLockoutMinutes);
+
+        if (_context.Database.IsRelational())
+        {
+            // The WHERE excludes a currently-locked (or exempt) row, so a late concurrent
+            // increment that lands AFTER a peer already latched the lock updates zero rows —
+            // no residual count survives onto the next window. Because a matched row is
+            // therefore always null-or-expired, the LockoutEnd else-branch is just null.
+            await _context.Users
+                .Where(u => u.Id == user.Id && u.LockoutEnabled && (u.LockoutEnd == null || u.LockoutEnd < now))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.AccessFailedCount,
+                        u => u.AccessFailedCount + 1 >= max ? 0 : u.AccessFailedCount + 1)
+                    .SetProperty(u => u.LockoutEnd,
+                        u => u.AccessFailedCount + 1 >= max ? (DateTimeOffset?)until : null)
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+            // Detach so the tracked (now-stale) user can't be written back by a later save.
+            _context.Entry(user).State = EntityState.Detached;
+            return;
+        }
+
+        if (user.AccessFailedCount + 1 >= max)
+        {
+            user.AccessFailedCount = 0;   // the lock window is now authoritative
+            user.LockoutEnd = until;
+        }
+        else
+        {
+            user.AccessFailedCount += 1;
+            if (user.LockoutEnd is { } expired && expired < now)
+            {
+                user.LockoutEnd = null;
+            }
+        }
+        user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
+        await _context.SaveChangesAsync();
+    }
+
+    // On the relational path ExecuteUpdate bypasses the change tracker, so the tracked
+    // `user` keeps its stale AccessFailedCount/LockoutEnd. Detach it so a later
+    // SaveChanges in the same request (e.g. a future unit-of-work or audit interceptor)
+    // can't write those stale values back and silently revert the reset. Subsequent reads
+    // (JWT generation, identity mapping) work fine on the detached entity.
+    private async Task ResetLoginLockoutAsync(ApplicationUser user)
+    {
+        if (_context.Database.IsRelational())
+        {
+            await _context.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.AccessFailedCount, 0)
+                    .SetProperty(u => u.LockoutEnd, (DateTimeOffset?)null)
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
+            _context.Entry(user).State = EntityState.Detached;
+            return;
+        }
+
+        user.AccessFailedCount = 0;
+        user.LockoutEnd = null;
+        user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
+        await _context.SaveChangesAsync();
     }
 
     /// <inheritdoc />
@@ -126,7 +253,7 @@ public class AuthService : IAuthService
         _context.Accounts.Add(account);
         await _context.SaveChangesAsync();
 
-        var token = _jwtService.GenerateToken(user);
+        var tokenResult = _jwtService.GenerateToken(user);
 
         _logger.LogInformation("User {UserId} registered successfully with account {AccountId}", user.Id, account.Id);
 
@@ -136,10 +263,10 @@ public class AuthService : IAuthService
             Account = _accountMapper.ToResponse(account),
             Token = new Shared.DTOs.Auth.TokenResponse
             {
-                AccessToken = token,
-                ExpiresIn = 15 * 60, // 15 minutes in seconds
+                AccessToken = tokenResult.AccessToken,
+                ExpiresIn = Math.Max(0, (int)(tokenResult.ExpiresAt - DateTime.UtcNow).TotalSeconds),
                 TokenType = "Bearer",
-                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+                ExpiresAt = tokenResult.ExpiresAt
             }
         };
     }

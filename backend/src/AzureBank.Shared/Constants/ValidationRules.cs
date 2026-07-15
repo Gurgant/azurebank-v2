@@ -42,6 +42,10 @@ public static class ValidationRules
     public const int MaxPinAttempts = 3;
     /// <summary>How long the PIN stays locked after too many wrong attempts.</summary>
     public const int PinLockoutMinutes = 15;
+    /// <summary>Consecutive failed logins before the account is temporarily locked (ADR-0012).</summary>
+    public const int MaxLoginAttempts = 5;
+    /// <summary>How long the account stays locked after too many failed logins.</summary>
+    public const int LoginLockoutMinutes = 15;
 
     // ═══════════════════════════════════════════════════════════════
     // EMAIL
