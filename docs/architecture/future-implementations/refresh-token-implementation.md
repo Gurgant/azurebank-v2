@@ -21,7 +21,7 @@ The `RefreshToken` entity and database configuration exist but are **never used*
 | `RefreshToken` Entity | `src/AzureBank.Shared/Entities/RefreshToken.cs` | ✅ Complete |
 | EF Core Configuration | `src/AzureBank.Infrastructure/Data/Configurations/RefreshTokenConfiguration.cs` | ✅ Complete |
 | Database Table | `RefreshTokens` | ✅ Ready (after migration) |
-| JWT Options | `JwtOptions.RefreshTokenExpirationMinutes` | ✅ Configured (60 min) |
+| JWT Options | `JwtOptions.RefreshTokenExpirationDays` | ✅ Configured (7 days) |
 
 ### What's MISSING (Needs Implementation)
 
@@ -331,7 +331,7 @@ private async Task<(string PlainToken, RefreshToken Entity)> CreateRefreshTokenA
     {
         UserId = userId,
         TokenHash = tokenHash,
-        ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtOptions.RefreshTokenExpirationMinutes),
+        ExpiresAt = DateTime.UtcNow.AddDays(_jwtOptions.RefreshTokenExpirationDays),
         CreatedAt = DateTime.UtcNow,
         IpAddress = ipAddress,
         UserAgent = userAgent,

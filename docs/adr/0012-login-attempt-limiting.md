@@ -110,10 +110,21 @@ return the identical `401 Invalid email or password.` (guarded by a test).
 - The PIN lockout (ADR-0010) stays a separate mechanism (dedicated columns; it returns
   429 even on a wrong PIN, which is fine because that path is post-authentication and
   carries no enumeration concern).
-- Anti-enumeration is now **timing-safe too**: the unknown-user path runs a dummy
-  password verification (Identity's PBKDF2 against a fixed hash) so it spends the same
-  work a real account would — an unknown email cannot be distinguished by response
-  latency, not just by body. (Earlier revisions left this as a known gap.)
+- Anti-enumeration is **also hardened against timing**: the unknown-user path runs a
+  dummy password verification (via the UserManager's own hasher, so the cost tracks the
+  real verifier) to spend the same **dominant** PBKDF2 cost a real account would — the
+  large hash-latency oracle is closed, not just the response body. A **smaller residual**
+  remains: a wrong password on an *existing, unlocked* account performs one extra DB
+  write (the failed-attempt increment) that the unknown-user path does not, so a fine
+  timing analysis could still separate the two populations. This is a much weaker signal
+  than the hash oracle and is bounded by the upstream per-IP rate limiting noted above;
+  fully equalizing the write path (or a fixed response-time floor) is left as future work.
+- **Per-user opt-out respected**: the lockout honors Identity's `LockoutEnabled` flag
+  (matching `IsLockedOutAsync`) — an exempt account (e.g. a service account) is never
+  treated as locked and never accrues lock state, so a future "disable lockout for user
+  X" toggle takes effect. Every registered user has it `true` via `AllowedForNewUsers`,
+  so this is defensive alignment, not a current behavior change. The PIN lockout is a
+  separate mechanism and is intentionally *not* governed by this password-scoped flag.
 
 ## Validation
 

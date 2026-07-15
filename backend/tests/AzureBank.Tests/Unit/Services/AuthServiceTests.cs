@@ -44,6 +44,8 @@ public class AuthServiceTests : IDisposable
         var userStoreMock = new Mock<IUserStore<ApplicationUser>>();
         _userManagerMock = new Mock<UserManager<ApplicationUser>>(
             userStoreMock.Object, null!, null!, null!, null!, null!, null!, null!, null!);
+        // The unknown-user timing-equalization path uses UserManager.PasswordHasher.
+        _userManagerMock.Object.PasswordHasher = new PasswordHasher<ApplicationUser>();
 
         _jwtServiceMock = new Mock<IJwtService>();
         _passwordHasherMock = new Mock<IPasswordHasher>();
@@ -100,6 +102,7 @@ public class AuthServiceTests : IDisposable
         var user = CreateTestUser(email, "lockuser");
         user.AccessFailedCount = failed;
         user.LockoutEnd = lockoutEnd;
+        user.LockoutEnabled = true; // registered users get this via AllowedForNewUsers
         _context.Users.Add(user);
         _context.SaveChanges();
         _userManagerMock.Setup(x => x.FindByEmailAsync(email)).ReturnsAsync(user);
@@ -218,6 +221,40 @@ public class AuthServiceTests : IDisposable
         var reloaded = await ReloadAsync(user.Id);
         reloaded.AccessFailedCount.Should().Be(0);
         reloaded.LockoutEnd.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LoginAsync_LockoutDisabledUser_CorrectPassword_LogsInDespiteLockoutEnd()
+    {
+        // An account exempt from lockout (LockoutEnabled=false) is never treated as
+        // locked, even with a future LockoutEnd — matches Identity's IsLockedOutAsync.
+        var user = SeedUserInContext(failed: 3, lockoutEnd: DateTimeOffset.UtcNow.AddMinutes(10));
+        user.LockoutEnabled = false;
+        _context.SaveChanges();
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "correct")).ReturnsAsync(true);
+        _jwtServiceMock.Setup(x => x.GenerateToken(user))
+            .Returns(new TokenResult("jwt", DateTime.UtcNow.AddMinutes(15)));
+
+        var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
+
+        result.Token.Should().Be("jwt");
+    }
+
+    [Fact]
+    public async Task LoginAsync_LockoutDisabledUser_WrongPassword_DoesNotLatchLock()
+    {
+        var user = SeedUserInContext(failed: ValidationRules.MaxLoginAttempts - 1); // one away
+        user.LockoutEnabled = false;
+        _context.SaveChanges();
+        _userManagerMock.Setup(x => x.CheckPasswordAsync(user, "wrong")).ReturnsAsync(false);
+
+        await _sut.Invoking(s => s.LoginAsync(new LoginRequest { Email = user.Email!, Password = "wrong" }))
+            .Should().ThrowAsync<AuthenticationException>();
+
+        // The writer skips an exempt account: no lock latched, no count churn.
+        var reloaded = await ReloadAsync(user.Id);
+        reloaded.LockoutEnd.Should().BeNull("an exempt account never latches a lock");
+        reloaded.AccessFailedCount.Should().Be(ValidationRules.MaxLoginAttempts - 1);
     }
 
     #endregion

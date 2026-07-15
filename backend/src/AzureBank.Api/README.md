@@ -292,8 +292,8 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
     "Issuer": "AzureBank.Api",
     "Audience": "AzureBank.Bff",
     "SecretKey": "your-secret-key-here-min-32-chars",
-    "AccessTokenExpirationMinutes": 15,
-    "RefreshTokenExpirationMinutes": 60
+    "ExpirationMinutes": 15,
+    "RefreshTokenExpirationDays": 7
   },
   "Serilog": {
     "MinimumLevel": {

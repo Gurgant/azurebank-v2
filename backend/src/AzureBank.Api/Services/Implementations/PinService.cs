@@ -169,6 +169,7 @@ public sealed class PinService : IPinVerifier
                 user.PinLockoutEnd = null;
             }
         }
+        user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
         await db.SaveChangesAsync();
         return user.PinLockoutEnd;
     }
@@ -209,6 +210,7 @@ public sealed class PinService : IPinVerifier
 
         user.PinAccessFailedCount = 0;
         user.PinLockoutEnd = null;
+        user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
         await db.SaveChangesAsync();
     }
 }

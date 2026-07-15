@@ -159,8 +159,8 @@ This guide explains how to deploy the AzureBank solution to Azure with:
     "Secret": "${JWT_SECRET}",
     "Issuer": "AzureBank.Api",
     "Audience": "AzureBank.Bff",
-    "AccessTokenExpirationMinutes": 15,
-    "RefreshTokenExpirationMinutes": 60
+    "ExpirationMinutes": 15,
+    "RefreshTokenExpirationDays": 7
   },
   "AllowedHosts": "*",
   "Kestrel": {

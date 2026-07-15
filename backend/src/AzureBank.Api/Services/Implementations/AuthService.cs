@@ -49,17 +49,20 @@ public class AuthService : IAuthService
         _logger = logger;
     }
 
-    // A fixed dummy hash + hasher (Identity's default PBKDF2, same cost as the real
-    // password check) used to equalize latency when the account does not exist, so
-    // account existence cannot be timed. PasswordHasher ignores the user argument.
+    // A throwaway user + lazily-computed hash used to spend the SAME password-hash cost
+    // a real account would when the email is unknown, so account existence can't be told
+    // apart by the dominant (PBKDF2) hash latency. It uses the UserManager's OWN hasher,
+    // so the cost automatically tracks whatever hasher CheckPasswordAsync uses (rather
+    // than hardcoding framework defaults). PasswordHasher ignores the user argument.
     private static readonly ApplicationUser DummyUser =
         new() { AzureTag = string.Empty, FirstName = string.Empty, LastName = string.Empty };
-    private static readonly PasswordHasher<ApplicationUser> DummyHasher = new();
-    private static readonly string DummyHash =
-        DummyHasher.HashPassword(DummyUser, "timing-equalization-dummy");
+    private string? _dummyHash;
 
-    private static void DummyPasswordVerify(string password)
-        => DummyHasher.VerifyHashedPassword(DummyUser, DummyHash, password);
+    private void DummyPasswordVerify(string password)
+    {
+        _dummyHash ??= _userManager.PasswordHasher.HashPassword(DummyUser, "timing-equalization-dummy");
+        _userManager.PasswordHasher.VerifyHashedPassword(DummyUser, _dummyHash, password);
+    }
 
     /// <inheritdoc />
     public async Task<LoginResponse> LoginAsync(LoginRequest request)
@@ -67,9 +70,10 @@ public class AuthService : IAuthService
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null)
         {
-            // Spend the same password-hash cost a real account would, so an unknown
-            // email can't be distinguished by RESPONSE TIMING — the body is already
-            // identical to a wrong password, this closes the timing oracle (ADR-0012).
+            // Spend the same DOMINANT (PBKDF2) password-hash cost a real account would, so
+            // an unknown email can't be told apart by that latency; the response body is
+            // already identical to a wrong password. A smaller write-latency residual on
+            // the account-exists path remains (ADR-0012) — bounded by upstream rate limiting.
             DummyPasswordVerify(request.Password);
             _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
             throw new AuthenticationException("Invalid email or password.");
@@ -77,7 +81,11 @@ public class AuthService : IAuthService
 
         var now = DateTimeOffset.UtcNow;
         var passwordOk = await _userManager.CheckPasswordAsync(user, request.Password);
-        var lockedUntil = user.LockoutEnd is { } end && end > now ? end : (DateTimeOffset?)null;
+        // Respect Identity's per-user LockoutEnabled opt-out (matches IsLockedOutAsync):
+        // an exempt account (e.g. a service account) is never treated as locked.
+        var lockedUntil = user.LockoutEnabled && user.LockoutEnd is { } end && end > now
+            ? end
+            : (DateTimeOffset?)null;
 
         if (passwordOk)
         {
@@ -133,17 +141,24 @@ public class AuthService : IAuthService
     /// </summary>
     private async Task IncrementAndMaybeLockLoginAsync(ApplicationUser user, DateTimeOffset now)
     {
+        // An account exempt from lockout (LockoutEnabled=false) never accrues lock state,
+        // preserving the invariant "LockoutEnd non-null => the account was lockout-eligible"
+        // that the read gate relies on. (Diverges from Identity's AccessFailedAsync, which
+        // always increments; safe here because our read gate never re-checks the flag mid-count.)
+        if (!user.LockoutEnabled)
+            return;
+
         var max = ValidationRules.MaxLoginAttempts;
         var until = now.AddMinutes(ValidationRules.LoginLockoutMinutes);
 
         if (_context.Database.IsRelational())
         {
-            // The WHERE excludes a currently-locked row, so a late concurrent increment
-            // that lands AFTER a peer already latched the lock updates zero rows — no
-            // residual count survives onto the next window. Because a matched row is
+            // The WHERE excludes a currently-locked (or exempt) row, so a late concurrent
+            // increment that lands AFTER a peer already latched the lock updates zero rows —
+            // no residual count survives onto the next window. Because a matched row is
             // therefore always null-or-expired, the LockoutEnd else-branch is just null.
             await _context.Users
-                .Where(u => u.Id == user.Id && (u.LockoutEnd == null || u.LockoutEnd < now))
+                .Where(u => u.Id == user.Id && u.LockoutEnabled && (u.LockoutEnd == null || u.LockoutEnd < now))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(u => u.AccessFailedCount,
                         u => u.AccessFailedCount + 1 >= max ? 0 : u.AccessFailedCount + 1)
@@ -166,6 +181,7 @@ public class AuthService : IAuthService
                 user.LockoutEnd = null;
             }
         }
+        user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
         await _context.SaveChangesAsync();
     }
 
@@ -188,6 +204,7 @@ public class AuthService : IAuthService
 
         user.AccessFailedCount = 0;
         user.LockoutEnd = null;
+        user.UpdatedAt = DateTime.UtcNow;   // parity with the relational writer's audit bump
         await _context.SaveChangesAsync();
     }
 

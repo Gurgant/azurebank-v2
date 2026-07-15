@@ -132,6 +132,10 @@ public class AuthEndpointTests : IntegrationTestBase
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions);
         result!.Data!.Token.Should().NotBeNullOrEmpty();
         result.Data.User.Email.Should().Be(email);
+        // ExpiresAt comes from the token's own exp (JwtOptions.ExpirationMinutes = 15),
+        // not a hardcoded literal — so it tracks the real token lifetime.
+        result.Data.ExpiresAt.Should().BeCloseTo(
+            DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
     }
 
     [Fact]
