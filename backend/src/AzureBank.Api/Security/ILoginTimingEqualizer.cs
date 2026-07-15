@@ -5,10 +5,13 @@ namespace AzureBank.Api.Security;
 /// NON-existent account costs the same as one for a real account — closing the
 /// user-enumeration timing oracle (ADR-0012).
 ///
-/// Implemented as a singleton: the reference hash is computed exactly ONCE at startup,
-/// so an unknown-email login performs a single verification (not a hash + a verify),
-/// which keeps the cost equal to <c>UserManager.CheckPasswordAsync</c> and avoids the
-/// CPU-doubling an unknown email would otherwise cause.
+/// The reference hash is cached process-wide and computed lazily on the first
+/// unknown-email login; from then on an unknown-email login performs a single
+/// verification (not a hash + a verify), keeping the cost equal to
+/// <c>UserManager.CheckPasswordAsync</c>. The service is registered scoped and uses
+/// the request's own password hasher, so the cost tracks the configured hashing
+/// options; only the very first unknown-email login after startup pays the one-time
+/// hash + verify.
 /// </summary>
 public interface ILoginTimingEqualizer
 {
