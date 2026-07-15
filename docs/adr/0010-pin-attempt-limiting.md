@@ -4,7 +4,7 @@
 
 **Date**: 2026-07-14
 
-**Decision Makers**: Development team (R2 follow-up), read-only discovery of the auth/PIN surface
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 

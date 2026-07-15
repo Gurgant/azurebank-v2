@@ -4,13 +4,13 @@
 
 **Date**: 2026-01-12
 
-**Decision Makers**: Architecture Team
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 
 ## Context
 
-The BFF gateway needs to proxy requests from clients to the backend API. We need a reverse proxy solution that:
+The BFF gateway needs to proxy requests from clients to the backend API. A reverse proxy solution is needed that:
 - Integrates well with ASP.NET Core
 - Allows custom request/response transformations
 - Supports configuration-based routing

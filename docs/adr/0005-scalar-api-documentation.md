@@ -4,7 +4,7 @@
 
 **Date**: 2026-01-10
 
-**Decision Makers**: Architecture Team, Developer Experience Team
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 

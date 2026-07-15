@@ -4,7 +4,7 @@
 
 **Date**: 2026-07-15
 
-**Decision Makers**: Development team (resolves the ADR-0010 follow-up)
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 
@@ -142,7 +142,7 @@ return the identical `401 Invalid email or password.` (guarded by a test).
 
 ## Related
 
-- ADR-0010 (PIN attempt-limiting) — the mirror; **this resolves its follow-up**. We
+- ADR-0010 (PIN attempt-limiting) — the mirror; **this resolves its follow-up**. I
   deviate from its "use `SignInManager.CheckPasswordSignInAsync`" note for
   concurrency-correctness, enumeration control, and the JWT-only fit.
 - ADR-0003 (Argon2id) — account passwords use Identity's own hasher (out of scope here).

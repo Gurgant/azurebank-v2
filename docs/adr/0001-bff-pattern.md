@@ -4,7 +4,7 @@
 
 **Date**: 2026-01-12
 
-**Decision Makers**: Architecture Team
+**Decision Makers**: Vladislav Aleshaev
 
 ---
 
