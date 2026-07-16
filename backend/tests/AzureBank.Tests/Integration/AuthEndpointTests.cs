@@ -83,8 +83,8 @@ public class AuthEndpointTests : IntegrationTestBase
         var body = await response.Content.ReadAsStringAsync();
         body.Should().NotContainEquivalentOf("already registered");
         body.Should().NotContainEquivalentOf("already taken");
-        body.Should().NotContain(ErrorCodes.DuplicateEmail);
-        body.Should().NotContain(ErrorCodes.DuplicateAzureTag);
+        body.Should().NotContain("DUPLICATE_EMAIL");
+        body.Should().NotContain("DUPLICATE_AZURE_TAG");
 
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
         problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RegistrationFailed);

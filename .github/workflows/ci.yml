@@ -55,7 +55,9 @@ jobs:
         if: always()
         with:
           name: backend-test-results
-          path: backend/tests/AzureBank.Tests/TestResults/
+          path: |
+            backend/tests/AzureBank.Tests/TestResults/
+            backend/tests/AzureBank.Bff.Tests/TestResults/
 
   # The idempotency single-execution guarantee and the balance optimistic-
   # concurrency retry depend on REAL SQL Server semantics (unique-key races,

@@ -25,4 +25,11 @@ public class RateLimitingOptions
 
     /// <summary>Window, in seconds, for the auth limiter.</summary>
     public int AuthWindowSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Segments the auth sliding window is divided into (6 => 10s segments over a 60s
+    /// window). More segments track the limit more smoothly; 1 degenerates to a fixed
+    /// window and reinstates the 2x boundary burst.
+    /// </summary>
+    public int AuthSegmentsPerWindow { get; set; } = 6;
 }

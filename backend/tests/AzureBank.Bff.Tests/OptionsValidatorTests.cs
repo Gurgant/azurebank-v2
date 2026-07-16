@@ -59,6 +59,17 @@ public class RateLimitingOptionsValidatorTests
         result.Failed.Should().BeTrue();
         result.FailureMessage.Should().Contain("AuthWindowSeconds");
     }
+
+    [Fact]
+    public void Validate_NonPositiveAuthSegmentsPerWindow_Fails()
+    {
+        // 0 would throw when the sliding window is built; 1 silently degrades to a fixed
+        // window and hands back the 2x boundary burst.
+        var result = _sut.Validate(null, new RateLimitingOptions { AuthSegmentsPerWindow = 0 });
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("AuthSegmentsPerWindow");
+    }
 }
 
 /// <summary>

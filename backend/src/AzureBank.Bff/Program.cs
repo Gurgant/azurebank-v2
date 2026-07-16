@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading.RateLimiting;
 using AzureBank.Bff;
 using AzureBank.Bff.Middleware;
@@ -137,8 +138,30 @@ try
     var rateLimiting = builder.Configuration
         .GetSection(RateLimitingOptions.SectionName).Get<RateLimitingOptions>() ?? new RateLimitingOptions();
 
-    static string ClientIp(HttpContext context) =>
-        context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    // Partition key. IPv6 end sites are handed a whole /64 (often more), so keying on the
+    // full address would let an attacker rotate addresses inside their OWN allocation — no
+    // spoofing required — and the per-IP limit would evaporate. Key IPv6 on its /64 prefix;
+    // IPv4 keys on the full address.
+    static string ClientIp(HttpContext context)
+    {
+        var ip = context.Connection.RemoteIpAddress;
+        if (ip is null)
+        {
+            return "unknown";
+        }
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+        if (ip.AddressFamily != AddressFamily.InterNetworkV6)
+        {
+            return ip.ToString();
+        }
+
+        var bytes = ip.GetAddressBytes();
+        Array.Clear(bytes, 8, 8); // zero the interface identifier -> the /64 prefix
+        return new IPAddress(bytes) + "/64";
+    }
 
     builder.Services.AddRateLimiter(options =>
     {
@@ -150,11 +173,19 @@ try
                 QueueLimit = 0,
             }));
 
+        // SLIDING window for the credential endpoints. A fixed window lets a client spend the
+        // whole quota at the end of one window and again at the start of the next — ~2x the
+        // limit within a couple of seconds, which is precisely the burst an anti-brute-force
+        // control must not gift. (The global baseline above stays a fixed window: it is a
+        // coarse anti-DoS backstop where the boundary burst is irrelevant.) One policy => ONE
+        // bucket shared by bff/auth/{login,register} and the YARP /api/auth/* routes, which
+        // is deliberate: that shared budget IS the per-IP enumeration/brute-force allowance.
         options.AddPolicy(RateLimitPolicies.Auth, context =>
-            RateLimitPartition.GetFixedWindowLimiter(ClientIp(context), _ => new FixedWindowRateLimiterOptions
+            RateLimitPartition.GetSlidingWindowLimiter(ClientIp(context), _ => new SlidingWindowRateLimiterOptions
             {
                 PermitLimit = rateLimiting.AuthPermitLimit,
                 Window = TimeSpan.FromSeconds(rateLimiting.AuthWindowSeconds),
+                SegmentsPerWindow = rateLimiting.AuthSegmentsPerWindow,
                 QueueLimit = 0,
             }));
 
@@ -167,6 +198,27 @@ try
                 response.Headers.RetryAfter =
                     ((int)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
             }
+            else
+            {
+                // Not every limiter advertises a retry time — the sliding window used for the
+                // auth policy does not, unlike the fixed-window global. Fall back to that
+                // window: conservative, and never tells a client to retry sooner than a permit
+                // can actually free (RFC 9110 §10.2.3). A 429 without Retry-After is a poor
+                // contract, and the API's lockout responses already always carry one.
+                response.Headers.RetryAfter =
+                    rateLimiting.AuthWindowSeconds.ToString(CultureInfo.InvariantCulture);
+            }
+            response.Headers.CacheControl = "no-store"; // RFC 6585 §4: a 429 must not be cached
+
+            // This limiter IS the anti-brute-force control (ADR-0013), so a burst that trips
+            // it is exactly the signal an operator must be able to alert on. Rejecting
+            // silently would ship the control with no telemetry.
+            Log.Warning(
+                "SecurityEvent {SecurityEvent}: {Method} {Path} rejected for partition {Partition}",
+                "RateLimitExceeded",
+                context.HttpContext.Request.Method,
+                context.HttpContext.Request.Path.Value,
+                ClientIp(context.HttpContext));
 
             var problem = new ProblemDetails
             {
@@ -265,9 +317,15 @@ try
     Log.Information("AzureBank BFF Gateway started successfully");
     app.Run();
 }
-catch (Exception ex)
+// HostAbortedException is how host-building tooling stops the app on purpose — it is not a
+// failure, so it must not set a failing exit code.
+catch (Exception ex) when (ex.GetType().Name is not "HostAbortedException")
 {
+    // Log AND fail. Without a non-zero exit code a failed startup — including the
+    // ValidateOnStart security-config checks — looks like a clean shutdown to an
+    // orchestrator, which is exactly the silent failure those checks exist to prevent.
     Log.Fatal(ex, "BFF Gateway terminated unexpectedly");
+    Environment.ExitCode = 1;
 }
 finally
 {
