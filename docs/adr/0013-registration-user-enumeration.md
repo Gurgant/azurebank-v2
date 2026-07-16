@@ -129,6 +129,13 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   listed in `ForwardedHeaders:KnownProxies` (loopback defaults cleared; `UseForwardedHeaders`
   runs before the limiter). With none configured (the BFF is the edge) the header is ignored
   and the direct connection IP is used. **Any proxied deployment must set `KnownProxies`.**
+- **Security config fails fast.** Both controls are validated at startup
+  (`IValidateOptions` + `ValidateOnStart`, mirroring the pepper validator in ADR-0011): a
+  non-positive rate-limit value or an unparseable `KnownProxies` entry stops the app. Both
+  would otherwise fail *invisibly* — the limiter builds its windows lazily inside the
+  partition factory (so a bad value throws per-request, not at boot), and a typo'd proxy IP
+  is silently skipped, leaving `X-Forwarded-For` untrusted and collapsing every client into
+  one partition. A log warning is not enough for a control whose failure mode is invisible.
 - **Registration neutrality under concurrency.** The pre-checks are advisory; the unique
   index + `RequireUniqueEmail` are authoritative. A duplicate that slips past the pre-checks
   under a race surfaces either as a `Duplicate*` `IdentityResult` or a `DbUpdateException` at

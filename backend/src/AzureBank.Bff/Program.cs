@@ -13,6 +13,7 @@ using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Bff.Transforms;
 using AzureBank.Shared.Constants;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -37,6 +38,20 @@ try
         builder.Configuration.GetSection(BffSessionOptions.SectionName));
     builder.Services.Configure<SecurityOptions>(
         builder.Configuration.GetSection(SecurityOptions.SectionName));
+
+    // Security-relevant config is validated at STARTUP (ADR-0013): a non-positive rate-limit
+    // value or a typo'd proxy IP must stop the app rather than silently disable the control
+    // at request time — the limiter builds its windows lazily inside the partition factory,
+    // and an unparseable proxy IP is otherwise just skipped, leaving XFF untrusted.
+    builder.Services.AddOptions<RateLimitingOptions>()
+        .Bind(builder.Configuration.GetSection(RateLimitingOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<RateLimitingOptions>, RateLimitingOptionsValidator>();
+
+    builder.Services.AddOptions<ProxyOptions>()
+        .Bind(builder.Configuration.GetSection(ProxyOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<ProxyOptions>, ProxyOptionsValidator>();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SERILOG CONFIGURATION (reads from appsettings.json)
@@ -91,21 +106,22 @@ try
     // configured (ForwardedHeaders:KnownProxies). Default — none configured, e.g. local/dev
     // where the BFF is the edge — do NOT process X-Forwarded-For; partition on the direct
     // connection IP (fail-safe). Deployments behind a proxy MUST set KnownProxies.
-    var knownProxies = builder.Configuration
-        .GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
-    var trustForwardedFor = knownProxies.Length > 0;
+    var proxyConfig = builder.Configuration
+        .GetSection(ProxyOptions.SectionName).Get<ProxyOptions>() ?? new ProxyOptions();
+    var trustForwardedFor = proxyConfig.KnownProxies.Length > 0;
     if (trustForwardedFor)
     {
-        var forwardLimit = builder.Configuration.GetValue<int?>("ForwardedHeaders:ForwardLimit") ?? 1;
         builder.Services.Configure<ForwardedHeadersOptions>(options =>
         {
             options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
-            options.ForwardLimit = forwardLimit;
+            options.ForwardLimit = proxyConfig.ForwardLimit;
             // Drop the loopback-only defaults; trust ONLY the configured proxies.
             options.KnownProxies.Clear();
             options.KnownIPNetworks.Clear();
-            foreach (var proxy in knownProxies)
+            foreach (var proxy in proxyConfig.KnownProxies)
             {
+                // ProxyOptionsValidator already failed startup on an unparseable entry, so
+                // nothing is silently dropped here.
                 if (IPAddress.TryParse(proxy, out var ip))
                 {
                     options.KnownProxies.Add(ip);
