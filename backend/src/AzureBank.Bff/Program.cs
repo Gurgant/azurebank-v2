@@ -14,6 +14,7 @@ using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Bff.Transforms;
 using AzureBank.Shared.Constants;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Serilog;
 
@@ -163,6 +164,26 @@ try
         return new IPAddress(bytes) + "/64";
     }
 
+    // Recipient lookup is limited per AUTHENTICATED USER, not per IP: registration is open,
+    // so an attacker's cost unit is the throwaway account, not the address (ADR-0014).
+    // Resolve the session cookie -> user id; fall back to the client IP for calls without a
+    // session (which the API 401s regardless).
+    static string LookupPartitionKey(HttpContext context)
+    {
+        var cookieName = context.RequestServices
+            .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+        if (context.Request.Cookies.TryGetValue(cookieName, out var sessionId)
+            && !string.IsNullOrEmpty(sessionId))
+        {
+            var session = context.RequestServices.GetRequiredService<ISessionService>().GetSession(sessionId);
+            if (session is not null)
+            {
+                return "user:" + session.UserId;
+            }
+        }
+        return "ip:" + ClientIp(context);
+    }
+
     builder.Services.AddRateLimiter(options =>
     {
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
@@ -185,6 +206,16 @@ try
             {
                 PermitLimit = rateLimiting.AuthPermitLimit,
                 Window = TimeSpan.FromSeconds(rateLimiting.AuthWindowSeconds),
+                SegmentsPerWindow = rateLimiting.AuthSegmentsPerWindow,
+                QueueLimit = 0,
+            }));
+
+        // Recipient lookup (/api/users/*): tight, per-user, sliding (ADR-0014).
+        options.AddPolicy(RateLimitPolicies.Lookup, context =>
+            RateLimitPartition.GetSlidingWindowLimiter(LookupPartitionKey(context), _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = rateLimiting.LookupPermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimiting.LookupWindowSeconds),
                 SegmentsPerWindow = rateLimiting.AuthSegmentsPerWindow,
                 QueueLimit = 0,
             }));

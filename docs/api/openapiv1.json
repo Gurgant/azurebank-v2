@@ -492,7 +492,7 @@
           }
         },
         "security": [
-          { }
+          {}
         ]
       }
     },
@@ -556,7 +556,7 @@
           }
         },
         "security": [
-          { }
+          {}
         ]
       }
     },
@@ -1682,56 +1682,6 @@
         }
       }
     },
-    "/api/users/search": {
-      "get": {
-        "tags": [
-          "User"
-        ],
-        "summary": "Search for users by AzureTag for transfer recipient lookup.\r\nReturns max 10 results with masked display names.",
-        "parameters": [
-          {
-            "name": "azureTag",
-            "in": "query",
-            "description": "Partial AzureTag to search (min 3 characters, must match AzureTag pattern)",
-            "required": true,
-            "schema": {
-              "maxLength": 20,
-              "minLength": 3,
-              "pattern": "^[a-z][a-z0-9_]{2,19}$",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponseOfListOfRecipientSearchResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
-          },
-          "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
-          }
-        }
-      }
-    },
     "/api/users/{azureTag}": {
       "get": {
         "tags": [
@@ -1935,26 +1885,6 @@
           }
         }
       },
-      "ApiResponseOfListOfRecipientSearchResult": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/RecipientSearchResult"
-            }
-          },
-          "message": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
       "ApiResponseOfLoginResponse": {
         "type": "object",
         "properties": {
@@ -1979,7 +1909,7 @@
       "ApiResponseOfObject": {
         "type": "object",
         "properties": {
-          "data": { },
+          "data": {},
           "message": {
             "type": [
               "null",
@@ -2174,7 +2104,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.00,
+            "maximum": 100000.0,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2227,7 +2157,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.00,
+            "maximum": 100000.0,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2435,21 +2365,6 @@
         },
         "description": "Response for recipient lookup by AzureTag.\r\nUsed for transfer recipient verification."
       },
-      "RecipientSearchResult": {
-        "required": [
-          "azureTag",
-          "displayName"
-        ],
-        "type": "object",
-        "properties": {
-          "azureTag": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          }
-        }
-      },
       "RegisterRequest": {
         "required": [
           "azureTag",
@@ -2652,7 +2567,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.00,
+            "maximum": 100000.0,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2803,7 +2718,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.00,
+            "maximum": 100000.0,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2855,7 +2770,7 @@
   },
   "security": [
     {
-      "Bearer": [ ]
+      "Bearer": []
     }
   ],
   "tags": [

@@ -27,9 +27,19 @@ public class RateLimitingOptions
     public int AuthWindowSeconds { get; set; } = 60;
 
     /// <summary>
-    /// Segments the auth sliding window is divided into (6 => 10s segments over a 60s
-    /// window). More segments track the limit more smoothly; 1 degenerates to a fixed
+    /// Segments the auth/lookup sliding windows are divided into (6 => 10s segments over a
+    /// 60s window). More segments track the limit more smoothly; 1 degenerates to a fixed
     /// window and reinstates the 2x boundary burst.
     /// </summary>
     public int AuthSegmentsPerWindow { get; set; } = 6;
+
+    /// <summary>
+    /// Tight limit for recipient lookup (/api/users/*), partitioned per authenticated USER
+    /// (not IP — registration is open, so the abuse unit is the account). Bounds directory
+    /// harvesting on top of the exact-match-only design (ADR-0014).
+    /// </summary>
+    public int LookupPermitLimit { get; set; } = 20;
+
+    /// <summary>Window, in seconds, for the lookup limiter.</summary>
+    public int LookupWindowSeconds { get; set; } = 60;
 }

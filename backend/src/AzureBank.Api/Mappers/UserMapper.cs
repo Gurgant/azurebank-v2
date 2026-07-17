@@ -45,48 +45,4 @@ public partial class UserMapper
         };
     }
 
-    /// <summary>
-    /// Maps ApplicationUser to RecipientSearchResult for transfer recipient lookup.
-    /// Display name is masked (First name + last initial) for privacy.
-    /// </summary>
-    public RecipientSearchResult ToSearchResult(ApplicationUser entity)
-    {
-        return new RecipientSearchResult
-        {
-            AzureTag = entity.AzureTag,
-            DisplayName = GetMaskedDisplayName(entity)
-        };
-    }
-
-    /// <summary>
-    /// Maps list of ApplicationUser to list of RecipientSearchResult.
-    /// </summary>
-    public List<RecipientSearchResult> ToSearchResultList(List<ApplicationUser> entities)
-    {
-        return entities.Select(ToSearchResult).ToList();
-    }
-
-    /// <summary>
-    /// Creates RecipientLookupResponse for transfer recipient verification.
-    /// </summary>
-    public RecipientLookupResponse ToLookupResponse(ApplicationUser? entity, string azureTag)
-    {
-        return new RecipientLookupResponse
-        {
-            AzureTag = azureTag,
-            DisplayName = entity != null ? GetMaskedDisplayName(entity) : string.Empty,
-            Exists = entity != null
-        };
-    }
-
-    /// <summary>
-    /// Gets masked display name: "John D." instead of "John Doe".
-    /// </summary>
-    private static string GetMaskedDisplayName(ApplicationUser entity)
-    {
-        if (string.IsNullOrEmpty(entity.LastName))
-            return entity.FirstName;
-
-        return $"{entity.FirstName} {entity.LastName[0]}.";
-    }
 }

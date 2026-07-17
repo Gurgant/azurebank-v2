@@ -39,40 +39,34 @@ public class UserService : IUserService
     /// <inheritdoc />
     public async Task<RecipientLookupResponse> GetUserByAzureTagAsync(string azureTag, Guid currentUserId)
     {
-        var normalizedTag = azureTag.ToLower();
+        // AzureTags are stored lower-cased; normalise the same way (invariant, not the
+        // current culture — a Turkish-I difference would silently mismatch).
+        var normalizedTag = azureTag.ToLowerInvariant();
 
-        var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.AzureTag == normalizedTag);
+        // EXACT match only — no substring/prefix search (ADR-0014). Project to just the
+        // fields the response needs so the query never materialises the full ApplicationUser
+        // (PasswordHash / PinHash / SecurityStamp) into memory.
+        var match = await _context.Users
+            .Where(u => u.AzureTag == normalizedTag)
+            .Select(u => new { u.Id, u.FirstName, u.LastName })
+            .FirstOrDefaultAsync();
 
-        // If looking up self, return exists but indicate it's self
-        if (user != null && user.Id == currentUserId)
+        // Looking up yourself is not a valid transfer recipient — report not-found without
+        // echoing a name (the transfer endpoint blocks self-transfer separately).
+        if (match is not null && match.Id == currentUserId)
         {
-            return new RecipientLookupResponse
-            {
-                AzureTag = azureTag,
-                DisplayName = "This is your own account",
-                Exists = false // Treat as not found for transfer purposes
-            };
+            return new RecipientLookupResponse { AzureTag = azureTag, DisplayName = string.Empty, Exists = false };
         }
 
-        return _mapper.ToLookupResponse(user, azureTag);
-    }
-
-    /// <inheritdoc />
-    public async Task<List<RecipientSearchResult>> SearchUsersAsync(string azureTagQuery, Guid excludeUserId)
-    {
-        if (string.IsNullOrEmpty(azureTagQuery) || azureTagQuery.Length < 2)
+        return new RecipientLookupResponse
         {
-            return [];
-        }
-
-        var normalizedQuery = azureTagQuery.ToLower();
-
-        var users = await _context.Users
-            .Where(u => u.Id != excludeUserId && u.AzureTag.Contains(normalizedQuery))
-            .Take(10)
-            .ToListAsync();
-
-        return _mapper.ToSearchResultList(users);
+            AzureTag = azureTag,
+            DisplayName = match is not null ? MaskDisplayName(match.FirstName, match.LastName) : string.Empty,
+            Exists = match is not null
+        };
     }
+
+    // "Vladislav A." — enough to confirm the right payee, not the full surname (ADR-0014).
+    private static string MaskDisplayName(string firstName, string? lastName) =>
+        string.IsNullOrEmpty(lastName) ? firstName : $"{firstName} {lastName[0]}.";
 }
