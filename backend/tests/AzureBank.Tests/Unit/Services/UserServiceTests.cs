@@ -199,5 +199,20 @@ public class UserServiceTests : IDisposable
         result.DisplayName.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task GetUserByAzureTagAsync_NameWithEdgeSpaces_MasksCleanly()
+    {
+        // The name charset permits edge spaces; the masked display must still be "John S.",
+        // not "John  ." (display normalisation — ADR-0014).
+        var user = CreateTestUser("spacedtag", "John", " Smith");
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var result = await _sut.GetUserByAzureTagAsync("spacedtag", Guid.NewGuid());
+
+        result.Exists.Should().BeTrue();
+        result.DisplayName.Should().Be("John S.");
+    }
+
     #endregion
 }

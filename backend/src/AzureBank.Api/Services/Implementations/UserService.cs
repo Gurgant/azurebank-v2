@@ -67,6 +67,12 @@ public class UserService : IUserService
     }
 
     // "Vladislav A." — enough to confirm the right payee, not the full surname (ADR-0014).
-    private static string MaskDisplayName(string firstName, string? lastName) =>
-        string.IsNullOrEmpty(lastName) ? firstName : $"{firstName} {lastName[0]}.";
+    // Trim for display robustness only: the name charset permits edge spaces and registration
+    // persists names untrimmed, so a surname like " Smith" would otherwise mask to "John  ."
+    // (This is presentation normalisation, not input validation.)
+    private static string MaskDisplayName(string firstName, string? lastName)
+    {
+        var first = firstName.Trim();
+        return string.IsNullOrWhiteSpace(lastName) ? first : $"{first} {lastName.Trim()[0]}.";
+    }
 }
