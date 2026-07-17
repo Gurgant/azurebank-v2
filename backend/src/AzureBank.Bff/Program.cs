@@ -1,11 +1,20 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading.RateLimiting;
+using AzureBank.Bff;
 using AzureBank.Bff.Middleware;
 using AzureBank.Bff.Options;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using AzureBank.Bff.Services;
 using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Bff.Transforms;
+using AzureBank.Shared.Constants;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -30,6 +39,20 @@ try
         builder.Configuration.GetSection(BffSessionOptions.SectionName));
     builder.Services.Configure<SecurityOptions>(
         builder.Configuration.GetSection(SecurityOptions.SectionName));
+
+    // Security-relevant config is validated at STARTUP (ADR-0013): a non-positive rate-limit
+    // value or a typo'd proxy IP must stop the app rather than silently disable the control
+    // at request time — the limiter builds its windows lazily inside the partition factory,
+    // and an unparseable proxy IP is otherwise just skipped, leaving XFF untrusted.
+    builder.Services.AddOptions<RateLimitingOptions>()
+        .Bind(builder.Configuration.GetSection(RateLimitingOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<RateLimitingOptions>, RateLimitingOptionsValidator>();
+
+    builder.Services.AddOptions<ProxyOptions>()
+        .Bind(builder.Configuration.GetSection(ProxyOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<ProxyOptions>, ProxyOptionsValidator>();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SERILOG CONFIGURATION (reads from appsettings.json)
@@ -77,16 +100,139 @@ try
         .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
         .AddTransforms<BearerTokenTransformProvider>();
 
-    // Rate limiting
+    // Forwarded headers (ADR-0013): the rate limiter partitions on the connection IP, which
+    // behind a proxy is the PROXY's IP unless we rewrite it from X-Forwarded-For. Trusting
+    // X-Forwarded-For from ANY source lets an attacker spoof/rotate IPs and defeat the per-IP
+    // limiter (worse than proxy-collapse), so we honour it ONLY when the real proxy IPs are
+    // configured (ForwardedHeaders:KnownProxies). Default — none configured, e.g. local/dev
+    // where the BFF is the edge — do NOT process X-Forwarded-For; partition on the direct
+    // connection IP (fail-safe). Deployments behind a proxy MUST set KnownProxies.
+    var proxyConfig = builder.Configuration
+        .GetSection(ProxyOptions.SectionName).Get<ProxyOptions>() ?? new ProxyOptions();
+    var trustForwardedFor = proxyConfig.KnownProxies.Length > 0;
+    if (trustForwardedFor)
+    {
+        builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+            options.ForwardLimit = proxyConfig.ForwardLimit;
+            // Drop the loopback-only defaults; trust ONLY the configured proxies.
+            options.KnownProxies.Clear();
+            options.KnownIPNetworks.Clear();
+            foreach (var proxy in proxyConfig.KnownProxies)
+            {
+                // ProxyOptionsValidator already failed startup on an unparseable entry, so
+                // nothing is silently dropped here.
+                if (IPAddress.TryParse(proxy, out var ip))
+                {
+                    options.KnownProxies.Add(ip);
+                }
+            }
+        });
+    }
+
+    // Rate limiting (ADR-0013): per-client-IP. A generous GlobalLimiter is the anti-DoS
+    // baseline applied to ALL traffic — including the YARP-proxied /api/* bypass — while a
+    // tight "auth" policy guards login/register against brute-force + enumeration at scale.
+    // Rejections return 429 + Retry-After + a ProblemDetails matching the API's error shape.
+    var rateLimiting = builder.Configuration
+        .GetSection(RateLimitingOptions.SectionName).Get<RateLimitingOptions>() ?? new RateLimitingOptions();
+
+    // Partition key. IPv6 end sites are handed a whole /64 (often more), so keying on the
+    // full address would let an attacker rotate addresses inside their OWN allocation — no
+    // spoofing required — and the per-IP limit would evaporate. Key IPv6 on its /64 prefix;
+    // IPv4 keys on the full address.
+    static string ClientIp(HttpContext context)
+    {
+        var ip = context.Connection.RemoteIpAddress;
+        if (ip is null)
+        {
+            return "unknown";
+        }
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+        if (ip.AddressFamily != AddressFamily.InterNetworkV6)
+        {
+            return ip.ToString();
+        }
+
+        var bytes = ip.GetAddressBytes();
+        Array.Clear(bytes, 8, 8); // zero the interface identifier -> the /64 prefix
+        return new IPAddress(bytes) + "/64";
+    }
+
     builder.Services.AddRateLimiter(options =>
     {
-        options.AddFixedWindowLimiter("fixed", config =>
+        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+            RateLimitPartition.GetFixedWindowLimiter(ClientIp(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = rateLimiting.GlobalPermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimiting.GlobalWindowSeconds),
+                QueueLimit = 0,
+            }));
+
+        // SLIDING window for the credential endpoints. A fixed window lets a client spend the
+        // whole quota at the end of one window and again at the start of the next — ~2x the
+        // limit within a couple of seconds, which is precisely the burst an anti-brute-force
+        // control must not gift. (The global baseline above stays a fixed window: it is a
+        // coarse anti-DoS backstop where the boundary burst is irrelevant.) One policy => ONE
+        // bucket shared by bff/auth/{login,register} and the YARP /api/auth/* routes, which
+        // is deliberate: that shared budget IS the per-IP enumeration/brute-force allowance.
+        options.AddPolicy(RateLimitPolicies.Auth, context =>
+            RateLimitPartition.GetSlidingWindowLimiter(ClientIp(context), _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = rateLimiting.AuthPermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimiting.AuthWindowSeconds),
+                SegmentsPerWindow = rateLimiting.AuthSegmentsPerWindow,
+                QueueLimit = 0,
+            }));
+
+        options.OnRejected = async (context, cancellationToken) =>
         {
-            config.PermitLimit = 100;
-            config.Window = TimeSpan.FromMinutes(1);
-            config.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-            config.QueueLimit = 10;
-        });
+            var response = context.HttpContext.Response;
+            response.StatusCode = StatusCodes.Status429TooManyRequests;
+            if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            {
+                response.Headers.RetryAfter =
+                    ((int)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                // Not every limiter advertises a retry time — the sliding window used for the
+                // auth policy does not, unlike the fixed-window global. Fall back to that
+                // window: conservative, and never tells a client to retry sooner than a permit
+                // can actually free (RFC 9110 §10.2.3). A 429 without Retry-After is a poor
+                // contract, and the API's lockout responses already always carry one.
+                response.Headers.RetryAfter =
+                    rateLimiting.AuthWindowSeconds.ToString(CultureInfo.InvariantCulture);
+            }
+            response.Headers.CacheControl = "no-store"; // RFC 6585 §4: a 429 must not be cached
+
+            // This limiter IS the anti-brute-force control (ADR-0013), so a burst that trips
+            // it is exactly the signal an operator must be able to alert on. Rejecting
+            // silently would ship the control with no telemetry.
+            Log.Warning(
+                "SecurityEvent {SecurityEvent}: {Method} {Path} rejected for partition {Partition}",
+                "RateLimitExceeded",
+                context.HttpContext.Request.Method,
+                context.HttpContext.Request.Path.Value,
+                ClientIp(context.HttpContext));
+
+            var problem = new ProblemDetails
+            {
+                Status = StatusCodes.Status429TooManyRequests,
+                Title = "Too Many Requests",
+                Detail = "Too many requests. Please retry later.",
+                Type = "https://httpstatuses.com/429",
+                Instance = context.HttpContext.Request.Path,
+            };
+            problem.Extensions["errorCode"] = ErrorCodes.RateLimitExceeded;
+            problem.Extensions["traceId"] = Activity.Current?.Id ?? context.HttpContext.TraceIdentifier;
+
+            await response.WriteAsJsonAsync(problem, cancellationToken);
+        };
     });
 
     // CORS for frontend
@@ -130,6 +276,13 @@ try
     // MIDDLEWARE PIPELINE (ORDER MATTERS!)
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // 0. Rewrite RemoteIpAddress from X-Forwarded-For BEFORE anything reads it (logging,
+    // the rate limiter). Only runs when trusted proxies are configured (see above).
+    if (trustForwardedFor)
+    {
+        app.UseForwardedHeaders();
+    }
+
     // 1. Serilog request logging
     app.UseSerilogRequestLogging(options =>
     {
@@ -164,11 +317,20 @@ try
     Log.Information("AzureBank BFF Gateway started successfully");
     app.Run();
 }
-catch (Exception ex)
+// HostAbortedException is how host-building tooling stops the app on purpose — it is not a
+// failure, so it must not set a failing exit code.
+catch (Exception ex) when (ex.GetType().Name is not "HostAbortedException")
 {
+    // Log AND fail. Without a non-zero exit code a failed startup — including the
+    // ValidateOnStart security-config checks — looks like a clean shutdown to an
+    // orchestrator, which is exactly the silent failure those checks exist to prevent.
     Log.Fatal(ex, "BFF Gateway terminated unexpectedly");
+    Environment.ExitCode = 1;
 }
 finally
 {
     Log.CloseAndFlush();
 }
+
+/// <summary>Exposed so the WebApplicationFactory in AzureBank.Bff.Tests can host the app.</summary>
+public partial class Program { }

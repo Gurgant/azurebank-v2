@@ -41,12 +41,23 @@ jobs:
           --no-build --configuration Release
           --logger "trx;LogFileName=test-results.trx"
 
+      # BFF gateway integration tests (edge rate limiter, ADR-0013). InMemory /
+      # no DB or backend needed — the limiter rejects before the proxy runs.
+      - name: Test BFF
+        working-directory: backend
+        run: >
+          dotnet test tests/AzureBank.Bff.Tests/AzureBank.Bff.Tests.csproj
+          --no-build --configuration Release
+          --logger "trx;LogFileName=bff-test-results.trx"
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: backend-test-results
-          path: backend/tests/AzureBank.Tests/TestResults/
+          path: |
+            backend/tests/AzureBank.Tests/TestResults/
+            backend/tests/AzureBank.Bff.Tests/TestResults/
 
   # The idempotency single-execution guarantee and the balance optimistic-
   # concurrency retry depend on REAL SQL Server semantics (unique-key races,

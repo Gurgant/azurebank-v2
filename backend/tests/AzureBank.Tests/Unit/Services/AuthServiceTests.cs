@@ -414,9 +414,10 @@ public class AuthServiceTests : IDisposable
         var act = () => _sut.RegisterAsync(request);
 
         // Assert
+        // Enumeration-neutral: generic code, no field-specific message (ADR-0013).
         await act.Should()
             .ThrowAsync<ConflictException>()
-            .WithMessage("*Email is already registered*");
+            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
     [Fact]
@@ -446,9 +447,10 @@ public class AuthServiceTests : IDisposable
         var act = () => _sut.RegisterAsync(request);
 
         // Assert
+        // Enumeration-neutral: generic code, no field-specific message (ADR-0013).
         await act.Should()
             .ThrowAsync<ConflictException>()
-            .WithMessage("*AzureTag is already taken*");
+            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
     [Fact]
@@ -477,9 +479,10 @@ public class AuthServiceTests : IDisposable
         var act = () => _sut.RegisterAsync(request);
 
         // Assert
+        // Enumeration-neutral: generic code, no field-specific message (ADR-0013).
         await act.Should()
             .ThrowAsync<ConflictException>()
-            .WithMessage("*AzureTag is already taken*");
+            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
     [Fact]
@@ -506,10 +509,70 @@ public class AuthServiceTests : IDisposable
         // Act
         var act = () => _sut.RegisterAsync(request);
 
-        // Assert
+        // Assert - generic, non-echoing message; Identity's error descriptions are logged
+        // server-side only, never returned to the client (ADR-0013).
         await act.Should()
             .ThrowAsync<BusinessRuleException>()
-            .WithMessage("*Registration failed*Password too weak*");
+            .WithMessage("Registration could not be completed.");
+    }
+
+    [Fact]
+    public async Task RegisterAsync_CreateAsyncReturnsDuplicate_ThrowsNeutralConflict()
+    {
+        // A duplicate that slips past the advisory pre-checks (a race) surfaces as a
+        // Duplicate* IdentityResult; it must return the SAME neutral 409 as the pre-check
+        // path, with no field-specific leak (ADR-0013).
+        var request = new RegisterRequest
+        {
+            Email = "race@example.com",
+            Password = "SecurePass123!",
+            AzureTag = "raceuser",
+            FirstName = "Race",
+            LastName = "User"
+        };
+
+        _userManagerMock
+            .Setup(x => x.FindByEmailAsync(request.Email))
+            .ReturnsAsync((ApplicationUser?)null);
+        _userManagerMock
+            .Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), request.Password))
+            .ReturnsAsync(IdentityResult.Failed(new IdentityError
+            {
+                Code = "DuplicateEmail",
+                Description = "Email 'race@example.com' is already taken."
+            }));
+
+        var thrown = await ((Func<Task>)(() => _sut.RegisterAsync(request)))
+            .Should().ThrowAsync<ConflictException>();
+        thrown.Which.ErrorCode.Should().Be(ErrorCodes.RegistrationFailed);
+        thrown.Which.Message.Should().NotContainEquivalentOf("already taken");
+    }
+
+    [Fact]
+    public async Task RegisterAsync_CreateAsyncRaceThrowsDbUpdateException_ThrowsNeutralConflict()
+    {
+        // The genuine write-time race: Identity's validators pass but the unique index
+        // rejects at SaveChanges. It must be neutralised to the same neutral 409 (ADR-0013).
+        var request = new RegisterRequest
+        {
+            Email = "race2@example.com",
+            Password = "SecurePass123!",
+            AzureTag = "raceuser2",
+            FirstName = "Race",
+            LastName = "Two"
+        };
+
+        _userManagerMock
+            .Setup(x => x.FindByEmailAsync(request.Email))
+            .ReturnsAsync((ApplicationUser?)null);
+        _userManagerMock
+            .Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), request.Password))
+            .ThrowsAsync(new DbUpdateException("unique index violation"));
+
+        var act = () => _sut.RegisterAsync(request);
+
+        await act.Should().ThrowAsync<ConflictException>()
+            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
     [Fact(Skip = "Requires SQL Server - Account.RowVersion requires database value generation")]

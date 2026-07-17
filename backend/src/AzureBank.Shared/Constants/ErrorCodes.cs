@@ -33,8 +33,11 @@ public static class ErrorCodes
     public const string AccountNotFound = "ACCOUNT_NOT_FOUND";
     public const string UserNotFound = "USER_NOT_FOUND";
     public const string TransactionNotFound = "TRANSACTION_NOT_FOUND";
-    public const string DuplicateAzureTag = "DUPLICATE_AZURE_TAG";
-    public const string DuplicateEmail = "DUPLICATE_EMAIL";
+    // Client-facing, enumeration-neutral code for a rejected self-registration: a duplicate
+    // email and a duplicate handle are indistinguishable to the caller, and the specific
+    // reason is logged server-side only (ADR-0013). This replaced the former
+    // DUPLICATE_EMAIL / DUPLICATE_AZURE_TAG codes, which are gone — nothing emits them.
+    public const string RegistrationFailed = "REGISTRATION_FAILED";
     public const string SelfTransferNotAllowed = "SELF_TRANSFER_NOT_ALLOWED";
     public const string SameAccountTransfer = "SAME_ACCOUNT_TRANSFER";
 

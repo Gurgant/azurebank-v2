@@ -94,6 +94,22 @@ The Seeder reads the same connection string from its `appsettings.json` or the
 **same `Security:PinPepper`** (e.g. `Security__PinPepper` in its environment) —
 otherwise seeded demo PINs cannot be verified.
 
+## Rate limiting & registration enumeration
+
+The BFF edge applies a per-client-IP rate limiter (`RateLimiting` in the BFF
+`appsettings.json`): a generous baseline over all traffic plus a tight `auth` policy on the
+login and registration endpoints (including the YARP-proxied `/api/auth/*` path), returning
+`429` + `Retry-After` + `RATE_LIMIT_EXCEEDED` when exceeded — the mandated anti-brute-force
+control (OWASP ASVS §6.3.1).
+
+Registration returns an identical, enumeration-neutral `409` whether an email or a handle
+collides (the specific reason is logged server-side only). This removes the plaintext
+disclosure but, because registration auto-logs-in, does **not** fully close the account
+existence oracle. That residual is a consciously accepted, bounded risk — full closure
+(out-of-band email confirmation) is deferred until email infrastructure lands
+([ADR-0013](docs/adr/0013-registration-user-enumeration.md)). Login is already
+enumeration-safe ([ADR-0012](docs/adr/0012-login-attempt-limiting.md)).
+
 ## Idempotent monetary operations
 
 Every mutating monetary endpoint (`POST /api/transactions/deposit`,
