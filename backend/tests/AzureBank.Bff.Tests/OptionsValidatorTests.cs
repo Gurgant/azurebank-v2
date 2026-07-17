@@ -70,6 +70,15 @@ public class RateLimitingOptionsValidatorTests
         result.Failed.Should().BeTrue();
         result.FailureMessage.Should().Contain("AuthSegmentsPerWindow");
     }
+
+    [Fact]
+    public void Validate_NonPositiveLookupPermitLimit_Fails()
+    {
+        var result = _sut.Validate(null, new RateLimitingOptions { LookupPermitLimit = 0 });
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("LookupPermitLimit");
+    }
 }
 
 /// <summary>

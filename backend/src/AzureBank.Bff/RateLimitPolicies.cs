@@ -9,4 +9,11 @@ public static class RateLimitPolicies
     /// (RateLimiterPolicy in appsettings.json — keep the literal there in sync with this).
     /// </summary>
     public const string Auth = "auth";
+
+    /// <summary>
+    /// Tight limit for recipient lookup (/api/users/*), partitioned per authenticated user.
+    /// Referenced by the dedicated YARP /api/users route (RateLimiterPolicy in
+    /// appsettings.json — keep the literal there in sync with this).
+    /// </summary>
+    public const string Lookup = "lookup";
 }

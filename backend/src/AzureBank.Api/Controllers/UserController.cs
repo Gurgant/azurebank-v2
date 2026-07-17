@@ -26,35 +26,19 @@ public class UserController : ControllerBase
     }
 
     /// <summary>
-    /// Search for users by AzureTag for transfer recipient lookup.
-    /// Returns max 10 results with masked display names.
+    /// Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.
+    /// Returns the masked display name (e.g. "Vladislav A.") for confirmation. This is an
+    /// exact-match confirmation oracle by design — there is deliberately no substring/prefix
+    /// directory search, which would let an authenticated user harvest the customer list
+    /// (ADR-0014; the Zelle/Cash App model).
     /// </summary>
-    /// <param name="azureTag">Partial AzureTag to search (min 3 characters, must match AzureTag pattern)</param>
-    /// <returns>List of matching users</returns>
-    [HttpGet("search")]
-    [EndpointSummary("Search users")]
-    [ProducesResponseType(typeof(ApiResponse<List<RecipientSearchResult>>), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<ApiResponse<List<RecipientSearchResult>>>> SearchUsers(
-        [FromQuery]
-        [Required(ErrorMessage = "AzureTag search query is required")]
-        [AzureTagQuery]
-        string azureTag)
-    {
-        var userId = GetCurrentUserId();
-        var results = await _userService.SearchUsersAsync(azureTag, userId);
-        return Ok(ApiResponse<List<RecipientSearchResult>>.Success(results));
-    }
-
-    /// <summary>
-    /// Look up a specific user by AzureTag for transfer recipient verification.
-    /// </summary>
-    /// <param name="azureTag">Full AzureTag to look up</param>
-    /// <returns>Recipient lookup result</returns>
+    /// <param name="azureTag">Full AzureTag to look up (3-20 chars, AzureTag charset).</param>
     [HttpGet("{azureTag}")]
     [EndpointSummary("Get user by AzureTag")]
     [ProducesResponseType(typeof(ApiResponse<RecipientLookupResponse>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<RecipientLookupResponse>>> GetUserByAzureTag(string azureTag)
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ApiResponse<RecipientLookupResponse>>> GetUserByAzureTag(
+        [Required][AzureTagQuery] string azureTag)
     {
         var userId = GetCurrentUserId();
         var result = await _userService.GetUserByAzureTagAsync(azureTag, userId);

@@ -34,6 +34,14 @@ public sealed class RateLimitingOptionsValidator : IValidateOptions<RateLimiting
         {
             errors.Add("RateLimiting:AuthSegmentsPerWindow must be >= 1.");
         }
+        if (options.LookupPermitLimit < 1)
+        {
+            errors.Add("RateLimiting:LookupPermitLimit must be >= 1.");
+        }
+        if (options.LookupWindowSeconds < 1)
+        {
+            errors.Add("RateLimiting:LookupWindowSeconds must be >= 1.");
+        }
 
         return errors.Count == 0
             ? ValidateOptionsResult.Success

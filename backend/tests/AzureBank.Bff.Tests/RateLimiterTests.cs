@@ -129,4 +129,38 @@ public class RateLimiterTests : IClassFixture<WebApplicationFactory<Program>>
         other.Select(r => r.StatusCode).Should().NotContain(HttpStatusCode.TooManyRequests,
             "the catch-all route carries only the generous global baseline, not the auth policy");
     }
+
+    [Fact]
+    public async Task YarpUsersRoute_CarriesTheLookupPolicy_PerClient()
+    {
+        // Recipient lookup (/api/users/*) is limited by the tight per-user "lookup" policy;
+        // with no session cookie it falls back to per-IP. A busy client is limited while a
+        // different client is unaffected (ADR-0014).
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("RateLimiting:LookupPermitLimit", "2");
+            builder.ConfigureTestServices(services =>
+                services.AddSingleton<IStartupFilter, FakeRemoteIpStartupFilter>());
+        }).CreateClient();
+
+        var noisy = new List<HttpStatusCode>();
+        for (var i = 0; i < 5; i++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/someexacttag");
+            request.Headers.Add(FakeRemoteIpStartupFilter.HeaderName, "203.0.113.70");
+            noisy.Add((await client.SendAsync(request)).StatusCode);
+        }
+        noisy.Should().Contain(HttpStatusCode.TooManyRequests,
+            "the lookup policy must limit a busy client on /api/users/*");
+
+        var innocent = new List<HttpStatusCode>();
+        for (var i = 0; i < 2; i++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/othertag");
+            request.Headers.Add(FakeRemoteIpStartupFilter.HeaderName, "203.0.113.71");
+            innocent.Add((await client.SendAsync(request)).StatusCode);
+        }
+        innocent.Should().NotContain(HttpStatusCode.TooManyRequests,
+            "a different client is a different lookup partition");
+    }
 }

@@ -162,10 +162,10 @@ public class UserServiceTests : IDisposable
         // Act
         var result = await _sut.GetUserByAzureTagAsync("selfuser", user.Id);
 
-        // Assert
+        // Assert - not a valid transfer recipient, and no name is echoed back (ADR-0014).
         result.Should().NotBeNull();
-        result.Exists.Should().BeFalse(); // Treated as not found for transfer purposes
-        result.DisplayName.Should().Be("This is your own account");
+        result.Exists.Should().BeFalse();
+        result.DisplayName.Should().BeEmpty();
     }
 
     [Fact]
@@ -184,163 +184,34 @@ public class UserServiceTests : IDisposable
         result.Exists.Should().BeTrue();
     }
 
-    #endregion
-
-    #region SearchUsersAsync Tests
-
     [Fact]
-    public async Task SearchUsersAsync_MatchingQuery_ReturnsMatchingUsers()
+    public async Task GetUserByAzureTagAsync_SubstringDoesNotMatch_ReturnsNotExists()
     {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
-        var user1 = CreateTestUser("johnsmith", "John", "Smith");
-        var user2 = CreateTestUser("johndoe", "John", "Doe");
-        var user3 = CreateTestUser("janedoe", "Jane", "Doe");
-        _context.Users.AddRange(user1, user2, user3);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _sut.SearchUsersAsync("john", excludeUserId);
-
-        // Assert
-        result.Should().HaveCount(2);
-        result.Should().Contain(r => r.AzureTag == "johnsmith");
-        result.Should().Contain(r => r.AzureTag == "johndoe");
-    }
-
-    [Fact]
-    public async Task SearchUsersAsync_NoMatches_ReturnsEmptyList()
-    {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
-        var user = CreateTestUser("testuser", "Test", "User");
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _sut.SearchUsersAsync("xyz", excludeUserId);
-
-        // Assert
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task SearchUsersAsync_ExcludesCurrentUser()
-    {
-        // Arrange
-        var currentUser = CreateTestUser("john", "John", "Self");
-        var otherUser = CreateTestUser("johnny", "Johnny", "Other");
-        _context.Users.AddRange(currentUser, otherUser);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _sut.SearchUsersAsync("john", currentUser.Id);
-
-        // Assert
-        result.Should().HaveCount(1);
-        result.First().AzureTag.Should().Be("johnny");
-    }
-
-    [Fact]
-    public async Task SearchUsersAsync_QueryTooShort_ReturnsEmptyList()
-    {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
-        var user = CreateTestUser("ab", "Ab", "User");
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-
-        // Act - Query is only 1 character
-        var result = await _sut.SearchUsersAsync("a", excludeUserId);
-
-        // Assert
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task SearchUsersAsync_EmptyQuery_ReturnsEmptyList()
-    {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
-        var user = CreateTestUser("testuser", "Test", "User");
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _sut.SearchUsersAsync("", excludeUserId);
-
-        // Assert
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task SearchUsersAsync_NullQuery_ReturnsEmptyList()
-    {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
-        var user = CreateTestUser("testuser", "Test", "User");
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _sut.SearchUsersAsync(null!, excludeUserId);
-
-        // Assert
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task SearchUsersAsync_LimitsResults()
-    {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
-        // Create 15 users matching "user"
-        for (int i = 0; i < 15; i++)
-        {
-            var user = CreateTestUser($"user{i:D2}", $"User{i}", "Test");
-            _context.Users.Add(user);
-        }
-        await _context.SaveChangesAsync();
-
-        // Act
-        var result = await _sut.SearchUsersAsync("user", excludeUserId);
-
-        // Assert - Should be limited to 10
-        result.Should().HaveCount(10);
-    }
-
-    [Fact]
-    public async Task SearchUsersAsync_CaseInsensitive()
-    {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
+        // Exact-match only: a substring of a real tag must NOT resolve (ADR-0014 — no
+        // directory browsing). "smith" must not find "johnsmith".
         var user = CreateTestUser("johnsmith", "John", "Smith");
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
 
-        // Act
-        var result = await _sut.SearchUsersAsync("JOHN", excludeUserId);
+        var result = await _sut.GetUserByAzureTagAsync("smith", Guid.NewGuid());
 
-        // Assert
-        result.Should().HaveCount(1);
-        result.First().AzureTag.Should().Be("johnsmith");
+        result.Exists.Should().BeFalse();
+        result.DisplayName.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task SearchUsersAsync_ReturnsDisplayNameMasked()
+    public async Task GetUserByAzureTagAsync_NameWithEdgeSpaces_MasksCleanly()
     {
-        // Arrange
-        var excludeUserId = Guid.NewGuid();
-        var user = CreateTestUser("johnsmith", "John", "Smith");
+        // The name charset permits edge spaces; the masked display must still be "John S.",
+        // not "John  ." (display normalisation — ADR-0014).
+        var user = CreateTestUser("spacedtag", "John", " Smith");
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
 
-        // Act
-        var result = await _sut.SearchUsersAsync("john", excludeUserId);
+        var result = await _sut.GetUserByAzureTagAsync("spacedtag", Guid.NewGuid());
 
-        // Assert
-        result.Should().HaveCount(1);
-        result.First().DisplayName.Should().Be("John S."); // First name + last initial
+        result.Exists.Should().BeTrue();
+        result.DisplayName.Should().Be("John S.");
     }
 
     #endregion
