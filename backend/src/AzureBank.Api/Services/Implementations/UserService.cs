@@ -1,6 +1,7 @@
 using AzureBank.Api.Mappers;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -64,6 +65,49 @@ public class UserService : IUserService
             DisplayName = match is not null ? MaskDisplayName(match.FirstName, match.LastName) : string.Empty,
             Exists = match is not null
         };
+    }
+
+    /// <inheritdoc />
+    public async Task<string> RenameAzureTagAsync(Guid userId, string newAzureTag)
+    {
+        var normalized = newAzureTag.ToLowerInvariant();
+
+        // Reject a handle already held by someone else. Unlike registration, revealing
+        // "taken" here is fine — the exact-match lookup already confirms handle existence.
+        var takenByOther = await _context.Users.AnyAsync(u => u.AzureTag == normalized && u.Id != userId);
+        if (takenByOther)
+        {
+            throw new ConflictException("That handle is already taken.", ErrorCodes.AzureTagTaken);
+        }
+
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId)
+            ?? throw new NotFoundException("User", userId);
+
+        if (user.AzureTag == normalized)
+        {
+            return normalized; // no-op: already the caller's handle
+        }
+
+        user.AzureTag = normalized;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        try
+        {
+            // A plain column update — UserName is the immutable id, so no Identity username
+            // change is involved (ADR-0015).
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // Lost the AzureTag unique-index race to a concurrent claim of the same handle.
+            throw new ConflictException("That handle is already taken.", ErrorCodes.AzureTagTaken);
+        }
+
+        _logger.LogInformation(
+            "SecurityEvent {SecurityEvent}: user {UserId} renamed their handle to {AzureTag}",
+            "AzureTagRenamed", userId, normalized);
+
+        return normalized;
     }
 
     // "Vladislav A." — enough to confirm the right payee, not the full surname (ADR-0014).

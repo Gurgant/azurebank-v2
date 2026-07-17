@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AzureBank.Tests.Integration;
 
@@ -94,6 +97,98 @@ public class UserEndpointTests : IntegrationTestBase
         ClearAuthHeader();
 
         var response = await Client.GetAsync($"/api/users/{Tag("payee")}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    // Register a user with a known tag and return the auto-login token (ADR-0015 tests).
+    private async Task<string> RegisterReturningTokenAsync(string azureTag)
+    {
+        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = azureTag,
+            Email = $"{azureTag}{Guid.NewGuid():N}@example.com",
+            Password = "SecurePass123!",
+            FirstName = "Vladislav",
+            LastName = "Aleshaev"
+        }, JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
+        return body!.Data!.Token.AccessToken;
+    }
+
+    [Fact]
+    public async Task Register_SetsUserNameToImmutableUuidV7Id_NotAzureTag()
+    {
+        // Decouple (ADR-0015): Identity's UserName is the user id (UUIDv7), not the handle.
+        var tag = Tag("decoup");
+        await RegisterPayeeAsync(tag);
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var user = await db.Users.FirstAsync(u => u.AzureTag == tag);
+
+        user.UserName.Should().Be(user.Id.ToString());
+        user.UserName.Should().NotBe(tag);
+        user.Id.Version.Should().Be(7); // UUIDv7 (time-sortable)
+    }
+
+    [Fact]
+    public async Task Rename_UpdatesHandle_OldTagStopsResolving()
+    {
+        var oldTag = Tag("old");
+        var token = await RegisterReturningTokenAsync(oldTag);
+        SetAuthHeader(token);
+        var newTag = Tag("new");
+
+        var response = await Client.PatchAsJsonAsync(
+            "/api/users/me/azuretag", new UpdateAzureTagRequest { AzureTag = newTag }, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<UpdateAzureTagResponse>>(JsonOptions);
+        body!.Data!.AzureTag.Should().Be(newTag);
+
+        // A different signed-in user confirms the new handle resolves and the old one doesn't.
+        SetAuthHeader(await RegisterReturningTokenAsync(Tag("obs")));
+        (await (await Client.GetAsync($"/api/users/{newTag}"))
+            .Content.ReadFromJsonAsync<ApiResponse<RecipientLookupResponse>>(JsonOptions))!.Data!.Exists
+            .Should().BeTrue();
+        (await (await Client.GetAsync($"/api/users/{oldTag}"))
+            .Content.ReadFromJsonAsync<ApiResponse<RecipientLookupResponse>>(JsonOptions))!.Data!.Exists
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Rename_ToTakenTag_ReturnsConflict()
+    {
+        var takenTag = Tag("taken");
+        await RegisterPayeeAsync(takenTag); // held by someone else
+        SetAuthHeader(await RegisterReturningTokenAsync(Tag("me")));
+
+        var response = await Client.PatchAsJsonAsync(
+            "/api/users/me/azuretag", new UpdateAzureTagRequest { AzureTag = takenTag }, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task Rename_InvalidTag_ReturnsBadRequest()
+    {
+        SetAuthHeader(await RegisterReturningTokenAsync(Tag("val")));
+
+        var response = await Client.PatchAsJsonAsync(
+            "/api/users/me/azuretag", new UpdateAzureTagRequest { AzureTag = "ab" }, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Rename_WithoutToken_ReturnsUnauthorized()
+    {
+        ClearAuthHeader();
+
+        var response = await Client.PatchAsJsonAsync(
+            "/api/users/me/azuretag", new UpdateAzureTagRequest { AzureTag = Tag("nope") }, JsonOptions);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }

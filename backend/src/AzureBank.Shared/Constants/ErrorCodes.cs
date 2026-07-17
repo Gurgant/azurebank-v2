@@ -38,6 +38,10 @@ public static class ErrorCodes
     // reason is logged server-side only (ADR-0013). This replaced the former
     // DUPLICATE_EMAIL / DUPLICATE_AZURE_TAG codes, which are gone — nothing emits them.
     public const string RegistrationFailed = "REGISTRATION_FAILED";
+    // A handle rename collided with an existing AzureTag. Unlike registration (where the
+    // response is enumeration-neutral), telling a signed-in user their chosen handle is taken
+    // is fine: the exact-match lookup already confirms handle existence (ADR-0014/0015).
+    public const string AzureTagTaken = "AZURE_TAG_TAKEN";
     public const string SelfTransferNotAllowed = "SELF_TRANSFER_NOT_ALLOWED";
     public const string SameAccountTransfer = "SAME_ACCOUNT_TRANSFER";
 
