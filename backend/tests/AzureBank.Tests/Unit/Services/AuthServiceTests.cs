@@ -77,13 +77,15 @@ public class AuthServiceTests : IDisposable
 
     private ApplicationUser CreateTestUser(string email = "test@example.com", string azureTag = "testuser")
     {
+        var id = Guid.NewGuid();
         return new ApplicationUser
         {
-            Id = Guid.NewGuid(),
+            Id = id,
             Email = email,
             NormalizedEmail = email.ToUpper(),
-            UserName = azureTag,
-            NormalizedUserName = azureTag.ToUpper(),
+            // Decouple (ADR-0015): Identity's UserName is the immutable user id, not the handle.
+            UserName = id.ToString(),
+            NormalizedUserName = id.ToString().ToUpperInvariant(),
             AzureTag = azureTag,
             FirstName = "Test",
             LastName = "User",
