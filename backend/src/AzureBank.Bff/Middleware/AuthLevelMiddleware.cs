@@ -57,9 +57,12 @@ public class AuthLevelMiddleware
 
                 if (authLevel < 2)
                 {
+                    // Strip CR/LF from the user-controlled path before logging — defence-in-depth
+                    // against log-forging into the plain-text sink (CodeQL).
+                    var safePath = path.Replace("\r", string.Empty).Replace("\n", string.Empty);
                     _logger.LogWarning(
                         "Access denied: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
-                        authLevel, method, path);
+                        authLevel, method, safePath);
 
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
                     context.Response.Headers.Append("X-Auth-Level-Required", "2");

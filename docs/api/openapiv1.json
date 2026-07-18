@@ -1682,7 +1682,7 @@
         "tags": [
           "User"
         ],
-        "summary": "Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.\r\nReturns the masked display name (e.g. \"Vladislav A.\") for confirmation. This is an\r\nexact-match confirmation oracle by design â€” there is deliberately no substring/prefix\r\ndirectory search, which would let an authenticated user harvest the customer list\r\n(ADR-0014; the Zelle/Cash App model).",
+        "summary": "Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.\r\nReturns the masked display name (e.g. \"Vladislav A.\") for confirmation. This is an\r\nexact-match confirmation oracle by design — there is deliberately no substring/prefix\r\ndirectory search, which would let an authenticated user harvest the customer list\r\n(ADR-0014; the Zelle/Cash App model).",
         "parameters": [
           {
             "name": "azureTag",
@@ -1720,9 +1720,6 @@
           },
           "403": {
             "description": "Forbidden - You don't have permission to access this resource."
-          },
-          "404": {
-            "description": "Not Found - The requested resource does not exist."
           }
         }
       }
@@ -2487,13 +2484,13 @@
           "firstName": {
             "maxLength": 50,
             "minLength": 2,
-            "pattern": "^[a-zA-ZÃ€-Ã–Ã˜-Ã¶Ã¸-Ã¿\\s'-]{2,50}$",
+            "pattern": "^[a-zA-ZÀ-ÖØ-öø-ÿ\\s'-]{2,50}$",
             "type": "string"
           },
           "lastName": {
             "maxLength": 50,
             "minLength": 2,
-            "pattern": "^[a-zA-ZÃ€-Ã–Ã˜-Ã¶Ã¸-Ã¿\\s'-]{2,50}$",
+            "pattern": "^[a-zA-ZÀ-ÖØ-öø-ÿ\\s'-]{2,50}$",
             "type": "string"
           }
         }
@@ -2724,7 +2721,9 @@
         "type": "object",
         "properties": {
           "azureTag": {
-            "minLength": 1,
+            "maxLength": 20,
+            "minLength": 3,
+            "pattern": "^[a-z][a-z0-9_]{2,19}$",
             "type": "string"
           }
         },

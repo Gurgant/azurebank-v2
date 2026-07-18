@@ -110,7 +110,8 @@ public class AuthService : IAuthService
         {
             await IncrementAndMaybeLockLoginAsync(user, now);
         }
-        _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
+        // Wrong password on a KNOWN account: log the stable user id, not the raw email (PII).
+        _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
         throw new AuthenticationException("Invalid email or password.");
     }
 

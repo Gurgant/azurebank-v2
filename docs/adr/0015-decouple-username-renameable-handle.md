@@ -39,7 +39,8 @@ already-issued tokens.
 3. **Rename endpoint** — `PATCH /api/users/me/azuretag` (authenticated): validates the new
    handle (`AzureTagPattern`), rejects one already held by another user (`409`
    `AZURE_TAG_TAKEN`), no-ops if unchanged, and is race-safe (the unique index + a
-   `DbUpdateException` guard both map to the same `409`). Because `UserName` is decoupled, this
+   `DbUpdateException` guard **scoped to the unique-constraint violation** both map to the same
+   `409`; any other database error propagates). Because `UserName` is decoupled, this
    is a plain column update — no Identity username change. It is audit-logged
    (`SecurityEvent=AzureTagRenamed`) and covered by the existing per-user `lookup` rate-limit
    policy on `/api/users/*`.
