@@ -1690,6 +1690,9 @@
             "description": "Full AzureTag to look up (3-20 chars, AzureTag charset).",
             "required": true,
             "schema": {
+              "maxLength": 20,
+              "minLength": 3,
+              "pattern": "^[a-z][a-z0-9_]{2,19}$",
               "type": "string"
             }
           }
@@ -1772,11 +1775,37 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "Conflict - the requested AzureTag is already taken (errorCode AZURE_TAG_TAKEN).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (AZURE_TAG_TAKEN)"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
                 }
               }
             }
@@ -1786,6 +1815,16 @@
           },
           "403": {
             "description": "Forbidden - You don't have permission to access this resource."
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
