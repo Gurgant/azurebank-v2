@@ -53,6 +53,16 @@
     <PackageReference Include="Serilog.Sinks.Console" />
   </ItemGroup>
 
+  <ItemGroup Label="Observability (OpenTelemetry)">
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+  </ItemGroup>
+
   <ItemGroup Label="Object Mapping">
     <PackageReference Include="Riok.Mapperly" />
   </ItemGroup>

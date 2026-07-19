@@ -45,7 +45,8 @@ try
         .AddApplicationServices(builder.Configuration)
         .AddApiControllers()
         .AddApiDocumentation()
-        .AddCorsPolicies(builder.Configuration);
+        .AddCorsPolicies(builder.Configuration)
+        .AddObservability(builder.Configuration);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BUILD APPLICATION
@@ -108,6 +109,12 @@ try
     app.UseIdempotency();
 
     app.MapControllers();
+
+    // Health probes (observability): liveness = process up; readiness = DB reachable.
+    app.MapHealthChecks("/health/live",
+        new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = _ => false });
+    app.MapHealthChecks("/health/ready",
+        new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = h => h.Tags.Contains("ready") });
 
     // ═══════════════════════════════════════════════════════════════════════════
     // DATABASE SEEDING (Development only)
