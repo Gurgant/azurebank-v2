@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.RateLimiting;
 using AzureBank.Bff;
+using AzureBank.Bff.Extensions;
 using AzureBank.Bff.Middleware;
 using AzureBank.Bff.Options;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -59,9 +60,16 @@ try
     // SERILOG CONFIGURATION (reads from appsettings.json)
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // preserveStaticLogger: true keeps the static bootstrap logger untouched instead of freezing
+    // it into the host logger. Freezing is a one-shot on a process-wide static: with multiple
+    // in-process hosts (WebApplicationFactory in tests) the second host build throws "The logger
+    // is already frozen", which the top-level catch below turns into a silent failed startup
+    // ("entry point exited without ever building an IHost"). The DI-registered logger still gets
+    // the full appsettings configuration.
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(services));
+        .ReadFrom.Services(services),
+        preserveStaticLogger: true);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SERVICE REGISTRATION
@@ -100,6 +108,11 @@ try
     builder.Services.AddReverseProxy()
         .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
         .AddTransforms<BearerTokenTransformProvider>();
+
+    // Observability (OpenTelemetry traces + metrics, health probes). Captures the YARP
+    // forwarder span so a proxied request is one trace spanning BFF -> API. Export is opt-in
+    // via OTEL_EXPORTER_OTLP_ENDPOINT (see the extension).
+    builder.Services.AddObservability(builder.Configuration);
 
     // Forwarded headers (ADR-0013): the rate limiter partitions on the connection IP, which
     // behind a proxy is the PROXY's IP unless we rewrite it from X-Forwarded-For. Trusting
@@ -340,6 +353,15 @@ try
 
     // 8. Map YARP reverse proxy (for /api/* routes)
     app.MapReverseProxy();
+
+    // 9. Health probes (observability): liveness = process up; readiness = backend API reachable.
+    // Excluded from the rate limiter — an orchestrator's probes must never be throttled.
+    app.MapHealthChecks("/health/live",
+        new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = _ => false })
+        .DisableRateLimiting();
+    app.MapHealthChecks("/health/ready",
+        new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = h => h.Tags.Contains("ready") })
+        .DisableRateLimiting();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // RUN APPLICATION
