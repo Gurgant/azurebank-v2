@@ -1,5 +1,6 @@
 using AzureBank.Api.Observability;
 using AzureBank.Infrastructure.Data;
+using Microsoft.Extensions.Compliance.Classification;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -91,6 +92,15 @@ public static class ObservabilityServiceCollectionExtensions
                     metrics.AddOtlpExporter(ConfigureOtlp);
                 }
             });
+
+        // PII redaction — the compliance side of observability. Logs leave the process over
+        // OTLP (Loki), so values classified AzureBank/PII must be masked BEFORE they reach the
+        // logging pipeline. Registered here (not in AddApplicationServices) because the reason
+        // redaction exists at all is the log-export path configured above. Call sites resolve a
+        // Redactor by CLASSIFICATION via IRedactorProvider, never a concrete masker — swapping
+        // the strategy (e.g. HMAC hashing for correlation) is a one-line change here.
+        services.AddRedaction(redaction =>
+            redaction.SetRedactor<EmailMaskingRedactor>(new DataClassificationSet(DataClassifications.Pii)));
 
         // Liveness = process up (no dependency probe); readiness = DB reachable (tagged "ready").
         services.AddHealthChecks()

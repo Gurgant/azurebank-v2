@@ -13,6 +13,8 @@ using AzureBank.Shared.Services.Interfaces;
 using AzureBank.Shared.Utilities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Compliance.Classification;
+using Microsoft.Extensions.Compliance.Redaction;
 
 namespace AzureBank.Api.Services.Implementations;
 
@@ -31,6 +33,7 @@ public class AuthService : IAuthService
     private readonly AccountMapper _accountMapper;
     private readonly ILoginTimingEqualizer _timingEqualizer;
     private readonly ILogger<AuthService> _logger;
+    private readonly Redactor _piiRedactor;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
@@ -41,7 +44,8 @@ public class AuthService : IAuthService
         UserMapper userMapper,
         AccountMapper accountMapper,
         ILoginTimingEqualizer timingEqualizer,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        IRedactorProvider redactorProvider)
     {
         _userManager = userManager;
         _context = context;
@@ -52,6 +56,11 @@ public class AuthService : IAuthService
         _accountMapper = accountMapper;
         _timingEqualizer = timingEqualizer;
         _logger = logger;
+        // Resolve by CLASSIFICATION, not by concrete type: this service only declares that
+        // it logs PII; which masking strategy applies is the observability layer's decision
+        // (see AddRedaction in ObservabilityServiceCollectionExtensions). Resolved once —
+        // redactors are stateless singletons.
+        _piiRedactor = redactorProvider.GetRedactor(new DataClassificationSet(DataClassifications.Pii));
     }
 
     /// <inheritdoc />
@@ -65,7 +74,10 @@ public class AuthService : IAuthService
             // already identical to a wrong password. A smaller write-latency residual on
             // the account-exists path remains (ADR-0012) — bounded by upstream rate limiting.
             _timingEqualizer.SpendVerifyCost(request.Password);
-            _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
+            // Unknown account, so there is no stable user id to log — mask the email (PII)
+            // instead of dropping it: logs are exported over OTLP, and "j***@example.com"
+            // still lets an operator correlate a credential-stuffing burst.
+            _logger.LogWarning("Failed login attempt for email {Email}", _piiRedactor.Redact(request.Email));
             ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "failed"));
             throw new AuthenticationException("Invalid email or password.");
         }
@@ -218,9 +230,11 @@ public class AuthService : IAuthService
         var normalizedAzureTag = request.AzureTag.ToLower();
         if (await _userManager.FindByEmailAsync(request.Email) != null)
         {
+            // Email masked (PII — exported over OTLP); the masked form is still enough for
+            // an operator to spot a targeted enumeration probe against one address.
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: registration rejected, email already registered ({Email})",
-                "DuplicateRegistration", request.Email);
+                "DuplicateRegistration", _piiRedactor.Redact(request.Email));
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
         if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag))

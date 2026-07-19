@@ -48,6 +48,11 @@
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
   </ItemGroup>
 
+  <ItemGroup Label="Compliance">
+    <!-- PII redaction for log output (brings Compliance.Abstractions transitively) -->
+    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" />
+  </ItemGroup>
+
   <ItemGroup Label="Logging">
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Serilog.Sinks.Console" />
