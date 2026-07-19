@@ -1,3 +1,4 @@
+using System.Globalization;
 using AzureBank.Shared.Utilities;
 using FluentAssertions;
 
@@ -87,4 +88,37 @@ public class LogSanitizerTests
         LogSanitizer.Sanitize("a\uFDD0b").Should().Be("ab", "Cn: noncharacter");
         LogSanitizer.Sanitize("a" + '\uD800' + "b").Should().Be("ab", "Cs: isolated surrogate breaks downstream encoders");
     }
+
+    [Fact]
+    public void Sanitize_StripsExactlyTheTrustedSet_AcrossTheEntireBmp()
+    {
+        // EXHAUSTIVE contract check: every UTF-16 code unit, both directions. The oracle is
+        // an independent reimplementation (CharUnicodeInfo, not the regex under test):
+        // p{C} = Cc|Cf|Co|Cn|Cs, plus U+2028/U+2029 - exactly what the CodeQL model trusts.
+        // Sampling one char per category would let a narrowed pattern ship green; sweeping
+        // the whole BMP (65,536 units, milliseconds) cannot. The preserve direction also
+        // guards against over-stripping regressions. Supplementary planes are covered per
+        // code unit: every surrogate half is Cs and must be stripped.
+        var failures = new List<string>();
+        for (var code = 0; code <= 0xFFFF; code++)
+        {
+            var c = (char)code;
+            var expected = ShouldStrip(code, c) ? "ab" : $"a{c}b";
+            if (LogSanitizer.Sanitize($"a{c}b") != expected)
+            {
+                failures.Add($"U+{code:X4} ({CharUnicodeInfo.GetUnicodeCategory(c)})");
+            }
+        }
+
+        failures.Should().BeEmpty("every BMP code unit must match the pinned contract");
+    }
+
+    private static bool ShouldStrip(int code, char c) =>
+        CharUnicodeInfo.GetUnicodeCategory(c)
+            is UnicodeCategory.Control
+            or UnicodeCategory.Format
+            or UnicodeCategory.PrivateUse
+            or UnicodeCategory.OtherNotAssigned
+            or UnicodeCategory.Surrogate
+        || code is 0x2028 or 0x2029;
 }

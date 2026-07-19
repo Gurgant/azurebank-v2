@@ -40,7 +40,9 @@ public static class ObservabilityServiceCollectionExtensions
     public static IServiceCollection AddObservability(
         this IServiceCollection services, IHostEnvironment environment)
     {
-        // Gate on the PROCESS environment variable — the same source the OTLP exporter reads.
+        // Gate on the PROCESS environment variable — a deliberate contract (see the API twin
+        // for the full rationale): the Serilog OTLP sink reads only real env vars, so an
+        // appsettings-driven gate would enable traces/metrics while logs stay dark.
         var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
         var exportOtlp = !string.IsNullOrWhiteSpace(otlpEndpoint);
 
