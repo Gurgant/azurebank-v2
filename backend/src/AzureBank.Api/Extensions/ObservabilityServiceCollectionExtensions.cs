@@ -18,10 +18,11 @@ namespace AzureBank.Api.Extensions;
 /// </summary>
 public static class ObservabilityServiceCollectionExtensions
 {
-    private const string ServiceName = "azurebank-api";
+    /// <summary>Single source of truth for the service name (also used by the Serilog OTLP sink's resource).</summary>
+    internal const string ServiceName = "azurebank-api";
 
     public static IServiceCollection AddObservability(
-        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+        this IServiceCollection services, IHostEnvironment environment)
     {
         // Gate on the PROCESS environment variable — the same source the OTLP exporter itself
         // reads. Reading IConfiguration could open the gate off an appsettings value the exporter
@@ -41,10 +42,11 @@ public static class ObservabilityServiceCollectionExtensions
                 $"'{environment.EnvironmentName}' environment. Use https, or an OTLP collector on loopback.");
         }
 
-        // The exporter's ENDPOINT comes entirely from OTEL_EXPORTER_OTLP_* env vars — setting it
-        // programmatically double-appends the signal path (…/v1/traces/v1/traces → 404, dropped).
-        // We DO pin the protocol in code: the SDK default is gRPC:4317, so a missing
-        // OTEL_EXPORTER_OTLP_PROTOCOL would otherwise silently ship gRPC to the http/4318 port.
+        // The exporter's ENDPOINT comes entirely from OTEL_EXPORTER_OTLP_* env vars. Setting it
+        // programmatically DISABLES the SDK's per-signal path append (/v1/traces, /v1/metrics),
+        // so batches POST to the bare URL and 404 silently. We DO pin the protocol in code: the
+        // SDK default is gRPC:4317, so a missing OTEL_EXPORTER_OTLP_PROTOCOL would otherwise
+        // silently ship gRPC to the http/4318 port.
         static void ConfigureOtlp(OtlpExporterOptions o) => o.Protocol = OtlpExportProtocol.HttpProtobuf;
 
         services.AddOpenTelemetry()

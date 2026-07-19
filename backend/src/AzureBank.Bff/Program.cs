@@ -75,15 +75,18 @@ try
 
         // Export logs over OTLP (Loki) with automatic trace_id/span_id correlation. Gated on the
         // same env var as the SDK exporter so tests stay quiet; the sink resolves the /v1/logs
-        // path from OTEL_EXPORTER_OTLP_ENDPOINT — do NOT set Endpoint here. See the API for detail.
+        // path from OTEL_EXPORTER_OTLP_ENDPOINT — do NOT set Endpoint here (a programmatic
+        // endpoint skips the path append and the bare URL 404s silently). See the API for detail.
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")))
         {
             configuration.WriteTo.OpenTelemetry(o =>
             {
                 o.Protocol = OtlpProtocol.HttpProtobuf;
+                // Mirror the SDK resource identity so Grafana joins logs to traces/metrics per-instance.
                 o.ResourceAttributes = new Dictionary<string, object>
                 {
-                    ["service.name"] = "azurebank-bff",
+                    ["service.name"] = AzureBank.Bff.Extensions.ObservabilityServiceCollectionExtensions.ServiceName,
+                    ["service.version"] = typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0",
                     ["service.namespace"] = "azurebank",
                     ["service.instance.id"] = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName,
                     ["deployment.environment.name"] = context.HostingEnvironment.EnvironmentName,
@@ -136,7 +139,7 @@ try
     // Observability (OpenTelemetry traces + metrics, health probes). Captures the YARP
     // forwarder span so a proxied request is one trace spanning BFF -> API. Export is opt-in
     // via OTEL_EXPORTER_OTLP_ENDPOINT (see the extension).
-    builder.Services.AddObservability(builder.Configuration, builder.Environment);
+    builder.Services.AddObservability(builder.Environment);
 
     // Forwarded headers (ADR-0013): the rate limiter partitions on the connection IP, which
     // behind a proxy is the PROXY's IP unless we rewrite it from X-Forwarded-For. Trusting

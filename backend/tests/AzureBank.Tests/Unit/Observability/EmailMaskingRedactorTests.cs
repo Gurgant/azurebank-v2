@@ -19,12 +19,12 @@ public class EmailMaskingRedactorTests
     [InlineData("john@example.com", "j***@example.com")]
     [InlineData("j@x.io", "j***@x.io")]
     [InlineData("first.last+tag@sub.domain.co.uk", "f***@sub.domain.co.uk")]
-    // Empty local part: nothing to keep before the mask.
-    [InlineData("@example.com", "***@example.com")]
-    // A second '@' lands in the kept tail — harmless, and locked in so it can't drift.
-    [InlineData("a@b@c.com", "a***@b@c.com")]
-    // Malformed input collapses to the full mask: when we can't parse it we assume
-    // ALL of it is sensitive rather than leak it verbatim.
+    // The tail is echoed VERBATIM, so anything not provably ONE well-formed address
+    // collapses to the bare mask: empty local part or domain, a second '@' (could embed
+    // another address), or malformed input generally.
+    [InlineData("@example.com", "***")]
+    [InlineData("john@", "***")]
+    [InlineData("a@b@c.com", "***")]
     [InlineData("not-an-email", "***")]
     [InlineData("   ", "***")]
     // Empty short-circuits in the BASE string overload (before our override runs) and
@@ -33,6 +33,21 @@ public class EmailMaskingRedactorTests
     public void Redact_MasksEmailToExpectedShape(string input, string expected)
     {
         _sut.Redact(input).Should().Be(expected);
+    }
+
+    [Theory]
+    // A redactor is a trust boundary: a crafted "email" whose kept tail smuggles
+    // control/format/whitespace characters would hand log forging a path straight
+    // through the PII defence. Any such character anywhere -> the bare mask.
+    [InlineData("a@b\r\n[WARN] forged")]
+    [InlineData("user name@example.com")]
+    [InlineData("user@exam\tple.com")]
+    [InlineData("user@example.com\n[ERROR] fake")]
+    public void Redact_UnsafeCharacters_CollapseToFullMask(string input)
+    {
+        var result = _sut.Redact(input);
+
+        result.Should().Be("***", "the verbatim tail must never carry forgeable characters");
     }
 
     [Fact]

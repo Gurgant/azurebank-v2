@@ -10,6 +10,8 @@ namespace AzureBank.Api.Observability;
 /// Registered with OpenTelemetry via <c>AddMeter(ApiMetrics.MeterName)</c>. Tags are strictly
 /// LOW-CARDINALITY outcome labels — never an account id, user id, amount, or free-form text. A
 /// money amount, if ever measured, belongs in a histogram VALUE with domain buckets, never a label.
+/// Tag keys are NAMESPACED (<c>azurebank.outcome</c>, <c>azurebank.kind</c>) per the OTel
+/// custom-attribute guidance, so they can never collide with semconv-defined attributes.
 /// </summary>
 public static class ApiMetrics
 {

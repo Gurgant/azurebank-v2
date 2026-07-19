@@ -25,7 +25,8 @@ namespace AzureBank.Bff.Extensions;
 /// </summary>
 public static class ObservabilityServiceCollectionExtensions
 {
-    private const string ServiceName = "azurebank-bff";
+    /// <summary>Single source of truth for the service name (also used by the Serilog OTLP sink's resource).</summary>
+    internal const string ServiceName = "azurebank-bff";
 
     /// <summary>
     /// The ActivitySource name YARP emits its forwarder span under. NOT a Meter — YARP 2.x
@@ -37,7 +38,7 @@ public static class ObservabilityServiceCollectionExtensions
     private const string RateLimitingMeterName = "Microsoft.AspNetCore.RateLimiting";
 
     public static IServiceCollection AddObservability(
-        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+        this IServiceCollection services, IHostEnvironment environment)
     {
         // Gate on the PROCESS environment variable — the same source the OTLP exporter reads.
         var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
@@ -54,8 +55,9 @@ public static class ObservabilityServiceCollectionExtensions
                 $"'{environment.EnvironmentName}' environment. Use https, or an OTLP collector on loopback.");
         }
 
-        // Endpoint comes from OTEL_EXPORTER_OTLP_* env vars (setting it in code double-appends the
-        // signal path → 404). Pin the protocol in code so a missing OTEL_EXPORTER_OTLP_PROTOCOL
+        // Endpoint comes from OTEL_EXPORTER_OTLP_* env vars. Setting it in code DISABLES the
+        // SDK's per-signal path append (/v1/traces, /v1/metrics), so batches POST to the bare
+        // URL and 404 silently. Pin only the protocol so a missing OTEL_EXPORTER_OTLP_PROTOCOL
         // doesn't silently default to gRPC:4317 and ship to the http/4318 port.
         static void ConfigureOtlp(OtlpExporterOptions o) => o.Protocol = OtlpExportProtocol.HttpProtobuf;
 
@@ -82,7 +84,16 @@ public static class ObservabilityServiceCollectionExtensions
                         o.RecordException = true;
                         o.Filter = ctx => !ctx.Request.Path.StartsWithSegments("/health");
                     })
-                    .AddHttpClientInstrumentation(o => o.RecordException = true)
+                    .AddHttpClientInstrumentation(o =>
+                    {
+                        o.RecordException = true;
+                        // The readiness probe pings the API's /health/live through the named
+                        // client. Its SERVER span is already filtered above; filter the CLIENT
+                        // span too, or every probe cycle ships an orphan root span to Tempo.
+                        o.FilterHttpRequestMessage = req =>
+                            req.RequestUri is not { } uri
+                            || !uri.AbsolutePath.StartsWith("/health", StringComparison.OrdinalIgnoreCase);
+                    })
                     .AddSource(YarpActivitySourceName);
                 if (exportOtlp)
                 {
@@ -106,7 +117,8 @@ public static class ObservabilityServiceCollectionExtensions
             });
 
         // Liveness = process up (no dependency probe); readiness = the backend API is reachable
-        // (tagged "ready"). The readiness probe is itself a traced BFF→API hop.
+        // (tagged "ready"). Probe spans (server AND client side) are filtered out of tracing
+        // above — they would flood Tempo with zero signal at 100% sampling.
         services.AddHealthChecks()
             .AddCheck<BackendApiHealthCheck>(name: "backend-api", tags: ["ready"]);
 

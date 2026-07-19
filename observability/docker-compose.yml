@@ -6,9 +6,14 @@
 #   Grafana UI:  http://localhost:3000   (anonymous admin — dev only)
 #
 # Run the API against it (opt-in — no endpoint set ⇒ no export, so tests stay quiet):
-#   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
-#   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
-#   dotnet run --project backend/src/AzureBank.Api
+#   bash:
+#     OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+#     OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+#     dotnet run --project backend/src/AzureBank.Api
+#   PowerShell:
+#     $env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"
+#     $env:OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
+#     dotnet run --project backend/src/AzureBank.Api
 #
 # ⚠ Use 127.0.0.1, NOT localhost. On Windows the .NET HttpClient resolves "localhost" to
 #   ::1 (IPv6) first, and Docker Desktop's IPv6 port-forward does NOT deliver to the
@@ -36,5 +41,5 @@ services:
       - GF_AUTH_DISABLE_LOGIN_FORM=true
     # The all-in-one stack (Grafana+Loki+Tempo+Prometheus+collector) is memory-hungry; cap it so a
     # runaway can't starve the host. Raise if local ingestion volume grows.
+    # No restart policy on purpose: a dev/demo stack must not resurrect itself on every boot.
     mem_limit: 2g
-    restart: unless-stopped

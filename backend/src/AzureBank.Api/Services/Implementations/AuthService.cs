@@ -78,7 +78,7 @@ public class AuthService : IAuthService
             // instead of dropping it: logs are exported over OTLP, and "j***@example.com"
             // still lets an operator correlate a credential-stuffing burst.
             _logger.LogWarning("Failed login attempt for email {Email}", _piiRedactor.Redact(request.Email));
-            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "failed"));
+            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
             throw new AuthenticationException("Invalid email or password.");
         }
 
@@ -98,7 +98,7 @@ public class AuthService : IAuthService
             if (lockedUntil is { } until)
             {
                 _logger.LogWarning("Login refused for locked account {UserId} until {Until}", user.Id, until);
-                ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "locked"));
+                ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "locked"));
                 throw AccountLockedException.Until(until, now);
             }
 
@@ -110,7 +110,7 @@ public class AuthService : IAuthService
 
             var tokenResult = _jwtService.GenerateToken(user);
             _logger.LogInformation("User {UserId} logged in successfully", user.Id);
-            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "succeeded"));
+            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "succeeded"));
             return new LoginResponse
             {
                 Token = tokenResult.AccessToken,
@@ -128,7 +128,7 @@ public class AuthService : IAuthService
         }
         // Wrong password on a KNOWN account: log the stable user id, not the raw email (PII).
         _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
-        ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "failed"));
+        ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "failed"));
         throw new AuthenticationException("Invalid email or password.");
     }
 

@@ -3,7 +3,6 @@ using AzureBank.Api.Observability;
 using FluentAssertions;
 using Microsoft.Extensions.Compliance.Classification;
 using Microsoft.Extensions.Compliance.Redaction;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -26,7 +25,7 @@ public class RedactionRegistrationTests
         environment.SetupGet(e => e.EnvironmentName).Returns(Environments.Development);
 
         var services = new ServiceCollection();
-        services.AddObservability(new ConfigurationBuilder().Build(), environment.Object);
+        services.AddObservability(environment.Object);
         return services.BuildServiceProvider();
     }
 
@@ -54,5 +53,9 @@ public class RedactionRegistrationTests
             .GetRedactor(new DataClassificationSet(new DataClassification("AzureBank", "Unregistered")));
 
         redactor.Should().NotBeOfType<EmailMaskingRedactor>();
+        // Pin the BEHAVIOUR, not just the type: the fallback must erase, because a future
+        // "pass-through" default would silently leak any newly-classified value verbatim.
+        redactor.Redact("secret@example.com").Should().BeEmpty(
+            "an unregistered classification must fall back to erasure, never pass-through");
     }
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Compliance.Redaction;
 
 namespace AzureBank.Api.Observability;
@@ -6,9 +7,15 @@ namespace AzureBank.Api.Observability;
 /// Masks an email address to <c>j***@example.com</c> form: the first character of the
 /// local part survives (enough for an operator to eyeball-correlate adjacent log lines),
 /// the rest of the local part is dropped, and the domain is kept (useful for spotting
-/// e.g. disposable-domain abuse) — the value can no longer identify a person.
-/// Malformed input (no <c>'@'</c>, empty, whitespace) collapses to <c>***</c>: when we
-/// can't parse it we assume ALL of it is sensitive rather than leak it verbatim.
+/// e.g. disposable-domain abuse). This is PSEUDONYMISATION, not anonymisation: masked
+/// lines remain personal data for GDPR retention/access purposes — the control reduces
+/// exposure, it does not exempt the logs from data-protection duties.
+///
+/// The domain tail is kept VERBATIM, so it is only kept when the input is provably a
+/// single well-formed address: exactly one <c>'@'</c>, non-empty on both sides, and no
+/// control/format/separator/whitespace character anywhere. Everything else collapses to
+/// <c>***</c> — a redactor is a trust boundary, and echoing a crafted "email" like
+/// <c>a@b\r\n[WARN]</c> would hand log-forging a path straight through the PII defence.
 /// </summary>
 public sealed class EmailMaskingRedactor : Redactor
 {
@@ -55,19 +62,54 @@ public sealed class EmailMaskingRedactor : Redactor
     /// </summary>
     private static void ComputeShape(ReadOnlySpan<char> source, out bool keepFirst, out int tailLength)
     {
-        // Split on the FIRST '@' — any further '@' belongs to the (kept) tail, which is
-        // harmless: extra masking is safer than misparsing.
+        // The tail (first '@' + domain) is echoed VERBATIM, so it may only survive when the
+        // input is provably one well-formed address. Anything else — no '@', empty local part
+        // or domain, a second '@' (could embed another address), or ANY control/format/
+        // separator/whitespace character (could forge log lines through the kept tail, e.g.
+        // "a@b\r\n[WARN]") — collapses to the bare mask.
         var at = source.IndexOf('@');
-        if (at < 0)
+        var wellFormed =
+            at > 0                                        // non-empty local part
+            && at < source.Length - 1                     // non-empty domain
+            && source[(at + 1)..].IndexOf('@') < 0        // exactly one '@'
+            && !ContainsUnsafeChar(source);
+        if (!wellFormed)
         {
-            // Not an email we can safely take apart (covers empty/whitespace too):
-            // redact everything.
             keepFirst = false;
             tailLength = 0;
             return;
         }
 
-        keepFirst = at > 0; // an empty local part ("@example.com") has no first char to keep
+        keepFirst = true;
         tailLength = source.Length - at;
+    }
+
+    /// <summary>
+    /// True when any character could alter log rendering or hide content: whitespace
+    /// (incl. Unicode line/paragraph separators), C0/C1 controls, format characters
+    /// (e.g. RTL override), surrogates, private-use, or unassigned code points.
+    /// Mirrors the character classes LogSanitizer strips — but here we REFUSE rather
+    /// than strip: a "cleaned" malformed email is still not provably an email.
+    /// </summary>
+    private static bool ContainsUnsafeChar(ReadOnlySpan<char> source)
+    {
+        foreach (var c in source)
+        {
+            if (char.IsWhiteSpace(c) || char.IsControl(c))
+            {
+                return true;
+            }
+
+            switch (CharUnicodeInfo.GetUnicodeCategory(c))
+            {
+                case UnicodeCategory.Format:
+                case UnicodeCategory.Surrogate:
+                case UnicodeCategory.PrivateUse:
+                case UnicodeCategory.OtherNotAssigned:
+                    return true;
+            }
+        }
+
+        return false;
     }
 }

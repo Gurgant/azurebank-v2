@@ -59,10 +59,13 @@ public class AuthServiceTests : IDisposable
         _timingEqualizerMock = new Mock<ILoginTimingEqualizer>();
 
         // The REAL email redactor behind a stub provider: log-content assertions below
-        // then prove the exact masked shape that production logging emits.
+        // then prove the exact masked shape that production logging emits. The setup is
+        // NARROWED to the Pii classification on purpose — if AuthService ever drifts to a
+        // different classification, the stub returns null and the test fails loudly instead
+        // of silently keeping the masking green.
         var redactorProviderMock = new Mock<IRedactorProvider>();
         redactorProviderMock
-            .Setup(x => x.GetRedactor(It.IsAny<DataClassificationSet>()))
+            .Setup(x => x.GetRedactor(new DataClassificationSet(DataClassifications.Pii)))
             .Returns(new EmailMaskingRedactor());
 
         _sut = new AuthService(
@@ -625,6 +628,7 @@ public class AuthServiceTests : IDisposable
         await act.Should().ThrowAsync<AuthenticationException>();
         VerifyWarningLogged(msg =>
             msg.Contains("n***@example.com") && !msg.Contains("nonexistent@example.com"));
+        VerifyRawEmailNeverLogged("nonexistent@example.com");
     }
 
     [Fact]
@@ -652,6 +656,7 @@ public class AuthServiceTests : IDisposable
         await act.Should().ThrowAsync<ConflictException>();
         VerifyWarningLogged(msg =>
             msg.Contains("e***@example.com") && !msg.Contains("existing@example.com"));
+        VerifyRawEmailNeverLogged("existing@example.com");
     }
 
     /// <summary>
@@ -667,6 +672,19 @@ public class AuthServiceTests : IDisposable
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
+
+    /// <summary>
+    /// Blanket guard: the raw address must not appear in ANY log call at ANY level — a
+    /// per-message predicate can pass while a second, unasserted log line leaks the value.
+    /// </summary>
+    private void VerifyRawEmailNeverLogged(string rawEmail) =>
+        _loggerMock.Verify(x => x.Log(
+                It.IsAny<LogLevel>(),
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains(rawEmail)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
 
     #endregion
 

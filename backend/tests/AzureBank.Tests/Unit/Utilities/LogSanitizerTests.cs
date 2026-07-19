@@ -64,4 +64,27 @@ public class LogSanitizerTests
         LogSanitizer.Sanitize(null).Should().Be(string.Empty);
         LogSanitizer.Sanitize(string.Empty).Should().Be(string.Empty);
     }
+
+    [Fact]
+    public void Sanitize_RemovesEveryC1ControlCharacter()
+    {
+        // U+0080-U+009F: the full C1 range (incl. U+009B CSI, exploitable like ESC).
+        for (var c = '\u0080'; c <= '\u009F'; c++)
+        {
+            LogSanitizer.Sanitize($"a{c}b").Should().Be("ab", $"U+{(int)c:X4} must be stripped");
+        }
+    }
+
+    [Fact]
+    public void Sanitize_RemovesEveryUnicodeCategoryTheCodeQlBarrierTrusts()
+    {
+        // The CodeQL model pack suppresses log-forging findings for Sanitize's return value
+        // on the strength of the FULL \p{C} claim - so every category must stay pinned:
+        // a regression to a narrower pattern (e.g. only C0/C1) must fail here, not ship.
+        LogSanitizer.Sanitize("a\u202Eb").Should().Be("ab", "Cf: U+202E RTL override reorders rendered text");
+        LogSanitizer.Sanitize("a\u200Bb").Should().Be("ab", "Cf: U+200B zero-width space hides content");
+        LogSanitizer.Sanitize("a\uE000b").Should().Be("ab", "Co: private-use rendering is viewer-defined");
+        LogSanitizer.Sanitize("a\uFDD0b").Should().Be("ab", "Cn: noncharacter");
+        LogSanitizer.Sanitize("a" + '\uD800' + "b").Should().Be("ab", "Cs: isolated surrogate breaks downstream encoders");
+    }
 }

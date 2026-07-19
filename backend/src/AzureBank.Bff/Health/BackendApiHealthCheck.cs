@@ -5,7 +5,8 @@ namespace AzureBank.Bff.Health;
 /// <summary>
 /// Readiness dependency probe: reports whether the BFF's sole downstream — the backend API — is
 /// reachable, by pinging its liveness endpoint through the "BackendApi" named client (so the probe
-/// reuses that client's config and shows up as a BFF→API span in the trace).
+/// reuses that client's config; its spans are deliberately filtered out of tracing — see
+/// AddObservability — so probe cycles don't flood Tempo).
 ///
 /// A backend blip returns <see cref="HealthStatus.Degraded"/>, NOT Unhealthy: a hard readiness
 /// failure on a SHARED downstream would let one API hiccup evict EVERY BFF instance at once

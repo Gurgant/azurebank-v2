@@ -38,17 +38,20 @@ try
         // trace_id/span_id (the sink stamps them from Activity.Current) — the Grafana log<->trace
         // pivot then works with zero manual wiring. Gated on the SAME env var as the SDK exporter
         // so tests / a collector-less run stay quiet. The sink reads OTEL_EXPORTER_OTLP_ENDPOINT
-        // itself and resolves the /v1/logs path — do NOT set Endpoint here (that double-appends
-        // the path → 404). Protocol pinned to http/protobuf, matching the trace/metric exporter.
+        // itself and resolves the /v1/logs path — do NOT set Endpoint here (a programmatic
+        // endpoint skips the path append and the bare URL 404s silently). Protocol pinned to
+        // http/protobuf, matching the trace/metric exporter.
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")))
         {
             configuration.WriteTo.OpenTelemetry(o =>
             {
                 o.Protocol = OtlpProtocol.HttpProtobuf;
-                // Keep byte-identical to the SDK resource so Grafana joins all three signals per-instance.
+                // Mirror the SDK resource identity (name/version/namespace/instance/environment)
+                // so Grafana joins logs to traces/metrics per-instance.
                 o.ResourceAttributes = new Dictionary<string, object>
                 {
-                    ["service.name"] = "azurebank-api",
+                    ["service.name"] = AzureBank.Api.Extensions.ObservabilityServiceCollectionExtensions.ServiceName,
+                    ["service.version"] = typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0",
                     ["service.namespace"] = "azurebank",
                     ["service.instance.id"] = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName,
                     ["deployment.environment.name"] = context.HostingEnvironment.EnvironmentName,
@@ -74,7 +77,7 @@ try
         .AddApiControllers()
         .AddApiDocumentation()
         .AddCorsPolicies(builder.Configuration)
-        .AddObservability(builder.Configuration, builder.Environment);
+        .AddObservability(builder.Environment);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BUILD APPLICATION

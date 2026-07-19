@@ -71,7 +71,9 @@
     <PackageVersion Include="Microsoft.Extensions.Configuration.FileExtensions" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.1" />
   </ItemGroup>
-  <ItemGroup Label="Observability (OpenTelemetry)">
+  <!-- OpenTelemetry SDK + instrumentation, plus the health-checks package (same layer: probes
+       are the third leg of the observability chapter alongside traces/metrics/logs). -->
+  <ItemGroup Label="Observability">
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
