@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Observability;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Transfer;
@@ -176,6 +177,7 @@ public class TransferService : ITransferService
                         _logger.LogInformation(
                             "Transfer of {Amount:C} from {SenderTag} to {RecipientTag} completed. Transaction: {TransactionNumber}",
                             request.Amount, senderUser.AzureTag, recipient.AzureTag, transactionNumber);
+                        ApiMetrics.Transfers.Add(1, new KeyValuePair<string, object?>("kind", "external"));
 
                         return new TransferResponse
                         {
@@ -317,6 +319,7 @@ public class TransferService : ITransferService
                         _logger.LogInformation(
                             "Internal transfer of {Amount:C} from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
                             request.Amount, fromAccount.Id, toAccount.Id, transactionNumber);
+                        ApiMetrics.Transfers.Add(1, new KeyValuePair<string, object?>("kind", "internal"));
 
                         return new InternalTransferResponse
                         {

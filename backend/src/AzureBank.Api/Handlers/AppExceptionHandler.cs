@@ -44,8 +44,9 @@ public class AppExceptionHandler : IExceptionHandler
         // Add error code extension
         problemDetails.Extensions["errorCode"] = appException.ErrorCode;
 
-        // Add correlation ID
-        problemDetails.Extensions["traceId"] = Activity.Current?.Id ?? httpContext.TraceIdentifier;
+        // Correlation id: bare 32-hex trace id (not the full W3C "00-…-01") so it pastes
+        // straight into Tempo/Grafana search.
+        problemDetails.Extensions["traceId"] = Activity.Current?.TraceId.ToString() ?? httpContext.TraceIdentifier;
 
         // Add details if present (e.g., InsufficientFundsException details)
         if (appException.Details is { Count: > 0 })

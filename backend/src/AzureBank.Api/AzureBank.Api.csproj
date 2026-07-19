@@ -51,6 +51,7 @@
   <ItemGroup Label="Logging">
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
   </ItemGroup>
 
   <ItemGroup Label="Observability (OpenTelemetry)">

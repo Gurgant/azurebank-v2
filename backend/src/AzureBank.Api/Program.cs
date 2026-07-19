@@ -3,6 +3,7 @@ using AzureBank.Api.Middleware;
 using AzureBank.Infrastructure.Extensions;
 using Scalar.AspNetCore;
 using Serilog;
+using Serilog.Sinks.OpenTelemetry;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOTSTRAP LOGGER (captures startup errors before config is loaded)
@@ -27,9 +28,36 @@ try
     // a process-wide static: with multiple in-process hosts (WebApplicationFactory in
     // integration tests) the second host build throws "The logger is already frozen".
     // The DI-registered logger below still gets the full appsettings configuration.
-    builder.Host.UseSerilog((context, services, configuration) => configuration
-        .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(services),
+    builder.Host.UseSerilog((context, services, configuration) =>
+    {
+        configuration
+            .ReadFrom.Configuration(context.Configuration)
+            .ReadFrom.Services(services);
+
+        // Export logs over OTLP so the LGTM stack's Loki lights up and every line carries
+        // trace_id/span_id (the sink stamps them from Activity.Current) — the Grafana log<->trace
+        // pivot then works with zero manual wiring. Gated on the SAME env var as the SDK exporter
+        // so tests / a collector-less run stay quiet. The sink reads OTEL_EXPORTER_OTLP_ENDPOINT
+        // itself and resolves the /v1/logs path — do NOT set Endpoint here (that double-appends
+        // the path → 404). Protocol pinned to http/protobuf, matching the trace/metric exporter.
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")))
+        {
+            configuration.WriteTo.OpenTelemetry(o =>
+            {
+                o.Protocol = OtlpProtocol.HttpProtobuf;
+                // Keep byte-identical to the SDK resource so Grafana joins all three signals per-instance.
+                o.ResourceAttributes = new Dictionary<string, object>
+                {
+                    ["service.name"] = "azurebank-api",
+                    ["service.namespace"] = "azurebank",
+                    ["service.instance.id"] = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName,
+                    ["deployment.environment.name"] = context.HostingEnvironment.EnvironmentName,
+                };
+                o.IncludedData = IncludedData.TraceIdField | IncludedData.SpanIdField
+                               | IncludedData.MessageTemplateTextAttribute;
+            });
+        }
+    },
         preserveStaticLogger: true);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -46,7 +74,7 @@ try
         .AddApiControllers()
         .AddApiDocumentation()
         .AddCorsPolicies(builder.Configuration)
-        .AddObservability(builder.Configuration);
+        .AddObservability(builder.Configuration, builder.Environment);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BUILD APPLICATION

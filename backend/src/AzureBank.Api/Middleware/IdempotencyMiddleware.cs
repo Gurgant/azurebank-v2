@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using AzureBank.Api.Attributes;
+using AzureBank.Api.Observability;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.Constants;
@@ -105,6 +106,7 @@ public class IdempotencyMiddleware
 
         if (acquisition.IsReplay)
         {
+            ApiMetrics.IdempotencyReplays.Add(1);
             await WriteReplayAsync(context, acquisition);
             return;
         }

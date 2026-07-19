@@ -39,8 +39,8 @@ public class ValidationExceptionHandler : IExceptionHandler
             Instance = httpContext.Request.Path
         };
 
-        // Add trace ID
-        problemDetails.Extensions["traceId"] = Activity.Current?.Id ?? httpContext.TraceIdentifier;
+        // Bare 32-hex trace id — pastes straight into Tempo/Grafana search.
+        problemDetails.Extensions["traceId"] = Activity.Current?.TraceId.ToString() ?? httpContext.TraceIdentifier;
 
         // Group errors by property name
         var errors = validationException.Errors

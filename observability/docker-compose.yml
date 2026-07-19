@@ -20,14 +20,21 @@
 # production — a real deployment would run Loki/Tempo/Mimir + Grafana as managed services.
 services:
   lgtm:
-    image: grafana/otel-lgtm:latest   # pin a digest/version for reproducibility if desired
+    # Pinned by digest for reproducibility (this is the v0.29.1 build). Bump deliberately, not by :latest drift.
+    image: grafana/otel-lgtm@sha256:b4da8bf6b1b44f6f683883869619eb9781465c642ce5f2d70591fb27094ddb1c
     container_name: azurebank-lgtm
     ports:
-      - "3000:3000"   # Grafana UI
-      - "4317:4317"   # OTLP / gRPC
-      - "4318:4318"   # OTLP / HTTP
+      # Bound to LOOPBACK only: Grafana runs with anonymous admin (dev convenience) and must never
+      # be reachable from the LAN. The API/BFF export from the host, so 127.0.0.1 is sufficient.
+      # OTLP gRPC (4317) is intentionally NOT published — the apps use http/protobuf on 4318 (see
+      # the 127.0.0.1/IPv6 note above); publishing an unused port is needless attack surface.
+      - "127.0.0.1:3000:3000"   # Grafana UI
+      - "127.0.0.1:4318:4318"   # OTLP / HTTP (http/protobuf)
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+    # The all-in-one stack (Grafana+Loki+Tempo+Prometheus+collector) is memory-hungry; cap it so a
+    # runaway can't starve the host. Raise if local ingestion volume grows.
+    mem_limit: 2g
     restart: unless-stopped

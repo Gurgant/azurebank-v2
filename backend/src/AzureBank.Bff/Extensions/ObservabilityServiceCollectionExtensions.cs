@@ -1,4 +1,5 @@
 using AzureBank.Bff.Health;
+using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -16,8 +17,8 @@ namespace AzureBank.Bff.Extensions;
 ///  - Yarp.ReverseProxy → the forwarder span for proxied /api/* traffic (AddSource). YARP 2.x
 ///    ships no System.Diagnostics.Metrics Meter, so proxy metrics come from the ASP.NET Core /
 ///    System.Net.Http meters, not a YARP-specific one.
-/// YARP propagates the W3C trace context to the destination, so the downstream API continues the
-/// same trace with no extra wiring.
+///  - Microsoft.AspNetCore.RateLimiting → the edge rate limiter (ADR-0013/0014) as first-class
+///    metrics: a brute-force burst is now an alertable series, not just a Serilog warning.
 ///
 /// Telemetry is exported over OTLP to a collector (Grafana LGTM) ONLY when
 /// OTEL_EXPORTER_OTLP_ENDPOINT is set, so local dev / tests don't emit noisy connection failures.
@@ -32,51 +33,75 @@ public static class ObservabilityServiceCollectionExtensions
     /// </summary>
     private const string YarpActivitySourceName = "Yarp.ReverseProxy";
 
-    public static IServiceCollection AddObservability(this IServiceCollection services, IConfiguration configuration)
+    /// <summary>The meter that emits aspnetcore.rate_limiting.* (lease acquired/rejected, queue).</summary>
+    private const string RateLimitingMeterName = "Microsoft.AspNetCore.RateLimiting";
+
+    public static IServiceCollection AddObservability(
+        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
-        // Export OTLP only when an endpoint is configured, so local dev / tests don't emit
-        // noisy connection failures to a collector that isn't running.
-        //
-        // The exporter is driven ENTIRELY by the standard OTEL_EXPORTER_OTLP_* environment
-        // variables (endpoint, protocol, headers). The SDK resolves the per-signal path
-        // (/v1/traces, /v1/metrics) from them per the OTLP spec. We deliberately do NOT set the
-        // endpoint programmatically: doing so conflicts with the env-var path resolution and
-        // silently double-appends the signal path (…/v1/traces/v1/traces → 404, dropped).
-        // For a local Grafana LGTM collector, set:
-        //   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   (127.0.0.1, NOT localhost — on
-        //     Windows, "localhost" resolves to ::1 first and Docker Desktop's IPv6 port-forward
-        //     drops the OTLP POSTs silently; forcing IPv4 makes them land)
-        //   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-        var exportOtlp = !string.IsNullOrWhiteSpace(configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
+        // Gate on the PROCESS environment variable — the same source the OTLP exporter reads.
+        var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+        var exportOtlp = !string.IsNullOrWhiteSpace(otlpEndpoint);
+
+        // Prod TLS guard: telemetry must not leave the host as cleartext over a network outside
+        // Development. Loopback http (an OTLP sidecar) is fine; a remote http endpoint fails fast.
+        if (exportOtlp && !environment.IsDevelopment()
+            && Uri.TryCreate(otlpEndpoint, UriKind.Absolute, out var endpointUri)
+            && endpointUri.Scheme == Uri.UriSchemeHttp && !endpointUri.IsLoopback)
+        {
+            throw new InvalidOperationException(
+                $"OTLP endpoint '{otlpEndpoint}' uses cleartext http to a non-loopback host in the " +
+                $"'{environment.EnvironmentName}' environment. Use https, or an OTLP collector on loopback.");
+        }
+
+        // Endpoint comes from OTEL_EXPORTER_OTLP_* env vars (setting it in code double-appends the
+        // signal path → 404). Pin the protocol in code so a missing OTEL_EXPORTER_OTLP_PROTOCOL
+        // doesn't silently default to gRPC:4317 and ship to the http/4318 port.
+        static void ConfigureOtlp(OtlpExporterOptions o) => o.Protocol = OtlpExportProtocol.HttpProtobuf;
 
         services.AddOpenTelemetry()
-            .ConfigureResource(r => r.AddService(
-                serviceName: ServiceName,
-                serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0"))
+            .ConfigureResource(r => r
+                .AddService(
+                    serviceName: ServiceName,
+                    serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0",
+                    serviceInstanceId: Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName)
+                .AddAttributes(new KeyValuePair<string, object>[]
+                {
+                    new("service.namespace", "azurebank"),
+                    new("deployment.environment.name", environment.EnvironmentName),
+                }))
             .WithTracing(tracing =>
             {
                 // AddHttpClientInstrumentation is REQUIRED alongside AddSource: it emits the
                 // outbound forwarder span AND injects the W3C traceparent that stitches the API
                 // span into this trace. YARP propagates context by default — do not disable it.
-                tracing.AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation()
+                // RecordException attaches exception.* to error spans; /health probes are filtered.
+                tracing
+                    .AddAspNetCoreInstrumentation(o =>
+                    {
+                        o.RecordException = true;
+                        o.Filter = ctx => !ctx.Request.Path.StartsWithSegments("/health");
+                    })
+                    .AddHttpClientInstrumentation(o => o.RecordException = true)
                     .AddSource(YarpActivitySourceName);
                 if (exportOtlp)
                 {
-                    tracing.AddOtlpExporter();
+                    tracing.AddOtlpExporter(ConfigureOtlp);
                 }
             })
             .WithMetrics(metrics =>
             {
-                // No AddMeter for YARP — v2.3.0 ships no System.Diagnostics.Metrics Meter. Proxy
-                // traffic metrics come from the ASP.NET Core (Hosting/Kestrel/RateLimiting) and
-                // System.Net.Http meters, which AspNetCore + HttpClient instrumentation cover.
-                metrics.AddAspNetCoreInstrumentation()
+                // No AddMeter for YARP — v2.3.0 ships no Meter. The rate-limiting meter IS added:
+                // the edge limiter is the flagship security control and must be observable.
+                metrics
+                    .AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
-                    .AddRuntimeInstrumentation();
+                    .AddRuntimeInstrumentation()
+                    .AddMeter(RateLimitingMeterName)
+                    .SetExemplarFilter(ExemplarFilterType.TraceBased);
                 if (exportOtlp)
                 {
-                    metrics.AddOtlpExporter();
+                    metrics.AddOtlpExporter(ConfigureOtlp);
                 }
             });
 

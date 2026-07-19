@@ -18,6 +18,7 @@ using AzureBank.Shared.Constants;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Serilog;
+using Serilog.Sinks.OpenTelemetry;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOTSTRAP LOGGER (captures startup errors before config is loaded)
@@ -66,9 +67,32 @@ try
     // is already frozen", which the top-level catch below turns into a silent failed startup
     // ("entry point exited without ever building an IHost"). The DI-registered logger still gets
     // the full appsettings configuration.
-    builder.Host.UseSerilog((context, services, configuration) => configuration
-        .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(services),
+    builder.Host.UseSerilog((context, services, configuration) =>
+    {
+        configuration
+            .ReadFrom.Configuration(context.Configuration)
+            .ReadFrom.Services(services);
+
+        // Export logs over OTLP (Loki) with automatic trace_id/span_id correlation. Gated on the
+        // same env var as the SDK exporter so tests stay quiet; the sink resolves the /v1/logs
+        // path from OTEL_EXPORTER_OTLP_ENDPOINT — do NOT set Endpoint here. See the API for detail.
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")))
+        {
+            configuration.WriteTo.OpenTelemetry(o =>
+            {
+                o.Protocol = OtlpProtocol.HttpProtobuf;
+                o.ResourceAttributes = new Dictionary<string, object>
+                {
+                    ["service.name"] = "azurebank-bff",
+                    ["service.namespace"] = "azurebank",
+                    ["service.instance.id"] = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName,
+                    ["deployment.environment.name"] = context.HostingEnvironment.EnvironmentName,
+                };
+                o.IncludedData = IncludedData.TraceIdField | IncludedData.SpanIdField
+                               | IncludedData.MessageTemplateTextAttribute;
+            });
+        }
+    },
         preserveStaticLogger: true);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -112,7 +136,7 @@ try
     // Observability (OpenTelemetry traces + metrics, health probes). Captures the YARP
     // forwarder span so a proxied request is one trace spanning BFF -> API. Export is opt-in
     // via OTEL_EXPORTER_OTLP_ENDPOINT (see the extension).
-    builder.Services.AddObservability(builder.Configuration);
+    builder.Services.AddObservability(builder.Configuration, builder.Environment);
 
     // Forwarded headers (ADR-0013): the rate limiter partitions on the connection IP, which
     // behind a proxy is the PROXY's IP unless we rewrite it from X-Forwarded-For. Trusting
@@ -273,7 +297,8 @@ try
                 Instance = context.HttpContext.Request.Path,
             };
             problem.Extensions["errorCode"] = ErrorCodes.RateLimitExceeded;
-            problem.Extensions["traceId"] = Activity.Current?.Id ?? context.HttpContext.TraceIdentifier;
+            // Bare 32-hex trace id — pastes straight into Tempo/Grafana search.
+            problem.Extensions["traceId"] = Activity.Current?.TraceId.ToString() ?? context.HttpContext.TraceIdentifier;
 
             await response.WriteAsJsonAsync(problem, cancellationToken);
         };

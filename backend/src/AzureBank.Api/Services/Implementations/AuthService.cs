@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Observability;
 using AzureBank.Api.Security;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
@@ -65,6 +66,7 @@ public class AuthService : IAuthService
             // the account-exists path remains (ADR-0012) — bounded by upstream rate limiting.
             _timingEqualizer.SpendVerifyCost(request.Password);
             _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
+            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "failed"));
             throw new AuthenticationException("Invalid email or password.");
         }
 
@@ -84,6 +86,7 @@ public class AuthService : IAuthService
             if (lockedUntil is { } until)
             {
                 _logger.LogWarning("Login refused for locked account {UserId} until {Until}", user.Id, until);
+                ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "locked"));
                 throw AccountLockedException.Until(until, now);
             }
 
@@ -95,6 +98,7 @@ public class AuthService : IAuthService
 
             var tokenResult = _jwtService.GenerateToken(user);
             _logger.LogInformation("User {UserId} logged in successfully", user.Id);
+            ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "succeeded"));
             return new LoginResponse
             {
                 Token = tokenResult.AccessToken,
@@ -112,6 +116,7 @@ public class AuthService : IAuthService
         }
         // Wrong password on a KNOWN account: log the stable user id, not the raw email (PII).
         _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
+        ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("outcome", "failed"));
         throw new AuthenticationException("Invalid email or password.");
     }
 

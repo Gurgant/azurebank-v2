@@ -220,7 +220,8 @@ public static class ServiceCollectionExtensions
                         Instance = context.Request.Path
                     };
                     problemDetails.Extensions["errorCode"] = errorCode;
-                    problemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+                    problemDetails.Extensions["traceId"] =
+                        System.Diagnostics.Activity.Current?.TraceId.ToString() ?? context.HttpContext.TraceIdentifier;
 
                     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     context.Response.ContentType = "application/problem+json";
@@ -246,7 +247,8 @@ public static class ServiceCollectionExtensions
                         Instance = context.Request.Path
                     };
                     problemDetails.Extensions["errorCode"] = ErrorCodes.Forbidden;
-                    problemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+                    problemDetails.Extensions["traceId"] =
+                        System.Diagnostics.Activity.Current?.TraceId.ToString() ?? context.HttpContext.TraceIdentifier;
 
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
                     context.Response.ContentType = "application/problem+json";

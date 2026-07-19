@@ -3,9 +3,14 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 namespace AzureBank.Bff.Health;
 
 /// <summary>
-/// Readiness probe: the BFF is only "ready" when its sole downstream — the backend API — is
-/// reachable. Pings the API's liveness endpoint through the "BackendApi" named client, so the
-/// probe reuses that client's dev-cert handling and shows up as a BFF→API span in the trace.
+/// Readiness dependency probe: reports whether the BFF's sole downstream — the backend API — is
+/// reachable, by pinging its liveness endpoint through the "BackendApi" named client (so the probe
+/// reuses that client's config and shows up as a BFF→API span in the trace).
+///
+/// A backend blip returns <see cref="HealthStatus.Degraded"/>, NOT Unhealthy: a hard readiness
+/// failure on a SHARED downstream would let one API hiccup evict EVERY BFF instance at once
+/// (cascading failure). Degraded keeps /health/ready at 200 — the BFF process is up and can still
+/// serve — while surfacing the downstream state for dashboards and alerts.
 /// </summary>
 public sealed class BackendApiHealthCheck : IHealthCheck
 {
@@ -30,16 +35,16 @@ public sealed class BackendApiHealthCheck : IHealthCheck
             using var response = await client.GetAsync("/health/live", timeout.Token);
             return response.IsSuccessStatusCode
                 ? HealthCheckResult.Healthy("Backend API reachable.")
-                : HealthCheckResult.Unhealthy($"Backend API returned {(int)response.StatusCode}.");
+                : HealthCheckResult.Degraded($"Backend API returned {(int)response.StatusCode}.");
         }
         catch (HttpRequestException ex)
         {
-            return HealthCheckResult.Unhealthy("Backend API unreachable.", ex);
+            return HealthCheckResult.Degraded("Backend API unreachable.", ex);
         }
-        // Our own timeout fired (not a host shutdown) — report unhealthy rather than throw.
+        // Our own timeout fired (not a host shutdown) — degraded, don't throw.
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return HealthCheckResult.Unhealthy("Backend API health check timed out.");
+            return HealthCheckResult.Degraded("Backend API health check timed out.");
         }
     }
 }
