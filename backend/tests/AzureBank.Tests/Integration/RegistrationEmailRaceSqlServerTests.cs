@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
@@ -14,12 +15,13 @@ namespace AzureBank.Tests.Integration;
 
 /// <summary>
 /// Proves the unique NULL-filtered NormalizedEmail index (migration AddUniqueEmailIndex,
-/// ADR-0013) closes the registration email race on real SQL Server: a burst of parallel
-/// registrations with the SAME email (distinct handles) must create EXACTLY ONE account —
-/// every other request loses the unique-index write and is neutralised to a 409, never a
-/// second 201 or a leaked 500. Identity's RequireUniqueEmail is only an advisory in-process
-/// check that a parallel burst can all pass, and InMemory cannot enforce a unique index, so
-/// this proof is SQL-gated.
+/// ADR-0013) closes the registration email race on real SQL Server AND that uniqueness is
+/// enforced on the CASE-INSENSITIVE NormalizedEmail, not the raw Email: a burst of parallel
+/// registrations that are MIXED-CASE spellings of ONE logical address (distinct handles) must
+/// create EXACTLY ONE account, and every loser must return the enumeration-neutral 409
+/// (errorCode REGISTRATION_FAILED) — never a second 201, a leaked 500, or a distinguishing
+/// error code. Identity's RequireUniqueEmail is only an advisory in-process check a parallel
+/// burst can all pass, and InMemory cannot enforce a unique index, so this proof is SQL-gated.
 /// </summary>
 [Trait("Category", "SqlServer")]
 [Collection(SqlServerProofsCollection.Name)]
@@ -34,34 +36,55 @@ public sealed class RegistrationEmailRaceSqlServerTests : IDisposable
     public RegistrationEmailRaceSqlServerTests(ITestOutputHelper output) => _output = output;
 
     [SqlServerFact]
-    public async Task ParallelSameEmailRegistrations_CreateExactlyOneAccount()
+    public async Task ParallelMixedCaseSameEmail_CreateExactlyOneAccount_LosersAreNeutral409()
     {
         var client = CreateSqlClient();
-        var email = $"emailrace{Guid.NewGuid():N}@example.com";
+        var logicalEmail = $"emailrace{Guid.NewGuid():N}@example.com";
 
-        // Same email, DISTINCT handles, fired in parallel. Every request passes the advisory
-        // FindByEmailAsync pre-check (all see no existing user), so only the unique index can
-        // arbitrate the collision — exactly one INSERT may win.
+        // Eight MIXED-CASE spellings of the SAME logical address (distinct handles), fired in
+        // parallel. They all normalise to one NormalizedEmail, so only a unique index on the
+        // NORMALISED column can arbitrate — an index on the raw Email would let different-case
+        // spellings coexist. Each passes the advisory FindByEmailAsync pre-check.
         const int burst = 8;
-        var statuses = await Task.WhenAll(
-            Enumerable.Range(0, burst).Select(i => RegisterStatusAsync(client, email, i)));
-        _output.WriteLine("parallel same-email statuses: " + string.Join(",", statuses.Select(s => (int)s)));
+        var results = await Task.WhenAll(
+            Enumerable.Range(0, burst).Select(i => RegisterAsync(client, CaseVariant(logicalEmail, i), i)));
 
-        statuses.Count(s => s == HttpStatusCode.Created).Should().Be(1,
-            "exactly one registration with a given email may succeed");
-        statuses.Where(s => s != HttpStatusCode.Created)
-            .Should().OnlyContain(s => s == HttpStatusCode.Conflict,
-                "every loser of the email race must be neutralised to 409 — never a second 201 or a leaked 500");
+        _output.WriteLine("statuses: " + string.Join(",", results.Select(r => (int)r.Status)));
 
-        (await CountUsersWithEmailAsync(email)).Should().Be(1,
-            "the unique index must leave exactly one row for the contested email");
+        results.Count(r => r.Status == HttpStatusCode.Created).Should().Be(1,
+            "exactly one registration for a given (normalized) email may succeed");
+
+        var losers = results.Where(r => r.Status != HttpStatusCode.Created).ToList();
+        losers.Should().OnlyContain(r => r.Status == HttpStatusCode.Conflict,
+            "every loser of the email race must be a 409 — never a second 201 or a leaked 500");
+        losers.Should().OnlyContain(r => r.ErrorCode == ErrorCodes.RegistrationFailed,
+            "every loser must return the enumeration-NEUTRAL errorCode, never a distinguishing one");
+
+        (await CountUsersByNormalizedEmailAsync(logicalEmail.ToUpperInvariant())).Should().Be(1,
+            "the unique index on NormalizedEmail must leave exactly one row for the contested address");
     }
 
-    private async Task<int> CountUsersWithEmailAsync(string email)
+    // Deterministically toggle the case of the local-part letters so the eight spellings are
+    // distinct raw strings that all normalise to the same NormalizedEmail.
+    private static string CaseVariant(string email, int seed)
+    {
+        var at = email.IndexOf('@');
+        var chars = email.ToCharArray();
+        for (var j = 0; j < at; j++)
+        {
+            if (!char.IsLetter(chars[j])) continue;
+            chars[j] = (j + seed) % 2 == 0
+                ? char.ToUpperInvariant(chars[j])
+                : char.ToLowerInvariant(chars[j]);
+        }
+        return new string(chars);
+    }
+
+    private async Task<int> CountUsersByNormalizedEmailAsync(string normalizedEmail)
     {
         using var scope = _factory!.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
-        return await db.Users.CountAsync(u => u.Email == email);
+        return await db.Users.CountAsync(u => u.NormalizedEmail == normalizedEmail);
     }
 
     private HttpClient CreateSqlClient()
@@ -71,7 +94,8 @@ public sealed class RegistrationEmailRaceSqlServerTests : IDisposable
         return _factory.CreateClient();
     }
 
-    private static async Task<HttpStatusCode> RegisterStatusAsync(HttpClient client, string email, int i)
+    private static async Task<(HttpStatusCode Status, string? ErrorCode)> RegisterAsync(
+        HttpClient client, string email, int i)
     {
         var response = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
@@ -81,7 +105,17 @@ public sealed class RegistrationEmailRaceSqlServerTests : IDisposable
             FirstName = "Email",
             LastName = "Race"
         }, Json);
-        return response.StatusCode;
+
+        string? errorCode = null;
+        if (response.StatusCode != HttpStatusCode.Created)
+        {
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (doc.RootElement.TryGetProperty("errorCode", out var code))
+            {
+                errorCode = code.GetString();
+            }
+        }
+        return (response.StatusCode, errorCode);
     }
 
     public void Dispose() => _factory?.Dispose();
