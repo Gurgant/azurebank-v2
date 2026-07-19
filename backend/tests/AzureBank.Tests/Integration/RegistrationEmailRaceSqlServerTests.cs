@@ -64,16 +64,18 @@ public sealed class RegistrationEmailRaceSqlServerTests : IDisposable
             "the unique index on NormalizedEmail must leave exactly one row for the contested address");
     }
 
-    // Deterministically toggle the case of the local-part letters so the eight spellings are
-    // distinct raw strings that all normalise to the same NormalizedEmail.
+    // Case each local-part letter by a DISTINCT bit of the seed, so every seed 0..7 yields a
+    // different spelling (the first letters carry the low bits) that still normalises to the
+    // same NormalizedEmail — not just a parity flip that would collapse the burst to 2 variants.
     private static string CaseVariant(string email, int seed)
     {
         var at = email.IndexOf('@');
         var chars = email.ToCharArray();
+        var letterIndex = 0;
         for (var j = 0; j < at; j++)
         {
             if (!char.IsLetter(chars[j])) continue;
-            chars[j] = (j + seed) % 2 == 0
+            chars[j] = ((seed >> letterIndex++) & 1) == 1
                 ? char.ToUpperInvariant(chars[j])
                 : char.ToLowerInvariant(chars[j]);
         }
