@@ -110,7 +110,8 @@ public class AuthService : IAuthService
         {
             await IncrementAndMaybeLockLoginAsync(user, now);
         }
-        _logger.LogWarning("Failed login attempt for email {Email}", request.Email);
+        // Wrong password on a KNOWN account: log the stable user id, not the raw email (PII).
+        _logger.LogWarning("Failed login attempt for account {UserId}", user.Id);
         throw new AuthenticationException("Invalid email or password.");
     }
 
@@ -225,9 +226,15 @@ public class AuthService : IAuthService
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
 
+        // Decouple the login identity from the public handle (ADR-0015): Identity's UserName
+        // is the immutable user id (a UUIDv7 — time-sortable, index-friendly), never shown and
+        // never a login credential (login is by email), so the AzureTag is left as a plain,
+        // renameable public column. Set the Id explicitly so UserName can mirror it here.
+        var userId = Guid.CreateVersion7();
         var user = new ApplicationUser
         {
-            UserName = normalizedAzureTag,
+            Id = userId,
+            UserName = userId.ToString(),
             Email = request.Email,
             AzureTag = normalizedAzureTag,
             FirstName = request.FirstName,

@@ -4,11 +4,6 @@
     "title": "AzureBank.Api | v1",
     "version": "1.0.0"
   },
-  "servers": [
-    {
-      "url": "http://localhost:5068/"
-    }
-  ],
   "paths": {
     "/api/accounts": {
       "get": {
@@ -1687,25 +1682,130 @@
         "tags": [
           "User"
         ],
-        "summary": "Look up a specific user by AzureTag for transfer recipient verification.",
+        "summary": "Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.\r\nReturns the masked display name (e.g. \"Vladislav A.\") for confirmation. This is an\r\nexact-match confirmation oracle by design — there is deliberately no substring/prefix\r\ndirectory search, which would let an authenticated user harvest the customer list\r\n(ADR-0014; the Zelle/Cash App model).",
         "parameters": [
           {
             "name": "azureTag",
             "in": "path",
-            "description": "Full AzureTag to look up",
+            "description": "Full AzureTag to look up (3-20 chars, AzureTag charset).",
             "required": true,
             "schema": {
+              "maxLength": 20,
+              "minLength": 3,
+              "pattern": "^[a-z][a-z0-9_]{2,19}$",
               "type": "string"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Recipient lookup result",
+            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponseOfRecipientLookupResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+          },
+          "403": {
+            "description": "Forbidden - You don't have permission to access this resource."
+          }
+        }
+      }
+    },
+    "/api/users/me/azuretag": {
+      "patch": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Renames the caller's own public AzureTag handle (ADR-0015). The handle is decoupled\r\nfrom the login identity (UserName is the immutable user id), so this is a plain update.\r\nThe bearer token still carries the old handle in its azure_tag claim until it is\r\nrefreshed on next login.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAzureTagRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAzureTagRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAzureTagRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfUpdateAzureTagResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict - the requested AzureTag is already taken (errorCode AZURE_TAG_TAKEN).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (AZURE_TAG_TAKEN)"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
                 }
               }
             }
@@ -1716,11 +1816,15 @@
           "403": {
             "description": "Forbidden - You don't have permission to access this resource."
           },
-          "400": {
-            "description": "Bad Request - Invalid parameter format or validation failed."
-          },
-          "404": {
-            "description": "Not Found - The requested resource does not exist."
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -1991,6 +2095,27 @@
               },
               {
                 "$ref": "#/components/schemas/TransferResponse"
+              }
+            ]
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ApiResponseOfUpdateAzureTagResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateAzureTagResponse"
               }
             ]
           },
@@ -2627,6 +2752,33 @@
             "type": "string"
           }
         }
+      },
+      "UpdateAzureTagRequest": {
+        "required": [
+          "azureTag"
+        ],
+        "type": "object",
+        "properties": {
+          "azureTag": {
+            "maxLength": 20,
+            "minLength": 3,
+            "pattern": "^[a-z][a-z0-9_]{2,19}$",
+            "type": "string"
+          }
+        },
+        "description": "Request to rename the caller's own public AzureTag handle (ADR-0015)."
+      },
+      "UpdateAzureTagResponse": {
+        "required": [
+          "azureTag"
+        ],
+        "type": "object",
+        "properties": {
+          "azureTag": {
+            "type": "string"
+          }
+        },
+        "description": "The caller's AzureTag after a successful rename (ADR-0015)."
       },
       "UserLoginInfo": {
         "required": [

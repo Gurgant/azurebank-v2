@@ -46,6 +46,24 @@ public class UserController : ControllerBase
     }
 
     /// <summary>
+    /// Renames the caller's own public AzureTag handle (ADR-0015). The handle is decoupled
+    /// from the login identity (UserName is the immutable user id), so this is a plain update.
+    /// The bearer token still carries the old handle in its azure_tag claim until it is
+    /// refreshed on next login.
+    /// </summary>
+    [HttpPatch("me/azuretag")]
+    [EndpointSummary("Rename my AzureTag")]
+    [ProducesResponseType(typeof(ApiResponse<UpdateAzureTagResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ApiResponse<UpdateAzureTagResponse>>> RenameAzureTag(
+        [FromBody] UpdateAzureTagRequest request)
+    {
+        var newTag = await _userService.RenameAzureTagAsync(GetCurrentUserId(), request.AzureTag);
+        return Ok(ApiResponse<UpdateAzureTagResponse>.Success(new UpdateAzureTagResponse { AzureTag = newTag }));
+    }
+
+    /// <summary>
     /// Extracts the current user ID from JWT claims.
     /// </summary>
     private Guid GetCurrentUserId()

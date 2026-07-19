@@ -1,5 +1,6 @@
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Exceptions;
 using FluentAssertions;
@@ -41,12 +42,14 @@ public class UserServiceTests : IDisposable
 
     private ApplicationUser CreateTestUser(string azureTag, string firstName = "Test", string lastName = "User")
     {
+        var id = Guid.NewGuid();
         return new ApplicationUser
         {
-            Id = Guid.NewGuid(),
+            Id = id,
             AzureTag = azureTag.ToLower(),
-            UserName = azureTag.ToLower(),
-            NormalizedUserName = azureTag.ToUpper(),
+            // Decouple (ADR-0015): Identity's UserName is the immutable user id, not the handle.
+            UserName = id.ToString(),
+            NormalizedUserName = id.ToString().ToUpperInvariant(),
             Email = $"{azureTag}@test.com",
             NormalizedEmail = $"{azureTag.ToUpper()}@TEST.COM",
             FirstName = firstName,
@@ -212,6 +215,49 @@ public class UserServiceTests : IDisposable
 
         result.Exists.Should().BeTrue();
         result.DisplayName.Should().Be("John S.");
+    }
+
+    #endregion
+
+    #region RenameAzureTagAsync Tests
+
+    [Fact]
+    public async Task RenameAzureTagAsync_FreshTag_UpdatesHandle()
+    {
+        var user = CreateTestUser("oldtag", "John", "Doe");
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var result = await _sut.RenameAzureTagAsync(user.Id, "newtag");
+
+        result.Should().Be("newtag");
+        (await _sut.GetUserByAzureTagAsync("newtag", Guid.NewGuid())).Exists.Should().BeTrue();
+        (await _sut.GetUserByAzureTagAsync("oldtag", Guid.NewGuid())).Exists.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RenameAzureTagAsync_TagTakenByAnother_ThrowsConflict()
+    {
+        var me = CreateTestUser("metag", "Me", "User");
+        var other = CreateTestUser("takentag", "Other", "User");
+        _context.Users.AddRange(me, other);
+        await _context.SaveChangesAsync();
+
+        var thrown = await ((Func<Task>)(() => _sut.RenameAzureTagAsync(me.Id, "takentag")))
+            .Should().ThrowAsync<ConflictException>();
+        thrown.Which.ErrorCode.Should().Be(ErrorCodes.AzureTagTaken);
+    }
+
+    [Fact]
+    public async Task RenameAzureTagAsync_OwnTagCaseInsensitive_IsNoOp()
+    {
+        var user = CreateTestUser("sametag", "Self", "User");
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        var result = await _sut.RenameAzureTagAsync(user.Id, "SameTag");
+
+        result.Should().Be("sametag");
     }
 
     #endregion

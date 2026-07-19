@@ -60,10 +60,13 @@ public class UserSeeder : ISeeder
             if (cancellationToken.IsCancellationRequested)
                 break;
 
+            // UserName is the immutable user id, not the AzureTag (ADR-0015).
+            var userId = Guid.CreateVersion7();
             var user = new ApplicationUser
             {
                 // Identity properties
-                UserName = azureTag,
+                Id = userId,
+                UserName = userId.ToString(),
                 Email = email,
                 EmailConfirmed = true,
 

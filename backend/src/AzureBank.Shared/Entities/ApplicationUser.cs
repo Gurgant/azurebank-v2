@@ -7,9 +7,9 @@ namespace AzureBank.Shared.Entities;
 public class ApplicationUser : IdentityUser<Guid>
 {
     /// <summary>
-    /// Public username for transfers (e.g., "@johnsmith")
-    /// Stored lowercase, IMMUTABLE after registration
-    /// Note: Maps to UserName in Identity
+    /// Public handle for transfers (e.g., "@johnsmith"), stored lowercase and unique.
+    /// Renameable (ADR-0015) and NOT a login credential: Identity's UserName is the
+    /// immutable user id, and login is by email. This is a plain profile column.
     /// </summary>
     [Required]
     public required string AzureTag { get; set; }

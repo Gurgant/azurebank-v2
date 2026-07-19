@@ -83,7 +83,10 @@ public class AccountService : IAccountService
 
         await _context.SaveChangesAsync();
 
-        _logger.LogInformation("Updated account {AccountId} name to '{Name}'", accountId, request.Name);
+        // Strip CR/LF from the user-controlled name before logging — defence-in-depth against
+        // log-forging into the plain-text sink (the structured template already mitigates most).
+        var safeName = request.Name.Replace("\r", string.Empty).Replace("\n", string.Empty);
+        _logger.LogInformation("Updated account {AccountId} name to '{Name}'", accountId, safeName);
 
         return _mapper.ToResponse(account);
     }
