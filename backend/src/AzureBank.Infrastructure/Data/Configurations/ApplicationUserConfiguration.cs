@@ -23,6 +23,15 @@ public class ApplicationUserConfiguration : IEntityTypeConfiguration<Application
         builder.HasIndex(e => e.AzureTag)
             .IsUnique();
 
+        // Email must be unique at the DATABASE level, not just via Identity's advisory
+        // RequireUniqueEmail (a FindByEmailAsync check that two concurrent registrations can
+        // both pass). This overrides the base Identity EmailIndex (non-unique) so a same-email
+        // race loses the unique-index write and is neutralised to a 409 (ADR-0013) instead of
+        // creating a duplicate account. NULL-filtered because NormalizedEmail is nullable.
+        builder.HasIndex(e => e.NormalizedEmail)
+            .IsUnique()
+            .HasFilter("[NormalizedEmail] IS NOT NULL");
+
         // Name fields
         builder.Property(e => e.FirstName)
             .HasMaxLength(ValidationRules.FirstNameMaxLength)

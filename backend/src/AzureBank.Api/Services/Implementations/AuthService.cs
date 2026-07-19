@@ -237,8 +237,8 @@ public class AuthService : IAuthService
             UserName = userId.ToString(),
             Email = request.Email,
             AzureTag = normalizedAzureTag,
-            FirstName = request.FirstName,
-            LastName = request.LastName,
+            FirstName = request.FirstName.Trim(),
+            LastName = request.LastName.Trim(),
             EmailConfirmed = true // Skip email verification for MVP
         };
 
@@ -250,9 +250,10 @@ public class AuthService : IAuthService
         catch (DbUpdateException ex)
         {
             // The genuine TOCTOU race: a concurrent registration passed the advisory
-            // pre-checks and Identity's validators too, then the unique index rejected this
-            // one at write time. Neutralise it to the SAME response as a pre-check duplicate
-            // so the race can't be used to enumerate accounts (ADR-0013).
+            // pre-checks and Identity's validators too, then a unique index (AzureTag, or now
+            // the NormalizedEmail unique index) rejected this one at write time. Neutralise it
+            // to the SAME response as a pre-check duplicate so the race can't be used to
+            // enumerate accounts (ADR-0013).
             _logger.LogWarning(ex,
                 "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
                 "DuplicateRegistration");

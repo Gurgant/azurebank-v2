@@ -50,6 +50,28 @@ public class AuthEndpointTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Register_TrimsWhitespaceFromNames()
+    {
+        // A name with surrounding whitespace passes validation (the charset allows \s) but must
+        // be stored trimmed, so masked display ("Vladislav A.") and the profile stay clean.
+        var request = new RegisterRequest
+        {
+            AzureTag = $"trim_{Guid.NewGuid().ToString("N")[..8]}",
+            Email = $"trim{Guid.NewGuid():N}@example.com",
+            Password = "SecurePass123!",
+            FirstName = "  Vladislav  ",
+            LastName = "  Aleshaev  "
+        };
+
+        var response = await Client.PostAsJsonAsync("/api/auth/register", request, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
+        result!.Data!.User.FirstName.Should().Be("Vladislav");
+        result.Data.User.LastName.Should().Be("Aleshaev");
+    }
+
+    [Fact]
     public async Task Register_WithDuplicateEmail_ReturnsConflict()
     {
         // Arrange - Register first user
