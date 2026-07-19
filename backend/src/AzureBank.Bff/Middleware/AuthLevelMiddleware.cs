@@ -1,5 +1,6 @@
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
+using AzureBank.Shared.Utilities;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Bff.Middleware;
@@ -57,9 +58,11 @@ public class AuthLevelMiddleware
 
                 if (authLevel < 2)
                 {
-                    // Strip CR/LF from the user-controlled path before logging — defence-in-depth
-                    // against log-forging into the plain-text sink (CodeQL).
-                    var safePath = path.Replace("\r", string.Empty).Replace("\n", string.Empty);
+                    // Sanitize the user-controlled path before logging — defence-in-depth against
+                    // log-forging into the plain-text sink. Central LogSanitizer (not inline
+                    // Replace): one audited contract, pinned by tests and declared to CodeQL as a
+                    // log-injection barrier (see the model pack under .github/codeql).
+                    var safePath = LogSanitizer.Sanitize(path);
                     _logger.LogWarning(
                         "Access denied: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
                         authLevel, method, safePath);

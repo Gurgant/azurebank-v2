@@ -1,0 +1,11 @@
+# CodeQL model pack — picked up automatically by code-scanning DEFAULT setup from
+# .github/codeql/extensions/** (no publishing, no workflow change).
+# Name MUST be lowercase scope/pack; the '*' extensionTargets range is deliberate —
+# a narrow range would make the whole pack a silent no-op on bundle upgrades.
+name: gurgant/azurebank-csharp-models
+version: 0.1.0
+library: true
+extensionTargets:
+  codeql/csharp-all: '*'
+dataExtensions:
+  - models/**/*.yml

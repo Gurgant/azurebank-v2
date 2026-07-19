@@ -83,9 +83,11 @@ public class AccountService : IAccountService
 
         await _context.SaveChangesAsync();
 
-        // Strip CR/LF from the user-controlled name before logging — defence-in-depth against
+        // Sanitize the user-controlled name before logging — defence-in-depth against
         // log-forging into the plain-text sink (the structured template already mitigates most).
-        var safeName = request.Name.Replace("\r", string.Empty).Replace("\n", string.Empty);
+        // Central LogSanitizer (not inline Replace): one audited contract, pinned by tests and
+        // declared to CodeQL as a log-injection barrier (see the model pack under .github/codeql).
+        var safeName = LogSanitizer.Sanitize(request.Name);
         _logger.LogInformation("Updated account {AccountId} name to '{Name}'", accountId, safeName);
 
         return _mapper.ToResponse(account);
