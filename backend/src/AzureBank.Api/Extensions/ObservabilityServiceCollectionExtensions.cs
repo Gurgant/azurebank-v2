@@ -18,8 +18,20 @@ public static class ObservabilityServiceCollectionExtensions
 
     public static IServiceCollection AddObservability(this IServiceCollection services, IConfiguration configuration)
     {
-        var otlpEndpoint = configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
-        var exportOtlp = !string.IsNullOrWhiteSpace(otlpEndpoint);
+        // Export OTLP only when an endpoint is configured, so local dev / tests don't emit
+        // noisy connection failures to a collector that isn't running.
+        //
+        // The exporter is driven ENTIRELY by the standard OTEL_EXPORTER_OTLP_* environment
+        // variables (endpoint, protocol, headers). The SDK resolves the per-signal path
+        // (/v1/traces, /v1/metrics) from them per the OTLP spec. We deliberately do NOT set the
+        // endpoint programmatically: doing so conflicts with the env-var path resolution and
+        // silently double-appends the signal path (…/v1/traces/v1/traces → 404, dropped).
+        // For a local Grafana LGTM collector, set:
+        //   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   (127.0.0.1, NOT localhost — on
+        //     Windows, "localhost" resolves to ::1 first and Docker Desktop's IPv6 port-forward
+        //     drops the OTLP POSTs silently; forcing IPv4 makes them land)
+        //   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+        var exportOtlp = !string.IsNullOrWhiteSpace(configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 
         services.AddOpenTelemetry()
             .ConfigureResource(r => r.AddService(

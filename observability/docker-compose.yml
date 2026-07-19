@@ -1,0 +1,33 @@
+# Grafana LGTM — Loki (logs) + Grafana (UI) + Tempo (traces) + Prometheus/Mimir (metrics),
+# all in ONE container. The local observability backend for AzureBank: the API and BFF export
+# OTLP here when OTEL_EXPORTER_OTLP_ENDPOINT points at it.
+#
+#   docker compose -f observability/docker-compose.yml up -d
+#   Grafana UI:  http://localhost:3000   (anonymous admin — dev only)
+#
+# Run the API against it (opt-in — no endpoint set ⇒ no export, so tests stay quiet):
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+#   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+#   dotnet run --project backend/src/AzureBank.Api
+#
+# ⚠ Use 127.0.0.1, NOT localhost. On Windows the .NET HttpClient resolves "localhost" to
+#   ::1 (IPv6) first, and Docker Desktop's IPv6 port-forward does NOT deliver to the
+#   container — the OTLP POSTs vanish with no error (collector shows 0 accepted, 0 refused).
+#   Forcing IPv4 (127.0.0.1) makes the export land. http/protobuf (4318) over gRPC (4317)
+#   for the same reason: it is the most robust path against a local collector on .NET.
+#
+# DEV / DEMO ONLY: telemetry is in-memory and non-persistent (gone on restart). Not for
+# production — a real deployment would run Loki/Tempo/Mimir + Grafana as managed services.
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest   # pin a digest/version for reproducibility if desired
+    container_name: azurebank-lgtm
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4317:4317"   # OTLP / gRPC
+      - "4318:4318"   # OTLP / HTTP
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    restart: unless-stopped
