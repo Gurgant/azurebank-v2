@@ -142,16 +142,16 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   `409 REGISTRATION_FAILED` as the pre-check path, and Identity's error descriptions are
   logged server-side, never returned to the client. Without this, the race path re-opened the
   very oracle this ADR closes.
-- **What is actually authoritative (corrected).** For the **handle**, a unique index on
-  `AzureTag` (plus Identity's unique `NormalizedUserName` index) is the authoritative
-  write-time guard. For the **email** there is **no unique index** — `NormalizedEmail` is
-  indexed but *not* uniquely — so email uniqueness rests solely on Identity's in-process
-  `RequireUniqueEmail` validator, which is **advisory**: under a genuine race two accounts
-  could share an email, and the `DbUpdateException` path is therefore unreachable for email.
-  This does not weaken the enumeration posture (every path still returns the identical 409),
-  but it is a real data-integrity gap. Closing it (unique index on `NormalizedEmail` +
-  migration, and making registration transactional — `AddToRoleAsync`'s result is currently
-  discarded and the account insert sits outside the guard) is a tracked follow-up.
+- **What is actually authoritative.** For the **handle**, a unique index on `AzureTag` (plus
+  Identity's unique `NormalizedUserName` index) is the authoritative write-time guard. For the
+  **email**, a unique NULL-filtered index on `NormalizedEmail` is now the authoritative guard
+  too (migration `AddUniqueEmailIndex`) — so a genuine race loses the unique-index write and
+  hits the same `DbUpdateException` → neutral `409` path, and two accounts can no longer share
+  an email. Identity's in-process `RequireUniqueEmail` validator remains only an advisory
+  fast-path. Proven by a SQL-Server parallel-burst test (`RegistrationEmailRaceSqlServerTests`:
+  N concurrent same-email registrations → exactly one `201`, the rest `409`, exactly one row).
+  Making the multi-step registration fully atomic (user + role + default account committed under
+  one transaction, wrapped in the retry execution strategy) remains a tracked follow-up.
 
 ## Known limits of the rate limiter (accepted for this scope)
 

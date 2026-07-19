@@ -50,6 +50,43 @@ public class AuthEndpointTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Register_TrimsWhitespaceFromNames()
+    {
+        // Raw JSON (bypassing the DTO setter's client-side trim) exercises the SERVER-side
+        // normalisation: whitespace-padded names must be stored trimmed.
+        var tag = $"trim_{Guid.NewGuid().ToString("N")[..8]}";
+        var email = $"trim{Guid.NewGuid():N}@example.com";
+        var json = $$"""
+            {"azureTag":"{{tag}}","email":"{{email}}","password":"SecurePass123!","firstName":"  Vladislav  ","lastName":"  Aleshaev  "}
+            """;
+
+        var response = await Client.PostAsync("/api/auth/register",
+            new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
+        result!.Data!.User.FirstName.Should().Be("Vladislav");
+        result.Data.User.LastName.Should().Be("Aleshaev");
+    }
+
+    [Fact]
+    public async Task Register_WithNameThatTrimsBelowMinLength_ReturnsBadRequest()
+    {
+        // "  a  " passes the RAW {2,50} length rule, but the server trims BEFORE validating, so
+        // the 1-char result is rejected — not silently persisted below the guarantee (CR1).
+        var tag = $"short_{Guid.NewGuid().ToString("N")[..8]}";
+        var email = $"short{Guid.NewGuid():N}@example.com";
+        var json = $$"""
+            {"azureTag":"{{tag}}","email":"{{email}}","password":"SecurePass123!","firstName":"  a  ","lastName":"Valid"}
+            """;
+
+        var response = await Client.PostAsync("/api/auth/register",
+            new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task Register_WithDuplicateEmail_ReturnsConflict()
     {
         // Arrange - Register first user
