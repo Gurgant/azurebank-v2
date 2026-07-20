@@ -1,204 +1,246 @@
-import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { RootState } from '../../app/store';
+import { createApi } from '@reduxjs/toolkit/query/react';
+import type { FetchBaseQueryMeta } from '@reduxjs/toolkit/query';
+import { unwrap } from '../../api/envelope';
+import { problemBaseQuery } from '../../api/problemBaseQuery';
+import type { components } from '../../api/schema';
 
-// ============================================
-// BASE TYPES
-// ============================================
+type Schemas = components['schemas'];
 
-interface Account {
-  id: string;
-  name: string;
-  accountNumber: string;
-  balance: number;
-  type: 'checking' | 'savings' | 'investment';
-  createdAt: string;
+export type AccountResponse = Schemas['AccountResponse'];
+export type BalanceResponse = Schemas['BalanceResponse'];
+export type CreateAccountRequest = Schemas['CreateAccountRequest'];
+export type UpdateAccountRequest = Schemas['UpdateAccountRequest'];
+export type TransactionResponse = Schemas['TransactionResponse'];
+export type PaginatedTransactions = Schemas['PaginatedResponseOfTransactionResponse'];
+export type DepositRequest = Schemas['DepositRequest'];
+export type DepositResponse = Schemas['DepositResponse'];
+export type WithdrawRequest = Schemas['WithdrawRequest'];
+export type WithdrawResponse = Schemas['WithdrawResponse'];
+export type TransferRequest = Schemas['TransferRequest'];
+export type TransferResponse = Schemas['TransferResponse'];
+export type InternalTransferRequest = Schemas['InternalTransferRequest'];
+export type InternalTransferResponse = Schemas['InternalTransferResponse'];
+
+/** Argument shape of every idempotent money mutation — the key comes from useIdempotentMutation. */
+export interface IdempotentArg<TBody> {
+  idempotencyKey: string;
+  body: TBody;
 }
 
-interface Transaction {
-  id: string;
-  transactionId: string;
-  type: 'deposit' | 'withdrawal' | 'transfer_out' | 'transfer_in';
-  amount: number;
-  description: string;
-  status: 'completed' | 'pending' | 'failed';
-  date: string;
-  accountId: string;
-  balanceBefore: number;
-  balanceAfter: number;
-  fee?: number;
-  recipientId?: string;
-  recipientName?: string;
-  notes?: string;
+/**
+ * Money-mutation results carry replay detection read from the `Idempotency-Replayed`
+ * response header in the SUCCESS path (D4) — a replayed 2xx means "this intent was
+ * already processed", surfaced as a polite inline note, never an error.
+ */
+export type WithReplay<T> = T & { replayed: boolean };
+
+function withReplay<T>(data: T, meta: FetchBaseQueryMeta | undefined): WithReplay<T> {
+  return { ...data, replayed: meta?.response?.headers.get('Idempotency-Replayed') === 'true' };
 }
 
-interface TransferRequest {
-  fromAccountId: string;
-  toAccountId?: string;
-  toExternalAccount?: string;
-  amount: number;
-  description?: string;
-}
-
-interface DepositRequest {
-  accountId: string;
-  amount: number;
-  description?: string;
-}
-
-interface WithdrawRequest {
-  accountId: string;
-  amount: number;
-  description?: string;
-}
-
-interface CreateAccountRequest {
-  name: string;
-  type: 'checking' | 'savings' | 'investment';
-}
-
-interface TransactionFilters {
-  from?: string;
-  to?: string;
-  type?: string;
+export interface TransactionsQuery {
   accountId?: string;
+  fromDate?: string;
+  toDate?: string;
   page?: number;
   pageSize?: number;
 }
 
-interface PaginatedResponse<T> {
-  data: T[];
-  page: number;
-  pageSize: number;
-  totalItems: number;
-  totalPages: number;
-}
-
-// ============================================
-// API SLICE
-// ============================================
-
+/**
+ * The typed data layer over the OpenAPI contract. Response/request shapes come from the
+ * generated schema (types-only, CI drift gate); success envelopes unwrap in
+ * `transformResponse`; errors normalize to ApiProblem in problemBaseQuery.
+ *
+ * Cache tag ledger (D7) — every provides/invalidates below implements it:
+ *   provides:    accounts list -> [LIST + one per row]; account/balance -> {Account,id}
+ *                (balance only for CURRENT balance — historical snapshots are immutable,
+ *                tag-less); transactions list -> [{Transaction,LIST}]; detail -> {Transaction,id}
+ *   invalidates: deposit/withdraw -> [{Account,accountId},{Transaction,LIST}];
+ *                transfer -> from only (recipient is another user); internal -> from+to;
+ *                create -> LIST; rename -> id; delete -> [LIST,id];
+ *                setPrimary -> blanket 'Account' (two accounts flip isPrimary).
+ * Invalidation happens only on SUCCESS (`error ? [] : ...`): failed mutations changed
+ * nothing server-side, and RESULT_UNKNOWN recovery invalidates explicitly in its flow.
+ */
 export const apiSlice = createApi({
   reducerPath: 'api',
-  baseQuery: fetchBaseQuery({
-    baseUrl: '/api',
-    prepareHeaders: (headers, { getState }) => {
-      // Get the token from auth state
-      const token = (getState() as RootState).auth.token;
-      if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
-      }
-      headers.set('Content-Type', 'application/json');
-      return headers;
-    },
-  }),
-  tagTypes: ['Account', 'Transaction', 'User'],
+  baseQuery: problemBaseQuery,
+  tagTypes: ['Account', 'Transaction', 'Session'],
   endpoints: (builder) => ({
     // ========== ACCOUNTS ==========
 
-    getAccounts: builder.query<Account[], void>({
-      query: () => '/accounts',
-      providesTags: (result) =>
-        result
-          ? [
-              ...result.map(({ id }) => ({ type: 'Account' as const, id })),
-              { type: 'Account', id: 'LIST' },
-            ]
-          : [{ type: 'Account', id: 'LIST' }],
+    getAccounts: builder.query<AccountResponse[], void>({
+      query: () => '/api/accounts',
+      transformResponse: (response: Schemas['ApiResponseOfListOfAccountResponse']) =>
+        unwrap(response),
+      providesTags: (result) => [
+        { type: 'Account' as const, id: 'LIST' },
+        ...(result ?? []).map(({ id }) => ({ type: 'Account' as const, id })),
+      ],
     }),
 
-    getAccount: builder.query<Account, string>({
-      query: (id) => `/accounts/${id}`,
-      providesTags: (_result, _error, id) => [{ type: 'Account', id }],
+    getAccount: builder.query<AccountResponse, string>({
+      query: (id) => `/api/accounts/${id}`,
+      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) => unwrap(response),
+      providesTags: (_result, _error, id) => [{ type: 'Account' as const, id }],
     }),
 
-    getAccountBalance: builder.query<
-      { balance: number; asOf: string },
-      { id: string; at?: string }
-    >({
+    getAccountBalance: builder.query<BalanceResponse, { id: string; at?: string }>({
       query: ({ id, at }) => ({
-        url: `/accounts/${id}/balance`,
+        url: `/api/accounts/${id}/balance`,
         params: at ? { at } : undefined,
       }),
-      providesTags: (_result, _error, { id }) => [{ type: 'Account', id }],
+      transformResponse: (response: Schemas['ApiResponseOfBalanceResponse']) => unwrap(response),
+      providesTags: (_result, _error, { id, at }) => (at ? [] : [{ type: 'Account' as const, id }]),
     }),
 
-    createAccount: builder.mutation<Account, CreateAccountRequest>({
-      query: (body) => ({
-        url: '/accounts',
-        method: 'POST',
-        body,
-      }),
-      invalidatesTags: [{ type: 'Account', id: 'LIST' }],
+    createAccount: builder.mutation<AccountResponse, CreateAccountRequest>({
+      query: (body) => ({ url: '/api/accounts', method: 'POST', body }),
+      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) => unwrap(response),
+      invalidatesTags: (_result, error) =>
+        error ? [] : [{ type: 'Account' as const, id: 'LIST' }],
+    }),
+
+    renameAccount: builder.mutation<AccountResponse, { id: string; body: UpdateAccountRequest }>({
+      query: ({ id, body }) => ({ url: `/api/accounts/${id}`, method: 'PATCH', body }),
+      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) => unwrap(response),
+      invalidatesTags: (_result, error, { id }) =>
+        error ? [] : [{ type: 'Account' as const, id }],
+    }),
+
+    setPrimaryAccount: builder.mutation<void, string>({
+      query: (id) => ({ url: `/api/accounts/${id}/set-primary`, method: 'PATCH' }),
+      // Message-only ApiResponse — nothing to unwrap.
+      transformResponse: () => undefined,
+      invalidatesTags: (_result, error) => (error ? [] : ['Account']),
+    }),
+
+    deleteAccount: builder.mutation<void, string>({
+      query: (id) => ({ url: `/api/accounts/${id}`, method: 'DELETE' }),
+      transformResponse: () => undefined,
+      invalidatesTags: (_result, error, id) =>
+        error
+          ? []
+          : [
+              { type: 'Account' as const, id: 'LIST' },
+              { type: 'Account' as const, id },
+            ],
     }),
 
     // ========== TRANSACTIONS ==========
 
-    getTransactions: builder.query<PaginatedResponse<Transaction>, TransactionFilters>({
+    getTransactions: builder.query<PaginatedTransactions, TransactionsQuery>({
+      // T1 is one of the two BARE responses — no envelope, no unwrap, by contract.
       query: (filters) => ({
-        url: '/transactions',
-        params: filters,
+        url: '/api/transactions',
+        params: {
+          AccountId: filters.accountId,
+          FromDate: filters.fromDate,
+          ToDate: filters.toDate,
+          Page: filters.page,
+          PageSize: filters.pageSize,
+        },
       }),
-      providesTags: (result) =>
-        result
-          ? [
-              ...result.data.map(({ id }) => ({ type: 'Transaction' as const, id })),
-              { type: 'Transaction', id: 'LIST' },
-            ]
-          : [{ type: 'Transaction', id: 'LIST' }],
+      providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
     }),
 
-    getTransaction: builder.query<Transaction, string>({
-      query: (id) => `/transactions/${id}`,
-      providesTags: (_result, _error, id) => [{ type: 'Transaction', id }],
+    getTransaction: builder.query<TransactionResponse, string>({
+      query: (id) => `/api/transactions/${id}`,
+      transformResponse: (response: Schemas['ApiResponseOfTransactionResponse']) =>
+        unwrap(response),
+      providesTags: (_result, _error, id) => [{ type: 'Transaction' as const, id }],
     }),
 
-    deposit: builder.mutation<Transaction, DepositRequest>({
-      query: (body) => ({
-        url: '/transactions/deposit',
+    deposit: builder.mutation<WithReplay<DepositResponse>, IdempotentArg<DepositRequest>>({
+      query: ({ idempotencyKey, body }) => ({
+        url: '/api/transactions/deposit',
         method: 'POST',
         body,
+        headers: { 'Idempotency-Key': idempotencyKey },
       }),
-      invalidatesTags: [
-        { type: 'Transaction', id: 'LIST' },
-        { type: 'Account', id: 'LIST' },
-      ],
+      transformResponse: (response: Schemas['ApiResponseOfDepositResponse'], meta) =>
+        withReplay(unwrap(response), meta),
+      invalidatesTags: (_result, error, { body }) =>
+        error
+          ? []
+          : [
+              { type: 'Account' as const, id: body.accountId },
+              { type: 'Transaction' as const, id: 'LIST' },
+            ],
     }),
 
-    withdraw: builder.mutation<Transaction, WithdrawRequest>({
-      query: (body) => ({
-        url: '/transactions/withdraw',
+    withdraw: builder.mutation<WithReplay<WithdrawResponse>, IdempotentArg<WithdrawRequest>>({
+      // PIN travels in the BODY (D1) — this endpoint never triggers the step-up interceptor.
+      query: ({ idempotencyKey, body }) => ({
+        url: '/api/transactions/withdraw',
         method: 'POST',
         body,
+        headers: { 'Idempotency-Key': idempotencyKey },
       }),
-      invalidatesTags: [
-        { type: 'Transaction', id: 'LIST' },
-        { type: 'Account', id: 'LIST' },
-      ],
+      transformResponse: (response: Schemas['ApiResponseOfWithdrawResponse'], meta) =>
+        withReplay(unwrap(response), meta),
+      invalidatesTags: (_result, error, { body }) =>
+        error
+          ? []
+          : [
+              { type: 'Account' as const, id: body.accountId },
+              { type: 'Transaction' as const, id: 'LIST' },
+            ],
     }),
 
-    // ========== TRANSFERS ==========
+    // ========== TRANSFERS (level-2 step-up — interceptor arrives with PR-11) ==========
 
-    transfer: builder.mutation<Transaction, TransferRequest>({
-      query: (body) => ({
-        url: '/transfers',
+    transfer: builder.mutation<WithReplay<TransferResponse>, IdempotentArg<TransferRequest>>({
+      query: ({ idempotencyKey, body }) => ({
+        url: '/api/transfers',
         method: 'POST',
         body,
+        headers: { 'Idempotency-Key': idempotencyKey },
       }),
-      invalidatesTags: [
-        { type: 'Transaction', id: 'LIST' },
-        { type: 'Account', id: 'LIST' },
-      ],
+      transformResponse: (response: Schemas['ApiResponseOfTransferResponse'], meta) =>
+        withReplay(unwrap(response), meta),
+      invalidatesTags: (_result, error, { body }) =>
+        error
+          ? []
+          : [
+              { type: 'Account' as const, id: body.fromAccountId },
+              { type: 'Transaction' as const, id: 'LIST' },
+            ],
+    }),
+
+    transferInternal: builder.mutation<
+      WithReplay<InternalTransferResponse>,
+      IdempotentArg<InternalTransferRequest>
+    >({
+      query: ({ idempotencyKey, body }) => ({
+        url: '/api/transfers/internal',
+        method: 'POST',
+        body,
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
+      transformResponse: (response: Schemas['ApiResponseOfInternalTransferResponse'], meta) =>
+        withReplay(unwrap(response), meta),
+      invalidatesTags: (_result, error, { body }) =>
+        error
+          ? []
+          : [
+              { type: 'Account' as const, id: body.fromAccountId },
+              { type: 'Account' as const, id: body.toAccountId },
+              { type: 'Transaction' as const, id: 'LIST' },
+            ],
     }),
   }),
 });
 
-// Export hooks for usage in components
 export const {
   // Accounts
   useGetAccountsQuery,
   useGetAccountQuery,
   useGetAccountBalanceQuery,
   useCreateAccountMutation,
+  useRenameAccountMutation,
+  useSetPrimaryAccountMutation,
+  useDeleteAccountMutation,
   // Transactions
   useGetTransactionsQuery,
   useGetTransactionQuery,
@@ -206,4 +248,5 @@ export const {
   useWithdrawMutation,
   // Transfers
   useTransferMutation,
+  useTransferInternalMutation,
 } = apiSlice;

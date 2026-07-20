@@ -3,6 +3,7 @@ import { FluentProvider } from '@fluentui/react-components';
 import { Provider } from 'react-redux';
 import { store } from './app/store';
 import { azureBankLightTheme } from './theme';
+import { AppToaster } from './components/feedback';
 import { ProtectedRoute } from './components/layout';
 import {
   LoginPage,
@@ -23,6 +24,7 @@ function App() {
   return (
     <Provider store={store}>
       <FluentProvider theme={azureBankLightTheme}>
+        <AppToaster />
         <BrowserRouter>
           <Routes>
             {/* Public Routes */}
