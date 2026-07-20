@@ -38,7 +38,7 @@ const registerSchema = z
         /^[a-z][a-z0-9_]{2,19}$/,
         'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores (3-20 characters)',
       ),
-    email: z.string().email('Please enter a valid email address'),
+    email: z.email('Please enter a valid email address'),
     password: z
       .string()
       .min(8, 'Password must be at least 8 characters')
@@ -359,12 +359,13 @@ export function RegisterPage() {
 
   const problem = error as ApiProblem | undefined;
 
-  // Shared login/register 429 bucket (D13/D15): absolute deadline, countdown on the form.
-  const retryAfterSeconds = problem?.retryAfterSeconds;
-  const lockDeadline = useMemo(
-    () => (retryAfterSeconds !== undefined ? retryDeadline(retryAfterSeconds) : null),
-    [retryAfterSeconds],
-  );
+  // Shared login/register 429 bucket (D13/D15): absolute deadline derived from the
+  // error object — fresh identity per rejection, so a repeat 429 with the identical
+  // retryAfterSeconds still mints a fresh deadline (see LoginPage).
+  const lockDeadline = useMemo(() => {
+    const seconds = (error as ApiProblem | undefined)?.retryAfterSeconds;
+    return seconds !== undefined ? retryDeadline(seconds) : null;
+  }, [error]);
   const rateLimited =
     problem?.errorCode === 'RATE_LIMIT_EXCEEDED' &&
     lockDeadline !== null &&
@@ -411,10 +412,19 @@ export function RegisterPage() {
       const rejected = caught as ApiProblem;
       if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {
         for (const [key, messages] of Object.entries(rejected.errors)) {
-          const field = (key.charAt(0).toLowerCase() +
-            key.slice(1)) as (typeof REGISTER_FIELDS)[number];
-          if (REGISTER_FIELDS.includes(field) && messages.length > 0) {
-            setError(field, { type: 'server', message: messages[0] });
+          if (messages.length === 0) {
+            continue;
+          }
+          const field = key.charAt(0).toLowerCase() + key.slice(1);
+          if ((REGISTER_FIELDS as readonly string[]).includes(field)) {
+            setError(field as (typeof REGISTER_FIELDS)[number], {
+              type: 'server',
+              message: messages[0],
+            });
+          } else {
+            // Contract drift (a server rule with no client field): surface at the form
+            // root instead of swallowing it — the user must never submit into silence.
+            setError('root', { type: 'server', message: messages[0] });
           }
         }
       }
@@ -517,6 +527,12 @@ export function RegisterPage() {
                   onElapsed={() => setElapsedDeadline(lockDeadline)}
                 />
               </MessageBarBody>
+            </MessageBar>
+          )}
+
+          {errors.root?.message && (
+            <MessageBar intent="error" className={styles.errorMessage}>
+              <MessageBarBody>{errors.root.message}</MessageBarBody>
             </MessageBar>
           )}
 

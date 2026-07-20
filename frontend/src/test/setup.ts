@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import { resetServerActivity } from '../features/auth/sessionActivity';
 import { server } from '../mocks/server';
 import { resetMockState } from '../mocks/state';
 
@@ -16,5 +17,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => {
   server.resetHandlers();
   resetMockState();
+  // Module-level client mirror of LastActivity — never let it leak between tests.
+  resetServerActivity();
 });
 afterAll(() => server.close());

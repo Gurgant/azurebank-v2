@@ -28,7 +28,7 @@ import { useLoginMutation } from '../features/api/apiSlice';
 
 // Validation schema
 const loginSchema = z.object({
-  email: z.string().email('Please enter a valid email address'),
+  email: z.email('Please enter a valid email address'),
   password: z.string().min(1, 'Password is required'),
 });
 
@@ -332,13 +332,14 @@ export function LoginPage() {
   const navState = (location.state ?? {}) as LoginNavState;
   const problem = error as ApiProblem | undefined;
 
-  // D13: one ABSOLUTE deadline per lock/limit response, computed once from the relative
-  // retryAfterSeconds; RetryCountdown's onElapsed re-enables the form.
-  const retryAfterSeconds = problem?.retryAfterSeconds;
-  const lockDeadline = useMemo(
-    () => (retryAfterSeconds !== undefined ? retryDeadline(retryAfterSeconds) : null),
-    [retryAfterSeconds],
-  );
+  // D13: one ABSOLUTE deadline per lock/limit RESPONSE. Derived from the error object —
+  // fresh identity on EVERY rejection — so a repeat lockout with the identical
+  // retryAfterSeconds (fixed windows are common) still mints a fresh deadline instead
+  // of staying pinned to the first, already-elapsed one.
+  const lockDeadline = useMemo(() => {
+    const seconds = (error as ApiProblem | undefined)?.retryAfterSeconds;
+    return seconds !== undefined ? retryDeadline(seconds) : null;
+  }, [error]);
   const countdownActive = lockDeadline !== null && elapsedDeadline !== lockDeadline;
   // The login form branches RATE_LIMIT_EXCEEDED vs ACCOUNT_LOCKED explicitly — never
   // identical copy (D13): the first is per-IP throttling, the second is the credential

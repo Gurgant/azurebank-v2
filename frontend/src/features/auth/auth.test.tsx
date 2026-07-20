@@ -68,6 +68,26 @@ describe('global 401 handling (D3)', () => {
     expect(Object.keys(store.getState().api.queries)).toHaveLength(0);
   });
 
+  it('a 401 while NOT authenticated never expires the session — the calling surface owns it', async () => {
+    const store = makeTestStore();
+    await boot(store);
+    expect(store.getState().auth.status).toBe('anonymous');
+
+    server.use(
+      http.get('*/api/accounts', () =>
+        // errorCode-less 401 — the shape that WOULD expire an authenticated session.
+        problem({ status: 401, title: 'Unauthorized' }),
+      ),
+    );
+    await store
+      .dispatch(apiSlice.endpoints.getAccounts.initiate())
+      .unwrap()
+      .catch(() => undefined);
+
+    // Anonymous stays anonymous: no fake "session expired" banner, no cache wipe.
+    expect(store.getState().auth.status).toBe('anonymous');
+  });
+
   it('a 401 INVALID_CREDENTIALS stays on the login form — no session expiry', async () => {
     const store = makeTestStore();
     await boot(store);
