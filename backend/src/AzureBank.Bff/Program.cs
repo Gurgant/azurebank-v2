@@ -56,10 +56,12 @@ try
     {
         builder.Services.PostConfigure<BffSessionOptions>(options =>
         {
-            // A null/empty name (config explicitly nulling it) falls through untouched:
-            // PostConfigure runs BEFORE validation, so the BffSessionOptionsValidator
-            // then fails startup with a clear message instead of an NRE here.
-            if (!string.IsNullOrEmpty(options.CookieName)
+            // A null/empty/whitespace name falls through UNTOUCHED: PostConfigure runs
+            // BEFORE validation, and prefixing a whitespace-only name would turn it into
+            // "__Host-   " — non-whitespace, so it would slip past the validator. The
+            // malformed value must reach BffSessionOptionsValidator intact so startup
+            // fails with a clear message.
+            if (!string.IsNullOrWhiteSpace(options.CookieName)
                 && !options.CookieName.StartsWith("__Host-", StringComparison.Ordinal))
             {
                 options.CookieName = "__Host-" + options.CookieName.TrimStart('.');

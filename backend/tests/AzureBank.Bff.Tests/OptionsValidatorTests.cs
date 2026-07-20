@@ -1,5 +1,7 @@
 using AzureBank.Bff.Options;
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace AzureBank.Bff.Tests;
 
@@ -180,5 +182,36 @@ public class BffSessionOptionsValidatorTests
 
         result.Failed.Should().BeTrue();
         result.FailureMessage.Should().Contain("AbsoluteTimeoutMinutes");
+    }
+}
+
+/// <summary>
+/// The validator alone is not the whole control — the __Host- PostConfigure runs BEFORE
+/// it, and a prefix applied to a whitespace-only name would turn it non-whitespace and
+/// slip past validation. This pins the PIPELINE: a whitespace CookieName must stop the
+/// host from starting, PostConfigure notwithstanding.
+/// </summary>
+public class SessionOptionsPipelineTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly WebApplicationFactory<Program> _factory;
+
+    public SessionOptionsPipelineTests(WebApplicationFactory<Program> factory) => _factory = factory;
+
+    [Fact]
+    public void WhitespaceCookieName_FailsStartup_DespiteTheHostPrefixPostConfigure()
+    {
+        // Production: the environment where the __Host- PostConfigure is active — the
+        // exact interplay that could mask the malformed value.
+        var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Production");
+            builder.UseSetting("Session:CookieName", "   ");
+        });
+
+        var exception = Record.Exception(() => factory.CreateClient());
+
+        exception.Should().NotBeNull(
+            "a whitespace-only cookie name must fail ValidateOnStart, not boot a BFF " +
+            "whose every session read is silently broken");
     }
 }
