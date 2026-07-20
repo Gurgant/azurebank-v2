@@ -1,0 +1,9 @@
+# CodeRabbit configuration.
+# Docstring-coverage check disabled by policy: this codebase follows "comments only where
+# necessary — the code should speak; comments explain WHY, not WHAT". A percentage of
+# exported functions carrying JSDoc is not a quality signal here, and chasing the metric
+# would add exactly the noise the convention exists to avoid.
+reviews:
+  pre_merge_checks:
+    docstrings:
+      mode: off
