@@ -24,6 +24,14 @@ public sealed class EmailMaskingRedactor : Redactor
     /// <inheritdoc />
     public override int GetRedactedLength(ReadOnlySpan<char> input)
     {
+        // Empty in -> empty out, matching the base class's string overload (which
+        // short-circuits "" before these overrides run). Without this, a direct span-based
+        // caller would get a misleading "***" for a field that was simply empty.
+        if (input.IsEmpty)
+        {
+            return 0;
+        }
+
         ComputeShape(input, out var keepFirst, out var tailLength);
         return (keepFirst ? 1 : 0) + Mask.Length + tailLength;
     }
@@ -31,6 +39,12 @@ public sealed class EmailMaskingRedactor : Redactor
     /// <inheritdoc />
     public override int Redact(ReadOnlySpan<char> source, Span<char> destination)
     {
+        // Keep both overloads in agreement (see GetRedactedLength).
+        if (source.IsEmpty)
+        {
+            return 0;
+        }
+
         ComputeShape(source, out var keepFirst, out var tailLength);
         var length = (keepFirst ? 1 : 0) + Mask.Length + tailLength;
         if (destination.Length < length)

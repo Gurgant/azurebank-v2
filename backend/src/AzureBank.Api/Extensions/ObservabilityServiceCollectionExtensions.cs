@@ -1,5 +1,6 @@
 using AzureBank.Api.Observability;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Observability;
 using Microsoft.Extensions.Compliance.Classification;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
@@ -33,17 +34,12 @@ public static class ObservabilityServiceCollectionExtensions
         var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
         var exportOtlp = !string.IsNullOrWhiteSpace(otlpEndpoint);
 
-        // Prod TLS guard (consistent with the app's ValidateOnStart posture): telemetry must not
-        // leave the host as cleartext over a network outside Development. Loopback http (an OTLP
-        // sidecar/agent on 127.0.0.1) is fine; a remote http endpoint in Production fails fast.
-        if (exportOtlp && !environment.IsDevelopment()
-            && Uri.TryCreate(otlpEndpoint, UriKind.Absolute, out var endpointUri)
-            && endpointUri.Scheme == Uri.UriSchemeHttp && !endpointUri.IsLoopback)
-        {
-            throw new InvalidOperationException(
-                $"OTLP endpoint '{otlpEndpoint}' uses cleartext http to a non-loopback host in the " +
-                $"'{environment.EnvironmentName}' environment. Use https, or an OTLP collector on loopback.");
-        }
+        // Prod TLS guard (consistent with the app's ValidateOnStart posture) — the policy lives
+        // in ONE place shared with the BFF (AzureBank.Shared.Observability.OtlpEndpointGuard):
+        // outside Development it fails fast on cleartext-to-remote AND on an unparseable
+        // endpoint (fail-closed). Loopback http (an OTLP sidecar) stays fine.
+        OtlpEndpointGuard.EnsureSecureExportEndpoint(
+            otlpEndpoint, environment.IsDevelopment(), environment.EnvironmentName);
 
         // The exporter's ENDPOINT comes entirely from OTEL_EXPORTER_OTLP_* env vars. Setting it
         // programmatically DISABLES the SDK's per-signal path append (/v1/traces, /v1/metrics),

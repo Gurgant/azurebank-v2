@@ -58,6 +58,17 @@ public class EmailMaskingRedactorTests
     }
 
     [Fact]
+    public void Redact_EmptySpan_WritesNothing_MatchingTheStringOverload()
+    {
+        // The base string overload short-circuits "" to "". The span-based overrides must
+        // agree: an empty field yields empty output, never a misleading "***".
+        var destination = new char[8];
+
+        _sut.GetRedactedLength(ReadOnlySpan<char>.Empty).Should().Be(0);
+        _sut.Redact(ReadOnlySpan<char>.Empty, destination).Should().Be(0);
+    }
+
+    [Fact]
     public void GetRedactedLength_MatchesActualOutputLength()
     {
         // The base class sizes destination buffers off GetRedactedLength before calling

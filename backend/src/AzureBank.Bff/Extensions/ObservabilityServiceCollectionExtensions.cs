@@ -1,4 +1,5 @@
 using AzureBank.Bff.Health;
+using AzureBank.Shared.Observability;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -46,16 +47,11 @@ public static class ObservabilityServiceCollectionExtensions
         var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
         var exportOtlp = !string.IsNullOrWhiteSpace(otlpEndpoint);
 
-        // Prod TLS guard: telemetry must not leave the host as cleartext over a network outside
-        // Development. Loopback http (an OTLP sidecar) is fine; a remote http endpoint fails fast.
-        if (exportOtlp && !environment.IsDevelopment()
-            && Uri.TryCreate(otlpEndpoint, UriKind.Absolute, out var endpointUri)
-            && endpointUri.Scheme == Uri.UriSchemeHttp && !endpointUri.IsLoopback)
-        {
-            throw new InvalidOperationException(
-                $"OTLP endpoint '{otlpEndpoint}' uses cleartext http to a non-loopback host in the " +
-                $"'{environment.EnvironmentName}' environment. Use https, or an OTLP collector on loopback.");
-        }
+        // Prod TLS guard — the policy lives in ONE place shared with the API
+        // (AzureBank.Shared.Observability.OtlpEndpointGuard): outside Development it fails fast
+        // on cleartext-to-remote AND on an unparseable endpoint (fail-closed).
+        OtlpEndpointGuard.EnsureSecureExportEndpoint(
+            otlpEndpoint, environment.IsDevelopment(), environment.EnvironmentName);
 
         // Endpoint comes from OTEL_EXPORTER_OTLP_* env vars. Setting it in code DISABLES the
         // SDK's per-signal path append (/v1/traces, /v1/metrics), so batches POST to the bare
@@ -92,8 +88,11 @@ public static class ObservabilityServiceCollectionExtensions
                         // The readiness probe pings the API's /health/live through the named
                         // client. Its SERVER span is already filtered above; filter the CLIENT
                         // span too, or every probe cycle ships an orphan root span to Tempo.
+                        // AbsolutePath THROWS on a relative Uri (possible in test/custom-handler
+                        // setups where HttpClient hasn't resolved BaseAddress) — check first.
                         o.FilterHttpRequestMessage = req =>
                             req.RequestUri is not { } uri
+                            || !uri.IsAbsoluteUri
                             || !uri.AbsolutePath.StartsWith("/health", StringComparison.OrdinalIgnoreCase);
                     })
                     .AddSource(YarpActivitySourceName);

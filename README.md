@@ -32,7 +32,7 @@ the original private repositories and backup archives, not in this repo.
 ```bash
 cd backend
 dotnet build AzureBank.slnx
-dotnet test                     # 383 passing, 17 SQL-Server-only skips
+dotnet test                     # all green; SQL-Server-gated proofs skip without a database
 ```
 
 The SQL-Server-gated proofs (idempotency single-execution under 24 parallel
@@ -166,7 +166,7 @@ log-injection barrier via a model pack.
 
 ## Honest status
 
-- Backend: builds clean (0 warnings); full test suites green (507 API +
+- Backend: builds clean (0 warnings); full test suites green (518 API +
   22 BFF passes; 29 explicit SQL-Server-gated skips, which pass against a real
   database and in the CI SQL job). Both auth modes (JWT and BFF cookie)
   verified live. Monetary operations are idempotent and concurrency-safe
