@@ -2,11 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { makeStyles, Text } from '@fluentui/react-components';
 import {
-  Home24Regular,
-  Wallet24Regular,
   ArrowSwap24Regular,
-  Clock24Regular,
-  MoreHorizontal24Regular,
   Add24Regular,
   ChevronRight20Regular,
   ArrowDownload20Regular,
@@ -130,84 +126,6 @@ const useStyles = makeStyles({
     fontSize: '32px',
     fontWeight: 700,
     color: '#FFFFFF',
-  },
-
-  // ========== DESKTOP HEADER ==========
-  desktopHeader: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '0 32px',
-      height: '64px',
-      backgroundColor: '#FFFFFF',
-      borderBottom: `1px solid ${colors.neutral[200]}`,
-    },
-  },
-
-  desktopHeaderLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '48px',
-  },
-
-  logo: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: colors.brand[60],
-    cursor: 'pointer',
-  },
-
-  navMenu: {
-    display: 'flex',
-    gap: '32px',
-  },
-
-  navItem: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-    cursor: 'pointer',
-    padding: '8px 0',
-    borderBottom: '2px solid transparent',
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      color: colors.neutral[800],
-    },
-  },
-
-  navItemActive: {
-    color: colors.brand[60],
-    borderBottomColor: colors.brand[60],
-  },
-
-  desktopHeaderRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-
-  userAvatar: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    backgroundColor: colors.brand[130],
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  avatarInitials: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: colors.brand[60],
-  },
-
-  userName: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[800],
   },
 
   // ========== MAIN CONTENT ==========
@@ -489,50 +407,6 @@ const useStyles = makeStyles({
     color: colors.neutral[500],
     transition: `all ${transitions.fast}`,
   },
-
-  // ========== BOTTOM NAV ==========
-  bottomNav: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-around',
-    padding: '8px 0 24px 0',
-    backgroundColor: '#FFFFFF',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  bottomNavItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-    cursor: 'pointer',
-    background: 'none',
-    border: 'none',
-    padding: '8px',
-  },
-
-  bottomNavIcon: {
-    width: '24px',
-    height: '24px',
-    color: colors.neutral[400],
-  },
-
-  bottomNavIconActive: {
-    color: colors.brand[60],
-  },
-
-  bottomNavLabel: {
-    fontSize: '10px',
-    fontWeight: 500,
-    color: colors.neutral[400],
-  },
-
-  bottomNavLabelActive: {
-    color: colors.brand[60],
-  },
 });
 
 // ============================================
@@ -584,11 +458,6 @@ export function AccountsPage() {
 
   const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
 
-  const handleAccountClick = (accountId: string) => {
-    // Navigate to account detail
-    navigate(`/accounts/${accountId}`);
-  };
-
   const handleDeposit = (account: Account, e: React.MouseEvent) => {
     e.stopPropagation();
     setSelectedAccount(account);
@@ -639,34 +508,7 @@ export function AccountsPage() {
         </div>
       </div>
 
-      {/* Desktop Header */}
-      <div className={styles.desktopHeader}>
-        <div className={styles.desktopHeaderLeft}>
-          <Text className={styles.logo} onClick={() => navigate('/dashboard')}>
-            AzureBank
-          </Text>
-          <div className={styles.navMenu}>
-            <Text className={styles.navItem} onClick={() => navigate('/dashboard')}>
-              Dashboard
-            </Text>
-            <Text className={`${styles.navItem} ${styles.navItemActive}`}>Accounts</Text>
-            <Text className={styles.navItem} onClick={() => navigate('/history')}>
-              Transactions
-            </Text>
-            <Text className={styles.navItem} onClick={() => navigate('/transfer')}>
-              Transfers
-            </Text>
-          </div>
-        </div>
-        <div className={styles.desktopHeaderRight}>
-          <div className={styles.userAvatar}>
-            <Text className={styles.avatarInitials}>JD</Text>
-          </div>
-          <Text className={styles.userName}>John Doe</Text>
-        </div>
-      </div>
-
-      {/* Main Content */}
+      {/* Main Content — the app shell (nav/header) is provided by ProtectedShell */}
       <div className={styles.mainContent}>
         {/* Desktop Page Header */}
         <div className={styles.desktopPageHeader}>
@@ -683,14 +525,11 @@ export function AccountsPage() {
           </button>
         </div>
 
-        {/* Accounts Grid */}
+        {/* Accounts Grid — cards are intentionally non-clickable: no /accounts/:id route
+            exists yet (it previously bounced off the catch-all); management flows come later. */}
         <div className={styles.accountsGrid}>
           {accounts.map((account) => (
-            <div
-              key={account.id}
-              className={styles.accountCard}
-              onClick={() => handleAccountClick(account.id)}
-            >
+            <div key={account.id} className={styles.accountCard}>
               <div className={styles.accountHeader}>
                 <div className={getIconContainerClass(account.type)}>
                   {getAccountIcon(account.type)}
@@ -743,32 +582,6 @@ export function AccountsPage() {
             <Text className={styles.addAccountText}>Add New Account</Text>
           </div>
         </div>
-      </div>
-
-      {/* Bottom Navigation (Mobile) */}
-      <div className={styles.bottomNav}>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/dashboard')}>
-          <Home24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Home</Text>
-        </button>
-        <button className={styles.bottomNavItem}>
-          <Wallet24Regular className={`${styles.bottomNavIcon} ${styles.bottomNavIconActive}`} />
-          <Text className={`${styles.bottomNavLabel} ${styles.bottomNavLabelActive}`}>
-            Accounts
-          </Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/transfer')}>
-          <ArrowSwap24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Transfer</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/history')}>
-          <Clock24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>History</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/settings')}>
-          <MoreHorizontal24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>More</Text>
-        </button>
       </div>
 
       {/* Dialogs */}

@@ -1,12 +1,9 @@
 import { useState, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { makeStyles, Text } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
   Filter24Regular,
-  Home24Regular,
-  Wallet24Regular,
-  ArrowSwap24Regular,
   History24Filled,
   ArrowDownload24Regular,
   ArrowUpload24Regular,
@@ -92,7 +89,6 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    paddingBottom: '72px', // Bottom nav space
   },
 
   // ========== FILTER TABS ==========
@@ -319,55 +315,6 @@ const useStyles = makeStyles({
     fontWeight: 400,
     color: colors.neutral[500],
     textAlign: 'center',
-  },
-
-  // ========== BOTTOM NAV ==========
-  bottomNav: {
-    position: 'fixed',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '72px',
-    backgroundColor: '#FFFFFF',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    boxShadow: '0px -2px 4px rgba(0, 0, 0, 0.05)',
-    display: 'flex',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingBottom: '20px',
-  },
-
-  navButton: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    padding: '8px 16px',
-    textDecoration: 'none',
-  },
-
-  navIconActive: {
-    color: colors.brand[60],
-  },
-
-  navIconInactive: {
-    color: colors.neutral[500],
-  },
-
-  navLabelText: {
-    fontSize: '12px',
-    fontWeight: 500,
-  },
-
-  navLabelActive: {
-    color: colors.brand[60],
-  },
-
-  navLabelInactive: {
-    color: colors.neutral[500],
   },
 });
 
@@ -669,26 +616,6 @@ export function HistoryPage() {
             </Text>
           </div>
         )}
-      </div>
-
-      {/* Bottom Navigation */}
-      <div className={styles.bottomNav}>
-        <Link to="/" className={styles.navButton}>
-          <Home24Regular className={styles.navIconInactive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelInactive}`}>Home</span>
-        </Link>
-        <Link to="/accounts" className={styles.navButton}>
-          <Wallet24Regular className={styles.navIconInactive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelInactive}`}>Accounts</span>
-        </Link>
-        <Link to="/transfer" className={styles.navButton}>
-          <ArrowSwap24Regular className={styles.navIconInactive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelInactive}`}>Transfer</span>
-        </Link>
-        <Link to="/history" className={styles.navButton}>
-          <History24Filled className={styles.navIconActive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelActive}`}>History</span>
-        </Link>
       </div>
     </div>
   );

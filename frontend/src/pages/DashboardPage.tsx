@@ -5,13 +5,10 @@ import {
   ArrowDownload24Regular,
   ArrowUpload24Regular,
   ArrowSwap24Regular,
-  Home24Filled,
-  History24Regular,
-  Wallet24Regular,
-  ChevronRight24Regular,
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients } from '../theme/tokens';
-import { Avatar } from '../components/shared/Avatar';
+import { useAppSelector } from '../app/hooks';
+import { selectCurrentUser } from '../features/auth/authSlice';
 import { TransactionItem, type TransactionType } from '../components/shared/TransactionItem';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
 
@@ -28,100 +25,14 @@ const useStyles = makeStyles({
     backgroundColor: '#F7F8FA',
   },
 
-  // ========== MOBILE HEADER ==========
-  mobileHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '12px 16px',
-    backgroundColor: '#FFFFFF',
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  mobileLogoText: {
-    fontSize: '20px',
-    fontWeight: 700,
-    color: colors.brand[60],
-  },
-
-  // ========== DESKTOP HEADER ==========
-  desktopHeader: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      height: '64px',
-      padding: '0 32px',
-      backgroundColor: '#FFFFFF',
-      borderBottom: `1px solid ${colors.neutral[200]}`,
-    },
-  },
-
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '48px',
-  },
-
-  desktopLogoText: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: colors.brand[60],
-  },
-
-  navMenu: {
-    display: 'flex',
-    gap: '32px',
-  },
-
-  navItem: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-    cursor: 'pointer',
-    textDecoration: 'none',
-    ':hover': {
-      color: colors.brand[60],
-    },
-  },
-
-  navItemActive: {
-    color: colors.brand[60],
-  },
-
-  headerRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '24px',
-  },
-
-  userMenu: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    cursor: 'pointer',
-  },
-
-  userName: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-  },
-
   // ========== MAIN CONTENT ==========
   mainContent: {
     flex: 1,
     padding: '16px',
-    paddingBottom: '92px', // Space for bottom nav
     '@media (min-width: 1024px)': {
       display: 'flex',
       gap: '32px',
       padding: '32px',
-      paddingBottom: '32px',
     },
   },
 
@@ -152,15 +63,6 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: '4px',
-  },
-
-  greetingLabel: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
   },
 
   greetingTitle: {
@@ -447,58 +349,6 @@ const useStyles = makeStyles({
     lineHeight: 1.5,
   },
 
-  // ========== BOTTOM NAV (Mobile) ==========
-  bottomNav: {
-    position: 'fixed',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '72px',
-    backgroundColor: '#FFFFFF',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    boxShadow: '0px -2px 4px rgba(0, 0, 0, 0.05)',
-    display: 'flex',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingBottom: '20px',
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  navButton: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    padding: '8px 16px',
-    textDecoration: 'none',
-  },
-
-  navIconActive: {
-    color: colors.brand[60],
-  },
-
-  navIconInactive: {
-    color: colors.neutral[500],
-  },
-
-  navLabelText: {
-    fontSize: '12px',
-    fontWeight: 500,
-  },
-
-  navLabelActive: {
-    color: colors.brand[60],
-  },
-
-  navLabelInactive: {
-    color: colors.neutral[500],
-  },
-
   // ========== LOADING STATE ==========
   loadingContainer: {
     display: 'flex',
@@ -511,12 +361,6 @@ const useStyles = makeStyles({
 // ============================================
 // MOCK DATA (to be replaced with RTK Query)
 // ============================================
-
-const mockUser = {
-  firstName: 'John',
-  lastName: 'Doe',
-  initials: 'JD',
-};
 
 const mockAccounts = [
   {
@@ -591,6 +435,7 @@ function getGreeting(): string {
 export function DashboardPage() {
   const styles = useStyles();
   const navigate = useNavigate();
+  const user = useAppSelector(selectCurrentUser);
   const [activeFilter, setActiveFilter] = useState('all');
   const [isLoading] = useState(false);
 
@@ -628,54 +473,15 @@ export function DashboardPage() {
 
   return (
     <div className={styles.container}>
-      {/* Mobile Header */}
-      <div className={styles.mobileHeader}>
-        <span className={styles.mobileLogoText}>AzureBank</span>
-        <Link to="/profile">
-          <Avatar initials={mockUser.initials} size="sm" />
-        </Link>
-      </div>
-
-      {/* Desktop Header */}
-      <div className={styles.desktopHeader}>
-        <div className={styles.headerLeft}>
-          <span className={styles.desktopLogoText}>AzureBank</span>
-          <nav className={styles.navMenu}>
-            <Link to="/" className={`${styles.navItem} ${styles.navItemActive}`}>
-              Dashboard
-            </Link>
-            <Link to="/accounts" className={styles.navItem}>
-              Accounts
-            </Link>
-            <Link to="/history" className={styles.navItem}>
-              Transactions
-            </Link>
-            <Link to="/transfer" className={styles.navItem}>
-              Transfers
-            </Link>
-          </nav>
-        </div>
-        <div className={styles.headerRight}>
-          <div className={styles.userMenu}>
-            <Avatar initials={mockUser.initials} size="sm" />
-            <span className={styles.userName}>
-              {mockUser.firstName} {mockUser.lastName}
-            </span>
-            <ChevronRight24Regular />
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
+      {/* Main Content — the app shell (nav/header) is provided by ProtectedShell */}
       <div className={styles.mainContent}>
         {/* Left Column */}
         <div className={styles.leftColumn}>
           {/* Greeting */}
           <div className={styles.greetingSection}>
-            <Text className={styles.greetingLabel}>{getGreeting()},</Text>
             <Text className={styles.greetingTitle}>
-              <span className={styles.greetingLabel} style={{ display: 'none' }}></span>
-              {getGreeting()}, {mockUser.firstName}
+              {getGreeting()}
+              {user ? `, ${user.firstName}` : ''}
             </Text>
             <Text className={styles.greetingSubtitle}>Here's an overview of your accounts</Text>
           </div>
@@ -831,26 +637,6 @@ export function DashboardPage() {
             </Button>
           </div>
         </div>
-      </div>
-
-      {/* Bottom Navigation (Mobile Only) */}
-      <div className={styles.bottomNav}>
-        <Link to="/" className={styles.navButton}>
-          <Home24Filled className={styles.navIconActive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelActive}`}>Home</span>
-        </Link>
-        <Link to="/accounts" className={styles.navButton}>
-          <Wallet24Regular className={styles.navIconInactive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelInactive}`}>Accounts</span>
-        </Link>
-        <Link to="/transfer" className={styles.navButton}>
-          <ArrowSwap24Regular className={styles.navIconInactive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelInactive}`}>Transfer</span>
-        </Link>
-        <Link to="/history" className={styles.navButton}>
-          <History24Regular className={styles.navIconInactive} />
-          <span className={`${styles.navLabelText} ${styles.navLabelInactive}`}>History</span>
-        </Link>
       </div>
     </div>
   );

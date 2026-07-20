@@ -2,11 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { makeStyles, Text, Button, Switch } from '@fluentui/react-components';
 import {
-  Home24Regular,
-  Wallet24Regular,
-  ArrowSwap24Regular,
-  Clock24Regular,
-  MoreHorizontal24Regular,
   Person24Regular,
   LockClosed24Regular,
   Link24Regular,
@@ -24,6 +19,7 @@ import {
   ArrowDownload20Regular,
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
+import { useLogoutMutation } from '../features/api/apiSlice';
 
 // ============================================
 // TYPES
@@ -82,79 +78,6 @@ const useStyles = makeStyles({
   headerTitle: {
     fontSize: '18px',
     fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  // ========== DESKTOP HEADER ==========
-  desktopHeader: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '0 32px',
-      height: '64px',
-      backgroundColor: '#FFFFFF',
-      borderBottom: `1px solid ${colors.neutral[200]}`,
-    },
-  },
-
-  desktopHeaderLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '48px',
-  },
-
-  logo: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: colors.brand[60],
-    cursor: 'pointer',
-  },
-
-  navMenu: {
-    display: 'flex',
-    gap: '32px',
-  },
-
-  navItem: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-    cursor: 'pointer',
-    padding: '8px 0',
-    borderBottom: '2px solid transparent',
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      color: colors.neutral[800],
-    },
-  },
-
-  desktopHeaderRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-
-  userAvatar: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    backgroundColor: colors.brand[130],
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  avatarInitials: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: colors.brand[60],
-  },
-
-  userName: {
-    fontSize: '14px',
-    fontWeight: 500,
     color: colors.neutral[800],
   },
 
@@ -729,50 +652,6 @@ const useStyles = makeStyles({
       textDecoration: 'underline',
     },
   },
-
-  // ========== BOTTOM NAV ==========
-  bottomNav: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-around',
-    padding: '8px 0 24px 0',
-    backgroundColor: '#FFFFFF',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  bottomNavItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-    cursor: 'pointer',
-    background: 'none',
-    border: 'none',
-    padding: '8px',
-  },
-
-  bottomNavIcon: {
-    width: '24px',
-    height: '24px',
-    color: colors.neutral[400],
-  },
-
-  bottomNavIconActive: {
-    color: colors.brand[60],
-  },
-
-  bottomNavLabel: {
-    fontSize: '10px',
-    fontWeight: 500,
-    color: colors.neutral[400],
-  },
-
-  bottomNavLabelActive: {
-    color: colors.brand[60],
-  },
 });
 
 // ============================================
@@ -885,6 +764,7 @@ const supportSettings: SettingsItem[] = [
 export function SettingsPage() {
   const styles = useStyles();
   const navigate = useNavigate();
+  const [logout] = useLogoutMutation();
 
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
   const [darkMode, setDarkMode] = useState(false);
@@ -892,9 +772,15 @@ export function SettingsPage() {
   const [showBalances, setShowBalances] = useState(true);
   const [compactView, setCompactView] = useState(false);
 
-  const handleLogout = () => {
-    // TODO: Implement logout
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      // Real server-side logout: revokes the BFF session and deletes the cookie.
+      // A bare navigate('/login') would leave the session alive and the guard would
+      // bounce straight back to the dashboard.
+      await logout().unwrap();
+    } finally {
+      navigate('/login', { replace: true });
+    }
   };
 
   const getIconClass = (color: string) => {
@@ -944,36 +830,7 @@ export function SettingsPage() {
         <Text className={styles.headerTitle}>Settings</Text>
       </div>
 
-      {/* Desktop Header */}
-      <div className={styles.desktopHeader}>
-        <div className={styles.desktopHeaderLeft}>
-          <Text className={styles.logo} onClick={() => navigate('/dashboard')}>
-            AzureBank
-          </Text>
-          <div className={styles.navMenu}>
-            <Text className={styles.navItem} onClick={() => navigate('/dashboard')}>
-              Dashboard
-            </Text>
-            <Text className={styles.navItem} onClick={() => navigate('/accounts')}>
-              Accounts
-            </Text>
-            <Text className={styles.navItem} onClick={() => navigate('/history')}>
-              Transactions
-            </Text>
-            <Text className={styles.navItem} onClick={() => navigate('/transfer')}>
-              Transfers
-            </Text>
-          </div>
-        </div>
-        <div className={styles.desktopHeaderRight}>
-          <div className={styles.userAvatar}>
-            <Text className={styles.avatarInitials}>JD</Text>
-          </div>
-          <Text className={styles.userName}>John Doe</Text>
-        </div>
-      </div>
-
-      {/* Main Layout */}
+      {/* Main Layout — the app shell (nav/header) is provided by ProtectedShell */}
       <div className={styles.mainLayout}>
         {/* Desktop Sidebar */}
         <div className={styles.desktopSidebar}>
@@ -1300,32 +1157,6 @@ export function SettingsPage() {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Bottom Navigation (Mobile) */}
-      <div className={styles.bottomNav}>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/dashboard')}>
-          <Home24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Home</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/accounts')}>
-          <Wallet24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Accounts</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/transfer')}>
-          <ArrowSwap24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Transfer</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/history')}>
-          <Clock24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>History</Text>
-        </button>
-        <button className={styles.bottomNavItem}>
-          <MoreHorizontal24Regular
-            className={`${styles.bottomNavIcon} ${styles.bottomNavIconActive}`}
-          />
-          <Text className={`${styles.bottomNavLabel} ${styles.bottomNavLabelActive}`}>More</Text>
-        </button>
       </div>
     </div>
   );
