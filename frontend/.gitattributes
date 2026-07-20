@@ -1,0 +1,5 @@
+# Frontend files are LF everywhere: prettier enforces endOfLine "lf", so letting
+# core.autocrlf materialize CRLF working copies on Windows makes format:check fail
+# locally while CI (Linux) stays green. Pinning eol here keeps every checkout
+# consistent with the formatter.
+* text=auto eol=lf
