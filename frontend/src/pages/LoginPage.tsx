@@ -1,12 +1,11 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import {
   makeStyles,
   tokens,
   Text,
   Input,
   Button,
-  Checkbox,
   Link as FluentLink,
   Spinner,
   MessageBar,
@@ -23,17 +22,24 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { login, selectAuthLoading, selectAuthError, clearError } from '../features/auth';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { useLoginMutation } from '../features/api/apiSlice';
 
 // Validation schema
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
   password: z.string().min(1, 'Password is required'),
-  rememberMe: z.boolean().optional(),
 });
 
 type LoginFormData = z.infer<typeof loginSchema>;
+
+/** Navigation state this page understands (guard redirects + register dual-path). */
+interface LoginNavState {
+  from?: { pathname?: string };
+  reason?: 'expired';
+  prefillEmail?: string;
+}
 
 const useStyles = makeStyles({
   // ========== CONTAINER ==========
@@ -317,11 +323,28 @@ const useStyles = makeStyles({
 export function LoginPage() {
   const styles = useStyles();
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
-  const isLoading = useAppSelector(selectAuthLoading);
-  const authError = useAppSelector(selectAuthError);
+  const location = useLocation();
+  const [login, { isLoading, error }] = useLoginMutation();
 
   const [showPassword, setShowPassword] = useState(false);
+  const [elapsedDeadline, setElapsedDeadline] = useState<number | null>(null);
+
+  const navState = (location.state ?? {}) as LoginNavState;
+  const problem = error as ApiProblem | undefined;
+
+  // D13: one ABSOLUTE deadline per lock/limit response, computed once from the relative
+  // retryAfterSeconds; RetryCountdown's onElapsed re-enables the form.
+  const retryAfterSeconds = problem?.retryAfterSeconds;
+  const lockDeadline = useMemo(
+    () => (retryAfterSeconds !== undefined ? retryDeadline(retryAfterSeconds) : null),
+    [retryAfterSeconds],
+  );
+  const countdownActive = lockDeadline !== null && elapsedDeadline !== lockDeadline;
+  // The login form branches RATE_LIMIT_EXCEEDED vs ACCOUNT_LOCKED explicitly — never
+  // identical copy (D13): the first is per-IP throttling, the second is the credential
+  // lockout, and only the second replaces the submit entirely.
+  const accountLocked = problem?.errorCode === 'ACCOUNT_LOCKED' && countdownActive;
+  const rateLimited = problem?.errorCode === 'RATE_LIMIT_EXCEEDED' && countdownActive;
 
   const {
     register,
@@ -330,23 +353,18 @@ export function LoginPage() {
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: '',
+      email: navState.prefillEmail ?? '',
       password: '',
-      rememberMe: false,
     },
   });
 
   const onSubmit = async (data: LoginFormData) => {
-    dispatch(clearError());
-    const result = await dispatch(
-      login({
-        email: data.email,
-        password: data.password,
-      }),
-    );
-
-    if (login.fulfilled.match(result)) {
-      navigate('/dashboard');
+    try {
+      await login({ email: data.email, password: data.password }).unwrap();
+      // returnTo: land where the guard interrupted, not always the dashboard.
+      navigate(navState.from?.pathname ?? '/dashboard', { replace: true });
+    } catch {
+      // Surfaced through the mutation's error state below.
     }
   };
 
@@ -413,12 +431,41 @@ export function LoginPage() {
             </Text>
           </div>
 
-          {/* Error Message */}
-          {authError && (
-            <MessageBar intent="error" className={styles.errorMessage}>
-              <MessageBarBody>{authError}</MessageBarBody>
+          {/* Session-expiry note: only ever set by a post-boot 401 (D3/D6) */}
+          {navState.reason === 'expired' && !problem && (
+            <MessageBar intent="warning" className={styles.errorMessage}>
+              <MessageBarBody>Your session has expired. Please sign in again.</MessageBarBody>
             </MessageBar>
           )}
+
+          {problem?.errorCode === 'INVALID_CREDENTIALS' && (
+            <MessageBar intent="error" className={styles.errorMessage}>
+              <MessageBarBody>Invalid email or password.</MessageBarBody>
+            </MessageBar>
+          )}
+
+          {accountLocked && lockDeadline !== null && (
+            <MessageBar intent="error" className={styles.errorMessage}>
+              <MessageBarBody>
+                Too many failed sign-in attempts — your account is temporarily locked.{' '}
+                <RetryCountdown
+                  deadline={lockDeadline}
+                  onElapsed={() => setElapsedDeadline(lockDeadline)}
+                />
+              </MessageBarBody>
+            </MessageBar>
+          )}
+
+          {problem &&
+            !['INVALID_CREDENTIALS', 'ACCOUNT_LOCKED', 'RATE_LIMIT_EXCEEDED'].includes(
+              problem.errorCode,
+            ) && (
+              <MessageBar intent="error" className={styles.errorMessage}>
+                <MessageBarBody>
+                  {problem.detail || 'Something went wrong. Please try again.'}
+                </MessageBarBody>
+              </MessageBar>
+            )}
 
           {/* Login Form */}
           <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
@@ -462,20 +509,31 @@ export function LoginPage() {
               </div>
             </Field>
 
-            <div className={styles.rememberRow}>
-              <Checkbox label="Remember me" {...register('rememberMe')} />
-              <FluentLink href="/forgot-password">Forgot password?</FluentLink>
-            </div>
+            {/* ACCOUNT_LOCKED replaces the submit entirely (D13); the banner above
+                carries the countdown. */}
+            {!accountLocked && (
+              <Button
+                appearance="primary"
+                size="large"
+                className={styles.submitButton}
+                type="submit"
+                disabled={isLoading || rateLimited}
+              >
+                {isLoading ? <Spinner size="tiny" /> : 'Sign in'}
+              </Button>
+            )}
 
-            <Button
-              appearance="primary"
-              size="large"
-              className={styles.submitButton}
-              type="submit"
-              disabled={isLoading}
-            >
-              {isLoading ? <Spinner size="tiny" /> : 'Sign in'}
-            </Button>
+            {rateLimited && lockDeadline !== null && (
+              <MessageBar intent="warning">
+                <MessageBarBody>
+                  Too many attempts from your connection.{' '}
+                  <RetryCountdown
+                    deadline={lockDeadline}
+                    onElapsed={() => setElapsedDeadline(lockDeadline)}
+                  />
+                </MessageBarBody>
+              </MessageBar>
+            )}
           </form>
 
           {/* Divider */}

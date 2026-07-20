@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   makeStyles,
@@ -22,19 +22,31 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Link as FluentLink } from '@fluentui/react-components';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { useRegisterMutation } from '../features/api/apiSlice';
 
-// Validation schema
+// Validation schema — mirrors the backend contract (ValidationRules): AzureTag pattern
+// and the full password policy (upper + lower + digit + special, 8-128).
 const registerSchema = z
   .object({
     firstName: z.string().min(1, 'First name is required').max(50, 'First name is too long'),
     lastName: z.string().min(1, 'Last name is required').max(50, 'Last name is too long'),
+    azureTag: z
+      .string()
+      .regex(
+        /^[a-z][a-z0-9_]{2,19}$/,
+        'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores (3-20 characters)',
+      ),
     email: z.string().email('Please enter a valid email address'),
     password: z
       .string()
       .min(8, 'Password must be at least 8 characters')
+      .max(128, 'Password is too long')
       .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
       .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-      .regex(/[0-9]/, 'Password must contain at least one number'),
+      .regex(/[0-9]/, 'Password must contain at least one number')
+      .regex(/[^a-zA-Z0-9]/, 'Password must contain at least one special character'),
     confirmPassword: z.string().min(1, 'Please confirm your password'),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -43,6 +55,8 @@ const registerSchema = z
   });
 
 type RegisterFormData = z.infer<typeof registerSchema>;
+
+const REGISTER_FIELDS = ['firstName', 'lastName', 'azureTag', 'email', 'password'] as const;
 
 const useStyles = makeStyles({
   // ========== CONTAINER ==========
@@ -336,45 +350,75 @@ export function RegisterPage() {
   const styles = useStyles();
   const navigate = useNavigate();
 
+  const [registerUser, { isLoading, error }] = useRegisterMutation();
+
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [elapsedDeadline, setElapsedDeadline] = useState<number | null>(null);
+  const bannerRef = useRef<HTMLDivElement>(null);
+
+  const problem = error as ApiProblem | undefined;
+
+  // Shared login/register 429 bucket (D13/D15): absolute deadline, countdown on the form.
+  const retryAfterSeconds = problem?.retryAfterSeconds;
+  const lockDeadline = useMemo(
+    () => (retryAfterSeconds !== undefined ? retryDeadline(retryAfterSeconds) : null),
+    [retryAfterSeconds],
+  );
+  const rateLimited =
+    problem?.errorCode === 'RATE_LIMIT_EXCEEDED' &&
+    lockDeadline !== null &&
+    elapsedDeadline !== lockDeadline;
 
   const {
     register,
     handleSubmit,
+    setError,
+    getValues,
     formState: { errors },
   } = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
     defaultValues: {
       firstName: '',
       lastName: '',
+      azureTag: '',
       email: '',
       password: '',
       confirmPassword: '',
     },
   });
 
-  // No parameter: the form values are unused until the real RTK Query call lands — and they
-  // carry the password, so they must never be logged or otherwise touched here.
-  const onSubmit = async () => {
-    setError(null);
-    setIsLoading(true);
+  // D15: field values stay, the dual-path banner takes focus.
+  useEffect(() => {
+    if (problem?.errorCode === 'REGISTRATION_FAILED') {
+      bannerRef.current?.focus();
+    }
+  }, [problem]);
 
+  const onSubmit = async (data: RegisterFormData) => {
     try {
-      // TODO: Replace with actual API call via RTK Query (the form values are unused until
-      // then — and they carry the password, so they must never reach the console)
-
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      // On success, navigate to login
-      navigate('/login', { state: { registered: true } });
-    } catch {
-      setError('Registration failed. Please try again.');
-    } finally {
-      setIsLoading(false);
+      await registerUser({
+        azureTag: data.azureTag,
+        email: data.email,
+        password: data.password,
+        firstName: data.firstName,
+        lastName: data.lastName,
+      }).unwrap();
+      // The 201 IS a login: the BFF set the session cookie and the auth slice is
+      // already 'authenticated'.
+      navigate('/dashboard', { replace: true });
+    } catch (caught) {
+      const rejected = caught as ApiProblem;
+      if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {
+        for (const [key, messages] of Object.entries(rejected.errors)) {
+          const field = (key.charAt(0).toLowerCase() +
+            key.slice(1)) as (typeof REGISTER_FIELDS)[number];
+          if (REGISTER_FIELDS.includes(field) && messages.length > 0) {
+            setError(field, { type: 'server', message: messages[0] });
+          }
+        }
+      }
+      // Everything else renders from the mutation error state below.
     }
   };
 
@@ -441,12 +485,51 @@ export function RegisterPage() {
             </Text>
           </div>
 
-          {/* Error Message */}
-          {error && (
-            <MessageBar intent="error" className={styles.errorMessage}>
-              <MessageBarBody>{error}</MessageBarBody>
+          {/* D15: tag-collision-blind dual-path banner — FORM-level, never field-attached,
+              neutral copy, "Sign in" pre-fills the typed email via route state. */}
+          {problem?.errorCode === 'REGISTRATION_FAILED' && (
+            <MessageBar
+              intent="error"
+              className={styles.errorMessage}
+              ref={bannerRef}
+              tabIndex={-1}
+            >
+              <MessageBarBody>
+                We couldn't create an account with these details. If you already have an account,{' '}
+                <Link
+                  to="/login"
+                  state={{ prefillEmail: getValues('email') }}
+                  style={{ color: 'inherit' }}
+                >
+                  <FluentLink as="span">sign in with this email</FluentLink>
+                </Link>{' '}
+                — or try a different AzureTag.
+              </MessageBarBody>
             </MessageBar>
           )}
+
+          {rateLimited && lockDeadline !== null && (
+            <MessageBar intent="warning" className={styles.errorMessage}>
+              <MessageBarBody>
+                Too many attempts from your connection.{' '}
+                <RetryCountdown
+                  deadline={lockDeadline}
+                  onElapsed={() => setElapsedDeadline(lockDeadline)}
+                />
+              </MessageBarBody>
+            </MessageBar>
+          )}
+
+          {problem &&
+            !['REGISTRATION_FAILED', 'RATE_LIMIT_EXCEEDED', 'VALIDATION_ERROR'].includes(
+              problem.errorCode,
+            ) && (
+              <MessageBar intent="error" className={styles.errorMessage}>
+                <MessageBarBody>
+                  {problem.detail || 'Registration failed. Please try again.'}
+                </MessageBarBody>
+              </MessageBar>
+            )}
 
           {/* Register Form */}
           <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
@@ -480,6 +563,22 @@ export function RegisterPage() {
                 />
               </Field>
             </div>
+
+            {/* AzureTag — the public handle other users send money to */}
+            <Field
+              label="AzureTag"
+              hint="Your public handle for receiving transfers — lowercase letters, numbers, underscores"
+              validationState={errors.azureTag ? 'error' : 'none'}
+              validationMessage={errors.azureTag?.message}
+            >
+              <Input
+                placeholder="john_doe"
+                size="large"
+                autoComplete="username"
+                {...register('azureTag')}
+                aria-invalid={errors.azureTag ? 'true' : 'false'}
+              />
+            </Field>
 
             {/* Email */}
             <Field
@@ -556,7 +655,7 @@ export function RegisterPage() {
               size="large"
               className={styles.submitButton}
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || rateLimited}
             >
               {isLoading ? <Spinner size="tiny" /> : 'Create Account'}
             </Button>

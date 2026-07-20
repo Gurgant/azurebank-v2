@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     AzureBank.Seeder: Console Tool for Database Seeding
@@ -21,6 +21,7 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>AzureBank.Seeder</RootNamespace>
     <AssemblyName>azurebank-seeder</AssemblyName>
+    <UserSecretsId>fa96b257-9aa4-4d3d-89ff-762f9c522320</UserSecretsId>
   </PropertyGroup>
 
   <!-- Project References: Can reference ALL projects (tool is external to architecture) -->

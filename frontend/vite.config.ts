@@ -12,4 +12,12 @@ export default defineConfig({
       '/bff': 'http://localhost:5000',
     },
   },
+  preview: {
+    // Same forwarding for `vite preview` — lets the PROD bundle run against the local
+    // BFF before BE-3 exists.
+    proxy: {
+      '/api': 'http://localhost:5000',
+      '/bff': 'http://localhost:5000',
+    },
+  },
 });

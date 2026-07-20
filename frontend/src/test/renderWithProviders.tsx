@@ -6,6 +6,7 @@ import { FluentProvider } from '@fluentui/react-components';
 import { render, type RenderOptions } from '@testing-library/react';
 import { azureBankLightTheme } from '../theme/fluentTheme';
 import { authReducer } from '../features/auth/authSlice';
+import { sessionMiddleware } from '../features/auth/sessionMiddleware';
 import { apiSlice } from '../features/api/apiSlice';
 
 /**
@@ -19,18 +20,18 @@ export function makeTestStore() {
       [apiSlice.reducerPath]: apiSlice.reducer,
     },
     middleware: (getDefaultMiddleware) =>
-      getDefaultMiddleware({
-        serializableCheck: { ignoredActions: ['auth/setCredentials'] },
-      }).concat(apiSlice.middleware),
+      getDefaultMiddleware().concat(apiSlice.middleware, sessionMiddleware),
   });
 }
 
 export type TestStore = ReturnType<typeof makeTestStore>;
 
+type RouterEntry = string | { pathname: string; state?: unknown };
+
 interface ProvidersOptions extends Omit<RenderOptions, 'wrapper'> {
   store?: TestStore;
-  /** Initial history entries for MemoryRouter (default: ['/']). */
-  routerEntries?: string[];
+  /** Initial history entries for MemoryRouter (default: ['/']); objects carry route state. */
+  routerEntries?: RouterEntry[];
 }
 
 /**
