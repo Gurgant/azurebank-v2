@@ -2,7 +2,7 @@ import { http, HttpResponse } from 'msw';
 import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import { problem } from './problem';
-import { mockState } from './state';
+import { MOCK_PASSWORD, MOCK_USER, mockState, type MockSessionUser } from './state';
 
 /**
  * Contract-faithful MSW handlers. Success bodies go through openapi-msw's TYPED response
@@ -161,4 +161,100 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   });
 });
 
-export const handlers = [deposit, transfer, verifyPin];
+/**
+ * BFF auth handlers (outside the API spec — plain msw, shapes mirror BffResponses.cs).
+ * Semantics from the controller source: login/register 200/201 with the SAME
+ * ApiResponse<BffLoginResponse> envelope; /me is enveloped, session-status is BARE;
+ * logout is message-only; an unauthenticated /me is a 401 ProblemDetails WITHOUT an
+ * errorCode (the BFF's own shape — normalizes to HTTP_401 client-side).
+ */
+const login = http.post('*/bff/auth/login', async ({ request }) => {
+  const { email, password } = (await request.json()) as { email?: string; password?: string };
+  if (email !== MOCK_USER.email || password !== MOCK_PASSWORD) {
+    return problem({
+      status: 401,
+      errorCode: 'INVALID_CREDENTIALS',
+      title: 'Unauthorized',
+      detail: 'Invalid email or password',
+    });
+  }
+  mockState.session = { ...MOCK_USER };
+  return HttpResponse.json({
+    data: { user: { ...MOCK_USER }, expiresAt: '2026-07-20T13:00:00.0000000Z' },
+    message: 'Login successful',
+  });
+});
+
+const register = http.post('*/bff/auth/register', async ({ request }) => {
+  const body = (await request.json()) as {
+    azureTag?: string;
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  if (body.email === 'taken@azurebank.dev') {
+    // ADR-0013 bounded acceptance: the genericised duplicate outcome.
+    return problem({
+      status: 409,
+      errorCode: 'REGISTRATION_FAILED',
+      detail: 'We could not create an account with these details.',
+    });
+  }
+  const user: MockSessionUser = {
+    id: '019f7b3f-0000-7000-8000-00000000aaaa',
+    email: body.email ?? 'new@azurebank.dev',
+    firstName: body.firstName ?? 'New',
+    lastName: body.lastName ?? 'User',
+    azureTag: body.azureTag ?? 'new_user',
+    hasPin: false,
+  };
+  mockState.session = user;
+  return HttpResponse.json(
+    {
+      data: { user, expiresAt: '2026-07-20T13:00:00.0000000Z' },
+      message: 'Registration successful',
+    },
+    { status: 201 },
+  );
+});
+
+const me = http.get('*/bff/auth/me', () => {
+  if (!mockState.session) {
+    // The BFF's own 401: ProblemDetails WITHOUT errorCode.
+    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  }
+  return HttpResponse.json({
+    data: {
+      user: { ...mockState.session },
+      session: {
+        authLevel: mockState.authLevel,
+        createdAt: '2026-07-20T12:00:00.0000000Z',
+        lastActivity: '2026-07-20T12:10:00.0000000Z',
+        expiresAt: '2026-07-20T13:00:00.0000000Z',
+        isPinVerified: mockState.authLevel === 2,
+        pinExpiresAt: mockState.authLevel === 2 ? '2026-07-20T12:15:00.0000000Z' : null,
+      },
+    },
+    message: null,
+  });
+});
+
+const logout = http.post('*/bff/auth/logout', () => {
+  mockState.session = null;
+  mockState.authLevel = 1;
+  return HttpResponse.json({ message: 'Logged out successfully' });
+});
+
+const sessionStatus = http.get('*/bff/auth/session-status', () => {
+  // BARE by contract — the second non-envelope response besides GET /api/transactions.
+  if (!mockState.session) {
+    return HttpResponse.json({ isAuthenticated: false, authLevel: null, isPinVerified: null });
+  }
+  return HttpResponse.json({
+    isAuthenticated: true,
+    authLevel: mockState.authLevel,
+    isPinVerified: mockState.authLevel === 2,
+  });
+});
+
+export const handlers = [deposit, transfer, verifyPin, login, register, me, logout, sessionStatus];

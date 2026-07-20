@@ -15,7 +15,6 @@ export {
 } from './Divider';
 
 // Form Components
-export { FormField, type FormFieldProps } from './FormField';
 export { AmountInput, type AmountInputProps } from './AmountInput';
 
 // Icon Components

@@ -4,6 +4,7 @@ import { Provider } from 'react-redux';
 import { store } from './app/store';
 import { azureBankLightTheme } from './theme';
 import { AppToaster } from './components/feedback';
+import { AuthBootstrap, SessionExpiryWarning } from './features/auth';
 import { ProtectedRoute } from './components/layout';
 import {
   LoginPage,
@@ -25,6 +26,8 @@ function App() {
     <Provider store={store}>
       <FluentProvider theme={azureBankLightTheme}>
         <AppToaster />
+        <AuthBootstrap />
+        <SessionExpiryWarning />
         <BrowserRouter>
           <Routes>
             {/* Public Routes */}

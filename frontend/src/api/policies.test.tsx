@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
+import { seedMockSession } from '../mocks/state';
 import { makeTestStore } from '../test/renderWithProviders';
 import { apiSlice, useDepositMutation, useWithdrawMutation } from '../features/api/apiSlice';
 import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
@@ -221,7 +222,11 @@ describe('data-layer policies (flagship, DECISIONS §2.4)', () => {
     );
 
     const { store, Wrapper } = hookWrapper();
-    const authBefore = store.getState().auth;
+    // Full flagship form: boot AUTHENTICATED, then prove the wrong-PIN 401 cannot expire
+    // the session (D3 routes INVALID_PIN to the calling form, never to sessionExpired).
+    seedMockSession();
+    await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+    expect(store.getState().auth.status).toBe('authenticated');
     const { result } = renderHook(() => useWithdrawIntent(), { wrapper: Wrapper });
 
     const failed = await act(() =>
@@ -231,10 +236,8 @@ describe('data-layer policies (flagship, DECISIONS §2.4)', () => {
     if (failed.ok) throw new Error('unreachable');
     expect(failed.error.errorCode).toBe('INVALID_PIN');
 
-    // NOT a session problem: auth state untouched. (sessionExpired() itself arrives with
-    // the PR-4 authSlice rewrite — this pins the foundation half: INVALID_PIN returns to
-    // the calling form and nothing global fires.)
-    expect(store.getState().auth).toEqual(authBefore);
+    // NOT a session problem: still authenticated, cache intact, no sessionExpired.
+    expect(store.getState().auth.status).toBe('authenticated');
 
     // Key DROPPED: the corrected PIN changes the body bytes (D4 — re-key on errorCode).
     const second = await act(() =>

@@ -1,11 +1,21 @@
 import { createApi } from '@reduxjs/toolkit/query/react';
 import type { FetchBaseQueryMeta } from '@reduxjs/toolkit/query';
+import type {
+  BffLoginResponse,
+  BffMeResponse,
+  BffPinVerificationResponse,
+  BffSessionStatusResponse,
+} from '../../api/bffTypes';
 import { unwrap } from '../../api/envelope';
 import { problemBaseQuery } from '../../api/problemBaseQuery';
 import type { components } from '../../api/schema';
 
 type Schemas = components['schemas'];
 
+export type LoginRequest = Schemas['LoginRequest'];
+export type RegisterRequest = Schemas['RegisterRequest'];
+export type VerifyPinRequest = Schemas['VerifyPinRequest'];
+export type SetPinRequest = Schemas['SetPinRequest'];
 export type AccountResponse = Schemas['AccountResponse'];
 export type BalanceResponse = Schemas['BalanceResponse'];
 export type CreateAccountRequest = Schemas['CreateAccountRequest'];
@@ -208,6 +218,59 @@ export const apiSlice = createApi({
             ],
     }),
 
+    // ========== BFF AUTH (cookie transport — no token ever reaches this code) ==========
+
+    login: builder.mutation<BffLoginResponse, LoginRequest>({
+      query: (body) => ({ url: '/bff/auth/login', method: 'POST', body }),
+      transformResponse: (response: { data?: BffLoginResponse | null }) => unwrap(response),
+      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
+    }),
+
+    register: builder.mutation<BffLoginResponse, RegisterRequest>({
+      query: (body) => ({ url: '/bff/auth/register', method: 'POST', body }),
+      transformResponse: (response: { data?: BffLoginResponse | null }) => unwrap(response),
+      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
+    }),
+
+    getMe: builder.query<BffMeResponse, void>({
+      // B3 — the ONE bootstrap probe (D6), and the deliberate "Stay signed in"
+      // keep-alive: the BFF counts it as activity.
+      query: () => '/bff/auth/me',
+      transformResponse: (response: { data?: BffMeResponse | null }) => unwrap(response),
+      providesTags: [{ type: 'Session' as const, id: 'CURRENT' }],
+    }),
+
+    logout: builder.mutation<void, void>({
+      query: () => ({ url: '/bff/auth/logout', method: 'POST' }),
+      // Message-only ApiResponse — nothing to unwrap.
+      transformResponse: () => undefined,
+      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
+    }),
+
+    getSessionStatus: builder.query<BffSessionStatusResponse, void>({
+      // B5 — BARE by contract (no envelope). The cheap guard re-check: the BFF
+      // deliberately does NOT count it as session activity, so it can never
+      // keep a session alive (ADR-0018). Never poll it on a timer regardless.
+      query: () => '/bff/auth/session-status',
+      providesTags: [{ type: 'Session' as const, id: 'STATUS' }],
+    }),
+
+    verifyPin: builder.mutation<BffPinVerificationResponse, VerifyPinRequest>({
+      // B6 — wrong PIN is HTTP 200 with verified:false, NEVER an error (the error
+      // channel would trip global 401/step-up handling).
+      query: (body) => ({ url: '/bff/auth/verify-pin', method: 'POST', body }),
+      transformResponse: (response: { data?: BffPinVerificationResponse | null }) =>
+        unwrap(response),
+      invalidatesTags: (_result, error) =>
+        error ? [] : [{ type: 'Session' as const, id: 'STATUS' }],
+    }),
+
+    setPin: builder.mutation<void, SetPinRequest>({
+      query: (body) => ({ url: '/bff/auth/set-pin', method: 'POST', body }),
+      transformResponse: () => undefined,
+      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
+    }),
+
     transferInternal: builder.mutation<
       WithReplay<InternalTransferResponse>,
       IdempotentArg<InternalTransferRequest>
@@ -249,4 +312,12 @@ export const {
   // Transfers
   useTransferMutation,
   useTransferInternalMutation,
+  // BFF auth
+  useLoginMutation,
+  useRegisterMutation,
+  useGetMeQuery,
+  useLogoutMutation,
+  useGetSessionStatusQuery,
+  useVerifyPinMutation,
+  useSetPinMutation,
 } = apiSlice;
