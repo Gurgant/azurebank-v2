@@ -143,6 +143,19 @@ jobs:
         working-directory: frontend
         run: npm run format:check
 
+      - name: API schema up to date
+        working-directory: frontend
+        # The FE↔BE contract gate: regenerate schema.d.ts from the committed OpenAPI spec
+        # and fail if it differs from what's checked in — spec drift becomes a red build,
+        # never a runtime surprise.
+        run: |
+          npm run generate:api
+          git diff --exit-code src/api/schema.d.ts
+
+      - name: Test
+        working-directory: frontend
+        run: npm test
+
       - name: Build (tsc + vite)
         working-directory: frontend
         run: npm run build
