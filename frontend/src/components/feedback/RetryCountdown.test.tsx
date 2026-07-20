@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../test/renderWithProviders';
@@ -13,9 +14,16 @@ it('formats minute-scale lockouts as m:ss', () => {
   expect(screen.getByRole('timer')).toHaveTextContent(/^Try again in 1:[23][0-9]$/);
 });
 
-it('renders nothing and fires onElapsed once for an already-elapsed deadline', async () => {
+it('renders nothing and fires onElapsed once for an already-elapsed deadline (StrictMode)', async () => {
   const onElapsed = vi.fn();
-  renderWithProviders(<RetryCountdown deadline={Date.now() - 1000} onElapsed={onElapsed} />);
-  await waitFor(() => expect(onElapsed).toHaveBeenCalledTimes(1));
+  // StrictMode double-invokes effects: the pre-fix sync branch fired onElapsed twice.
+  renderWithProviders(
+    <StrictMode>
+      <RetryCountdown deadline={Date.now() - 1000} onElapsed={onElapsed} />
+    </StrictMode>,
+  );
+  await waitFor(() => expect(onElapsed).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  expect(onElapsed).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole('timer')).not.toBeInTheDocument();
 });
