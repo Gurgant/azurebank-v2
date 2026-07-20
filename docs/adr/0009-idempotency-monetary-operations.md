@@ -227,7 +227,9 @@ tracing. It surfaced a set of bounded issues, resolved as follows.
   / `SaveChangesAsync(bool, ct)` so a direct bool-overload call can no longer bypass
   the write-once Transaction guard.
 - **Dev CORS.** The development policy now reflects only **loopback** origins (any
-  localhost port) instead of any origin + credentials.
+  localhost port) instead of any origin + credentials. *(Superseded: ADR-0018 deletes
+  CORS from the BFF entirely — same-origin topology, which also ends the exposed
+  replay-header dependency.)*
 - **Coverage.** Added an N=24 parallel *withdrawal* overdraft proof (exactly one
   success, balance never negative) alongside the existing deposit/transfer proofs.
 

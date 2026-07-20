@@ -38,10 +38,36 @@ try
     // CONFIGURATION BINDING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    builder.Services.Configure<BffSessionOptions>(
-        builder.Configuration.GetSection(BffSessionOptions.SectionName));
+    builder.Services.AddOptions<BffSessionOptions>()
+        .Bind(builder.Configuration.GetSection(BffSessionOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<BffSessionOptions>, BffSessionOptionsValidator>();
     builder.Services.Configure<SecurityOptions>(
         builder.Configuration.GetSection(SecurityOptions.SectionName));
+
+    // Outside Development the session cookie carries the __Host- prefix (RFC 6265bis):
+    // the browser refuses to store it unless it arrives Secure, with Path=/ and no
+    // Domain — unforgeable from subdomains or insecure origins. Applied at runtime so
+    // config keeps one canonical name and every reader (controller, middleware, YARP
+    // transform, rate-limit partitioner) picks it up through IOptions. Development stays
+    // unprefixed: the dev loop runs on http://localhost, where prefixed cookies cannot
+    // be set at all (and Safari refuses Secure cookies there even unprefixed).
+    if (!builder.Environment.IsDevelopment())
+    {
+        builder.Services.PostConfigure<BffSessionOptions>(options =>
+        {
+            // A null/empty/whitespace name falls through UNTOUCHED: PostConfigure runs
+            // BEFORE validation, and prefixing a whitespace-only name would turn it into
+            // "__Host-   " — non-whitespace, so it would slip past the validator. The
+            // malformed value must reach BffSessionOptionsValidator intact so startup
+            // fails with a clear message.
+            if (!string.IsNullOrWhiteSpace(options.CookieName)
+                && !options.CookieName.StartsWith("__Host-", StringComparison.Ordinal))
+            {
+                options.CookieName = "__Host-" + options.CookieName.TrimStart('.');
+            }
+        });
+    }
 
     // Security-relevant config is validated at STARTUP (ADR-0013): a non-positive rate-limit
     // value or a typo'd proxy IP must stop the app rather than silently disable the control
@@ -307,36 +333,12 @@ try
         };
     });
 
-    // CORS for frontend
-    builder.Services.AddCors(options =>
-    {
-        options.AddPolicy("AllowFrontend", policy =>
-        {
-            policy.WithOrigins(
-                    "http://localhost:5173",  // Vite dev server
-                    "http://localhost:3000",  // Alternative frontend port
-                    "https://localhost:5173")
-                .AllowCredentials()
-                .AllowAnyHeader()
-                .AllowAnyMethod()
-                // Proxied API responses may carry the idempotency replay
-                // marker; browsers hide response headers unless exposed.
-                .WithExposedHeaders(AzureBank.Shared.Constants.IdempotencyConstants.ReplayedHeaderName);
-        });
-
-        // Development: allow any LOOPBACK origin (any localhost port) but never
-        // an external origin. Reflecting an arbitrary origin together with
-        // AllowCredentials is a cross-site footgun even in development.
-        options.AddPolicy("Development", policy =>
-        {
-            policy.SetIsOriginAllowed(origin =>
-                    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback)
-                .AllowCredentials()
-                .AllowAnyHeader()
-                .AllowAnyMethod()
-                .WithExposedHeaders(AzureBank.Shared.Constants.IdempotencyConstants.ReplayedHeaderName);
-        });
-    });
+    // NO CORS — deliberately (ADR-0018). The browser only ever talks to the BFF from its
+    // own origin: dev = Vite server.proxy forwards /api and /bff, prod = the BFF serves
+    // the SPA itself. The former "AllowFrontend" policy credential-whitelisted
+    // http://localhost:5173 IN PRODUCTION — a live cross-site hole, not dead config.
+    // Same-origin also makes WithExposedHeaders(Idempotency-Replayed) unnecessary:
+    // the browser exposes all response headers on same-origin requests.
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BUILD APPLICATION
@@ -364,11 +366,14 @@ try
     // 2. Security headers (OWASP)
     app.UseSecurityHeaders();
 
-    // 3. Session activity tracking (updates LastActivity on every request)
-    app.UseSessionActivity();
+    // 3. Fetch-Metadata isolation: a cross-site state-changing request stops here —
+    // before it can refresh session activity, consume rate-limit budget, or reach the
+    // controllers/proxy.
+    app.UseFetchMetadata();
 
-    // 4. CORS (must be before authentication)
-    app.UseCors(app.Environment.IsDevelopment() ? "Development" : "AllowFrontend");
+    // 4. Session activity tracking (updates LastActivity on every request except the
+    // session-status probe)
+    app.UseSessionActivity();
 
     // 5. Rate limiting
     app.UseRateLimiter();

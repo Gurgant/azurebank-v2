@@ -256,10 +256,11 @@ public class UserSession
 
 | Feature | Configuration |
 |---------|---------------|
-| Cookie Name | `.AzureBank.Session` |
+| Cookie Name | `__Host-AzureBank.Session` (Production); `.AzureBank.Session` in Development — the `__Host-` prefix is applied at runtime over the configured name (ADR-0018) |
+| Lifetime | Session cookie — no `Expires`/`Max-Age`; bounded server-side by the inactivity + absolute timeouts |
 | HTTP-Only | Yes (no JavaScript access) |
-| Secure | Yes (HTTPS only) |
-| SameSite | Strict (CSRF protection) |
+| Secure | Production (required by `__Host-`); off in Development — the dev loop runs on `http://localhost` |
+| SameSite | Strict (CSRF protection, backed by the Fetch-Metadata middleware) |
 | Session ID | 32 bytes cryptographic random |
 
 ---
@@ -463,22 +464,13 @@ For multiple BFF instances:
 2. Configure sticky sessions or share session state
 3. Ensure all instances have same JWT secret
 
-### CORS Configuration
+### CORS
 
-Configure CORS for your frontend origin:
-
-```csharp
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-    {
-        policy.WithOrigins("https://your-frontend.com")
-              .AllowCredentials()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
-```
+The BFF registers **no CORS, by design** (ADR-0018). The browser only ever reaches it
+same-origin: in development Vite's `server.proxy` forwards `/api` and `/bff`, and in
+production the BFF serves the SPA bundle itself. A credentialed cross-origin allowance
+here would be pure attack surface; cross-site state-changing requests are additionally
+rejected by the Fetch-Metadata middleware.
 
 ---
 
