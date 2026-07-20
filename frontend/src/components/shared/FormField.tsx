@@ -144,12 +144,7 @@ export function FormField({
         name={name}
         aria-invalid={!!error}
         aria-describedby={error ? `${name}-error` : hint ? `${name}-hint` : undefined}
-        className={mergeClasses(
-          styles.input,
-          sizeClass,
-          error && styles.inputError,
-          className
-        )}
+        className={mergeClasses(styles.input, sizeClass, error && styles.inputError, className)}
         {...inputProps}
       />
 

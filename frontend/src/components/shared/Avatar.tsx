@@ -129,12 +129,7 @@ export function Avatar({
 
   return (
     <div
-      className={mergeClasses(
-        styles.base,
-        styles[size],
-        styles[variant],
-        className
-      )}
+      className={mergeClasses(styles.base, styles[size], styles[variant], className)}
       role="img"
       aria-label={name ?? displayInitials}
     >

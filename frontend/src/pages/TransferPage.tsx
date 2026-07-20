@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  makeStyles,
-  Text,
-  Button,
-  Spinner,
-} from '@fluentui/react-components';
+import { makeStyles, Text, Button, Spinner } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
   Dismiss24Regular,
@@ -779,7 +774,9 @@ export function TransferPage() {
       case 2:
         return transferData.toRecipient !== null;
       case 3:
-        return transferData.amount > 0 && transferData.amount <= (transferData.fromAccount?.balance || 0);
+        return (
+          transferData.amount > 0 && transferData.amount <= (transferData.fromAccount?.balance || 0)
+        );
       default:
         return true;
     }
@@ -789,7 +786,7 @@ export function TransferPage() {
   const filteredRecipients = mockRecipients.filter(
     (r) =>
       r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.accountNumber.includes(searchQuery)
+      r.accountNumber.includes(searchQuery),
   );
 
   // Render progress indicator
@@ -803,17 +800,15 @@ export function TransferPage() {
               step === currentStep
                 ? styles.stepActive
                 : step < currentStep
-                ? styles.stepCompleted
-                : styles.stepInactive
+                  ? styles.stepCompleted
+                  : styles.stepInactive
             }`}
           >
             {step}
           </div>
           {index < 3 && (
             <div
-              className={`${styles.stepLine} ${
-                step < currentStep ? styles.stepLineCompleted : ''
-              }`}
+              className={`${styles.stepLine} ${step < currentStep ? styles.stepLineCompleted : ''}`}
             />
           )}
         </>
@@ -944,9 +939,7 @@ export function TransferPage() {
       <div className={styles.summaryCard}>
         <div className={styles.summaryAmountSection}>
           <Text className={styles.summaryAmountLabel}>You're sending</Text>
-          <Text className={styles.summaryAmountValue}>
-            {formatCurrency(transferData.amount)}
-          </Text>
+          <Text className={styles.summaryAmountValue}>{formatCurrency(transferData.amount)}</Text>
         </div>
 
         <div className={styles.transferFlow}>
@@ -994,7 +987,12 @@ export function TransferPage() {
           <div className={styles.detailRow}>
             <span className={styles.detailLabel}>Date</span>
             <span className={styles.detailValue}>
-              Today, {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              Today,{' '}
+              {new Date().toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+              })}
             </span>
           </div>
         </div>
@@ -1009,9 +1007,14 @@ export function TransferPage() {
 
   // Render Success Screen
   const renderSuccess = () => (
-    <div className={`${styles.content} ${styles.contentCentered}`} style={{ gap: '32px', paddingTop: '48px' }}>
+    <div
+      className={`${styles.content} ${styles.contentCentered}`}
+      style={{ gap: '32px', paddingTop: '48px' }}
+    >
       <div className={styles.successIconContainer}>
-        <CheckmarkCircle24Filled style={{ width: '64px', height: '64px', color: colors.semantic.success.main }} />
+        <CheckmarkCircle24Filled
+          style={{ width: '64px', height: '64px', color: colors.semantic.success.main }}
+        />
       </div>
 
       <div className={styles.successMessage}>
@@ -1050,8 +1053,12 @@ export function TransferPage() {
         <div className={styles.detailRow}>
           <span className={styles.detailLabel}>Date & Time</span>
           <span className={styles.detailValue}>
-            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} at{' '}
-            {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+            {new Date().toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+            })}{' '}
+            at {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
           </span>
         </div>
 

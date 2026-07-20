@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { breakpoints } from '../theme/tokens';
 
 /**
@@ -35,24 +35,25 @@ export function useResponsive() {
 }
 
 /**
- * Hook for custom media query matching
+ * Hook for custom media query matching.
+ * useSyncExternalStore is the canonical pattern for subscribing to matchMedia: the first
+ * render already returns the real match (no false-then-update flash), and there is no
+ * setState-inside-effect to cascade renders.
  */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(false);
+  // One MediaQueryList per query: the snapshot selector runs on every render, and
+  // re-parsing the query through window.matchMedia each time is avoidable work.
+  const mediaQuery = useMemo(() => window.matchMedia(query), [query]);
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(query);
-    setMatches(mediaQuery.matches);
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      mediaQuery.addEventListener('change', onStoreChange);
+      return () => mediaQuery.removeEventListener('change', onStoreChange);
+    },
+    [mediaQuery],
+  );
 
-    const handler = (event: MediaQueryListEvent) => {
-      setMatches(event.matches);
-    };
-
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, [query]);
-
-  return matches;
+  return useSyncExternalStore(subscribe, () => mediaQuery.matches);
 }
 
 export default useResponsive;

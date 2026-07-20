@@ -1,9 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import {
-  makeStyles,
-  Text,
-} from '@fluentui/react-components';
+import { makeStyles, Text } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
   ArrowDownload24Regular,
@@ -59,7 +56,7 @@ const mockTransaction: Transaction = {
   id: '1',
   transactionId: 'TXN-2026010100089',
   type: 'withdrawal',
-  amount: 200.00,
+  amount: 200.0,
   description: 'ATM Withdrawal at Main Branch - Downtown Location',
   category: 'Cash Out',
   status: 'completed',
@@ -71,8 +68,8 @@ const mockTransaction: Transaction = {
     number: '**** **** **** 4521',
     type: 'Checking',
   },
-  balanceBefore: 12650.00,
-  balanceAfter: 12450.00,
+  balanceBefore: 12650.0,
+  balanceAfter: 12450.0,
   fee: 0,
 };
 
@@ -885,32 +882,32 @@ export function TransactionDetailPage() {
     transaction.type === 'withdrawal'
       ? styles.iconContainerWithdrawal
       : transaction.type === 'deposit'
-      ? styles.iconContainerDeposit
-      : styles.iconContainerTransfer
+        ? styles.iconContainerDeposit
+        : styles.iconContainerTransfer
   }`;
 
   const statusBadgeClass = `${styles.statusBadge} ${
     transaction.status === 'completed'
       ? styles.statusBadgeCompleted
       : transaction.status === 'pending'
-      ? styles.statusBadgePending
-      : styles.statusBadgeFailed
+        ? styles.statusBadgePending
+        : styles.statusBadgeFailed
   }`;
 
   const statusDotClass = `${styles.statusDot} ${
     transaction.status === 'completed'
       ? styles.statusDotCompleted
       : transaction.status === 'pending'
-      ? styles.statusDotPending
-      : styles.statusDotFailed
+        ? styles.statusDotPending
+        : styles.statusDotFailed
   }`;
 
   const statusTextClass = `${styles.statusText} ${
     transaction.status === 'completed'
       ? styles.statusTextCompleted
       : transaction.status === 'pending'
-      ? styles.statusTextPending
-      : styles.statusTextFailed
+        ? styles.statusTextPending
+        : styles.statusTextFailed
   }`;
 
   const handleBack = () => {
@@ -965,9 +962,7 @@ export function TransactionDetailPage() {
             <Text className={styles.navItem} onClick={() => navigate('/accounts')}>
               Accounts
             </Text>
-            <Text className={`${styles.navItem} ${styles.navItemActive}`}>
-              Transactions
-            </Text>
+            <Text className={`${styles.navItem} ${styles.navItemActive}`}>Transactions</Text>
             <Text className={styles.navItem} onClick={() => navigate('/transfer')}>
               Transfers
             </Text>
@@ -996,9 +991,7 @@ export function TransactionDetailPage() {
           <div>
             {/* Transaction Header (Mobile) */}
             <div className={styles.transactionHeader}>
-              <div className={iconContainerClass}>
-                {getTransactionIcon(transaction.type)}
-              </div>
+              <div className={iconContainerClass}>{getTransactionIcon(transaction.type)}</div>
               <Text
                 className={`${styles.transactionAmount} ${
                   isPositive ? styles.amountPositive : styles.amountNegative
@@ -1021,9 +1014,7 @@ export function TransactionDetailPage() {
             <div className={styles.mainCard}>
               {/* Transaction Summary (Desktop) */}
               <div className={styles.transactionSummary}>
-                <div className={iconContainerClass}>
-                  {getTransactionIcon(transaction.type)}
-                </div>
+                <div className={iconContainerClass}>{getTransactionIcon(transaction.type)}</div>
                 <div className={styles.transactionMainInfo}>
                   <Text className={styles.typeLabel}>
                     {getTransactionTypeLabel(transaction.type)}
@@ -1035,9 +1026,7 @@ export function TransactionDetailPage() {
                   >
                     {amountDisplay}
                   </Text>
-                  <Text className={styles.transactionDescription}>
-                    {transaction.description}
-                  </Text>
+                  <Text className={styles.transactionDescription}>{transaction.description}</Text>
                 </div>
                 <div className={styles.transactionStatus}>
                   <div className={statusBadgeClass}>
@@ -1231,13 +1220,9 @@ export function TransactionDetailPage() {
                 }`}
               >
                 {isPositive ? (
-                  <ArrowDownload20Regular
-                    style={{ color: colors.semantic.success.main }}
-                  />
+                  <ArrowDownload20Regular style={{ color: colors.semantic.success.main }} />
                 ) : (
-                  <ArrowUpload20Regular
-                    style={{ color: colors.semantic.error.main }}
-                  />
+                  <ArrowUpload20Regular style={{ color: colors.semantic.error.main }} />
                 )}
                 <Text
                   className={`${styles.changeText} ${

@@ -176,9 +176,13 @@ export function AmountInput({
   const [isFocused, setIsFocused] = useState(false);
   const [internalValue, setInternalValue] = useState(value.toString());
 
-  // Sync internal value with external value
+  // Sync internal value with external value.
+  // TODO(deposit/withdraw PRs): restructure this controlled/uncontrolled hybrid with the
+  // "adjust state during render" pattern when the component gets wired to real mutations —
+  // reworking the focus-guarded sync is that PR's concern, not this hygiene pass's.
   useEffect(() => {
     if (!isFocused) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- see TODO above
       setInternalValue(value === 0 ? '' : value.toString());
     }
   }, [value, isFocused]);
@@ -225,32 +229,19 @@ export function AmountInput({
     }
   };
 
-  const displayValue = value === 0 && !isFocused
-    ? placeholder
-    : formatDisplayAmount(value);
+  const displayValue = value === 0 && !isFocused ? placeholder : formatDisplayAmount(value);
 
   const showCursor = isFocused && !disabled;
 
   return (
-    <div
-      className={mergeClasses(
-        styles.container,
-        disabled && styles.disabled,
-        className
-      )}
-    >
+    <div className={mergeClasses(styles.container, disabled && styles.disabled, className)}>
       <div
         className={styles.inputWrapper}
         onClick={handleContainerClick}
         role="button"
         tabIndex={-1}
       >
-        <Text
-          className={mergeClasses(
-            styles.currency,
-            isFocused && styles.currencyFocused
-          )}
-        >
+        <Text className={mergeClasses(styles.currency, isFocused && styles.currencyFocused)}>
           {currency}
         </Text>
 
@@ -258,7 +249,7 @@ export function AmountInput({
           <Text
             className={mergeClasses(
               styles.amount,
-              value === 0 && !isFocused && styles.amountPlaceholder
+              value === 0 && !isFocused && styles.amountPlaceholder,
             )}
           >
             {displayValue}
@@ -291,7 +282,8 @@ export function AmountInput({
 
       {maxAmount && !error && (
         <Text className={styles.hint}>
-          Available: {currency}{formatDisplayAmount(maxAmount)}
+          Available: {currency}
+          {formatDisplayAmount(maxAmount)}
         </Text>
       )}
     </div>

@@ -111,7 +111,10 @@ export const apiSlice = createApi({
       providesTags: (_result, _error, id) => [{ type: 'Account', id }],
     }),
 
-    getAccountBalance: builder.query<{ balance: number; asOf: string }, { id: string; at?: string }>({
+    getAccountBalance: builder.query<
+      { balance: number; asOf: string },
+      { id: string; at?: string }
+    >({
       query: ({ id, at }) => ({
         url: `/accounts/${id}/balance`,
         params: at ? { at } : undefined,

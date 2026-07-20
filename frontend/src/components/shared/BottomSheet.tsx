@@ -184,7 +184,7 @@ export function BottomSheet({
   useEffect(() => {
     if (isOpen && sheetRef.current) {
       const firstFocusable = sheetRef.current.querySelector<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
       );
       firstFocusable?.focus();
     }
@@ -194,10 +194,7 @@ export function BottomSheet({
     <>
       {/* Overlay */}
       <div
-        className={mergeClasses(
-          styles.overlay,
-          isOpen && styles.overlayOpen
-        )}
+        className={mergeClasses(styles.overlay, isOpen && styles.overlayOpen)}
         onClick={onClose}
         aria-hidden="true"
       />
@@ -205,10 +202,7 @@ export function BottomSheet({
       {/* Sheet */}
       <div
         ref={sheetRef}
-        className={mergeClasses(
-          styles.sheet,
-          isOpen && styles.sheetOpen
-        )}
+        className={mergeClasses(styles.sheet, isOpen && styles.sheetOpen)}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? 'bottom-sheet-title' : undefined}
@@ -225,9 +219,7 @@ export function BottomSheet({
                   {title}
                 </Text>
               )}
-              {subtitle && (
-                <Text className={styles.subtitle}>{subtitle}</Text>
-              )}
+              {subtitle && <Text className={styles.subtitle}>{subtitle}</Text>}
             </div>
             {showCloseButton && (
               <button
@@ -243,9 +235,7 @@ export function BottomSheet({
         )}
 
         {/* Content */}
-        <div className={mergeClasses(styles.content, className)}>
-          {children}
-        </div>
+        <div className={mergeClasses(styles.content, className)}>{children}</div>
 
         {/* Footer */}
         {footer && <div className={styles.footer}>{footer}</div>}

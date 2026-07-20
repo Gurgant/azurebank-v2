@@ -1,5 +1,11 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
-import type { AuthState, LoginRequest, LoginResponse, RegisterRequest, User } from '../../types/auth';
+import type {
+  AuthState,
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  User,
+} from '../../types/auth';
 
 const initialState: AuthState = {
   user: null,
@@ -29,10 +35,10 @@ export const login = createAsyncThunk<LoginResponse, LoginRequest>(
       }
 
       return await response.json();
-    } catch (error) {
+    } catch {
       return rejectWithValue('Network error. Please try again.');
     }
-  }
+  },
 );
 
 export const register = createAsyncThunk<LoginResponse, RegisterRequest>(
@@ -52,10 +58,10 @@ export const register = createAsyncThunk<LoginResponse, RegisterRequest>(
       }
 
       return await response.json();
-    } catch (error) {
+    } catch {
       return rejectWithValue('Network error. Please try again.');
     }
-  }
+  },
 );
 
 const authSlice = createSlice({

@@ -133,19 +133,11 @@ export function IconContainer({
   const styles = useStyles();
 
   // Get gradient class if needed
-  const gradientClass = gradient
-    ? styles[`${variant}Gradient` as keyof typeof styles]
-    : undefined;
+  const gradientClass = gradient ? styles[`${variant}Gradient` as keyof typeof styles] : undefined;
 
   return (
     <div
-      className={mergeClasses(
-        styles.base,
-        styles[size],
-        styles[variant],
-        gradientClass,
-        className
-      )}
+      className={mergeClasses(styles.base, styles[size], styles[variant], gradientClass, className)}
       aria-hidden="true"
     >
       {children}

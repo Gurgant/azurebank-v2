@@ -219,7 +219,7 @@ export function ConfirmDialog({
   useEffect(() => {
     if (isOpen && dialogRef.current) {
       const firstFocusable = dialogRef.current.querySelector<HTMLElement>(
-        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
       );
       firstFocusable?.focus();
     }
@@ -233,19 +233,13 @@ export function ConfirmDialog({
 
   return (
     <div
-      className={mergeClasses(
-        styles.overlay,
-        isOpen && styles.overlayOpen
-      )}
+      className={mergeClasses(styles.overlay, isOpen && styles.overlayOpen)}
       onClick={handleOverlayClick}
       aria-hidden={!isOpen}
     >
       <div
         ref={dialogRef}
-        className={mergeClasses(
-          styles.dialog,
-          isOpen && styles.dialogOpen
-        )}
+        className={mergeClasses(styles.dialog, isOpen && styles.dialogOpen)}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
@@ -256,7 +250,7 @@ export function ConfirmDialog({
           <div
             className={mergeClasses(
               styles.iconContainer,
-              variant === 'danger' ? styles.iconDanger : styles.iconDefault
+              variant === 'danger' ? styles.iconDanger : styles.iconDefault,
             )}
           >
             <Warning24Regular />
@@ -294,9 +288,7 @@ export function ConfirmDialog({
           <Button
             className={mergeClasses(
               styles.button,
-              variant === 'danger'
-                ? styles.confirmButtonDanger
-                : styles.confirmButtonDefault
+              variant === 'danger' ? styles.confirmButtonDanger : styles.confirmButtonDefault,
             )}
             onClick={onConfirm}
             disabled={isLoading}

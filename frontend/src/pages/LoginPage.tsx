@@ -338,10 +338,12 @@ export function LoginPage() {
 
   const onSubmit = async (data: LoginFormData) => {
     dispatch(clearError());
-    const result = await dispatch(login({
-      email: data.email,
-      password: data.password,
-    }));
+    const result = await dispatch(
+      login({
+        email: data.email,
+        password: data.password,
+      }),
+    );
 
     if (login.fulfilled.match(result)) {
       navigate('/dashboard');
@@ -359,13 +361,11 @@ export function LoginPage() {
           <span className={styles.logoText}>AzureBank</span>
         </div>
 
-        <h1 className={styles.tagline}>
-          Banking Made Simple, Secure, and Smart
-        </h1>
+        <h1 className={styles.tagline}>Banking Made Simple, Secure, and Smart</h1>
 
         <p className={styles.taglineSubtext}>
-          Manage your finances with confidence. Experience modern banking
-          with powerful tools designed for your success.
+          Manage your finances with confidence. Experience modern banking with powerful tools
+          designed for your success.
         </p>
 
         <div className={styles.features}>
@@ -463,13 +463,8 @@ export function LoginPage() {
             </Field>
 
             <div className={styles.rememberRow}>
-              <Checkbox
-                label="Remember me"
-                {...register('rememberMe')}
-              />
-              <FluentLink href="/forgot-password">
-                Forgot password?
-              </FluentLink>
+              <Checkbox label="Remember me" {...register('rememberMe')} />
+              <FluentLink href="/forgot-password">Forgot password?</FluentLink>
             </div>
 
             <Button
@@ -502,9 +497,7 @@ export function LoginPage() {
 
           {/* Footer */}
           <div className={styles.footer}>
-            <Text className={styles.footerText}>
-              © 2024 AzureBank. All rights reserved.
-            </Text>
+            <Text className={styles.footerText}>© 2024 AzureBank. All rights reserved.</Text>
           </div>
         </div>
       </div>
