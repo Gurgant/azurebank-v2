@@ -78,14 +78,19 @@ public class OtlpEndpointGuardTests
     [Fact]
     public void ExceptionMessages_NeverEchoCredentials()
     {
-        // Startup errors are logged (and exported): a secret-bearing endpoint must be
-        // redacted to scheme://host:port in the message — user-info and query never appear.
+        // Startup errors are logged (and exported): a secret-bearing endpoint must be redacted
+        // to scheme://host:port in the message. Assert the SHAPE (no user-info, no path, no
+        // query markers), not just the sample secret values — a regression that echoed
+        // "/v1?token=..." while stripping only the known samples must fail here.
         var act = () => OtlpEndpointGuard.EnsureSecureExportEndpoint(
             "http://admin:hunter2@collector.example.com:4318/v1?token=tok123",
             isDevelopment: false, "Production");
 
         act.Should().Throw<InvalidOperationException>()
-            .Which.Message.Should().NotContain("hunter2").And.NotContain("admin").And.NotContain("tok123")
+            .Which.Message.Should()
+            .NotContain("hunter2").And.NotContain("admin").And.NotContain("tok123")
+            .And.NotContain("/v1").And.NotContain("token=").And.NotContain("?")
+            .And.NotContain("@")
             .And.Contain("http://collector.example.com:4318");
     }
 
@@ -93,10 +98,14 @@ public class OtlpEndpointGuardTests
     public void UnparseableEndpoint_MessageNeverEchoesTheRawValue()
     {
         // We cannot redact what we cannot parse — so the raw value is not echoed at all.
+        // BOTH assertions on purpose: NotContain(whole raw value) alone would still pass if
+        // the message echoed only a fragment, so the distinctive fragment is asserted too.
+        const string endpoint = "::secret-blob-pasted-by-mistake::";
+
         var act = () => OtlpEndpointGuard.EnsureSecureExportEndpoint(
-            "::secret-blob-pasted-by-mistake::", isDevelopment: false, "Production");
+            endpoint, isDevelopment: false, "Production");
 
         act.Should().Throw<InvalidOperationException>()
-            .Which.Message.Should().NotContain("secret-blob");
+            .Which.Message.Should().NotContain(endpoint).And.NotContain("secret-blob");
     }
 }
