@@ -29,8 +29,15 @@ export function RetryCountdown({ deadline, onElapsed }: RetryCountdownProps) {
 
   useEffect(() => {
     if (deadline <= Date.now()) {
-      onElapsedRef.current?.();
-      return;
+      // Deadline crossed between render and this effect: sync the display too — a stale
+      // positive countdown would otherwise stick, since no interval gets created. Runs
+      // from a task callback (setState in the effect body is a lint error), which also
+      // makes this branch fire onElapsed exactly once under StrictMode.
+      const timeout = setTimeout(() => {
+        setNow(Date.now());
+        onElapsedRef.current?.();
+      }, 0);
+      return () => clearTimeout(timeout);
     }
     const timer = setInterval(() => {
       setNow(Date.now());
