@@ -341,7 +341,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const styles = useStyles();
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(
-    accounts.length > 0 ? accounts[0] : null
+    accounts.length > 0 ? accounts[0] : null,
   );
   const [amount, setAmount] = useState(0);
   const [amountInput, setAmountInput] = useState('');
@@ -427,9 +427,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             </div>
             <Text className={styles.successTitle}>Withdrawal Successful!</Text>
             <Text className={styles.successAmount}>{formatCurrency(amount)}</Text>
-            <Text className={styles.successSubtitle}>
-              Withdrawn from {selectedAccount?.name}
-            </Text>
+            <Text className={styles.successSubtitle}>Withdrawn from {selectedAccount?.name}</Text>
           </div>
         ) : (
           <div className={styles.content}>
@@ -456,9 +454,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                     <Text className={styles.accountName}>{account.name}</Text>
                     <Text className={styles.accountNumber}>{account.accountNumber}</Text>
                   </div>
-                  <Text className={styles.accountBalance}>
-                    {formatCurrency(account.balance)}
-                  </Text>
+                  <Text className={styles.accountBalance}>{formatCurrency(account.balance)}</Text>
                 </div>
               ))}
             </div>
@@ -467,7 +463,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             <div className={styles.amountSection}>
               <Text className={styles.amountLabel}>Enter amount</Text>
               <div className={styles.amountInputWrapper}>
-                <span className={`${styles.amountCurrency} ${isOverBalance ? styles.amountInputError : ''}`}>
+                <span
+                  className={`${styles.amountCurrency} ${isOverBalance ? styles.amountInputError : ''}`}
+                >
                   $
                 </span>
                 <input
@@ -479,11 +477,12 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                   onChange={(e) => handleAmountChange(e.target.value)}
                 />
               </div>
-              <Text className={`${styles.availableBalance} ${isOverBalance ? styles.availableBalanceError : ''}`}>
+              <Text
+                className={`${styles.availableBalance} ${isOverBalance ? styles.availableBalanceError : ''}`}
+              >
                 {isOverBalance
                   ? `Exceeds available balance of ${formatCurrency(availableBalance)}`
-                  : `Available: ${formatCurrency(availableBalance)}`
-                }
+                  : `Available: ${formatCurrency(availableBalance)}`}
               </Text>
             </div>
 
@@ -530,7 +529,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               onClick={handleSubmit}
               disabled={isLoading || amount <= 0 || isOverBalance}
             >
-              {isLoading ? <Spinner size="tiny" /> : `Withdraw ${amount > 0 ? formatCurrency(amount) : ''}`}
+              {isLoading ? (
+                <Spinner size="tiny" />
+              ) : (
+                `Withdraw ${amount > 0 ? formatCurrency(amount) : ''}`
+              )}
             </Button>
           )}
         </div>

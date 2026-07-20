@@ -136,17 +136,21 @@ export function Card({
         fullWidth && styles.fullWidth,
         isClickable && styles.clickable,
         isOutlinedClickable && styles.outlinedClickable,
-        className
+        className,
       )}
       onClick={onClick}
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
-      onKeyDown={isClickable ? (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick?.();
-        }
-      } : undefined}
+      onKeyDown={
+        isClickable
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
     >
       {children}
     </div>

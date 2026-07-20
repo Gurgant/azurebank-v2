@@ -229,32 +229,19 @@ export function AmountInput({
     }
   };
 
-  const displayValue = value === 0 && !isFocused
-    ? placeholder
-    : formatDisplayAmount(value);
+  const displayValue = value === 0 && !isFocused ? placeholder : formatDisplayAmount(value);
 
   const showCursor = isFocused && !disabled;
 
   return (
-    <div
-      className={mergeClasses(
-        styles.container,
-        disabled && styles.disabled,
-        className
-      )}
-    >
+    <div className={mergeClasses(styles.container, disabled && styles.disabled, className)}>
       <div
         className={styles.inputWrapper}
         onClick={handleContainerClick}
         role="button"
         tabIndex={-1}
       >
-        <Text
-          className={mergeClasses(
-            styles.currency,
-            isFocused && styles.currencyFocused
-          )}
-        >
+        <Text className={mergeClasses(styles.currency, isFocused && styles.currencyFocused)}>
           {currency}
         </Text>
 
@@ -262,7 +249,7 @@ export function AmountInput({
           <Text
             className={mergeClasses(
               styles.amount,
-              value === 0 && !isFocused && styles.amountPlaceholder
+              value === 0 && !isFocused && styles.amountPlaceholder,
             )}
           >
             {displayValue}
@@ -295,7 +282,8 @@ export function AmountInput({
 
       {maxAmount && !error && (
         <Text className={styles.hint}>
-          Available: {currency}{formatDisplayAmount(maxAmount)}
+          Available: {currency}
+          {formatDisplayAmount(maxAmount)}
         </Text>
       )}
     </div>

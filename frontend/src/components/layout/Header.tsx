@@ -135,7 +135,7 @@ export function Header({
       className={mergeClasses(
         styles.header,
         variant === 'transparent' ? styles.headerTransparent : styles.headerDefault,
-        className
+        className,
       )}
     >
       {/* Left Section */}
@@ -143,12 +143,7 @@ export function Header({
         {leftContent ? (
           leftContent
         ) : showBack ? (
-          <button
-            className={styles.iconButton}
-            onClick={onBack}
-            aria-label="Go back"
-            type="button"
-          >
+          <button className={styles.iconButton} onClick={onBack} aria-label="Go back" type="button">
             <ChevronLeft24Regular />
           </button>
         ) : null}

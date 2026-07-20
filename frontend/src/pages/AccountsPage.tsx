@@ -1,9 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  makeStyles,
-  Text,
-} from '@fluentui/react-components';
+import { makeStyles, Text } from '@fluentui/react-components';
 import {
   Home24Regular,
   Wallet24Regular,
@@ -652,9 +649,7 @@ export function AccountsPage() {
             <Text className={styles.navItem} onClick={() => navigate('/dashboard')}>
               Dashboard
             </Text>
-            <Text className={`${styles.navItem} ${styles.navItemActive}`}>
-              Accounts
-            </Text>
+            <Text className={`${styles.navItem} ${styles.navItemActive}`}>Accounts</Text>
             <Text className={styles.navItem} onClick={() => navigate('/history')}>
               Transactions
             </Text>
@@ -732,10 +727,7 @@ export function AccountsPage() {
                   <ArrowUpload20Regular className={styles.actionBtnIcon} />
                   <Text className={styles.actionBtnText}>Withdraw</Text>
                 </button>
-                <button
-                  className={styles.accountActionBtn}
-                  onClick={handleTransfer}
-                >
+                <button className={styles.accountActionBtn} onClick={handleTransfer}>
                   <ArrowSwap24Regular className={styles.actionBtnIcon} />
                   <Text className={styles.actionBtnText}>Transfer</Text>
                 </button>

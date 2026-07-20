@@ -1,9 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import {
-  makeStyles,
-  Text,
-} from '@fluentui/react-components';
+import { makeStyles, Text } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
   Filter24Regular,
@@ -379,14 +376,78 @@ const useStyles = makeStyles({
 // ============================================
 
 const mockTransactions: Transaction[] = [
-  { id: '1', type: 'deposit', description: 'Salary Deposit', account: 'Main Account', amount: 5000, date: 'January 1, 2026', time: '10:30 AM' },
-  { id: '2', type: 'withdrawal', description: 'ATM Withdrawal', account: 'Main Account', amount: -200, date: 'January 1, 2026', time: '2:15 PM' },
-  { id: '3', type: 'transfer_out', description: 'Transfer to Sarah', account: 'Main Account', amount: -350, date: 'January 1, 2026', time: '4:45 PM' },
-  { id: '4', type: 'transfer_in', description: 'Transfer from Mike', account: 'Main Account', amount: 89.99, date: 'December 31, 2025', time: '11:20 AM' },
-  { id: '5', type: 'withdrawal', description: 'Online Purchase', account: 'Main Account', amount: -156.50, date: 'December 31, 2025', time: '3:30 PM' },
-  { id: '6', type: 'deposit', description: 'Refund - Amazon', account: 'Main Account', amount: 45, date: 'December 31, 2025', time: '5:00 PM' },
-  { id: '7', type: 'deposit', description: 'Freelance Payment', account: 'Main Account', amount: 1250, date: 'December 30, 2025', time: '9:15 AM' },
-  { id: '8', type: 'transfer_out', description: 'Rent Payment', account: 'Main Account', amount: -1500, date: 'December 30, 2025', time: '10:00 AM' },
+  {
+    id: '1',
+    type: 'deposit',
+    description: 'Salary Deposit',
+    account: 'Main Account',
+    amount: 5000,
+    date: 'January 1, 2026',
+    time: '10:30 AM',
+  },
+  {
+    id: '2',
+    type: 'withdrawal',
+    description: 'ATM Withdrawal',
+    account: 'Main Account',
+    amount: -200,
+    date: 'January 1, 2026',
+    time: '2:15 PM',
+  },
+  {
+    id: '3',
+    type: 'transfer_out',
+    description: 'Transfer to Sarah',
+    account: 'Main Account',
+    amount: -350,
+    date: 'January 1, 2026',
+    time: '4:45 PM',
+  },
+  {
+    id: '4',
+    type: 'transfer_in',
+    description: 'Transfer from Mike',
+    account: 'Main Account',
+    amount: 89.99,
+    date: 'December 31, 2025',
+    time: '11:20 AM',
+  },
+  {
+    id: '5',
+    type: 'withdrawal',
+    description: 'Online Purchase',
+    account: 'Main Account',
+    amount: -156.5,
+    date: 'December 31, 2025',
+    time: '3:30 PM',
+  },
+  {
+    id: '6',
+    type: 'deposit',
+    description: 'Refund - Amazon',
+    account: 'Main Account',
+    amount: 45,
+    date: 'December 31, 2025',
+    time: '5:00 PM',
+  },
+  {
+    id: '7',
+    type: 'deposit',
+    description: 'Freelance Payment',
+    account: 'Main Account',
+    amount: 1250,
+    date: 'December 30, 2025',
+    time: '9:15 AM',
+  },
+  {
+    id: '8',
+    type: 'transfer_out',
+    description: 'Rent Payment',
+    account: 'Main Account',
+    amount: -1500,
+    date: 'December 30, 2025',
+    time: '10:00 AM',
+  },
 ];
 
 // ============================================
@@ -395,11 +456,14 @@ const mockTransactions: Transaction[] = [
 
 function formatCurrency(amount: number): string {
   const prefix = amount >= 0 ? '+' : '';
-  return prefix + new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(Math.abs(amount));
+  return (
+    prefix +
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+    }).format(Math.abs(amount))
+  );
 }
 
 function getTransactionIcon(type: TransactionType) {
@@ -449,7 +513,9 @@ export function HistoryPage() {
       case 'withdrawals':
         return mockTransactions.filter((t) => t.type === 'withdrawal');
       case 'transfers':
-        return mockTransactions.filter((t) => t.type === 'transfer_out' || t.type === 'transfer_in');
+        return mockTransactions.filter(
+          (t) => t.type === 'transfer_out' || t.type === 'transfer_in',
+        );
       default:
         return mockTransactions;
     }
@@ -458,13 +524,17 @@ export function HistoryPage() {
   // Group by date
   const groupedTransactions = useMemo(
     () => groupTransactionsByDate(filteredTransactions),
-    [filteredTransactions]
+    [filteredTransactions],
   );
 
   // Calculate summary
   const summary = useMemo(() => {
-    const income = mockTransactions.filter((t) => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
-    const expenses = mockTransactions.filter((t) => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const income = mockTransactions
+      .filter((t) => t.amount > 0)
+      .reduce((sum, t) => sum + t.amount, 0);
+    const expenses = mockTransactions
+      .filter((t) => t.amount < 0)
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
     return { income, expenses, net: income - expenses };
   }, []);
 
@@ -565,7 +635,9 @@ export function HistoryPage() {
                       role="button"
                       tabIndex={0}
                     >
-                      <div className={`${styles.transactionIcon} ${getIconStyle(transaction.type)}`}>
+                      <div
+                        className={`${styles.transactionIcon} ${getIconStyle(transaction.type)}`}
+                      >
                         <IconComponent />
                       </div>
                       <div className={styles.transactionDetails}>
@@ -573,7 +645,9 @@ export function HistoryPage() {
                         <Text className={styles.transactionSubtitle}>{transaction.account}</Text>
                       </div>
                       <div className={styles.transactionRight}>
-                        <Text className={`${styles.transactionAmount} ${getAmountStyle(transaction.type, transaction.amount)}`}>
+                        <Text
+                          className={`${styles.transactionAmount} ${getAmountStyle(transaction.type, transaction.amount)}`}
+                        >
                           {formatCurrency(transaction.amount)}
                         </Text>
                         <Text className={styles.transactionTime}>{transaction.time}</Text>

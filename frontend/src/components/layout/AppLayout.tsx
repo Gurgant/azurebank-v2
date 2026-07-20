@@ -154,19 +154,14 @@ export function AppLayout({
         {/* Main Content Area */}
         <main className={styles.desktopMain}>
           {/* Desktop Header (optional - usually shows page title) */}
-          {!hideHeader && header && (
-            <Header
-              {...header}
-              className={styles.desktopHeader}
-            />
-          )}
+          {!hideHeader && header && <Header {...header} className={styles.desktopHeader} />}
 
           {/* Page Content */}
           <div
             className={mergeClasses(
               styles.desktopContent,
               fullHeight && styles.desktopContentFullHeight,
-              className
+              className,
             )}
           >
             {children}
@@ -188,7 +183,7 @@ export function AppLayout({
           styles.mobileContent,
           hideBottomNav && styles.mobileContentNoNav,
           fullHeight && styles.mobileContentFullHeight,
-          className
+          className,
         )}
       >
         {children}

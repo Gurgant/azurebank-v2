@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  makeStyles,
-  Text,
-  Button,
-  Switch,
-} from '@fluentui/react-components';
+import { makeStyles, Text, Button, Switch } from '@fluentui/react-components';
 import {
   Home24Regular,
   Wallet24Regular,
@@ -1297,8 +1292,8 @@ export function SettingsPage() {
                   <Text className={styles.helpTitle}>Need Help?</Text>
                 </div>
                 <Text className={styles.helpText}>
-                  If you have questions about your account settings or need assistance, our
-                  support team is available 24/7.
+                  If you have questions about your account settings or need assistance, our support
+                  team is available 24/7.
                 </Text>
                 <Text className={styles.helpLink}>Contact Support →</Text>
               </div>

@@ -181,51 +181,43 @@ export function TransactionItem({
 
   return (
     <div
-      className={mergeClasses(
-        styles.container,
-        onClick && styles.clickable,
-        className
-      )}
+      className={mergeClasses(styles.container, onClick && styles.clickable, className)}
       onClick={handleClick}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
-      onKeyDown={onClick ? (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleClick();
-        }
-      } : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleClick();
+              }
+            }
+          : undefined
+      }
     >
       <IconContainer variant={getIconVariant(type)} size="md">
         {getTransactionIcon(type)}
       </IconContainer>
 
       <div className={styles.content}>
-        <Text className={styles.description}>
-          {counterparty || description}
-        </Text>
-        <Text className={styles.meta}>
-          {format(date, 'MMM d, yyyy')}
-        </Text>
+        <Text className={styles.description}>{counterparty || description}</Text>
+        <Text className={styles.meta}>{format(date, 'MMM d, yyyy')}</Text>
       </div>
 
       <div className={styles.amountContainer}>
         <Text
           className={mergeClasses(
             styles.amount,
-            isPositive ? styles.amountPositive : styles.amountNegative
+            isPositive ? styles.amountPositive : styles.amountNegative,
           )}
         >
           {formatAmount(amount, type)}
         </Text>
-        <Text className={styles.typeLabel}>
-          {getTypeLabel(type)}
-        </Text>
+        <Text className={styles.typeLabel}>{getTypeLabel(type)}</Text>
       </div>
 
-      {showArrow && onClick && (
-        <ChevronRight24Regular className={styles.arrow} />
-      )}
+      {showArrow && onClick && <ChevronRight24Regular className={styles.arrow} />}
     </div>
   );
 }

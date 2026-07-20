@@ -272,17 +272,10 @@ export function Sidebar({
 
       {/* User Section */}
       <div className={styles.userSection}>
-        <Avatar
-          name={userName}
-          src={userAvatar}
-          size="md"
-          variant="primary"
-        />
+        <Avatar name={userName} src={userAvatar} size="md" variant="primary" />
         <div className={styles.userInfo}>
           <Text className={styles.userName}>{userName}</Text>
-          {userEmail && (
-            <Text className={styles.userEmail}>{userEmail}</Text>
-          )}
+          {userEmail && <Text className={styles.userEmail}>{userEmail}</Text>}
         </div>
       </div>
 
@@ -296,21 +289,14 @@ export function Sidebar({
               key={item.path}
               className={mergeClasses(
                 styles.navItem,
-                active ? styles.navItemActive : styles.navItemInactive
+                active ? styles.navItemActive : styles.navItemInactive,
               )}
               onClick={() => navigate(item.path)}
               aria-current={active ? 'page' : undefined}
               type="button"
             >
-              <div className={styles.navIcon}>
-                {active ? item.activeIcon : item.icon}
-              </div>
-              <Text
-                className={mergeClasses(
-                  styles.navLabel,
-                  active && styles.navLabelActive
-                )}
-              >
+              <div className={styles.navIcon}>{active ? item.activeIcon : item.icon}</div>
+              <Text className={mergeClasses(styles.navLabel, active && styles.navLabelActive)}>
                 {item.label}
               </Text>
             </button>
@@ -321,11 +307,7 @@ export function Sidebar({
       {/* Footer Actions */}
       <div className={styles.footer}>
         {onSettings && (
-          <button
-            className={styles.footerButton}
-            onClick={onSettings}
-            type="button"
-          >
+          <button className={styles.footerButton} onClick={onSettings} type="button">
             <Settings24Regular className={styles.navIcon} />
             <Text className={styles.navLabel}>Settings</Text>
           </button>

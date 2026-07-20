@@ -117,12 +117,7 @@ export function Divider({
     );
   }
 
-  return (
-    <div
-      className={mergeClasses(lineClass, spacingClass, className)}
-      role="separator"
-    />
-  );
+  return <div className={mergeClasses(lineClass, spacingClass, className)} role="separator" />;
 }
 
 export default Divider;

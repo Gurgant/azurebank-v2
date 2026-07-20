@@ -139,11 +139,7 @@ export function QuickActionButton({
 
   return (
     <button
-      className={mergeClasses(
-        styles.button,
-        highlighted && styles.highlighted,
-        className
-      )}
+      className={mergeClasses(styles.button, highlighted && styles.highlighted, className)}
       onClick={onClick}
       disabled={disabled}
       type="button"
@@ -151,17 +147,12 @@ export function QuickActionButton({
       <div
         className={mergeClasses(
           styles.iconContainer,
-          highlighted ? styles.iconHighlighted : iconVariantClass
+          highlighted ? styles.iconHighlighted : iconVariantClass,
         )}
       >
         {icon}
       </div>
-      <Text
-        className={mergeClasses(
-          styles.label,
-          highlighted && styles.labelHighlighted
-        )}
-      >
+      <Text className={mergeClasses(styles.label, highlighted && styles.labelHighlighted)}>
         {label}
       </Text>
     </button>

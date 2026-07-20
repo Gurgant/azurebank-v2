@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import {
-  makeStyles,
-  Text,
-  Button,
-  Spinner,
-} from '@fluentui/react-components';
+import { makeStyles, Text, Button, Spinner } from '@fluentui/react-components';
 import {
   ArrowDownload24Regular,
   ArrowUpload24Regular,
@@ -663,7 +658,9 @@ export function DashboardPage() {
         <div className={styles.headerRight}>
           <div className={styles.userMenu}>
             <Avatar initials={mockUser.initials} size="sm" />
-            <span className={styles.userName}>{mockUser.firstName} {mockUser.lastName}</span>
+            <span className={styles.userName}>
+              {mockUser.firstName} {mockUser.lastName}
+            </span>
             <ChevronRight24Regular />
           </div>
         </div>
@@ -680,9 +677,7 @@ export function DashboardPage() {
               <span className={styles.greetingLabel} style={{ display: 'none' }}></span>
               {getGreeting()}, {mockUser.firstName}
             </Text>
-            <Text className={styles.greetingSubtitle}>
-              Here's an overview of your accounts
-            </Text>
+            <Text className={styles.greetingSubtitle}>Here's an overview of your accounts</Text>
           </div>
 
           {/* Balance Cards */}
@@ -705,7 +700,9 @@ export function DashboardPage() {
             <div className={styles.secondaryCard}>
               <div className={styles.accountInfo}>
                 <Text className={styles.secondaryAccountName}>{secondaryAccount.name}</Text>
-                <Text className={styles.secondaryAccountNumber}>{secondaryAccount.accountNumber}</Text>
+                <Text className={styles.secondaryAccountNumber}>
+                  {secondaryAccount.accountNumber}
+                </Text>
               </div>
               <div className={styles.balanceInfo}>
                 <Text className={styles.secondaryBalanceLabel}>Available Balance</Text>

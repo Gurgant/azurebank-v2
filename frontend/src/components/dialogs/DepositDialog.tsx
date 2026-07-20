@@ -323,7 +323,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const styles = useStyles();
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(
-    accounts.length > 0 ? accounts[0] : null
+    accounts.length > 0 ? accounts[0] : null,
   );
   const [amount, setAmount] = useState(0);
   const [amountInput, setAmountInput] = useState('');
@@ -401,9 +401,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             </div>
             <Text className={styles.successTitle}>Deposit Successful!</Text>
             <Text className={styles.successAmount}>{formatCurrency(amount)}</Text>
-            <Text className={styles.successSubtitle}>
-              Deposited to {selectedAccount?.name}
-            </Text>
+            <Text className={styles.successSubtitle}>Deposited to {selectedAccount?.name}</Text>
           </div>
         ) : (
           <div className={styles.content}>
@@ -423,9 +421,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                     <Text className={styles.accountName}>{account.name}</Text>
                     <Text className={styles.accountNumber}>{account.accountNumber}</Text>
                   </div>
-                  <Text className={styles.accountBalance}>
-                    {formatCurrency(account.balance)}
-                  </Text>
+                  <Text className={styles.accountBalance}>{formatCurrency(account.balance)}</Text>
                 </div>
               ))}
             </div>
@@ -488,7 +484,11 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               onClick={handleSubmit}
               disabled={isLoading || amount <= 0}
             >
-              {isLoading ? <Spinner size="tiny" /> : `Deposit ${amount > 0 ? formatCurrency(amount) : ''}`}
+              {isLoading ? (
+                <Spinner size="tiny" />
+              ) : (
+                `Deposit ${amount > 0 ? formatCurrency(amount) : ''}`
+              )}
             </Button>
           )}
         </div>

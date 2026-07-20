@@ -188,7 +188,7 @@ export function BottomNav({ items = defaultNavItems, className }: BottomNavProps
             key={item.path}
             className={mergeClasses(
               styles.navItem,
-              active ? styles.navItemActive : styles.navItemInactive
+              active ? styles.navItemActive : styles.navItemInactive,
             )}
             onClick={() => navigate(item.path)}
             aria-label={item.label}
@@ -201,12 +201,7 @@ export function BottomNav({ items = defaultNavItems, className }: BottomNavProps
                 {active ? item.activeIcon : item.icon}
               </div>
             </div>
-            <Text
-              className={mergeClasses(
-                styles.label,
-                active && styles.labelActive
-              )}
-            >
+            <Text className={mergeClasses(styles.label, active && styles.labelActive)}>
               {item.label}
             </Text>
           </button>

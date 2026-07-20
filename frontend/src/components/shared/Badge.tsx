@@ -136,14 +136,7 @@ export function Badge({
   }[variant];
 
   return (
-    <span
-      className={mergeClasses(
-        styles.base,
-        styles[size],
-        styles[variant],
-        className
-      )}
-    >
+    <span className={mergeClasses(styles.base, styles[size], styles[variant], className)}>
       {dot && <span className={mergeClasses(styles.dot, dotColorClass)} />}
       {icon && <span className={styles.icon}>{icon}</span>}
       {children}
