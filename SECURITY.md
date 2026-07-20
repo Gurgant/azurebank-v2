@@ -52,9 +52,10 @@ Out of scope:
 - No secrets in source code
 
 ### Session Security
-- HTTP-only, Secure, SameSite cookies
-- Session timeout after inactivity
-- CSRF protection via SameSite cookies
+- `__Host-` prefixed, HTTP-only, Secure, SameSite=Strict session cookie in production (ADR-0018)
+- Session cookie (no Expires) — lifetime enforced server-side: inactivity + absolute timeouts
+- CSRF protection: SameSite=Strict backed by Fetch-Metadata rejection of cross-site state-changing requests
+- Same-origin topology — the BFF registers no CORS; the JWT never reaches the browser (ADR-0001)
 
 ## Dependencies
 

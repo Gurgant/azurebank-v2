@@ -30,6 +30,7 @@ public class BffAuthController : ControllerBase
     private readonly ISessionService _sessionService;
     private readonly BffSessionOptions _sessionOptions;
     private readonly SecurityOptions _securityOptions;
+    private readonly IWebHostEnvironment _environment;
     private readonly ILogger<BffAuthController> _logger;
 
     // Shared JSON options with enum string converter for API responses
@@ -44,12 +45,14 @@ public class BffAuthController : ControllerBase
         ISessionService sessionService,
         IOptions<BffSessionOptions> sessionOptions,
         IOptions<SecurityOptions> securityOptions,
+        IWebHostEnvironment environment,
         ILogger<BffAuthController> logger)
     {
         _httpClient = httpClientFactory.CreateClient("BackendApi");
         _sessionService = sessionService;
         _sessionOptions = sessionOptions.Value;
         _securityOptions = securityOptions.Value;
+        _environment = environment;
         _logger = logger;
     }
 
@@ -70,7 +73,7 @@ public class BffAuthController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
-                return StatusCode((int)response.StatusCode, JsonDocument.Parse(content).RootElement);
+                return ForwardUpstreamError(response, content);
             }
 
             var apiResponse = JsonSerializer.Deserialize<ApiResponse<LoginResponse>>(content,
@@ -85,7 +88,7 @@ public class BffAuthController : ControllerBase
                 loginResponse.User);
 
             // Set HTTP-only session cookie
-            SetSessionCookie(sessionId, loginResponse.ExpiresAt);
+            SetSessionCookie(sessionId);
 
             _logger.LogInformation("User {UserId} logged in via BFF", loginResponse.User.Id);
 
@@ -135,7 +138,7 @@ public class BffAuthController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
-                return StatusCode((int)response.StatusCode, JsonDocument.Parse(content).RootElement);
+                return ForwardUpstreamError(response, content);
             }
 
             var apiResponse = JsonSerializer.Deserialize<ApiResponse<RegisterResponse>>(content,
@@ -150,7 +153,7 @@ public class BffAuthController : ControllerBase
                 registerResponse.User);
 
             // Set HTTP-only session cookie
-            SetSessionCookie(sessionId, registerResponse.Token.ExpiresAt);
+            SetSessionCookie(sessionId);
 
             _logger.LogInformation("User {UserId} registered via BFF", registerResponse.User.Id);
 
@@ -237,7 +240,10 @@ public class BffAuthController : ControllerBase
             _logger.LogInformation("User logged out via BFF");
         }
 
-        Response.Cookies.Delete(_sessionOptions.CookieName);
+        // The deletion must carry the SAME attributes as the append: browsers match
+        // cookies by name+path+attributes, and a __Host- cookie in particular is only
+        // evicted by a Secure, Path=/ expiration.
+        Response.Cookies.Delete(_sessionOptions.CookieName, BuildSessionCookieOptions());
         return Ok(ApiResponse.Success("Logged out successfully"));
     }
 
@@ -301,7 +307,7 @@ public class BffAuthController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
-                return StatusCode((int)response.StatusCode, JsonDocument.Parse(content).RootElement);
+                return ForwardUpstreamError(response, content);
             }
 
             var apiResponse = JsonSerializer.Deserialize<ApiResponse<PinVerifyResult>>(content,
@@ -382,7 +388,7 @@ public class BffAuthController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
-                return StatusCode((int)response.StatusCode, JsonDocument.Parse(content).RootElement);
+                return ForwardUpstreamError(response, content);
             }
 
             // Update cached user info to reflect HasPin = true
@@ -419,18 +425,51 @@ public class BffAuthController : ControllerBase
     /// <summary>
     /// Sets the session cookie with security attributes.
     /// </summary>
-    private void SetSessionCookie(string sessionId, DateTime expiresAt)
+    private void SetSessionCookie(string sessionId)
     {
-        var cookieOptions = new CookieOptions
+        Response.Cookies.Append(_sessionOptions.CookieName, sessionId, BuildSessionCookieOptions());
+    }
+
+    private CookieOptions BuildSessionCookieOptions()
+    {
+        return new CookieOptions
         {
-            HttpOnly = true,           // Not accessible via JavaScript
-            Secure = true,             // HTTPS only
+            HttpOnly = true,                 // Not accessible via JavaScript
+            // The dev browser loop runs over http://localhost (Vite proxy -> BFF), where
+            // Safari refuses Secure cookies outright; everywhere else Secure is mandatory
+            // (and required by the __Host- prefix applied outside Development).
+            Secure = !_environment.IsDevelopment(),
             SameSite = SameSiteMode.Strict,  // CSRF protection
-            Expires = expiresAt,
+            // No Expires/Max-Age: a SESSION cookie, gone when the browser closes. A bank
+            // session persisted to disk until the JWT expiry was wrong; lifetime is
+            // enforced server-side anyway (inactivity + absolute timeouts in the store).
             Path = "/"
         };
+    }
 
-        Response.Cookies.Append(_sessionOptions.CookieName, sessionId, cookieOptions);
+    /// <summary>
+    /// Forwards an upstream error response preserving its status code and JSON body.
+    /// A non-JSON body (proxy HTML, empty 502) must not escape as an unhandled 500 —
+    /// it becomes a generic 502 ProblemDetails instead.
+    /// </summary>
+    private IActionResult ForwardUpstreamError(HttpResponseMessage response, string content)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(content);
+            // Clone: the element must outlive the disposed document.
+            return StatusCode((int)response.StatusCode, document.RootElement.Clone());
+        }
+        catch (JsonException)
+        {
+            _logger.LogWarning(
+                "Upstream returned a non-JSON error body (status {StatusCode})",
+                (int)response.StatusCode);
+            return Problem(
+                title: "Bad Gateway",
+                detail: "Upstream service returned an invalid response",
+                statusCode: StatusCodes.Status502BadGateway);
+        }
     }
 
     #endregion
