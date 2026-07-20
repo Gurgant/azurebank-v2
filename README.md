@@ -166,7 +166,7 @@ log-injection barrier via a model pack.
 
 ## Honest status
 
-- Backend: builds clean (0 warnings); full test suites green (518 API +
+- Backend: builds clean (0 warnings); full test suites green (523 API +
   22 BFF passes; 29 explicit SQL-Server-gated skips, which pass against a real
   database and in the CI SQL job). Both auth modes (JWT and BFF cookie)
   verified live. Monetary operations are idempotent and concurrency-safe

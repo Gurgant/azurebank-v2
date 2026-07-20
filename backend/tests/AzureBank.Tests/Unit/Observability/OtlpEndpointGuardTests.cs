@@ -61,4 +61,42 @@ public class OtlpEndpointGuardTests
 
         act.Should().Throw<InvalidOperationException>().WithMessage("*not a valid absolute URI*");
     }
+
+    [Theory]
+    [InlineData("ftp://collector.example.com:4318")]
+    [InlineData("file:///var/otlp")]
+    [InlineData("ws://collector.example.com:4318")]
+    public void UnsupportedScheme_FailsClosedInProduction(string endpoint)
+    {
+        // ALLOWLIST semantics: only https and loopback http pass. Anything else — even a
+        // scheme nobody would deliberately configure — is a config error, not a pass.
+        var act = () => OtlpEndpointGuard.EnsureSecureExportEndpoint(endpoint, isDevelopment: false, "Production");
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*unsupported scheme*");
+    }
+
+    [Fact]
+    public void ExceptionMessages_NeverEchoCredentials()
+    {
+        // Startup errors are logged (and exported): a secret-bearing endpoint must be
+        // redacted to scheme://host:port in the message — user-info and query never appear.
+        var act = () => OtlpEndpointGuard.EnsureSecureExportEndpoint(
+            "http://admin:hunter2@collector.example.com:4318/v1?token=tok123",
+            isDevelopment: false, "Production");
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().NotContain("hunter2").And.NotContain("admin").And.NotContain("tok123")
+            .And.Contain("http://collector.example.com:4318");
+    }
+
+    [Fact]
+    public void UnparseableEndpoint_MessageNeverEchoesTheRawValue()
+    {
+        // We cannot redact what we cannot parse — so the raw value is not echoed at all.
+        var act = () => OtlpEndpointGuard.EnsureSecureExportEndpoint(
+            "::secret-blob-pasted-by-mistake::", isDevelopment: false, "Production");
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().NotContain("secret-blob");
+    }
 }
