@@ -1,0 +1,45 @@
+# Grafana LGTM — Loki (logs) + Grafana (UI) + Tempo (traces) + Prometheus/Mimir (metrics),
+# all in ONE container. The local observability backend for AzureBank: the API and BFF export
+# OTLP here when OTEL_EXPORTER_OTLP_ENDPOINT points at it.
+#
+#   docker compose -f observability/docker-compose.yml up -d
+#   Grafana UI:  http://localhost:3000   (anonymous admin — dev only)
+#
+# Run the API against it (opt-in — no endpoint set ⇒ no export, so tests stay quiet):
+#   bash:
+#     OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+#     OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+#     dotnet run --project backend/src/AzureBank.Api
+#   PowerShell:
+#     $env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"
+#     $env:OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
+#     dotnet run --project backend/src/AzureBank.Api
+#
+# ⚠ Use 127.0.0.1, NOT localhost. On Windows the .NET HttpClient resolves "localhost" to
+#   ::1 (IPv6) first, and Docker Desktop's IPv6 port-forward does NOT deliver to the
+#   container — the OTLP POSTs vanish with no error (collector shows 0 accepted, 0 refused).
+#   Forcing IPv4 (127.0.0.1) makes the export land. http/protobuf (4318) over gRPC (4317)
+#   for the same reason: it is the most robust path against a local collector on .NET.
+#
+# DEV / DEMO ONLY: telemetry is in-memory and non-persistent (gone on restart). Not for
+# production — a real deployment would run Loki/Tempo/Mimir + Grafana as managed services.
+services:
+  lgtm:
+    # Pinned by digest for reproducibility (this is the v0.29.1 build). Bump deliberately, not by :latest drift.
+    image: grafana/otel-lgtm@sha256:b4da8bf6b1b44f6f683883869619eb9781465c642ce5f2d70591fb27094ddb1c
+    container_name: azurebank-lgtm
+    ports:
+      # Bound to LOOPBACK only: Grafana runs with anonymous admin (dev convenience) and must never
+      # be reachable from the LAN. The API/BFF export from the host, so 127.0.0.1 is sufficient.
+      # OTLP gRPC (4317) is intentionally NOT published — the apps use http/protobuf on 4318 (see
+      # the 127.0.0.1/IPv6 note above); publishing an unused port is needless attack surface.
+      - "127.0.0.1:3000:3000"   # Grafana UI
+      - "127.0.0.1:4318:4318"   # OTLP / HTTP (http/protobuf)
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    # The all-in-one stack (Grafana+Loki+Tempo+Prometheus+collector) is memory-hungry; cap it so a
+    # runaway can't starve the host. Raise if local ingestion volume grows.
+    # No restart policy on purpose: a dev/demo stack must not resurrect itself on every boot.
+    mem_limit: 2g

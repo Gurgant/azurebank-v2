@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Observability;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Transfer;
@@ -173,9 +174,12 @@ public class TransferService : ITransferService
 
                         await dbTransaction.CommitAsync();
 
+                        // No amount in the log line: logs are exported (Loki), and a money amount
+                        // is financial data — the transaction number is the audit-trail key.
                         _logger.LogInformation(
-                            "Transfer of {Amount:C} from {SenderTag} to {RecipientTag} completed. Transaction: {TransactionNumber}",
-                            request.Amount, senderUser.AzureTag, recipient.AzureTag, transactionNumber);
+                            "Transfer from {SenderTag} to {RecipientTag} completed. Transaction: {TransactionNumber}",
+                            senderUser.AzureTag, recipient.AzureTag, transactionNumber);
+                        ApiMetrics.Transfers.Add(1, new KeyValuePair<string, object?>("azurebank.kind", "external"));
 
                         return new TransferResponse
                         {
@@ -314,9 +318,11 @@ public class TransferService : ITransferService
 
                         await dbTransaction.CommitAsync();
 
+                        // No amount in the log line (financial data in an exported log — see above).
                         _logger.LogInformation(
-                            "Internal transfer of {Amount:C} from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
-                            request.Amount, fromAccount.Id, toAccount.Id, transactionNumber);
+                            "Internal transfer from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
+                            fromAccount.Id, toAccount.Id, transactionNumber);
+                        ApiMetrics.Transfers.Add(1, new KeyValuePair<string, object?>("azurebank.kind", "internal"));
 
                         return new InternalTransferResponse
                         {

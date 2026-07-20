@@ -32,7 +32,7 @@ the original private repositories and backup archives, not in this repo.
 ```bash
 cd backend
 dotnet build AzureBank.slnx
-dotnet test                     # 383 passing, 17 SQL-Server-only skips
+dotnet test                     # all green; SQL-Server-gated proofs skip without a database
 ```
 
 The SQL-Server-gated proofs (idempotency single-execution under 24 parallel
@@ -133,14 +133,47 @@ The guarantee is proven by tests: 24 byte-identical parallel requests with one
 key → exactly one execution, balances mathematically exact, on EF InMemory
 and on real SQL Server (3 deterministic rounds per run, also in CI).
 
+## Observability
+
+Both services ship the three pillars — traces, metrics and logs — over OpenTelemetry,
+correlated end-to-end ([ADR-0016](docs/adr/0016-observability-three-pillars.md)):
+
+```bash
+docker compose -f observability/docker-compose.yml up -d   # Grafana LGTM on 127.0.0.1:3000
+
+# then run each service with (PowerShell: $env:NAME = "value"):
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # 127.0.0.1, NOT localhost (Windows/Docker IPv6 gotcha)
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+```
+
+- **One trace across the gateway**: a request through the BFF is a single trace —
+  BFF server span → YARP forwarder → HttpClient → API server → SQL — on one trace id.
+- **Logs carry `trace_id`/`span_id`** (Serilog → OTLP → Loki), so Grafana pivots
+  log↔trace↔metric; every ProblemDetails carries the bare 32-hex `traceId` that pastes
+  straight into Tempo search.
+- **Domain metrics** (`azurebank.logins|transfers|idempotency.replays`) with strictly
+  low-cardinality tags, the rate-limiter meter (a brute-force burst is an alertable series),
+  and trace-linked exemplars.
+- **Health probes**: `/health/live` + `/health/ready` on both services; the BFF reports
+  *Degraded* (not Unhealthy) on an API blip, so one hiccup can't evict the fleet.
+- Export is **opt-in**: without the env var, tests and dev runs emit nothing.
+
+Telemetry is PII-safe by design ([ADR-0017](docs/adr/0017-pii-redaction-codeql-barrier.md)):
+emails are masked through the .NET compliance stack (`DataClassification` + `Redactor`),
+amounts never appear in log lines, user-controlled values pass a central `LogSanitizer`
+whose contract is pinned by an exhaustive test sweep and declared to CodeQL as a
+log-injection barrier via a model pack.
+
 ## Honest status
 
-- Backend: builds clean (0 warnings); full test suite green (383 pass / 17
-  explicit SQL-Server-gated skips, which pass against a real database and in
-  the CI SQL job). Both auth modes (JWT and BFF cookie) verified live.
-  Monetary operations are idempotent and concurrency-safe (ADR-0009).
+- Backend: builds clean (0 warnings); full test suites green (523 API +
+  22 BFF passes; 29 explicit SQL-Server-gated skips, which pass against a real
+  database and in the CI SQL job). Both auth modes (JWT and BFF cookie)
+  verified live. Monetary operations are idempotent and concurrency-safe
+  (ADR-0009). Observability verified live against the LGTM stack: one
+  cross-service trace, correlated logs in Loki, metrics with exemplars.
 - Frontend: builds and renders; **not yet wired** to the backend API. The
   wiring must generate an `Idempotency-Key` per user intent (retries reuse it).
 - Known gaps tracked in `docs/design/`: refresh tokens, persistent BFF
-  session store, frontend/API contract reconciliation, API-side PIN attempt
-  limiting, BFF rate-limiter attachment.
+  session store, frontend/API contract reconciliation; observability
+  follow-ups listed in ADR-0016 "Residuals".

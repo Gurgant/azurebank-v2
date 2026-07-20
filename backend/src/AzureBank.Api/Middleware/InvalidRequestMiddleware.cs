@@ -49,8 +49,8 @@ public class InvalidRequestMiddleware
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         context.Response.ContentType = "application/json";
 
-        // Get trace ID for debugging
-        var traceId = Activity.Current?.Id ?? context.TraceIdentifier;
+        // Bare 32-hex trace id — pastes straight into Tempo/Grafana search.
+        var traceId = Activity.Current?.TraceId.ToString() ?? context.TraceIdentifier;
 
         // Build RFC 7807 Problem Details response
         var problemDetails = new

@@ -21,6 +21,19 @@
 
   <ItemGroup Label="Logging">
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
+  </ItemGroup>
+
+  <ItemGroup Label="Observability (OpenTelemetry)">
+    <!-- No SqlClient instrumentation: the BFF has no database. The forwarder + named
+         HttpClient calls to the API are covered by the Http instrumentation; the YARP
+         forwarder SPAN comes via AddSource (YARP ships no Meter — see the observability
+         extension, which is the canonical doc for that decision). -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>
 
   <ItemGroup Label="Project References">

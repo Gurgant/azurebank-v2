@@ -52,15 +52,35 @@
          GHSA-w3x6-4m5h-cxqf (NU1903). Referenced by AzureBank.Infrastructure. -->
     <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.9" />
   </ItemGroup>
+  <ItemGroup Label="Compliance">
+    <!-- .NET compliance stack (DataClassification + Redactor + IRedactorProvider) used to
+         mask PII before it enters the logging pipeline — logs are exported over OTLP (Loki),
+         so anything logged raw leaves the process. Ships on its own release train (10.x
+         monthly), separate from the 10.0.x runtime packages above. -->
+    <PackageVersion Include="Microsoft.Extensions.Compliance.Redaction" Version="10.8.0" />
+  </ItemGroup>
   <ItemGroup Label="Logging">
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <!-- Exports logs over OTLP (Loki) with automatic trace_id/span_id correlation. -->
+    <PackageVersion Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.1" />
   </ItemGroup>
   <ItemGroup Label="Configuration">
     <PackageVersion Include="Microsoft.Extensions.Configuration.FileExtensions" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.1" />
+  </ItemGroup>
+  <!-- OpenTelemetry SDK + instrumentation, plus the health-checks package (same layer: probes
+       are the third leg of the observability chapter alongside traces/metrics/logs). -->
+  <ItemGroup Label="Observability">
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.10" />
   </ItemGroup>
   <ItemGroup Label="Object Mapping">
     <PackageVersion Include="Riok.Mapperly" Version="4.3.1" />

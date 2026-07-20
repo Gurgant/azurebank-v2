@@ -48,9 +48,25 @@
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
   </ItemGroup>
 
+  <ItemGroup Label="Compliance">
+    <!-- PII redaction for log output (brings Compliance.Abstractions transitively) -->
+    <PackageReference Include="Microsoft.Extensions.Compliance.Redaction" />
+  </ItemGroup>
+
   <ItemGroup Label="Logging">
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
+  </ItemGroup>
+
+  <ItemGroup Label="Observability (OpenTelemetry)">
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
   </ItemGroup>
 
   <ItemGroup Label="Object Mapping">

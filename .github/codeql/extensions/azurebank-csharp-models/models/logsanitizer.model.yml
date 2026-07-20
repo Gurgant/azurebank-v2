@@ -1,0 +1,17 @@
+# cs/log-forging barrier: the return value of LogSanitizer.Sanitize(string) is safe for log
+# output. CodeQL trusts this row unconditionally — the claim is kept honest by
+# AzureBank.Tests.Unit.Utilities.LogSanitizerTests, which pins the full sanitization contract
+# (all C0/C1 controls, DEL, NEL, U+2028/U+2029, ESC; idempotent; never throws). Weakening the
+# implementation without failing that suite must be impossible.
+#
+# Matching is EXACT and silently inert on any mismatch:
+#  - kind MUST be "log-injection" (the query's MaD hook), NOT "log-forging";
+#  - signature MUST be "(System.String)" — "(string)" matches nothing;
+#  - renaming/moving the method or adding overloads orphans this row (update it together).
+# Columns: namespace, type, subtypes, name, signature, ext, output, kind, provenance
+extensions:
+  - addsTo:
+      pack: codeql/csharp-all
+      extensible: barrierModel
+    data:
+      - ["AzureBank.Shared.Utilities", "LogSanitizer", false, "Sanitize", "(System.String)", "", "ReturnValue", "log-injection", "manual"]

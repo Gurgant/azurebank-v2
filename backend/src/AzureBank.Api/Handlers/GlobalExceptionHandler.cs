@@ -33,6 +33,12 @@ public class GlobalExceptionHandler : IExceptionHandler
             exception.GetType().Name,
             exception.Message);
 
+        // Record the fault on the current trace span. The instrumentation's RecordException can't
+        // see it because THIS handler marks the exception handled — without this, an error trace is
+        // hollow (a 500 span with Error status but no exception.type/message/stacktrace event).
+        Activity.Current?.AddException(exception);
+        Activity.Current?.SetStatus(ActivityStatusCode.Error, exception.Message);
+
         var problemDetails = new ProblemDetails
         {
             Status = StatusCodes.Status500InternalServerError,
@@ -44,7 +50,9 @@ public class GlobalExceptionHandler : IExceptionHandler
             Instance = httpContext.Request.Path
         };
 
-        problemDetails.Extensions["traceId"] = Activity.Current?.Id ?? httpContext.TraceIdentifier;
+        // Bare 32-hex trace id (not the full W3C "00-<trace>-<span>-01") so it pastes straight
+        // into Tempo/Grafana search.
+        problemDetails.Extensions["traceId"] = Activity.Current?.TraceId.ToString() ?? httpContext.TraceIdentifier;
 
         // Include stack trace in development only
         if (_environment.IsDevelopment())

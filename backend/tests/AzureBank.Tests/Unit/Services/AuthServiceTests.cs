@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Observability;
 using AzureBank.Api.Security;
 using AzureBank.Api.Services;
 using AzureBank.Api.Services.Implementations;
@@ -12,6 +13,8 @@ using AzureBank.Shared.Services.Interfaces;
 using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Compliance.Classification;
+using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -55,6 +58,16 @@ public class AuthServiceTests : IDisposable
         _pinVerifierMock = new Mock<IPinVerifier>();
         _timingEqualizerMock = new Mock<ILoginTimingEqualizer>();
 
+        // The REAL email redactor behind a stub provider: log-content assertions below
+        // then prove the exact masked shape that production logging emits. The setup is
+        // NARROWED to the Pii classification on purpose — if AuthService ever drifts to a
+        // different classification, the stub returns null and the test fails loudly instead
+        // of silently keeping the masking green.
+        var redactorProviderMock = new Mock<IRedactorProvider>();
+        redactorProviderMock
+            .Setup(x => x.GetRedactor(new DataClassificationSet(DataClassifications.Pii)))
+            .Returns(new EmailMaskingRedactor());
+
         _sut = new AuthService(
             _userManagerMock.Object,
             _context,
@@ -64,7 +77,8 @@ public class AuthServiceTests : IDisposable
             _userMapper,
             _accountMapper,
             _timingEqualizerMock.Object,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            redactorProviderMock.Object);
     }
 
     public void Dispose()
@@ -584,6 +598,93 @@ public class AuthServiceTests : IDisposable
         // InMemory provider doesn't support automatic value generation for byte[] properties
         await Task.CompletedTask;
     }
+
+    #endregion
+
+    #region PII redaction in logs
+
+    // Logs are exported over OTLP (Loki), so a raw email in a log message leaves the
+    // process. These tests pin the ONLY two sites that log an email: the value that
+    // reaches ILogger must be the masked form and must NOT contain the raw address.
+
+    [Fact]
+    public async Task LoginAsync_NonExistentUser_LogsMaskedEmailNotRawPii()
+    {
+        // Arrange
+        var request = new LoginRequest
+        {
+            Email = "nonexistent@example.com",
+            Password = "Password123!"
+        };
+
+        _userManagerMock
+            .Setup(x => x.FindByEmailAsync(request.Email))
+            .ReturnsAsync((ApplicationUser?)null);
+
+        // Act
+        var act = () => _sut.LoginAsync(request);
+
+        // Assert
+        await act.Should().ThrowAsync<AuthenticationException>();
+        VerifyWarningLogged(msg =>
+            msg.Contains("n***@example.com") && !msg.Contains("nonexistent@example.com"));
+        VerifyRawEmailNeverLogged("nonexistent@example.com");
+    }
+
+    [Fact]
+    public async Task RegisterAsync_DuplicateEmail_LogsMaskedEmailNotRawPii()
+    {
+        // Arrange
+        var existingUser = CreateTestUser("existing@example.com");
+        var request = new RegisterRequest
+        {
+            Email = "existing@example.com",
+            Password = "Password123!",
+            AzureTag = "newuser",
+            FirstName = "New",
+            LastName = "User"
+        };
+
+        _userManagerMock
+            .Setup(x => x.FindByEmailAsync(request.Email))
+            .ReturnsAsync(existingUser);
+
+        // Act
+        var act = () => _sut.RegisterAsync(request);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>();
+        VerifyWarningLogged(msg =>
+            msg.Contains("e***@example.com") && !msg.Contains("existing@example.com"));
+        VerifyRawEmailNeverLogged("existing@example.com");
+    }
+
+    /// <summary>
+    /// Asserts exactly one Warning was logged whose FORMATTED message satisfies the
+    /// predicate — formatting is where structured properties get rendered, so this is
+    /// the exact string that would reach the exporter.
+    /// </summary>
+    private void VerifyWarningLogged(Func<string, bool> messagePredicate) =>
+        _loggerMock.Verify(x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => messagePredicate(state.ToString()!)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+
+    /// <summary>
+    /// Blanket guard: the raw address must not appear in ANY log call at ANY level — a
+    /// per-message predicate can pass while a second, unasserted log line leaks the value.
+    /// </summary>
+    private void VerifyRawEmailNeverLogged(string rawEmail) =>
+        _loggerMock.Verify(x => x.Log(
+                It.IsAny<LogLevel>(),
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains(rawEmail)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
 
     #endregion
 

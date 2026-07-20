@@ -1,5 +1,6 @@
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
+using AzureBank.Shared.Utilities;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Bff.Middleware;
@@ -44,6 +45,10 @@ public class AuthLevelMiddleware
         IOptions<BffSessionOptions> sessionOptions)
     {
         var path = context.Request.Path.Value ?? "";
+        // Sanitize ONCE, up front, and use safePath in EVERY log statement below — a branch
+        // that logs the raw path would bypass the log-forging defence (route matching still
+        // uses the raw path: sanitizing could alter which rules match).
+        var safePath = LogSanitizer.Sanitize(path);
         var method = context.Request.Method;
 
         // Check if this route requires AuthLevel 2 (PIN)
@@ -57,9 +62,6 @@ public class AuthLevelMiddleware
 
                 if (authLevel < 2)
                 {
-                    // Strip CR/LF from the user-controlled path before logging — defence-in-depth
-                    // against log-forging into the plain-text sink (CodeQL).
-                    var safePath = path.Replace("\r", string.Empty).Replace("\n", string.Empty);
                     _logger.LogWarning(
                         "Access denied: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
                         authLevel, method, safePath);
@@ -84,7 +86,7 @@ public class AuthLevelMiddleware
             else
             {
                 // No session cookie - let the API handle 401
-                _logger.LogDebug("No session cookie found for PIN-protected route {Path}", path);
+                _logger.LogDebug("No session cookie found for PIN-protected route {Path}", safePath);
             }
         }
 

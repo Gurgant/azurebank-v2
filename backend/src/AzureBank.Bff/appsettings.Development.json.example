@@ -16,5 +16,16 @@
     "PinValidityMinutes": 10,
     "MaxPinAttempts": 10,
     "LockoutMinutes": 1
+  },
+
+  "ReverseProxy": {
+    "Clusters": {
+      "backend-api": {
+        "HttpClient": {
+          "_comment": "DEV ONLY: trust the ASP.NET Core dev cert on the BFF->API hop. This lives in Development config (never base appsettings.json — that would disable TLS validation in production). Mirrors the IsDevelopment() gate on the named 'BackendApi' client.",
+          "DangerousAcceptAnyServerCertificate": true
+        }
+      }
+    }
   }
 }
