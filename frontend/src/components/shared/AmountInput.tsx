@@ -176,9 +176,13 @@ export function AmountInput({
   const [isFocused, setIsFocused] = useState(false);
   const [internalValue, setInternalValue] = useState(value.toString());
 
-  // Sync internal value with external value
+  // Sync internal value with external value.
+  // TODO(deposit/withdraw PRs): restructure this controlled/uncontrolled hybrid with the
+  // "adjust state during render" pattern when the component gets wired to real mutations —
+  // reworking the focus-guarded sync is that PR's concern, not this hygiene pass's.
   useEffect(() => {
     if (!isFocused) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- see TODO above
       setInternalValue(value === 0 ? '' : value.toString());
     }
   }, [value, isFocused]);

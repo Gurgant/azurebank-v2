@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -14,14 +16,13 @@
     "@fluentui/react-icons": "^2.0.316",
     "@hookform/resolvers": "^5.2.2",
     "@reduxjs/toolkit": "^2.11.2",
-    "axios": "^1.13.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-hook-form": "^7.69.0",
     "react-redux": "^9.2.0",
-    "react-router-dom": "^7.11.0",
+    "react-router-dom": "^7.18.0",
     "zod": "^4.3.4"
   },
   "devDependencies": {

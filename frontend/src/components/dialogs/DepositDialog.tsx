@@ -357,7 +357,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
 
       setIsSuccess(true);
       onSuccess?.();
-    } catch (err) {
+    } catch {
       setError('Deposit failed. Please try again.');
     } finally {
       setIsLoading(false);

@@ -29,7 +29,7 @@ export const login = createAsyncThunk<LoginResponse, LoginRequest>(
       }
 
       return await response.json();
-    } catch (error) {
+    } catch {
       return rejectWithValue('Network error. Please try again.');
     }
   }
@@ -52,7 +52,7 @@ export const register = createAsyncThunk<LoginResponse, RegisterRequest>(
       }
 
       return await response.json();
-    } catch (error) {
+    } catch {
       return rejectWithValue('Network error. Please try again.');
     }
   }

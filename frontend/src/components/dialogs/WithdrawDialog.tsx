@@ -383,7 +383,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
       setIsSuccess(true);
       onSuccess?.();
-    } catch (err) {
+    } catch {
       setError('Withdrawal failed. Please try again.');
     } finally {
       setIsLoading(false);

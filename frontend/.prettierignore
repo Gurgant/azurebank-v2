@@ -1,0 +1,3 @@
+# Build output
+dist/
+# Generated files (PR-1 will add src/api/schema.d.ts here)
