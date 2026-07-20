@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useSyncExternalStore } from 'react';
+import { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { breakpoints } from '../theme/tokens';
 
 /**
@@ -41,16 +41,19 @@ export function useResponsive() {
  * setState-inside-effect to cascade renders.
  */
 export function useMediaQuery(query: string): boolean {
+  // One MediaQueryList per query: the snapshot selector runs on every render, and
+  // re-parsing the query through window.matchMedia each time is avoidable work.
+  const mediaQuery = useMemo(() => window.matchMedia(query), [query]);
+
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
-      const mediaQuery = window.matchMedia(query);
       mediaQuery.addEventListener('change', onStoreChange);
       return () => mediaQuery.removeEventListener('change', onStoreChange);
     },
-    [query],
+    [mediaQuery],
   );
 
-  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches);
+  return useSyncExternalStore(subscribe, () => mediaQuery.matches);
 }
 
 export default useResponsive;

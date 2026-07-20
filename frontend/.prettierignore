@@ -1,3 +1,4 @@
 # Build output
 dist/
-# Generated files (PR-1 will add src/api/schema.d.ts here)
+# Generated files (src/api/schema.d.ts arrives with the contract PR)
+src/api/schema.d.ts
