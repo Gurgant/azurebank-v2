@@ -69,7 +69,7 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
     }
 
     [Fact]
-    public async Task EmptyUpstreamErrorBody_BecomesAGeneric502Problem()
+    public async Task EmptyUpstream5xxBody_BecomesAGeneric502Problem()
     {
         var client = ClientWithUpstream(HttpStatusCode.InternalServerError, string.Empty, "application/json");
 
@@ -78,5 +78,20 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
         response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("status").GetInt32().Should().Be(502);
+    }
+
+    [Fact]
+    public async Task EmptyUpstream4xxBody_PreservesTheClientStatus()
+    {
+        // The framework's bare 401/403/404 responses have EMPTY bodies by contract; the
+        // status must survive as a ProblemDetails so status-based client flows
+        // (session-expiry on 401) keep working — not degrade to 502.
+        var client = ClientWithUpstream(HttpStatusCode.Unauthorized, string.Empty, "application/json");
+
+        var response = await PostLogin(client);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("status").GetInt32().Should().Be(401);
     }
 }

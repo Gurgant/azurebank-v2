@@ -31,12 +31,13 @@ public class FetchMetadataMiddleware
     {
         if (IsCrossSiteStateChange(context.Request))
         {
-            // Header value and path are attacker-controlled — sanitize before logging
-            // (log-forging barrier, ADR-0017).
+            // Header value, method and path are attacker-controlled — everything goes
+            // through the one audited sanitizer (log-forging barrier, ADR-0017), even
+            // though Kestrel already rejects non-token method names.
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: cross-site {Method} to {Path} blocked (Sec-Fetch-Site: {Site})",
                 "CrossSiteRequestBlocked",
-                context.Request.Method,
+                LogSanitizer.Sanitize(context.Request.Method),
                 LogSanitizer.Sanitize(context.Request.Path.Value ?? string.Empty),
                 LogSanitizer.Sanitize(context.Request.Headers[SecFetchSiteHeader].ToString()));
 

@@ -8,6 +8,7 @@ using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Bff.Controllers;
@@ -465,6 +466,21 @@ public class BffAuthController : ControllerBase
             _logger.LogWarning(
                 "Upstream returned a non-JSON error body (status {StatusCode})",
                 (int)response.StatusCode);
+
+            // The status line is still trustworthy metadata from OUR API (direct
+            // HttpClient, no intermediate proxy) even when the body is not JSON — the
+            // framework's bare 401/403/404 responses have EMPTY bodies by contract.
+            // Preserve 4xx so status-based client flows (session-expiry on 401) keep
+            // working; only 5xx garbage degrades to a generic 502.
+            var status = (int)response.StatusCode;
+            if (status is >= 400 and < 500)
+            {
+                return Problem(
+                    title: ReasonPhrases.GetReasonPhrase(status),
+                    detail: "Upstream service returned an empty or non-JSON response",
+                    statusCode: status);
+            }
+
             return Problem(
                 title: "Bad Gateway",
                 detail: "Upstream service returned an invalid response",

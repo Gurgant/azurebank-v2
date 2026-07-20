@@ -38,8 +38,10 @@ try
     // CONFIGURATION BINDING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    builder.Services.Configure<BffSessionOptions>(
-        builder.Configuration.GetSection(BffSessionOptions.SectionName));
+    builder.Services.AddOptions<BffSessionOptions>()
+        .Bind(builder.Configuration.GetSection(BffSessionOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<BffSessionOptions>, BffSessionOptionsValidator>();
     builder.Services.Configure<SecurityOptions>(
         builder.Configuration.GetSection(SecurityOptions.SectionName));
 
@@ -54,7 +56,11 @@ try
     {
         builder.Services.PostConfigure<BffSessionOptions>(options =>
         {
-            if (!options.CookieName.StartsWith("__Host-", StringComparison.Ordinal))
+            // A null/empty name (config explicitly nulling it) falls through untouched:
+            // PostConfigure runs BEFORE validation, so the BffSessionOptionsValidator
+            // then fails startup with a clear message instead of an NRE here.
+            if (!string.IsNullOrEmpty(options.CookieName)
+                && !options.CookieName.StartsWith("__Host-", StringComparison.Ordinal))
             {
                 options.CookieName = "__Host-" + options.CookieName.TrimStart('.');
             }

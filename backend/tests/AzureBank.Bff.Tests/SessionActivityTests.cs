@@ -71,6 +71,22 @@ public class SessionActivityTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task SessionStatusProbe_WithTrailingSlash_DoesNotRefreshLastActivityEither()
+    {
+        // The middleware runs BEFORE routing; routing tolerates one trailing slash, so
+        // the exclusion must too or a slash-suffixed poll silently counts as activity.
+        var (sessionId, cookieName, sessions) = CreateSession();
+        var client = _factory.CreateClient();
+        var baseline = sessions.GetSession(sessionId)!.LastActivity;
+
+        await Task.Delay(30);
+
+        await client.SendAsync(Get("/bff/auth/session-status/", cookieName, sessionId));
+
+        sessions.GetSession(sessionId)!.LastActivity.Should().Be(baseline);
+    }
+
+    [Fact]
     public async Task MeEndpoint_DoesRefreshLastActivity()
     {
         var (sessionId, cookieName, sessions) = CreateSession();

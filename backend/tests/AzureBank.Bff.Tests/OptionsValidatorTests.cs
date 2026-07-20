@@ -135,3 +135,50 @@ public class ProxyOptionsValidatorTests
         result.FailureMessage.Should().Contain("ForwardLimit");
     }
 }
+
+/// <summary>
+/// The cookie name feeds every session read and the timeouts ARE the session-lifetime
+/// control; a config that nulls the name would otherwise surface as per-request failures
+/// (or an NRE inside the __Host- PostConfigure). Pin the fail-at-startup behaviour
+/// instead (ADR-0018).
+/// </summary>
+public class BffSessionOptionsValidatorTests
+{
+    private readonly BffSessionOptionsValidator _sut = new();
+
+    [Fact]
+    public void Validate_Defaults_Succeeds()
+    {
+        _sut.Validate(null, new BffSessionOptions()).Succeeded.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Validate_MissingCookieName_Fails(string? cookieName)
+    {
+        var result = _sut.Validate(null, new BffSessionOptions { CookieName = cookieName! });
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("CookieName");
+    }
+
+    [Fact]
+    public void Validate_NonPositiveInactivityTimeout_Fails()
+    {
+        var result = _sut.Validate(null, new BffSessionOptions { InactivityTimeoutMinutes = 0 });
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("InactivityTimeoutMinutes");
+    }
+
+    [Fact]
+    public void Validate_NonPositiveAbsoluteTimeout_Fails()
+    {
+        var result = _sut.Validate(null, new BffSessionOptions { AbsoluteTimeoutMinutes = -1 });
+
+        result.Failed.Should().BeTrue();
+        result.FailureMessage.Should().Contain("AbsoluteTimeoutMinutes");
+    }
+}
