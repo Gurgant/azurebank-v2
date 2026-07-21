@@ -74,8 +74,9 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
   });
 
   const close = () => {
-    // The dialog stays mounted while closed — clear BOTH the form and the mutation
-    // state, or a failed attempt's error bar would greet the next open.
+    // Belt-and-braces: the page mounts this dialog per open (fresh state by
+    // construction), but clearing the form and the mutation here keeps the
+    // component correct even under a persistent parent.
     reset();
     resetMutation();
     onClose();

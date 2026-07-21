@@ -56,6 +56,12 @@ export interface TransactionsQuery {
   pageSize?: number;
 }
 
+/** T1 filters — paging belongs to the infinite machinery, never to the caller. */
+export type TransactionHistoryFilters = Omit<TransactionsQuery, 'page' | 'pageSize'>;
+
+/** One page per request; small enough to bound the accepted refetch-all-pages cost (D7). */
+export const HISTORY_PAGE_SIZE = 20;
+
 /**
  * The typed data layer over the OpenAPI contract. Response/request shapes come from the
  * generated schema (types-only, CI drift gate); success envelopes unwrap in
@@ -149,6 +155,35 @@ export const apiSlice = createApi({
           ToDate: filters.toDate,
           Page: filters.page,
           PageSize: filters.pageSize,
+        },
+      }),
+      providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
+    }),
+
+    /**
+     * T1 — the history feed. An INFINITE query: pages accumulate client-side and the
+     * whole family carries {Transaction,'LIST'}, so any money mutation refetches every
+     * loaded page (the accepted D7 cost — HISTORY_PAGE_SIZE bounds it) rather than
+     * hand-patching the cache.
+     */
+    getTransactionHistory: builder.infiniteQuery<
+      PaginatedTransactions,
+      TransactionHistoryFilters,
+      number
+    >({
+      infiniteQueryOptions: {
+        initialPageParam: 1,
+        getNextPageParam: (lastPage) =>
+          lastPage.pagination?.hasNextPage ? lastPage.pagination.page + 1 : undefined,
+      },
+      query: ({ queryArg, pageParam }) => ({
+        url: '/api/transactions',
+        params: {
+          AccountId: queryArg.accountId,
+          FromDate: queryArg.fromDate,
+          ToDate: queryArg.toDate,
+          Page: pageParam,
+          PageSize: HISTORY_PAGE_SIZE,
         },
       }),
       providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
@@ -306,6 +341,7 @@ export const {
   useDeleteAccountMutation,
   // Transactions
   useGetTransactionsQuery,
+  useGetTransactionHistoryInfiniteQuery,
   useGetTransactionQuery,
   useDepositMutation,
   useWithdrawMutation,

@@ -429,7 +429,7 @@ const useStyles = makeStyles({
 // HELPER FUNCTIONS
 // ============================================
 
-function getAccountIcon(type: AccountType | undefined) {
+function getAccountIcon(type: AccountType) {
   switch (type) {
     case 'Savings':
       return <MoneyHand24Regular />;
@@ -465,7 +465,7 @@ export function AccountsPage() {
   const [deleteTarget, setDeleteTarget] = useState<AccountResponse | null>(null);
   const [deleteProblem, setDeleteProblem] = useState<ApiProblem | null>(null);
 
-  const totalBalance = accounts.reduce((sum, account) => sum + (account.balance ?? 0), 0);
+  const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
   // Honest headers: never assert "€0.00" while loading, nor a stale total beside the
   // error bar (RTK Query keeps the last data when a refetch fails).
   const totalDisplay = isLoading || problem ? '—' : formatCurrency(totalBalance);
@@ -473,10 +473,10 @@ export function AccountsPage() {
   // Adapter for the legacy money dialogs (their real flows arrive in their own PRs):
   // they only need id/name/number/balance — and they get the MASKED number.
   const toLegacy = (account: AccountResponse): LegacyDialogAccount => ({
-    id: account.id ?? '',
+    id: account.id,
     name: account.name,
     accountNumber: maskAccountNumber(account.accountNumber),
-    balance: account.balance ?? 0,
+    balance: account.balance,
   });
   const legacyAccounts = accounts.map(toLegacy);
 
@@ -517,7 +517,7 @@ export function AccountsPage() {
   // (two rows flip, so the whole tag family refetches). Failures have no owning
   // surface here — they go through the problem-toast pipeline.
   const handleSetPrimary = (account: AccountResponse) => {
-    setPrimaryAccount(account.id ?? '')
+    setPrimaryAccount(account.id)
       .unwrap()
       .catch((caught) => showProblem(caught as ApiProblem));
   };
@@ -533,7 +533,7 @@ export function AccountsPage() {
       return;
     }
     setDeleteProblem(null);
-    deleteAccount(deleteTarget.id ?? '')
+    deleteAccount(deleteTarget.id)
       .unwrap()
       .then(closeDelete)
       .catch((caught) => setDeleteProblem(caught as ApiProblem));
@@ -545,7 +545,7 @@ export function AccountsPage() {
       'Could not delete the account.')
     : null;
 
-  const getIconContainerClass = (type: AccountType | undefined) => {
+  const getIconContainerClass = (type: AccountType) => {
     const base = styles.accountIconContainer;
     switch (type) {
       case 'Savings':
@@ -655,9 +655,7 @@ export function AccountsPage() {
                 <div className={styles.accountBalanceSection}>
                   <div className={styles.balanceInfo}>
                     <Text className={styles.balanceLabel}>Available Balance</Text>
-                    <Text className={styles.balanceValue}>
-                      {formatCurrency(account.balance ?? 0)}
-                    </Text>
+                    <Text className={styles.balanceValue}>{formatCurrency(account.balance)}</Text>
                   </div>
                   <div className={styles.badgeRow}>
                     {account.isPrimary && (
@@ -666,7 +664,7 @@ export function AccountsPage() {
                       </div>
                     )}
                     <div className={styles.accountTypeBadge}>
-                      <Text className={styles.badgeText}>{account.type ?? 'Checking'}</Text>
+                      <Text className={styles.badgeText}>{account.type}</Text>
                     </div>
                   </div>
                 </div>
@@ -728,11 +726,16 @@ export function AccountsPage() {
           selection and unmounting on close drops all internal state. No onSuccess:
           their own Done button closes them, so the success screen stays reachable.
           (They still format USD — they die in the deposit/withdraw PRs.) */}
-      <CreateAccountDialog open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+      {/* Mount-on-open like every other dialog on this page: a persistent Fluent
+          Dialog instance re-opened after a close can race its own exit presence
+          under load (the surface never re-mounts — seen as a CI-only flake); a
+          fresh instance per open has virgin presence state and starts clean by
+          construction. */}
+      {isCreateOpen && <CreateAccountDialog open onClose={() => setIsCreateOpen(false)} />}
 
       {renameTarget && (
         <RenameAccountDialog
-          account={{ id: renameTarget.id ?? '', name: renameTarget.name }}
+          account={{ id: renameTarget.id, name: renameTarget.name }}
           onClose={() => setRenameTarget(null)}
         />
       )}

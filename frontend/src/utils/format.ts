@@ -1,3 +1,6 @@
+import { format } from 'date-fns';
+import type { TransactionType } from '../api/enums';
+
 /**
  * Display formatting for contract data. The API's currency is EUR (BalanceResponse
  * default) — the old mock pages showed USD, which dies as pages go live.
@@ -17,6 +20,35 @@ export function formatCurrency(amount: number): string {
  * display bullets, and doubles as defense-in-depth: if a full number ever reached the
  * client, it still would not reach the screen.
  */
+/**
+ * Money direction comes from the TYPE, never from the amount's sign: the API sends
+ * UNSIGNED amounts (the old mock carried signed ones — the summary-math trap).
+ */
+export function isIncomeType(type: TransactionType): boolean {
+  return type === 'Deposit' || type === 'TransferIn';
+}
+
+/** Signed display amount for a transaction row: +€50.00 / -€50.00. */
+export function formatTransactionAmount(amount: number, type: TransactionType): string {
+  const sign = isIncomeType(type) ? '+' : '-';
+  return `${sign}${formatCurrency(Math.abs(amount))}`;
+}
+
+/** "January 5, 2026" — date-group headings. */
+export function formatDateHeading(isoDate: string): string {
+  return format(new Date(isoDate), 'MMMM d, yyyy');
+}
+
+/** "9:15 AM" — row-level time. */
+export function formatTime(isoDate: string): string {
+  return format(new Date(isoDate), 'h:mm a');
+}
+
+/** "January 5, 2026 · 9:15 AM" — detail-level timestamp. */
+export function formatDateTime(isoDate: string): string {
+  return format(new Date(isoDate), 'MMMM d, yyyy · h:mm a');
+}
+
 export function maskAccountNumber(accountNumber: string): string {
   const parts = accountNumber.split('-');
   if (parts.length < 3) {
