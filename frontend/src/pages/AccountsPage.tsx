@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { makeStyles, Text } from '@fluentui/react-components';
+import {
+  Button,
+  makeStyles,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
+  Spinner,
+  Text,
+} from '@fluentui/react-components';
 import {
   ArrowSwap24Regular,
   Add24Regular,
@@ -11,49 +19,20 @@ import {
   CurrencyDollarEuro24Regular,
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
-import { DepositDialog, WithdrawDialog } from '../components';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import type { AccountType } from '../api/enums';
+import type { AccountResponse } from '../features/api/apiSlice';
+import { useGetAccountsQuery } from '../features/api/apiSlice';
+import { formatCurrency, maskAccountNumber } from '../utils/format';
+import { CreateAccountDialog, DepositDialog, WithdrawDialog } from '../components';
 
-// ============================================
-// TYPES
-// ============================================
-
-type AccountType = 'checking' | 'savings' | 'investment';
-
-interface Account {
+// The legacy money dialogs (mock flow until their own PRs) take this minimal shape.
+interface LegacyDialogAccount {
   id: string;
   name: string;
   accountNumber: string;
   balance: number;
-  type: AccountType;
 }
-
-// ============================================
-// MOCK DATA
-// ============================================
-
-const mockAccounts: Account[] = [
-  {
-    id: '1',
-    name: 'Main Account',
-    accountNumber: '**** **** **** 4521',
-    balance: 12450.0,
-    type: 'checking',
-  },
-  {
-    id: '2',
-    name: 'Savings Account',
-    accountNumber: '**** **** **** 7832',
-    balance: 8200.0,
-    type: 'savings',
-  },
-  {
-    id: '3',
-    name: 'Investment Account',
-    accountNumber: '**** **** **** 9156',
-    balance: 4200.0,
-    type: 'investment',
-  },
-];
 
 // ============================================
 // STYLES
@@ -310,6 +289,12 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
+  badgeRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+
   accountTypeBadge: {
     padding: '4px 10px',
     backgroundColor: colors.neutral[100],
@@ -320,6 +305,24 @@ const useStyles = makeStyles({
     fontSize: '12px',
     fontWeight: 500,
     color: colors.neutral[500],
+  },
+
+  primaryBadge: {
+    padding: '4px 10px',
+    backgroundColor: colors.brand[130],
+    borderRadius: '12px',
+  },
+
+  primaryBadgeText: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: colors.brand[60],
+  },
+
+  stateContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '48px 0',
   },
 
   accountActions: {
@@ -403,33 +406,14 @@ const useStyles = makeStyles({
 // HELPER FUNCTIONS
 // ============================================
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
-function getAccountIcon(type: AccountType) {
+function getAccountIcon(type: AccountType | undefined) {
   switch (type) {
-    case 'checking':
-      return <CreditCardToolbox24Regular />;
-    case 'savings':
+    case 'Savings':
       return <MoneyHand24Regular />;
-    case 'investment':
+    case 'Investment':
       return <CurrencyDollarEuro24Regular />;
-  }
-}
-
-function getAccountTypeLabel(type: AccountType): string {
-  switch (type) {
-    case 'checking':
-      return 'Checking';
-    case 'savings':
-      return 'Savings';
-    case 'investment':
-      return 'Investment';
+    default:
+      return <CreditCardToolbox24Regular />;
   }
 }
 
@@ -441,22 +425,37 @@ export function AccountsPage() {
   const styles = useStyles();
   const navigate = useNavigate();
 
-  const [accounts] = useState<Account[]>(mockAccounts);
+  // A1 — the first page on REAL data. Loading/error/empty are first-class states
+  // (D22); the list refreshes through D7 tag invalidation, never hand-patching.
+  const { data: accounts = [], isLoading, error, refetch } = useGetAccountsQuery();
+  const problem = error as ApiProblem | undefined;
+
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDepositOpen, setIsDepositOpen] = useState(false);
   const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
-  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<LegacyDialogAccount | null>(null);
 
-  const totalBalance = accounts.reduce((sum, account) => sum + account.balance, 0);
+  const totalBalance = accounts.reduce((sum, account) => sum + (account.balance ?? 0), 0);
 
-  const handleDeposit = (account: Account, e: React.MouseEvent) => {
+  // Adapter for the legacy money dialogs (their real flows arrive in their own PRs):
+  // they only need id/name/number/balance — and they get the MASKED number.
+  const toLegacy = (account: AccountResponse): LegacyDialogAccount => ({
+    id: account.id ?? '',
+    name: account.name,
+    accountNumber: maskAccountNumber(account.accountNumber),
+    balance: account.balance ?? 0,
+  });
+  const legacyAccounts = accounts.map(toLegacy);
+
+  const handleDeposit = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSelectedAccount(account);
+    setSelectedAccount(toLegacy(account));
     setIsDepositOpen(true);
   };
 
-  const handleWithdraw = (account: Account, e: React.MouseEvent) => {
+  const handleWithdraw = (account: AccountResponse, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSelectedAccount(account);
+    setSelectedAccount(toLegacy(account));
     setIsWithdrawOpen(true);
   };
 
@@ -466,19 +465,18 @@ export function AccountsPage() {
   };
 
   const handleAddAccount = () => {
-    // TODO: Navigate to add account flow
-    console.log('Add new account');
+    setIsCreateOpen(true);
   };
 
-  const getIconContainerClass = (type: AccountType) => {
+  const getIconContainerClass = (type: AccountType | undefined) => {
     const base = styles.accountIconContainer;
     switch (type) {
-      case 'checking':
-        return `${base} ${styles.iconContainerChecking}`;
-      case 'savings':
+      case 'Savings':
         return `${base} ${styles.iconContainerSavings}`;
-      case 'investment':
+      case 'Investment':
         return `${base} ${styles.iconContainerInvestment}`;
+      default:
+        return `${base} ${styles.iconContainerChecking}`;
     }
   };
 
@@ -515,82 +513,116 @@ export function AccountsPage() {
           </button>
         </div>
 
+        {/* Loading / error are first-class states (D22) */}
+        {isLoading && (
+          <div className={styles.stateContainer}>
+            <Spinner size="large" aria-label="Loading accounts" />
+          </div>
+        )}
+
+        {problem && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              {problem.detail || 'Could not load your accounts.'}
+              {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button appearance="transparent" onClick={() => void refetch()}>
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
+
         {/* Accounts Grid — cards are intentionally non-clickable: no /accounts/:id route
             exists yet (it previously bounced off the catch-all); management flows come later. */}
-        <div className={styles.accountsGrid}>
-          {accounts.map((account) => (
-            <div key={account.id} className={styles.accountCard}>
-              <div className={styles.accountHeader}>
-                <div className={getIconContainerClass(account.type)}>
-                  {getAccountIcon(account.type)}
+        {!isLoading && !problem && (
+          <div className={styles.accountsGrid}>
+            {accounts.map((account) => (
+              <div key={account.id} className={styles.accountCard}>
+                <div className={styles.accountHeader}>
+                  <div className={getIconContainerClass(account.type)}>
+                    {getAccountIcon(account.type)}
+                  </div>
+                  <div className={styles.accountInfo}>
+                    <Text className={styles.accountName}>{account.name}</Text>
+                    <Text className={styles.accountNumber}>
+                      {maskAccountNumber(account.accountNumber)}
+                    </Text>
+                  </div>
                 </div>
-                <div className={styles.accountInfo}>
-                  <Text className={styles.accountName}>{account.name}</Text>
-                  <Text className={styles.accountNumber}>{account.accountNumber}</Text>
-                </div>
-              </div>
 
-              <div className={styles.accountBalanceSection}>
-                <div className={styles.balanceInfo}>
-                  <Text className={styles.balanceLabel}>Available Balance</Text>
-                  <Text className={styles.balanceValue}>{formatCurrency(account.balance)}</Text>
+                <div className={styles.accountBalanceSection}>
+                  <div className={styles.balanceInfo}>
+                    <Text className={styles.balanceLabel}>Available Balance</Text>
+                    <Text className={styles.balanceValue}>
+                      {formatCurrency(account.balance ?? 0)}
+                    </Text>
+                  </div>
+                  <div className={styles.badgeRow}>
+                    {account.isPrimary && (
+                      <div className={styles.primaryBadge}>
+                        <Text className={styles.primaryBadgeText}>Primary</Text>
+                      </div>
+                    )}
+                    <div className={styles.accountTypeBadge}>
+                      <Text className={styles.badgeText}>{account.type ?? 'Checking'}</Text>
+                    </div>
+                  </div>
                 </div>
-                <div className={styles.accountTypeBadge}>
-                  <Text className={styles.badgeText}>{getAccountTypeLabel(account.type)}</Text>
-                </div>
-              </div>
 
-              <div className={styles.accountActions}>
-                <button
-                  className={styles.accountActionBtn}
-                  onClick={(e) => handleDeposit(account, e)}
-                >
-                  <ArrowDownload20Regular className={styles.actionBtnIcon} />
-                  <Text className={styles.actionBtnText}>Deposit</Text>
-                </button>
-                <button
-                  className={styles.accountActionBtn}
-                  onClick={(e) => handleWithdraw(account, e)}
-                >
-                  <ArrowUpload20Regular className={styles.actionBtnIcon} />
-                  <Text className={styles.actionBtnText}>Withdraw</Text>
-                </button>
-                <button className={styles.accountActionBtn} onClick={handleTransfer}>
-                  <ArrowSwap24Regular className={styles.actionBtnIcon} />
-                  <Text className={styles.actionBtnText}>Transfer</Text>
-                </button>
+                <div className={styles.accountActions}>
+                  <button
+                    className={styles.accountActionBtn}
+                    onClick={(e) => handleDeposit(account, e)}
+                  >
+                    <ArrowDownload20Regular className={styles.actionBtnIcon} />
+                    <Text className={styles.actionBtnText}>Deposit</Text>
+                  </button>
+                  <button
+                    className={styles.accountActionBtn}
+                    onClick={(e) => handleWithdraw(account, e)}
+                  >
+                    <ArrowUpload20Regular className={styles.actionBtnIcon} />
+                    <Text className={styles.actionBtnText}>Withdraw</Text>
+                  </button>
+                  <button className={styles.accountActionBtn} onClick={handleTransfer}>
+                    <ArrowSwap24Regular className={styles.actionBtnIcon} />
+                    <Text className={styles.actionBtnText}>Transfer</Text>
+                  </button>
+                </div>
               </div>
+            ))}
+
+            {/* Add Account Card */}
+            <div className={styles.addAccountCard} onClick={handleAddAccount}>
+              <div className={styles.addAccountIcon}>
+                <Add24Regular />
+              </div>
+              <Text className={styles.addAccountText}>Add New Account</Text>
             </div>
-          ))}
-
-          {/* Add Account Card */}
-          <div className={styles.addAccountCard} onClick={handleAddAccount}>
-            <div className={styles.addAccountIcon}>
-              <Add24Regular />
-            </div>
-            <Text className={styles.addAccountText}>Add New Account</Text>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Dialogs */}
+      <CreateAccountDialog open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+
       <DepositDialog
         isOpen={isDepositOpen}
         onClose={() => setIsDepositOpen(false)}
-        accounts={selectedAccount ? [selectedAccount] : accounts}
+        accounts={selectedAccount ? [selectedAccount] : legacyAccounts}
         onSuccess={() => {
           setIsDepositOpen(false);
-          // TODO: Refresh account data
         }}
       />
 
       <WithdrawDialog
         isOpen={isWithdrawOpen}
         onClose={() => setIsWithdrawOpen(false)}
-        accounts={selectedAccount ? [selectedAccount] : accounts}
+        accounts={selectedAccount ? [selectedAccount] : legacyAccounts}
         onSuccess={() => {
           setIsWithdrawOpen(false);
-          // TODO: Refresh account data
         }}
       />
     </div>

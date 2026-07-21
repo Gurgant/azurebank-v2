@@ -29,6 +29,31 @@ function fingerprint(raw: string): string {
   return (hash >>> 0).toString(16);
 }
 
+/** GET /api/accounts — the session user's accounts (enveloped list, A1). */
+const listAccounts = api.get('/api/accounts', ({ response }) => {
+  return response(200).json({ data: mockState.accounts, message: null });
+});
+
+/**
+ * POST /api/accounts — create (A4): server assigns id/number; first account is primary.
+ * The returned number is MASKED like the real mapper's output (server-side masking).
+ */
+const createAccount = api.post('/api/accounts', async ({ request, response }) => {
+  const body = (await request.clone().json()) as { name?: string; type?: string };
+  const index = mockState.accounts.length;
+  const account = {
+    id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
+    accountNumber: `AB-****-****-${70 + index}`,
+    name: body.name ?? 'New Account',
+    type: (body.type ?? 'Checking') as 'Checking' | 'Savings' | 'Investment',
+    balance: 0,
+    isPrimary: index === 0,
+    createdAt: '2026-07-21T12:00:00.0000000Z',
+  };
+  mockState.accounts.push(account);
+  return response(201).json({ data: account, message: 'Account created successfully.' });
+});
+
 /** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
 const deposit = api.post('/api/transactions/deposit', async ({ request, response }) => {
   const key = request.headers.get('Idempotency-Key');
@@ -257,4 +282,15 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
   });
 });
 
-export const handlers = [deposit, transfer, verifyPin, login, register, me, logout, sessionStatus];
+export const handlers = [
+  listAccounts,
+  createAccount,
+  deposit,
+  transfer,
+  verifyPin,
+  login,
+  register,
+  me,
+  logout,
+  sessionStatus,
+];

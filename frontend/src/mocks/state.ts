@@ -21,6 +21,16 @@ export interface MockSessionUser {
   hasPin: boolean;
 }
 
+export interface MockAccount {
+  id: string;
+  accountNumber: string;
+  name: string;
+  type: 'Checking' | 'Savings' | 'Investment';
+  balance: number;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
 interface MockState {
   /** key -> stored response, per (endpoint|key) like the backend's (user, endpoint, key). */
   idempotency: Map<string, StoredIdempotentResponse>;
@@ -28,6 +38,35 @@ interface MockState {
   authLevel: 1 | 2;
   /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
   session: MockSessionUser | null;
+  /**
+   * The session user's accounts — REAL contract shapes: PascalCase types, and numbers
+   * arrive ALREADY MASKED (`AB-****-****-90`) because AccountMapper.MaskAccountNumber
+   * runs server-side; the full number never leaves the API.
+   */
+  accounts: MockAccount[];
+}
+
+function defaultAccounts(): MockAccount[] {
+  return [
+    {
+      id: '019f7b3f-0000-7000-8000-0000000000a1',
+      accountNumber: 'AB-****-****-90',
+      name: 'Main Account',
+      type: 'Checking',
+      balance: 1250.5,
+      isPrimary: true,
+      createdAt: '2026-07-01T09:00:00.0000000Z',
+    },
+    {
+      id: '019f7b3f-0000-7000-8000-0000000000a2',
+      accountNumber: 'AB-****-****-01',
+      name: 'Rainy Day',
+      type: 'Savings',
+      balance: 830.0,
+      isPrimary: false,
+      createdAt: '2026-07-05T09:00:00.0000000Z',
+    },
+  ];
 }
 
 /** The one seeded credential pair the mock login accepts. */
@@ -45,6 +84,7 @@ export const mockState: MockState = {
   idempotency: new Map(),
   authLevel: 1,
   session: null,
+  accounts: defaultAccounts(),
 };
 
 /** Test helper: start authenticated without walking the login flow. */
@@ -56,4 +96,5 @@ export function resetMockState(): void {
   mockState.idempotency.clear();
   mockState.authLevel = 1;
   mockState.session = null;
+  mockState.accounts = defaultAccounts();
 }
