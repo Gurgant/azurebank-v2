@@ -5,7 +5,7 @@ import { store } from './app/store';
 import { azureBankLightTheme } from './theme';
 import { AppToaster } from './components/feedback';
 import { AuthBootstrap, SessionExpiryWarning } from './features/auth';
-import { ProtectedRoute } from './components/layout';
+import { ProtectedRoute, ProtectedShell } from './components/layout';
 import {
   LoginPage,
   RegisterPage,
@@ -34,68 +34,70 @@ function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
 
-            {/* Protected Routes - Require Authentication */}
+            {/* Protected routes inside the shared app shell */}
             <Route
               path="/"
               element={
-                <ProtectedRoute>
+                <ProtectedShell>
                   <DashboardPage />
-                </ProtectedRoute>
+                </ProtectedShell>
               }
             />
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute>
+                <ProtectedShell>
                   <DashboardPage />
-                </ProtectedRoute>
+                </ProtectedShell>
               }
             />
             <Route
               path="/accounts"
               element={
-                <ProtectedRoute>
+                <ProtectedShell>
                   <AccountsPage />
-                </ProtectedRoute>
+                </ProtectedShell>
               }
             />
             <Route
               path="/history"
               element={
-                <ProtectedRoute>
+                <ProtectedShell>
                   <HistoryPage />
-                </ProtectedRoute>
+                </ProtectedShell>
               }
             />
             <Route
               path="/transactions/:id"
               element={
-                <ProtectedRoute>
+                <ProtectedShell>
                   <TransactionDetailPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/transfer"
-              element={
-                <ProtectedRoute>
-                  <TransferPage />
-                </ProtectedRoute>
+                </ProtectedShell>
               }
             />
             <Route
               path="/settings"
               element={
-                <ProtectedRoute>
+                <ProtectedShell>
                   <SettingsPage />
-                </ProtectedRoute>
+                </ProtectedShell>
               }
             />
             <Route
               path="/profile"
               element={
-                <ProtectedRoute>
+                <ProtectedShell>
                   <SettingsPage />
+                </ProtectedShell>
+              }
+            />
+
+            {/* Full-screen wizard: deliberately NO app shell */}
+            <Route
+              path="/transfer"
+              element={
+                <ProtectedRoute>
+                  <TransferPage />
                 </ProtectedRoute>
               }
             />

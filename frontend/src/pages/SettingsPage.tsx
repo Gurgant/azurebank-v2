@@ -2,11 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { makeStyles, Text, Button, Switch } from '@fluentui/react-components';
 import {
-  Home24Regular,
-  Wallet24Regular,
-  ArrowSwap24Regular,
-  Clock24Regular,
-  MoreHorizontal24Regular,
   Person24Regular,
   LockClosed24Regular,
   Link24Regular,
@@ -24,6 +19,11 @@ import {
   ArrowDownload20Regular,
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import { useAppSelector } from '../app/hooks';
+import { useProblemToast } from '../components/feedback';
+import { selectCurrentUser } from '../features/auth/authSlice';
+import { useLogoutMutation } from '../features/api/apiSlice';
 
 // ============================================
 // TYPES
@@ -45,10 +45,9 @@ interface SettingsItem {
 // MOCK DATA
 // ============================================
 
+// FICTION ONLY — fields with no backend counterpart, scheduled for pruning in the
+// settings-content rewrite. Identity (name/email/initials) comes from the session.
 const mockUser = {
-  firstName: 'John',
-  lastName: 'Doe',
-  email: 'john.doe@email.com',
   phone: '+1 (555) 123-4567',
   dateOfBirth: 'March 15, 1990',
   country: 'United States',
@@ -82,79 +81,6 @@ const useStyles = makeStyles({
   headerTitle: {
     fontSize: '18px',
     fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  // ========== DESKTOP HEADER ==========
-  desktopHeader: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '0 32px',
-      height: '64px',
-      backgroundColor: '#FFFFFF',
-      borderBottom: `1px solid ${colors.neutral[200]}`,
-    },
-  },
-
-  desktopHeaderLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '48px',
-  },
-
-  logo: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: colors.brand[60],
-    cursor: 'pointer',
-  },
-
-  navMenu: {
-    display: 'flex',
-    gap: '32px',
-  },
-
-  navItem: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-    cursor: 'pointer',
-    padding: '8px 0',
-    borderBottom: '2px solid transparent',
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      color: colors.neutral[800],
-    },
-  },
-
-  desktopHeaderRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-
-  userAvatar: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '50%',
-    backgroundColor: colors.brand[130],
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  avatarInitials: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: colors.brand[60],
-  },
-
-  userName: {
-    fontSize: '14px',
-    fontWeight: 500,
     color: colors.neutral[800],
   },
 
@@ -729,50 +655,6 @@ const useStyles = makeStyles({
       textDecoration: 'underline',
     },
   },
-
-  // ========== BOTTOM NAV ==========
-  bottomNav: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-around',
-    padding: '8px 0 24px 0',
-    backgroundColor: '#FFFFFF',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  bottomNavItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-    cursor: 'pointer',
-    background: 'none',
-    border: 'none',
-    padding: '8px',
-  },
-
-  bottomNavIcon: {
-    width: '24px',
-    height: '24px',
-    color: colors.neutral[400],
-  },
-
-  bottomNavIconActive: {
-    color: colors.brand[60],
-  },
-
-  bottomNavLabel: {
-    fontSize: '10px',
-    fontWeight: 500,
-    color: colors.neutral[400],
-  },
-
-  bottomNavLabelActive: {
-    color: colors.brand[60],
-  },
 });
 
 // ============================================
@@ -885,6 +767,19 @@ const supportSettings: SettingsItem[] = [
 export function SettingsPage() {
   const styles = useStyles();
   const navigate = useNavigate();
+  const [logout] = useLogoutMutation();
+  const showProblem = useProblemToast();
+
+  // IDENTITY comes from the session (the shell shows the same user — the two must
+  // never disagree on one screen). The remaining mockUser fields (phone, date of
+  // birth, country, member-since) are fabrications scheduled for pruning in the
+  // settings-content rewrite.
+  const user = useAppSelector(selectCurrentUser);
+  const displayName = user ? `${user.firstName} ${user.lastName}` : '';
+  const displayEmail = user?.email ?? '';
+  const displayInitials = user
+    ? `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`.toUpperCase()
+    : '';
 
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
   const [darkMode, setDarkMode] = useState(false);
@@ -892,9 +787,17 @@ export function SettingsPage() {
   const [showBalances, setShowBalances] = useState(true);
   const [compactView, setCompactView] = useState(false);
 
-  const handleLogout = () => {
-    // TODO: Implement logout
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      // Real server-side logout: revokes the BFF session and deletes the cookie.
+      // Navigation happens ONLY on success — a failed revocation must never
+      // masquerade as a logout (the cookie would still be alive behind a login
+      // screen). Mirrors ProtectedShell.
+      await logout().unwrap();
+      navigate('/login', { replace: true });
+    } catch (caught) {
+      showProblem(caught as ApiProblem);
+    }
   };
 
   const getIconClass = (color: string) => {
@@ -939,41 +842,14 @@ export function SettingsPage() {
 
   return (
     <div className={styles.container}>
-      {/* Mobile Header */}
+      {/* Mobile PAGE-TITLE bar — NOT a shell duplicate: the shared shell renders no
+          mobile header (ProtectedShell passes no `header` prop to AppLayout), so this
+          is the page's own title, the mobile counterpart of desktop page headings. */}
       <div className={styles.mobileHeader}>
         <Text className={styles.headerTitle}>Settings</Text>
       </div>
 
-      {/* Desktop Header */}
-      <div className={styles.desktopHeader}>
-        <div className={styles.desktopHeaderLeft}>
-          <Text className={styles.logo} onClick={() => navigate('/dashboard')}>
-            AzureBank
-          </Text>
-          <div className={styles.navMenu}>
-            <Text className={styles.navItem} onClick={() => navigate('/dashboard')}>
-              Dashboard
-            </Text>
-            <Text className={styles.navItem} onClick={() => navigate('/accounts')}>
-              Accounts
-            </Text>
-            <Text className={styles.navItem} onClick={() => navigate('/history')}>
-              Transactions
-            </Text>
-            <Text className={styles.navItem} onClick={() => navigate('/transfer')}>
-              Transfers
-            </Text>
-          </div>
-        </div>
-        <div className={styles.desktopHeaderRight}>
-          <div className={styles.userAvatar}>
-            <Text className={styles.avatarInitials}>JD</Text>
-          </div>
-          <Text className={styles.userName}>John Doe</Text>
-        </div>
-      </div>
-
-      {/* Main Layout */}
+      {/* Main Layout — the app shell (nav) is provided by ProtectedShell */}
       <div className={styles.mainLayout}>
         {/* Desktop Sidebar */}
         <div className={styles.desktopSidebar}>
@@ -1066,13 +942,11 @@ export function SettingsPage() {
           {/* Profile Section */}
           <div className={styles.profileSection}>
             <div className={styles.profileAvatar}>
-              <Text className={styles.profileAvatarInitials}>JD</Text>
+              <Text className={styles.profileAvatarInitials}>{displayInitials}</Text>
             </div>
             <div className={styles.profileInfo}>
-              <Text className={styles.profileName}>
-                {mockUser.firstName} {mockUser.lastName}
-              </Text>
-              <Text className={styles.profileEmail}>{mockUser.email}</Text>
+              <Text className={styles.profileName}>{displayName}</Text>
+              <Text className={styles.profileEmail}>{displayEmail}</Text>
             </div>
             <ChevronRight20Regular className={styles.profileChevron} />
           </div>
@@ -1096,7 +970,12 @@ export function SettingsPage() {
           </div>
 
           {/* Logout */}
-          <button className={styles.logoutButton} onClick={handleLogout}>
+          <button
+            className={styles.logoutButton}
+            onClick={() => {
+              void handleLogout();
+            }}
+          >
             <SignOut24Regular style={{ color: colors.semantic.error.main }} />
             <Text className={styles.logoutText}>Log Out</Text>
           </button>
@@ -1118,13 +997,11 @@ export function SettingsPage() {
                 <div className={styles.cardContent}>
                   <div className={styles.profileHeader}>
                     <div className={styles.profileAvatarLarge}>
-                      <Text className={styles.avatarInitialsLarge}>JD</Text>
+                      <Text className={styles.avatarInitialsLarge}>{displayInitials}</Text>
                     </div>
                     <div className={styles.profileDetails}>
-                      <Text className={styles.profileNameLarge}>
-                        {mockUser.firstName} {mockUser.lastName}
-                      </Text>
-                      <Text className={styles.profileEmailLarge}>{mockUser.email}</Text>
+                      <Text className={styles.profileNameLarge}>{displayName}</Text>
+                      <Text className={styles.profileEmailLarge}>{displayEmail}</Text>
                       <Text className={styles.profileMemberSince}>
                         Member since {mockUser.memberSince}
                       </Text>
@@ -1139,13 +1016,13 @@ export function SettingsPage() {
                     <div className={styles.formField}>
                       <Text className={styles.formLabel}>First Name</Text>
                       <div className={styles.formInput}>
-                        <Text className={styles.inputValue}>{mockUser.firstName}</Text>
+                        <Text className={styles.inputValue}>{user?.firstName ?? ''}</Text>
                       </div>
                     </div>
                     <div className={styles.formField}>
                       <Text className={styles.formLabel}>Last Name</Text>
                       <div className={styles.formInput}>
-                        <Text className={styles.inputValue}>{mockUser.lastName}</Text>
+                        <Text className={styles.inputValue}>{user?.lastName ?? ''}</Text>
                       </div>
                     </div>
                   </div>
@@ -1154,7 +1031,7 @@ export function SettingsPage() {
                     <div className={styles.formField}>
                       <Text className={styles.formLabel}>Email Address</Text>
                       <div className={styles.formInput}>
-                        <Text className={styles.inputValue}>{mockUser.email}</Text>
+                        <Text className={styles.inputValue}>{displayEmail}</Text>
                       </div>
                     </div>
                     <div className={styles.formField}>
@@ -1248,7 +1125,9 @@ export function SettingsPage() {
                         color: colors.semantic.error.main,
                       }}
                       icon={<SignOut24Regular />}
-                      onClick={handleLogout}
+                      onClick={() => {
+                        void handleLogout();
+                      }}
                     >
                       Log Out
                     </Button>
@@ -1300,32 +1179,6 @@ export function SettingsPage() {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Bottom Navigation (Mobile) */}
-      <div className={styles.bottomNav}>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/dashboard')}>
-          <Home24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Home</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/accounts')}>
-          <Wallet24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Accounts</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/transfer')}>
-          <ArrowSwap24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>Transfer</Text>
-        </button>
-        <button className={styles.bottomNavItem} onClick={() => navigate('/history')}>
-          <Clock24Regular className={styles.bottomNavIcon} />
-          <Text className={styles.bottomNavLabel}>History</Text>
-        </button>
-        <button className={styles.bottomNavItem}>
-          <MoreHorizontal24Regular
-            className={`${styles.bottomNavIcon} ${styles.bottomNavIconActive}`}
-          />
-          <Text className={`${styles.bottomNavLabel} ${styles.bottomNavLabelActive}`}>More</Text>
-        </button>
       </div>
     </div>
   );

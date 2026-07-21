@@ -4,8 +4,6 @@
 
 // Core UI Components
 export { Avatar, type AvatarProps, type AvatarSize, type AvatarVariant } from './Avatar';
-export { Badge, type BadgeProps, type BadgeVariant, type BadgeSize } from './Badge';
-export { Card, type CardProps, type CardVariant, type CardPadding } from './Card';
 export {
   Divider,
   type DividerProps,

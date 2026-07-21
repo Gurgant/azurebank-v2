@@ -3,12 +3,12 @@ import { makeStyles, mergeClasses, Text } from '@fluentui/react-components';
 import {
   Home24Regular,
   Home24Filled,
+  Wallet24Regular,
+  Wallet24Filled,
   History24Regular,
   History24Filled,
   ArrowSwap24Regular,
   ArrowSwap24Filled,
-  Person24Regular,
-  Person24Filled,
   Settings24Regular,
   SignOut24Regular,
 } from '@fluentui/react-icons';
@@ -49,6 +49,9 @@ export interface SidebarProps {
 // DEFAULT NAV ITEMS
 // ============================================
 
+// The app's REAL information architecture (routes in App.tsx). History previously
+// pointed at the non-existent /transactions — the exact drift the shared shell
+// exists to prevent. Profile/Settings live in the sidebar footer, not here.
 const defaultNavItems: NavItem[] = [
   {
     path: '/dashboard',
@@ -57,8 +60,14 @@ const defaultNavItems: NavItem[] = [
     activeIcon: <Home24Filled />,
   },
   {
-    path: '/transactions',
-    label: 'Transactions',
+    path: '/accounts',
+    label: 'Accounts',
+    icon: <Wallet24Regular />,
+    activeIcon: <Wallet24Filled />,
+  },
+  {
+    path: '/history',
+    label: 'History',
     icon: <History24Regular />,
     activeIcon: <History24Filled />,
   },
@@ -67,12 +76,6 @@ const defaultNavItems: NavItem[] = [
     label: 'Transfer',
     icon: <ArrowSwap24Regular />,
     activeIcon: <ArrowSwap24Filled />,
-  },
-  {
-    path: '/profile',
-    label: 'Profile',
-    icon: <Person24Regular />,
-    activeIcon: <Person24Filled />,
   },
 ];
 

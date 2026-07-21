@@ -3,6 +3,8 @@ import { makeStyles, mergeClasses, Text } from '@fluentui/react-components';
 import {
   Home24Regular,
   Home24Filled,
+  Wallet24Regular,
+  Wallet24Filled,
   History24Regular,
   History24Filled,
   ArrowSwap24Regular,
@@ -38,6 +40,8 @@ export interface BottomNavProps {
 // DEFAULT NAV ITEMS
 // ============================================
 
+// The app's REAL information architecture. The History entry previously pointed at
+// the non-existent /transactions (label said History, path lied) — fixed for good.
 const defaultNavItems: NavItem[] = [
   {
     path: '/dashboard',
@@ -46,16 +50,22 @@ const defaultNavItems: NavItem[] = [
     activeIcon: <Home24Filled />,
   },
   {
-    path: '/transactions',
-    label: 'History',
-    icon: <History24Regular />,
-    activeIcon: <History24Filled />,
+    path: '/accounts',
+    label: 'Accounts',
+    icon: <Wallet24Regular />,
+    activeIcon: <Wallet24Filled />,
   },
   {
     path: '/transfer',
     label: 'Transfer',
     icon: <ArrowSwap24Regular />,
     activeIcon: <ArrowSwap24Filled />,
+  },
+  {
+    path: '/history',
+    label: 'History',
+    icon: <History24Regular />,
+    activeIcon: <History24Filled />,
   },
   {
     path: '/profile',
@@ -174,6 +184,11 @@ export function BottomNav({ items = defaultNavItems, className }: BottomNavProps
     // Exact match for home, startsWith for others
     if (path === '/dashboard') {
       return location.pathname === path;
+    }
+    // /profile and /settings alias the same page; the shell's Settings action
+    // navigates to /settings — the Profile tab must light up for both.
+    if (path === '/profile' && location.pathname.startsWith('/settings')) {
+      return true;
     }
     return location.pathname.startsWith(path);
   };
