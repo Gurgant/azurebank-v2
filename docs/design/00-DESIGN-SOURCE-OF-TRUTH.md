@@ -49,7 +49,7 @@ implementation had already settled all five:
   `{data[], pagination{page,pageSize,totalItems,totalPages,hasNextPage,hasPreviousPage}}`
   (transaction lists return the paginated object bare — the one exception). Field names:
   `transactionNumber`, `createdAt`, `recipientAzureTag`. The real spec is
-  `../api/openapiv1.json` (18 paths, matches the code 1:1).
+  `../api/openapiv1.json` (19 paths, matches the code 1:1).
 - **D4 — Versions: PINNED via CPM** (`backend/Directory.Packages.props`): net10.0, EF Core
   10.0.1, Identity/JwtBearer/OpenApi 10.0.1, FluentValidation 12.1.1, Mapperly 4.3.1,
   Scalar 2.12.4, YARP 2.3.0, Serilog.AspNetCore 10.0.0, xunit 2.9.3, Testcontainers 4.3.0,

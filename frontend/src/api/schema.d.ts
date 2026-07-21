@@ -394,6 +394,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/accounts/{id}/full-number": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reveal the full (unmasked) account number of one owned account.
+         *     Every other endpoint returns the masked form; behind the BFF this exact path is
+         *     step-up-gated (PIN, auth level 2) and the response must never be cached.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfAccountNumberResponse"];
+                    };
+                };
+                /** @description Bad Request - Invalid parameter format or validation failed. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - You don't have permission to access this resource. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found - The requested resource does not exist. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounts/{id}/set-primary": {
         parameters: {
             query?: never;
@@ -1747,6 +1818,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description The on-demand reveal of a single account's FULL (unmasked) account number.
+         *     Every other account DTO carries the masked form (AccountMapper); this dedicated type
+         *     exists so the unmasked value is a deliberate, self-describing, separately-audited
+         *     shape — never a field a generic mapping could adopt by accident.
+         */
+        AccountNumberResponse: {
+            /** Format: uuid */
+            accountId?: string;
+            /** @description The full, unmasked account number (e.g. AB-1234-5678-90). */
+            accountNumber: string;
+        };
         AccountResponse: {
             /** Format: uuid */
             id?: string;
@@ -1765,6 +1848,10 @@ export interface components {
          */
         AccountType: "Checking" | "Savings" | "Investment";
         ApiResponse: {
+            message?: null | string;
+        };
+        ApiResponseOfAccountNumberResponse: {
+            data?: null | components["schemas"]["AccountNumberResponse"];
             message?: null | string;
         };
         ApiResponseOfAccountResponse: {

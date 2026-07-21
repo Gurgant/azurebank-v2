@@ -373,6 +373,50 @@
         }
       }
     },
+    "/api/accounts/{id}/full-number": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Reveal the full (unmasked) account number of one owned account.\r\nEvery other endpoint returns the masked form; behind the BFF this exact path is\r\nstep-up-gated (PIN, auth level 2) and the response must never be cached.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfAccountNumberResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - The requested resource does not exist."
+          },
+          "403": {
+            "description": "Forbidden - You don't have permission to access this resource."
+          },
+          "401": {
+            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+          },
+          "400": {
+            "description": "Bad Request - Invalid parameter format or validation failed."
+          }
+        }
+      }
+    },
     "/api/accounts/{id}/set-primary": {
       "patch": {
         "tags": [
@@ -1832,6 +1876,23 @@
   },
   "components": {
     "schemas": {
+      "AccountNumberResponse": {
+        "required": [
+          "accountNumber"
+        ],
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accountNumber": {
+            "type": "string",
+            "description": "The full, unmasked account number (e.g. AB-1234-5678-90)."
+          }
+        },
+        "description": "The on-demand reveal of a single account's FULL (unmasked) account number.\r\nEvery other account DTO carries the masked form (AccountMapper); this dedicated type\r\nexists so the unmasked value is a deliberate, self-describing, separately-audited\r\nshape — never a field a generic mapping could adopt by accident."
+      },
       "AccountResponse": {
         "required": [
           "accountNumber",
@@ -1877,6 +1938,27 @@
       "ApiResponse": {
         "type": "object",
         "properties": {
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ApiResponseOfAccountNumberResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AccountNumberResponse"
+              }
+            ]
+          },
           "message": {
             "type": [
               "null",

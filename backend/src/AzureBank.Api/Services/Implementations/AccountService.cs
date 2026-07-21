@@ -167,6 +167,28 @@ public class AccountService : IAccountService
         return _mapper.ToHistoricalBalanceResponse(accountId, historicalBalance, atTime.Value);
     }
 
+    /// <inheritdoc />
+    public async Task<AccountNumberResponse> GetFullAccountNumberAsync(Guid accountId, Guid userId)
+    {
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+
+        // Detective audit line (SecurityEvent series): WHO revealed WHICH account —
+        // never the number itself. PII redaction is opt-in per call site, so the value
+        // must not enter the logging pipeline at all.
+        _logger.LogInformation(
+            "SecurityEvent {SecurityEvent}: user {UserId} revealed the full account number of account {AccountId}",
+            "AccountNumberRevealed", userId, accountId);
+
+        // Deliberately NOT via AccountMapper: the mapper's contract is "account numbers
+        // leave masked". Constructing the one unmasked shape by hand keeps that invariant
+        // and prevents any generated mapping from ever adopting the raw value.
+        return new AccountNumberResponse
+        {
+            AccountId = account.Id,
+            AccountNumber = account.AccountNumber
+        };
+    }
+
     /// <summary>
     /// Calculates the account balance at a specific point in time.
     /// Works by getting all transactions up to that time and calculating the final balance.
