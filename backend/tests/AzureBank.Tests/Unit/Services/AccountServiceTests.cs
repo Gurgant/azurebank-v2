@@ -505,6 +505,80 @@ public class AccountServiceTests : IDisposable
 
     #endregion
 
+    #region GetFullAccountNumberAsync Tests
+
+    [Fact]
+    public async Task GetFullAccountNumberAsync_ForOwnedAccount_ReturnsVerbatimUnmaskedNumber()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        _accountAccessMock
+            .Setup(a => a.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        var result = await _sut.GetFullAccountNumberAsync(account.Id, userId);
+
+        // Assert — the ONE read that returns the entity value verbatim, not the mask.
+        result.AccountId.Should().Be(account.Id);
+        result.AccountNumber.Should().Be(account.AccountNumber);
+        result.AccountNumber.Should().NotContain("*");
+    }
+
+    [Fact]
+    public async Task GetFullAccountNumberAsync_AuditsTheReveal_WithoutLoggingTheNumber()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _accountAccessMock
+            .Setup(a => a.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        await _sut.GetFullAccountNumberAsync(account.Id, userId);
+
+        // Assert — the SecurityEvent fires with Guids only. PII redaction is opt-in per
+        // call site, so the rendered message must never contain the account number.
+        _loggerMock.Verify(l => l.Log(
+            LogLevel.Information,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) =>
+                state.ToString()!.Contains("AccountNumberRevealed") &&
+                state.ToString()!.Contains(userId.ToString()) &&
+                state.ToString()!.Contains(account.Id.ToString()) &&
+                !state.ToString()!.Contains(account.AccountNumber)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetFullAccountNumberAsync_ForForeignAccount_PropagatesAuthorizationFailure()
+    {
+        // Arrange — ownership goes through the SAME central check as every other read.
+        var accountId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        _accountAccessMock
+            .Setup(a => a.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ThrowsAsync(new AuthorizationException("You do not have access to this account."));
+
+        // Act & Assert
+        await _sut.Invoking(s => s.GetFullAccountNumberAsync(accountId, userId))
+            .Should().ThrowAsync<AuthorizationException>();
+
+        // No audit line for a denied attempt with this event name — the denial is logged
+        // by the exception pipeline; AccountNumberRevealed must mean "value was returned".
+        _loggerMock.Verify(l => l.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains("AccountNumberRevealed")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private static Account CreateTestAccount(Guid userId, bool isPrimary)

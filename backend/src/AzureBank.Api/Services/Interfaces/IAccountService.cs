@@ -44,4 +44,10 @@ public interface IAccountService
     /// <param name="userId">User identifier for ownership verification</param>
     /// <param name="atTime">Optional: Get balance at specific point in time (null = current)</param>
     Task<BalanceResponse> GetBalanceAsync(Guid accountId, Guid userId, DateTime? atTime = null);
+
+    /// <summary>
+    /// Reveals the FULL (unmasked) account number of an owned account — the one read
+    /// that bypasses the mapper's masking. Audited (SecurityEvent AccountNumberRevealed).
+    /// </summary>
+    Task<AccountNumberResponse> GetFullAccountNumberAsync(Guid accountId, Guid userId);
 }

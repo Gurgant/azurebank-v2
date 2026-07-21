@@ -249,4 +249,84 @@ public class AccountEndpointTests : IntegrationTestBase
     }
 
     #endregion
+
+    #region Full Account Number (Reveal) Tests
+
+    [Fact]
+    public async Task FullNumber_ForOwner_ReturnsUnmaskedNumber_WithNoStore()
+    {
+        // Arrange
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // The regular read is masked — the baseline the reveal must differ from.
+        var maskedResponse = await Client.GetAsync($"/api/accounts/{accountId}");
+        var masked = await maskedResponse.Content
+            .ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions);
+        masked!.Data!.AccountNumber.Should().Contain("****");
+
+        // Act
+        var response = await Client.GetAsync($"/api/accounts/{accountId}/full-number");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var result = await response.Content
+            .ReadFromJsonAsync<ApiResponse<AccountNumberResponse>>(JsonOptions);
+        result!.Data!.AccountId.Should().Be(accountId);
+        result.Data.AccountNumber.Should().MatchRegex(@"^AB-\d{4}-\d{4}-\d{2}$",
+            "the reveal returns the entity's real number, not the mapper's mask");
+        result.Data.AccountNumber.Should().NotContain("*");
+        result.Data.AccountNumber.Should().NotBe(masked.Data.AccountNumber);
+        result.Data.AccountNumber[^2..].Should().Be(masked.Data.AccountNumber[^2..],
+            "mask and full number describe the same account");
+
+        // ASVS 14.3.2 — the unmasked response must never be cacheable.
+        response.Headers.CacheControl!.NoStore.Should().BeTrue();
+        response.Headers.Pragma.ToString().Should().Contain("no-cache");
+    }
+
+    [Fact]
+    public async Task FullNumber_ForForeignAccount_ReturnsForbidden()
+    {
+        // Arrange — user B tries to reveal user A's account number.
+        var (_, _, foreignAccountId) = await RegisterTestUserAsync();
+        var (tokenB, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(tokenB);
+
+        // Act
+        var response = await Client.GetAsync($"/api/accounts/{foreignAccountId}/full-number");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task FullNumber_ForUnknownAccount_ReturnsNotFound()
+    {
+        // Arrange
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // Act
+        var response = await Client.GetAsync($"/api/accounts/{Guid.NewGuid()}/full-number");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task FullNumber_WithoutToken_ReturnsUnauthorized()
+    {
+        // Arrange
+        ClearAuthHeader();
+
+        // Act
+        var response = await Client.GetAsync($"/api/accounts/{Guid.NewGuid()}/full-number");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    #endregion
 }

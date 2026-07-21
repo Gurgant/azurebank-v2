@@ -95,10 +95,16 @@ public class AuthLevelMiddleware
 
     private static bool RequiresPinVerification(string path, string method)
     {
+        // Endpoint routing tolerates a trailing slash ("/api/transfers/" and
+        // ".../full-number/" still reach their endpoints), so the gate must match the
+        // NORMALIZED path — raw exact/suffix matching would let a slash-suffixed request
+        // bypass step-up entirely while the API happily serves it.
+        var normalizedPath = path.TrimEnd('/');
+
         // POST to transfer endpoints requires PIN
         if (method.Equals("POST", StringComparison.OrdinalIgnoreCase))
         {
-            if (PinRequiredPaths.Contains(path))
+            if (PinRequiredPaths.Contains(normalizedPath))
             {
                 return true;
             }
@@ -107,12 +113,12 @@ public class AuthLevelMiddleware
         // Check path suffixes that require PIN (any method)
         foreach (var suffix in PinRequiredSuffixes)
         {
-            if (path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            if (normalizedPath.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
             {
                 // Only if it's under a PIN-required prefix
                 foreach (var prefix in PinRequiredPrefixes)
                 {
-                    if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    if (normalizedPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     {
                         return true;
                     }

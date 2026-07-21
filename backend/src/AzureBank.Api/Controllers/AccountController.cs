@@ -74,6 +74,31 @@ public class AccountController(
     }
 
     /// <summary>
+    /// Reveal the full (unmasked) account number of one owned account.
+    /// Every other endpoint returns the masked form; behind the BFF this exact path is
+    /// step-up-gated (PIN, auth level 2) and the response must never be cached.
+    /// </summary>
+    /// <param name="id">Account ID</param>
+    /// <returns>The full account number</returns>
+    [HttpGet("{id:guid}/full-number")]
+    [EndpointSummary("Reveal full account number")]
+    [ProducesResponseType(typeof(ApiResponse<AccountNumberResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ApiResponse<AccountNumberResponse>>> GetFullAccountNumber(Guid id)
+    {
+        var userId = GetCurrentUserId();
+        var result = await _accountService.GetFullAccountNumberAsync(id, userId);
+
+        // ASVS 14.3.2: the one response carrying the unmasked number must never land in
+        // a browser or intermediary cache (YARP forwards response headers untouched).
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.Pragma = "no-cache";
+
+        return Ok(ApiResponse<AccountNumberResponse>.Success(result));
+    }
+
+    /// <summary>
     /// Create a new bank account.
     /// </summary>
     /// <param name="request">Account creation details</param>

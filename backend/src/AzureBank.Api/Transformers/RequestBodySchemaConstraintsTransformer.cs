@@ -40,6 +40,9 @@ public sealed class RequestBodySchemaConstraintsTransformer : IOpenApiDocumentTr
 
         // Account DTOs
         ["CreateAccountRequest"] = typeof(AzureBank.Shared.DTOs.Account.CreateAccountRequest),
+
+        // User DTOs
+        ["UpdateAzureTagRequest"] = typeof(AzureBank.Shared.DTOs.User.UpdateAzureTagRequest),
     };
 
     public Task TransformAsync(
@@ -117,8 +120,12 @@ public sealed class RequestBodySchemaConstraintsTransformer : IOpenApiDocumentTr
                     schema.Pattern = ValidationRules.PasswordPattern;
                     break;
 
-                // AzureTag - minLength: 3, maxLength: 20, pattern for format
+                // AzureTag - minLength: 3, maxLength: 20, pattern for format.
+                // AzureTagQuery is the body/param variant of the same rule set
+                // (UpdateAzureTagRequest uses it) — without this case a spec regen
+                // silently DROPS the documented constraints.
                 case AzureTagAttribute:
+                case AzureTagQueryAttribute:
                     schema.MinLength = ValidationRules.AzureTagMinLength;
                     schema.MaxLength = ValidationRules.AzureTagMaxLength;
                     schema.Pattern = ValidationRules.AzureTagPattern;
