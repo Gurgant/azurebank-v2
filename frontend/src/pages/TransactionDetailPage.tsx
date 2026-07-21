@@ -1,80 +1,29 @@
-import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { makeStyles, Text } from '@fluentui/react-components';
+import {
+  Button,
+  makeStyles,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
+  mergeClasses,
+  Spinner,
+  Text,
+} from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
   ArrowDownload24Regular,
   ArrowUpload24Regular,
   ArrowSwap24Regular,
-  ArrowDownload20Regular,
-  ArrowUpload20Regular,
-  Share20Regular,
-  Print20Regular,
-  ArrowRepeatAll20Regular,
-  QuestionCircle20Regular,
+  Search24Regular,
 } from '@fluentui/react-icons';
-import { colors, shadows, gradients, transitions } from '../theme/tokens';
+import { colors, shadows } from '../theme/tokens';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import type { TransactionStatus, TransactionType } from '../api/enums';
+import { useGetTransactionQuery } from '../features/api/apiSlice';
+import { formatDateHeading, formatCurrency, formatTime, isIncomeType } from '../utils/format';
 
 // ============================================
-// TYPES
-// ============================================
-
-type TransactionType = 'deposit' | 'withdrawal' | 'transfer_out' | 'transfer_in';
-type TransactionStatus = 'completed' | 'pending' | 'failed';
-
-interface Transaction {
-  id: string;
-  transactionId: string;
-  type: TransactionType;
-  amount: number;
-  description: string;
-  category: string;
-  status: TransactionStatus;
-  date: string;
-  time: string;
-  reference: string;
-  account: {
-    name: string;
-    number: string;
-    type: string;
-  };
-  balanceBefore: number;
-  balanceAfter: number;
-  fee: number;
-  recipient?: {
-    name: string;
-    accountNumber: string;
-  };
-  notes?: string;
-}
-
-// ============================================
-// MOCK DATA
-// ============================================
-
-const mockTransaction: Transaction = {
-  id: '1',
-  transactionId: 'TXN-2026010100089',
-  type: 'withdrawal',
-  amount: 200.0,
-  description: 'ATM Withdrawal at Main Branch - Downtown Location',
-  category: 'Cash Out',
-  status: 'completed',
-  date: 'Jan 1, 2026',
-  time: '10:23 AM',
-  reference: 'REF-8472651',
-  account: {
-    name: 'Main Account',
-    number: '**** **** **** 4521',
-    type: 'Checking',
-  },
-  balanceBefore: 12650.0,
-  balanceAfter: 12450.0,
-  fee: 0,
-};
-
-// ============================================
-// STYLES
+// STYLES — mobile layout (desktop pass = quality track)
 // ============================================
 
 const useStyles = makeStyles({
@@ -85,23 +34,13 @@ const useStyles = makeStyles({
     flexDirection: 'column',
   },
 
-  // ========== MOBILE HEADER ==========
-  mobileHeader: {
+  header: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: '8px',
     padding: '12px 16px',
     backgroundColor: '#FFFFFF',
     borderBottom: `1px solid ${colors.neutral[200]}`,
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
   },
 
   backButton: {
@@ -126,231 +65,57 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
-  headerAction: {
-    width: '40px',
-    height: '40px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    borderRadius: '8px',
-    color: colors.neutral[500],
-    ':hover': {
-      backgroundColor: colors.neutral[100],
-    },
-  },
-
-  // ========== MAIN CONTENT ==========
-  mainContent: {
+  content: {
     flex: 1,
     padding: '16px',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
-    '@media (min-width: 1024px)': {
-      padding: '32px',
-      gap: '24px',
-    },
   },
 
-  // ========== PAGE HEADER (Desktop) ==========
-  pageHeader: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '16px',
-    },
-  },
-
-  desktopBackButton: {
-    width: '40px',
-    height: '40px',
-    backgroundColor: '#FFFFFF',
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    color: colors.neutral[500],
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-    },
-  },
-
-  pageTitle: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-  },
-
-  // ========== CONTENT GRID ==========
-  contentGrid: {
+  // ========== HERO ==========
+  hero: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
-    '@media (min-width: 1024px)': {
-      display: 'grid',
-      gridTemplateColumns: '1fr 400px',
-      gap: '24px',
-    },
-  },
-
-  // ========== TRANSACTION HEADER (Mobile) ==========
-  transactionHeader: {
+    alignItems: 'center',
+    gap: '12px',
+    padding: '24px 16px',
     backgroundColor: '#FFFFFF',
     borderRadius: '16px',
-    padding: '24px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '16px',
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
+    boxShadow: shadows.sm,
   },
 
   iconContainer: {
-    width: '72px',
-    height: '72px',
-    borderRadius: '50%',
+    width: '56px',
+    height: '56px',
+    borderRadius: '16px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    '@media (min-width: 1024px)': {
-      width: '80px',
-      height: '80px',
-    },
   },
 
-  iconContainerWithdrawal: {
-    background: gradients.error,
-    color: colors.semantic.error.main,
-  },
-
-  iconContainerDeposit: {
-    background: gradients.success,
+  iconIncome: {
+    backgroundColor: colors.semantic.success.light,
     color: colors.semantic.success.main,
   },
 
-  iconContainerTransfer: {
-    background: gradients.primary,
-    color: colors.brand[60],
-  },
-
-  transactionIcon: {
-    width: '36px',
-    height: '36px',
-    '@media (min-width: 1024px)': {
-      width: '40px',
-      height: '40px',
-    },
-  },
-
-  transactionAmount: {
-    fontSize: '36px',
-    fontWeight: 700,
-    '@media (min-width: 1024px)': {
-      fontSize: '40px',
-    },
-  },
-
-  amountNegative: {
+  iconExpense: {
+    backgroundColor: colors.semantic.error.light,
     color: colors.semantic.error.main,
+  },
+
+  amount: {
+    fontSize: '32px',
+    fontWeight: 700,
+    fontFamily: 'Consolas, monospace',
   },
 
   amountPositive: {
     color: colors.semantic.success.main,
   },
 
-  transactionType: {
-    fontSize: '16px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-  },
-
-  statusBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    borderRadius: '20px',
-  },
-
-  statusBadgeCompleted: {
-    backgroundColor: colors.semantic.success.light,
-  },
-
-  statusBadgePending: {
-    backgroundColor: colors.semantic.warning.light,
-  },
-
-  statusBadgeFailed: {
-    backgroundColor: colors.semantic.error.light,
-  },
-
-  statusDot: {
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-  },
-
-  statusDotCompleted: {
-    backgroundColor: colors.semantic.success.main,
-  },
-
-  statusDotPending: {
-    backgroundColor: colors.semantic.warning.main,
-  },
-
-  statusDotFailed: {
-    backgroundColor: colors.semantic.error.main,
-  },
-
-  statusText: {
-    fontSize: '14px',
-    fontWeight: 600,
-  },
-
-  statusTextCompleted: {
-    color: '#137333',
-  },
-
-  statusTextPending: {
-    color: '#B45309',
-  },
-
-  statusTextFailed: {
-    color: '#B91C1C',
-  },
-
-  // ========== MAIN CARD (Desktop) ==========
-  mainCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: '16px',
-    boxShadow: shadows.sm,
-    overflow: 'hidden',
-  },
-
-  transactionSummary: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '24px',
-      padding: '32px',
-      borderBottom: `1px solid ${colors.neutral[200]}`,
-    },
-  },
-
-  transactionMainInfo: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
+  amountNegative: {
+    color: colors.neutral[800],
   },
 
   typeLabel: {
@@ -359,94 +124,86 @@ const useStyles = makeStyles({
     color: colors.neutral[500],
   },
 
-  transactionDescription: {
-    fontSize: '16px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  transactionStatus: {
+  statusBadge: {
     display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    gap: '8px',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '4px 12px',
+    borderRadius: '12px',
   },
 
-  transactionDate: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
+  statusDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
   },
 
-  // ========== DETAILS SECTIONS ==========
+  statusLabel: {
+    fontSize: '13px',
+    fontWeight: 600,
+  },
+
+  statusCompleted: {
+    backgroundColor: colors.semantic.success.light,
+  },
+  statusCompletedFg: {
+    color: colors.semantic.success.main,
+    backgroundColor: colors.semantic.success.main,
+  },
+  statusPending: {
+    backgroundColor: '#FEF3E2',
+  },
+  statusPendingFg: {
+    color: '#B45309',
+    backgroundColor: '#F59E0B',
+  },
+  statusFailed: {
+    backgroundColor: colors.semantic.error.light,
+  },
+  statusFailedFg: {
+    color: colors.semantic.error.main,
+    backgroundColor: colors.semantic.error.main,
+  },
+  statusReversed: {
+    backgroundColor: colors.neutral[100],
+  },
+  statusReversedFg: {
+    color: colors.neutral[600],
+    backgroundColor: colors.neutral[500],
+  },
+
+  // ========== DETAILS CARD ==========
   detailsCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: '16px',
-    overflow: 'hidden',
-    '@media (min-width: 1024px)': {
-      borderRadius: 0,
-      boxShadow: 'none',
-    },
-  },
-
-  detailsSection: {
-    padding: '16px',
-    '@media (min-width: 1024px)': {
-      padding: '24px 32px',
-    },
+    padding: '8px 16px',
+    boxShadow: shadows.sm,
   },
 
   sectionTitle: {
-    fontSize: '12px',
+    display: 'block',
+    fontSize: '14px',
     fontWeight: 600,
     color: colors.neutral[500],
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-    marginBottom: '12px',
-    '@media (min-width: 1024px)': {
-      fontSize: '14px',
-      marginBottom: '16px',
-    },
+    padding: '12px 0 4px',
   },
 
-  // Mobile: detail rows
   detailRow: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'baseline',
+    gap: '16px',
     padding: '12px 0',
     borderBottom: `1px solid ${colors.neutral[100]}`,
     ':last-child': {
       borderBottom: 'none',
     },
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  // Desktop: detail grid
-  detailsGrid: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: '16px 32px',
-    },
-  },
-
-  detailItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
   },
 
   detailLabel: {
-    fontSize: '13px',
-    fontWeight: 400,
+    fontSize: '14px',
     color: colors.neutral[500],
-    '@media (min-width: 1024px)': {
-      fontSize: '13px',
-    },
+    flexShrink: 0,
   },
 
   detailValue: {
@@ -454,290 +211,45 @@ const useStyles = makeStyles({
     fontWeight: 500,
     color: colors.neutral[800],
     textAlign: 'right',
-    '@media (min-width: 1024px)': {
-      fontSize: '15px',
-      textAlign: 'left',
-    },
+    overflowWrap: 'anywhere',
   },
 
   detailValueMono: {
-    fontFamily: 'Consolas, "Courier New", monospace',
+    fontFamily: 'Consolas, monospace',
   },
 
-  detailValueMultiline: {
+  // ========== STATES ==========
+  stateContainer: {
+    flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'flex-end',
-    gap: '2px',
-    '@media (min-width: 1024px)': {
-      alignItems: 'flex-start',
-    },
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '16px',
+    padding: '48px 24px',
   },
 
-  detailSubvalue: {
-    fontSize: '12px',
-    fontWeight: 400,
+  stateIcon: {
+    width: '80px',
+    height: '80px',
+    borderRadius: '50%',
+    backgroundColor: colors.neutral[100],
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     color: colors.neutral[400],
   },
 
-  sectionDivider: {
-    height: '8px',
-    backgroundColor: colors.neutral[50],
-    '@media (min-width: 1024px)': {
-      height: '1px',
-      backgroundColor: colors.neutral[200],
-      margin: '0 32px',
-    },
-  },
-
-  fullWidth: {
-    '@media (min-width: 1024px)': {
-      gridColumn: 'span 2',
-    },
-  },
-
-  // ========== SIDEBAR ==========
-  sidebar: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px',
-    '@media (min-width: 1024px)': {
-      gap: '24px',
-    },
-  },
-
-  sidebarCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: '16px',
-    boxShadow: shadows.sm,
-    padding: '24px',
-  },
-
-  sidebarTitle: {
-    fontSize: '16px',
+  stateTitle: {
+    fontSize: '18px',
     fontWeight: 600,
     color: colors.neutral[800],
-    marginBottom: '16px',
   },
 
-  // ========== BALANCE TIMELINE ==========
-  balanceTimeline: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '16px',
-    },
-  },
-
-  timelineItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-  },
-
-  timelineDot: {
-    width: '12px',
-    height: '12px',
-    borderRadius: '50%',
-    backgroundColor: colors.neutral[300],
-    flexShrink: 0,
-  },
-
-  timelineDotActive: {
-    backgroundColor: colors.brand[60],
-  },
-
-  timelineContent: {
-    flex: 1,
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  timelineLabel: {
+  stateSubtitle: {
     fontSize: '14px',
-    fontWeight: 400,
     color: colors.neutral[500],
-  },
-
-  timelineValue: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  timelineConnector: {
-    width: '2px',
-    height: '24px',
-    backgroundColor: colors.neutral[200],
-    marginLeft: '5px',
-  },
-
-  changeIndicator: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    padding: '12px',
-    borderRadius: '8px',
-    marginTop: '8px',
-  },
-
-  changeIndicatorNegative: {
-    backgroundColor: colors.semantic.error.light,
-  },
-
-  changeIndicatorPositive: {
-    backgroundColor: colors.semantic.success.light,
-  },
-
-  changeText: {
-    fontSize: '16px',
-    fontWeight: 600,
-  },
-
-  changeTextNegative: {
-    color: colors.semantic.error.main,
-  },
-
-  changeTextPositive: {
-    color: colors.semantic.success.main,
-  },
-
-  // ========== ACTIONS ==========
-  actionsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: '16px',
-    padding: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    '@media (min-width: 1024px)': {
-      boxShadow: shadows.sm,
-      padding: '24px',
-    },
-  },
-
-  actionButton: {
-    width: '100%',
-    height: '52px',
-    backgroundColor: '#FFFFFF',
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '12px',
-    cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-      border: `1px solid ${colors.neutral[300]}`,
-    },
-    '@media (min-width: 1024px)': {
-      height: '48px',
-      borderRadius: '8px',
-      gap: '10px',
-    },
-  },
-
-  actionButtonPrimary: {
-    backgroundColor: colors.brand[60],
-    border: `1px solid ${colors.brand[60]}`,
-    ':hover': {
-      backgroundColor: colors.brand[50],
-      border: `1px solid ${colors.brand[50]}`,
-    },
-  },
-
-  actionButtonIcon: {
-    width: '20px',
-    height: '20px',
-    color: colors.neutral[500],
-  },
-
-  actionButtonIconPrimary: {
-    color: '#FFFFFF',
-  },
-
-  actionButtonText: {
-    fontSize: '15px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-    '@media (min-width: 1024px)': {
-      fontSize: '14px',
-    },
-  },
-
-  actionButtonTextPrimary: {
-    color: '#FFFFFF',
-  },
-
-  // ========== HELP SECTION ==========
-  helpLink: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    padding: '16px',
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  helpLinkText: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.brand[60],
-  },
-
-  helpCard: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '12px',
-      backgroundColor: colors.brand[140],
-      border: `1px solid ${colors.brand[120]}`,
-      borderRadius: '12px',
-      padding: '20px',
-    },
-  },
-
-  helpHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-
-  helpIcon: {
-    width: '24px',
-    height: '24px',
-    color: colors.brand[60],
-  },
-
-  helpTitle: {
-    fontSize: '15px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  helpText: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-    lineHeight: '1.5',
-  },
-
-  helpLinkDesktop: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.brand[60],
-    cursor: 'pointer',
-    ':hover': {
-      textDecoration: 'underline',
-    },
+    textAlign: 'center',
   },
 });
 
@@ -745,42 +257,24 @@ const useStyles = makeStyles({
 // HELPER FUNCTIONS
 // ============================================
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
 function getTransactionIcon(type: TransactionType) {
   switch (type) {
-    case 'deposit':
+    case 'Deposit':
       return <ArrowDownload24Regular />;
-    case 'withdrawal':
+    case 'Withdrawal':
       return <ArrowUpload24Regular />;
-    case 'transfer_out':
-    case 'transfer_in':
+    case 'TransferIn':
+    case 'TransferOut':
       return <ArrowSwap24Regular />;
   }
 }
 
-function getTransactionTypeLabel(type: TransactionType): string {
-  switch (type) {
-    case 'deposit':
-      return 'Deposit';
-    case 'withdrawal':
-      return 'Withdrawal';
-    case 'transfer_out':
-      return 'Transfer Sent';
-    case 'transfer_in':
-      return 'Transfer Received';
-  }
-}
-
-function isPositiveTransaction(type: TransactionType): boolean {
-  return type === 'deposit' || type === 'transfer_in';
-}
+const TYPE_LABELS: Record<TransactionType, string> = {
+  Deposit: 'Deposit',
+  Withdrawal: 'Withdrawal',
+  TransferIn: 'Transfer received',
+  TransferOut: 'Transfer sent',
+};
 
 // ============================================
 // COMPONENT
@@ -789,397 +283,158 @@ function isPositiveTransaction(type: TransactionType): boolean {
 export function TransactionDetailPage() {
   const styles = useStyles();
   const navigate = useNavigate();
-  const { id: transactionId } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>();
 
-  // TODO: In real app, fetch transaction by transactionId from RTK Query
-  console.debug('Viewing transaction:', transactionId);
-  const [transaction] = useState<Transaction>(mockTransaction);
+  // T2 — enveloped detail, tagged {Transaction,id}. The route guarantees `id`.
+  const { data: transaction, isLoading, error, refetch } = useGetTransactionQuery(id ?? '');
+  const problem = error as ApiProblem | undefined;
+  const isNotFound = problem?.status === 404;
 
-  const isPositive = isPositiveTransaction(transaction.type);
-  const amountDisplay = isPositive
-    ? formatCurrency(transaction.amount)
-    : `-${formatCurrency(transaction.amount)}`;
-
-  const iconContainerClass = `${styles.iconContainer} ${
-    transaction.type === 'withdrawal'
-      ? styles.iconContainerWithdrawal
-      : transaction.type === 'deposit'
-        ? styles.iconContainerDeposit
-        : styles.iconContainerTransfer
-  }`;
-
-  const statusBadgeClass = `${styles.statusBadge} ${
-    transaction.status === 'completed'
-      ? styles.statusBadgeCompleted
-      : transaction.status === 'pending'
-        ? styles.statusBadgePending
-        : styles.statusBadgeFailed
-  }`;
-
-  const statusDotClass = `${styles.statusDot} ${
-    transaction.status === 'completed'
-      ? styles.statusDotCompleted
-      : transaction.status === 'pending'
-        ? styles.statusDotPending
-        : styles.statusDotFailed
-  }`;
-
-  const statusTextClass = `${styles.statusText} ${
-    transaction.status === 'completed'
-      ? styles.statusTextCompleted
-      : transaction.status === 'pending'
-        ? styles.statusTextPending
-        : styles.statusTextFailed
-  }`;
-
-  const handleBack = () => {
-    navigate(-1);
-  };
-
-  const handleDownload = () => {
-    // TODO: Implement download receipt
-    console.log('Download receipt');
-  };
-
-  const handleShare = () => {
-    // TODO: Implement share
-    console.log('Share details');
-  };
-
-  const handlePrint = () => {
-    // TODO: Implement print
-    window.print();
-  };
-
-  const handleRepeat = () => {
-    // TODO: Navigate to repeat transaction
-    console.log('Repeat transaction');
+  const statusStyles: Record<TransactionStatus, [string, string]> = {
+    Completed: [styles.statusCompleted, styles.statusCompletedFg],
+    Pending: [styles.statusPending, styles.statusPendingFg],
+    Failed: [styles.statusFailed, styles.statusFailedFg],
+    Reversed: [styles.statusReversed, styles.statusReversedFg],
   };
 
   return (
     <div className={styles.container}>
-      {/* Mobile Header */}
-      <div className={styles.mobileHeader}>
-        <div className={styles.headerLeft}>
-          <button className={styles.backButton} onClick={handleBack}>
-            <ChevronLeft24Regular />
-          </button>
-          <Text className={styles.headerTitle}>Transaction Details</Text>
-        </div>
-        <button className={styles.headerAction} onClick={handleShare}>
-          <Share20Regular />
+      <div className={styles.header}>
+        <button
+          className={styles.backButton}
+          aria-label="Go back"
+          onClick={() => void navigate(-1)}
+        >
+          <ChevronLeft24Regular />
         </button>
+        <Text className={styles.headerTitle}>Transaction Details</Text>
       </div>
 
-      {/* Main Content — the app shell (nav/header) is provided by ProtectedShell */}
-      <div className={styles.mainContent}>
-        {/* Page Header (Desktop) */}
-        <div className={styles.pageHeader}>
-          <button className={styles.desktopBackButton} onClick={handleBack}>
-            <ChevronLeft24Regular />
-          </button>
-          <Text className={styles.pageTitle}>Transaction Details</Text>
+      {isLoading && (
+        <div className={styles.stateContainer}>
+          <Spinner size="large" aria-label="Loading transaction" />
         </div>
+      )}
 
-        <div className={styles.contentGrid}>
-          {/* Left Column */}
-          <div>
-            {/* Transaction Header (Mobile) */}
-            <div className={styles.transactionHeader}>
-              <div className={iconContainerClass}>{getTransactionIcon(transaction.type)}</div>
-              <Text
-                className={`${styles.transactionAmount} ${
-                  isPositive ? styles.amountPositive : styles.amountNegative
-                }`}
-              >
-                {amountDisplay}
-              </Text>
-              <Text className={styles.transactionType}>
-                {getTransactionTypeLabel(transaction.type)}
-              </Text>
-              <div className={statusBadgeClass}>
-                <div className={statusDotClass} />
-                <Text className={statusTextClass}>
-                  {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}
-                </Text>
-              </div>
-            </div>
-
-            {/* Main Card (Desktop) */}
-            <div className={styles.mainCard}>
-              {/* Transaction Summary (Desktop) */}
-              <div className={styles.transactionSummary}>
-                <div className={iconContainerClass}>{getTransactionIcon(transaction.type)}</div>
-                <div className={styles.transactionMainInfo}>
-                  <Text className={styles.typeLabel}>
-                    {getTransactionTypeLabel(transaction.type)}
-                  </Text>
-                  <Text
-                    className={`${styles.transactionAmount} ${
-                      isPositive ? styles.amountPositive : styles.amountNegative
-                    }`}
-                  >
-                    {amountDisplay}
-                  </Text>
-                  <Text className={styles.transactionDescription}>{transaction.description}</Text>
-                </div>
-                <div className={styles.transactionStatus}>
-                  <div className={statusBadgeClass}>
-                    <div className={statusDotClass} />
-                    <Text className={statusTextClass}>
-                      {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}
-                    </Text>
-                  </div>
-                  <Text className={styles.transactionDate}>
-                    {transaction.date} at {transaction.time}
-                  </Text>
-                </div>
-              </div>
-
-              {/* Transaction Information */}
-              <div className={styles.detailsCard}>
-                <div className={styles.detailsSection}>
-                  <Text className={styles.sectionTitle}>Transaction Information</Text>
-
-                  {/* Mobile: Detail Rows */}
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Transaction ID</Text>
-                    <Text className={`${styles.detailValue} ${styles.detailValueMono}`}>
-                      {transaction.transactionId}
-                    </Text>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Date & Time</Text>
-                    <div className={styles.detailValueMultiline}>
-                      <Text className={styles.detailValue}>{transaction.date}</Text>
-                      <Text className={styles.detailSubvalue}>{transaction.time}</Text>
-                    </div>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Type</Text>
-                    <Text className={styles.detailValue}>
-                      {getTransactionTypeLabel(transaction.type)}
-                    </Text>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Category</Text>
-                    <Text className={styles.detailValue}>{transaction.category}</Text>
-                  </div>
-
-                  {/* Desktop: Detail Grid */}
-                  <div className={styles.detailsGrid}>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Transaction ID</Text>
-                      <Text className={`${styles.detailValue} ${styles.detailValueMono}`}>
-                        {transaction.transactionId}
-                      </Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Reference Number</Text>
-                      <Text className={`${styles.detailValue} ${styles.detailValueMono}`}>
-                        {transaction.reference}
-                      </Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Type</Text>
-                      <Text className={styles.detailValue}>
-                        {getTransactionTypeLabel(transaction.type)}
-                      </Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Category</Text>
-                      <Text className={styles.detailValue}>{transaction.category}</Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Processing Time</Text>
-                      <Text className={styles.detailValue}>Instant</Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Fee</Text>
-                      <Text className={styles.detailValue}>{formatCurrency(transaction.fee)}</Text>
-                    </div>
-                  </div>
-                </div>
-
-                <div className={styles.sectionDivider} />
-
-                {/* Account Details */}
-                <div className={styles.detailsSection}>
-                  <Text className={styles.sectionTitle}>Account Details</Text>
-
-                  {/* Mobile: Detail Rows */}
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>From Account</Text>
-                    <div className={styles.detailValueMultiline}>
-                      <Text className={styles.detailValue}>{transaction.account.name}</Text>
-                      <Text className={`${styles.detailSubvalue} ${styles.detailValueMono}`}>
-                        {transaction.account.number}
-                      </Text>
-                    </div>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Balance Before</Text>
-                    <Text className={styles.detailValue}>
-                      {formatCurrency(transaction.balanceBefore)}
-                    </Text>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Balance After</Text>
-                    <Text className={styles.detailValue}>
-                      {formatCurrency(transaction.balanceAfter)}
-                    </Text>
-                  </div>
-
-                  {/* Desktop: Detail Grid */}
-                  <div className={styles.detailsGrid}>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Account Name</Text>
-                      <Text className={styles.detailValue}>{transaction.account.name}</Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Account Number</Text>
-                      <Text className={`${styles.detailValue} ${styles.detailValueMono}`}>
-                        {transaction.account.number}
-                      </Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Account Type</Text>
-                      <Text className={styles.detailValue}>{transaction.account.type}</Text>
-                    </div>
-                    <div className={styles.detailItem}>
-                      <Text className={styles.detailLabel}>Currency</Text>
-                      <Text className={styles.detailValue}>USD</Text>
-                    </div>
-                  </div>
-                </div>
-
-                <div className={styles.sectionDivider} />
-
-                {/* Additional Details */}
-                <div className={styles.detailsSection}>
-                  <Text className={styles.sectionTitle}>Additional Details</Text>
-
-                  {/* Mobile: Detail Rows */}
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Description</Text>
-                    <Text className={styles.detailValue}>ATM Withdrawal</Text>
-                  </div>
-                  <div className={styles.detailRow}>
-                    <Text className={styles.detailLabel}>Reference</Text>
-                    <Text className={`${styles.detailValue} ${styles.detailValueMono}`}>
-                      {transaction.reference}
-                    </Text>
-                  </div>
-
-                  {/* Desktop: Detail Grid */}
-                  <div className={styles.detailsGrid}>
-                    <div className={`${styles.detailItem} ${styles.fullWidth}`}>
-                      <Text className={styles.detailLabel}>Description</Text>
-                      <Text className={styles.detailValue}>{transaction.description}</Text>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+      {/* A 404 is a first-class outcome, not an error bar: the link may be stale. */}
+      {isNotFound && (
+        <div className={styles.stateContainer}>
+          <div className={styles.stateIcon}>
+            <Search24Regular style={{ width: '32px', height: '32px' }} />
           </div>
+          <Text className={styles.stateTitle}>Transaction not found</Text>
+          <Text className={styles.stateSubtitle}>
+            This transaction doesn&apos;t exist or is not yours to see.
+          </Text>
+          <Button appearance="primary" onClick={() => void navigate('/history')}>
+            Back to history
+          </Button>
+        </div>
+      )}
 
-          {/* Right Column / Sidebar */}
-          <div className={styles.sidebar}>
-            {/* Balance Impact Card (Desktop) */}
-            <div className={styles.sidebarCard}>
-              <Text className={styles.sidebarTitle}>Balance Impact</Text>
-              <div className={styles.balanceTimeline}>
-                <div className={styles.timelineItem}>
-                  <div className={styles.timelineDot} />
-                  <div className={styles.timelineContent}>
-                    <Text className={styles.timelineLabel}>Balance Before</Text>
-                    <Text className={styles.timelineValue}>
-                      {formatCurrency(transaction.balanceBefore)}
-                    </Text>
-                  </div>
-                </div>
-                <div className={styles.timelineConnector} />
-                <div className={styles.timelineItem}>
-                  <div className={`${styles.timelineDot} ${styles.timelineDotActive}`} />
-                  <div className={styles.timelineContent}>
-                    <Text className={styles.timelineLabel}>Balance After</Text>
-                    <Text className={styles.timelineValue}>
-                      {formatCurrency(transaction.balanceAfter)}
-                    </Text>
-                  </div>
-                </div>
-              </div>
+      {problem && !isNotFound && (
+        <div className={styles.content}>
+          <MessageBar intent="error">
+            <MessageBarBody>
+              {problem.detail || 'Could not load the transaction.'}
+              {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button appearance="transparent" onClick={() => void refetch()}>
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        </div>
+      )}
+
+      {transaction && (
+        <div className={styles.content}>
+          {/* Hero */}
+          <div className={styles.hero}>
+            <div
+              className={mergeClasses(
+                styles.iconContainer,
+                isIncomeType(transaction.type) ? styles.iconIncome : styles.iconExpense,
+              )}
+            >
+              {getTransactionIcon(transaction.type)}
+            </div>
+            <Text
+              className={mergeClasses(
+                styles.amount,
+                isIncomeType(transaction.type) ? styles.amountPositive : styles.amountNegative,
+              )}
+            >
+              {isIncomeType(transaction.type) ? '+' : '-'}
+              {formatCurrency(Math.abs(transaction.amount))}
+            </Text>
+            <Text className={styles.typeLabel}>{TYPE_LABELS[transaction.type]}</Text>
+            <div className={mergeClasses(styles.statusBadge, statusStyles[transaction.status][0])}>
               <div
-                className={`${styles.changeIndicator} ${
-                  isPositive ? styles.changeIndicatorPositive : styles.changeIndicatorNegative
-                }`}
+                className={mergeClasses(styles.statusDot, statusStyles[transaction.status][1])}
+              />
+              <Text
+                className={mergeClasses(styles.statusLabel, statusStyles[transaction.status][1])}
               >
-                {isPositive ? (
-                  <ArrowDownload20Regular style={{ color: colors.semantic.success.main }} />
-                ) : (
-                  <ArrowUpload20Regular style={{ color: colors.semantic.error.main }} />
-                )}
-                <Text
-                  className={`${styles.changeText} ${
-                    isPositive ? styles.changeTextPositive : styles.changeTextNegative
-                  }`}
-                >
-                  {amountDisplay}
-                </Text>
-              </div>
-            </div>
-
-            {/* Actions Card */}
-            <div className={styles.actionsCard}>
-              <Text className={styles.sidebarTitle} style={{ display: 'none' }}>
-                Quick Actions
+                {transaction.status}
               </Text>
-              <button className={styles.actionButton} onClick={handleDownload}>
-                <ArrowDownload20Regular className={styles.actionButtonIcon} />
-                <Text className={styles.actionButtonText}>Download Receipt</Text>
-              </button>
-              <button className={styles.actionButton} onClick={handlePrint}>
-                <Print20Regular className={styles.actionButtonIcon} />
-                <Text className={styles.actionButtonText}>Print Details</Text>
-              </button>
-              <button className={styles.actionButton} onClick={handleShare}>
-                <Share20Regular className={styles.actionButtonIcon} />
-                <Text className={styles.actionButtonText}>Share Details</Text>
-              </button>
-              <button
-                className={`${styles.actionButton} ${styles.actionButtonPrimary}`}
-                onClick={handleRepeat}
-              >
-                <ArrowRepeatAll20Regular
-                  className={`${styles.actionButtonIcon} ${styles.actionButtonIconPrimary}`}
-                />
-                <Text className={`${styles.actionButtonText} ${styles.actionButtonTextPrimary}`}>
-                  Repeat Transaction
-                </Text>
-              </button>
             </div>
+          </div>
 
-            {/* Help Link (Mobile) */}
-            <div className={styles.helpLink}>
-              <QuestionCircle20Regular style={{ color: colors.brand[60] }} />
-              <Text className={styles.helpLinkText}>Need help with this transaction?</Text>
-            </div>
+          {/* Details — the CONTRACT's fields, nothing fabricated */}
+          <div className={styles.detailsCard}>
+            <Text className={styles.sectionTitle}>Transaction Information</Text>
 
-            {/* Help Card (Desktop) */}
-            <div className={styles.helpCard}>
-              <div className={styles.helpHeader}>
-                <QuestionCircle20Regular className={styles.helpIcon} />
-                <Text className={styles.helpTitle}>Need Assistance?</Text>
-              </div>
-              <Text className={styles.helpText}>
-                If you have questions about this transaction or notice any discrepancies, our
-                support team is here to help.
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>Transaction number</Text>
+              <Text className={mergeClasses(styles.detailValue, styles.detailValueMono)}>
+                {transaction.transactionNumber}
               </Text>
-              <Text className={styles.helpLinkDesktop}>Contact Support →</Text>
+            </div>
+
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>Date &amp; time</Text>
+              <Text className={styles.detailValue}>
+                {formatDateHeading(transaction.createdAt)} · {formatTime(transaction.createdAt)}
+              </Text>
+            </div>
+
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>Type</Text>
+              <Text className={styles.detailValue}>{TYPE_LABELS[transaction.type]}</Text>
+            </div>
+
+            {transaction.recipientAzureTag && (
+              <div className={styles.detailRow}>
+                <Text className={styles.detailLabel}>To</Text>
+                <Text className={styles.detailValue}>@{transaction.recipientAzureTag}</Text>
+              </div>
+            )}
+
+            {transaction.senderAzureTag && (
+              <div className={styles.detailRow}>
+                <Text className={styles.detailLabel}>From</Text>
+                <Text className={styles.detailValue}>@{transaction.senderAzureTag}</Text>
+              </div>
+            )}
+
+            {transaction.description && (
+              <div className={styles.detailRow}>
+                <Text className={styles.detailLabel}>Description</Text>
+                <Text className={styles.detailValue}>{transaction.description}</Text>
+              </div>
+            )}
+
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>Balance after</Text>
+              <Text className={mergeClasses(styles.detailValue, styles.detailValueMono)}>
+                {formatCurrency(transaction.balanceAfter)}
+              </Text>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -133,6 +133,50 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) =>
   return response(200).json({ message: 'Account deleted successfully' });
 });
 
+/**
+ * GET /api/transactions — T1, one of the two BARE responses (no envelope, by
+ * contract): a PaginatedResponse with real page math, newest first.
+ */
+const listTransactions = api.get('/api/transactions', ({ request, response }) => {
+  const params = new URL(request.url).searchParams;
+  const page = Number(params.get('Page') ?? 1);
+  const pageSize = Number(params.get('PageSize') ?? 20);
+
+  const ordered = [...mockState.transactions].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
+  const totalItems = ordered.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const data = ordered.slice((page - 1) * pageSize, page * pageSize);
+
+  return response(200).json({
+    data,
+    pagination: {
+      page,
+      pageSize,
+      totalItems,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    },
+  });
+});
+
+/** GET /api/transactions/{id} — T2 detail, enveloped; unknown ids are a real 404. */
+const getTransaction = api.get('/api/transactions/{id}', ({ params, response }) => {
+  const transaction = mockState.transactions.find((t) => t.id === params.id);
+  if (!transaction) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'NOT_FOUND',
+        detail: `Transaction with identifier '${params.id}' was not found.`,
+      }),
+    );
+  }
+  return response(200).json({ data: transaction, message: null });
+});
+
 /** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
 const deposit = api.post('/api/transactions/deposit', async ({ request, response }) => {
   const key = request.headers.get('Idempotency-Key');
@@ -380,6 +424,8 @@ export const handlers = [
   renameAccount,
   setPrimaryAccount,
   deleteAccount,
+  listTransactions,
+  getTransaction,
   deposit,
   transfer,
   verifyPin,

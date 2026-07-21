@@ -726,7 +726,12 @@ export function AccountsPage() {
           selection and unmounting on close drops all internal state. No onSuccess:
           their own Done button closes them, so the success screen stays reachable.
           (They still format USD — they die in the deposit/withdraw PRs.) */}
-      <CreateAccountDialog open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+      {/* Mount-on-open like every other dialog on this page: a persistent Fluent
+          Dialog instance re-opened after a close can race its own exit presence
+          under load (the surface never re-mounts — seen as a CI-only flake); a
+          fresh instance per open has virgin presence state and starts clean by
+          construction. */}
+      {isCreateOpen && <CreateAccountDialog open onClose={() => setIsCreateOpen(false)} />}
 
       {renameTarget && (
         <RenameAccountDialog

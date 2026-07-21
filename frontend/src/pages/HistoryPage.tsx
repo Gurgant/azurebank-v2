@@ -1,9 +1,16 @@
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { makeStyles, Text } from '@fluentui/react-components';
+import {
+  Button,
+  makeStyles,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
+  Spinner,
+  Text,
+} from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
-  Filter24Regular,
   History24Filled,
   ArrowDownload24Regular,
   ArrowUpload24Regular,
@@ -11,27 +18,27 @@ import {
   ArrowLeft24Regular,
 } from '@fluentui/react-icons';
 import { colors, gradients, transitions } from '../theme/tokens';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import type { TransactionType } from '../api/enums';
+import type { TransactionResponse } from '../features/api/apiSlice';
+import { useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
+import {
+  formatCurrency,
+  formatDateHeading,
+  formatTime,
+  formatTransactionAmount,
+  isIncomeType,
+} from '../utils/format';
 
 // ============================================
 // TYPES
 // ============================================
 
-type TransactionType = 'deposit' | 'withdrawal' | 'transfer_out' | 'transfer_in';
 type FilterType = 'all' | 'deposits' | 'withdrawals' | 'transfers';
-
-interface Transaction {
-  id: string;
-  type: TransactionType;
-  description: string;
-  account: string;
-  amount: number;
-  date: string;
-  time: string;
-}
 
 interface GroupedTransactions {
   date: string;
-  transactions: Transaction[];
+  transactions: TransactionResponse[];
 }
 
 // ============================================
@@ -79,8 +86,8 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
-  filterButton: {
-    color: colors.brand[60],
+  headerSpacer: {
+    width: '40px',
   },
 
   // ========== CONTENT ==========
@@ -193,6 +200,10 @@ const useStyles = makeStyles({
     gap: '12px',
     cursor: 'pointer',
     transition: `background ${transitions.fast}`,
+    width: '100%',
+    textAlign: 'left',
+    backgroundColor: 'transparent',
+    border: 'none',
     ':hover': {
       backgroundColor: colors.neutral[50],
     },
@@ -272,14 +283,36 @@ const useStyles = makeStyles({
     color: colors.semantic.error.main,
   },
 
-  amountTransfer: {
-    color: '#B45309',
-  },
-
   transactionTime: {
     fontSize: '12px',
     fontWeight: 400,
     color: colors.neutral[400],
+  },
+
+  statusText: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: colors.semantic.warning.main,
+  },
+
+  // ========== STATES (D22) ==========
+  stateContainer: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '48px 0',
+  },
+
+  errorContainer: {
+    padding: '16px',
+  },
+
+  loadMoreContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '16px',
+    backgroundColor: '#FFFFFF',
   },
 
   // ========== EMPTY STATE ==========
@@ -319,127 +352,51 @@ const useStyles = makeStyles({
 });
 
 // ============================================
-// MOCK DATA
-// ============================================
-
-const mockTransactions: Transaction[] = [
-  {
-    id: '1',
-    type: 'deposit',
-    description: 'Salary Deposit',
-    account: 'Main Account',
-    amount: 5000,
-    date: 'January 1, 2026',
-    time: '10:30 AM',
-  },
-  {
-    id: '2',
-    type: 'withdrawal',
-    description: 'ATM Withdrawal',
-    account: 'Main Account',
-    amount: -200,
-    date: 'January 1, 2026',
-    time: '2:15 PM',
-  },
-  {
-    id: '3',
-    type: 'transfer_out',
-    description: 'Transfer to Sarah',
-    account: 'Main Account',
-    amount: -350,
-    date: 'January 1, 2026',
-    time: '4:45 PM',
-  },
-  {
-    id: '4',
-    type: 'transfer_in',
-    description: 'Transfer from Mike',
-    account: 'Main Account',
-    amount: 89.99,
-    date: 'December 31, 2025',
-    time: '11:20 AM',
-  },
-  {
-    id: '5',
-    type: 'withdrawal',
-    description: 'Online Purchase',
-    account: 'Main Account',
-    amount: -156.5,
-    date: 'December 31, 2025',
-    time: '3:30 PM',
-  },
-  {
-    id: '6',
-    type: 'deposit',
-    description: 'Refund - Amazon',
-    account: 'Main Account',
-    amount: 45,
-    date: 'December 31, 2025',
-    time: '5:00 PM',
-  },
-  {
-    id: '7',
-    type: 'deposit',
-    description: 'Freelance Payment',
-    account: 'Main Account',
-    amount: 1250,
-    date: 'December 30, 2025',
-    time: '9:15 AM',
-  },
-  {
-    id: '8',
-    type: 'transfer_out',
-    description: 'Rent Payment',
-    account: 'Main Account',
-    amount: -1500,
-    date: 'December 30, 2025',
-    time: '10:00 AM',
-  },
-];
-
-// ============================================
 // HELPER FUNCTIONS
 // ============================================
 
-function formatCurrency(amount: number): string {
-  const prefix = amount >= 0 ? '+' : '';
-  return (
-    prefix +
-    new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-    }).format(Math.abs(amount))
-  );
-}
-
 function getTransactionIcon(type: TransactionType) {
   switch (type) {
-    case 'deposit':
+    case 'Deposit':
       return ArrowDownload24Regular;
-    case 'withdrawal':
+    case 'Withdrawal':
       return ArrowUpload24Regular;
-    case 'transfer_out':
+    case 'TransferOut':
       return ArrowRight24Regular;
-    case 'transfer_in':
+    case 'TransferIn':
       return ArrowLeft24Regular;
   }
 }
 
-function groupTransactionsByDate(transactions: Transaction[]): GroupedTransactions[] {
-  const groups: { [key: string]: Transaction[] } = {};
+/** The row's headline: counterparty first, then description, then the bare type. */
+function getRowTitle(transaction: TransactionResponse): string {
+  if (transaction.type === 'TransferOut' && transaction.recipientAzureTag) {
+    return `To @${transaction.recipientAzureTag}`;
+  }
+  if (transaction.type === 'TransferIn' && transaction.senderAzureTag) {
+    return `From @${transaction.senderAzureTag}`;
+  }
+  return transaction.description ?? transaction.type;
+}
 
-  transactions.forEach((transaction) => {
-    if (!groups[transaction.date]) {
-      groups[transaction.date] = [];
+const FILTER_TYPES: Record<Exclude<FilterType, 'all'>, TransactionType[]> = {
+  deposits: ['Deposit'],
+  withdrawals: ['Withdrawal'],
+  transfers: ['TransferIn', 'TransferOut'],
+};
+
+function groupByDate(transactions: TransactionResponse[]): GroupedTransactions[] {
+  const groups = new Map<string, TransactionResponse[]>();
+  for (const transaction of transactions) {
+    const heading = formatDateHeading(transaction.createdAt);
+    const group = groups.get(heading);
+    if (group) {
+      group.push(transaction);
+    } else {
+      groups.set(heading, [transaction]);
     }
-    groups[transaction.date].push(transaction);
-  });
-
-  return Object.keys(groups).map((date) => ({
-    date,
-    transactions: groups[date],
-  }));
+  }
+  return [...groups.entries()].map(([date, items]) => ({ date, transactions: items }));
 }
 
 // ============================================
@@ -452,169 +409,212 @@ export function HistoryPage() {
 
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
 
-  // Filter transactions
-  const filteredTransactions = useMemo(() => {
-    switch (activeFilter) {
-      case 'deposits':
-        return mockTransactions.filter((t) => t.type === 'deposit');
-      case 'withdrawals':
-        return mockTransactions.filter((t) => t.type === 'withdrawal');
-      case 'transfers':
-        return mockTransactions.filter(
-          (t) => t.type === 'transfer_out' || t.type === 'transfer_in',
-        );
-      default:
-        return mockTransactions;
-    }
-  }, [activeFilter]);
+  // T1 — the infinite feed. Pages accumulate; every money mutation invalidates
+  // {Transaction,'LIST'} and refetches all loaded pages (accepted D7 cost).
+  const { data, isLoading, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useGetTransactionHistoryInfiniteQuery({});
+  const problem = error as ApiProblem | undefined;
 
-  // Group by date
+  const transactions = useMemo(() => (data?.pages ?? []).flatMap((p) => p.data ?? []), [data]);
+
+  // Client-side tabs over the LOADED pages — the API has no type filter, and the
+  // honest alternative to filtering what we have would be lying about totals.
+  const filteredTransactions = useMemo(() => {
+    if (activeFilter === 'all') {
+      return transactions;
+    }
+    const types = FILTER_TYPES[activeFilter];
+    return transactions.filter((t) => types.includes(t.type));
+  }, [transactions, activeFilter]);
+
   const groupedTransactions = useMemo(
-    () => groupTransactionsByDate(filteredTransactions),
+    () => groupByDate(filteredTransactions),
     [filteredTransactions],
   );
 
-  // Calculate summary
+  // The mock-signed trap, killed: amounts are UNSIGNED — direction comes from the
+  // TYPE. Failed/Reversed money never (or no longer) moved, so it stays out.
   const summary = useMemo(() => {
-    const income = mockTransactions
-      .filter((t) => t.amount > 0)
+    const settled = transactions.filter((t) => t.status !== 'Failed' && t.status !== 'Reversed');
+    const income = settled
+      .filter((t) => isIncomeType(t.type))
       .reduce((sum, t) => sum + t.amount, 0);
-    const expenses = mockTransactions
-      .filter((t) => t.amount < 0)
-      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const expenses = settled
+      .filter((t) => !isIncomeType(t.type))
+      .reduce((sum, t) => sum + t.amount, 0);
     return { income, expenses, net: income - expenses };
-  }, []);
-
-  const handleTransactionClick = (id: string) => {
-    navigate(`/transactions/${id}`);
-  };
-
-  const handleBack = () => {
-    navigate(-1);
-  };
+  }, [transactions]);
 
   const getIconStyle = (type: TransactionType) => {
     switch (type) {
-      case 'deposit':
+      case 'Deposit':
         return styles.iconDeposit;
-      case 'withdrawal':
+      case 'Withdrawal':
         return styles.iconWithdrawal;
-      case 'transfer_out':
+      case 'TransferOut':
         return styles.iconTransferOut;
-      case 'transfer_in':
+      case 'TransferIn':
         return styles.iconTransferIn;
     }
-  };
-
-  const getAmountStyle = (type: TransactionType, amount: number) => {
-    if (type === 'transfer_out') return styles.amountTransfer;
-    return amount >= 0 ? styles.amountPositive : styles.amountNegative;
   };
 
   return (
     <div className={styles.container}>
       {/* Header */}
       <div className={styles.header}>
-        <button className={styles.headerButton} onClick={handleBack}>
+        <button
+          className={styles.headerButton}
+          aria-label="Go back"
+          onClick={() => void navigate(-1)}
+        >
           <ChevronLeft24Regular />
         </button>
         <Text className={styles.headerTitle}>Transaction History</Text>
-        <button className={`${styles.headerButton} ${styles.filterButton}`}>
-          <Filter24Regular />
-        </button>
+        <div className={styles.headerSpacer} />
       </div>
 
       {/* Content */}
       <div className={styles.content}>
-        {/* Filter Tabs */}
-        <div className={styles.filterTabs}>
-          {(['all', 'deposits', 'withdrawals', 'transfers'] as FilterType[]).map((filter) => (
-            <button
-              key={filter}
-              className={`${styles.filterTab} ${activeFilter === filter ? styles.filterTabActive : ''}`}
-              onClick={() => setActiveFilter(filter)}
-            >
-              {filter.charAt(0).toUpperCase() + filter.slice(1)}
-            </button>
-          ))}
-        </div>
+        {isLoading && (
+          <div className={styles.stateContainer}>
+            <Spinner size="large" aria-label="Loading transactions" />
+          </div>
+        )}
 
-        {/* Summary Card */}
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Income</span>
-            <span className={`${styles.summaryValue} ${styles.summaryValuePositive}`}>
-              +${summary.income.toLocaleString()}
-            </span>
+        {problem && (
+          <div className={styles.errorContainer}>
+            <MessageBar intent="error">
+              <MessageBarBody>
+                {problem.detail || 'Could not load your transactions.'}
+                {problem.traceId ? ` Support code: ${problem.traceId}` : ''}
+              </MessageBarBody>
+              <MessageBarActions>
+                <Button appearance="transparent" onClick={() => void refetch()}>
+                  Retry
+                </Button>
+              </MessageBarActions>
+            </MessageBar>
           </div>
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Expenses</span>
-            <span className={`${styles.summaryValue} ${styles.summaryValueNegative}`}>
-              -${summary.expenses.toLocaleString()}
-            </span>
-          </div>
-          <div className={styles.summaryItem}>
-            <span className={styles.summaryLabel}>Net</span>
-            <span className={styles.summaryValue}>
-              {summary.net >= 0 ? '+' : '-'}${Math.abs(summary.net).toLocaleString()}
-            </span>
-          </div>
-        </div>
+        )}
 
-        {/* Transaction List */}
-        {filteredTransactions.length > 0 ? (
-          <div className={styles.transactionList}>
-            {groupedTransactions.map((group) => (
-              <div key={group.date}>
-                {/* Date Header */}
-                <div className={styles.dateHeader}>
-                  <span className={styles.dateText}>{group.date}</span>
-                </div>
-
-                {/* Transactions */}
-                {group.transactions.map((transaction) => {
-                  const IconComponent = getTransactionIcon(transaction.type);
-                  return (
-                    <div
-                      key={transaction.id}
-                      className={styles.transactionItem}
-                      onClick={() => handleTransactionClick(transaction.id)}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <div
-                        className={`${styles.transactionIcon} ${getIconStyle(transaction.type)}`}
-                      >
-                        <IconComponent />
-                      </div>
-                      <div className={styles.transactionDetails}>
-                        <Text className={styles.transactionTitle}>{transaction.description}</Text>
-                        <Text className={styles.transactionSubtitle}>{transaction.account}</Text>
-                      </div>
-                      <div className={styles.transactionRight}>
-                        <Text
-                          className={`${styles.transactionAmount} ${getAmountStyle(transaction.type, transaction.amount)}`}
-                        >
-                          {formatCurrency(transaction.amount)}
-                        </Text>
-                        <Text className={styles.transactionTime}>{transaction.time}</Text>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className={styles.emptyState}>
-            <div className={styles.emptyIcon}>
-              <History24Filled style={{ width: '32px', height: '32px' }} />
+        {!isLoading && !problem && (
+          <>
+            {/* Filter Tabs — client-side, over the loaded pages */}
+            <div className={styles.filterTabs}>
+              {(['all', 'deposits', 'withdrawals', 'transfers'] as FilterType[]).map((filter) => (
+                <button
+                  key={filter}
+                  className={`${styles.filterTab} ${activeFilter === filter ? styles.filterTabActive : ''}`}
+                  onClick={() => setActiveFilter(filter)}
+                >
+                  {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                </button>
+              ))}
             </div>
-            <Text className={styles.emptyTitle}>No Transactions</Text>
-            <Text className={styles.emptySubtitle}>
-              No transactions found for the selected filter.
-            </Text>
-          </div>
+
+            {/* Summary Card — totals over the loaded, settled transactions */}
+            <div className={styles.summaryCard}>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Income</span>
+                <span className={`${styles.summaryValue} ${styles.summaryValuePositive}`}>
+                  +{formatCurrency(summary.income)}
+                </span>
+              </div>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Expenses</span>
+                <span className={`${styles.summaryValue} ${styles.summaryValueNegative}`}>
+                  -{formatCurrency(summary.expenses)}
+                </span>
+              </div>
+              <div className={styles.summaryItem}>
+                <span className={styles.summaryLabel}>Net</span>
+                <span className={styles.summaryValue}>
+                  {summary.net >= 0 ? '+' : '-'}
+                  {formatCurrency(Math.abs(summary.net))}
+                </span>
+              </div>
+            </div>
+
+            {/* Transaction List */}
+            {filteredTransactions.length > 0 ? (
+              <div className={styles.transactionList}>
+                {groupedTransactions.map((group) => (
+                  <div key={group.date}>
+                    <div className={styles.dateHeader}>
+                      <span className={styles.dateText}>{group.date}</span>
+                    </div>
+
+                    {group.transactions.map((transaction) => {
+                      const IconComponent = getTransactionIcon(transaction.type);
+                      return (
+                        <button
+                          key={transaction.id}
+                          className={styles.transactionItem}
+                          onClick={() => void navigate(`/transactions/${transaction.id}`)}
+                        >
+                          <div
+                            className={`${styles.transactionIcon} ${getIconStyle(transaction.type)}`}
+                          >
+                            <IconComponent />
+                          </div>
+                          <div className={styles.transactionDetails}>
+                            <Text className={styles.transactionTitle}>
+                              {getRowTitle(transaction)}
+                            </Text>
+                            <Text className={styles.transactionSubtitle}>
+                              {transaction.transactionNumber}
+                            </Text>
+                          </div>
+                          <div className={styles.transactionRight}>
+                            <Text
+                              className={`${styles.transactionAmount} ${
+                                isIncomeType(transaction.type)
+                                  ? styles.amountPositive
+                                  : styles.amountNegative
+                              }`}
+                            >
+                              {formatTransactionAmount(transaction.amount, transaction.type)}
+                            </Text>
+                            {transaction.status === 'Completed' ? (
+                              <Text className={styles.transactionTime}>
+                                {formatTime(transaction.createdAt)}
+                              </Text>
+                            ) : (
+                              <Text className={styles.statusText}>{transaction.status}</Text>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+
+                {hasNextPage && (
+                  <div className={styles.loadMoreContainer}>
+                    <Button
+                      appearance="secondary"
+                      disabled={isFetchingNextPage}
+                      onClick={() => void fetchNextPage()}
+                    >
+                      {isFetchingNextPage ? <Spinner size="tiny" /> : 'Load more'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className={styles.emptyState}>
+                <div className={styles.emptyIcon}>
+                  <History24Filled style={{ width: '32px', height: '32px' }} />
+                </div>
+                <Text className={styles.emptyTitle}>No Transactions</Text>
+                <Text className={styles.emptySubtitle}>
+                  {activeFilter === 'all'
+                    ? 'Your transactions will appear here.'
+                    : 'No transactions found for the selected filter.'}
+                </Text>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
