@@ -185,7 +185,7 @@ like while you work.
 
 Plain, imperative, and specific — **name the concrete outcome, not a vague label**:
 
-```
+```text
 Real deposit flow — the first idempotent mutation
 Reject negative balances on concurrent withdrawals
 Add the architecture diagram to the README
