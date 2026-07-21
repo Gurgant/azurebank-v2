@@ -3,6 +3,7 @@
  * honest (idempotency replay, step-up level) rather than shape-only stubs.
  * Reset between tests by src/test/setup.ts.
  */
+import type { AccountType } from '../api/enums';
 
 export interface StoredIdempotentResponse {
   /** Fingerprint of the RAW request body bytes — the backend hashes bytes, not JSON. */
@@ -25,7 +26,7 @@ export interface MockAccount {
   id: string;
   accountNumber: string;
   name: string;
-  type: 'Checking' | 'Savings' | 'Investment';
+  type: AccountType;
   balance: number;
   isPrimary: boolean;
   createdAt: string;

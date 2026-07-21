@@ -95,7 +95,8 @@ describe('create account (A4)', () => {
       http.post('*/api/accounts', () =>
         problem({
           status: 400,
-          errors: { Name: ['An account with this name already exists.'] },
+          // camelCase key — exactly as the ValidationExceptionHandler emits.
+          errors: { name: ['An account with this name already exists.'] },
         }),
       ),
     );
@@ -115,6 +116,13 @@ describe('create account (A4)', () => {
   });
 
   it('rejects a too-short name client-side before any request', async () => {
+    let createRequests = 0;
+    server.use(
+      http.post('*/api/accounts', () => {
+        createRequests += 1;
+        return HttpResponse.json({ data: null, message: null }, { status: 500 });
+      }),
+    );
     renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
     await screen.findByText('Main Account');
 
@@ -126,5 +134,64 @@ describe('create account (A4)', () => {
     expect(
       await screen.findByText('Account name must be at least 2 characters'),
     ).toBeInTheDocument();
+    // "before any request" is the contract — pin it.
+    expect(createRequests).toBe(0);
+  });
+
+  it('a non-validation failure shows in the dialog, and cancel + reopen starts clean', async () => {
+    server.use(
+      http.post('*/api/accounts', () =>
+        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Creation exploded.' }),
+      ),
+    );
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+
+    await userEvent.click(screen.getByText('Add New Account'));
+    await screen.findByRole('dialog');
+    await userEvent.type(screen.getByLabelText('Account name'), 'Doomed Fund');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
+
+    // The failure renders IN the dialog, which stays open for a retry.
+    expect(await screen.findByText(/Creation exploded\./)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // Cancel, reopen: BOTH the form and the mutation error must be gone —
+    // the dialog stays mounted, so close() has to reset the mutation state too.
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await userEvent.click(screen.getByText('Add New Account'));
+    await screen.findByRole('dialog');
+    expect(screen.queryByText(/Creation exploded\./)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Account name')).toHaveValue('');
+  });
+});
+
+describe('legacy money dialogs (adapter wiring)', () => {
+  it('card Deposit scopes the dialog to THAT account, pre-selected — and reopening re-scopes', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+
+    // Open Deposit from the Rainy Day card: the dialog must list ONLY Rainy Day.
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit to Rainy Day' }));
+    expect(screen.getByText('Deposit Money')).toBeInTheDocument();
+    expect(screen.getAllByText('Rainy Day')).toHaveLength(2); // page card + dialog row
+    expect(screen.getAllByText('Main Account')).toHaveLength(1); // page card only
+
+    // The scoped account is pre-selected: a quick-amount deposit succeeds without
+    // touching the selection, and lands on the RIGHT account.
+    await userEvent.click(screen.getByRole('button', { name: '$100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit $100.00' }));
+    // The legacy mock flow resolves after a 1.5s setTimeout — give it headroom.
+    expect(
+      await screen.findByText('Deposited to Rainy Day', undefined, { timeout: 4000 }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    // Reopen on the OTHER card: the dialog must re-scope, never reuse stale state.
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit to Main Account' }));
+    expect(screen.getAllByText('Main Account')).toHaveLength(2);
+    expect(screen.getAllByText('Rainy Day')).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   });
 });

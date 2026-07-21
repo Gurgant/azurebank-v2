@@ -1,6 +1,7 @@
 import { http, HttpResponse } from 'msw';
 import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
+import type { AccountType } from '../api/enums';
 import { problem } from './problem';
 import { MOCK_PASSWORD, MOCK_USER, mockState, type MockSessionUser } from './state';
 
@@ -35,8 +36,10 @@ const listAccounts = api.get('/api/accounts', ({ response }) => {
 });
 
 /**
- * POST /api/accounts — create (A4): server assigns id/number; first account is primary.
- * The returned number is MASKED like the real mapper's output (server-side masking).
+ * POST /api/accounts — create (A4): server assigns id/number; the number arrives MASKED
+ * like the real mapper's output. NEVER primary: AccountService hard-codes
+ * IsPrimary = false on create — the primary exists only via registration's auto-created
+ * account or the separate set-primary operation.
  */
 const createAccount = api.post('/api/accounts', async ({ request, response }) => {
   const body = (await request.clone().json()) as { name?: string; type?: string };
@@ -45,9 +48,9 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
     id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
     accountNumber: `AB-****-****-${70 + index}`,
     name: body.name ?? 'New Account',
-    type: (body.type ?? 'Checking') as 'Checking' | 'Savings' | 'Investment',
+    type: (body.type ?? 'Checking') as AccountType,
     balance: 0,
-    isPrimary: index === 0,
+    isPrimary: false,
     createdAt: '2026-07-21T12:00:00.0000000Z',
   };
   mockState.accounts.push(account);
@@ -234,6 +237,19 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
     hasPin: false,
   };
   mockState.session = user;
+  // Real registration (AuthService) atomically creates the user's primary account:
+  // 'Primary Account', Checking, balance 0, isPrimary true — mirror it.
+  mockState.accounts = [
+    {
+      id: '019f7b3f-0000-7000-8000-00000000b001',
+      accountNumber: 'AB-****-****-11',
+      name: 'Primary Account',
+      type: 'Checking',
+      balance: 0,
+      isPrimary: true,
+      createdAt: '2026-07-20T12:00:00.0000000Z',
+    },
+  ];
   return HttpResponse.json(
     {
       data: { user, expiresAt: '2026-07-20T13:00:00.0000000Z' },

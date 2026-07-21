@@ -44,9 +44,23 @@ export interface CreateAccountDialogProps {
  * the dialog; the new account appears through the D7 tag invalidation ({Account,'LIST'}),
  * never through a hand-patched cache.
  */
+/** PascalCase server keys (FluentValidation) and camelCase both land on the same field. */
+const toFieldName = (key: string) => key.charAt(0).toLowerCase() + key.slice(1);
+const isOurField = (key: string) => {
+  const field = toFieldName(key);
+  return field === 'name' || field === 'type';
+};
+
 export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps) {
-  const [createAccount, { isLoading, error }] = useCreateAccountMutation();
+  const [createAccount, { isLoading, error, reset: resetMutation }] = useCreateAccountMutation();
   const problem = error as ApiProblem | undefined;
+
+  // A VALIDATION_ERROR normally lands on a field; if the server keys NONE of our
+  // fields, fall back to the bar — a dead-silent submit is worse than a generic error.
+  const showProblemBar =
+    problem &&
+    (problem.errorCode !== 'VALIDATION_ERROR' ||
+      !Object.keys(problem.errors ?? {}).some(isOurField));
 
   const {
     register,
@@ -60,7 +74,10 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
   });
 
   const close = () => {
+    // The dialog stays mounted while closed — clear BOTH the form and the mutation
+    // state, or a failed attempt's error bar would greet the next open.
     reset();
+    resetMutation();
     onClose();
   };
 
@@ -72,9 +89,11 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
       const rejected = caught as ApiProblem;
       if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {
         for (const [key, messages] of Object.entries(rejected.errors)) {
-          const field = key.charAt(0).toLowerCase() + key.slice(1);
-          if ((field === 'name' || field === 'type') && messages.length > 0) {
-            setError(field, { type: 'server', message: messages[0] });
+          if (isOurField(key) && messages.length > 0) {
+            setError(toFieldName(key) as 'name' | 'type', {
+              type: 'server',
+              message: messages[0],
+            });
           }
         }
       }
@@ -93,7 +112,7 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
           <DialogBody>
             <DialogTitle>Add New Account</DialogTitle>
             <DialogContent>
-              {problem && problem.errorCode !== 'VALIDATION_ERROR' && (
+              {showProblemBar && (
                 <MessageBar intent="error">
                   <MessageBarBody>
                     {problem.detail || 'Could not create the account. Please try again.'}

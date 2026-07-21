@@ -436,6 +436,9 @@ export function AccountsPage() {
   const [selectedAccount, setSelectedAccount] = useState<LegacyDialogAccount | null>(null);
 
   const totalBalance = accounts.reduce((sum, account) => sum + (account.balance ?? 0), 0);
+  // Honest headers: never assert "€0.00" while loading, nor a stale total beside the
+  // error bar (RTK Query keeps the last data when a refetch fails).
+  const totalDisplay = isLoading || problem ? '—' : formatCurrency(totalBalance);
 
   // Adapter for the legacy money dialogs (their real flows arrive in their own PRs):
   // they only need id/name/number/balance — and they get the MASKED number.
@@ -468,6 +471,18 @@ export function AccountsPage() {
     setIsCreateOpen(true);
   };
 
+  // Closing a money dialog also drops the card selection, so the next open always
+  // re-scopes from the click that caused it.
+  const closeDeposit = () => {
+    setIsDepositOpen(false);
+    setSelectedAccount(null);
+  };
+
+  const closeWithdraw = () => {
+    setIsWithdrawOpen(false);
+    setSelectedAccount(null);
+  };
+
   const getIconContainerClass = (type: AccountType | undefined) => {
     const base = styles.accountIconContainer;
     switch (type) {
@@ -486,13 +501,13 @@ export function AccountsPage() {
       <div className={styles.mobileHeader}>
         <div className={styles.headerTop}>
           <Text className={styles.headerTitle}>My Accounts</Text>
-          <button className={styles.addButton} onClick={handleAddAccount}>
+          <button className={styles.addButton} aria-label="Add account" onClick={handleAddAccount}>
             <Add24Regular />
           </button>
         </div>
         <div className={styles.totalBalanceSection}>
           <Text className={styles.totalLabel}>Total Balance</Text>
-          <Text className={styles.totalValue}>{formatCurrency(totalBalance)}</Text>
+          <Text className={styles.totalValue}>{totalDisplay}</Text>
         </div>
       </div>
 
@@ -504,7 +519,7 @@ export function AccountsPage() {
             <Text className={styles.pageTitle}>My Accounts</Text>
             <div className={styles.desktopTotalBalance}>
               <Text className={styles.desktopTotalLabel}>Total Balance:</Text>
-              <Text className={styles.desktopTotalValue}>{formatCurrency(totalBalance)}</Text>
+              <Text className={styles.desktopTotalValue}>{totalDisplay}</Text>
             </div>
           </div>
           <button className={styles.desktopAddButton} onClick={handleAddAccount}>
@@ -546,7 +561,10 @@ export function AccountsPage() {
                   </div>
                   <div className={styles.accountInfo}>
                     <Text className={styles.accountName}>{account.name}</Text>
-                    <Text className={styles.accountNumber}>
+                    <Text
+                      className={styles.accountNumber}
+                      aria-label={`Account ending in ${account.accountNumber.slice(-2)}`}
+                    >
                       {maskAccountNumber(account.accountNumber)}
                     </Text>
                   </div>
@@ -574,6 +592,7 @@ export function AccountsPage() {
                 <div className={styles.accountActions}>
                   <button
                     className={styles.accountActionBtn}
+                    aria-label={`Deposit to ${account.name}`}
                     onClick={(e) => handleDeposit(account, e)}
                   >
                     <ArrowDownload20Regular className={styles.actionBtnIcon} />
@@ -581,12 +600,17 @@ export function AccountsPage() {
                   </button>
                   <button
                     className={styles.accountActionBtn}
+                    aria-label={`Withdraw from ${account.name}`}
                     onClick={(e) => handleWithdraw(account, e)}
                   >
                     <ArrowUpload20Regular className={styles.actionBtnIcon} />
                     <Text className={styles.actionBtnText}>Withdraw</Text>
                   </button>
-                  <button className={styles.accountActionBtn} onClick={handleTransfer}>
+                  <button
+                    className={styles.accountActionBtn}
+                    aria-label={`Transfer from ${account.name}`}
+                    onClick={handleTransfer}
+                  >
                     <ArrowSwap24Regular className={styles.actionBtnIcon} />
                     <Text className={styles.actionBtnText}>Transfer</Text>
                   </button>
@@ -594,8 +618,19 @@ export function AccountsPage() {
               </div>
             ))}
 
-            {/* Add Account Card */}
-            <div className={styles.addAccountCard} onClick={handleAddAccount}>
+            {/* Add Account Card — a styled div, so it needs the button semantics by hand */}
+            <div
+              className={styles.addAccountCard}
+              role="button"
+              tabIndex={0}
+              onClick={handleAddAccount}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleAddAccount();
+                }
+              }}
+            >
               <div className={styles.addAccountIcon}>
                 <Add24Regular />
               </div>
@@ -605,26 +640,29 @@ export function AccountsPage() {
         )}
       </div>
 
-      {/* Dialogs */}
+      {/* Dialogs. The legacy money dialogs mount ON open: they capture `accounts` in a
+          lazy useState initializer, so a persistent instance would pre-select from a
+          stale (or, at page load, empty) list — remounting re-reads the CURRENT
+          selection and unmounting on close drops all internal state. No onSuccess:
+          their own Done button closes them, so the success screen stays reachable.
+          (They still format USD — they die in the deposit/withdraw PRs.) */}
       <CreateAccountDialog open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
 
-      <DepositDialog
-        isOpen={isDepositOpen}
-        onClose={() => setIsDepositOpen(false)}
-        accounts={selectedAccount ? [selectedAccount] : legacyAccounts}
-        onSuccess={() => {
-          setIsDepositOpen(false);
-        }}
-      />
+      {isDepositOpen && (
+        <DepositDialog
+          isOpen
+          onClose={closeDeposit}
+          accounts={selectedAccount ? [selectedAccount] : legacyAccounts}
+        />
+      )}
 
-      <WithdrawDialog
-        isOpen={isWithdrawOpen}
-        onClose={() => setIsWithdrawOpen(false)}
-        accounts={selectedAccount ? [selectedAccount] : legacyAccounts}
-        onSuccess={() => {
-          setIsWithdrawOpen(false);
-        }}
-      />
+      {isWithdrawOpen && (
+        <WithdrawDialog
+          isOpen
+          onClose={closeWithdraw}
+          accounts={selectedAccount ? [selectedAccount] : legacyAccounts}
+        />
+      )}
     </div>
   );
 }

@@ -20,7 +20,12 @@ export function formatCurrency(amount: number): string {
 export function maskAccountNumber(accountNumber: string): string {
   const parts = accountNumber.split('-');
   if (parts.length < 3) {
-    return accountNumber;
+    // Unexpected format: fail CLOSED — a defense-in-depth layer that echoed the
+    // input verbatim would defeat its own purpose. Keep only the last 2 characters.
+    if (accountNumber.length <= 2) {
+      return '••';
+    }
+    return `${'•'.repeat(accountNumber.length - 2)}${accountNumber.slice(-2)}`;
   }
   return [
     parts[0],

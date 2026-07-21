@@ -388,7 +388,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             </div>
             {isSuccess ? 'Deposit Complete' : 'Deposit Money'}
           </div>
-          <button className={styles.closeButton} onClick={handleClose}>
+          <button className={styles.closeButton} aria-label="Close" onClick={handleClose}>
             <Dismiss24Regular />
           </button>
         </div>
