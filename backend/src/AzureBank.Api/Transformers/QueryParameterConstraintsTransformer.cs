@@ -33,7 +33,11 @@ public sealed class QueryParameterConstraintsTransformer : IOpenApiDocumentTrans
                 {
                     // Cast to concrete type for modification
                     if (parameter is not OpenApiParameter openApiParam) continue;
-                    if (openApiParam.In != ParameterLocation.Query) continue;
+                    // Path parameters carry the same domain constraints as their query
+                    // twins (e.g. GET /api/users/{azureTag}) — without them a regen
+                    // silently DROPS the documented pattern/length rules.
+                    if (openApiParam.In is not (ParameterLocation.Query or ParameterLocation.Path))
+                        continue;
                     if (openApiParam.Schema is not OpenApiSchema schema) continue;
 
                     ApplyParameterConstraints(openApiParam, schema);

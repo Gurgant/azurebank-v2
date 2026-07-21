@@ -349,6 +349,10 @@ public static class ServiceCollectionExtensions
             // This fixes Schemathesis "API rejected schema-compliant request" errors
             options.AddSchemaTransformer<DataAnnotationSchemaTransformer>();
 
+            // Schema transformer: non-nullable value-type members are ALWAYS serialized,
+            // so the contract marks them required (kills `id?: string` for Guids etc.)
+            options.AddSchemaTransformer<RequiredValueTypeMembersTransformer>();
+
             // Operation transformer: Add 401/403 responses to authenticated endpoints
             // This fixes Schemathesis "Undocumented HTTP status code: 401" errors
             options.AddOperationTransformer<AuthorizationResponseTransformer>();
@@ -386,6 +390,14 @@ public static class ServiceCollectionExtensions
             // header + 409/422 responses on [RequireIdempotency] endpoints
             // (ADR-0009). Keeps spec 1:1 with live and Schemathesis green.
             options.AddOperationTransformer<IdempotencyOperationTransformer>();
+
+            // Operation transformer: the rename endpoint's 409 AZURE_TAG_TAKEN + 429
+            // docs, formerly hand-enrichments a regen silently dropped
+            options.AddOperationTransformer<AzureTagRenameResponsesTransformer>();
+
+            // Document transformer: strip the environment-dependent servers block so
+            // the committed spec regenerates byte-identically from any profile
+            options.AddDocumentTransformer<NoServersDocumentTransformer>();
         });
 
         return services;

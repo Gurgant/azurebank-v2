@@ -531,7 +531,7 @@
           }
         },
         "security": [
-          {}
+          { }
         ]
       }
     },
@@ -595,7 +595,7 @@
           }
         },
         "security": [
-          {}
+          { }
         ]
       }
     },
@@ -1767,6 +1767,9 @@
           },
           "403": {
             "description": "Forbidden - You don't have permission to access this resource."
+          },
+          "404": {
+            "description": "Not Found - The requested resource does not exist."
           }
         }
       }
@@ -1897,7 +1900,12 @@
       "AccountResponse": {
         "required": [
           "accountNumber",
-          "name"
+          "name",
+          "id",
+          "type",
+          "balance",
+          "isPrimary",
+          "createdAt"
         ],
         "type": "object",
         "properties": {
@@ -2096,7 +2104,7 @@
       "ApiResponseOfObject": {
         "type": "object",
         "properties": {
-          "data": {},
+          "data": { },
           "message": {
             "type": [
               "null",
@@ -2253,6 +2261,12 @@
         }
       },
       "BalanceResponse": {
+        "required": [
+          "accountId",
+          "balance",
+          "asOf",
+          "isHistorical"
+        ],
         "type": "object",
         "properties": {
           "accountId": {
@@ -2312,7 +2326,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.0,
+            "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2329,7 +2343,8 @@
       },
       "DepositResponse": {
         "required": [
-          "transaction"
+          "transaction",
+          "newBalance"
         ],
         "type": "object",
         "properties": {
@@ -2365,7 +2380,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.0,
+            "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2382,7 +2397,14 @@
       },
       "InternalTransferResponse": {
         "required": [
-          "transactionNumber"
+          "transactionNumber",
+          "transferId",
+          "fromAccountId",
+          "toAccountId",
+          "amount",
+          "fromAccountNewBalance",
+          "toAccountNewBalance",
+          "processedAt"
         ],
         "type": "object",
         "properties": {
@@ -2492,6 +2514,14 @@
         }
       },
       "PaginationMetadata": {
+        "required": [
+          "page",
+          "pageSize",
+          "totalItems",
+          "totalPages",
+          "hasNextPage",
+          "hasPreviousPage"
+        ],
         "type": "object",
         "properties": {
           "page": {
@@ -2554,7 +2584,8 @@
       "RecipientLookupResponse": {
         "required": [
           "azureTag",
-          "displayName"
+          "displayName",
+          "exists"
         ],
         "type": "object",
         "properties": {
@@ -2657,7 +2688,9 @@
       },
       "TokenResponse": {
         "required": [
-          "accessToken"
+          "accessToken",
+          "expiresIn",
+          "expiresAt"
         ],
         "type": "object",
         "properties": {
@@ -2684,7 +2717,13 @@
       },
       "TransactionResponse": {
         "required": [
-          "transactionNumber"
+          "transactionNumber",
+          "id",
+          "type",
+          "amount",
+          "balanceAfter",
+          "status",
+          "createdAt"
         ],
         "type": "object",
         "properties": {
@@ -2775,7 +2814,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.0,
+            "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2793,7 +2832,10 @@
       "TransferResponse": {
         "required": [
           "transactionNumber",
-          "recipientAzureTag"
+          "recipientAzureTag",
+          "amount",
+          "newBalance",
+          "processedAt"
         ],
         "type": "object",
         "properties": {
@@ -2869,7 +2911,8 @@
           "azureTag",
           "email",
           "firstName",
-          "lastName"
+          "lastName",
+          "hasPin"
         ],
         "type": "object",
         "properties": {
@@ -2953,7 +2996,7 @@
           },
           "amount": {
             "multipleOf": 0.01,
-            "maximum": 100000.0,
+            "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
@@ -2977,7 +3020,8 @@
       },
       "WithdrawResponse": {
         "required": [
-          "transaction"
+          "transaction",
+          "newBalance"
         ],
         "type": "object",
         "properties": {
@@ -3005,7 +3049,7 @@
   },
   "security": [
     {
-      "Bearer": []
+      "Bearer": [ ]
     }
   ],
   "tags": [
