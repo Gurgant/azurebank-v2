@@ -7,3 +7,15 @@ reviews:
   pre_merge_checks:
     docstrings:
       mode: off
+  # Auto-review pinned EXPLICITLY after two PRs (#18, #19) silently got no automatic
+  # review (manual `@coderabbitai full review` worked — the signature of a dropped
+  # pull_request.opened webhook). This file is read from the PR's HEAD branch and takes
+  # precedence over the dashboard UI settings, so nothing toggled there can disable it.
+  auto_review:
+    enabled: true
+    auto_incremental_review: true # re-review on every push
+    drafts: false
+    ignore_title_keywords: []
+    ignore_usernames: []
+    labels: []
+    auto_pause_after_reviewed_commits: 0 # default 5 pauses busy branches — never pause
