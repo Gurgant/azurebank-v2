@@ -148,7 +148,7 @@ describe('create account (A4)', () => {
     await screen.findByText('Main Account');
 
     await userEvent.click(screen.getByText('Add New Account'));
-    await screen.findByRole('dialog');
+    await screen.findByRole('dialog', {}, { timeout: 4000 });
     await userEvent.type(screen.getByLabelText('Account name'), 'Doomed Fund');
     await userEvent.click(screen.getByRole('button', { name: 'Create Account' }));
 
@@ -161,7 +161,9 @@ describe('create account (A4)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await userEvent.click(screen.getByText('Add New Account'));
-    await screen.findByRole('dialog');
+    // The REMOUNTING dialog (portal + presence motion + tabster) can exceed the
+    // default 1s under CI load — this exact line flaked twice in CI runs.
+    await screen.findByRole('dialog', {}, { timeout: 4000 });
     expect(screen.queryByText(/Creation exploded\./)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Account name')).toHaveValue('');
   });
