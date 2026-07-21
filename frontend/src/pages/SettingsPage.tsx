@@ -20,7 +20,9 @@ import {
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { useAppSelector } from '../app/hooks';
 import { useProblemToast } from '../components/feedback';
+import { selectCurrentUser } from '../features/auth/authSlice';
 import { useLogoutMutation } from '../features/api/apiSlice';
 
 // ============================================
@@ -43,10 +45,9 @@ interface SettingsItem {
 // MOCK DATA
 // ============================================
 
+// FICTION ONLY — fields with no backend counterpart, scheduled for pruning in the
+// settings-content rewrite. Identity (name/email/initials) comes from the session.
 const mockUser = {
-  firstName: 'John',
-  lastName: 'Doe',
-  email: 'john.doe@email.com',
   phone: '+1 (555) 123-4567',
   dateOfBirth: 'March 15, 1990',
   country: 'United States',
@@ -769,6 +770,17 @@ export function SettingsPage() {
   const [logout] = useLogoutMutation();
   const showProblem = useProblemToast();
 
+  // IDENTITY comes from the session (the shell shows the same user — the two must
+  // never disagree on one screen). The remaining mockUser fields (phone, date of
+  // birth, country, member-since) are fabrications scheduled for pruning in the
+  // settings-content rewrite.
+  const user = useAppSelector(selectCurrentUser);
+  const displayName = user ? `${user.firstName} ${user.lastName}` : '';
+  const displayEmail = user?.email ?? '';
+  const displayInitials = user
+    ? `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`.toUpperCase()
+    : '';
+
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
   const [darkMode, setDarkMode] = useState(false);
   const [biometrics, setBiometrics] = useState(true);
@@ -928,13 +940,11 @@ export function SettingsPage() {
           {/* Profile Section */}
           <div className={styles.profileSection}>
             <div className={styles.profileAvatar}>
-              <Text className={styles.profileAvatarInitials}>JD</Text>
+              <Text className={styles.profileAvatarInitials}>{displayInitials}</Text>
             </div>
             <div className={styles.profileInfo}>
-              <Text className={styles.profileName}>
-                {mockUser.firstName} {mockUser.lastName}
-              </Text>
-              <Text className={styles.profileEmail}>{mockUser.email}</Text>
+              <Text className={styles.profileName}>{displayName}</Text>
+              <Text className={styles.profileEmail}>{displayEmail}</Text>
             </div>
             <ChevronRight20Regular className={styles.profileChevron} />
           </div>
@@ -985,13 +995,11 @@ export function SettingsPage() {
                 <div className={styles.cardContent}>
                   <div className={styles.profileHeader}>
                     <div className={styles.profileAvatarLarge}>
-                      <Text className={styles.avatarInitialsLarge}>JD</Text>
+                      <Text className={styles.avatarInitialsLarge}>{displayInitials}</Text>
                     </div>
                     <div className={styles.profileDetails}>
-                      <Text className={styles.profileNameLarge}>
-                        {mockUser.firstName} {mockUser.lastName}
-                      </Text>
-                      <Text className={styles.profileEmailLarge}>{mockUser.email}</Text>
+                      <Text className={styles.profileNameLarge}>{displayName}</Text>
+                      <Text className={styles.profileEmailLarge}>{displayEmail}</Text>
                       <Text className={styles.profileMemberSince}>
                         Member since {mockUser.memberSince}
                       </Text>
@@ -1006,13 +1014,13 @@ export function SettingsPage() {
                     <div className={styles.formField}>
                       <Text className={styles.formLabel}>First Name</Text>
                       <div className={styles.formInput}>
-                        <Text className={styles.inputValue}>{mockUser.firstName}</Text>
+                        <Text className={styles.inputValue}>{user?.firstName ?? ''}</Text>
                       </div>
                     </div>
                     <div className={styles.formField}>
                       <Text className={styles.formLabel}>Last Name</Text>
                       <div className={styles.formInput}>
-                        <Text className={styles.inputValue}>{mockUser.lastName}</Text>
+                        <Text className={styles.inputValue}>{user?.lastName ?? ''}</Text>
                       </div>
                     </div>
                   </div>
@@ -1021,7 +1029,7 @@ export function SettingsPage() {
                     <div className={styles.formField}>
                       <Text className={styles.formLabel}>Email Address</Text>
                       <div className={styles.formInput}>
-                        <Text className={styles.inputValue}>{mockUser.email}</Text>
+                        <Text className={styles.inputValue}>{displayEmail}</Text>
                       </div>
                     </div>
                     <div className={styles.formField}>
