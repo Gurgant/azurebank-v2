@@ -17,11 +17,13 @@ it('settings profile shows the session user identity, never the old mock', async
 
   renderWithProviders(<SettingsPage />, { store, routerEntries: ['/settings'] });
 
-  // Both the mobile and desktop profile sections render the session identity.
-  expect(
-    screen.getAllByText(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`).length,
-  ).toBeGreaterThan(0);
-  expect(screen.getAllByText(MOCK_USER.email).length).toBeGreaterThan(0);
+  // EXACT counts — both responsive variants are in the jsdom DOM (media queries
+  // hide one visually): name = mobile profile + desktop profile card; email = those
+  // two PLUS the read-only Email form value; initials = the two avatars.
+  const initials = `${MOCK_USER.firstName.charAt(0)}${MOCK_USER.lastName.charAt(0)}`.toUpperCase();
+  expect(screen.getAllByText(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`)).toHaveLength(2);
+  expect(screen.getAllByText(MOCK_USER.email)).toHaveLength(3);
+  expect(screen.getAllByText(initials)).toHaveLength(2);
   expect(screen.queryByText(/john doe/i)).not.toBeInTheDocument();
   expect(screen.queryByText('john.doe@email.com')).not.toBeInTheDocument();
 });

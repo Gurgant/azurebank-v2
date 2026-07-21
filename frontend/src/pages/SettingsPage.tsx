@@ -842,12 +842,14 @@ export function SettingsPage() {
 
   return (
     <div className={styles.container}>
-      {/* Mobile Header */}
+      {/* Mobile PAGE-TITLE bar — NOT a shell duplicate: the shared shell renders no
+          mobile header (ProtectedShell passes no `header` prop to AppLayout), so this
+          is the page's own title, the mobile counterpart of desktop page headings. */}
       <div className={styles.mobileHeader}>
         <Text className={styles.headerTitle}>Settings</Text>
       </div>
 
-      {/* Main Layout — the app shell (nav/header) is provided by ProtectedShell */}
+      {/* Main Layout — the app shell (nav) is provided by ProtectedShell */}
       <div className={styles.mainLayout}>
         {/* Desktop Sidebar */}
         <div className={styles.desktopSidebar}>
