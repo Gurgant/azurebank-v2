@@ -26,6 +26,11 @@ export interface ConfirmDialogProps {
   variant?: 'default' | 'danger';
   /** Loading state for confirm button */
   isLoading?: boolean;
+  /**
+   * Inline error shown under the message (D17: business-rule failures render at the
+   * owning surface — the dialog stays open so the user reads WHY it was refused).
+   */
+  errorText?: string | null;
 }
 
 // ============================================
@@ -128,6 +133,14 @@ const useStyles = makeStyles({
     lineHeight: '1.5',
   },
 
+  errorText: {
+    display: 'block',
+    marginTop: '12px',
+    fontSize: '13px',
+    fontWeight: 500,
+    color: colors.semantic.error.main,
+  },
+
   footer: {
     display: 'flex',
     gap: '12px',
@@ -184,6 +197,7 @@ export function ConfirmDialog({
   cancelText = 'Cancel',
   variant = 'default',
   isLoading = false,
+  errorText = null,
 }: ConfirmDialogProps) {
   const styles = useStyles();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -274,6 +288,11 @@ export function ConfirmDialog({
           <Text id="confirm-dialog-message" className={styles.message}>
             {message}
           </Text>
+          {errorText && (
+            <Text role="alert" className={styles.errorText}>
+              {errorText}
+            </Text>
+          )}
         </div>
 
         {/* Footer */}

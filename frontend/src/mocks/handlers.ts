@@ -30,9 +30,12 @@ function fingerprint(raw: string): string {
   return (hash >>> 0).toString(16);
 }
 
-/** GET /api/accounts — the session user's accounts (enveloped list, A1). */
+/** GET /api/accounts — the session user's accounts, primary first like the real query. */
 const listAccounts = api.get('/api/accounts', ({ response }) => {
-  return response(200).json({ data: mockState.accounts, message: null });
+  const ordered = [...mockState.accounts].sort(
+    (a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.createdAt.localeCompare(b.createdAt),
+  );
+  return response(200).json({ data: ordered, message: null });
 });
 
 /**
@@ -55,6 +58,79 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   };
   mockState.accounts.push(account);
   return response(201).json({ data: account, message: 'Account created successfully.' });
+});
+
+/** PATCH /api/accounts/{id} — rename (A5): name only, per the contract. */
+const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, response }) => {
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'NOT_FOUND',
+        detail: `Account with identifier '${params.id}' was not found.`,
+      }),
+    );
+  }
+  const body = (await request.clone().json()) as { name?: string };
+  account.name = body.name ?? account.name;
+  return response(200).json({ data: account, message: 'Account updated successfully' });
+});
+
+/** PATCH /api/accounts/{id}/set-primary — exactly one primary at a time (A6). */
+const setPrimaryAccount = api.patch('/api/accounts/{id}/set-primary', ({ params, response }) => {
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'NOT_FOUND',
+        detail: `Account with identifier '${params.id}' was not found.`,
+      }),
+    );
+  }
+  for (const a of mockState.accounts) {
+    a.isPrimary = false;
+  }
+  account.isPrimary = true;
+  return response(200).json({ message: 'Account set as primary' });
+});
+
+/**
+ * DELETE /api/accounts/{id} — the REAL business rules (AccountService): a 422
+ * BusinessRuleException for non-zero balance or primary, else soft delete.
+ */
+const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) => {
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'NOT_FOUND',
+        detail: `Account with identifier '${params.id}' was not found.`,
+      }),
+    );
+  }
+  if (account.balance !== 0) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'NON_ZERO_BALANCE',
+        detail: 'Cannot delete account with non-zero balance.',
+      }),
+    );
+  }
+  if (account.isPrimary) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'PRIMARY_ACCOUNT_DELETE',
+        detail: 'Cannot delete primary account. Set another account as primary first.',
+      }),
+    );
+  }
+  mockState.accounts = mockState.accounts.filter((a) => a.id !== params.id);
+  return response(200).json({ message: 'Account deleted successfully' });
 });
 
 /** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
@@ -301,6 +377,9 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
 export const handlers = [
   listAccounts,
   createAccount,
+  renameAccount,
+  setPrimaryAccount,
+  deleteAccount,
   deposit,
   transfer,
   verifyPin,
