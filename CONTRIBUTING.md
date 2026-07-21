@@ -10,7 +10,7 @@ Thank you for your interest in contributing to AzureBank! This document provides
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
 - [Coding Standards](#coding-standards)
-- [Commit Guidelines](#commit-guidelines)
+- [Commit & PR Titles](#commit--pr-titles)
 - [Pull Request Process](#pull-request-process)
 - [Testing Requirements](#testing-requirements)
 - [Documentation](#documentation)
@@ -174,53 +174,35 @@ throw new Exception("Not found");
 
 ---
 
-## Commit Guidelines
+## Commit & PR Titles
 
-### Commit Message Format
+This repository **squash-merges**. Only the **pull-request title** lands on `main` —
+GitHub uses it as the squash commit subject, and the individual commits on your branch
+are discarded. So the PR title is the one thing that has to be right; commit however you
+like while you work.
 
-We follow [Conventional Commits](https://www.conventionalcommits.org/):
+### Format
 
-```
-<type>(<scope>): <description>
+Plain, imperative, and specific — **name the concrete outcome, not a vague label**:
 
-[optional body]
-
-[optional footer(s)]
-```
-
-### Types
-
-| Type | Description |
-|------|-------------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation only |
-| `style` | Code style (formatting, semicolons) |
-| `refactor` | Code change that neither fixes nor adds |
-| `perf` | Performance improvement |
-| `test` | Adding or updating tests |
-| `chore` | Build process, dependencies |
-
-### Examples
-
-```bash
-feat(auth): add PIN-based step-up authentication
-
-fix(transfer): prevent negative balance on concurrent withdrawals
-
-docs(readme): add architecture diagram
-
-refactor(accounts): extract validation to FluentValidation
-
-test(integration): add transfer endpoint tests
+```text
+Real deposit flow — the first idempotent mutation
+Reject negative balances on concurrent withdrawals
+Add the architecture diagram to the README
 ```
 
 ### Rules
 
-- Use present tense ("add feature" not "added feature")
-- Use imperative mood ("move cursor" not "moves cursor")
-- Limit first line to 72 characters
-- Reference issues in footer: `Closes #123`
+- **Imperative mood**, present tense ("add", not "added"/"adds").
+- **≤ 72 characters**, and state the *outcome/deltas* ("deps to zero vulns", "dead code
+  out") rather than stopping at a category ("hygiene pass").
+- **No `type(scope):` prefix.** Conventional Commits is intentionally *not* used here — its
+  payoff (auto CHANGELOG + SemVer bump) requires release automation this repo doesn't run,
+  so the prefix would be pure ceremony, and a consistent plain log reads better than a
+  half-applied taxonomy. (If `release-please`/`semantic-release` is ever wired up,
+  reintroduce Conventional-Commits prefixes on the PR title only.)
+- GitHub appends the `(#123)` PR number to the squash subject automatically; reference an
+  ADR in the PR body where a decision is involved.
 
 ---
 
@@ -245,11 +227,8 @@ test(integration): add transfer endpoint tests
 
 ### PR Title Format
 
-Follow the same format as commits:
-
-```
-feat(scope): brief description
-```
+See [Commit & PR Titles](#commit--pr-titles) — the PR title *is* the squash commit, so it
+must be plain, imperative, and name the concrete outcome (no `type(scope):` prefix).
 
 ### PR Description Template
 
