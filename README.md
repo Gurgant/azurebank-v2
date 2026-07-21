@@ -164,6 +164,17 @@ amounts never appear in log lines, user-controlled values pass a central `LogSan
 whose contract is pinned by an exhaustive test sweep and declared to CodeQL as a
 log-injection barrier via a model pack.
 
+## Conventions
+
+Squash-merge workflow: the **pull-request title** is the commit that lands on `main`, so it
+carries the meaning — plain and imperative, naming the concrete outcome
+(e.g. *"Real deposit flow — the first idempotent mutation"*), never a `type(scope):` label.
+Conventional Commits is deliberately not used: its payoff (auto CHANGELOG + SemVer bump)
+needs release automation this repo intentionally doesn't run, and a consistent plain log
+reads better than a half-applied taxonomy. Architectural decisions live as
+[ADRs](docs/adr/); every change ships behind a reviewed PR (CodeRabbit + CodeQL default
+setup). Full rule in [CONTRIBUTING](CONTRIBUTING.md#commit--pr-titles).
+
 ## Honest status
 
 - Backend: builds clean (0 warnings); full test suites green (523 API +
