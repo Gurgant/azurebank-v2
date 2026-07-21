@@ -3,6 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import {
   Button,
   makeStyles,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   MessageBar,
   MessageBarActions,
   MessageBarBody,
@@ -17,14 +22,32 @@ import {
   CreditCardToolbox24Regular,
   MoneyHand24Regular,
   CurrencyDollarEuro24Regular,
+  MoreHorizontal20Regular,
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountType } from '../api/enums';
 import type { AccountResponse } from '../features/api/apiSlice';
-import { useGetAccountsQuery } from '../features/api/apiSlice';
+import {
+  useDeleteAccountMutation,
+  useGetAccountsQuery,
+  useSetPrimaryAccountMutation,
+} from '../features/api/apiSlice';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import { CreateAccountDialog, DepositDialog, WithdrawDialog } from '../components';
+import {
+  ConfirmDialog,
+  CreateAccountDialog,
+  DepositDialog,
+  RenameAccountDialog,
+  WithdrawDialog,
+} from '../components';
+import { useProblemToast } from '../components/feedback';
+
+// D17: business-rule 422s render INLINE at the owning surface, mapped by errorCode.
+const DELETE_RULES: Record<string, string> = {
+  NON_ZERO_BALANCE: 'Only accounts with a zero balance can be deleted.',
+  PRIMARY_ACCOUNT_DELETE: 'This is your primary account — set another account as primary first.',
+};
 
 // The legacy money dialogs (mock flow until their own PRs) take this minimal shape.
 interface LegacyDialogAccount {
@@ -429,11 +452,18 @@ export function AccountsPage() {
   // (D22); the list refreshes through D7 tag invalidation, never hand-patching.
   const { data: accounts = [], isLoading, error, refetch } = useGetAccountsQuery();
   const problem = error as ApiProblem | undefined;
+  const showProblem = useProblemToast();
+
+  const [setPrimaryAccount] = useSetPrimaryAccountMutation();
+  const [deleteAccount, { isLoading: isDeleting }] = useDeleteAccountMutation();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDepositOpen, setIsDepositOpen] = useState(false);
   const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<LegacyDialogAccount | null>(null);
+  const [renameTarget, setRenameTarget] = useState<AccountResponse | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AccountResponse | null>(null);
+  const [deleteProblem, setDeleteProblem] = useState<ApiProblem | null>(null);
 
   const totalBalance = accounts.reduce((sum, account) => sum + (account.balance ?? 0), 0);
   // Honest headers: never assert "€0.00" while loading, nor a stale total beside the
@@ -482,6 +512,38 @@ export function AccountsPage() {
     setIsWithdrawOpen(false);
     setSelectedAccount(null);
   };
+
+  // A6 — no dialog: the badge simply moves via the blanket 'Account' invalidation
+  // (two rows flip, so the whole tag family refetches). Failures have no owning
+  // surface here — they go through the problem-toast pipeline.
+  const handleSetPrimary = (account: AccountResponse) => {
+    setPrimaryAccount(account.id ?? '')
+      .unwrap()
+      .catch((caught) => showProblem(caught as ApiProblem));
+  };
+
+  const closeDelete = () => {
+    setDeleteTarget(null);
+    setDeleteProblem(null);
+  };
+
+  // A7 — the 422 business rules keep the dialog OPEN with the mapped reason inline.
+  const handleConfirmDelete = () => {
+    if (!deleteTarget) {
+      return;
+    }
+    setDeleteProblem(null);
+    deleteAccount(deleteTarget.id ?? '')
+      .unwrap()
+      .then(closeDelete)
+      .catch((caught) => setDeleteProblem(caught as ApiProblem));
+  };
+
+  const deleteErrorText = deleteProblem
+    ? (DELETE_RULES[deleteProblem.errorCode ?? ''] ??
+      deleteProblem.detail ??
+      'Could not delete the account.')
+    : null;
 
   const getIconContainerClass = (type: AccountType | undefined) => {
     const base = styles.accountIconContainer;
@@ -568,6 +630,26 @@ export function AccountsPage() {
                       {maskAccountNumber(account.accountNumber)}
                     </Text>
                   </div>
+                  <Menu>
+                    <MenuTrigger disableButtonEnhancement>
+                      <Button
+                        appearance="subtle"
+                        icon={<MoreHorizontal20Regular />}
+                        aria-label={`Account actions for ${account.name}`}
+                      />
+                    </MenuTrigger>
+                    <MenuPopover>
+                      <MenuList>
+                        <MenuItem onClick={() => setRenameTarget(account)}>Rename</MenuItem>
+                        {!account.isPrimary && (
+                          <MenuItem onClick={() => handleSetPrimary(account)}>
+                            Set as primary
+                          </MenuItem>
+                        )}
+                        <MenuItem onClick={() => setDeleteTarget(account)}>Delete</MenuItem>
+                      </MenuList>
+                    </MenuPopover>
+                  </Menu>
                 </div>
 
                 <div className={styles.accountBalanceSection}>
@@ -647,6 +729,27 @@ export function AccountsPage() {
           their own Done button closes them, so the success screen stays reachable.
           (They still format USD — they die in the deposit/withdraw PRs.) */}
       <CreateAccountDialog open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+
+      {renameTarget && (
+        <RenameAccountDialog
+          account={{ id: renameTarget.id ?? '', name: renameTarget.name }}
+          onClose={() => setRenameTarget(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        onClose={closeDelete}
+        onConfirm={handleConfirmDelete}
+        title="Delete account?"
+        message={
+          deleteTarget ? `You're about to delete "${deleteTarget.name}". This can't be undone.` : ''
+        }
+        confirmText="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+        errorText={deleteErrorText}
+      />
 
       {isDepositOpen && (
         <DepositDialog
