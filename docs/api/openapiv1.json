@@ -1878,6 +1878,7 @@
     "schemas": {
       "AccountNumberResponse": {
         "required": [
+          "accountId",
           "accountNumber"
         ],
         "type": "object",

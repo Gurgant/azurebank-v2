@@ -23,11 +23,22 @@ namespace AzureBank.Bff.Tests;
 /// concept; the JWT carries no level claim). YARP's forwarder is replaced with a
 /// recording fake, so "the backend was never called" is asserted, never assumed.
 /// </summary>
-public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Program>>
+public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
+    private readonly List<WebApplicationFactory<Program>> _derivedFactories = [];
 
     public AuthLevelMiddlewareTests(WebApplicationFactory<Program> factory) => _factory = factory;
+
+    public void Dispose()
+    {
+        // WithWebHostBuilder spins up a whole derived host per test — release them.
+        foreach (var factory in _derivedFactories)
+        {
+            factory.Dispose();
+        }
+        GC.SuppressFinalize(this);
+    }
 
     /// <summary>Captures every request YARP forwards instead of hitting a real backend.</summary>
     private sealed class RecordingForwarder : IForwarderHttpClientFactory
@@ -62,6 +73,7 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
             builder.ConfigureTestServices(services =>
                 services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(recorder)));
         });
+        _derivedFactories.Add(factory);
         return (factory, recorder);
     }
 

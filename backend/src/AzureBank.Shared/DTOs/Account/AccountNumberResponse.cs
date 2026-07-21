@@ -8,7 +8,9 @@ namespace AzureBank.Shared.DTOs.Account;
 /// </summary>
 public class AccountNumberResponse
 {
-    public Guid AccountId { get; set; }
+    // `required` so the generated OpenAPI/TypeScript contract marks it required too —
+    // the server always sends it (non-nullable value type).
+    public required Guid AccountId { get; set; }
 
     /// <summary>
     /// The full, unmasked account number (e.g. AB-1234-5678-90).

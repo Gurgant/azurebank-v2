@@ -1826,7 +1826,7 @@ export interface components {
          */
         AccountNumberResponse: {
             /** Format: uuid */
-            accountId?: string;
+            accountId: string;
             /** @description The full, unmasked account number (e.g. AB-1234-5678-90). */
             accountNumber: string;
         };
