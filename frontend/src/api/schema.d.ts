@@ -1703,6 +1703,13 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description Not Found - The requested resource does not exist. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         put?: never;
@@ -1832,15 +1839,15 @@ export interface components {
         };
         AccountResponse: {
             /** Format: uuid */
-            id?: string;
+            id: string;
             accountNumber: string;
             name: string;
-            type?: components["schemas"]["AccountType"];
+            type: components["schemas"]["AccountType"];
             /** Format: double */
-            balance?: number;
-            isPrimary?: boolean;
+            balance: number;
+            isPrimary: boolean;
             /** Format: date-time */
-            createdAt?: string;
+            createdAt: string;
         };
         /**
          * @description Type of bank account: Checking, Savings, Investment
@@ -1919,21 +1926,21 @@ export interface components {
              * Format: uuid
              * @description Account identifier
              */
-            accountId?: string;
+            accountId: string;
             /**
              * Format: double
              * @description Balance amount
              */
-            balance?: number;
+            balance: number;
             /** @description Currency code (default: EUR) */
             currency?: string;
             /**
              * Format: date-time
              * @description Timestamp of the balance (current time or requested historical time)
              */
-            asOf?: string;
+            asOf: string;
             /** @description True if this is a historical balance query, false for current balance */
-            isHistorical?: boolean;
+            isHistorical: boolean;
         };
         CreateAccountRequest: {
             name: string;
@@ -1963,7 +1970,7 @@ export interface components {
              * Format: double
              * @description Updated account balance after the deposit
              */
-            newBalance?: number;
+            newBalance: number;
         };
         InternalTransferRequest: {
             /**
@@ -1992,41 +1999,41 @@ export interface components {
              * Format: uuid
              * @description Unique transfer identifier
              */
-            transferId?: string;
+            transferId: string;
             /** @description Transaction number for reference */
             transactionNumber: string;
             /**
              * Format: uuid
              * @description Source account ID
              */
-            fromAccountId?: string;
+            fromAccountId: string;
             /**
              * Format: uuid
              * @description Destination account ID
              */
-            toAccountId?: string;
+            toAccountId: string;
             /**
              * Format: double
              * @description Transfer amount
              */
-            amount?: number;
+            amount: number;
             /** @description Optional transfer description */
             description?: null | string;
             /**
              * Format: double
              * @description Updated balance of the source account
              */
-            fromAccountNewBalance?: number;
+            fromAccountNewBalance: number;
             /**
              * Format: double
              * @description Updated balance of the destination account
              */
-            toAccountNewBalance?: number;
+            toAccountNewBalance: number;
             /**
              * Format: date-time
              * @description Transfer completion timestamp
              */
-            processedAt?: string;
+            processedAt: string;
         };
         LoginRequest: {
             /** Format: email */
@@ -2046,15 +2053,15 @@ export interface components {
         };
         PaginationMetadata: {
             /** Format: int32 */
-            page?: number;
+            page: number;
             /** Format: int32 */
-            pageSize?: number;
+            pageSize: number;
             /** Format: int32 */
-            totalItems?: number;
+            totalItems: number;
             /** Format: int32 */
-            totalPages?: number;
-            hasNextPage?: boolean;
-            hasPreviousPage?: boolean;
+            totalPages: number;
+            hasNextPage: boolean;
+            hasPreviousPage: boolean;
         };
         ProblemDetails: {
             type?: null | string;
@@ -2074,7 +2081,7 @@ export interface components {
             /** @description Masked display name for privacy (e.g., "John D.") */
             displayName: string;
             /** @description Whether the user exists in the system */
-            exists?: boolean;
+            exists: boolean;
         };
         RegisterRequest: {
             /** @description Must start with a letter and contain only lowercase letters, numbers, and underscores. */
@@ -2110,30 +2117,30 @@ export interface components {
              * Format: int32
              * @description Token expiration time in seconds
              */
-            expiresIn?: number;
+            expiresIn: number;
             /** @description Token type (always "Bearer") */
             tokenType?: string;
             /**
              * Format: date-time
              * @description Absolute expiration timestamp
              */
-            expiresAt?: string;
+            expiresAt: string;
         };
         TransactionResponse: {
             /** Format: uuid */
-            id?: string;
+            id: string;
             transactionNumber: string;
-            type?: components["schemas"]["TransactionType"];
+            type: components["schemas"]["TransactionType"];
             /** Format: double */
-            amount?: number;
+            amount: number;
             /** Format: double */
-            balanceAfter?: number;
+            balanceAfter: number;
             description?: null | string;
             recipientAzureTag?: null | string;
             senderAzureTag?: null | string;
-            status?: components["schemas"]["TransactionStatus"];
+            status: components["schemas"]["TransactionStatus"];
             /** Format: date-time */
-            createdAt?: string;
+            createdAt: string;
         };
         /**
          * @description Transaction Statuses: Pending, Completed, Failed, Reversed
@@ -2163,13 +2170,13 @@ export interface components {
         TransferResponse: {
             transactionNumber: string;
             /** Format: double */
-            amount?: number;
+            amount: number;
             /** Format: double */
-            newBalance?: number;
+            newBalance: number;
             recipientAzureTag: string;
             recipientName?: null | string;
             /** Format: date-time */
-            processedAt?: string;
+            processedAt: string;
         };
         UpdateAccountRequest: {
             name: string;
@@ -2190,7 +2197,7 @@ export interface components {
             email: string;
             firstName: string;
             lastName: string;
-            hasPin?: boolean;
+            hasPin: boolean;
         };
         UserResponse: {
             /** Format: uuid */
@@ -2230,7 +2237,7 @@ export interface components {
              * Format: double
              * @description Updated account balance after the withdrawal
              */
-            newBalance?: number;
+            newBalance: number;
         };
     };
     responses: never;
