@@ -221,24 +221,34 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     );
   }
 
-  const body = JSON.parse(raw) as { accountId?: string; amount?: number };
+  const body = JSON.parse(raw) as { accountId?: string; amount?: number; description?: string };
   const amount = body.amount ?? 0;
+
+  // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay
+  // branch above returns the stored bytes without re-applying them (idempotent).
+  const account = mockState.accounts.find((a) => a.id === body.accountId);
+  const newBalance = (account?.balance ?? 1000) + amount;
+  if (account) {
+    account.balance = newBalance;
+  }
+  const index = mockState.transactions.length;
+  const transaction = {
+    id: `019f7b3f-0000-7000-8000-0000000000d${String(index).padStart(2, '0')}`,
+    transactionNumber: `TXN-20260722-${String(300 + index).padStart(6, '0')}`,
+    type: 'Deposit' as const,
+    amount,
+    balanceAfter: newBalance,
+    description: body.description ?? null,
+    recipientAzureTag: null,
+    senderAzureTag: null,
+    status: 'Completed' as const,
+    // Latest timestamp so it leads the newest-first history feed.
+    createdAt: `2026-07-22T10:${String(index).padStart(2, '0')}:00.0000000Z`,
+  };
+  mockState.transactions.push(transaction);
+
   const payload = {
-    data: {
-      transaction: {
-        id: '019f7b3f-0000-7000-8000-000000000001',
-        transactionNumber: 'TXN-20260720-000001',
-        type: 'Deposit' as const,
-        amount,
-        balanceAfter: 1000 + amount,
-        description: null,
-        recipientAzureTag: null,
-        senderAzureTag: null,
-        status: 'Completed' as const,
-        createdAt: '2026-07-20T12:00:00.0000000Z',
-      },
-      newBalance: 1000 + amount,
-    },
+    data: { transaction, newBalance },
     message: 'Deposit completed successfully.',
   };
   const text = JSON.stringify(payload);
