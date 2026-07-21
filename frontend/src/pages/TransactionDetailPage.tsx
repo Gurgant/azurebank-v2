@@ -146,30 +146,38 @@ const useStyles = makeStyles({
   statusCompleted: {
     backgroundColor: colors.semantic.success.light,
   },
-  statusCompletedFg: {
-    color: colors.semantic.success.main,
+  statusCompletedDot: {
     backgroundColor: colors.semantic.success.main,
+  },
+  statusCompletedText: {
+    color: colors.semantic.success.main,
   },
   statusPending: {
     backgroundColor: '#FEF3E2',
   },
-  statusPendingFg: {
-    color: '#B45309',
+  statusPendingDot: {
     backgroundColor: '#F59E0B',
+  },
+  statusPendingText: {
+    color: '#B45309',
   },
   statusFailed: {
     backgroundColor: colors.semantic.error.light,
   },
-  statusFailedFg: {
-    color: colors.semantic.error.main,
+  statusFailedDot: {
     backgroundColor: colors.semantic.error.main,
+  },
+  statusFailedText: {
+    color: colors.semantic.error.main,
   },
   statusReversed: {
     backgroundColor: colors.neutral[100],
   },
-  statusReversedFg: {
-    color: colors.neutral[600],
+  statusReversedDot: {
     backgroundColor: colors.neutral[500],
+  },
+  statusReversedText: {
+    color: colors.neutral[600],
   },
 
   // ========== DETAILS CARD ==========
@@ -290,11 +298,13 @@ export function TransactionDetailPage() {
   const problem = error as ApiProblem | undefined;
   const isNotFound = problem?.status === 404;
 
-  const statusStyles: Record<TransactionStatus, [string, string]> = {
-    Completed: [styles.statusCompleted, styles.statusCompletedFg],
-    Pending: [styles.statusPending, styles.statusPendingFg],
-    Failed: [styles.statusFailed, styles.statusFailedFg],
-    Reversed: [styles.statusReversed, styles.statusReversedFg],
+  // [badge background, dot fill, label text color] — the dot needs a FILL, the
+  // label a color only; one shared class painted a block behind the text.
+  const statusStyles: Record<TransactionStatus, [string, string, string]> = {
+    Completed: [styles.statusCompleted, styles.statusCompletedDot, styles.statusCompletedText],
+    Pending: [styles.statusPending, styles.statusPendingDot, styles.statusPendingText],
+    Failed: [styles.statusFailed, styles.statusFailedDot, styles.statusFailedText],
+    Reversed: [styles.statusReversed, styles.statusReversedDot, styles.statusReversedText],
   };
 
   return (
@@ -375,7 +385,7 @@ export function TransactionDetailPage() {
                 className={mergeClasses(styles.statusDot, statusStyles[transaction.status][1])}
               />
               <Text
-                className={mergeClasses(styles.statusLabel, statusStyles[transaction.status][1])}
+                className={mergeClasses(styles.statusLabel, statusStyles[transaction.status][2])}
               >
                 {transaction.status}
               </Text>

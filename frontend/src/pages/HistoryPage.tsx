@@ -239,6 +239,11 @@ const useStyles = makeStyles({
     color: '#0EA5E9',
   },
 
+  iconFallback: {
+    backgroundColor: colors.neutral[100],
+    color: colors.neutral[500],
+  },
+
   transactionDetails: {
     flex: 1,
     display: 'flex',
@@ -365,6 +370,10 @@ function getTransactionIcon(type: TransactionType) {
       return ArrowRight24Regular;
     case 'TransferIn':
       return ArrowLeft24Regular;
+    default:
+      // A beyond-contract type must degrade to a generic icon, never crash the
+      // render (an undefined component would) — same posture as AccountsPage.
+      return History24Filled;
   }
 }
 
@@ -455,6 +464,8 @@ export function HistoryPage() {
         return styles.iconTransferOut;
       case 'TransferIn':
         return styles.iconTransferIn;
+      default:
+        return styles.iconFallback;
     }
   };
 
