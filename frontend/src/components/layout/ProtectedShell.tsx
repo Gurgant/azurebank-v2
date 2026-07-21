@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
+import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useAppSelector } from '../../app/hooks';
+import { useProblemToast } from '../../components/feedback';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { useLogoutMutation } from '../../features/api/apiSlice';
 import { AppLayout } from './AppLayout';
@@ -28,15 +30,18 @@ function ShellWithSession({ children }: ProtectedShellProps) {
   const navigate = useNavigate();
   const user = useAppSelector(selectCurrentUser);
   const [logout] = useLogoutMutation();
+  const showProblem = useProblemToast();
 
   const handleLogout = async () => {
     try {
       // Server-side revocation + cookie deletion; the fulfilled action flips the auth
-      // slice to 'anonymous' (and the guard would redirect anyway — the navigate just
-      // makes it immediate and lands on a clean login, not a returnTo loop).
+      // slice to 'anonymous'. Navigation happens ONLY on success: a failed revocation
+      // must never masquerade as a logout — the session cookie would still be alive
+      // behind a login screen.
       await logout().unwrap();
-    } finally {
       navigate('/login', { replace: true });
+    } catch (caught) {
+      showProblem(caught as ApiProblem);
     }
   };
 

@@ -185,6 +185,11 @@ export function BottomNav({ items = defaultNavItems, className }: BottomNavProps
     if (path === '/dashboard') {
       return location.pathname === path;
     }
+    // /profile and /settings alias the same page; the shell's Settings action
+    // navigates to /settings — the Profile tab must light up for both.
+    if (path === '/profile' && location.pathname.startsWith('/settings')) {
+      return true;
+    }
     return location.pathname.startsWith(path);
   };
 

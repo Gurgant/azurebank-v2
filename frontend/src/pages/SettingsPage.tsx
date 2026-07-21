@@ -19,6 +19,8 @@ import {
   ArrowDownload20Regular,
 } from '@fluentui/react-icons';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import { useProblemToast } from '../components/feedback';
 import { useLogoutMutation } from '../features/api/apiSlice';
 
 // ============================================
@@ -765,6 +767,7 @@ export function SettingsPage() {
   const styles = useStyles();
   const navigate = useNavigate();
   const [logout] = useLogoutMutation();
+  const showProblem = useProblemToast();
 
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
   const [darkMode, setDarkMode] = useState(false);
@@ -775,11 +778,13 @@ export function SettingsPage() {
   const handleLogout = async () => {
     try {
       // Real server-side logout: revokes the BFF session and deletes the cookie.
-      // A bare navigate('/login') would leave the session alive and the guard would
-      // bounce straight back to the dashboard.
+      // Navigation happens ONLY on success — a failed revocation must never
+      // masquerade as a logout (the cookie would still be alive behind a login
+      // screen). Mirrors ProtectedShell.
       await logout().unwrap();
-    } finally {
       navigate('/login', { replace: true });
+    } catch (caught) {
+      showProblem(caught as ApiProblem);
     }
   };
 
@@ -953,7 +958,12 @@ export function SettingsPage() {
           </div>
 
           {/* Logout */}
-          <button className={styles.logoutButton} onClick={handleLogout}>
+          <button
+            className={styles.logoutButton}
+            onClick={() => {
+              void handleLogout();
+            }}
+          >
             <SignOut24Regular style={{ color: colors.semantic.error.main }} />
             <Text className={styles.logoutText}>Log Out</Text>
           </button>
@@ -1105,7 +1115,9 @@ export function SettingsPage() {
                         color: colors.semantic.error.main,
                       }}
                       icon={<SignOut24Regular />}
-                      onClick={handleLogout}
+                      onClick={() => {
+                        void handleLogout();
+                      }}
                     >
                       Log Out
                     </Button>

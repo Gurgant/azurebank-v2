@@ -4,7 +4,6 @@ import { makeStyles, Text } from '@fluentui/react-components';
 import {
   ArrowSwap24Regular,
   Add24Regular,
-  ChevronRight20Regular,
   ArrowDownload20Regular,
   ArrowUpload20Regular,
   CreditCardToolbox24Regular,
@@ -226,11 +225,6 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     gap: '16px',
     boxShadow: shadows.sm,
-    cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      boxShadow: shadows.md,
-    },
     '@media (min-width: 1024px)': {
       padding: '24px',
     },
@@ -290,10 +284,6 @@ const useStyles = makeStyles({
     fontWeight: 400,
     fontFamily: 'Consolas, "Courier New", monospace',
     color: colors.neutral[500],
-  },
-
-  accountChevron: {
-    color: colors.neutral[400],
   },
 
   accountBalanceSection: {
@@ -538,7 +528,6 @@ export function AccountsPage() {
                   <Text className={styles.accountName}>{account.name}</Text>
                   <Text className={styles.accountNumber}>{account.accountNumber}</Text>
                 </div>
-                <ChevronRight20Regular className={styles.accountChevron} />
               </div>
 
               <div className={styles.accountBalanceSection}>
