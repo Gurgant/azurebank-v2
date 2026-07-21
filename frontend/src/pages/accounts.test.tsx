@@ -195,13 +195,15 @@ describe('legacy money dialogs (adapter wiring)', () => {
     expect(screen.getAllByText('Main Account')).toHaveLength(1); // page card only
 
     // The scoped account is pre-selected: a quick-amount deposit succeeds without
-    // touching the selection, and lands on the RIGHT account.
-    await userEvent.click(screen.getByRole('button', { name: '$100' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Deposit $100.00' }));
-    // The legacy mock flow resolves after a 1.5s setTimeout — give it headroom.
-    expect(
-      await screen.findByText('Deposited to Rainy Day', undefined, { timeout: 4000 }),
-    ).toBeInTheDocument();
+    // touching the selection, and the receipt lands on the RIGHT account (Rainy Day
+    // seed balance 830 → 930). Deposit mechanics are pinned in deposit.test.tsx.
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    expect(await screen.findByText('Deposit Successful!')).toBeInTheDocument();
+    // €930.00 appears TWICE — the receipt's new balance AND the refreshed Rainy Day
+    // card (deposit invalidates {Account,id}, so the list refetches): proves the
+    // balance updates without a hand-patched cache.
+    await waitFor(() => expect(screen.getAllByText('€930.00')).toHaveLength(2));
     await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 
     // Reopen on the OTHER card: the dialog must re-scope, never reuse stale state.

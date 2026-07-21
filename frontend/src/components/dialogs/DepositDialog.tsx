@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   Text,
@@ -11,8 +12,13 @@ import {
   Dismiss24Regular,
   ArrowDownload24Regular,
   CheckmarkCircle24Filled,
+  Warning24Regular,
 } from '@fluentui/react-icons';
 import { colors, transitions } from '../../theme/tokens';
+import type { ApiProblem } from '../../api/problemBaseQuery';
+import { useDepositMutation } from '../../features/api/apiSlice';
+import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
+import { formatCurrency } from '../../utils/format';
 
 // ============================================
 // TYPES
@@ -30,6 +36,14 @@ export interface DepositDialogProps {
   onClose: () => void;
   accounts: Account[];
   onSuccess?: () => void;
+}
+
+interface SuccessData {
+  amount: number;
+  accountName: string;
+  newBalance: number;
+  transactionId: string;
+  replayed: boolean;
 }
 
 // ============================================
@@ -215,6 +229,17 @@ const useStyles = makeStyles({
     },
   },
 
+  newBalance: {
+    fontSize: '13px',
+    color: colors.neutral[500],
+  },
+
+  amountHint: {
+    fontSize: '13px',
+    fontWeight: 500,
+    color: colors.semantic.error.main,
+  },
+
   // ========== QUICK AMOUNTS ==========
   quickAmounts: {
     display: 'flex',
@@ -246,13 +271,29 @@ const useStyles = makeStyles({
     color: colors.brand[60],
   },
 
-  // ========== SUCCESS STATE ==========
-  successContent: {
+  // ========== DESCRIPTION ==========
+  descriptionInput: {
+    width: '100%',
+    padding: '12px',
+    borderRadius: '8px',
+    border: `1px solid ${colors.neutral[200]}`,
+    fontSize: '14px',
+    fontFamily: 'inherit',
+    color: colors.neutral[800],
+    outline: 'none',
+    ':focus': {
+      border: `1px solid ${colors.brand[60]}`,
+    },
+  },
+
+  // ========== SUCCESS / STATE VIEWS ==========
+  centeredView: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     gap: '16px',
     padding: '32px 20px',
+    textAlign: 'center',
   },
 
   successIcon: {
@@ -266,11 +307,27 @@ const useStyles = makeStyles({
     color: colors.semantic.success.main,
   },
 
+  warningIcon: {
+    width: '80px',
+    height: '80px',
+    backgroundColor: '#FEF3E2',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#B45309',
+  },
+
   successTitle: {
     fontSize: '24px',
     fontWeight: 700,
     color: colors.semantic.success.main,
-    textAlign: 'center',
+  },
+
+  stateTitle: {
+    fontSize: '20px',
+    fontWeight: 700,
+    color: colors.neutral[800],
   },
 
   successAmount: {
@@ -279,106 +336,199 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
-  successSubtitle: {
-    fontSize: '16px',
-    fontWeight: 400,
+  stateBody: {
+    fontSize: '15px',
     color: colors.neutral[500],
-    textAlign: 'center',
+    lineHeight: '1.5',
   },
+
+  detailsCard: {
+    width: '100%',
+    backgroundColor: colors.neutral[50],
+    borderRadius: '12px',
+    padding: '4px 16px',
+    marginTop: '8px',
+  },
+
+  detailRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '12px 0',
+    borderBottom: `1px solid ${colors.neutral[100]}`,
+    ':last-child': {
+      borderBottom: 'none',
+    },
+  },
+
+  detailLabel: { fontSize: '14px', color: colors.neutral[500] },
+  detailValue: { fontSize: '14px', fontWeight: 600, color: colors.neutral[800] },
 
   // ========== FOOTER ==========
   footer: {
     padding: '16px 20px 24px 20px',
     borderTop: `1px solid ${colors.neutral[200]}`,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
   },
 
   errorMessage: {
-    marginBottom: '16px',
+    marginBottom: '4px',
   },
 });
 
 // ============================================
-// QUICK AMOUNTS
+// CONSTANTS
 // ============================================
 
-const quickAmounts = [50, 100, 250, 500, 1000];
-
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
+const QUICK_AMOUNTS = [50, 100, 200, 500];
+const MIN_AMOUNT = 0.01;
+const MAX_AMOUNT = 1_000_000;
 
 // ============================================
 // COMPONENT
 // ============================================
 
+/**
+ * T3 — the first production idempotent mutation (PR-9). The deposit rides
+ * useIdempotentMutation: a lazy in-memory Idempotency-Key that survives a KEEP error
+ * (IN_FLIGHT / network / 5xx) so the user's Retry re-sends the SAME key + body, and
+ * rotates on any body edit (an edited body with the old key is a 422 KEY_REUSE). A
+ * replayed 2xx surfaces a polite note (D4); RESULT_UNKNOWN latches a verify-first flow
+ * (§2.3). No step-up — deposit is auth level 1.
+ */
 export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositDialogProps) {
   const styles = useStyles();
+  const navigate = useNavigate();
+
+  const [depositTrigger] = useDepositMutation();
+  const { submit, resetIntent, verifyRequired } = useIdempotentMutation(depositTrigger);
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(
     accounts.length > 0 ? accounts[0] : null,
   );
   const [amount, setAmount] = useState(0);
   const [amountInput, setAmountInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  const [description, setDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<SuccessData | null>(null);
+
+  // Any body-affecting edit rotates the key: the old key + a new body is a raw-byte
+  // fingerprint mismatch → 422 KEY_REUSE. Also clears transient in-flight/error state.
+  const onBodyEdit = () => {
+    resetIntent();
+    setInFlight(false);
+    setError(null);
+  };
 
   const handleAmountChange = (value: string) => {
-    const cleaned = value.replace(/[^0-9.]/g, '');
+    // Strip non-numerics AND collapse to a single decimal point — "1.2.3" would
+    // desync the shown field from the parsed amount otherwise.
+    const digitsAndDots = value.replace(/[^0-9.]/g, '');
+    const firstDot = digitsAndDots.indexOf('.');
+    const cleaned =
+      firstDot === -1
+        ? digitsAndDots
+        : digitsAndDots.slice(0, firstDot + 1) +
+          digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
     setAmountInput(cleaned);
     setAmount(parseFloat(cleaned) || 0);
+    onBodyEdit();
   };
 
   const handleQuickAmount = (value: number) => {
     setAmountInput(value.toString());
     setAmount(value);
+    onBodyEdit();
   };
+
+  const handleSelectAccount = (account: Account) => {
+    setSelectedAccount(account);
+    onBodyEdit();
+  };
+
+  const isAmountValid = amount >= MIN_AMOUNT && amount <= MAX_AMOUNT;
+  const newBalance = selectedAccount ? selectedAccount.balance + amount : 0;
+
+  // Shown inline under the amount once the user has typed something invalid (the CTA
+  // is also disabled) — a silently-disabled button leaves an over-limit amount
+  // unexplained.
+  const amountHint =
+    amount > 0 && !isAmountValid
+      ? amount > MAX_AMOUNT
+        ? 'Maximum deposit is €1,000,000.'
+        : 'Minimum deposit is €0.01.'
+      : null;
 
   const handleSubmit = async () => {
-    if (!selectedAccount || amount <= 0) {
-      setError('Please select an account and enter an amount');
+    if (!selectedAccount || !isAmountValid) {
       return;
     }
-
     setError(null);
-    setIsLoading(true);
-
+    setInFlight(false);
+    setIsSubmitting(true);
     try {
-      // TODO: Replace with actual API call
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      setIsSuccess(true);
+      const result = await submit({
+        accountId: selectedAccount.id,
+        amount,
+        description: description.trim() || undefined,
+      });
+      setSuccess({
+        amount,
+        accountName: selectedAccount.name,
+        newBalance: result.newBalance,
+        transactionId: result.transaction.id,
+        replayed: result.replayed,
+      });
       onSuccess?.();
-    } catch {
-      setError('Deposit failed. Please try again.');
+    } catch (caught) {
+      const problem = caught as ApiProblem;
+      // D17 / §2.3: route on errorCode, never a blanket toast. RESULT_UNKNOWN is
+      // handled by the hook (latches verifyRequired) — we just render that view.
+      if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+        // hook set verifyRequired; the verify view renders below.
+      } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
+        setInFlight(true);
+      } else if (problem.errorCode === 'VALIDATION_ERROR') {
+        // Field-agnostic: surface the first server message rather than assuming 'amount'.
+        const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
+        setError(firstFieldError ?? 'Please check the amount and try again.');
+      } else if (
+        problem.errorCode === 'IDEMPOTENCY_KEY_REUSE' ||
+        problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
+        problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
+      ) {
+        // Client protocol bug — never surface the raw code (D17).
+        setError('Something went wrong. Please try again.');
+      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
+        // Transport failure — a raw "TypeError: Failed to fetch" would leak (D17). The
+        // key is KEPT (shouldKeepKey) so tapping Deposit again is a safe same-key retry.
+        setError("Couldn't reach the server — check your connection and try again.");
+      } else {
+        setError(problem.detail || 'Deposit failed. Please try again.');
+      }
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
-  };
-
-  const handleClose = () => {
-    // Reset state
-    setSelectedAccount(accounts.length > 0 ? accounts[0] : null);
-    setAmount(0);
-    setAmountInput('');
-    setIsLoading(false);
-    setIsSuccess(false);
-    setError(null);
-    onClose();
   };
 
   if (!isOpen) return null;
 
+  const showForm = !success && !verifyRequired;
+
+  // CRITICAL: never dismiss mid-flight. The dialog is mount-on-open, so unmounting
+  // during a submit destroys the in-memory idempotency key — reopening would mint a
+  // fresh one and the same amount becomes a NEW intent = a real double-deposit.
+  const requestClose = () => {
+    if (!isSubmitting) {
+      onClose();
+    }
+  };
+
   return (
-    <div className={styles.overlay} onClick={handleClose}>
+    <div className={styles.overlay} onClick={requestClose}>
       <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className={styles.header}>
@@ -386,26 +536,63 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             <div className={styles.headerIcon}>
               <ArrowDownload24Regular />
             </div>
-            {isSuccess ? 'Deposit Complete' : 'Deposit Money'}
+            {success ? 'Deposit Complete' : 'Deposit Money'}
           </div>
-          <button className={styles.closeButton} aria-label="Close" onClick={handleClose}>
+          <button
+            className={styles.closeButton}
+            aria-label="Close"
+            onClick={requestClose}
+            disabled={isSubmitting}
+          >
             <Dismiss24Regular />
           </button>
         </div>
 
-        {/* Content */}
-        {isSuccess ? (
-          <div className={styles.successContent}>
+        {/* Success */}
+        {success && (
+          <div className={styles.centeredView}>
             <div className={styles.successIcon}>
               <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
             </div>
             <Text className={styles.successTitle}>Deposit Successful!</Text>
-            <Text className={styles.successAmount}>{formatCurrency(amount)}</Text>
-            <Text className={styles.successSubtitle}>Deposited to {selectedAccount?.name}</Text>
+            <Text className={styles.successAmount}>+{formatCurrency(success.amount)}</Text>
+            {success.replayed && (
+              <MessageBar intent="info">
+                <MessageBarBody>
+                  This deposit was already processed — showing the existing result.
+                </MessageBarBody>
+              </MessageBar>
+            )}
+            <div className={styles.detailsCard}>
+              <div className={styles.detailRow}>
+                <Text className={styles.detailLabel}>To</Text>
+                <Text className={styles.detailValue}>{success.accountName}</Text>
+              </div>
+              <div className={styles.detailRow}>
+                <Text className={styles.detailLabel}>New balance</Text>
+                <Text className={styles.detailValue}>{formatCurrency(success.newBalance)}</Text>
+              </div>
+            </div>
           </div>
-        ) : (
+        )}
+
+        {/* RESULT_UNKNOWN — verify-first (§2.3) */}
+        {!success && verifyRequired && (
+          <div className={styles.centeredView}>
+            <div className={styles.warningIcon}>
+              <Warning24Regular style={{ width: '40px', height: '40px' }} />
+            </div>
+            <Text className={styles.stateTitle}>We couldn&apos;t confirm your deposit</Text>
+            <Text className={styles.stateBody}>
+              The request may or may not have gone through. Check your recent transactions before
+              trying again — retrying blindly could deposit twice.
+            </Text>
+          </div>
+        )}
+
+        {/* Form */}
+        {showForm && (
           <div className={styles.content}>
-            {/* Account Selection */}
             <div>
               <Text className={styles.sectionLabel}>Select Account</Text>
               {accounts.map((account) => (
@@ -414,7 +601,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                   className={`${styles.accountCard} ${
                     selectedAccount?.id === account.id ? styles.accountCardSelected : ''
                   }`}
-                  onClick={() => setSelectedAccount(account)}
+                  onClick={() => handleSelectAccount(account)}
                   style={{ marginBottom: '8px' }}
                 >
                   <div className={styles.accountInfo}>
@@ -426,25 +613,32 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               ))}
             </div>
 
-            {/* Amount Input */}
             <div className={styles.amountSection}>
               <Text className={styles.amountLabel}>Enter amount</Text>
               <div className={styles.amountInputWrapper}>
-                <span className={styles.amountCurrency}>$</span>
+                <span className={styles.amountCurrency}>€</span>
                 <input
                   type="text"
                   inputMode="decimal"
                   placeholder="0"
+                  aria-label="Deposit amount"
                   className={styles.amountInput}
                   value={amountInput}
                   onChange={(e) => handleAmountChange(e.target.value)}
                 />
               </div>
+              {selectedAccount && isAmountValid && (
+                <Text className={styles.newBalance}>New balance: {formatCurrency(newBalance)}</Text>
+              )}
+              {amountHint && (
+                <Text role="alert" className={styles.amountHint}>
+                  {amountHint}
+                </Text>
+              )}
             </div>
 
-            {/* Quick Amounts */}
             <div className={styles.quickAmounts}>
-              {quickAmounts.map((quickAmount) => (
+              {QUICK_AMOUNTS.map((quickAmount) => (
                 <button
                   key={quickAmount}
                   className={`${styles.quickBtn} ${
@@ -452,10 +646,23 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                   }`}
                   onClick={() => handleQuickAmount(quickAmount)}
                 >
-                  ${quickAmount}
+                  €{quickAmount}
                 </button>
               ))}
             </div>
+
+            <input
+              type="text"
+              placeholder="Description (optional)"
+              aria-label="Description"
+              maxLength={100}
+              className={styles.descriptionInput}
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                onBodyEdit();
+              }}
+            />
           </div>
         )}
 
@@ -466,25 +673,59 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               <MessageBarBody>{error}</MessageBarBody>
             </MessageBar>
           )}
+          {inFlight && (
+            <MessageBar intent="info" className={styles.errorMessage}>
+              <MessageBarBody>Still processing — tap Deposit again to check.</MessageBarBody>
+            </MessageBar>
+          )}
 
-          {isSuccess ? (
-            <Button
-              appearance="primary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={handleClose}
-            >
-              Done
-            </Button>
+          {success ? (
+            <>
+              <Button
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => void navigate(`/transactions/${success.transactionId}`)}
+              >
+                View Transaction
+              </Button>
+              <Button
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={onClose}
+              >
+                Done
+              </Button>
+            </>
+          ) : verifyRequired ? (
+            <>
+              <Button
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => void navigate('/history')}
+              >
+                Check recent transactions
+              </Button>
+              <Button
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={resetIntent}
+              >
+                It didn&apos;t go through — try again
+              </Button>
+            </>
           ) : (
             <Button
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={handleSubmit}
-              disabled={isLoading || amount <= 0}
+              disabled={isSubmitting || !isAmountValid}
             >
-              {isLoading ? (
+              {isSubmitting ? (
                 <Spinner size="tiny" />
               ) : (
                 `Deposit ${amount > 0 ? formatCurrency(amount) : ''}`
