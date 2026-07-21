@@ -76,7 +76,6 @@ try
         .AddApplicationServices(builder.Configuration)
         .AddApiControllers()
         .AddApiDocumentation()
-        .AddCorsPolicies(builder.Configuration)
         .AddObservability(builder.Environment);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -127,8 +126,8 @@ try
 
     app.UseHttpsRedirection();
 
-    // CORS (must be before Auth)
-    app.UseCors(app.Environment.IsDevelopment() ? "Development" : "AllowFrontend");
+    // No CORS, by design (ADR-0018): the browser only ever reaches the API through the
+    // BFF's same-origin proxy; direct API access is server-to-server or Swagger/dev.
 
     // Authentication & Authorization (order matters!)
     app.UseAuthentication();

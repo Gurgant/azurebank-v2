@@ -416,42 +416,4 @@ public static class ServiceCollectionExtensions
 
         return services;
     }
-
-    /// <summary>
-    /// Adds CORS policy for frontend development.
-    /// </summary>
-    public static IServiceCollection AddCorsPolicies(
-        this IServiceCollection services,
-        IConfiguration configuration)
-    {
-        services.AddCors(options =>
-        {
-            options.AddPolicy("AllowFrontend", policy =>
-            {
-                policy
-                    .WithOrigins(
-                        "http://localhost:5173",  // Vite dev server
-                        "http://localhost:3000",  // Alternative frontend port
-                        "https://localhost:5173")
-                    .AllowAnyHeader()
-                    .AllowAnyMethod()
-                    .AllowCredentials()
-                    // Response headers are NOT readable by browser JS unless
-                    // exposed: the frontend must be able to see replays.
-                    .WithExposedHeaders(IdempotencyConstants.ReplayedHeaderName);
-            });
-
-            // Development: Allow any origin
-            options.AddPolicy("Development", policy =>
-            {
-                policy
-                    .AllowAnyOrigin()
-                    .AllowAnyHeader()
-                    .AllowAnyMethod()
-                    .WithExposedHeaders(IdempotencyConstants.ReplayedHeaderName);
-            });
-        });
-
-        return services;
-    }
 }
