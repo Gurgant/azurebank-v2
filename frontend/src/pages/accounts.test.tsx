@@ -161,7 +161,8 @@ describe('create account (A4)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await userEvent.click(screen.getByText('Add New Account'));
-    // The REMOUNTING dialog (portal + presence motion + tabster) can exceed the
+    // The reopening dialog's SURFACE remounts (portal + presence motion + tabster —
+    // the component itself stays mounted, controlled via `open`) and can exceed the
     // default 1s under CI load — this exact line flaked twice in CI runs.
     await screen.findByRole('dialog', {}, { timeout: 4000 });
     expect(screen.queryByText(/Creation exploded\./)).not.toBeInTheDocument();
