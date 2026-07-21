@@ -1,5 +1,3 @@
-using System.Reflection;
-using System.Text.Json;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 
@@ -32,11 +30,17 @@ public sealed class RequiredValueTypeMembersTransformer : IOpenApiSchemaTransfor
             return Task.CompletedTask;
         }
 
-        var clrType = context.JsonTypeInfo.Type;
-
-        foreach (var property in clrType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        // JsonTypeInfo.Properties is the serializer's OWN precomputed metadata: it
+        // carries the exact wire name (naming policy and [JsonPropertyName] applied)
+        // and already excludes ignored members — no manual reflection, no name guessing.
+        if (context.JsonTypeInfo?.Properties is not { } jsonProperties)
         {
-            var propertyType = property.PropertyType;
+            return Task.CompletedTask;
+        }
+
+        foreach (var jsonProperty in jsonProperties)
+        {
+            var propertyType = jsonProperty.PropertyType;
             var isNonNullableValueType =
                 propertyType.IsValueType && Nullable.GetUnderlyingType(propertyType) == null;
             if (!isNonNullableValueType)
@@ -44,14 +48,13 @@ public sealed class RequiredValueTypeMembersTransformer : IOpenApiSchemaTransfor
                 continue;
             }
 
-            var wireName = JsonNamingPolicy.CamelCase.ConvertName(property.Name);
-            if (!schema.Properties.ContainsKey(wireName))
+            if (!schema.Properties.ContainsKey(jsonProperty.Name))
             {
                 continue;
             }
 
             schema.Required ??= new HashSet<string>();
-            schema.Required.Add(wireName);
+            schema.Required.Add(jsonProperty.Name);
         }
 
         return Task.CompletedTask;
