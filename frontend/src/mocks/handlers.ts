@@ -259,6 +259,157 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   return response(201).json(payload);
 });
 
+/**
+ * POST /api/transactions/withdraw — the deposit protocol PLUS the PIN-in-body gate (D1).
+ * NOT step-up: the PIN travels in the request body and is verified here, so this endpoint
+ * never returns the 403 STEP_UP_REQUIRED shape (that gates transfers only). Failure order
+ * mirrors the backend (TransactionService.WithdrawAsync): idempotency → PIN_REQUIRED →
+ * PIN_LOCKED → INVALID_PIN → INSUFFICIENT_FUNDS → success. Side effects (balance debit,
+ * transaction, stored idempotency record) run ONLY on the success path.
+ */
+const withdraw = api.post('/api/transactions/withdraw', async ({ request, response }) => {
+  const key = request.headers.get('Idempotency-Key');
+  if (!key) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errorCode: 'IDEMPOTENCY_KEY_MISSING',
+        detail: 'The Idempotency-Key header is required.',
+      }),
+    );
+  }
+  if (!UUID_RE.test(key) || key === NIL_UUID) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errorCode: 'IDEMPOTENCY_KEY_INVALID',
+        detail: 'The Idempotency-Key header must be a single non-empty UUID.',
+      }),
+    );
+  }
+
+  const raw = await request.clone().text();
+  const fp = fingerprint(raw);
+  const stored = mockState.idempotency.get(`withdraw|${key}`);
+  if (stored) {
+    if (stored.bodyFingerprint !== fp) {
+      return response.untyped(
+        problem({
+          status: 422,
+          errorCode: 'IDEMPOTENCY_KEY_REUSE',
+          detail: 'This idempotency key was already used with a different payload.',
+        }),
+      );
+    }
+    return response.untyped(
+      new HttpResponse(stored.body, {
+        status: stored.status,
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Replayed': 'true' },
+      }),
+    );
+  }
+
+  const body = JSON.parse(raw) as {
+    accountId?: string;
+    amount?: number;
+    pin?: string;
+    description?: string;
+  };
+  const amount = body.amount ?? 0;
+
+  // PIN_REQUIRED — the user never set a PIN. Gated only when a session exists; tests that
+  // render the dialog without seeding a session are treated as a PIN-holder (they pass one).
+  if (mockState.session && !mockState.session.hasPin) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'PIN_REQUIRED',
+        detail: 'PIN must be set before making withdrawals.',
+      }),
+    );
+  }
+
+  // PIN_LOCKED — attempt-limiting window still open (checked BEFORE the PIN compare, like
+  // the backend refuses before Argon2id runs).
+  const now = Date.now();
+  if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
+    const retryAfterSeconds = Math.ceil((Date.parse(mockState.pinLockedUntil) - now) / 1000);
+    return response.untyped(
+      problem({
+        status: 429,
+        errorCode: 'PIN_LOCKED',
+        detail: 'Too many incorrect PIN attempts. Please try again later.',
+        extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
+        headers: { 'Retry-After': String(retryAfterSeconds) },
+      }),
+    );
+  }
+
+  // INVALID_PIN — wrong PIN. The 3rd consecutive miss trips the 15-minute lock and returns
+  // 429 PIN_LOCKED (not 401), exactly like ValidationRules.MaxPinAttempts.
+  if (body.pin !== mockState.pin) {
+    mockState.pinAttempts += 1;
+    if (mockState.pinAttempts >= 3) {
+      mockState.pinAttempts = 0;
+      const retryAfterSeconds = 15 * 60;
+      mockState.pinLockedUntil = new Date(now + retryAfterSeconds * 1000).toISOString();
+      return response.untyped(
+        problem({
+          status: 429,
+          errorCode: 'PIN_LOCKED',
+          detail: 'Too many incorrect PIN attempts. Please try again later.',
+          extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
+          headers: { 'Retry-After': String(retryAfterSeconds) },
+        }),
+      );
+    }
+    return response.untyped(
+      problem({ status: 401, errorCode: 'INVALID_PIN', detail: 'Invalid PIN.' }),
+    );
+  }
+  // Correct PIN clears the attempt counter.
+  mockState.pinAttempts = 0;
+
+  // INSUFFICIENT_FUNDS — after the PIN passes, like the backend orders it.
+  const account = mockState.accounts.find((a) => a.id === body.accountId);
+  const available = account?.balance ?? 0;
+  if (amount > available) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'INSUFFICIENT_FUNDS',
+        detail: 'Insufficient funds for this withdrawal.',
+        extensions: { available, requested: amount },
+      }),
+    );
+  }
+
+  // Success — debit, record, store (once), reply.
+  const newBalance = available - amount;
+  if (account) {
+    account.balance = newBalance;
+  }
+  const index = mockState.transactions.length;
+  const transaction = {
+    id: `019f7b3f-0000-7000-8000-${(0x400 + index).toString(16).padStart(12, '0')}`,
+    transactionNumber: `TXN-20260722-${String(400 + index).padStart(6, '0')}`,
+    type: 'Withdrawal' as const,
+    amount,
+    balanceAfter: newBalance,
+    description: body.description ?? null,
+    recipientAzureTag: null,
+    senderAzureTag: null,
+    status: 'Completed' as const,
+    createdAt: `2026-07-22T11:${String(index).padStart(2, '0')}:00.0000000Z`,
+  };
+  mockState.transactions.push(transaction);
+
+  const payload = { data: { transaction, newBalance }, message: 'Withdrawal successful' };
+  const text = JSON.stringify(payload);
+  mockState.idempotency.set(`withdraw|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  return response(201).json(payload);
+});
+
 /** POST /api/transfers — level-2 step-up gate (AuthLevelMiddleware semantics). */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (mockState.authLevel < 2) {
@@ -303,10 +454,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
  * Source semantics: correct PIN elevates the session to level 2 for 5 minutes; a WRONG
  * PIN is HTTP 200 with verified:false, never a 4xx (PIN lockout is a separate 429).
  */
-const MOCK_PIN = '123456';
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   const { pin } = (await request.json()) as { pin?: string };
-  if (pin === MOCK_PIN) {
+  if (pin === mockState.pin) {
     mockState.authLevel = 2;
     return HttpResponse.json({
       data: { verified: true, authLevel: 2, pinExpiresAt: '2026-07-20T12:05:00.0000000Z' },
@@ -317,6 +467,27 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
     data: { verified: false, authLevel: mockState.authLevel, pinExpiresAt: null },
     message: 'PIN verification failed.',
   });
+});
+
+/**
+ * POST /bff/auth/set-pin — set/overwrite the user's PIN (SetPinController, AuthLevel 1: no
+ * old PIN and no step-up required). A bad format is the API's VALIDATION_ERROR shape (400,
+ * `errors` dict, NO errorCode — the FE synthesizes VALIDATION_ERROR). On success it flips
+ * session.hasPin so the invalidated /me refetch clears the withdraw gate, and clears any
+ * prior lock so the freshly-set PIN works immediately.
+ */
+const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
+  const { pin } = (await request.json()) as { pin?: string };
+  if (!pin || !/^\d{6}$/.test(pin)) {
+    return problem({ status: 400, errors: { pin: ['PIN must be exactly 6 digits.'] } });
+  }
+  mockState.pin = pin;
+  mockState.pinAttempts = 0;
+  mockState.pinLockedUntil = null;
+  if (mockState.session) {
+    mockState.session.hasPin = true;
+  }
+  return HttpResponse.json({ message: 'PIN set successfully' });
 });
 
 /**
@@ -437,8 +608,10 @@ export const handlers = [
   listTransactions,
   getTransaction,
   deposit,
+  withdraw,
   transfer,
   verifyPin,
+  setPin,
   login,
   register,
   me,

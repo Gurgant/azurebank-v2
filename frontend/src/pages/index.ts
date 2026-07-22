@@ -5,6 +5,7 @@
 // Auth Pages
 export { LoginPage } from './LoginPage';
 export { RegisterPage } from './RegisterPage';
+export { PinSetupPage } from './PinSetupPage';
 
 // Main App Pages
 export { DashboardPage } from './DashboardPage';
