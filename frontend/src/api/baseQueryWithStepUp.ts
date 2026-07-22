@@ -26,7 +26,10 @@ export const baseQueryWithStepUp: BaseQueryFn<
     return result;
   }
 
-  const outcome = await requestStepUp({ requiredAuthLevel: problem.requiredAuthLevel ?? 2 });
+  // One effective level for BOTH the request and the cancelled-error paths (the header is
+  // always numeric in practice, but keep the two branches consistent).
+  const requiredAuthLevel = problem.requiredAuthLevel ?? 2;
+  const outcome = await requestStepUp({ requiredAuthLevel });
 
   if (outcome !== 'elevated') {
     // The user cancelled (or the session died). Surface a distinct code the caller can treat
@@ -37,7 +40,7 @@ export const baseQueryWithStepUp: BaseQueryFn<
         status: 403,
         errorCode: 'STEP_UP_CANCELLED',
         detail: 'PIN verification was cancelled.',
-        requiredAuthLevel: problem.requiredAuthLevel,
+        requiredAuthLevel,
       } satisfies ApiProblem,
       meta: result.meta,
     };

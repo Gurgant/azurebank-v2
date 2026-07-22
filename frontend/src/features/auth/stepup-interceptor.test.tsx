@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
+import { problem } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import type { ApiProblem } from '../../api/problemBaseQuery';
@@ -161,5 +162,24 @@ describe('step-up interceptor (PR-11)', () => {
     await enterPin('000000'); // 3rd miss trips the shared lockout
 
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+  });
+
+  it('an unexpected verify-pin error (500) is SURFACED, not masked as a cancellation', async () => {
+    server.use(spyTransfer([]));
+    server.use(
+      http.post('*/bff/auth/verify-pin', () =>
+        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'boom' }),
+      ),
+    );
+    renderWithProviders(<Harness />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText("Verify it's you");
+    await enterPin('123456');
+
+    expect(await screen.findByText(/Couldn't verify right now/)).toBeInTheDocument();
+    // Modal stays open (NOT settled 'cancelled') so the failure isn't silent.
+    expect(screen.getByText("Verify it's you")).toBeInTheDocument();
+    expect(screen.queryByText(/^err:/)).not.toBeInTheDocument();
   });
 });

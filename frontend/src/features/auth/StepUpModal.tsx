@@ -105,9 +105,14 @@ function StepUpForm() {
         // the user can retry the PIN without re-driving the whole flow.
         setError("Couldn't verify right now — check your connection and try again.");
         setPin('');
-      } else {
+      } else if (problem.status === 401) {
         // A real 401 = dead session (sessionMiddleware already logs out); abandon step-up.
         settleStepUp('cancelled');
+      } else {
+        // Any OTHER unexpected status (e.g. a 500) must be SURFACED, never masked as a
+        // cancellation — keep the modal open with a visible error so the failure isn't silent.
+        setError("Couldn't verify right now — please try again.");
+        setPin('');
       }
     }
   };
