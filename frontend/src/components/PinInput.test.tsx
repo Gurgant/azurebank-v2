@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -75,6 +75,15 @@ describe('PinInput (PR-10)', () => {
     renderWithProviders(<Harness />);
     await userEvent.type(screen.getByLabelText('Digit 4 of 6'), '7');
     expect(screen.getByTestId('value')).toHaveTextContent('7');
+  });
+
+  it('distributes a multi-digit value from a single change event (OTP / password-manager autofill)', () => {
+    // Autofill delivers the whole code via one input event (not a paste) — it must not be
+    // truncated to the last digit.
+    renderWithProviders(<Harness />);
+    fireEvent.change(screen.getByLabelText('Digit 1 of 6'), { target: { value: '123456' } });
+    expect(screen.getByTestId('value')).toHaveTextContent('123456');
+    expect(screen.getByTestId('completed')).toHaveTextContent('123456');
   });
 
   it('masks digits by default and reveals them on the toggle', async () => {

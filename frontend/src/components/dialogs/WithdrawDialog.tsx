@@ -334,7 +334,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const needsPinSetup = user ? user.hasPin === false : false;
 
   const [withdrawTrigger] = useWithdrawMutation();
-  const { submit, resetIntent, verifyRequired } = useIdempotentMutation(withdrawTrigger);
+  const { submit, resetIntent, verifyRequired, keyRetained } =
+    useIdempotentMutation(withdrawTrigger);
 
   const [step, setStep] = useState<Step>('form');
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(
@@ -493,10 +494,13 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const showForm = !success && !verifyRequired && !needsPinSetup && step === 'form';
   const showPin = !success && !verifyRequired && !needsPinSetup && step === 'pin';
 
-  // CRITICAL: never dismiss while an idempotency key is still LIVE — submitting OR held after
-  // an IN_FLIGHT. The dialog is mount-on-open, so unmounting with a retained key loses it;
-  // reopening mints a fresh one and the same amount becomes a NEW intent = a double-spend.
-  const keyLive = isSubmitting || inFlight;
+  // CRITICAL: never dismiss while an idempotency key is still LIVE. `keyRetained` is the hook's
+  // source of truth — the key is held while submitting AND after every KEEP outcome
+  // (IN_FLIGHT, network, parse, 5xx), not just IN_FLIGHT. The dialog is mount-on-open, so
+  // unmounting with a retained key loses it; reopening mints a fresh one and the same amount
+  // becomes a NEW intent = a double-spend. Editing the body (onBodyEdit → resetIntent) or a
+  // terminal outcome releases the key and re-enables dismissal.
+  const keyLive = isSubmitting || keyRetained;
   const requestClose = () => {
     if (!keyLive) {
       onClose();

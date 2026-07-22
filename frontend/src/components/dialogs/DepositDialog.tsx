@@ -402,7 +402,8 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const navigate = useNavigate();
 
   const [depositTrigger] = useDepositMutation();
-  const { submit, resetIntent, verifyRequired } = useIdempotentMutation(depositTrigger);
+  const { submit, resetIntent, verifyRequired, keyRetained } =
+    useIdempotentMutation(depositTrigger);
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(
     accounts.length > 0 ? accounts[0] : null,
@@ -518,11 +519,13 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
 
   const showForm = !success && !verifyRequired;
 
-  // CRITICAL: never dismiss mid-flight. The dialog is mount-on-open, so unmounting
-  // during a submit destroys the in-memory idempotency key — reopening would mint a
-  // fresh one and the same amount becomes a NEW intent = a real double-deposit.
+  // CRITICAL: never dismiss while an idempotency key is still LIVE. `keyRetained` covers
+  // submitting AND every KEEP outcome (IN_FLIGHT / network / 5xx) — the dialog is
+  // mount-on-open, so unmounting with a retained key loses it, and reopening mints a fresh
+  // one so the same amount becomes a NEW intent = a real double-deposit.
+  const keyLive = isSubmitting || keyRetained;
   const requestClose = () => {
-    if (!isSubmitting) {
+    if (!keyLive) {
       onClose();
     }
   };
@@ -542,7 +545,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             className={styles.closeButton}
             aria-label="Close"
             onClick={requestClose}
-            disabled={isSubmitting}
+            disabled={keyLive}
           >
             <Dismiss24Regular />
           </button>

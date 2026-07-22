@@ -138,19 +138,28 @@ export function PinInput({
   };
 
   const handleChange = (index: number, raw: string) => {
-    const digit = raw.replace(/\D/g, '').slice(-1);
-    if (!digit) return;
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return;
+    if (digits.length > 1) {
+      // A multi-digit value in a single input event is an OTP / password-manager AUTOFILL
+      // (browsers do NOT fire a paste event for it) — distribute from this box instead of
+      // dropping all but the last digit.
+      const next = (value.slice(0, index) + digits).slice(0, length);
+      emit(next);
+      focusBox(next.length);
+      return;
+    }
     let next: string;
     let nextFocus: number;
     if (index < value.length) {
       // Overwrite the digit already in this box.
-      next = value.slice(0, index) + digit + value.slice(index + 1);
+      next = value.slice(0, index) + digits + value.slice(index + 1);
       nextFocus = index + 1;
     } else {
       // At OR past the end — e.g. focus stranded on an empty box after the parent reset
       // `value` (a wrong-PIN retry). Append into the first empty slot rather than dropping
       // the keystroke, and move focus to follow the compact value.
-      next = value + digit;
+      next = value + digits;
       nextFocus = next.length;
     }
     emit(next);

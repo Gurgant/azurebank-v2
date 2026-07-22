@@ -304,6 +304,24 @@ describe('withdraw (PR-10 — PIN-in-body idempotent mutation)', () => {
     expect(screen.getByText('Withdraw Money')).toBeInTheDocument(); // still open
   });
 
+  it('after a NETWORK failure the key is retained, so Close stays disabled — until the body is edited', async () => {
+    server.use(http.post('*/api/transactions/withdraw', () => HttpResponse.error()));
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
+    // The hook KEEPS the key on a transport failure — dismissal must stay blocked so the
+    // intent can't be abandoned then re-minted (double-spend). isSubmitting is already false.
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+
+    // Escape hatch, not a hard trap: editing the body rotates (releases) the key.
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await userEvent.click(screen.getByRole('button', { name: '€200' }));
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+  });
+
   it('gates a PIN-less user to /pin-setup instead of the withdraw form (hasPin=false)', async () => {
     renderWithdraw(storeWithUser(false));
 

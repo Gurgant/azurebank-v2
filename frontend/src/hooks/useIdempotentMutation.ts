@@ -32,11 +32,17 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
   const keyRef = useRef<string | null>(null);
   const verifyRequiredRef = useRef(false);
   const [verifyRequired, setVerifyRequired] = useState(false);
+  // Reactive mirror of "a key is currently held" (keyRef.current !== null). The owning flow
+  // reads this to block dismissal while ANY key is live — not just while awaiting: the key is
+  // KEPT after an IN_FLIGHT / network / parse / 5xx failure too, and abandoning it then
+  // reopening would mint a fresh key = a new intent = a double-spend.
+  const [keyRetained, setKeyRetained] = useState(false);
 
   const resetIntent = useCallback(() => {
     keyRef.current = null;
     verifyRequiredRef.current = false;
     setVerifyRequired(false);
+    setKeyRetained(false);
   }, []);
 
   const submit = useCallback(
@@ -45,9 +51,11 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
         throw new Error('Previous result unknown — verify before submitting again.');
       }
       keyRef.current ??= crypto.randomUUID();
+      setKeyRetained(true);
       try {
         const result = await trigger({ idempotencyKey: keyRef.current, body }).unwrap();
         keyRef.current = null;
+        setKeyRetained(false);
         return result;
       } catch (error) {
         const problem = error as ApiProblem;
@@ -55,14 +63,17 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
           keyRef.current = null;
           verifyRequiredRef.current = true;
           setVerifyRequired(true);
+          setKeyRetained(false);
         } else if (!shouldKeepKey(problem)) {
           keyRef.current = null;
+          setKeyRetained(false);
         }
+        // shouldKeepKey path: the key survives, so keyRetained stays true.
         throw error;
       }
     },
     [trigger],
   );
 
-  return { submit, resetIntent, verifyRequired };
+  return { submit, resetIntent, verifyRequired, keyRetained };
 }
