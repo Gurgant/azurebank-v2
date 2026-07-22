@@ -13,4 +13,5 @@ export { AccountsPage } from './AccountsPage';
 export { HistoryPage } from './HistoryPage';
 export { TransactionDetailPage } from './TransactionDetailPage';
 export { TransferPage } from './TransferPage';
+export { InternalTransferPage } from './InternalTransferPage';
 export { SettingsPage } from './SettingsPage';

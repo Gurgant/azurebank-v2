@@ -15,6 +15,7 @@ import {
   HistoryPage,
   TransactionDetailPage,
   TransferPage,
+  InternalTransferPage,
   SettingsPage,
 } from './pages';
 
@@ -101,6 +102,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <TransferPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/transfer/internal"
+              element={
+                <ProtectedRoute>
+                  <InternalTransferPage />
                 </ProtectedRoute>
               }
             />
