@@ -20,6 +20,7 @@ export type AccountResponse = Schemas['AccountResponse'];
 export type BalanceResponse = Schemas['BalanceResponse'];
 export type CreateAccountRequest = Schemas['CreateAccountRequest'];
 export type UpdateAccountRequest = Schemas['UpdateAccountRequest'];
+export type AccountNumberResponse = Schemas['AccountNumberResponse'];
 export type TransactionResponse = Schemas['TransactionResponse'];
 export type PaginatedTransactions = Schemas['PaginatedResponseOfTransactionResponse'];
 export type DepositRequest = Schemas['DepositRequest'];
@@ -143,6 +144,17 @@ export const apiSlice = createApi({
               { type: 'Account' as const, id: 'LIST' },
               { type: 'Account' as const, id },
             ],
+    }),
+
+    // Reveal the full (unmasked) account number. A MUTATION on purpose (ADR-0020): it must never
+    // be cached and never auto-retried — it fires only on explicit user intent and the value lives
+    // in transient component state, never the query cache. The path suffix `/full-number` is
+    // level-2 gated, so an un-elevated call 403s and rides baseQueryWithStepUp into the PIN modal,
+    // which replays the GET automatically. GET verb, no idempotency key, no cache tags.
+    revealAccountNumber: builder.mutation<AccountNumberResponse, string>({
+      query: (id) => ({ url: `/api/accounts/${id}/full-number`, method: 'GET' }),
+      transformResponse: (response: Schemas['ApiResponseOfAccountNumberResponse']) =>
+        unwrap(response),
     }),
 
     // ========== TRANSACTIONS ==========
@@ -349,6 +361,7 @@ export const {
   useRenameAccountMutation,
   useSetPrimaryAccountMutation,
   useDeleteAccountMutation,
+  useRevealAccountNumberMutation,
   // Transactions
   useGetTransactionsQuery,
   useGetTransactionHistoryInfiniteQuery,
