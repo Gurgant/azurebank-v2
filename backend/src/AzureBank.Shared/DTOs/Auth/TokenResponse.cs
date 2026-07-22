@@ -13,8 +13,10 @@ public class TokenResponse
     /// <summary>
     /// Refresh token (plaintext, shown once) for rotating the access token via
     /// POST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately
-    /// NOT `required` so a cross-boundary consumer (the BFF) degrades gracefully on its absence;
-    /// the API always populates it on success.
+    /// NOT `required`: registration issues it BEST-EFFORT — the user + account are already
+    /// committed, so a post-registration token-write failure must not fail the request. It is
+    /// therefore genuinely optional here (null when that write failed); the user obtains a
+    /// refresh token on their next login.
     /// </summary>
     public string? RefreshToken { get; set; }
 

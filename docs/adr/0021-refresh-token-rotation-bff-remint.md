@@ -70,8 +70,11 @@ in two PRs so the auth-critical surface stays reviewable:
    so two concurrent rotations of the same token cannot both commit — the loser's UPDATE matches
    zero rows and EF rolls the whole unit back (the loser gets a benign 401). Without this, a
    concurrent double-rotation would *fork* the chain and silently defeat reuse-detection. A
-   just-rotated token replayed within a short (10 s) **grace window** is treated as a benign
-   lost-response retry (RFC 9700), rejected with 401 but *without* revoking the family.
+   just-rotated token replayed within a short **grace window** is treated as a benign
+   lost-response retry, rejected with 401 but *without* revoking the family. RFC 9700 endorses
+   the grace-window *concept*; the **10-second duration is our application policy** (comparable
+   to Connect2id's configurable default), not an RFC-mandated value. A client that loses the
+   rotation response and gets a 401 simply re-authenticates (login) to obtain a fresh pair.
 6. **Logout revokes.** `LogoutAsync` now revokes the user's active refresh tokens.
 7. **Hosted cleanup.** `RefreshTokenCleanupService` sweeps expired rows every 6 h (hygiene —
    reads are already expiry-filtered). Because the table self-references itself

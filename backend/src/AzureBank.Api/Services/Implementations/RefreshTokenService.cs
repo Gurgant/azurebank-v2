@@ -31,7 +31,9 @@ namespace AzureBank.Api.Services.Implementations;
 public class RefreshTokenService : IRefreshTokenService
 {
     // A just-rotated token replayed within this window is a benign lost-response retry, not a
-    // theft signal (RFC 9700 grace window). Kept short to bound the theft-tolerance window.
+    // theft signal. RFC 9700 endorses the grace-window concept; the 10-second duration is our
+    // application policy (kept short to bound the theft-tolerance window). A client that loses
+    // the rotation response and receives a 401 recovers by re-authenticating.
     private static readonly TimeSpan RotationGraceWindow = TimeSpan.FromSeconds(10);
 
     private readonly AzureBankDbContext _context;
@@ -137,6 +139,13 @@ public class RefreshTokenService : IRefreshTokenService
         }
         catch (DbUpdateConcurrencyException)
         {
+            // EF does not auto-revert entity states after a concurrency failure: the successor
+            // (Added) and the presented row (Modified) stay tracked. Detach both so a later
+            // SaveChanges in this request scope can't retry the losing INSERT/UPDATE (matches the
+            // detach-after-write pattern in AuthService.ResetLoginLockoutAsync).
+            _context.Entry(successor).State = EntityState.Detached;
+            _context.Entry(existing).State = EntityState.Detached;
+
             // Lost a concurrent rotation of this exact token (another request rotated it first).
             // Benign race, NOT reuse of an already-revoked token — uniform 401, no family revoke.
             _logger.LogInformation(

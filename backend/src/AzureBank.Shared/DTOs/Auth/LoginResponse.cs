@@ -10,7 +10,9 @@ public class LoginResponse
     /// POST /api/auth/refresh. In the BFF deployment this is captured server-side and never
     /// reaches the browser. Deliberately NOT `required`: a consumer deserializing this response
     /// across the service boundary (the BFF) must degrade gracefully on its absence rather than
-    /// hard-fail — the API always populates it, so it is non-null in practice.
+    /// hard-fail. Login issues one on every success (an issuance failure fails the login), so it
+    /// is non-null in practice — the nullability is a boundary-robustness allowance, not a
+    /// signal that login may omit it.
     /// </summary>
     public string? RefreshToken { get; set; }
 

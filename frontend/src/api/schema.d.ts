@@ -2115,7 +2115,9 @@ export interface components {
              *     POST /api/auth/refresh. In the BFF deployment this is captured server-side and never
              *     reaches the browser. Deliberately NOT `required`: a consumer deserializing this response
              *     across the service boundary (the BFF) must degrade gracefully on its absence rather than
-             *     hard-fail — the API always populates it, so it is non-null in practice.
+             *     hard-fail. Login issues one on every success (an issuance failure fails the login), so it
+             *     is non-null in practice — the nullability is a boundary-robustness allowance, not a
+             *     signal that login may omit it.
              */
             refreshToken?: null | string;
             user: components["schemas"]["UserLoginInfo"];
@@ -2214,8 +2216,10 @@ export interface components {
             /**
              * @description Refresh token (plaintext, shown once) for rotating the access token via
              *     POST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately
-             *     NOT `required` so a cross-boundary consumer (the BFF) degrades gracefully on its absence;
-             *     the API always populates it on success.
+             *     NOT `required`: registration issues it BEST-EFFORT — the user + account are already
+             *     committed, so a post-registration token-write failure must not fail the request. It is
+             *     therefore genuinely optional here (null when that write failed); the user obtains a
+             *     refresh token on their next login.
              */
             refreshToken?: null | string;
             /**

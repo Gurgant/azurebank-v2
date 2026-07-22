@@ -2584,7 +2584,7 @@
               "null",
               "string"
             ],
-            "description": "Refresh token (plaintext, shown once) for rotating the short-lived access token via\r\nPOST /api/auth/refresh. In the BFF deployment this is captured server-side and never\r\nreaches the browser. Deliberately NOT `required`: a consumer deserializing this response\r\nacross the service boundary (the BFF) must degrade gracefully on its absence rather than\r\nhard-fail — the API always populates it, so it is non-null in practice."
+            "description": "Refresh token (plaintext, shown once) for rotating the short-lived access token via\r\nPOST /api/auth/refresh. In the BFF deployment this is captured server-side and never\r\nreaches the browser. Deliberately NOT `required`: a consumer deserializing this response\r\nacross the service boundary (the BFF) must degrade gracefully on its absence rather than\r\nhard-fail. Login issues one on every success (an issuance failure fails the login), so it\r\nis non-null in practice — the nullability is a boundary-robustness allowance, not a\r\nsignal that login may omit it."
           },
           "user": {
             "$ref": "#/components/schemas/UserLoginInfo"
@@ -2832,7 +2832,7 @@
               "null",
               "string"
             ],
-            "description": "Refresh token (plaintext, shown once) for rotating the access token via\r\nPOST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately\r\nNOT `required` so a cross-boundary consumer (the BFF) degrades gracefully on its absence;\r\nthe API always populates it on success."
+            "description": "Refresh token (plaintext, shown once) for rotating the access token via\r\nPOST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately\r\nNOT `required`: registration issues it BEST-EFFORT — the user + account are already\r\ncommitted, so a post-registration token-write failure must not fail the request. It is\r\ntherefore genuinely optional here (null when that write failed); the user obtains a\r\nrefresh token on their next login."
           },
           "expiresIn": {
             "type": "integer",
