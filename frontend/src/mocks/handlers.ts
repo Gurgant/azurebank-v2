@@ -410,10 +410,38 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   return response(201).json(payload);
 });
 
-/** POST /api/transfers — level-2 step-up gate (AuthLevelMiddleware semantics). */
+/**
+ * GET /api/users/{azureTag} — exact-match recipient lookup (ADR-0014, level-1, no listing).
+ * A nonexistent OR self tag returns HTTP 200 { exists:false, displayName:'' } — never a 404,
+ * and self is masked identically to unknown (UserService semantics).
+ */
+const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) => {
+  const tag = params.azureTag;
+  const isSelf = mockState.session?.azureTag === tag;
+  const found = isSelf ? undefined : mockState.recipients.find((r) => r.azureTag === tag);
+  if (found) {
+    return response(200).json({
+      data: { azureTag: found.azureTag, displayName: found.displayName, exists: true },
+      message: null,
+    });
+  }
+  return response(200).json({
+    data: { azureTag: tag, displayName: '', exists: false },
+    message: null,
+  });
+});
+
+/**
+ * POST /api/transfers — the level-2 step-up gate (BFF AuthLevelMiddleware, runs BEFORE the
+ * API) PLUS the API's idempotency protocol. Failure order mirrors the real path: 403 gate →
+ * idempotency → SELF_TRANSFER_NOT_ALLOWED → recipient not found (ACCOUNT_NOT_FOUND, the real
+ * code) → INSUFFICIENT_FUNDS → success (debit sender, push a TransferOut row; the recipient
+ * is off-ledger). A missing fromAccount is tolerated (debit only if found) so the stepup.test
+ * contract (fromAccountId:'a') keeps passing.
+ */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (mockState.authLevel < 2) {
-    // The 403 body is AuthLevelMiddleware's BARE shape — deliberately not ProblemDetails.
+    // The BFF's 403 is AuthLevelMiddleware's BARE shape — deliberately not ProblemDetails.
     return response.untyped(
       HttpResponse.json(
         {
@@ -435,32 +463,162 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     );
   }
 
-  const body = (await request.clone().json()) as { amount?: number; recipientAzureTag?: string };
-  return response(201).json({
+  const key = request.headers.get('Idempotency-Key');
+  if (!key) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errorCode: 'IDEMPOTENCY_KEY_MISSING',
+        detail: 'The Idempotency-Key header is required.',
+      }),
+    );
+  }
+  if (!UUID_RE.test(key) || key === NIL_UUID) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errorCode: 'IDEMPOTENCY_KEY_INVALID',
+        detail: 'The Idempotency-Key header must be a single non-empty UUID.',
+      }),
+    );
+  }
+
+  const raw = await request.clone().text();
+  const fp = fingerprint(raw);
+  const stored = mockState.idempotency.get(`transfer|${key}`);
+  if (stored) {
+    if (stored.bodyFingerprint !== fp) {
+      return response.untyped(
+        problem({
+          status: 422,
+          errorCode: 'IDEMPOTENCY_KEY_REUSE',
+          detail: 'This idempotency key was already used with a different payload.',
+        }),
+      );
+    }
+    return response.untyped(
+      new HttpResponse(stored.body, {
+        status: stored.status,
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Replayed': 'true' },
+      }),
+    );
+  }
+
+  const body = JSON.parse(raw) as {
+    fromAccountId?: string;
+    recipientAzureTag?: string;
+    amount?: number;
+    description?: string;
+  };
+  const amount = body.amount ?? 0;
+  const tag = body.recipientAzureTag ?? '';
+
+  if (mockState.session?.azureTag === tag) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'SELF_TRANSFER_NOT_ALLOWED',
+        detail: 'You cannot transfer money to yourself.',
+      }),
+    );
+  }
+  const recipient = mockState.recipients.find((r) => r.azureTag === tag);
+  if (!recipient) {
+    // Recipient-not-found surfaces as ACCOUNT_NOT_FOUND — NotFoundException hard-codes it.
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'ACCOUNT_NOT_FOUND',
+        detail: `No user was found with the handle '${tag}'.`,
+      }),
+    );
+  }
+
+  const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
+  const available = account?.balance ?? 1000; // tolerate a missing fromAccount (stepup.test)
+  if (amount > available) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'INSUFFICIENT_FUNDS',
+        detail: 'Insufficient funds for this transfer.',
+        extensions: { available, requested: amount },
+      }),
+    );
+  }
+
+  const newBalance = available - amount;
+  if (account) {
+    account.balance = newBalance;
+  }
+  const index = mockState.transactions.length;
+  mockState.transactions.push({
+    id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
+    transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
+    type: 'TransferOut',
+    amount,
+    balanceAfter: newBalance,
+    description: body.description ?? null,
+    recipientAzureTag: tag,
+    senderAzureTag: null,
+    status: 'Completed',
+    createdAt: `2026-07-22T12:${String(index).padStart(2, '0')}:00.0000000Z`,
+  });
+
+  const payload = {
     data: {
-      transactionNumber: 'TXN-20260720-000002',
-      amount: body.amount ?? 0,
-      newBalance: 1000 - (body.amount ?? 0),
-      recipientAzureTag: body.recipientAzureTag ?? 'someone',
-      recipientName: 'John D.',
-      processedAt: '2026-07-20T12:00:00.0000000Z',
+      transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
+      amount,
+      newBalance,
+      recipientAzureTag: tag,
+      recipientName: recipient.displayName,
+      processedAt: '2026-07-22T12:00:00.0000000Z',
     },
     message: 'Transfer completed successfully.',
-  });
+  };
+  const text = JSON.stringify(payload);
+  mockState.idempotency.set(`transfer|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  return response(201).json(payload);
 });
 
 /**
  * POST /bff/auth/verify-pin — BFF endpoint (outside the API spec, so plain msw).
- * Source semantics: correct PIN elevates the session to level 2 for 5 minutes; a WRONG
- * PIN is HTTP 200 with verified:false, never a 4xx (PIN lockout is a separate 429).
+ * Source semantics: correct PIN elevates the session to level 2; a WRONG PIN is HTTP 200
+ * with verified:false, never a 4xx. Shares the SAME attempt/lock state as withdraw
+ * (mockState.pinAttempts/pinLockedUntil) so the 3rd consecutive miss is a 429 PIN_LOCKED.
  */
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   const { pin } = (await request.json()) as { pin?: string };
+  const now = Date.now();
+  if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
+    const retryAfterSeconds = Math.ceil((Date.parse(mockState.pinLockedUntil) - now) / 1000);
+    return problem({
+      status: 429,
+      errorCode: 'PIN_LOCKED',
+      detail: 'Too many incorrect PIN attempts. Please try again later.',
+      extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
+      headers: { 'Retry-After': String(retryAfterSeconds) },
+    });
+  }
   if (pin === mockState.pin) {
+    mockState.pinAttempts = 0;
     mockState.authLevel = 2;
     return HttpResponse.json({
       data: { verified: true, authLevel: 2, pinExpiresAt: '2026-07-20T12:05:00.0000000Z' },
       message: 'PIN verified.',
+    });
+  }
+  mockState.pinAttempts += 1;
+  if (mockState.pinAttempts >= 3) {
+    mockState.pinAttempts = 0;
+    const retryAfterSeconds = 15 * 60;
+    mockState.pinLockedUntil = new Date(now + retryAfterSeconds * 1000).toISOString();
+    return problem({
+      status: 429,
+      errorCode: 'PIN_LOCKED',
+      detail: 'Too many incorrect PIN attempts. Please try again later.',
+      extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
+      headers: { 'Retry-After': String(retryAfterSeconds) },
     });
   }
   return HttpResponse.json({
@@ -609,6 +767,7 @@ export const handlers = [
   getTransaction,
   deposit,
   withdraw,
+  lookupRecipient,
   transfer,
   verifyPin,
   setPin,

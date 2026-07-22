@@ -22,6 +22,13 @@ export interface MockSessionUser {
   hasPin: boolean;
 }
 
+/** A transfer recipient in the exact-match directory (ADR-0014 — no substring/listing). */
+export interface MockRecipient {
+  azureTag: string;
+  /** Masked display name for privacy, e.g. "John D." */
+  displayName: string;
+}
+
 export interface MockAccount {
   id: string;
   accountNumber: string;
@@ -71,6 +78,17 @@ interface MockState {
   accounts: MockAccount[];
   /** History feed, NEWEST FIRST like the real query orders it. */
   transactions: MockTransaction[];
+  /** Exact-match transfer-recipient directory. Looking up self returns exists:false. */
+  recipients: MockRecipient[];
+}
+
+/** Seeded recipients — 'friend' backs the stepup.test contract; the rest are demo handles. */
+function defaultRecipients(): MockRecipient[] {
+  return [
+    { azureTag: 'friend', displayName: 'A. Friend' },
+    { azureTag: 'john_d', displayName: 'John D.' },
+    { azureTag: 'anna_k', displayName: 'Anna K.' },
+  ];
 }
 
 function defaultAccounts(): MockAccount[] {
@@ -202,6 +220,7 @@ export const mockState: MockState = {
   pinLockedUntil: null,
   accounts: defaultAccounts(),
   transactions: defaultTransactions(),
+  recipients: defaultRecipients(),
 };
 
 /** Test helper: start authenticated without walking the login flow. */
@@ -218,4 +237,5 @@ export function resetMockState(): void {
   mockState.pinLockedUntil = null;
   mockState.accounts = defaultAccounts();
   mockState.transactions = defaultTransactions();
+  mockState.recipients = defaultRecipients();
 }

@@ -1,42 +1,58 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { makeStyles, Text, Button, Spinner } from '@fluentui/react-components';
+import {
+  makeStyles,
+  Text,
+  Button,
+  Spinner,
+  MessageBar,
+  MessageBarBody,
+} from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
   Dismiss24Regular,
-  Search24Regular,
-  Add24Regular,
-  Checkmark24Filled,
-  ArrowRight24Regular,
-  Info24Regular,
-  Share24Regular,
   CheckmarkCircle24Filled,
+  Warning24Regular,
 } from '@fluentui/react-icons';
-import { colors, shadows, transitions } from '../theme/tokens';
-import { Avatar } from '../components/shared/Avatar';
+import { colors, transitions } from '../theme/tokens';
+import type { ApiProblem } from '../api/problemBaseQuery';
+import {
+  useGetAccountsQuery,
+  useLazyLookupRecipientQuery,
+  useTransferMutation,
+  type AccountResponse,
+} from '../features/api/apiSlice';
+import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
+import { formatCurrency, maskAccountNumber } from '../utils/format';
 
 // ============================================
-// TYPES
+// CONSTANTS
 // ============================================
 
-interface Account {
-  id: string;
-  name: string;
-  accountNumber: string;
-  balance: number;
-}
+const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
+const MIN_AMOUNT = 0.01;
+const MAX_AMOUNT = 100_000;
+
+type Step = 'form' | 'review';
 
 interface Recipient {
-  id: string;
-  name: string;
-  accountNumber: string;
-  initials: string;
+  azureTag: string;
+  displayName: string;
 }
 
-interface TransferData {
-  fromAccount: Account | null;
-  toRecipient: Recipient | null;
+interface SuccessData {
   amount: number;
+  recipientName: string;
+  recipientAzureTag: string;
+  newBalance: number;
+  transactionNumber: string;
+  replayed: boolean;
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
 }
 
 // ============================================
@@ -44,25 +60,17 @@ interface TransferData {
 // ============================================
 
 const useStyles = makeStyles({
-  container: {
-    display: 'flex',
-    flexDirection: 'column',
-    minHeight: '100vh',
-    backgroundColor: '#F7F8FA',
-  },
-
-  // ========== HEADER ==========
+  page: { minHeight: '100vh', backgroundColor: colors.neutral[50] },
   header: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     height: '56px',
-    padding: '0 16px',
+    padding: '0 12px',
     backgroundColor: '#FFFFFF',
     borderBottom: `1px solid ${colors.neutral[200]}`,
   },
-
-  headerButton: {
+  headerBtn: {
     width: '40px',
     height: '40px',
     display: 'flex',
@@ -73,1125 +81,670 @@ const useStyles = makeStyles({
     cursor: 'pointer',
     borderRadius: '8px',
     color: colors.neutral[800],
-    ':hover': {
-      backgroundColor: colors.neutral[100],
-    },
+    ':hover': { backgroundColor: colors.neutral[100] },
+    ':disabled': { opacity: 0.4, cursor: 'not-allowed' },
   },
-
-  headerTitle: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  headerPlaceholder: {
-    width: '40px',
-  },
-
-  // ========== PROGRESS INDICATOR ==========
-  progressIndicator: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '60px',
-    backgroundColor: '#FFFFFF',
-    gap: '0px',
-  },
-
-  stepCircle: {
-    width: '32px',
-    height: '32px',
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '14px',
-    fontWeight: 600,
-    flexShrink: 0,
-  },
-
-  stepActive: {
-    backgroundColor: colors.brand[60],
-    color: '#FFFFFF',
-  },
-
-  stepCompleted: {
-    backgroundColor: colors.brand[60],
-    color: '#FFFFFF',
-  },
-
-  stepInactive: {
-    backgroundColor: colors.neutral[200],
-    color: colors.neutral[400],
-  },
-
-  stepLine: {
-    width: '60px',
-    height: '2px',
-    backgroundColor: colors.neutral[200],
-  },
-
-  stepLineCompleted: {
-    backgroundColor: colors.brand[60],
-  },
-
-  // ========== CONTENT ==========
-  content: {
-    flex: 1,
-    padding: '24px 16px',
+  headerTitle: { fontSize: '16px', fontWeight: 600, color: colors.neutral[800] },
+  body: {
+    maxWidth: '480px',
+    margin: '0 auto',
+    padding: '20px 16px 32px 16px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '20px',
   },
-
-  contentCentered: {
-    alignItems: 'center',
-  },
-
-  sectionTitle: {
-    fontSize: '20px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  sectionLabel: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-  },
-
-  // ========== ACCOUNT CARD ==========
-  accountCard: {
+  sectionLabel: { fontSize: '14px', fontWeight: 500, color: colors.neutral[500] },
+  card: {
     width: '100%',
-    height: '80px',
+    padding: '14px 16px',
     backgroundColor: '#FFFFFF',
-    borderRadius: '12px',
     border: `1px solid ${colors.neutral[200]}`,
-    padding: '0 16px',
+    borderRadius: '12px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     cursor: 'pointer',
     transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-    },
+    ':hover': { backgroundColor: colors.neutral[50] },
+    ':disabled': { opacity: 0.5, cursor: 'not-allowed' },
   },
-
-  accountCardSelected: {
-    border: `2px solid ${colors.brand[60]}`,
-    backgroundColor: colors.brand[130],
-  },
-
-  accountInfo: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-
-  accountName: {
-    fontSize: '16px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-  },
-
+  cardSelected: { border: `2px solid ${colors.brand[60]}`, backgroundColor: colors.brand[130] },
+  accountInfo: { display: 'flex', flexDirection: 'column', gap: '2px', textAlign: 'left' },
+  accountName: { fontSize: '15px', fontWeight: 500, color: colors.neutral[800] },
   accountNumber: {
-    fontSize: '14px',
+    fontSize: '13px',
     fontFamily: 'Consolas, monospace',
     color: colors.neutral[500],
   },
-
-  accountBalance: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  // ========== SEARCH FIELD ==========
-  searchField: {
-    width: '100%',
-    height: '48px',
-    backgroundColor: '#FFFFFF',
-    border: `1px solid ${colors.neutral[300]}`,
+  accountBalance: { fontSize: '15px', fontWeight: 600, color: colors.neutral[800] },
+  recipientRow: { display: 'flex', gap: '8px' },
+  input: {
+    flex: 1,
+    padding: '12px',
     borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 16px',
-    gap: '12px',
-  },
-
-  searchIcon: {
-    color: colors.neutral[400],
-    flexShrink: 0,
-  },
-
-  searchInput: {
-    flex: 1,
-    border: 'none',
-    outline: 'none',
-    fontSize: '16px',
-    backgroundColor: 'transparent',
-    '::placeholder': {
-      color: colors.neutral[400],
-    },
-  },
-
-  // ========== RECIPIENT CARD ==========
-  recipientSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-
-  recipientCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '12px',
-    padding: '16px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-    },
-  },
-
-  recipientCardSelected: {
-    border: `2px solid ${colors.brand[60]}`,
-    backgroundColor: colors.brand[130],
-  },
-
-  recipientInfo: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '2px',
-  },
-
-  recipientName: {
-    fontSize: '16px',
-    fontWeight: 600,
+    border: `1px solid ${colors.neutral[300]}`,
+    fontSize: '15px',
+    fontFamily: 'inherit',
     color: colors.neutral[800],
+    outline: 'none',
+    ':focus': { border: `1px solid ${colors.brand[60]}` },
+    ':disabled': { backgroundColor: colors.neutral[100] },
   },
-
-  recipientAccount: {
-    fontSize: '14px',
-    fontFamily: 'Consolas, monospace',
-    color: colors.neutral[500],
-  },
-
-  recipientCheck: {
-    color: colors.brand[60],
-    flexShrink: 0,
-  },
-
-  // ========== NEW RECIPIENT CARD ==========
-  newRecipientCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    border: `1px dashed ${colors.neutral[300]}`,
-    borderRadius: '12px',
-    padding: '16px',
+  recipientCard: {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    cursor: 'pointer',
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-    },
+    padding: '14px 16px',
+    backgroundColor: colors.semantic.success.light,
+    borderRadius: '12px',
   },
-
-  newRecipientIcon: {
-    width: '48px',
-    height: '48px',
+  avatar: {
+    width: '40px',
+    height: '40px',
     borderRadius: '50%',
-    backgroundColor: colors.neutral[100],
+    backgroundColor: colors.brand[60],
+    color: '#FFFFFF',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: colors.neutral[500],
+    fontSize: '15px',
+    fontWeight: 600,
+    flexShrink: 0,
   },
-
-  newRecipientText: {
-    fontSize: '16px',
-    fontWeight: 500,
-    color: colors.brand[60],
-  },
-
-  // ========== AMOUNT SECTION ==========
+  recipientName: { fontSize: '15px', fontWeight: 600, color: colors.neutral[800] },
+  recipientTag: { fontSize: '13px', color: colors.neutral[500] },
   amountSection: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     gap: '8px',
-    width: '100%',
-    padding: '24px 16px',
+    padding: '16px',
+    backgroundColor: '#FFFFFF',
+    border: `1px solid ${colors.neutral[200]}`,
+    borderRadius: '12px',
   },
-
-  amountLabel: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  amountDisplay: {
-    display: 'flex',
-    alignItems: 'baseline',
-  },
-
-  amountCurrency: {
-    fontSize: '48px',
-    fontWeight: 300,
-    color: colors.neutral[800],
-  },
-
-  amountValue: {
-    fontSize: '48px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-  },
-
+  amountWrapper: { display: 'flex', alignItems: 'baseline', gap: '4px' },
+  amountCurrency: { fontSize: '30px', fontWeight: 300, color: colors.neutral[800] },
   amountInput: {
-    fontSize: '48px',
+    fontSize: '44px',
     fontWeight: 700,
     color: colors.neutral[800],
     border: 'none',
     outline: 'none',
     background: 'transparent',
     textAlign: 'center',
-    width: '200px',
-    '::placeholder': {
-      color: colors.neutral[300],
-    },
+    width: '170px',
+    '::placeholder': { color: colors.neutral[300] },
   },
-
-  availableBalance: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  // ========== QUICK AMOUNTS ==========
-  quickAmounts: {
-    display: 'flex',
-    gap: '12px',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-  },
-
+  hint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
+  subtle: { fontSize: '13px', color: colors.neutral[500] },
+  quickAmounts: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' },
   quickBtn: {
-    minWidth: '70px',
-    height: '36px',
-    padding: '0 16px',
-    backgroundColor: colors.neutral[100],
+    minWidth: '60px',
+    height: '34px',
+    padding: '0 14px',
+    backgroundColor: '#FFFFFF',
+    border: `1px solid ${colors.neutral[200]}`,
     borderRadius: '8px',
-    border: 'none',
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: 500,
     color: colors.neutral[800],
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.neutral[200],
-    },
+    ':hover': { backgroundColor: colors.neutral[50] },
+    ':disabled': { opacity: 0.5, cursor: 'not-allowed' },
   },
-
   quickBtnSelected: {
     backgroundColor: colors.brand[120],
+    border: `1px solid ${colors.brand[60]}`,
     color: colors.brand[60],
   },
-
-  // ========== SUMMARY CARD ==========
-  summaryCard: {
-    width: '100%',
+  reviewCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: '16px',
-    boxShadow: shadows.lg,
-    padding: '24px',
+    border: `1px solid ${colors.neutral[200]}`,
+    borderRadius: '12px',
+    padding: '4px 16px',
+  },
+  reviewRow: {
     display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
-  },
-
-  summaryAmountSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-    paddingBottom: '20px',
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-  },
-
-  summaryAmountLabel: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  summaryAmountValue: {
-    fontSize: '40px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-  },
-
-  // ========== TRANSFER FLOW ==========
-  transferFlow: {
-    display: 'flex',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '16px 0',
+    alignItems: 'center',
+    padding: '14px 0',
+    borderBottom: `1px solid ${colors.neutral[100]}`,
+    ':last-child': { borderBottom: 'none' },
   },
-
-  flowAccount: {
+  reviewLabel: { fontSize: '14px', color: colors.neutral[500] },
+  reviewValue: { fontSize: '14px', fontWeight: 600, color: colors.neutral[800] },
+  actions: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '4px' },
+  centeredView: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: '8px',
-  },
-
-  flowName: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[800],
+    gap: '16px',
+    padding: '40px 20px',
     textAlign: 'center',
   },
-
-  flowType: {
-    fontSize: '12px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  flowArrow: {
-    color: colors.brand[60],
-  },
-
-  // ========== DETAIL ROWS ==========
-  transferDetails: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px',
-  },
-
-  detailRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-
-  detailLabel: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  detailValue: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-    textAlign: 'right',
-  },
-
-  detailValueAccount: {
-    fontSize: '12px',
-    fontWeight: 400,
-    fontFamily: 'Consolas, monospace',
-    color: colors.neutral[500],
-  },
-
-  accountBlock: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    gap: '2px',
-  },
-
-  // ========== FEE NOTICE ==========
-  feeNotice: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    padding: '12px',
-    backgroundColor: colors.brand[130],
-    borderRadius: '8px',
-  },
-
-  feeIcon: {
-    color: colors.brand[60],
-  },
-
-  feeText: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.brand[60],
-  },
-
-  // ========== SUCCESS SCREEN ==========
-  successIconContainer: {
-    width: '120px',
-    height: '120px',
+  successIcon: {
+    width: '80px',
+    height: '80px',
     backgroundColor: colors.semantic.success.light,
     borderRadius: '50%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-
-  successIcon: {
-    width: '64px',
-    height: '64px',
     color: colors.semantic.success.main,
   },
-
-  successMessage: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '8px',
-  },
-
-  successTitle: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: colors.semantic.success.main,
-    textAlign: 'center',
-  },
-
-  successSubtitle: {
-    fontSize: '16px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-    textAlign: 'center',
-  },
-
-  divider: {
-    width: '100%',
-    height: '1px',
-    backgroundColor: colors.neutral[200],
-  },
-
-  referenceSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-    paddingTop: '8px',
-  },
-
-  referenceLabel: {
-    fontSize: '12px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  referenceValue: {
-    fontSize: '14px',
-    fontWeight: 600,
-    fontFamily: 'Consolas, monospace',
-    color: colors.neutral[800],
-    letterSpacing: '0.05em',
-  },
-
-  amountHighlight: {
-    fontSize: '20px',
-    fontWeight: 700,
-    color: colors.semantic.success.main,
-  },
-
-  // ========== FOOTER ==========
-  footer: {
-    backgroundColor: '#FFFFFF',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    padding: '16px 16px 24px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-
-  footerSingle: {
-    padding: '12px 16px 32px 16px',
-  },
-
-  // ========== LOADING ==========
-  loadingOverlay: {
-    position: 'fixed',
-    inset: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+  warningIcon: {
+    width: '80px',
+    height: '80px',
+    backgroundColor: '#FEF3E2',
+    borderRadius: '50%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 1000,
+    color: '#B45309',
   },
+  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.main },
+  stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
+  stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
+  successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
 });
-
-// ============================================
-// MOCK DATA
-// ============================================
-
-const mockAccounts: Account[] = [
-  {
-    id: '1',
-    name: 'Primary Account',
-    accountNumber: '**** 4521',
-    balance: 12450.0,
-  },
-  {
-    id: '2',
-    name: 'Savings Account',
-    accountNumber: '**** 7832',
-    balance: 8230.5,
-  },
-];
-
-const mockRecipients: Recipient[] = [
-  {
-    id: '1',
-    name: 'John Doe',
-    accountNumber: '****4567',
-    initials: 'JD',
-  },
-  {
-    id: '2',
-    name: 'Sarah Miller',
-    accountNumber: '****8901',
-    initials: 'SM',
-  },
-  {
-    id: '3',
-    name: 'Michael Johnson',
-    accountNumber: '****2345',
-    initials: 'MJ',
-  },
-];
-
-const quickAmounts = [50, 100, 250, 500];
-
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
-function generateReferenceNumber(): string {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = String(Math.floor(Math.random() * 100000)).padStart(5, '0');
-  return `TXN-${year}-${month}${day}-${random}`;
-}
 
 // ============================================
 // COMPONENT
 // ============================================
 
+/**
+ * PR-11 — the real external transfer (to another user's primary account by AzureTag). The
+ * PIN is NOT collected here: submitting a level-2-gated transfer 403s, the root StepUpModal
+ * pops via the base-query interceptor, the session elevates, and the SAME request replays
+ * (same Idempotency-Key). This page only knows the transfer mutation; step-up is invisible
+ * to it. Recipient is confirmed up-front by exact AzureTag lookup (ADR-0014).
+ */
 export function TransferPage() {
   const styles = useStyles();
   const navigate = useNavigate();
 
-  // Wizard state
-  const [currentStep, setCurrentStep] = useState(1);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const { data: accounts = [] } = useGetAccountsQuery();
+  const [lookup, lookupState] = useLazyLookupRecipientQuery();
+  const [transferTrigger] = useTransferMutation();
+  const { submit, resetIntent, verifyRequired, keyRetained } =
+    useIdempotentMutation(transferTrigger);
 
-  // Form data
-  const [transferData, setTransferData] = useState<TransferData>({
-    fromAccount: null,
-    toRecipient: null,
-    amount: 0,
-  });
-
-  const [searchQuery, setSearchQuery] = useState('');
+  const [step, setStep] = useState<Step>('form');
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [recipientInput, setRecipientInput] = useState('');
+  const [recipient, setRecipient] = useState<Recipient | null>(null);
+  const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [amount, setAmount] = useState(0);
   const [amountInput, setAmountInput] = useState('');
-  const [referenceNumber, setReferenceNumber] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [inFlight, setInFlight] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<SuccessData | null>(null);
 
-  // Navigation handlers
-  const handleBack = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    } else {
-      navigate(-1);
-    }
+  const selectedAccount =
+    accounts.find((a) => a.id === selectedAccountId) ??
+    accounts.find((a) => a.isPrimary) ??
+    accounts[0] ??
+    null;
+  const availableBalance = selectedAccount?.balance ?? 0;
+  const keyLive = isSubmitting || keyRetained;
+
+  // Guard the ONE nav path the in-app buttons can't cover: a browser refresh / tab-close
+  // while a transfer key is live. (In-app popstate needs a data-router useBlocker — deferred
+  // with the router migration; the SPA controls below cover the common paths.)
+  useEffect(() => {
+    if (!keyLive) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [keyLive]);
+
+  // Editing any body field rotates the idempotency key — blocked whenever a key is LIVE
+  // (submitting OR retained after IN_FLIGHT/NETWORK/5xx), not just while submitting. Nulling
+  // a retained key then resending mints a fresh key = a NEW intent = a double-spend if the
+  // original committed. The safe forward action on a retained key is Send-again (same key).
+  const onBodyEdit = () => {
+    if (keyLive) return;
+    resetIntent();
+    setInFlight(false);
+    setError(null);
   };
 
-  const handleClose = () => {
-    navigate('/');
-  };
-
-  const handleContinue = () => {
-    if (currentStep < 4) {
-      setCurrentStep(currentStep + 1);
-    }
-  };
-
-  const handleConfirmTransfer = async () => {
-    setIsLoading(true);
-
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    setReferenceNumber(generateReferenceNumber());
-    setIsLoading(false);
-    setIsSuccess(true);
-  };
-
-  // Selection handlers
-  const handleSelectAccount = (account: Account) => {
-    setTransferData((prev) => ({ ...prev, fromAccount: account }));
-  };
-
-  const handleSelectRecipient = (recipient: Recipient) => {
-    setTransferData((prev) => ({ ...prev, toRecipient: recipient }));
+  const handleSelectAccount = (account: AccountResponse) => {
+    if (keyLive) return;
+    setSelectedAccountId(account.id);
+    onBodyEdit();
   };
 
   const handleAmountChange = (value: string) => {
-    // Remove non-numeric characters except decimal
-    const cleaned = value.replace(/[^0-9.]/g, '');
+    if (keyLive) return;
+    const digitsAndDots = value.replace(/[^0-9.]/g, '');
+    const firstDot = digitsAndDots.indexOf('.');
+    const singleDot =
+      firstDot === -1
+        ? digitsAndDots
+        : digitsAndDots.slice(0, firstDot + 1) +
+          digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
+    const dot = singleDot.indexOf('.');
+    const cleaned = dot === -1 ? singleDot : singleDot.slice(0, dot + 3);
     setAmountInput(cleaned);
-    setTransferData((prev) => ({ ...prev, amount: parseFloat(cleaned) || 0 }));
+    setAmount(parseFloat(cleaned) || 0);
+    onBodyEdit();
   };
 
-  const handleQuickAmount = (amount: number) => {
-    setAmountInput(amount.toString());
-    setTransferData((prev) => ({ ...prev, amount }));
-  };
-
-  // Check if can continue
-  const canContinue = () => {
-    switch (currentStep) {
-      case 1:
-        return transferData.fromAccount !== null;
-      case 2:
-        return transferData.toRecipient !== null;
-      case 3:
-        return (
-          transferData.amount > 0 && transferData.amount <= (transferData.fromAccount?.balance || 0)
-        );
-      default:
-        return true;
+  const handleVerifyRecipient = async () => {
+    const tag = recipientInput.trim().replace(/^@/, '');
+    if (!tag) return;
+    setRecipient(null);
+    setRecipientError(null);
+    onBodyEdit();
+    try {
+      const result = await lookup(tag).unwrap();
+      if (result.exists) {
+        setRecipient({ azureTag: result.azureTag, displayName: result.displayName });
+      } else {
+        setRecipientError(`We couldn't find @${tag}. Check the handle and try again.`);
+      }
+    } catch {
+      setRecipientError("Couldn't reach the server — check your connection and try again.");
     }
   };
 
-  // Filter recipients by search
-  const filteredRecipients = mockRecipients.filter(
-    (r) =>
-      r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      r.accountNumber.includes(searchQuery),
-  );
+  const isAmountValid = amount >= MIN_AMOUNT && amount <= MAX_AMOUNT && amount <= availableBalance;
+  const canReview = !!selectedAccount && !!recipient && isAmountValid;
+  const newBalance = availableBalance - amount;
 
-  // Render progress indicator
-  const renderProgressIndicator = () => (
-    <div className={styles.progressIndicator}>
-      {[1, 2, 3, 4].map((step, index) => (
-        <>
-          <div
-            key={step}
-            className={`${styles.stepCircle} ${
-              step === currentStep
-                ? styles.stepActive
-                : step < currentStep
-                  ? styles.stepCompleted
-                  : styles.stepInactive
-            }`}
-          >
-            {step}
-          </div>
-          {index < 3 && (
-            <div
-              className={`${styles.stepLine} ${step < currentStep ? styles.stepLineCompleted : ''}`}
-            />
-          )}
-        </>
-      ))}
-    </div>
-  );
+  const amountHint =
+    amount > 0 && !isAmountValid
+      ? amount > availableBalance
+        ? `Exceeds available balance of ${formatCurrency(availableBalance)}.`
+        : amount > MAX_AMOUNT
+          ? 'Maximum transfer is €100,000.'
+          : 'Minimum transfer is €0.01.'
+      : null;
 
-  // Render Step 1: Select Source Account
-  const renderStep1 = () => (
-    <div className={styles.content}>
-      <Text className={styles.sectionTitle}>From which account?</Text>
-
-      {mockAccounts.map((account) => (
-        <div
-          key={account.id}
-          className={`${styles.accountCard} ${
-            transferData.fromAccount?.id === account.id ? styles.accountCardSelected : ''
-          }`}
-          onClick={() => handleSelectAccount(account)}
-          role="button"
-          tabIndex={0}
-        >
-          <div className={styles.accountInfo}>
-            <Text className={styles.accountName}>{account.name}</Text>
-            <Text className={styles.accountNumber}>{account.accountNumber}</Text>
-          </div>
-          <Text className={styles.accountBalance}>{formatCurrency(account.balance)}</Text>
-        </div>
-      ))}
-    </div>
-  );
-
-  // Render Step 2: Select Destination
-  const renderStep2 = () => (
-    <div className={styles.content}>
-      <Text className={styles.sectionTitle}>Select Destination</Text>
-
-      <div className={styles.searchField}>
-        <Search24Regular className={styles.searchIcon} />
-        <input
-          type="text"
-          placeholder="Search by name or account"
-          className={styles.searchInput}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-      </div>
-
-      <div className={styles.recipientSection}>
-        <Text className={styles.sectionLabel}>Recent Recipients</Text>
-
-        {filteredRecipients.map((recipient) => (
-          <div
-            key={recipient.id}
-            className={`${styles.recipientCard} ${
-              transferData.toRecipient?.id === recipient.id ? styles.recipientCardSelected : ''
-            }`}
-            onClick={() => handleSelectRecipient(recipient)}
-            role="button"
-            tabIndex={0}
-          >
-            <Avatar initials={recipient.initials} size="md" />
-            <div className={styles.recipientInfo}>
-              <Text className={styles.recipientName}>{recipient.name}</Text>
-              <Text className={styles.recipientAccount}>{recipient.accountNumber}</Text>
-            </div>
-            {transferData.toRecipient?.id === recipient.id && (
-              <Checkmark24Filled className={styles.recipientCheck} />
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div className={styles.newRecipientCard} role="button" tabIndex={0}>
-        <div className={styles.newRecipientIcon}>
-          <Add24Regular />
-        </div>
-        <Text className={styles.newRecipientText}>Add New Recipient</Text>
-      </div>
-    </div>
-  );
-
-  // Render Step 3: Enter Amount
-  const renderStep3 = () => (
-    <div className={`${styles.content} ${styles.contentCentered}`}>
-      <div className={styles.amountSection}>
-        <Text className={styles.amountLabel}>Enter amount</Text>
-        <div className={styles.amountDisplay}>
-          <span className={styles.amountCurrency}>$</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="0"
-            className={styles.amountInput}
-            value={amountInput}
-            onChange={(e) => handleAmountChange(e.target.value)}
-            autoFocus
-          />
-        </div>
-        <Text className={styles.availableBalance}>
-          Available: {formatCurrency(transferData.fromAccount?.balance || 0)}
-        </Text>
-      </div>
-
-      <div className={styles.quickAmounts}>
-        {quickAmounts.map((amount) => (
-          <button
-            key={amount}
-            className={`${styles.quickBtn} ${
-              transferData.amount === amount ? styles.quickBtnSelected : ''
-            }`}
-            onClick={() => handleQuickAmount(amount)}
-          >
-            ${amount}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-
-  // Render Step 4: Confirm Transfer
-  const renderStep4 = () => (
-    <div className={styles.content}>
-      <Text className={styles.sectionTitle} style={{ textAlign: 'center' }}>
-        Confirm Transfer
-      </Text>
-
-      <div className={styles.summaryCard}>
-        <div className={styles.summaryAmountSection}>
-          <Text className={styles.summaryAmountLabel}>You're sending</Text>
-          <Text className={styles.summaryAmountValue}>{formatCurrency(transferData.amount)}</Text>
-        </div>
-
-        <div className={styles.transferFlow}>
-          <div className={styles.flowAccount}>
-            <Avatar initials="ME" size="md" />
-            <Text className={styles.flowName}>{transferData.fromAccount?.name}</Text>
-            <Text className={styles.flowType}>From</Text>
-          </div>
-
-          <ArrowRight24Regular className={styles.flowArrow} />
-
-          <div className={styles.flowAccount}>
-            <Avatar initials={transferData.toRecipient?.initials || ''} size="md" />
-            <Text className={styles.flowName}>{transferData.toRecipient?.name}</Text>
-            <Text className={styles.flowType}>To</Text>
-          </div>
-        </div>
-
-        <div className={styles.transferDetails}>
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>From Account</span>
-            <div className={styles.accountBlock}>
-              <span className={styles.detailValue}>{transferData.fromAccount?.name}</span>
-              <span className={styles.detailValueAccount}>
-                {transferData.fromAccount?.accountNumber}
-              </span>
-            </div>
-          </div>
-
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>To Account</span>
-            <div className={styles.accountBlock}>
-              <span className={styles.detailValue}>{transferData.toRecipient?.name}</span>
-              <span className={styles.detailValueAccount}>
-                {transferData.toRecipient?.accountNumber}
-              </span>
-            </div>
-          </div>
-
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Amount</span>
-            <span className={styles.detailValue}>{formatCurrency(transferData.amount)}</span>
-          </div>
-
-          <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Date</span>
-            <span className={styles.detailValue}>
-              Today,{' '}
-              {new Date().toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
-              })}
-            </span>
-          </div>
-        </div>
-
-        <div className={styles.feeNotice}>
-          <Info24Regular className={styles.feeIcon} />
-          <span className={styles.feeText}>No fees for internal transfers</span>
-        </div>
-      </div>
-    </div>
-  );
-
-  // Render Success Screen
-  const renderSuccess = () => (
-    <div
-      className={`${styles.content} ${styles.contentCentered}`}
-      style={{ gap: '32px', paddingTop: '48px' }}
-    >
-      <div className={styles.successIconContainer}>
-        <CheckmarkCircle24Filled
-          style={{ width: '64px', height: '64px', color: colors.semantic.success.main }}
-        />
-      </div>
-
-      <div className={styles.successMessage}>
-        <Text className={styles.successTitle}>Transfer Successful!</Text>
-        <Text className={styles.successSubtitle}>Your money has been sent successfully</Text>
-      </div>
-
-      <div className={styles.summaryCard}>
-        <div className={styles.detailRow}>
-          <span className={styles.detailLabel}>Amount Sent</span>
-          <span className={styles.amountHighlight}>{formatCurrency(transferData.amount)}</span>
-        </div>
-
-        <div className={styles.divider} />
-
-        <div className={styles.detailRow}>
-          <span className={styles.detailLabel}>From</span>
-          <div className={styles.accountBlock}>
-            <span className={styles.detailValue}>{transferData.fromAccount?.name}</span>
-            <span className={styles.detailValueAccount}>
-              {transferData.fromAccount?.accountNumber}
-            </span>
-          </div>
-        </div>
-
-        <div className={styles.detailRow}>
-          <span className={styles.detailLabel}>To</span>
-          <div className={styles.accountBlock}>
-            <span className={styles.detailValue}>{transferData.toRecipient?.name}</span>
-            <span className={styles.detailValueAccount}>
-              {transferData.toRecipient?.accountNumber}
-            </span>
-          </div>
-        </div>
-
-        <div className={styles.detailRow}>
-          <span className={styles.detailLabel}>Date & Time</span>
-          <span className={styles.detailValue}>
-            {new Date().toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric',
-            })}{' '}
-            at {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-          </span>
-        </div>
-
-        <div className={styles.divider} />
-
-        <div className={styles.referenceSection}>
-          <span className={styles.referenceLabel}>Reference Number</span>
-          <span className={styles.referenceValue}>{referenceNumber}</span>
-        </div>
-      </div>
-    </div>
-  );
-
-  // Render current step content
-  const renderStepContent = () => {
-    if (isSuccess) return renderSuccess();
-
-    switch (currentStep) {
-      case 1:
-        return renderStep1();
-      case 2:
-        return renderStep2();
-      case 3:
-        return renderStep3();
-      case 4:
-        return renderStep4();
-      default:
-        return null;
+  const handleSubmit = async () => {
+    if (!selectedAccount || !recipient || !isAmountValid) return;
+    setError(null);
+    setInFlight(false);
+    setIsSubmitting(true);
+    try {
+      const result = await submit({
+        fromAccountId: selectedAccount.id,
+        recipientAzureTag: recipient.azureTag,
+        amount,
+      });
+      setSuccess({
+        amount,
+        recipientName: recipient.displayName,
+        recipientAzureTag: recipient.azureTag,
+        newBalance: result.newBalance,
+        transactionNumber: result.transactionNumber,
+        replayed: result.replayed,
+      });
+    } catch (caught) {
+      const problem = caught as ApiProblem;
+      if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+        // hook latched verifyRequired; the verify view renders.
+      } else if (problem.errorCode === 'STEP_UP_CANCELLED') {
+        // The user dismissed the PIN modal — benign. Stay on review; Send re-triggers it.
+      } else if (problem.errorCode === 'STEP_UP_REQUIRED') {
+        // The replay 403'd again (elevation didn't stick) — never leak the raw gate string.
+        setError("Verification didn't complete. Please tap Send and try again.");
+      } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
+        setInFlight(true);
+      } else if (problem.errorCode === 'SELF_TRANSFER_NOT_ALLOWED') {
+        setError("You can't send money to yourself.");
+      } else if (problem.errorCode === 'ACCOUNT_NOT_FOUND') {
+        setError('That recipient could not be found. Please re-check the handle.');
+      } else if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
+        setError('Insufficient funds for this transfer.');
+      } else if (problem.errorCode === 'VALIDATION_ERROR') {
+        const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
+        setError(firstFieldError ?? 'Please check the details and try again.');
+      } else if (
+        problem.errorCode === 'IDEMPOTENCY_KEY_REUSE' ||
+        problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
+        problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
+      ) {
+        setError('Something went wrong. Please try again.');
+      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
+        setError("Couldn't reach the server — check your connection and try again.");
+      } else {
+        setError(problem.detail || 'Transfer failed. Please try again.');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  // Render footer
-  const renderFooter = () => {
-    if (isSuccess) {
-      return (
-        <div className={styles.footer}>
-          <Button
-            appearance="primary"
-            size="large"
-            style={{ width: '100%', height: '48px' }}
-            onClick={() => navigate('/')}
-          >
-            Done
-          </Button>
-          <Button
-            appearance="outline"
-            size="large"
-            style={{ width: '100%', height: '48px' }}
-            icon={<Share24Regular />}
-          >
-            Share Receipt
-          </Button>
-        </div>
-      );
-    }
+  const requestLeave = (to: string) => {
+    if (!keyLive) navigate(to);
+  };
 
-    if (currentStep === 4) {
-      return (
-        <div className={styles.footer}>
-          <Button
-            appearance="primary"
-            size="large"
-            style={{ width: '100%', height: '48px' }}
-            onClick={handleConfirmTransfer}
-            disabled={isLoading}
-          >
-            {isLoading ? <Spinner size="tiny" /> : 'Confirm Transfer'}
-          </Button>
-          <Button
-            appearance="outline"
-            size="large"
-            style={{ width: '100%', height: '48px' }}
-            onClick={handleClose}
-          >
-            Cancel
-          </Button>
-        </div>
-      );
-    }
-
+  // ===== Success receipt =====
+  if (success) {
     return (
-      <div className={`${styles.footer} ${styles.footerSingle}`}>
-        <Button
-          appearance="primary"
-          size="large"
-          style={{ width: '100%', height: '48px' }}
-          onClick={handleContinue}
-          disabled={!canContinue()}
-        >
-          Continue
-        </Button>
+      <div className={styles.page}>
+        <div className={styles.header}>
+          <span />
+          <Text className={styles.headerTitle}>Transfer Complete</Text>
+          <span style={{ width: '40px' }} />
+        </div>
+        <div className={styles.body}>
+          <div className={styles.centeredView}>
+            <div className={styles.successIcon}>
+              <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
+            </div>
+            <Text className={styles.successTitle}>Transfer Sent!</Text>
+            <Text className={styles.successAmount}>-{formatCurrency(success.amount)}</Text>
+            {success.replayed && (
+              <MessageBar intent="info">
+                <MessageBarBody>
+                  This transfer was already processed — showing the existing result.
+                </MessageBarBody>
+              </MessageBar>
+            )}
+            <div className={styles.reviewCard} style={{ width: '100%' }}>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>To</Text>
+                <Text className={styles.reviewValue}>
+                  {success.recipientName} (@{success.recipientAzureTag})
+                </Text>
+              </div>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>Reference</Text>
+                <Text className={styles.reviewValue}>{success.transactionNumber}</Text>
+              </div>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>New balance</Text>
+                <Text className={styles.reviewValue}>{formatCurrency(success.newBalance)}</Text>
+              </div>
+            </div>
+          </div>
+          <div className={styles.actions}>
+            <Button
+              appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => navigate('/history')}
+            >
+              View History
+            </Button>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => navigate('/dashboard')}
+            >
+              Done
+            </Button>
+          </div>
+        </div>
       </div>
     );
-  };
+  }
+
+  // ===== RESULT_UNKNOWN verify view =====
+  if (verifyRequired) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.header}>
+          <span style={{ width: '40px' }} />
+          <Text className={styles.headerTitle}>Send Money</Text>
+          <span style={{ width: '40px' }} />
+        </div>
+        <div className={styles.body}>
+          <div className={styles.centeredView}>
+            <div className={styles.warningIcon}>
+              <Warning24Regular style={{ width: '40px', height: '40px' }} />
+            </div>
+            <Text className={styles.stateTitle}>We couldn&apos;t confirm your transfer</Text>
+            <Text className={styles.stateBody}>
+              The request may or may not have gone through. Check your recent transactions before
+              trying again — retrying blindly could send twice.
+            </Text>
+          </div>
+          <div className={styles.actions}>
+            <Button
+              appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => navigate('/history')}
+            >
+              Check recent transactions
+            </Button>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => {
+                resetIntent();
+                setStep('form');
+              }}
+            >
+              It didn&apos;t go through — start over
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={styles.container}>
-      {/* Loading overlay */}
-      {isLoading && (
-        <div className={styles.loadingOverlay}>
-          <Spinner size="large" label="Processing transfer..." />
-        </div>
-      )}
-
-      {/* Header */}
+    <div className={styles.page}>
       <div className={styles.header}>
-        {!isSuccess ? (
-          <button className={styles.headerButton} onClick={handleBack}>
-            <ChevronLeft24Regular />
-          </button>
-        ) : (
-          <div className={styles.headerPlaceholder} />
-        )}
+        <button
+          className={styles.headerBtn}
+          aria-label="Back"
+          disabled={keyLive}
+          onClick={() => (step === 'review' ? setStep('form') : requestLeave('/dashboard'))}
+        >
+          <ChevronLeft24Regular />
+        </button>
         <Text className={styles.headerTitle}>
-          {isSuccess ? 'Transfer Complete' : 'Transfer Money'}
+          {step === 'review' ? 'Review Transfer' : 'Send Money'}
         </Text>
-        {!isSuccess ? (
-          <button className={styles.headerButton} onClick={handleClose}>
-            <Dismiss24Regular />
-          </button>
-        ) : (
-          <div className={styles.headerPlaceholder} />
-        )}
+        <button
+          className={styles.headerBtn}
+          aria-label="Close"
+          disabled={keyLive}
+          onClick={() => requestLeave('/dashboard')}
+        >
+          <Dismiss24Regular />
+        </button>
       </div>
 
-      {/* Progress Indicator (hide on success) */}
-      {!isSuccess && renderProgressIndicator()}
+      <div className={styles.body}>
+        {error && (
+          <MessageBar intent="error">
+            <MessageBarBody>{error}</MessageBarBody>
+          </MessageBar>
+        )}
+        {inFlight && (
+          <MessageBar intent="info">
+            <MessageBarBody>Still processing — tap Send again to check.</MessageBarBody>
+          </MessageBar>
+        )}
 
-      {/* Content */}
-      {renderStepContent()}
+        {step === 'form' ? (
+          <>
+            {/* From account */}
+            <div>
+              <Text className={styles.sectionLabel}>From</Text>
+              <div
+                style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}
+              >
+                {accounts.map((account) => (
+                  <button
+                    key={account.id}
+                    className={`${styles.card} ${
+                      selectedAccount?.id === account.id ? styles.cardSelected : ''
+                    }`}
+                    onClick={() => handleSelectAccount(account)}
+                  >
+                    <div className={styles.accountInfo}>
+                      <Text className={styles.accountName}>{account.name}</Text>
+                      <Text className={styles.accountNumber}>
+                        {maskAccountNumber(account.accountNumber)}
+                      </Text>
+                    </div>
+                    <Text className={styles.accountBalance}>{formatCurrency(account.balance)}</Text>
+                  </button>
+                ))}
+              </div>
+            </div>
 
-      {/* Footer */}
-      {renderFooter()}
+            {/* Recipient */}
+            <div>
+              <Text className={styles.sectionLabel}>To (recipient&apos;s @handle)</Text>
+              <div className={styles.recipientRow} style={{ marginTop: '8px' }}>
+                <input
+                  className={styles.input}
+                  placeholder="@handle"
+                  aria-label="Recipient handle"
+                  value={recipientInput}
+                  onChange={(e) => {
+                    setRecipientInput(e.target.value);
+                    setRecipient(null);
+                    setRecipientError(null);
+                    onBodyEdit();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleVerifyRecipient();
+                  }}
+                />
+                <Button
+                  appearance="secondary"
+                  onClick={() => void handleVerifyRecipient()}
+                  disabled={!recipientInput.trim() || lookupState.isFetching}
+                >
+                  {lookupState.isFetching ? <Spinner size="tiny" /> : 'Verify'}
+                </Button>
+              </div>
+              {recipient && (
+                <div className={styles.recipientCard} style={{ marginTop: '10px' }}>
+                  <div className={styles.avatar}>{initials(recipient.displayName)}</div>
+                  <div>
+                    <Text className={styles.recipientName}>{recipient.displayName}</Text>
+                    <br />
+                    <Text className={styles.recipientTag}>@{recipient.azureTag}</Text>
+                  </div>
+                </div>
+              )}
+              {recipientError && (
+                <Text
+                  role="alert"
+                  className={styles.hint}
+                  style={{ marginTop: '8px', display: 'block' }}
+                >
+                  {recipientError}
+                </Text>
+              )}
+            </div>
+
+            {/* Amount */}
+            <div className={styles.amountSection}>
+              <Text className={styles.subtle}>Amount</Text>
+              <div className={styles.amountWrapper}>
+                <span className={styles.amountCurrency}>€</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  aria-label="Transfer amount"
+                  className={styles.amountInput}
+                  value={amountInput}
+                  onChange={(e) => handleAmountChange(e.target.value)}
+                />
+              </div>
+              <Text className={styles.subtle}>Available: {formatCurrency(availableBalance)}</Text>
+              {amountHint && (
+                <Text role="alert" className={styles.hint}>
+                  {amountHint}
+                </Text>
+              )}
+            </div>
+            <div className={styles.quickAmounts}>
+              {QUICK_AMOUNTS.map((quickAmount) => (
+                <button
+                  key={quickAmount}
+                  className={`${styles.quickBtn} ${
+                    amount === quickAmount ? styles.quickBtnSelected : ''
+                  }`}
+                  onClick={() => handleAmountChange(String(quickAmount))}
+                  disabled={quickAmount > availableBalance}
+                >
+                  €{quickAmount}
+                </button>
+              ))}
+            </div>
+
+            <div className={styles.actions}>
+              <Button
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => setStep('review')}
+                disabled={!canReview}
+              >
+                Review Transfer
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Review */}
+            <div className={styles.reviewCard}>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>From</Text>
+                <Text className={styles.reviewValue}>{selectedAccount?.name}</Text>
+              </div>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>To</Text>
+                <Text className={styles.reviewValue}>
+                  {recipient?.displayName} (@{recipient?.azureTag})
+                </Text>
+              </div>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>Amount</Text>
+                <Text className={styles.reviewValue}>{formatCurrency(amount)}</Text>
+              </div>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>New balance</Text>
+                <Text className={styles.reviewValue}>{formatCurrency(newBalance)}</Text>
+              </div>
+            </div>
+            <Text className={styles.subtle} style={{ textAlign: 'center' }}>
+              You&apos;ll confirm with your PIN on the next step.
+            </Text>
+            <div className={styles.actions}>
+              <Button
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={handleSubmit}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amount)}`}
+              </Button>
+              <Button
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => setStep('form')}
+                disabled={keyLive}
+              >
+                Back
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

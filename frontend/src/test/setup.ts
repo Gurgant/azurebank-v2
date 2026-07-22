@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { resetServerActivity } from '../features/auth/sessionActivity';
+import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
 import { resetMockState } from '../mocks/state';
 
@@ -19,5 +20,7 @@ afterEach(() => {
   resetMockState();
   // Module-level client mirror of LastActivity — never let it leak between tests.
   resetServerActivity();
+  // Module-level step-up bridge (mirrors mockState.authLevel reset) — no inflight leak.
+  __resetStepUpController();
 });
 afterAll(() => server.close());
