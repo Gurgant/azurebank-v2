@@ -214,6 +214,7 @@ public class UserSession
     public string UserId { get; set; }
     public string AccessToken { get; set; }
     public DateTime TokenExpiry { get; set; }
+    public string? RefreshToken { get; set; }  // Rotated; drives silent re-mint (ADR-0021)
     public DateTime SessionCreated { get; set; }
     public DateTime LastActivity { get; set; }
     public int AuthLevel { get; set; }  // Current authentication level

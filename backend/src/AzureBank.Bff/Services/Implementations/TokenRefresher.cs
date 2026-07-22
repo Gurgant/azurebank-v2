@@ -29,6 +29,11 @@ public class TokenRefresher : ITokenRefresher
     // per active session at most.
     private static readonly TimeSpan TokenRefreshSkew = TimeSpan.FromSeconds(60);
 
+    // Bounded timeout for the mutating refresh POST, INDEPENDENT of the caller's request lifetime
+    // (see RefreshAsync). A browser disconnect must never cancel a rotation the API has already
+    // committed, so the call runs on its own budget — the same pattern as logout's revoke call.
+    private static readonly TimeSpan RefreshCallTimeout = TimeSpan.FromSeconds(5);
+
     // Match the controller's deserialization of the API envelope (camelCase, enums-as-strings).
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -105,7 +110,7 @@ public class TokenRefresher : ITokenRefresher
                 return session.IsTokenExpired ? null : session.AccessToken;
             }
 
-            return await RefreshAsync(sessionId, session.RefreshToken, session.AccessToken, cancellationToken);
+            return await RefreshAsync(sessionId, session.RefreshToken, session.AccessToken);
         }
         finally
         {
@@ -117,21 +122,31 @@ public class TokenRefresher : ITokenRefresher
         session.TokenExpiry - DateTime.UtcNow <= TokenRefreshSkew;
 
     private async Task<string?> RefreshAsync(
-        string sessionId, string refreshToken, string currentAccessToken, CancellationToken ct)
+        string sessionId, string refreshToken, string currentAccessToken)
     {
         var client = _httpClientFactory.CreateClient("BackendApi");
+
+        // The refresh POST is a MUTATION: the API rotates (revokes old + issues new) the instant it
+        // handles the request. PostAsJsonAsync buffers the whole response (ResponseContentRead), so
+        // its token covers send+receive; driving it off the CALLER's token (RequestAborted) would let
+        // a browser disconnect mid-flight cancel it AFTER the API committed the rotation — we'd return
+        // the stale token, never persist the successor, and the next re-mint would reuse a now-revoked
+        // token and trip reuse-detection (killing the session). So run it on an INDEPENDENT bounded
+        // timeout, decoupled from the caller — the same pattern as logout's RevokeApiTokensAsync. (The
+        // caller's token still gated the single-flight wait upstream, before we committed to rotating.)
+        using var cts = new CancellationTokenSource(RefreshCallTimeout);
 
         HttpResponseMessage response;
         try
         {
             response = await client.PostAsJsonAsync(
-                "/api/auth/refresh", new RefreshRequest { RefreshToken = refreshToken }, ct);
+                "/api/auth/refresh", new RefreshRequest { RefreshToken = refreshToken }, cts.Token);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
-            // Transient (network / timeout / caller aborted before a response): do NOT revoke —
-            // the session may still be usable and the upstream call fails naturally / retries.
-            // (TaskCanceledException derives from OperationCanceledException, so both are caught.)
+            // Transient (network / bounded-timeout elapsed): do NOT revoke — the session may still be
+            // usable and the upstream call fails naturally / retries. (TaskCanceledException derives
+            // from OperationCanceledException, so a timeout is caught here too.)
             _logger.LogWarning(ex,
                 "Refresh call to API failed transiently for session {SessionId}", Redact(sessionId));
             return currentAccessToken;

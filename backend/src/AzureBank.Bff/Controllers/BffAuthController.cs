@@ -328,6 +328,28 @@ public class BffAuthController : ControllerBase
     }
 
     /// <summary>
+    /// Re-mints the session's access token for the PIN paths, which bypass the YARP transform (so
+    /// the stored token may be within the skew window). Returns the fresh token, or a ready-to-return
+    /// 401 when the session is gone / its refresh token is dead — the single place that 401 is shaped.
+    /// </summary>
+    private async Task<(string? AccessToken, IActionResult? Unauthorized)> ReMintOrUnauthorizedAsync(
+        string sessionId)
+    {
+        var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(
+            sessionId, HttpContext.RequestAborted);
+        if (accessToken is null)
+        {
+            return (null, Unauthorized(new ProblemDetails
+            {
+                Title = "Unauthorized",
+                Detail = "Session expired or invalid",
+                Status = 401
+            }));
+        }
+        return (accessToken, null);
+    }
+
+    /// <summary>
     /// Verify PIN - upgrades session to AuthLevel 2 for sensitive operations.
     /// </summary>
     [HttpPost("verify-pin")]
@@ -348,26 +370,20 @@ public class BffAuthController : ControllerBase
         }
 
         // These paths bypass the YARP transform, so re-mint here too (the access token may be
-        // within the skew window). A null result means the session is gone / refresh is dead.
-        var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(
-            session.SessionId, HttpContext.RequestAborted);
-        if (accessToken is null)
+        // within the skew window).
+        var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
+        if (unauthorized is not null)
         {
-            return Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            });
+            return unauthorized;
         }
 
         try
         {
-            // Add Authorization header for API call
+            // Add Authorization header for API call (accessToken is non-null past the guard above).
             using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin/verify");
             apiRequest.Content = JsonContent.Create(request);
             apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Bearer", accessToken);
+                "Bearer", accessToken!);
 
             var response = await _httpClient.SendAsync(apiRequest);
             var content = await response.Content.ReadAsStringAsync();
@@ -443,26 +459,20 @@ public class BffAuthController : ControllerBase
         }
 
         // These paths bypass the YARP transform, so re-mint here too (the access token may be
-        // within the skew window). A null result means the session is gone / refresh is dead.
-        var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(
-            session.SessionId, HttpContext.RequestAborted);
-        if (accessToken is null)
+        // within the skew window).
+        var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
+        if (unauthorized is not null)
         {
-            return Unauthorized(new ProblemDetails
-            {
-                Title = "Unauthorized",
-                Detail = "Session expired or invalid",
-                Status = 401
-            });
+            return unauthorized;
         }
 
         try
         {
-            // Add Authorization header for API call
+            // Add Authorization header for API call (accessToken is non-null past the guard above).
             using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin");
             apiRequest.Content = JsonContent.Create(request);
             apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Bearer", accessToken);
+                "Bearer", accessToken!);
 
             var response = await _httpClient.SendAsync(apiRequest);
             var content = await response.Content.ReadAsStringAsync();
