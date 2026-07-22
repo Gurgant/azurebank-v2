@@ -7,7 +7,7 @@ import type {
   BffSessionStatusResponse,
 } from '../../api/bffTypes';
 import { unwrap } from '../../api/envelope';
-import { problemBaseQuery } from '../../api/problemBaseQuery';
+import { baseQueryWithStepUp } from '../../api/baseQueryWithStepUp';
 import type { components } from '../../api/schema';
 
 type Schemas = components['schemas'];
@@ -30,6 +30,7 @@ export type TransferRequest = Schemas['TransferRequest'];
 export type TransferResponse = Schemas['TransferResponse'];
 export type InternalTransferRequest = Schemas['InternalTransferRequest'];
 export type InternalTransferResponse = Schemas['InternalTransferResponse'];
+export type RecipientLookupResponse = Schemas['RecipientLookupResponse'];
 
 /** Argument shape of every idempotent money mutation — the key comes from useIdempotentMutation. */
 export interface IdempotentArg<TBody> {
@@ -80,7 +81,8 @@ export const HISTORY_PAGE_SIZE = 20;
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
-  baseQuery: problemBaseQuery,
+  // Step-up interceptor (DECISIONS §2.2): transparently elevates + replays on a level-2 403.
+  baseQuery: baseQueryWithStepUp,
   tagTypes: ['Account', 'Transaction', 'Session'],
   endpoints: (builder) => ({
     // ========== ACCOUNTS ==========
@@ -233,7 +235,15 @@ export const apiSlice = createApi({
             ],
     }),
 
-    // ========== TRANSFERS (level-2 step-up — interceptor arrives with PR-11) ==========
+    // ========== TRANSFERS (level-2 step-up — interceptor rides the base query) ==========
+
+    // Confirm a transfer recipient by EXACT AzureTag (ADR-0014 — no directory/substring).
+    // Level-1 (not step-up gated); a nonexistent or self tag returns 200 { exists:false }.
+    lookupRecipient: builder.query<RecipientLookupResponse, string>({
+      query: (azureTag) => `/api/users/${encodeURIComponent(azureTag)}`,
+      transformResponse: (response: Schemas['ApiResponseOfRecipientLookupResponse']) =>
+        unwrap(response),
+    }),
 
     transfer: builder.mutation<WithReplay<TransferResponse>, IdempotentArg<TransferRequest>>({
       query: ({ idempotencyKey, body }) => ({
@@ -346,6 +356,7 @@ export const {
   useDepositMutation,
   useWithdrawMutation,
   // Transfers
+  useLazyLookupRecipientQuery,
   useTransferMutation,
   useTransferInternalMutation,
   // BFF auth

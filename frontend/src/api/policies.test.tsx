@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from 'react';
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
+import { getStepUpSnapshot, settleStepUp } from '../features/auth/stepUpController';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { server } from '../mocks/server';
@@ -177,11 +178,16 @@ describe('data-layer policies (flagship, DECISIONS §2.4)', () => {
     expect(validation.error.errors).toEqual({ amount: ['Amount must be at least $0.01.'] });
   });
 
-  it('4 — recognizes the step-up 403 from the X-Auth-Level-Required header BEFORE body normalization (D2)', async () => {
-    // The stateful transfers handler answers with the bare-token 403 at authLevel 1.
+  it('4 — the step-up 403 (X-Auth-Level-Required header, D2) drives the interceptor; cancel → STEP_UP_CANCELLED', async () => {
+    // The stateful transfers handler answers with the bare-token 403 at authLevel 1. The
+    // interceptor (baseQueryWithStepUp) recognizes it from the normalized STEP_UP_REQUIRED
+    // and requests step-up. With no modal mounted here, cancel it — the surfaced error is
+    // STEP_UP_CANCELLED (carrying requiredAuthLevel), which PROVES the 403 was recognized as
+    // step-up, not a generic error. The elevate+replay flagship (byte-identical, same key,
+    // D21) is pinned in features/auth/stepup-interceptor.test.tsx.
     const { store } = hookWrapper();
 
-    const denied = await settle(
+    const pending = settle(
       store
         .dispatch(
           apiSlice.endpoints.transfer.initiate({
@@ -191,18 +197,22 @@ describe('data-layer policies (flagship, DECISIONS §2.4)', () => {
         )
         .unwrap(),
     );
+
+    // The interceptor opened a step-up request; cancel it to unblock the replay path.
+    await waitFor(() => expect(getStepUpSnapshot()).not.toBeNull());
+    settleStepUp('cancelled');
+
+    const denied = await pending;
     expect(denied.ok).toBe(false);
     if (denied.ok) throw new Error('unreachable');
     expect(denied.error).toMatchObject({
       status: 403,
-      errorCode: 'STEP_UP_REQUIRED',
+      errorCode: 'STEP_UP_CANCELLED',
       requiredAuthLevel: 2,
     });
-    // The bare body never passed through toApiProblem: nothing from it leaked.
+    // The bare 403 body never passed through toApiProblem: nothing from it leaked.
     expect(denied.error.title).toBeUndefined();
     expect(denied.error.traceId).toBeUndefined();
-    // Full flagship form — byte-identical replay through the elevation — is pinned with
-    // the interceptor in PR-11 (D21).
   });
 
   it('5 — withdraw 401 INVALID_PIN stays in-flow: ApiProblem to the caller, key dropped, auth state untouched', async () => {

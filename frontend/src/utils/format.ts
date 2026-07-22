@@ -49,6 +49,15 @@ export function formatDateTime(isoDate: string): string {
   return format(new Date(isoDate), 'MMMM d, yyyy · h:mm a');
 }
 
+/** "15 minutes" / "45 seconds" — a STATIC PIN-lock horizon (the window is minutes long). */
+export function formatLockHorizon(seconds: number): string {
+  if (seconds >= 60) {
+    const minutes = Math.ceil(seconds / 60);
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+  return `${seconds} second${seconds === 1 ? '' : 's'}`;
+}
+
 export function maskAccountNumber(accountNumber: string): string {
   const parts = accountNumber.split('-');
   if (parts.length < 3) {
