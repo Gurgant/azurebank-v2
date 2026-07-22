@@ -69,6 +69,29 @@ describe('internal transfer (PR-11b)', () => {
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
   });
 
+  it('explains that a second account is needed when the user has only one', async () => {
+    server.use(
+      http.get('*/api/accounts', () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: '019f7b3f-0000-7000-8000-0000000000a1',
+              accountNumber: 'AB-****-****-90',
+              name: 'Main Account',
+              type: 'Checking',
+              balance: 1000,
+              isPrimary: true,
+              createdAt: '2026-07-01T09:00:00.0000000Z',
+            },
+          ],
+          message: null,
+        }),
+      ),
+    );
+    renderInternal();
+    expect(await screen.findByText(/You need a second account to transfer/)).toBeInTheDocument();
+  });
+
   it('disables Review when the amount exceeds the source balance', async () => {
     renderInternal();
     await screen.findByRole('button', { name: 'From Main Account' });

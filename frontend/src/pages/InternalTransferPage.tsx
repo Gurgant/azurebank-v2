@@ -224,7 +224,7 @@ export function InternalTransferPage() {
   const styles = useStyles();
   const navigate = useNavigate();
 
-  const { data: accounts = [] } = useGetAccountsQuery();
+  const { data: accounts = [], isLoading: accountsLoading } = useGetAccountsQuery();
   const [transferTrigger] = useTransferInternalMutation();
   const { submit, resetIntent, verifyRequired, keyRetained } =
     useIdempotentMutation(transferTrigger);
@@ -533,6 +533,11 @@ export function InternalTransferPage() {
 
             <div>
               <Text className={styles.sectionLabel}>To</Text>
+              {!accountsLoading && accounts.length < 2 && (
+                <Text className={styles.subtle} style={{ display: 'block', marginBottom: '8px' }}>
+                  You need a second account to transfer between your own accounts.
+                </Text>
+              )}
               {accounts.map((account) => {
                 const isFrom = account.id === fromAccount?.id;
                 return (

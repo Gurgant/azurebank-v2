@@ -660,6 +660,16 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   };
   const amount = body.amount ?? 0;
 
+  // Validation runs first (like FluentValidation before the controller). A non-positive
+  // amount must be rejected BEFORE any balance math — otherwise a negative amount would
+  // invert the transfer (credit the source, debit the destination). Mirrors
+  // InternalTransferRequestValidator (Amount >= TransactionMinAmount).
+  if (amount < 0.01) {
+    return response.untyped(
+      problem({ status: 400, errors: { amount: ['Amount must be at least $0.01.'] } }),
+    );
+  }
+
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
     return response.untyped(
       problem({

@@ -187,6 +187,30 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     expect((await res.json()).errorCode).toBe('INSUFFICIENT_FUNDS');
   });
 
+  it('400 VALIDATION_ERROR for a non-positive amount, BEFORE any balance change', async () => {
+    elevate();
+    const fromBefore = mockState.accounts[0].balance;
+    const toBefore = mockState.accounts[1].balance;
+
+    const zero = await internal(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      toAccountId: acct2(),
+      amount: 0,
+    });
+    expect(zero.status).toBe(400);
+    expect((await zero.json()).errors.amount).toBeDefined();
+
+    // A negative amount must NOT invert the transfer (credit source / debit destination).
+    const neg = await internal(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      toAccountId: acct2(),
+      amount: -50,
+    });
+    expect(neg.status).toBe(400);
+    expect(mockState.accounts[0].balance).toBe(fromBefore);
+    expect(mockState.accounts[1].balance).toBe(toBefore);
+  });
+
   it('double-entry: debits source, credits destination, writes both ledger rows, replays bytes', async () => {
     elevate();
     const fromBefore = mockState.accounts[0].balance; // 1250.5
