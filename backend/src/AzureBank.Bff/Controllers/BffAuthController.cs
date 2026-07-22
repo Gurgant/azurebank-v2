@@ -29,6 +29,7 @@ public class BffAuthController : ControllerBase
 {
     private readonly HttpClient _httpClient;
     private readonly ISessionService _sessionService;
+    private readonly ITokenRefresher _tokenRefresher;
     private readonly BffSessionOptions _sessionOptions;
     private readonly SecurityOptions _securityOptions;
     private readonly IWebHostEnvironment _environment;
@@ -44,6 +45,7 @@ public class BffAuthController : ControllerBase
     public BffAuthController(
         IHttpClientFactory httpClientFactory,
         ISessionService sessionService,
+        ITokenRefresher tokenRefresher,
         IOptions<BffSessionOptions> sessionOptions,
         IOptions<SecurityOptions> securityOptions,
         IWebHostEnvironment environment,
@@ -51,6 +53,7 @@ public class BffAuthController : ControllerBase
     {
         _httpClient = httpClientFactory.CreateClient("BackendApi");
         _sessionService = sessionService;
+        _tokenRefresher = tokenRefresher;
         _sessionOptions = sessionOptions.Value;
         _securityOptions = securityOptions.Value;
         _environment = environment;
@@ -82,10 +85,12 @@ public class BffAuthController : ControllerBase
 
             var loginResponse = apiResponse!.Data!;
 
-            // Create server-side session with JWT and user info
+            // Create server-side session with the JWT, its refresh token (for silent re-mint),
+            // and user info.
             var sessionId = _sessionService.CreateSession(
                 loginResponse.Token,
                 loginResponse.ExpiresAt,
+                loginResponse.RefreshToken,
                 loginResponse.User);
 
             // Set HTTP-only session cookie
@@ -147,10 +152,12 @@ public class BffAuthController : ControllerBase
 
             var registerResponse = apiResponse!.Data!;
 
-            // Create server-side session with JWT and user info
+            // Create server-side session with the JWT, its refresh token (nullable — registration
+            // issues it best-effort), and user info.
             var sessionId = _sessionService.CreateSession(
                 registerResponse.Token.AccessToken,
                 registerResponse.Token.ExpiresAt,
+                registerResponse.Token.RefreshToken,
                 registerResponse.User);
 
             // Set HTTP-only session cookie
@@ -233,10 +240,15 @@ public class BffAuthController : ControllerBase
     /// </summary>
     [HttpPost("logout")]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
-    public IActionResult Logout()
+    public async Task<IActionResult> Logout()
     {
-        if (Request.Cookies.TryGetValue(_sessionOptions.CookieName, out var sessionId))
+        if (Request.Cookies.TryGetValue(_sessionOptions.CookieName, out var sessionId)
+            && !string.IsNullOrEmpty(sessionId))
         {
+            // Propagate to the API so it revokes this user's refresh tokens — otherwise logout
+            // would end the BFF session but leave the refresh tokens alive server-side. Strictly
+            // best-effort: a failure here must never block the local logout.
+            await RevokeApiTokensAsync(sessionId);
             _sessionService.RevokeSession(sessionId);
             _logger.LogInformation("User logged out via BFF");
         }
@@ -246,6 +258,46 @@ public class BffAuthController : ControllerBase
         // evicted by a Secure, Path=/ expiration.
         Response.Cookies.Delete(_sessionOptions.CookieName, BuildSessionCookieOptions());
         return Ok(ApiResponse.Success("Logged out successfully"));
+    }
+
+    /// <summary>
+    /// Best-effort call to the API's /api/auth/logout so it revokes this user's refresh tokens.
+    /// Uses a freshly re-minted access token (the stored one may be within skew). Never throws.
+    /// </summary>
+    private async Task RevokeApiTokensAsync(string sessionId)
+    {
+        try
+        {
+            // Independent, BOUNDED timeout — deliberately NOT HttpContext.RequestAborted: this
+            // revocation is the whole point of the call and must complete even if the browser
+            // tears down the connection right after sending the logout request.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+            var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(sessionId, cts.Token);
+            if (string.IsNullOrEmpty(accessToken))
+            {
+                // No usable token: the session was already dead (its refresh token was revoked or
+                // expired), so the API-side tokens are already moot.
+                return;
+            }
+
+            using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/logout");
+            apiRequest.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            using var response = await _httpClient.SendAsync(apiRequest, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "API logout returned {StatusCode} during BFF logout", (int)response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Strictly best-effort: this must NEVER bubble into Logout() and skip the local session
+            // revocation + cookie deletion. A bare OperationCanceledException (e.g. from a gate
+            // wait), a malformed response, or any transient are all swallowed here by design.
+            _logger.LogWarning(ex, "API logout call failed during BFF logout; proceeding locally");
+        }
     }
 
     /// <summary>
@@ -295,13 +347,27 @@ public class BffAuthController : ControllerBase
             });
         }
 
+        // These paths bypass the YARP transform, so re-mint here too (the access token may be
+        // within the skew window). A null result means the session is gone / refresh is dead.
+        var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(
+            session.SessionId, HttpContext.RequestAborted);
+        if (accessToken is null)
+        {
+            return Unauthorized(new ProblemDetails
+            {
+                Title = "Unauthorized",
+                Detail = "Session expired or invalid",
+                Status = 401
+            });
+        }
+
         try
         {
             // Add Authorization header for API call
             using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin/verify");
             apiRequest.Content = JsonContent.Create(request);
             apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Bearer", session.AccessToken);
+                "Bearer", accessToken);
 
             var response = await _httpClient.SendAsync(apiRequest);
             var content = await response.Content.ReadAsStringAsync();
@@ -376,13 +442,27 @@ public class BffAuthController : ControllerBase
             });
         }
 
+        // These paths bypass the YARP transform, so re-mint here too (the access token may be
+        // within the skew window). A null result means the session is gone / refresh is dead.
+        var accessToken = await _tokenRefresher.GetFreshAccessTokenAsync(
+            session.SessionId, HttpContext.RequestAborted);
+        if (accessToken is null)
+        {
+            return Unauthorized(new ProblemDetails
+            {
+                Title = "Unauthorized",
+                Detail = "Session expired or invalid",
+                Status = 401
+            });
+        }
+
         try
         {
             // Add Authorization header for API call
             using var apiRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin");
             apiRequest.Content = JsonContent.Create(request);
             apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                "Bearer", session.AccessToken);
+                "Bearer", accessToken);
 
             var response = await _httpClient.SendAsync(apiRequest);
             var content = await response.Content.ReadAsStringAsync();

@@ -14,9 +14,10 @@ public interface ISessionService
     /// </summary>
     /// <param name="accessToken">The JWT access token to store</param>
     /// <param name="tokenExpiry">Token expiration time</param>
+    /// <param name="refreshToken">The refresh token for silent re-mint (null if none was issued)</param>
     /// <param name="userInfo">User information to cache in session</param>
     /// <returns>A secure session ID to be stored in a cookie</returns>
-    string CreateSession(string accessToken, DateTime tokenExpiry, UserLoginInfo userInfo);
+    string CreateSession(string accessToken, DateTime tokenExpiry, string? refreshToken, UserLoginInfo userInfo);
 
     /// <summary>
     /// Gets the full session data for a session ID.
@@ -68,7 +69,8 @@ public interface ISessionService
     void UpdateUserInfo(string sessionId, Action<UserSessionInfo> update);
 
     /// <summary>
-    /// Refreshes a session with a new token (for future token refresh support).
+    /// Refreshes a session with a re-minted access token AND its rotated refresh token
+    /// (rotation issues a new refresh token on every use — store the successor).
     /// </summary>
-    void RefreshSession(string sessionId, string newToken, DateTime expiresAt);
+    void RefreshSession(string sessionId, string newToken, DateTime expiresAt, string? newRefreshToken);
 }

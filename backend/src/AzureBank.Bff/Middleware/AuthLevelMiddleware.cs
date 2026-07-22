@@ -51,6 +51,19 @@ public class AuthLevelMiddleware
         var safePath = LogSanitizer.Sanitize(path);
         var method = context.Request.Method;
 
+        // The browser must NEVER drive refresh-token rotation: only the BFF holds refresh tokens
+        // (server-side) and re-mints access tokens itself via the YARP transform (ADR-0021, PR-2).
+        // A raw proxied /api/auth/refresh has no legitimate caller here, so short-circuit it to
+        // 404 — as if the route did not exist (don't leak why). Trailing slash is normalized the
+        // same way the PIN gate is, since endpoint routing tolerates it.
+        if (path.TrimEnd('/').Equals("/api/auth/refresh", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "SecurityEvent {SecurityEvent}: blocked raw proxied {Path}", "RawRefreshBlocked", safePath);
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
         // Check if this route requires AuthLevel 2 (PIN)
         if (RequiresPinVerification(path, method))
         {

@@ -43,7 +43,7 @@ Out of scope:
 
 ### Authentication
 - Argon2id password hashing (ADR-0003)
-- JWT with short expiration (15 min access, 60 min refresh)
+- JWT with a 15-min access token, silently re-minted by the BFF from a 7-day rotating refresh token (ADR-0021) — an active session is bounded by the inactivity/absolute timeouts, not the 15-min JWT
 - PIN-based step-up authentication for sensitive operations (ADR-0008)
 
 ### Data Protection
