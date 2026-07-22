@@ -116,22 +116,38 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
         // Age the original's revocation past the grace window so replaying it is genuine reuse.
         await AgeRevocationsBeyondGraceAsync();
 
-        // Concurrently: replay the ORIGINAL (reuse → family revoke) while several rotations race
-        // the live successor. The family revoke must not leave any successor active even if a
-        // rotation commits one concurrently (the revoke re-runs until it revokes nothing).
-        var tasks = new List<Task<HttpResponseMessage>>
+        // Fire all requests behind a shared gate so they genuinely OVERLAP (rather than the
+        // replay launching first): the ORIGINAL replay (reuse → family revoke) races several
+        // rotations of the live successor. The family revoke must not leave any successor active
+        // even if a rotation commits one concurrently (the revoke re-runs until it revokes nothing).
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<HttpResponseMessage> GatedRefresh(string token) => Task.Run(async () =>
         {
-            client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = original }, Json),
-        };
+            await gate.Task;
+            return await client.PostAsJsonAsync(
+                "/api/auth/refresh", new RefreshRequest { RefreshToken = token }, Json);
+        });
+
+        var tasks = new List<Task<HttpResponseMessage>> { GatedRefresh(original) };
         for (var i = 0; i < 6; i++)
         {
-            tasks.Add(client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = live }, Json));
+            tasks.Add(GatedRefresh(live));
         }
-        await Task.WhenAll(tasks);
+        gate.SetResult(true);
+        var responses = await Task.WhenAll(tasks);
 
-        // A final reuse-replay after the rotations have settled runs a last revoke pass, so any
-        // straggler successor is caught — the theft response must converge to ZERO active tokens.
-        await client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = original }, Json);
+        // The original replay is genuine reuse → 401. Every concurrent response is either a
+        // rotation success or a benign race/reuse rejection — never a 5xx (which would otherwise
+        // be swallowed and hide a bug).
+        responses[0].StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        responses.Should().OnlyContain(r =>
+            r.StatusCode == HttpStatusCode.OK || r.StatusCode == HttpStatusCode.Unauthorized);
+
+        // A final reuse-replay after the burst runs a last revoke pass. The theft response must
+        // converge to ZERO active tokens: no successor a rotation committed escapes revocation,
+        // because minting one requires rotating an active parent whose rowversion the revoke has
+        // already bumped — so that rotation's guarded UPDATE fails.
+        (await GatedRefresh(original)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         (await CountActiveAsync(userId)).Should().Be(0,
             "reuse-detection must leave no active token even when rotations race the family revoke");
     }
