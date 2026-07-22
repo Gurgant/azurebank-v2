@@ -582,6 +582,165 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
 });
 
 /**
+ * POST /api/transfers/internal — move money between the caller's OWN accounts. Same level-2
+ * step-up gate + idempotency as the external transfer, but double-entry ON-ledger: debit the
+ * source, credit the destination, push BOTH a TransferOut and a TransferIn row. Failure order
+ * mirrors the backend: 403 gate → idempotency → SAME_ACCOUNT_TRANSFER (from==to) → ownership
+ * (either account missing → ACCOUNT_NOT_FOUND) → INSUFFICIENT_FUNDS → success.
+ */
+const transferInternal = api.post('/api/transfers/internal', async ({ request, response }) => {
+  if (mockState.authLevel < 2) {
+    return response.untyped(
+      HttpResponse.json(
+        {
+          type: 'STEP_UP_REQUIRED',
+          title: 'PIN Verification Required',
+          detail: 'This operation requires PIN verification',
+          requiredLevel: 2,
+          currentLevel: mockState.authLevel,
+          status: 403,
+        },
+        {
+          status: 403,
+          headers: {
+            'X-Auth-Level-Required': '2',
+            'X-Auth-Level-Current': String(mockState.authLevel),
+          },
+        },
+      ),
+    );
+  }
+
+  const key = request.headers.get('Idempotency-Key');
+  if (!key) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errorCode: 'IDEMPOTENCY_KEY_MISSING',
+        detail: 'The Idempotency-Key header is required.',
+      }),
+    );
+  }
+  if (!UUID_RE.test(key) || key === NIL_UUID) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errorCode: 'IDEMPOTENCY_KEY_INVALID',
+        detail: 'The Idempotency-Key header must be a single non-empty UUID.',
+      }),
+    );
+  }
+
+  const raw = await request.clone().text();
+  const fp = fingerprint(raw);
+  const stored = mockState.idempotency.get(`internal|${key}`);
+  if (stored) {
+    if (stored.bodyFingerprint !== fp) {
+      return response.untyped(
+        problem({
+          status: 422,
+          errorCode: 'IDEMPOTENCY_KEY_REUSE',
+          detail: 'This idempotency key was already used with a different payload.',
+        }),
+      );
+    }
+    return response.untyped(
+      new HttpResponse(stored.body, {
+        status: stored.status,
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Replayed': 'true' },
+      }),
+    );
+  }
+
+  const body = JSON.parse(raw) as {
+    fromAccountId?: string;
+    toAccountId?: string;
+    amount?: number;
+    description?: string;
+  };
+  const amount = body.amount ?? 0;
+
+  if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'SAME_ACCOUNT_TRANSFER',
+        detail: 'Cannot transfer to the same account.',
+      }),
+    );
+  }
+  const from = mockState.accounts.find((a) => a.id === body.fromAccountId);
+  const to = mockState.accounts.find((a) => a.id === body.toAccountId);
+  if (!from || !to) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'ACCOUNT_NOT_FOUND',
+        detail: 'One of the accounts could not be found.',
+      }),
+    );
+  }
+  if (amount > from.balance) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'INSUFFICIENT_FUNDS',
+        detail: 'Insufficient funds for this transfer.',
+        extensions: { available: from.balance, requested: amount },
+      }),
+    );
+  }
+
+  from.balance -= amount;
+  to.balance += amount;
+  const index = mockState.transactions.length;
+  const transactionNumber = `TXN-20260722-${String(600 + index).padStart(6, '0')}`;
+  const at = `2026-07-22T13:${String(index).padStart(2, '0')}:00.0000000Z`;
+  mockState.transactions.push({
+    id: `019f7b3f-0000-7000-8000-${(0xc00 + index).toString(16).padStart(12, '0')}`,
+    transactionNumber,
+    type: 'TransferOut',
+    amount,
+    balanceAfter: from.balance,
+    description: body.description ?? `Internal transfer to ${to.name}`,
+    recipientAzureTag: null,
+    senderAzureTag: null,
+    status: 'Completed',
+    createdAt: at,
+  });
+  mockState.transactions.push({
+    id: `019f7b3f-0000-7000-8000-${(0xc00 + index + 1).toString(16).padStart(12, '0')}`,
+    transactionNumber: `TXN-20260722-${String(600 + index + 1).padStart(6, '0')}`,
+    type: 'TransferIn',
+    amount,
+    balanceAfter: to.balance,
+    description: body.description ?? `Internal transfer from ${from.name}`,
+    recipientAzureTag: null,
+    senderAzureTag: null,
+    status: 'Completed',
+    createdAt: at,
+  });
+
+  const payload = {
+    data: {
+      transferId: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
+      transactionNumber,
+      fromAccountId: from.id,
+      toAccountId: to.id,
+      amount,
+      description: body.description ?? null,
+      fromAccountNewBalance: from.balance,
+      toAccountNewBalance: to.balance,
+      processedAt: '2026-07-22T13:00:00.0000000Z',
+    },
+    message: 'Internal transfer completed successfully.',
+  };
+  const text = JSON.stringify(payload);
+  mockState.idempotency.set(`internal|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  return response(201).json(payload);
+});
+
+/**
  * POST /bff/auth/verify-pin — BFF endpoint (outside the API spec, so plain msw).
  * Source semantics: correct PIN elevates the session to level 2; a WRONG PIN is HTTP 200
  * with verified:false, never a 4xx. Shares the SAME attempt/lock state as withdraw
@@ -769,6 +928,7 @@ export const handlers = [
   withdraw,
   lookupRecipient,
   transfer,
+  transferInternal,
   verifyPin,
   setPin,
   login,
