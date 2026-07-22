@@ -9,6 +9,7 @@ import { ProtectedRoute, ProtectedShell } from './components/layout';
 import {
   LoginPage,
   RegisterPage,
+  PinSetupPage,
   DashboardPage,
   AccountsPage,
   HistoryPage,
@@ -92,12 +93,20 @@ function App() {
               }
             />
 
-            {/* Full-screen wizard: deliberately NO app shell */}
+            {/* Full-screen wizards: deliberately NO app shell */}
             <Route
               path="/transfer"
               element={
                 <ProtectedRoute>
                   <TransferPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/pin-setup"
+              element={
+                <ProtectedRoute>
+                  <PinSetupPage />
                 </ProtectedRoute>
               }
             />

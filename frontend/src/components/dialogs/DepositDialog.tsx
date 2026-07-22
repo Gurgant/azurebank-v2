@@ -402,7 +402,8 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const navigate = useNavigate();
 
   const [depositTrigger] = useDepositMutation();
-  const { submit, resetIntent, verifyRequired } = useIdempotentMutation(depositTrigger);
+  const { submit, resetIntent, verifyRequired, keyRetained } =
+    useIdempotentMutation(depositTrigger);
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(
     accounts.length > 0 ? accounts[0] : null,
@@ -417,7 +418,11 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
 
   // Any body-affecting edit rotates the key: the old key + a new body is a raw-byte
   // fingerprint mismatch → 422 KEY_REUSE. Also clears transient in-flight/error state.
+  // Blocked while a request is in flight: rotating/nulling the key out from under a pending
+  // submit would defeat the retained-key guard (a subsequent NETWORK/5xx/IN_FLIGHT could
+  // then close/resubmit into a NEW intent while the original still settles).
   const onBodyEdit = () => {
+    if (isSubmitting) return;
     resetIntent();
     setInFlight(false);
     setError(null);
@@ -445,6 +450,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   };
 
   const handleSelectAccount = (account: Account) => {
+    if (isSubmitting) return; // a div can't be `disabled` — guard the mid-flight edit here
     setSelectedAccount(account);
     onBodyEdit();
   };
@@ -518,11 +524,13 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
 
   const showForm = !success && !verifyRequired;
 
-  // CRITICAL: never dismiss mid-flight. The dialog is mount-on-open, so unmounting
-  // during a submit destroys the in-memory idempotency key — reopening would mint a
-  // fresh one and the same amount becomes a NEW intent = a real double-deposit.
+  // CRITICAL: never dismiss while an idempotency key is still LIVE. `keyRetained` covers
+  // submitting AND every KEEP outcome (IN_FLIGHT / network / 5xx) — the dialog is
+  // mount-on-open, so unmounting with a retained key loses it, and reopening mints a fresh
+  // one so the same amount becomes a NEW intent = a real double-deposit.
+  const keyLive = isSubmitting || keyRetained;
   const requestClose = () => {
-    if (!isSubmitting) {
+    if (!keyLive) {
       onClose();
     }
   };
@@ -542,7 +550,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
             className={styles.closeButton}
             aria-label="Close"
             onClick={requestClose}
-            disabled={isSubmitting}
+            disabled={keyLive}
           >
             <Dismiss24Regular />
           </button>
@@ -624,6 +632,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                   aria-label="Deposit amount"
                   className={styles.amountInput}
                   value={amountInput}
+                  disabled={isSubmitting}
                   onChange={(e) => handleAmountChange(e.target.value)}
                 />
               </div>
@@ -645,6 +654,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                     amount === quickAmount ? styles.quickBtnSelected : ''
                   }`}
                   onClick={() => handleQuickAmount(quickAmount)}
+                  disabled={isSubmitting}
                 >
                   €{quickAmount}
                 </button>
@@ -658,6 +668,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               maxLength={100}
               className={styles.descriptionInput}
               value={description}
+              disabled={isSubmitting}
               onChange={(e) => {
                 setDescription(e.target.value);
                 onBodyEdit();

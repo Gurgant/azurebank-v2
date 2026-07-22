@@ -54,6 +54,16 @@ interface MockState {
   /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
   session: MockSessionUser | null;
   /**
+   * The session user's PIN — the value withdraw (PIN-in-body, D1) verifies against. Set-pin
+   * overwrites it and flips session.hasPin; it defaults to MOCK_PIN so the seeded MOCK_USER
+   * (hasPin:true) can withdraw with '123456'.
+   */
+  pin: string;
+  /** Consecutive wrong-PIN count; MaxPinAttempts (3) trips the lockout, a success resets it. */
+  pinAttempts: number;
+  /** ISO instant the PIN lock lifts, or null. A withdraw while locked is a 429 PIN_LOCKED. */
+  pinLockedUntil: string | null;
+  /**
    * The session user's accounts — REAL contract shapes: PascalCase types, and numbers
    * arrive ALREADY MASKED (`AB-****-****-90`) because AccountMapper.MaskAccountNumber
    * runs server-side; the full number never leaves the API.
@@ -180,11 +190,16 @@ export const MOCK_USER: MockSessionUser = {
   hasPin: true,
 };
 export const MOCK_PASSWORD = 'Password1!';
+/** The one seeded PIN the mock verifies withdrawals (and step-up) against. */
+export const MOCK_PIN = '123456';
 
 export const mockState: MockState = {
   idempotency: new Map(),
   authLevel: 1,
   session: null,
+  pin: MOCK_PIN,
+  pinAttempts: 0,
+  pinLockedUntil: null,
   accounts: defaultAccounts(),
   transactions: defaultTransactions(),
 };
@@ -198,6 +213,9 @@ export function resetMockState(): void {
   mockState.idempotency.clear();
   mockState.authLevel = 1;
   mockState.session = null;
+  mockState.pin = MOCK_PIN;
+  mockState.pinAttempts = 0;
+  mockState.pinLockedUntil = null;
   mockState.accounts = defaultAccounts();
   mockState.transactions = defaultTransactions();
 }

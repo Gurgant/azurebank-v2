@@ -207,6 +207,57 @@ describe('deposit (T3 — idempotent mutation)', () => {
     expect(screen.getByText('Deposit Money')).toBeInTheDocument(); // still open
   });
 
+  it('freezes body edits mid-flight so the pending intent cannot be rotated/nulled', async () => {
+    // A body edit during submit would run onBodyEdit → resetIntent(), dropping the retained
+    // key out from under the in-flight request; a later NETWORK/5xx could then close or
+    // resubmit into a NEW intent. Every body control is disabled while submitting.
+    server.use(http.post('*/api/transactions/deposit', () => new Promise<Response>(() => {})));
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Deposit amount')).toBeDisabled());
+    expect(screen.getByRole('button', { name: '€200' })).toBeDisabled();
+    expect(screen.getByLabelText('Description')).toBeDisabled();
+  });
+
+  it('ignores account-card selection mid-flight — the div guard holds the live intent', async () => {
+    // Account cards are <div>s (no `disabled`), so handleSelectAccount's isSubmitting guard is
+    // their ONLY protection: switching accounts mid-flight would run resetIntent() + change the
+    // body under the pending request. The new-balance preview is the observable for which
+    // account is selected (Main €1,000 vs Rainy Day €500).
+    server.use(http.post('*/api/transactions/deposit', () => new Promise<Response>(() => {})));
+    const a1 = {
+      id: MAIN.id,
+      name: 'Main Account',
+      accountNumber: 'AB-••••-••••-90',
+      balance: 1000,
+    };
+    const a2 = {
+      id: '019f7b3f-0000-7000-8000-0000000000a2',
+      name: 'Rainy Day',
+      accountNumber: 'AB-••••-••••-01',
+      balance: 500,
+    };
+    renderWithProviders(
+      <Routes>
+        <Route path="/" element={<DepositDialog isOpen onClose={() => {}} accounts={[a1, a2]} />} />
+      </Routes>,
+      { routerEntries: ['/'] },
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    expect(screen.getByText('New balance: €1,100.00')).toBeInTheDocument(); // a1 (Main) selected
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await waitFor(() => expect(screen.getByLabelText('Deposit amount')).toBeDisabled());
+
+    // Try to switch to Rainy Day while the request is held — must be a no-op.
+    await userEvent.click(screen.getByText('Rainy Day'));
+    expect(screen.getByText('New balance: €1,100.00')).toBeInTheDocument(); // still Main Account
+    expect(screen.queryByText('New balance: €600.00')).not.toBeInTheDocument();
+  });
+
   it('shows an inline hint and disables the CTA for an over-limit amount', async () => {
     renderDeposit();
     await userEvent.type(screen.getByLabelText('Deposit amount'), '1000001');

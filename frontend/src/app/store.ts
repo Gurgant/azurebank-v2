@@ -10,6 +10,9 @@ export const store = configureStore({
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(apiSlice.middleware, sessionMiddleware),
+  // Explicit: never expose the state tree (which transiently holds a withdraw mutation's
+  // args, incl. the PIN) to the Redux DevTools extension in production.
+  devTools: import.meta.env.DEV,
 });
 
 export type RootState = ReturnType<typeof store.getState>;
