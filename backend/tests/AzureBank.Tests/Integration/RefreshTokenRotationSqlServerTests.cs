@@ -101,6 +101,42 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
+    public async Task ReuseRevokeConcurrentWithRotations_LeavesNoActiveToken()
+    {
+        var client = CreateSqlClient();
+        var (userId, _, original) = await RegisterAsync(client);
+
+        // Rotate once so `original` is revoked and a live successor exists to rotate against.
+        var rotated = await client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = original }, Json);
+        rotated.StatusCode.Should().Be(HttpStatusCode.OK);
+        var live = (await rotated.Content
+            .ReadFromJsonAsync<ApiResponse<RefreshResponse>>(Json))!.Data!.RefreshToken;
+
+        // Age the original's revocation past the grace window so replaying it is genuine reuse.
+        await AgeRevocationsBeyondGraceAsync();
+
+        // Concurrently: replay the ORIGINAL (reuse → family revoke) while several rotations race
+        // the live successor. The family revoke must not leave any successor active even if a
+        // rotation commits one concurrently (the revoke re-runs until it revokes nothing).
+        var tasks = new List<Task<HttpResponseMessage>>
+        {
+            client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = original }, Json),
+        };
+        for (var i = 0; i < 6; i++)
+        {
+            tasks.Add(client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = live }, Json));
+        }
+        await Task.WhenAll(tasks);
+
+        // A final reuse-replay after the rotations have settled runs a last revoke pass, so any
+        // straggler successor is caught — the theft response must converge to ZERO active tokens.
+        await client.PostAsJsonAsync("/api/auth/refresh", new RefreshRequest { RefreshToken = original }, Json);
+        (await CountActiveAsync(userId)).Should().Be(0,
+            "reuse-detection must leave no active token even when rotations race the family revoke");
+    }
+
+    [SqlServerFact]
     public async Task LoginAfterFailedAttempt_IssuesRefreshToken_NoDuplicateUserInsert()
     {
         var client = CreateSqlClient();

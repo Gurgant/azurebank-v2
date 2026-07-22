@@ -70,15 +70,17 @@ in two PRs so the auth-critical surface stays reviewable:
 4. **Uniform failure.** Unknown / expired / reused all return **401 `REFRESH_TOKEN_INVALID`** —
    an identical status + code + body, so the response is never an oracle for *why* a refresh
    was rejected (the specific reason is logged server-side as a `SecurityEvent`).
-5. **Un-forkable rotation.** The presented token carries an optimistic-concurrency **rowversion**,
-   so two concurrent rotations of the same token cannot both commit — the loser's UPDATE matches
-   zero rows and EF rolls the whole unit back (the loser gets a benign 401). Without this, a
-   concurrent double-rotation would *fork* the chain and silently defeat reuse-detection. A
-   just-rotated token replayed within a short **grace window** is treated as a benign
-   lost-response retry, rejected with 401 but *without* revoking the family. RFC 9700 endorses
-   the grace-window *concept*; the **10-second duration is our application policy** (comparable
-   to Connect2id's configurable default), not an RFC-mandated value. A client that loses the
-   rotation response and gets a 401 simply re-authenticates (login) to obtain a fresh pair.
+5. **Un-forkable rotation.** The **stored row** for the presented token carries an
+   optimistic-concurrency **rowversion** (the opaque client token itself carries no concurrency
+   metadata), so two concurrent rotations of the same token cannot both commit — the loser's
+   UPDATE matches zero rows and EF rolls the whole unit back (the loser gets a benign 401).
+   Without this, a concurrent double-rotation would *fork* the chain and silently defeat
+   reuse-detection. A just-rotated token replayed within a short **grace window** is treated as a
+   benign lost-response retry, rejected with 401 but *without* revoking the family. The
+   **10-second grace window is purely local application policy** — an availability/security
+   trade-off that bounds the theft-tolerance window (RFC 9700 defines rotation + reuse-detection
+   but does **not** define a grace window; cf. Connect2id's configurable default). A client that
+   loses the rotation response and gets a 401 simply re-authenticates (login) for a fresh pair.
 6. **Logout revokes.** `LogoutAsync` now revokes the user's active refresh tokens.
 7. **Hosted cleanup.** `RefreshTokenCleanupService` sweeps expired rows every 6 h (hygiene —
    reads are already expiry-filtered). Because the table self-references itself
@@ -99,7 +101,7 @@ revocation.
 |---|---|---|
 | Rotate vs. reuse | **Rotate-on-use + reuse-detection** | Schema is purpose-built for it (`ReplacedByToken` chain); RFC 9700/OWASP-recommended; strong portfolio signal. (Duende's confidential-client *reuse* default noted as the lighter alternative.) |
 | Reuse response | **Revoke ALL the user's active tokens** | Matches the entity's documented intent + the existing user-active index; no migration. Per-family `FamilyId` revocation (multi-device precision) is a future refinement. |
-| Concurrency | **Optimistic-concurrency rowversion on the presented token + a short (10 s) grace window** | Rotation is un-forkable *regardless of caller* — concurrent rotations of the same token can't both commit (loser → benign 401), so reuse-detection can't be silently bypassed. A just-rotated token replayed within the window is a benign lost-response retry, not theft. (The BFF still adds single-flight in PR-2 to avoid the wasted round-trip, but correctness no longer depends on it.) |
+| Concurrency | **Optimistic-concurrency rowversion on the presented token's stored row + a short (10 s) grace window** | Rotation is un-forkable *regardless of caller* — concurrent rotations of the same token can't both commit (loser → benign 401), so reuse-detection can't be silently bypassed. A just-rotated token replayed within the window is a benign lost-response retry, not theft. The reuse-triggered family revoke **re-runs until it revokes nothing**, so a successor committed concurrently with the revoke (a phantom under READ COMMITTED) is caught on the next pass. (The BFF still adds single-flight in PR-2 to avoid the wasted round-trip, but correctness no longer depends on it.) |
 | Failure signalling | **Uniform 401 `REFRESH_TOKEN_INVALID`** | No unknown-vs-expired-vs-reuse oracle. |
 | Token lifetime | **7-day sliding** | Aligns with RFC 9700 idle-expiry. **PR-1 enforces only this 7-day lifetime.** In the deployed BFF model (**PR-2**) the session's 30 m-inactivity / 60 m-absolute timeouts become the effective cap — PR-1 does not itself bound the session (the BFF ignores the refresh token until PR-2). |
 
@@ -124,8 +126,9 @@ revocation.
   affected lineage — on multi-device this logs out every device. Acceptable (and arguably
   correct) as a theft response; `FamilyId` is the future precise-revocation refinement.
 - **Orphan refresh rows until PR-2.** PR-1 issues a refresh token on every login (and,
-  best-effort, registration) that the current BFF ignores; those rows are inert and reaped by
-  the cleanup sweep.
+  best-effort, registration) that the current BFF ignores; those rows are **inert from the
+  current BFF's perspective** (a direct `POST /api/auth/refresh` caller could still use them
+  until they expire) and are reaped by the cleanup sweep.
 - **Sender-constraining (DPoP/mTLS) is out of scope** — not required for a confidential BFF;
   a future option, not a gap.
 
@@ -139,7 +142,9 @@ revocation.
   refresh-after-logout ⇒ 401.
 - SQL-gated (`RefreshTokenRotationSqlServerTests`): the self-referencing FK rotation-chain
   write and the set-based family-revoke; **8 concurrent rotations of the same token ⇒ exactly
-  one successor, no fork, no false reuse-revoke** (the rowversion guard); and a correct login
-  after a failed attempt issues a refresh token **without re-inserting the detached principal**.
+  one successor, no fork, no false reuse-revoke** (the rowversion guard); **a reuse-triggered
+  family revoke racing concurrent rotations ⇒ zero active tokens** (the revoke re-runs to
+  convergence); and a correct login after a failed attempt issues a refresh token **without
+  re-inserting the detached principal**.
   InMemory only approximates the relational + concurrency paths. Full suite green on InMemory +
   SQL Server (2×).

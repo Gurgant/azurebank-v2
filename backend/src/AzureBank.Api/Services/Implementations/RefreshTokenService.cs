@@ -31,9 +31,10 @@ namespace AzureBank.Api.Services.Implementations;
 public class RefreshTokenService : IRefreshTokenService
 {
     // A just-rotated token replayed within this window is a benign lost-response retry, not a
-    // theft signal. RFC 9700 endorses the grace-window concept; the 10-second duration is our
-    // application policy (kept short to bound the theft-tolerance window). A client that loses
-    // the rotation response and receives a 401 recovers by re-authenticating.
+    // theft signal. The 10-second duration is purely LOCAL APPLICATION POLICY — an
+    // availability/security trade-off that bounds the theft-tolerance window. (RFC 9700 defines
+    // rotation + reuse-detection but does NOT define a grace window.) A client that loses the
+    // rotation response and receives a 401 recovers by re-authenticating.
     private static readonly TimeSpan RotationGraceWindow = TimeSpan.FromSeconds(10);
 
     private readonly AzureBankDbContext _context;
@@ -165,27 +166,48 @@ public class RefreshTokenService : IRefreshTokenService
     /// <inheritdoc />
     public async Task RevokeAllForUserAsync(Guid userId, CancellationToken cancellationToken = default)
     {
+        // Loop until a pass revokes nothing. A rotation racing this revoke can commit a successor
+        // that a single bulk UPDATE misses (a phantom row under READ COMMITTED); the next pass
+        // catches it. This TERMINATES: a successor can only be minted by rotating an ACTIVE parent,
+        // and once every active row is revoked the parent's rowversion-guarded rotation UPDATE
+        // fails — so no new successor can appear. Capped as a safety net against a pathological
+        // sustained race (a straggler then falls to the next reuse-replay / logout / expiry).
+        const int maxPasses = 5;
         var now = DateTime.UtcNow;
 
-        if (_context.Database.IsRelational())
+        for (var pass = 0; pass < maxPasses; pass++)
         {
-            // Set-based revoke over IX_RefreshTokens_UserId_Active: one round-trip, nothing tracked.
-            await _context.RefreshTokens
-                .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
-                .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), cancellationToken);
-        }
-        else
-        {
-            // ExecuteUpdate is relational-only; the EF InMemory test host loads + mutates + saves.
-            var active = await _context.RefreshTokens
-                .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
-                .ToListAsync(cancellationToken);
-            foreach (var token in active)
+            int revoked;
+            if (_context.Database.IsRelational())
             {
-                token.RevokedAt = now;
+                // Set-based revoke over IX_RefreshTokens_UserId_Active: one round-trip, nothing tracked.
+                revoked = await _context.RefreshTokens
+                    .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), cancellationToken);
             }
-            await _context.SaveChangesAsync(cancellationToken);
+            else
+            {
+                // ExecuteUpdate is relational-only; the EF InMemory test host loads + mutates + saves.
+                var active = await _context.RefreshTokens
+                    .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
+                    .ToListAsync(cancellationToken);
+                foreach (var token in active)
+                {
+                    token.RevokedAt = now;
+                }
+                await _context.SaveChangesAsync(cancellationToken);
+                revoked = active.Count;
+            }
+
+            if (revoked == 0)
+            {
+                return;
+            }
         }
+
+        _logger.LogWarning(
+            "RevokeAllForUserAsync hit the {MaxPasses}-pass cap for user {UserId}; a straggler token may survive until expiry",
+            maxPasses, userId);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
