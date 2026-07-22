@@ -323,7 +323,24 @@ public class AuthService : IAuthService
         await _context.SaveChangesAsync();
 
         var tokenResult = _jwtService.GenerateToken(user);
-        var refreshToken = await _refreshTokenService.IssueAsync(user);
+
+        // Registration has already durably committed the user + account. Issuing the refresh
+        // token is a best-effort convenience on top of that: if this write fails, do NOT fail
+        // the whole registration — that would 500 the client for an account that WAS created and
+        // then hand back a confusing duplicate-409 on retry. Instead the user still gets an
+        // access token now and a refresh token on their next login. (Wrapping account+token in a
+        // transaction would not help: the duplicate-409 originates from the already-committed
+        // Identity user, which UserManager.CreateAsync commits in its own unit of work.)
+        string? refreshToken = null;
+        try
+        {
+            refreshToken = await _refreshTokenService.IssueAsync(user);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Refresh-token issuance failed after registering user {UserId}; continuing without it", user.Id);
+        }
 
         _logger.LogInformation("User {UserId} registered successfully with account {AccountId}", user.Id, account.Id);
 

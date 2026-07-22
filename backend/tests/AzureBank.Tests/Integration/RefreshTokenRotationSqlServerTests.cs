@@ -176,7 +176,9 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
         }, Json);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(Json);
-        return (result!.Data!.User.Id, email, result.Data.Token.RefreshToken);
+        // The API always populates RefreshToken on a successful register (nullable only so a
+        // cross-boundary consumer degrades gracefully) — assert non-null for the test tuple.
+        return (result!.Data!.User.Id, email, result.Data.Token.RefreshToken!);
     }
 
     public void Dispose() => _factory?.Dispose();

@@ -2113,9 +2113,11 @@ export interface components {
             /**
              * @description Refresh token (plaintext, shown once) for rotating the short-lived access token via
              *     POST /api/auth/refresh. In the BFF deployment this is captured server-side and never
-             *     reaches the browser.
+             *     reaches the browser. Deliberately NOT `required`: a consumer deserializing this response
+             *     across the service boundary (the BFF) must degrade gracefully on its absence rather than
+             *     hard-fail — the API always populates it, so it is non-null in practice.
              */
-            refreshToken: string;
+            refreshToken?: null | string;
             user: components["schemas"]["UserLoginInfo"];
         };
         PaginatedResponseOfTransactionResponse: {
@@ -2211,9 +2213,11 @@ export interface components {
             accessToken: string;
             /**
              * @description Refresh token (plaintext, shown once) for rotating the access token via
-             *     POST /api/auth/refresh. In the BFF deployment it is captured server-side.
+             *     POST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately
+             *     NOT `required` so a cross-boundary consumer (the BFF) degrades gracefully on its absence;
+             *     the API always populates it on success.
              */
-            refreshToken: string;
+            refreshToken?: null | string;
             /**
              * Format: int32
              * @description Token expiration time in seconds

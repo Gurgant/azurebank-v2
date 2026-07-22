@@ -2568,7 +2568,6 @@
         "required": [
           "token",
           "expiresAt",
-          "refreshToken",
           "user"
         ],
         "type": "object",
@@ -2581,8 +2580,11 @@
             "format": "date-time"
           },
           "refreshToken": {
-            "type": "string",
-            "description": "Refresh token (plaintext, shown once) for rotating the short-lived access token via\r\nPOST /api/auth/refresh. In the BFF deployment this is captured server-side and never\r\nreaches the browser."
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Refresh token (plaintext, shown once) for rotating the short-lived access token via\r\nPOST /api/auth/refresh. In the BFF deployment this is captured server-side and never\r\nreaches the browser. Deliberately NOT `required`: a consumer deserializing this response\r\nacross the service boundary (the BFF) must degrade gracefully on its absence rather than\r\nhard-fail — the API always populates it, so it is non-null in practice."
           },
           "user": {
             "$ref": "#/components/schemas/UserLoginInfo"
@@ -2816,7 +2818,6 @@
       "TokenResponse": {
         "required": [
           "accessToken",
-          "refreshToken",
           "expiresIn",
           "expiresAt"
         ],
@@ -2827,8 +2828,11 @@
             "description": "JWT access token"
           },
           "refreshToken": {
-            "type": "string",
-            "description": "Refresh token (plaintext, shown once) for rotating the access token via\r\nPOST /api/auth/refresh. In the BFF deployment it is captured server-side."
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "Refresh token (plaintext, shown once) for rotating the access token via\r\nPOST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately\r\nNOT `required` so a cross-boundary consumer (the BFF) degrades gracefully on its absence;\r\nthe API always populates it on success."
           },
           "expiresIn": {
             "type": "integer",

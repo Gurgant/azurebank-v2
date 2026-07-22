@@ -12,9 +12,11 @@ public class TokenResponse
 
     /// <summary>
     /// Refresh token (plaintext, shown once) for rotating the access token via
-    /// POST /api/auth/refresh. In the BFF deployment it is captured server-side.
+    /// POST /api/auth/refresh. In the BFF deployment it is captured server-side. Deliberately
+    /// NOT `required` so a cross-boundary consumer (the BFF) degrades gracefully on its absence;
+    /// the API always populates it on success.
     /// </summary>
-    public required string RefreshToken { get; set; }
+    public string? RefreshToken { get; set; }
 
     /// <summary>
     /// Token expiration time in seconds

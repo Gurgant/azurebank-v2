@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
@@ -86,6 +88,9 @@ public class RefreshTokenServiceTests : IDisposable
         var stored = await _context.RefreshTokens.SingleAsync();
         stored.UserId.Should().Be(user.Id);
         stored.TokenHash.Should().NotBe(plaintext, "only the SHA-256 hash may be stored, never the plaintext");
+        stored.TokenHash.Should().Be(
+            Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(plaintext))),
+            "the stored value must be exactly SHA-256(plaintext) in base64 — pins the hash-at-rest contract");
         stored.RevokedAt.Should().BeNull();
         stored.IsActive.Should().BeTrue();
         stored.ExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddDays(7), TimeSpan.FromMinutes(1));

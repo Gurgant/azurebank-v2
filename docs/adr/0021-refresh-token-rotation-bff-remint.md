@@ -73,7 +73,7 @@ in two PRs so the auth-critical surface stays reviewable:
    just-rotated token replayed within a short (10 s) **grace window** is treated as a benign
    lost-response retry (RFC 9700), rejected with 401 but *without* revoking the family.
 6. **Logout revokes.** `LogoutAsync` now revokes the user's active refresh tokens.
-6. **Hosted cleanup.** `RefreshTokenCleanupService` sweeps expired rows every 6 h (hygiene —
+7. **Hosted cleanup.** `RefreshTokenCleanupService` sweeps expired rows every 6 h (hygiene —
    reads are already expiry-filtered). Because the table self-references itself
    (`ReplacedByTokenId`, `DeleteBehavior.Restrict`), the sweep first NULLs intra-set links,
    then deletes.

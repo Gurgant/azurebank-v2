@@ -417,7 +417,8 @@ public class AuthEndpointTests : IntegrationTestBase
         }, JsonOptions);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
-        return (result!.Data!.Token.AccessToken, result.Data.Token.RefreshToken);
+        // RefreshToken is nullable at the contract level but always populated on success.
+        return (result!.Data!.Token.AccessToken, result.Data.Token.RefreshToken!);
     }
 
     [Fact]
@@ -470,10 +471,13 @@ public class AuthEndpointTests : IntegrationTestBase
             .ReadFromJsonAsync<ApiResponse<RefreshResponse>>(JsonOptions))!.Data!.RefreshToken;
 
         // Replaying the ORIGINAL token immediately is a benign lost-response retry (within the
-        // rotation grace window) → rejected with 401...
+        // rotation grace window) → rejected with 401 + the UNIFORM invalid-token code (so it is
+        // indistinguishable from an unknown/expired token — no oracle).
         var reuse = await Client.PostAsJsonAsync("/api/auth/refresh",
             new RefreshRequest { RefreshToken = refresh }, JsonOptions);
         reuse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await reuse.Content.ReadFromJsonAsync<JsonElement>(JsonOptions))
+            .GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RefreshTokenInvalid);
 
         // ...but the family is NOT revoked — the successor still rotates (genuine reuse-revoke,
         // aged past the grace window, is proved on the SQL-gated path + in unit tests).
@@ -484,11 +488,14 @@ public class AuthEndpointTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Refresh_WithUnknownToken_Returns401()
+    public async Task Refresh_WithUnknownToken_Returns401_WithUniformCode()
     {
         var response = await Client.PostAsJsonAsync("/api/auth/refresh",
             new RefreshRequest { RefreshToken = "not-a-real-token" }, JsonOptions);
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        // Same code as the replay/expired paths — the response must not reveal WHY it failed.
+        (await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions))
+            .GetProperty("errorCode").GetString().Should().Be(ErrorCodes.RefreshTokenInvalid);
     }
 
     [Fact]
