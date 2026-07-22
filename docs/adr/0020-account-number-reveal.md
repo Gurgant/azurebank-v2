@@ -61,11 +61,17 @@ a portfolio demonstration of the mechanism):
    middleware's first test suite — pins the 403 short-circuit (backend provably never
    called), the trailing-slash variants, the post-PIN pass-through, and PIN expiry.
 
-The frontend consumption (eye button) is specified for a later PR, after the PIN dialog
-and step-up interceptor exist: RTK Query **mutation** (never cached, never auto-retried),
-revealed value held in transient component state only (ASVS 14.3.1), auto-rehide on
-timer/navigation, copy-to-clipboard as the primary affordance, `aria-pressed` toggle
-semantics.
+6. **Frontend consumption (eye button) — implemented (PR-R2).** An `AccountNumberField`
+   component replaces the masked `<Text>` in each account card. It calls `revealAccountNumber`,
+   an RTK Query **mutation** (never cached, never auto-retried; a GET request with mutation
+   semantics so the value never enters the query cache). Because the mutation rides the slice-wide
+   `baseQueryWithStepUp`, an un-elevated reveal 403s and drives the shared PIN modal, which
+   replays the request on elevation — the component carries no step-up logic. The unmasked value
+   lives in **transient component state only** (ASVS 14.3.1) and is `reset()` out of the RTK Query
+   store the instant it is captured; it **auto-rehides** after a 20s timer or on unmount
+   (navigation). A **copy-to-clipboard** button (with a `role="status"` "Copied" confirmation) is
+   the primary affordance, and the eye button carries **`aria-pressed`** toggle semantics with a
+   per-account `aria-label`. A cancelled PIN step-up is a benign no-op (stays masked, no error).
 
 ## Consequences
 
@@ -78,5 +84,5 @@ semantics.
   is deliberately out of scope.
 - The reveal is rate-limited only by the BFF global limiter (300/min/IP) — acceptable for
   an owner-only, non-enumerable resource (Guid ids, ownership-checked).
-- The OpenAPI spec grows to 19 paths; `schema.d.ts` regenerated (the FE gains
-  `AccountNumberResponse` for the future eye-button PR).
+- The OpenAPI spec grows to 19 paths; `schema.d.ts` regenerated. The FE gained
+  `AccountNumberResponse`, now consumed by the eye button (PR-R2).

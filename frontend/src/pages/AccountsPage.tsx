@@ -34,6 +34,7 @@ import {
   useSetPrimaryAccountMutation,
 } from '../features/api/apiSlice';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
+import { AccountNumberField } from '../components/AccountNumberField';
 import {
   ConfirmDialog,
   CreateAccountDialog,
@@ -623,12 +624,7 @@ export function AccountsPage() {
                   </div>
                   <div className={styles.accountInfo}>
                     <Text className={styles.accountName}>{account.name}</Text>
-                    <Text
-                      className={styles.accountNumber}
-                      aria-label={`Account ending in ${account.accountNumber.slice(-2)}`}
-                    >
-                      {maskAccountNumber(account.accountNumber)}
-                    </Text>
+                    <AccountNumberField account={account} />
                   </div>
                   <Menu>
                     <MenuTrigger disableButtonEnhancement>

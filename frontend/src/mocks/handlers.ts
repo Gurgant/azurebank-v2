@@ -30,6 +30,40 @@ function fingerprint(raw: string): string {
   return (hash >>> 0).toString(16);
 }
 
+/**
+ * The BFF AuthLevelMiddleware 403 for a level-2 route — its BARE shape (deliberately NOT
+ * ProblemDetails) plus the X-Auth-Level-* headers the client normalizes into STEP_UP_REQUIRED.
+ * Shared by the transfer, internal-transfer, and reveal handlers.
+ */
+function stepUp403(currentLevel: number) {
+  return HttpResponse.json(
+    {
+      type: 'STEP_UP_REQUIRED',
+      title: 'PIN Verification Required',
+      detail: 'This operation requires PIN verification',
+      requiredLevel: 2,
+      currentLevel,
+      status: 403,
+    },
+    {
+      status: 403,
+      headers: {
+        'X-Auth-Level-Required': '2',
+        'X-Auth-Level-Current': String(currentLevel),
+      },
+    },
+  );
+}
+
+/**
+ * The API never exposes the full number (AccountMapper masks it server-side), so the mock holds
+ * none. Synthesize a deterministic unmasked value from the visible last group for the reveal
+ * endpoint: `AB-****-****-90` → `AB-1234-5678-90`.
+ */
+function unmaskForMock(masked: string): string {
+  return `AB-1234-5678-${masked.slice(-2)}`;
+}
+
 /** GET /api/accounts — the session user's accounts, primary first like the real query. */
 const listAccounts = api.get('/api/accounts', ({ response }) => {
   const ordered = [...mockState.accounts].sort(
@@ -131,6 +165,31 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) =>
   }
   mockState.accounts = mockState.accounts.filter((a) => a.id !== params.id);
   return response(200).json({ message: 'Account deleted successfully' });
+});
+
+/**
+ * GET /api/accounts/{id}/full-number — PIN-gated reveal (ADR-0020). Mirrors the BFF ordering:
+ * the level-2 gate first (403 step-up when not elevated), THEN ownership (404), then the full
+ * unmasked number the API emits only here.
+ */
+const revealAccountNumber = api.get('/api/accounts/{id}/full-number', ({ params, response }) => {
+  if (mockState.authLevel < 2) {
+    return response.untyped(stepUp403(mockState.authLevel));
+  }
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'NOT_FOUND',
+        detail: `Account with identifier '${params.id}' was not found.`,
+      }),
+    );
+  }
+  return response(200).json({
+    data: { accountId: account.id, accountNumber: unmaskForMock(account.accountNumber) },
+    message: null,
+  });
 });
 
 /**
@@ -441,26 +500,7 @@ const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) 
  */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (mockState.authLevel < 2) {
-    // The BFF's 403 is AuthLevelMiddleware's BARE shape — deliberately not ProblemDetails.
-    return response.untyped(
-      HttpResponse.json(
-        {
-          type: 'STEP_UP_REQUIRED',
-          title: 'PIN Verification Required',
-          detail: 'This operation requires PIN verification',
-          requiredLevel: 2,
-          currentLevel: mockState.authLevel,
-          status: 403,
-        },
-        {
-          status: 403,
-          headers: {
-            'X-Auth-Level-Required': '2',
-            'X-Auth-Level-Current': String(mockState.authLevel),
-          },
-        },
-      ),
-    );
+    return response.untyped(stepUp403(mockState.authLevel));
   }
 
   const key = request.headers.get('Idempotency-Key');
@@ -590,25 +630,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
  */
 const transferInternal = api.post('/api/transfers/internal', async ({ request, response }) => {
   if (mockState.authLevel < 2) {
-    return response.untyped(
-      HttpResponse.json(
-        {
-          type: 'STEP_UP_REQUIRED',
-          title: 'PIN Verification Required',
-          detail: 'This operation requires PIN verification',
-          requiredLevel: 2,
-          currentLevel: mockState.authLevel,
-          status: 403,
-        },
-        {
-          status: 403,
-          headers: {
-            'X-Auth-Level-Required': '2',
-            'X-Auth-Level-Current': String(mockState.authLevel),
-          },
-        },
-      ),
-    );
+    return response.untyped(stepUp403(mockState.authLevel));
   }
 
   const key = request.headers.get('Idempotency-Key');
@@ -932,6 +954,7 @@ export const handlers = [
   renameAccount,
   setPrimaryAccount,
   deleteAccount,
+  revealAccountNumber,
   listTransactions,
   getTransaction,
   deposit,
