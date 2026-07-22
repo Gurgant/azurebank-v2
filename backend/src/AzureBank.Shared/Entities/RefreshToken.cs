@@ -3,9 +3,11 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace AzureBank.Shared.Entities;
 
 /// <summary>
-/// Refresh token entity for JWT token rotation
-/// Token is stored HASHED for security - if DB is compromised, tokens are useless
-/// Banking standard: 1 hour max expiration
+/// Refresh token entity for JWT token rotation (RFC 9700 / OWASP; see ADR-0021).
+/// Token is stored HASHED (SHA-256) - if the DB is compromised, tokens are useless.
+/// Lifetime is a sliding window of JwtOptions.RefreshTokenExpirationDays (default 7 days):
+/// each rotation issues a fresh successor, and the effective session cap is enforced by the
+/// BFF's inactivity/absolute timeouts, not by this row.
 /// </summary>
 public class RefreshToken
 {
@@ -19,7 +21,8 @@ public class RefreshToken
     public required string TokenHash { get; set; }
 
     /// <summary>
-    /// Banking standard: 1 hour max
+    /// Absolute expiry of THIS token (issued-at + RefreshTokenExpirationDays). Enforced on
+    /// every read: RotateAsync treats an expired token as invalid.
     /// </summary>
     public DateTime ExpiresAt { get; set; }
 
@@ -46,8 +49,20 @@ public class RefreshToken
     /// </summary>
     public required string UserAgent { get; set; }
 
-    // Navigation properties
-    public required ApplicationUser User { get; set; }
+    /// <summary>
+    /// Optimistic-concurrency token (SQL Server rowversion, DB-generated). Guards rotation:
+    /// two concurrent refreshes of the SAME token cannot both commit — the loser's UPDATE
+    /// matches zero rows and EF raises DbUpdateConcurrencyException — so the rotation chain
+    /// can never fork (a fork would silently defeat reuse-detection). Mirrors Account.RowVersion.
+    /// </summary>
+    public byte[] RowVersion { get; set; } = null!;
+
+    // Navigation properties.
+    // User is nullable-to-CONSTRUCT on purpose: issuance sets only the UserId foreign key and
+    // never links this navigation, because DbContext.Add cascades an INSERT to any non-null
+    // reachable principal — and a caller may hand us a DETACHED user (the login path detaches
+    // it after the atomic lockout reset). The property is still populated on load via Include.
+    public ApplicationUser? User { get; set; }
     public RefreshToken? ReplacedByToken { get; set; }
 
     // Computed properties (not stored in DB)

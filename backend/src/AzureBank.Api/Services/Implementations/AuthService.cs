@@ -27,6 +27,7 @@ public class AuthService : IAuthService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly AzureBankDbContext _context;
     private readonly IJwtService _jwtService;
+    private readonly IRefreshTokenService _refreshTokenService;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IPinVerifier _pinVerifier;
     private readonly UserMapper _userMapper;
@@ -39,6 +40,7 @@ public class AuthService : IAuthService
         UserManager<ApplicationUser> userManager,
         AzureBankDbContext context,
         IJwtService jwtService,
+        IRefreshTokenService refreshTokenService,
         IPasswordHasher passwordHasher,
         IPinVerifier pinVerifier,
         UserMapper userMapper,
@@ -50,6 +52,7 @@ public class AuthService : IAuthService
         _userManager = userManager;
         _context = context;
         _jwtService = jwtService;
+        _refreshTokenService = refreshTokenService;
         _passwordHasher = passwordHasher;
         _pinVerifier = pinVerifier;
         _userMapper = userMapper;
@@ -109,12 +112,14 @@ public class AuthService : IAuthService
             }
 
             var tokenResult = _jwtService.GenerateToken(user);
+            var refreshToken = await _refreshTokenService.IssueAsync(user);
             _logger.LogInformation("User {UserId} logged in successfully", user.Id);
             ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "succeeded"));
             return new LoginResponse
             {
                 Token = tokenResult.AccessToken,
                 ExpiresAt = tokenResult.ExpiresAt, // single source of truth (the token's exp)
+                RefreshToken = refreshToken,
                 User = _userMapper.ToLoginInfo(user)
             };
         }
@@ -319,6 +324,24 @@ public class AuthService : IAuthService
 
         var tokenResult = _jwtService.GenerateToken(user);
 
+        // Registration has already durably committed the user + account. Issuing the refresh
+        // token is a best-effort convenience on top of that: if this write fails, do NOT fail
+        // the whole registration — that would 500 the client for an account that WAS created and
+        // then hand back a confusing duplicate-409 on retry. Instead the user still gets an
+        // access token now and a refresh token on their next login. (Wrapping account+token in a
+        // transaction would not help: the duplicate-409 originates from the already-committed
+        // Identity user, which UserManager.CreateAsync commits in its own unit of work.)
+        string? refreshToken = null;
+        try
+        {
+            refreshToken = await _refreshTokenService.IssueAsync(user);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Refresh-token issuance failed after registering user {UserId}; continuing without it", user.Id);
+        }
+
         _logger.LogInformation("User {UserId} registered successfully with account {AccountId}", user.Id, account.Id);
 
         return new RegisterResponse
@@ -328,6 +351,7 @@ public class AuthService : IAuthService
             Token = new Shared.DTOs.Auth.TokenResponse
             {
                 AccessToken = tokenResult.AccessToken,
+                RefreshToken = refreshToken,
                 ExpiresIn = Math.Max(0, (int)(tokenResult.ExpiresAt - DateTime.UtcNow).TotalSeconds),
                 TokenType = "Bearer",
                 ExpiresAt = tokenResult.ExpiresAt
@@ -349,12 +373,30 @@ public class AuthService : IAuthService
     }
 
     /// <inheritdoc />
+    public async Task<RefreshResponse> RefreshAsync(RefreshRequest request)
+    {
+        // Rotate first (revoke the presented token, mint a successor + detect reuse); the
+        // returned user lets us mint the matching access token without a second lookup.
+        var rotation = await _refreshTokenService.RotateAsync(request.RefreshToken);
+        var tokenResult = _jwtService.GenerateToken(rotation.User);
+
+        _logger.LogInformation("Refreshed access token for user {UserId}", rotation.User.Id);
+
+        return new RefreshResponse
+        {
+            AccessToken = tokenResult.AccessToken,
+            RefreshToken = rotation.RefreshToken,
+            ExpiresAt = tokenResult.ExpiresAt // single source of truth (the token's exp)
+        };
+    }
+
+    /// <inheritdoc />
     public async Task LogoutAsync(Guid userId)
     {
-        // For MVP: Just log the logout
-        // Future: Invalidate refresh tokens in database
+        // Revoke every active refresh token so a logout genuinely ends the session's ability
+        // to re-mint access tokens (a stolen-but-not-yet-rotated token is neutralised too).
+        await _refreshTokenService.RevokeAllForUserAsync(userId);
         _logger.LogInformation("User {UserId} logged out", userId);
-        await Task.CompletedTask;
     }
 
     /// <inheritdoc />

@@ -54,6 +54,11 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
         builder.Property(r => r.CreatedAt)
             .IsRequired();
 
+        // Optimistic-concurrency token: makes rotation un-forkable under concurrent refreshes
+        // of the same token (the losing UPDATE matches zero rows → DbUpdateConcurrencyException).
+        builder.Property(r => r.RowVersion)
+            .IsRowVersion();
+
         // ═══════════════════════════════════════════════════════════════
         // RELATIONSHIPS
         // ═══════════════════════════════════════════════════════════════

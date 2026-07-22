@@ -90,7 +90,9 @@ describe('external transfer (PR-11)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     await screen.findByText("Verify it's you");
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    // findByRole (not getByRole): the modal title can paint a tick before its Cancel button, so
+    // wait for the button itself to avoid a CI-load race (was intermittently flaky).
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     // Still on review, no receipt — the user can Send again to retry step-up.
     await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());

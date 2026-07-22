@@ -106,7 +106,9 @@ describe('step-up interceptor (PR-11)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText("Verify it's you");
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    // findByRole (not getByRole): wait for the Cancel button, not just the modal title — the
+    // title can paint a tick earlier, which raced under CI load.
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     expect(await screen.findByText('err:STEP_UP_CANCELLED')).toBeInTheDocument();
     expect(keys).toHaveLength(1); // only the initial 403 — no replay after cancel

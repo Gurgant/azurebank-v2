@@ -29,6 +29,7 @@ public class AuthServiceTests : IDisposable
     private readonly AzureBankDbContext _context;
     private readonly Mock<UserManager<ApplicationUser>> _userManagerMock;
     private readonly Mock<IJwtService> _jwtServiceMock;
+    private readonly Mock<IRefreshTokenService> _refreshTokenServiceMock;
     private readonly Mock<IPasswordHasher> _passwordHasherMock;
     private readonly UserMapper _userMapper;
     private readonly AccountMapper _accountMapper;
@@ -51,6 +52,13 @@ public class AuthServiceTests : IDisposable
             userStoreMock.Object, null!, null!, null!, null!, null!, null!, null!, null!);
 
         _jwtServiceMock = new Mock<IJwtService>();
+        _refreshTokenServiceMock = new Mock<IRefreshTokenService>();
+        // Login/register issue a refresh token; default the mock so LoginResponse/TokenResponse
+        // get a non-null value (the rotation mechanics themselves are covered in
+        // RefreshTokenServiceTests).
+        _refreshTokenServiceMock
+            .Setup(x => x.IssueAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("refresh-token-plaintext");
         _passwordHasherMock = new Mock<IPasswordHasher>();
         _userMapper = new UserMapper();
         _accountMapper = new AccountMapper();
@@ -72,6 +80,7 @@ public class AuthServiceTests : IDisposable
             _userManagerMock.Object,
             _context,
             _jwtServiceMock.Object,
+            _refreshTokenServiceMock.Object,
             _passwordHasherMock.Object,
             _pinVerifierMock.Object,
             _userMapper,
@@ -832,16 +841,62 @@ public class AuthServiceTests : IDisposable
     #region LogoutAsync Tests
 
     [Fact]
-    public async Task LogoutAsync_ValidUserId_CompletesWithoutError()
+    public async Task LogoutAsync_RevokesAllRefreshTokensForUser()
     {
         // Arrange
         var userId = Guid.NewGuid();
 
-        // Act - Should not throw
-        var act = async () => await _sut.LogoutAsync(userId);
+        // Act
+        await _sut.LogoutAsync(userId);
+
+        // Assert - logout must genuinely end the session's ability to re-mint access tokens.
+        _refreshTokenServiceMock.Verify(
+            x => x.RevokeAllForUserAsync(userId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region RefreshAsync Tests
+
+    [Fact]
+    public async Task RefreshAsync_RotatesAndMintsAccessTokenForRotatedUser()
+    {
+        // Arrange - rotation returns the owning user + the NEW refresh token.
+        var user = CreateTestUser();
+        _refreshTokenServiceMock
+            .Setup(x => x.RotateAsync("old-refresh", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RefreshRotationResult(user, "new-refresh"));
+        _jwtServiceMock
+            .Setup(x => x.GenerateToken(user))
+            .Returns(new TokenResult("new-access", DateTime.UtcNow.AddMinutes(15)));
+
+        // Act
+        var result = await _sut.RefreshAsync(new RefreshRequest { RefreshToken = "old-refresh" });
+
+        // Assert - the access token is minted for the rotated user, and the NEW refresh
+        // token is handed back (never the presented one).
+        result.AccessToken.Should().Be("new-access");
+        result.RefreshToken.Should().Be("new-refresh");
+        result.ExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
+        _jwtServiceMock.Verify(x => x.GenerateToken(user), Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_InvalidToken_PropagatesAndMintsNoAccessToken()
+    {
+        // Arrange - the rotation service is the single arbiter of validity; a rejection
+        // must surface as-is and never reach JWT minting.
+        _refreshTokenServiceMock
+            .Setup(x => x.RotateAsync("bad", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AuthenticationException("Invalid refresh token.", ErrorCodes.RefreshTokenInvalid));
+
+        // Act
+        var act = () => _sut.RefreshAsync(new RefreshRequest { RefreshToken = "bad" });
 
         // Assert
-        await act.Should().NotThrowAsync();
+        (await act.Should().ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.RefreshTokenInvalid);
+        _jwtServiceMock.Verify(x => x.GenerateToken(It.IsAny<ApplicationUser>()), Times.Never);
     }
 
     #endregion

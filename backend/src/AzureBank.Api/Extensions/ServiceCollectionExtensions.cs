@@ -133,6 +133,10 @@ public static class ServiceCollectionExtensions
             new Shared.Services.Implementations.PasswordHasher(
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
+        // Refresh-token rotation + reuse-detection (ADR-0021). Reads client IP/UA for theft
+        // forensics, so it needs the request's HttpContext.
+        services.AddHttpContextAccessor();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         // Login-timing equalizer (ADR-0012): scoped, so it takes the request's own
         // IPasswordHasher<ApplicationUser> by normal injection — no captive dependency even
         // if a custom scoped hasher is registered later. The expensive reference hash is
@@ -151,6 +155,9 @@ public static class ServiceCollectionExtensions
 
         // Background sweep of expired idempotency records
         services.AddHostedService<Services.IdempotencyCleanupService>();
+
+        // Background sweep of expired refresh tokens (hygiene — reads are expiry-filtered)
+        services.AddHostedService<Services.RefreshTokenCleanupService>();
 
         return services;
     }
