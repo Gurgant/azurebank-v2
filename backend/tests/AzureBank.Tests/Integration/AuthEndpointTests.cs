@@ -400,4 +400,112 @@ public class AuthEndpointTests : IntegrationTestBase
     }
 
     #endregion
+
+    #region Refresh Tests (ADR-0021)
+
+    /// <summary>Registers a fresh user and returns its (access, refresh) token pair.</summary>
+    private async Task<(string Access, string Refresh)> RegisterAndGetTokensAsync()
+    {
+        var uniqueId = Guid.NewGuid().ToString("N")[..8];
+        var response = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = $"rt_{uniqueId}",
+            Email = $"rt{uniqueId}@example.com",
+            Password = "SecurePass123!",
+            FirstName = "Refresh",
+            LastName = "User"
+        }, JsonOptions);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions);
+        return (result!.Data!.Token.AccessToken, result.Data.Token.RefreshToken);
+    }
+
+    [Fact]
+    public async Task Register_And_Login_IssueRefreshTokens()
+    {
+        var (_, registerRefresh) = await RegisterAndGetTokensAsync();
+        registerRefresh.Should().NotBeNullOrEmpty("registration must issue a refresh token");
+
+        // A subsequent login issues its own (distinct) refresh token.
+        var email = $"rtlogin{Guid.NewGuid():N}@example.com";
+        (await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = $"rtl_{Guid.NewGuid().ToString("N")[..8]}",
+            Email = email, Password = "SecurePass123!", FirstName = "Ref", LastName = "Log"
+        }, JsonOptions)).EnsureSuccessStatusCode();
+        var login = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = "SecurePass123!" }, JsonOptions);
+        login.StatusCode.Should().Be(HttpStatusCode.OK);
+        var loginBody = await login.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions);
+        loginBody!.Data!.RefreshToken.Should().NotBeNullOrEmpty("login must issue a refresh token");
+    }
+
+    [Fact]
+    public async Task Refresh_WithValidToken_RotatesAndReturnsNewPair()
+    {
+        var (_, refresh) = await RegisterAndGetTokensAsync();
+
+        var response = await Client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = refresh }, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<ApiResponse<RefreshResponse>>(JsonOptions);
+        result!.Data!.AccessToken.Should().NotBeNullOrEmpty();
+        result.Data.RefreshToken.Should().NotBeNullOrEmpty()
+            .And.NotBe(refresh, "rotation must hand back a NEW refresh token");
+        // ExpiresAt tracks the access token's own exp (JwtOptions.ExpirationMinutes = 15).
+        result.Data.ExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task Refresh_ImmediateReplayWithinGrace_Is401_ButLeavesSuccessorUsable()
+    {
+        var (_, refresh) = await RegisterAndGetTokensAsync();
+
+        // First rotation succeeds and yields a successor.
+        var first = await Client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = refresh }, JsonOptions);
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        var successor = (await first.Content
+            .ReadFromJsonAsync<ApiResponse<RefreshResponse>>(JsonOptions))!.Data!.RefreshToken;
+
+        // Replaying the ORIGINAL token immediately is a benign lost-response retry (within the
+        // rotation grace window) → rejected with 401...
+        var reuse = await Client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = refresh }, JsonOptions);
+        reuse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        // ...but the family is NOT revoked — the successor still rotates (genuine reuse-revoke,
+        // aged past the grace window, is proved on the SQL-gated path + in unit tests).
+        var successorUse = await Client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = successor }, JsonOptions);
+        successorUse.StatusCode.Should().Be(HttpStatusCode.OK,
+            "an immediate replay is a benign retry, not theft — it must not revoke the family");
+    }
+
+    [Fact]
+    public async Task Refresh_WithUnknownToken_Returns401()
+    {
+        var response = await Client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = "not-a-real-token" }, JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Refresh_AfterLogout_Returns401()
+    {
+        var (access, refresh) = await RegisterAndGetTokensAsync();
+
+        SetAuthHeader(access);
+        (await Client.PostAsync("/api/auth/logout", content: null)).StatusCode
+            .Should().Be(HttpStatusCode.OK);
+        ClearAuthHeader();
+
+        // Logout revoked the user's refresh tokens, so the still-held token no longer works.
+        var response = await Client.PostAsJsonAsync("/api/auth/refresh",
+            new RefreshRequest { RefreshToken = refresh }, JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    #endregion
 }

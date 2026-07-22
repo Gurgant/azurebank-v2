@@ -18,6 +18,10 @@ public static class ErrorCodes
     public const string TokenInvalid = "AUTH_TOKEN_INVALID";
     public const string TokenExpired = "AUTH_TOKEN_EXPIRED";
     public const string TokenMalformed = "AUTH_TOKEN_MALFORMED";
+    // Refresh-token rotation (POST /api/auth/refresh). Deliberately UNIFORM across every
+    // failure — unknown, expired, or reuse-detected — so the response is not an oracle for
+    // WHY a refresh was rejected (the specific reason is logged server-side; ADR-0021).
+    public const string RefreshTokenInvalid = "REFRESH_TOKEN_INVALID";
 
     // Authorization
     public const string AccessDenied = "ACCESS_DENIED";

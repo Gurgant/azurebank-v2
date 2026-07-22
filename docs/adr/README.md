@@ -31,6 +31,7 @@ An ADR is a document that captures an important architectural decision made alon
 | [ADR-0018](0018-bff-origin-hardening.md) | BFF Origin Hardening (__Host- Cookie, Fetch-Metadata, No CORS) | Accepted | 2026-07-20 |
 | [ADR-0019](0019-spa-bff-integration.md) | SPA–BFF Integration Architecture (Cookie Auth, One Error Channel) | Accepted | 2026-07-20 |
 | [ADR-0020](0020-account-number-reveal.md) | On-Demand Account-Number Reveal (Masked-by-Default + PIN-Gated) | Accepted | 2026-07-21 |
+| [ADR-0021](0021-refresh-token-rotation-bff-remint.md) | Refresh-Token Rotation with Reuse-Detection (+ BFF Silent Re-Mint) | Accepted | 2026-07-22 |
 
 ## Creating a New ADR
 

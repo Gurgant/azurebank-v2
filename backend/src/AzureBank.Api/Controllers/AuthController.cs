@@ -78,6 +78,23 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Exchange a refresh token for a fresh access + refresh token pair (rotation).
+    /// </summary>
+    /// <param name="request">The current refresh token</param>
+    /// <returns>New access token, new refresh token, and its expiry</returns>
+    [EndpointSummary("Refresh access token")]
+    [HttpPost("refresh")]
+    [AllowAnonymous] // the refresh token IS the credential; the access token may be expired
+    [ProducesResponseType(typeof(ApiResponse<RefreshResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)] // invalid/expired/reused
+    public async Task<ActionResult<ApiResponse<RefreshResponse>>> Refresh([FromBody] RefreshRequest request)
+    {
+        var result = await _authService.RefreshAsync(request);
+        return Ok(ApiResponse<RefreshResponse>.Success(result, "Token refreshed"));
+    }
+
+    /// <summary>
     /// Get current authenticated user information.
     /// </summary>
     /// <returns>User profile information</returns>

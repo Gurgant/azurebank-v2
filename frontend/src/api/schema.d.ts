@@ -663,6 +663,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange a refresh token for a fresh access + refresh token pair (rotation). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description The current refresh token */
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RefreshRequest"];
+                    "text/json": components["schemas"]["RefreshRequest"];
+                    "application/*+json": components["schemas"]["RefreshRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfRefreshResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/me": {
         parameters: {
             query?: never;
@@ -1893,6 +1954,10 @@ export interface components {
             data?: null | components["schemas"]["RecipientLookupResponse"];
             message?: null | string;
         };
+        ApiResponseOfRefreshResponse: {
+            data?: null | components["schemas"]["RefreshResponse"];
+            message?: null | string;
+        };
         ApiResponseOfRegisterResponse: {
             data?: null | components["schemas"]["RegisterResponse"];
             message?: null | string;
@@ -2045,6 +2110,12 @@ export interface components {
             token: string;
             /** Format: date-time */
             expiresAt: string;
+            /**
+             * @description Refresh token (plaintext, shown once) for rotating the short-lived access token via
+             *     POST /api/auth/refresh. In the BFF deployment this is captured server-side and never
+             *     reaches the browser.
+             */
+            refreshToken: string;
             user: components["schemas"]["UserLoginInfo"];
         };
         PaginatedResponseOfTransactionResponse: {
@@ -2083,6 +2154,31 @@ export interface components {
             /** @description Whether the user exists in the system */
             exists: boolean;
         };
+        /**
+         * @description Request body for POST /api/auth/refresh: exchanges a valid refresh token for a fresh
+         *     access + refresh token pair (rotation). The refresh token is the SOLE credential — no
+         *     bearer access token is required (the access token being refreshed may already be expired).
+         */
+        RefreshRequest: {
+            refreshToken: string;
+        };
+        /**
+         * @description Result of a successful refresh-token rotation: a new short-lived access token AND a NEW
+         *     refresh token. The presented refresh token is now revoked — the caller MUST replace its
+         *     stored value with this one. Replaying the old token is rejected and, because it is now a
+         *     revoked token, trips reuse-detection (revoking the whole active token set for the user).
+         */
+        RefreshResponse: {
+            /** @description Fresh JWT access token (short-lived, per JwtOptions.ExpirationMinutes). */
+            accessToken: string;
+            /** @description The NEW refresh token (plaintext, shown once). Store it; discard the old one. */
+            refreshToken: string;
+            /**
+             * Format: date-time
+             * @description Absolute expiry of the new access token (from its own exp claim).
+             */
+            expiresAt: string;
+        };
         RegisterRequest: {
             /** @description Must start with a letter and contain only lowercase letters, numbers, and underscores. */
             azureTag: string;
@@ -2113,6 +2209,11 @@ export interface components {
         TokenResponse: {
             /** @description JWT access token */
             accessToken: string;
+            /**
+             * @description Refresh token (plaintext, shown once) for rotating the access token via
+             *     POST /api/auth/refresh. In the BFF deployment it is captured server-side.
+             */
+            refreshToken: string;
             /**
              * Format: int32
              * @description Token expiration time in seconds

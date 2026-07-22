@@ -599,6 +599,70 @@
         ]
       }
     },
+    "/api/auth/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Exchange a refresh token for a fresh access + refresh token pair (rotation).",
+        "requestBody": {
+          "description": "The current refresh token",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfRefreshResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          { }
+        ]
+      }
+    },
     "/api/auth/me": {
       "get": {
         "tags": [
@@ -2134,6 +2198,27 @@
           }
         }
       },
+      "ApiResponseOfRefreshResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RefreshResponse"
+              }
+            ]
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ApiResponseOfRegisterResponse": {
         "type": "object",
         "properties": {
@@ -2483,6 +2568,7 @@
         "required": [
           "token",
           "expiresAt",
+          "refreshToken",
           "user"
         ],
         "type": "object",
@@ -2493,6 +2579,10 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Refresh token (plaintext, shown once) for rotating the short-lived access token via\r\nPOST /api/auth/refresh. In the BFF deployment this is captured server-side and never\r\nreaches the browser."
           },
           "user": {
             "$ref": "#/components/schemas/UserLoginInfo"
@@ -2604,6 +2694,43 @@
         },
         "description": "Response for recipient lookup by AzureTag.\r\nUsed for transfer recipient verification."
       },
+      "RefreshRequest": {
+        "required": [
+          "refreshToken"
+        ],
+        "type": "object",
+        "properties": {
+          "refreshToken": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "description": "Request body for POST /api/auth/refresh: exchanges a valid refresh token for a fresh\r\naccess + refresh token pair (rotation). The refresh token is the SOLE credential — no\r\nbearer access token is required (the access token being refreshed may already be expired)."
+      },
+      "RefreshResponse": {
+        "required": [
+          "accessToken",
+          "refreshToken",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "Fresh JWT access token (short-lived, per JwtOptions.ExpirationMinutes)."
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "The NEW refresh token (plaintext, shown once). Store it; discard the old one."
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "Absolute expiry of the new access token (from its own exp claim).",
+            "format": "date-time"
+          }
+        },
+        "description": "Result of a successful refresh-token rotation: a new short-lived access token AND a NEW\r\nrefresh token. The presented refresh token is now revoked — the caller MUST replace its\r\nstored value with this one. Replaying the old token is rejected and, because it is now a\r\nrevoked token, trips reuse-detection (revoking the whole active token set for the user)."
+      },
       "RegisterRequest": {
         "required": [
           "azureTag",
@@ -2689,6 +2816,7 @@
       "TokenResponse": {
         "required": [
           "accessToken",
+          "refreshToken",
           "expiresIn",
           "expiresAt"
         ],
@@ -2697,6 +2825,10 @@
           "accessToken": {
             "type": "string",
             "description": "JWT access token"
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Refresh token (plaintext, shown once) for rotating the access token via\r\nPOST /api/auth/refresh. In the BFF deployment it is captured server-side."
           },
           "expiresIn": {
             "type": "integer",

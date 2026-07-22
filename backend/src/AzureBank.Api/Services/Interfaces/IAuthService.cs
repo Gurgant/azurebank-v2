@@ -19,7 +19,12 @@ public interface IAuthService
     Task<RegisterResponse> RegisterAsync(RegisterRequest request);
 
     /// <summary>
-    /// Logs out a user (invalidates refresh token if applicable).
+    /// Exchanges a valid refresh token for a fresh access + refresh token pair (rotation).
+    /// </summary>
+    Task<RefreshResponse> RefreshAsync(RefreshRequest request);
+
+    /// <summary>
+    /// Logs out a user, revoking all of their active refresh tokens.
     /// </summary>
     Task LogoutAsync(Guid userId);
 
