@@ -28,7 +28,7 @@ public class SessionService : ISessionService
     }
 
     /// <inheritdoc />
-    public string CreateSession(string accessToken, DateTime tokenExpiry, UserLoginInfo userInfo)
+    public string CreateSession(string accessToken, DateTime tokenExpiry, string? refreshToken, UserLoginInfo userInfo)
     {
         var sessionId = GenerateSecureSessionId();
         var now = DateTime.UtcNow;
@@ -39,6 +39,7 @@ public class SessionService : ISessionService
             UserId = userInfo.Id,
             AccessToken = accessToken,
             TokenExpiry = tokenExpiry,
+            RefreshToken = refreshToken,
             SessionCreated = now,
             LastActivity = now,
             AuthLevel = 1, // Level 1 = authenticated via email/password
@@ -148,13 +149,14 @@ public class SessionService : ISessionService
     }
 
     /// <inheritdoc />
-    public void RefreshSession(string sessionId, string newToken, DateTime expiresAt)
+    public void RefreshSession(string sessionId, string newToken, DateTime expiresAt, string? newRefreshToken)
     {
         var session = GetSession(sessionId);
         if (session != null)
         {
             session.AccessToken = newToken;
             session.TokenExpiry = expiresAt;
+            session.RefreshToken = newRefreshToken;
             _tokenStore.UpdateSessionAsync(session).GetAwaiter().GetResult();
             _logger.LogDebug("Session refreshed: {SessionId}", sessionId[..Math.Min(8, sessionId.Length)]);
         }

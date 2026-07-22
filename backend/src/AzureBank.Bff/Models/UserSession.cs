@@ -28,6 +28,14 @@ public class UserSession
     public required DateTime TokenExpiry { get; set; }
 
     /// <summary>
+    /// Refresh token used to silently re-mint the access token — rotated on every re-mint
+    /// (each refresh returns a NEW one, stored here in place of the old). Never reaches the
+    /// browser. Null when registration's best-effort issuance failed: such a session cannot
+    /// re-mint and expires with its access token (see InMemoryTokenStore.IsSessionValid).
+    /// </summary>
+    public string? RefreshToken { get; set; }
+
+    /// <summary>
     /// When the session was created - for absolute timeout enforcement.
     /// </summary>
     public required DateTime SessionCreated { get; init; }

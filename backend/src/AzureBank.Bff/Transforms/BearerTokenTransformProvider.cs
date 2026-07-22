@@ -29,23 +29,25 @@ public class BearerTokenTransformProvider : ITransformProvider
     {
         context.AddRequestTransform(async transformContext =>
         {
-            var sessionService = transformContext.HttpContext.RequestServices
-                .GetRequiredService<ISessionService>();
-            var sessionOptions = transformContext.HttpContext.RequestServices
-                .GetRequiredService<IOptions<BffSessionOptions>>();
+            var httpContext = transformContext.HttpContext;
+            var cookieName = httpContext.RequestServices
+                .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
 
-            var cookieName = sessionOptions.Value.CookieName;
-
-            if (transformContext.HttpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId))
+            if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
+                && !string.IsNullOrEmpty(sessionId))
             {
-                if (sessionService.TryGetToken(sessionId, out var token) && token != null)
+                // Silently re-mint the access token if it is within the refresh skew window, so
+                // the 15-minute JWT no longer hard-kills an active session (ADR-0021, PR-2). A
+                // null result (session gone / refresh token dead) means we inject NO Authorization
+                // header — the API then 401s and the SPA's existing session-expired path fires.
+                var refresher = httpContext.RequestServices.GetRequiredService<ITokenRefresher>();
+                var token = await refresher.GetFreshAccessTokenAsync(sessionId, httpContext.RequestAborted);
+                if (!string.IsNullOrEmpty(token))
                 {
                     transformContext.ProxyRequest.Headers.Authorization =
                         new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 }
             }
-
-            await Task.CompletedTask;
         });
     }
 }

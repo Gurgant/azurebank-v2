@@ -135,6 +135,9 @@ try
     // Session services (singleton - shared across requests)
     builder.Services.AddSingleton<ITokenStoreService, InMemoryTokenStore>();
     builder.Services.AddSingleton<ISessionService, SessionService>();
+    // Silent access-token re-mint (ADR-0021 PR-2). Singleton: it owns the process-wide
+    // per-session single-flight gate map and only depends on singleton-safe services.
+    builder.Services.AddSingleton<ITokenRefresher, TokenRefresher>();
 
     // Background services
     builder.Services.AddHostedService<SessionCleanupService>();

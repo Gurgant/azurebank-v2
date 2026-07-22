@@ -106,8 +106,12 @@ public class InMemoryTokenStore : ITokenStoreService
             return false;
         }
 
-        // Check token expiry
-        if (session.IsTokenExpired)
+        // Access-token expiry no longer kills a session that can silently re-mint (ADR-0021,
+        // PR-2): a session holding a refresh token slides within the inactivity/absolute budgets
+        // above, and its 15-minute JWT is re-minted inline before the next proxied call. A
+        // TOKENLESS session (registration's best-effort issuance failed) keeps the old hard-stop
+        // instead of becoming a zombie that 401s on every request.
+        if (session.IsTokenExpired && session.RefreshToken is null)
         {
             return false;
         }

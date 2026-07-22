@@ -86,6 +86,7 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
         var sessionId = sessions.CreateSession(
             "fake-jwt",
             DateTime.UtcNow.AddHours(1),
+            "fake-refresh",
             new UserLoginInfo
             {
                 Id = Guid.NewGuid(),

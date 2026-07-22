@@ -1,6 +1,6 @@
 # ADR-0021: Refresh-token rotation with reuse-detection (+ BFF silent re-mint)
 
-**Status**: Accepted (PR-1: API rotation). BFF silent re-mint is planned as a follow-up PR (PR-2).
+**Status**: Accepted — PR-1 (API rotation) and PR-2 (BFF silent re-mint) both shipped.
 
 **Date**: 2026-07-22
 
@@ -87,13 +87,37 @@ in two PRs so the auth-critical surface stays reviewable:
    (`ReplacedByTokenId`, `DeleteBehavior.Restrict`), the sweep first NULLs intra-set links,
    then deletes.
 
-**PR-2 (planned — BFF silent re-mint):** add the refresh token to `UserSession`; a
-single-flight `EnsureFreshAccessToken` used by the YARP bearer-injection transform **and** the
-verify-pin/set-pin paths; decouple `IsSessionValid` from access-token expiry so the 15-minute
-token is re-minted inline while the session slides within its inactivity(30 m)/absolute(60 m)
-budget. **No mandatory FE change** — the existing client-activity sliding-window warning
-becomes *correct* under re-mint, and the global-401 handler already covers reuse-detection
-revocation.
+**PR-2 (shipped — BFF silent re-mint):** the BFF captures the refresh token into `UserSession`
+(login + best-effort on register) and re-mints the access token **inline, on-demand** via a new
+`ITokenRefresher`:
+
+- **Where:** the YARP bearer-injection transform (every proxied `/api/**` call) and the
+  verify-pin / set-pin controller paths (which bypass the transform) call
+  `GetFreshAccessTokenAsync` first. It re-mints when the token is within a **60 s skew** window.
+- **Single-flight:** one refresh in flight per session (a per-session `SemaphoreSlim` with a
+  double-check after acquiring), so concurrent proxied calls share ONE rotation instead of each
+  tripping the API's reuse-detection.
+- **Failure policy:** a **401** from `/api/auth/refresh` (the refresh token is dead) revokes the
+  BFF session (forced re-login); a **transient** (network / 5xx) keeps the session and forwards
+  the current token, so a blip can't log the user out.
+- **Validity decoupling:** `InMemoryTokenStore.IsSessionValid` no longer kills a session on
+  access-token expiry **when it holds a refresh token** — it slides within the inactivity(30 m) /
+  absolute(60 m) budgets. A tokenless session (register best-effort failure) keeps the old
+  hard-stop.
+- **Logout propagation:** BFF logout now best-effort calls the API's `/api/auth/logout` (with a
+  fresh Bearer) to revoke the refresh tokens, then always revokes the local session.
+- **Raw-refresh block:** a browser-driven `POST /api/auth/refresh` through the proxy is
+  short-circuited to **404** in `AuthLevelMiddleware` — only the BFF drives rotation.
+
+**No FE change** — the existing client-activity sliding-window warning becomes *correct* under
+re-mint, and the global-401 handler already covers reuse-detection revocation.
+
+**Standards alignment:** this matches the IETF *OAuth 2.0 for Browser-Based Apps* BCP (draft-26)
+§6.1 — a confidential BFF that holds tokens server-side and refreshes **on-demand, inline** (not
+on a background timer), invalidating the session when the refresh token dies. The session's 60-min
+absolute cap is ≤ the 7-day refresh-token lifetime, so a live session can always re-mint. (Duende's
+BFF would use a *reusable* refresh token for a confidential client; we keep rotation + reuse-detection
+as a deliberate defense-in-depth showcase, per RFC 9700 §4.14 which makes it optional here.)
 
 ### Key design decisions
 
@@ -125,12 +149,26 @@ revocation.
 - **No `FamilyId` column.** Reuse revokes *all* of a user's active tokens, not just the
   affected lineage — on multi-device this logs out every device. Acceptable (and arguably
   correct) as a theft response; `FamilyId` is the future precise-revocation refinement.
-- **Orphan refresh rows until PR-2.** PR-1 issues a refresh token on every login (and,
-  best-effort, registration) that the current BFF ignores; those rows are **inert from the
-  current BFF's perspective** (a direct `POST /api/auth/refresh` caller could still use them
-  until they expire) and are reaped by the cleanup sweep.
-- **Sender-constraining (DPoP/mTLS) is out of scope** — not required for a confidential BFF;
-  a future option, not a gap.
+- **Orphan refresh rows on BFF restart.** With PR-2 the BFF captures and uses the refresh token,
+  and logout revokes it, so refresh rows are no longer routinely orphaned. The remaining case is
+  a BFF **restart** (or a session lost from the in-memory store): the cookie's session id maps to
+  nothing → forced re-login, and that session's API-side refresh token lingers until its 7-day
+  expiry / the cleanup sweep. This is a facet of the in-memory-store residual above (Redis fixes
+  it); the tokens are inert (no session references them) in the meantime.
+- **A dead refresh token is discovered lazily (PR-2).** If a session's refresh token is revoked
+  out-of-band (reuse-detection from another client, or an admin revoke), the BFF learns it only on
+  the next *re-mint attempt* (a proxied `/api/**` call or a verify-pin / set-pin / logout → 401 →
+  session revoked). The no-upstream `/bff/auth/me` and `/bff/auth/session-status` endpoints keep
+  reporting the session as authenticated until then, so the SPA may show a logged-in shell whose
+  first real data call bounces. Bounded by the 60-min absolute timeout, and **no data is accessible
+  with a dead token**. Making `/me` re-mint would close it but conflicts with the deliberately-
+  not-a-keep-alive design (ADR-0018) — left as a known behavior.
+- **Sender-constraining (DPoP / mTLS) — considered and deliberately rejected.** RFC 9700 §4.14
+  makes it *optional* for a confidential client (the BFF authenticates to the AS and never exposes
+  tokens to the browser, which is already the boundary DPoP would protect), and DPoP in a BFF is a
+  known architectural mismatch — the proof must be generated where the token lives (the server), so
+  it adds key-management for no attacker-model gain in this topology. A future option if the
+  topology changes, not a gap.
 
 ## Verification
 
@@ -148,3 +186,10 @@ revocation.
   re-inserting the detached principal**.
   InMemory only approximates the relational + concurrency paths. Full suite green on InMemory +
   SQL Server (2×).
+- BFF (`TokenRefreshTests`): a proxied call with an expired token re-mints and forwards the NEW
+  Bearer, rotating the stored refresh token; N concurrent calls re-mint **exactly once**
+  (single-flight); a refresh-401 revokes the session; a transient keeps it (current token
+  forwarded); a tokenless session still dies at token expiry while a session with a refresh token
+  **outlives** it; logout propagates to the API with a Bearer and revokes locally even when the
+  API call fails; a raw proxied `/api/auth/refresh` is **404** and never reaches the backend;
+  verify-pin re-mints and calls the API with the fresh Bearer.

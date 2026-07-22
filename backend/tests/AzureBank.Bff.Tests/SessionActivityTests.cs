@@ -32,6 +32,7 @@ public class SessionActivityTests : IClassFixture<WebApplicationFactory<Program>
         var sessionId = sessions.CreateSession(
             "fake-jwt",
             DateTime.UtcNow.AddHours(1),
+            "fake-refresh",
             new UserLoginInfo
             {
                 Id = Guid.NewGuid(),

@@ -202,6 +202,10 @@ services.AddSession(options =>
 | **Inactivity** | 30 min | 10 min | Session expires after idle |
 | **Absolute** | 60 min | 20 min | Maximum session lifetime |
 
+> The 15-min access token no longer bounds the session: the BFF silently re-mints it via
+> refresh-token rotation (ADR-0021), so an active session slides within the inactivity/absolute
+> budgets above. A refresh-token reuse/revocation (or logout) ends the session immediately.
+
 ### 3.4 Session Data Structure
 
 ```csharp
@@ -210,6 +214,7 @@ public class UserSession
     public string UserId { get; set; }
     public string AccessToken { get; set; }
     public DateTime TokenExpiry { get; set; }
+    public string? RefreshToken { get; set; }  // Rotated; drives silent re-mint (ADR-0021)
     public DateTime SessionCreated { get; set; }
     public DateTime LastActivity { get; set; }
     public int AuthLevel { get; set; }  // Current authentication level
