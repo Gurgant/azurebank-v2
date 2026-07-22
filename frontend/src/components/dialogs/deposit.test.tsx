@@ -207,6 +207,21 @@ describe('deposit (T3 — idempotent mutation)', () => {
     expect(screen.getByText('Deposit Money')).toBeInTheDocument(); // still open
   });
 
+  it('freezes body edits mid-flight so the pending intent cannot be rotated/nulled', async () => {
+    // A body edit during submit would run onBodyEdit → resetIntent(), dropping the retained
+    // key out from under the in-flight request; a later NETWORK/5xx could then close or
+    // resubmit into a NEW intent. Every body control is disabled while submitting.
+    server.use(http.post('*/api/transactions/deposit', () => new Promise<Response>(() => {})));
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Deposit amount')).toBeDisabled());
+    expect(screen.getByRole('button', { name: '€200' })).toBeDisabled();
+    expect(screen.getByLabelText('Description')).toBeDisabled();
+  });
+
   it('shows an inline hint and disables the CTA for an over-limit amount', async () => {
     renderDeposit();
     await userEvent.type(screen.getByLabelText('Deposit amount'), '1000001');

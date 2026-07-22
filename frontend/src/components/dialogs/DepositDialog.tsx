@@ -418,7 +418,11 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
 
   // Any body-affecting edit rotates the key: the old key + a new body is a raw-byte
   // fingerprint mismatch → 422 KEY_REUSE. Also clears transient in-flight/error state.
+  // Blocked while a request is in flight: rotating/nulling the key out from under a pending
+  // submit would defeat the retained-key guard (a subsequent NETWORK/5xx/IN_FLIGHT could
+  // then close/resubmit into a NEW intent while the original still settles).
   const onBodyEdit = () => {
+    if (isSubmitting) return;
     resetIntent();
     setInFlight(false);
     setError(null);
@@ -446,6 +450,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   };
 
   const handleSelectAccount = (account: Account) => {
+    if (isSubmitting) return; // a div can't be `disabled` — guard the mid-flight edit here
     setSelectedAccount(account);
     onBodyEdit();
   };
@@ -627,6 +632,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                   aria-label="Deposit amount"
                   className={styles.amountInput}
                   value={amountInput}
+                  disabled={isSubmitting}
                   onChange={(e) => handleAmountChange(e.target.value)}
                 />
               </div>
@@ -648,6 +654,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                     amount === quickAmount ? styles.quickBtnSelected : ''
                   }`}
                   onClick={() => handleQuickAmount(quickAmount)}
+                  disabled={isSubmitting}
                 >
                   €{quickAmount}
                 </button>
@@ -661,6 +668,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               maxLength={100}
               className={styles.descriptionInput}
               value={description}
+              disabled={isSubmitting}
               onChange={(e) => {
                 setDescription(e.target.value);
                 onBodyEdit();

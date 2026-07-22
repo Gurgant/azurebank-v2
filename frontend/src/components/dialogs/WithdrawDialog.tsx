@@ -356,8 +356,12 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const availableBalance = selectedAccount?.balance ?? 0;
 
   // Any body-affecting edit (amount/account/description/PIN) rotates the key: the old key
-  // + a new body is a raw-byte fingerprint mismatch → 422 KEY_REUSE.
+  // + a new body is a raw-byte fingerprint mismatch → 422 KEY_REUSE. Never while a request
+  // is in flight — nulling the key out from under a pending submit would defeat the
+  // retained-key dismissal guard. (Structurally the body isn't reachable mid-submit here —
+  // the PIN step's input is disabled — but the invariant is stated uniformly.)
   const onBodyEdit = () => {
+    if (isSubmitting) return;
     resetIntent();
     setInFlight(false);
     setError(null);
