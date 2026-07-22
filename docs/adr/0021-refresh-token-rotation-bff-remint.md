@@ -55,14 +55,18 @@ in two PRs so the auth-critical surface stays reviewable:
 1. **Issue on login/register.** A refresh token = **256 bits of CSPRNG entropy**, URL-safe
    Base64 (same scheme as the BFF session id), returned to the caller **once**; only its
    **SHA-256 → Base64** hash is persisted (`ValidationRules.TokenHashLength = 44`). Lifetime =
-   `now + RefreshTokenExpirationDays` (7 days).
+   `now + RefreshTokenExpirationDays` (7 days). Login issues one on every success (an issuance
+   failure fails the login), but registration issues one **best-effort** — the user + account
+   are already committed, so a token-write failure returns a **null** token (the response field
+   is nullable) and the user obtains one at their next login, rather than failing the register.
 2. **`POST /api/auth/refresh`** (`[AllowAnonymous]` — the refresh token *is* the credential;
    the access token being refreshed may already be expired). Rotates: the presented token is
    revoked, a chained successor is minted (`ReplacedByTokenId`), and a fresh access token is
    minted for the same user.
-3. **Reuse-detection = theft response.** Replaying an already-revoked token revokes **every
-   active refresh token for that user** (matches the entity's documented "revoke ALL user
-   tokens" intent + the existing `IX_RefreshTokens_UserId_Active` index) and returns 401.
+3. **Reuse-detection = theft response.** Replaying an already-revoked token — **outside the
+   grace window (item 5)** — revokes **every active refresh token for that user** (matches the
+   entity's documented "revoke ALL user tokens" intent + the existing
+   `IX_RefreshTokens_UserId_Active` index) and returns 401.
 4. **Uniform failure.** Unknown / expired / reused all return **401 `REFRESH_TOKEN_INVALID`** —
    an identical status + code + body, so the response is never an oracle for *why* a refresh
    was rejected (the specific reason is logged server-side as a `SecurityEvent`).
@@ -97,7 +101,7 @@ revocation.
 | Reuse response | **Revoke ALL the user's active tokens** | Matches the entity's documented intent + the existing user-active index; no migration. Per-family `FamilyId` revocation (multi-device precision) is a future refinement. |
 | Concurrency | **Optimistic-concurrency rowversion on the presented token + a short (10 s) grace window** | Rotation is un-forkable *regardless of caller* — concurrent rotations of the same token can't both commit (loser → benign 401), so reuse-detection can't be silently bypassed. A just-rotated token replayed within the window is a benign lost-response retry, not theft. (The BFF still adds single-flight in PR-2 to avoid the wasted round-trip, but correctness no longer depends on it.) |
 | Failure signalling | **Uniform 401 `REFRESH_TOKEN_INVALID`** | No unknown-vs-expired-vs-reuse oracle. |
-| Token lifetime | **7-day sliding** (bounded in practice by the BFF session's 60 m absolute cap) | Aligns with RFC 9700 idle-expiry; the session store is the real bound. |
+| Token lifetime | **7-day sliding** | Aligns with RFC 9700 idle-expiry. **PR-1 enforces only this 7-day lifetime.** In the deployed BFF model (**PR-2**) the session's 30 m-inactivity / 60 m-absolute timeouts become the effective cap — PR-1 does not itself bound the session (the BFF ignores the refresh token until PR-2). |
 
 ## Consequences
 
@@ -119,8 +123,9 @@ revocation.
 - **No `FamilyId` column.** Reuse revokes *all* of a user's active tokens, not just the
   affected lineage — on multi-device this logs out every device. Acceptable (and arguably
   correct) as a theft response; `FamilyId` is the future precise-revocation refinement.
-- **Orphan refresh rows until PR-2.** PR-1 issues a refresh token on every login/register that
-  the current BFF ignores; those rows are inert and reaped by the cleanup sweep.
+- **Orphan refresh rows until PR-2.** PR-1 issues a refresh token on every login (and,
+  best-effort, registration) that the current BFF ignores; those rows are inert and reaped by
+  the cleanup sweep.
 - **Sender-constraining (DPoP/mTLS) is out of scope** — not required for a confidential BFF;
   a future option, not a gap.
 
