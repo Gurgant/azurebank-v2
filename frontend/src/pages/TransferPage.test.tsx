@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -65,7 +65,9 @@ describe('external transfer (PR-11)', () => {
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
     expect(screen.getByText('-€50.00')).toBeInTheDocument();
     expect(screen.getByText('€1,200.50')).toBeInTheDocument(); // 1250.50 - 50
-    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    // findBy: the step-up modal's EXIT is async — until its aria-hidden lifts off the
+    // background, role queries can't see the receipt buttons (P1.9 sweep).
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
 
@@ -97,16 +99,10 @@ describe('external transfer (PR-11)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
       await screen.findByText("Verify it's you");
-      // The dialog is aria-hidden during its Fluent open transition, and on a starved CI
-      // runner that transition can stall for 5s+ (two consecutive CI runs proved the strict
-      // role query NEVER resolves there, while the title — found by TEXT, which ignores
-      // aria-hidden — shows the button is really in the DOM). So query hidden-inclusive and
-      // click via fireEvent (no interactivity checks mid-transition). What this test pins is
-      // cancel-returns-to-review, not the dialog's aria lifecycle — the step-up suite and
-      // the live browser cover that.
-      fireEvent.click(
-        await screen.findByRole('button', { name: 'Cancel', hidden: true }, { timeout: 5000 }),
-      );
+      // STRICT role query again (the #34 hidden:true workaround is retired): with reduced
+      // motion stubbed in setup, Fluent skips the dialog's open transition, so the surface
+      // is never stuck aria-hidden and the accessible button resolves deterministically.
+      await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
       // Still on review, no receipt — the user can Send again to retry step-up.
       // (Same starved-runner headroom for the exit transition.)
