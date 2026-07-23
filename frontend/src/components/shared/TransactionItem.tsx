@@ -200,7 +200,9 @@ export function TransactionItem({
       </IconContainer>
 
       <div className={styles.content}>
-        <Text className={styles.description}>{counterparty || description || getTypeLabel(type)}</Text>
+        <Text className={styles.description}>
+          {counterparty || description || getTypeLabel(type)}
+        </Text>
         <Text className={styles.meta}>{format(new Date(date), 'MMM d, yyyy')}</Text>
       </div>
 
