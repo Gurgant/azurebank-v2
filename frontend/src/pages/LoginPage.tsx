@@ -42,7 +42,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 const loginNavStateSchema = z.object({
   from: z.object({ pathname: z.string().optional() }).optional(),
   reason: z.literal('expired').optional(),
-  prefillEmail: z.string().optional(),
+  prefillEmail: z.email().optional(),
 });
 type LoginNavState = z.infer<typeof loginNavStateSchema>;
 
