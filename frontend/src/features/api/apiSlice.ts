@@ -7,6 +7,12 @@ import type {
   BffSessionStatusResponse,
 } from '../../api/bffTypes';
 import { unwrap } from '../../api/envelope';
+import {
+  bffLoginResponseSchema,
+  bffMeResponseSchema,
+  bffPinVerificationResponseSchema,
+  bffSessionStatusResponseSchema,
+} from '../../api/bffSchemas';
 import { baseQueryWithStepUp } from '../../api/baseQueryWithStepUp';
 import type { components } from '../../api/schema';
 
@@ -293,13 +299,15 @@ export const apiSlice = createApi({
 
     login: builder.mutation<BffLoginResponse, LoginRequest>({
       query: (body) => ({ url: '/bff/auth/login', method: 'POST', body }),
-      transformResponse: (response: { data?: BffLoginResponse | null }) => unwrap(response),
+      transformResponse: (response: { data?: BffLoginResponse | null }) =>
+        unwrap(response, bffLoginResponseSchema),
       invalidatesTags: (_result, error) => (error ? [] : ['Session']),
     }),
 
     register: builder.mutation<BffLoginResponse, RegisterRequest>({
       query: (body) => ({ url: '/bff/auth/register', method: 'POST', body }),
-      transformResponse: (response: { data?: BffLoginResponse | null }) => unwrap(response),
+      transformResponse: (response: { data?: BffLoginResponse | null }) =>
+        unwrap(response, bffLoginResponseSchema),
       invalidatesTags: (_result, error) => (error ? [] : ['Session']),
     }),
 
@@ -307,7 +315,8 @@ export const apiSlice = createApi({
       // B3 — the ONE bootstrap probe (D6), and the deliberate "Stay signed in"
       // keep-alive: the BFF counts it as activity.
       query: () => '/bff/auth/me',
-      transformResponse: (response: { data?: BffMeResponse | null }) => unwrap(response),
+      transformResponse: (response: { data?: BffMeResponse | null }) =>
+        unwrap(response, bffMeResponseSchema),
       providesTags: [{ type: 'Session' as const, id: 'CURRENT' }],
     }),
 
@@ -323,6 +332,9 @@ export const apiSlice = createApi({
       // deliberately does NOT count it as session activity, so it can never
       // keep a session alive (ADR-0018). Never poll it on a timer regardless.
       query: () => '/bff/auth/session-status',
+      // Bare response — validate the raw body directly (no envelope to unwrap).
+      transformResponse: (response: BffSessionStatusResponse) =>
+        bffSessionStatusResponseSchema.parse(response),
       providesTags: [{ type: 'Session' as const, id: 'STATUS' }],
     }),
 
@@ -331,7 +343,7 @@ export const apiSlice = createApi({
       // channel would trip global 401/step-up handling).
       query: (body) => ({ url: '/bff/auth/verify-pin', method: 'POST', body }),
       transformResponse: (response: { data?: BffPinVerificationResponse | null }) =>
-        unwrap(response),
+        unwrap(response, bffPinVerificationResponseSchema),
       invalidatesTags: (_result, error) =>
         error ? [] : [{ type: 'Session' as const, id: 'STATUS' }],
     }),

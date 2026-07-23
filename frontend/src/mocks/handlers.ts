@@ -881,7 +881,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   }
   mockState.session = { ...MOCK_USER };
   return HttpResponse.json({
-    data: { user: { ...MOCK_USER }, expiresAt: '2026-07-20T13:00:00.0000000Z' },
+    data: { user: { ...MOCK_USER }, expiresAt: '2099-01-01T00:00:00.0000000Z' },
     message: 'Login successful',
   });
 });
@@ -925,7 +925,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   ];
   return HttpResponse.json(
     {
-      data: { user, expiresAt: '2026-07-20T13:00:00.0000000Z' },
+      data: { user, expiresAt: '2099-01-01T00:00:00.0000000Z' },
       message: 'Registration successful',
     },
     { status: 201 },
@@ -944,9 +944,11 @@ const me = http.get('*/bff/auth/me', () => {
         authLevel: mockState.authLevel,
         createdAt: '2026-07-20T12:00:00.0000000Z',
         lastActivity: '2026-07-20T12:10:00.0000000Z',
-        expiresAt: '2026-07-20T13:00:00.0000000Z',
+        expiresAt: '2099-01-01T00:00:00.0000000Z',
         isPinVerified: mockState.authLevel === 2,
-        pinExpiresAt: mockState.authLevel === 2 ? '2026-07-20T12:15:00.0000000Z' : null,
+        // Future (before the session's own expiry) so a PIN-verified fixture is self-consistent —
+        // isPinVerified:true must not ship an already-elapsed pinExpiresAt.
+        pinExpiresAt: mockState.authLevel === 2 ? '2098-01-01T00:00:00.0000000Z' : null,
       },
     },
     message: null,

@@ -22,6 +22,7 @@ import { useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { formatCurrency } from '../../utils/format';
+import { amountIsValid } from '../../utils/amountSchema';
 import { PinInput } from '../PinInput';
 
 // ============================================
@@ -415,7 +416,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     setInFlight(false);
   };
 
-  const isAmountValid = amount >= MIN_AMOUNT && amount <= MAX_AMOUNT && amount <= availableBalance;
+  const isAmountValid = amountIsValid(amount, {
+    min: MIN_AMOUNT,
+    max: MAX_AMOUNT,
+    balance: availableBalance,
+  });
   const newBalance = selectedAccount ? availableBalance - amount : 0;
 
   const amountHint =

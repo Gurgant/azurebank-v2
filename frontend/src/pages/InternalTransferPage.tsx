@@ -24,6 +24,7 @@ import {
 } from '../features/api/apiSlice';
 import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
+import { amountIsValid } from '../utils/amountSchema';
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
 const MIN_AMOUNT = 0.01;
@@ -297,7 +298,11 @@ export function InternalTransferPage() {
     onBodyEdit();
   };
 
-  const isAmountValid = amount >= MIN_AMOUNT && amount <= MAX_AMOUNT && amount <= availableBalance;
+  const isAmountValid = amountIsValid(amount, {
+    min: MIN_AMOUNT,
+    max: MAX_AMOUNT,
+    balance: availableBalance,
+  });
   const canReview =
     !!fromAccount && !!toAccount && fromAccount.id !== toAccount.id && isAmountValid;
   const fromNewBalance = availableBalance - amount;
