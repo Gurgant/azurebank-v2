@@ -15,6 +15,8 @@ import {
   Warning24Regular,
   ArrowSwap24Regular,
 } from '@fluentui/react-icons';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { colors, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import {
@@ -24,11 +26,15 @@ import {
 } from '../features/api/apiSlice';
 import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import { amountIsValid } from '../utils/amountSchema';
+import {
+  internalTransferFormSchema,
+  parseAmountInput,
+  type InternalTransferFormOutput,
+  type InternalTransferFormValues,
+} from '../forms/moneySchemas';
+import { AmountField } from '../components/form/AmountField';
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
-const MIN_AMOUNT = 0.01;
-const MAX_AMOUNT = 100_000;
 
 type Step = 'form' | 'review';
 
@@ -215,11 +221,12 @@ const useStyles = makeStyles({
 });
 
 /**
- * PR-11b — move money between the caller's OWN accounts. Rides the same step-up interceptor
- * as the external transfer (level-2 gated → the root StepUpModal pops on Send, invisible to
- * this page) and the same idempotency spine + keyLive money-safety guards. The difference is
- * two account pickers (source + destination, which can't be the same) instead of a recipient
- * lookup.
+ * PR-11b — move money between the caller's OWN accounts, now on RHF+Zod (the money-forms
+ * rewrite): source, destination and amount live in react-hook-form with
+ * `internalTransferFormSchema` as resolver — including the ONE genuinely local cross-field
+ * rule (source ≠ destination) as a Zod superRefine. Rides the same step-up interceptor as
+ * the external transfer (level-2 gated → the root StepUpModal pops on Send, invisible to
+ * this page) and the same idempotency spine + keyLive money-safety guards.
  */
 export function InternalTransferPage() {
   const styles = useStyles();
@@ -231,23 +238,46 @@ export function InternalTransferPage() {
     useIdempotentMutation(transferTrigger);
 
   const [step, setStep] = useState<Step>('form');
-  const [fromId, setFromId] = useState<string | null>(null);
-  const [toId, setToId] = useState<string | null>(null);
-  const [amount, setAmount] = useState(0);
-  const [amountInput, setAmountInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
+  // ===== RHF form (source / destination / amount) =====
+  const [balanceBound, setBalanceBound] = useState(0);
+  const { control, handleSubmit, setValue, watch, formState } = useForm<
+    InternalTransferFormValues,
+    unknown,
+    InternalTransferFormOutput
+  >({
+    resolver: zodResolver(internalTransferFormSchema(balanceBound)),
+    mode: 'onChange',
+    defaultValues: { fromAccountId: '', toAccountId: '', amount: '' },
+  });
+
+  const watchedFromId = watch('fromAccountId');
+  const watchedToId = watch('toAccountId');
+  const amountNumber = parseAmountInput(watch('amount'));
+
   const fromAccount =
-    accounts.find((a) => a.id === fromId) ??
+    accounts.find((a) => a.id === watchedFromId) ??
     accounts.find((a) => a.isPrimary) ??
     accounts[0] ??
     null;
-  const toAccount = accounts.find((a) => a.id === toId) ?? null;
+  const toAccount = accounts.find((a) => a.id === watchedToId) ?? null;
   const availableBalance = fromAccount?.balance ?? 0;
   const keyLive = isSubmitting || keyRetained;
+
+  // Auto-select the legacy default source (primary ?? first) once accounts load, and keep
+  // the schema's balance bound in lockstep with the source account.
+  useEffect(() => {
+    if (fromAccount && watchedFromId !== fromAccount.id) {
+      setValue('fromAccountId', fromAccount.id, { shouldValidate: true });
+    }
+  }, [fromAccount, watchedFromId, setValue]);
+  useEffect(() => {
+    setBalanceBound(availableBalance);
+  }, [availableBalance]);
 
   useEffect(() => {
     if (!keyLive) return;
@@ -270,67 +300,48 @@ export function InternalTransferPage() {
 
   const selectFrom = (account: AccountResponse) => {
     if (keyLive) return;
-    setFromId(account.id);
-    if (account.id === toId) setToId(null); // can't send to the same account
+    setValue('fromAccountId', account.id, { shouldValidate: true });
+    if (account.id === watchedToId) {
+      // Can't send to the same account — the destination resets like the legacy handler.
+      setValue('toAccountId', '', { shouldValidate: true });
+    }
     onBodyEdit();
   };
 
   const selectTo = (account: AccountResponse) => {
     if (keyLive) return;
     if (account.id === fromAccount?.id) return; // same-account is not selectable
-    setToId(account.id);
+    setValue('toAccountId', account.id, { shouldValidate: true });
     onBodyEdit();
   };
 
-  const handleAmountChange = (value: string) => {
+  const handleQuickAmount = (value: number) => {
     if (keyLive) return;
-    const digitsAndDots = value.replace(/[^0-9.]/g, '');
-    const firstDot = digitsAndDots.indexOf('.');
-    const singleDot =
-      firstDot === -1
-        ? digitsAndDots
-        : digitsAndDots.slice(0, firstDot + 1) +
-          digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
-    const dot = singleDot.indexOf('.');
-    const cleaned = dot === -1 ? singleDot : singleDot.slice(0, dot + 3);
-    setAmountInput(cleaned);
-    setAmount(parseFloat(cleaned) || 0);
+    setValue('amount', value.toString(), { shouldValidate: true, shouldDirty: true });
     onBodyEdit();
   };
 
-  const isAmountValid = amountIsValid(amount, {
-    min: MIN_AMOUNT,
-    max: MAX_AMOUNT,
-    balance: availableBalance,
-  });
+  // The schema owns everything here (ids present, from ≠ to via superRefine, amount
+  // bounds); the derived accounts are the belt-and-suspenders the legacy code kept.
   const canReview =
-    !!fromAccount && !!toAccount && fromAccount.id !== toAccount.id && isAmountValid;
-  const fromNewBalance = availableBalance - amount;
+    formState.isValid && !!fromAccount && !!toAccount && fromAccount.id !== toAccount.id;
+  const fromNewBalance = availableBalance - amountNumber;
 
-  const amountHint =
-    amount > 0 && !isAmountValid
-      ? amount > availableBalance
-        ? `Exceeds available balance of ${formatCurrency(availableBalance)}.`
-        : amount > MAX_AMOUNT
-          ? 'Maximum transfer is €100,000.'
-          : 'Minimum transfer is €0.01.'
-      : null;
-
-  const handleSubmit = async () => {
+  const onValid = async (data: InternalTransferFormOutput) => {
     // Mirror canReview exactly (incl. from !== to) — belt-and-suspenders against a fromAccount
     // fallback converging on toAccount if the accounts list ever changed under the review step.
-    if (!fromAccount || !toAccount || fromAccount.id === toAccount.id || !isAmountValid) return;
+    if (!fromAccount || !toAccount || fromAccount.id === toAccount.id) return;
     setError(null);
     setInFlight(false);
     setIsSubmitting(true);
     try {
       const result = await submit({
-        fromAccountId: fromAccount.id,
-        toAccountId: toAccount.id,
-        amount,
+        fromAccountId: data.fromAccountId,
+        toAccountId: data.toAccountId,
+        amount: data.amount,
       });
       setSuccess({
-        amount,
+        amount: data.amount,
         fromName: fromAccount.name,
         toName: toAccount.name,
         fromNewBalance: result.fromAccountNewBalance,
@@ -568,31 +579,31 @@ export function InternalTransferPage() {
 
             <div className={styles.amountSection}>
               <Text className={styles.subtle}>Amount</Text>
-              <div className={styles.amountWrapper}>
-                <span className={styles.amountCurrency}>€</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  aria-label="Transfer amount"
-                  className={styles.amountInput}
-                  value={amountInput}
-                  onChange={(e) => handleAmountChange(e.target.value)}
-                />
-              </div>
-              <Text className={styles.subtle}>Available: {formatCurrency(availableBalance)}</Text>
-              {amountHint && (
-                <Text role="alert" className={styles.hint}>
-                  {amountHint}
-                </Text>
-              )}
+              <AmountField
+                control={control}
+                name="amount"
+                ariaLabel="Transfer amount"
+                disabled={keyLive}
+                onBodyEdit={onBodyEdit}
+                classNames={{
+                  wrapper: styles.amountWrapper,
+                  currency: styles.amountCurrency,
+                  input: styles.amountInput,
+                  hint: styles.hint,
+                }}
+                belowSlot={
+                  <Text className={styles.subtle}>
+                    Available: {formatCurrency(availableBalance)}
+                  </Text>
+                }
+              />
             </div>
             <div className={styles.quickAmounts}>
               {QUICK_AMOUNTS.map((quickAmount) => (
                 <button
                   key={quickAmount}
-                  className={`${styles.quickBtn} ${amount === quickAmount ? styles.quickBtnSelected : ''}`}
-                  onClick={() => handleAmountChange(String(quickAmount))}
+                  className={`${styles.quickBtn} ${amountNumber === quickAmount ? styles.quickBtnSelected : ''}`}
+                  onClick={() => handleQuickAmount(quickAmount)}
                   disabled={quickAmount > availableBalance}
                 >
                   €{quickAmount}
@@ -629,7 +640,7 @@ export function InternalTransferPage() {
               </div>
               <div className={styles.reviewRow}>
                 <Text className={styles.reviewLabel}>Amount</Text>
-                <Text className={styles.reviewValue}>{formatCurrency(amount)}</Text>
+                <Text className={styles.reviewValue}>{formatCurrency(amountNumber)}</Text>
               </div>
               <div className={styles.reviewRow}>
                 <Text className={styles.reviewLabel}>{fromAccount?.name} balance</Text>
@@ -644,10 +655,10 @@ export function InternalTransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={handleSubmit}
+                onClick={() => void handleSubmit(onValid)()}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amount)}`}
+                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
               </Button>
               <Button
                 appearance="secondary"
