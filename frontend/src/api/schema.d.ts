@@ -1098,7 +1098,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Business Rule Violation - The resolved date window is invalid (e.g., a lone future FromDate against the defaulted ToDate). */
+                /** @description Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE). */
                 422: {
                     headers: {
                         [name: string]: unknown;

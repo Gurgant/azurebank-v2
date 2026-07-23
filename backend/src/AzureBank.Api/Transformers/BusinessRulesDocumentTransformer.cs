@@ -36,7 +36,7 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         ["DELETE /api/accounts/{id}"] =
             "Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance).",
         ["GET /api/transactions/summary"] =
-            "Business Rule Violation - The resolved date window is invalid (e.g., a lone future FromDate against the defaulted ToDate)."
+            "Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE)."
     };
 
     public Task TransformAsync(

@@ -936,14 +936,23 @@ public class TransactionServiceTests : IDisposable
     [Fact]
     public async Task GetSummaryAsync_DefaultsToTheCurrentUtcMonth()
     {
+        // Arrange — capture "now" on both sides so a month rollover mid-test cannot flake
+        var beforeUtc = DateTime.UtcNow;
+
         // Act — no bounds provided
         var result = await _sut.GetSummaryAsync(Guid.NewGuid(), new TransactionSummaryFilter());
+        var afterUtc = DateTime.UtcNow;
 
-        // Assert — resolved window = first day of the current UTC month up to "now"
+        // Assert — resolved window = first instant of the CURRENT UTC month up to "now"
         result.FromDate.Day.Should().Be(1);
         result.FromDate.TimeOfDay.Should().Be(TimeSpan.Zero);
+        var matchesACapturedMonth =
+            (result.FromDate.Year == beforeUtc.Year && result.FromDate.Month == beforeUtc.Month)
+            || (result.FromDate.Year == afterUtc.Year && result.FromDate.Month == afterUtc.Month);
+        matchesACapturedMonth.Should().BeTrue(
+            "the default FromDate must be the first day of the current UTC month");
         result.FromDate.Should().BeOnOrBefore(result.ToDate);
-        result.ToDate.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+        result.ToDate.Should().BeCloseTo(afterUtc, TimeSpan.FromMinutes(1));
     }
 
     [Fact]

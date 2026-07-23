@@ -286,7 +286,9 @@ public class TransactionEndpointTests : IntegrationTestBase
     [Fact]
     public async Task Summary_AggregatesTheUsersTransactions()
     {
-        // Arrange — 1000 + 500 in, 200 out (all inside the default current-month window)
+        // Arrange — 1000 + 500 in, 200 out. Queried through an EXPLICIT ±1-day window so
+        // the test cannot flake across a UTC month rollover (the default current-month
+        // window has its own dedicated test).
         var (token, _, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
         await SetPinAsync(token, "123456");
@@ -303,8 +305,12 @@ public class TransactionEndpointTests : IntegrationTestBase
         (await PostMonetaryAsync("/api/transactions/withdraw", withdraw))
             .StatusCode.Should().Be(HttpStatusCode.Created);
 
+        var fromDate = Uri.EscapeDataString(DateTime.UtcNow.AddDays(-1).ToString("O"));
+        var toDate = Uri.EscapeDataString(DateTime.UtcNow.AddDays(1).ToString("O"));
+
         // Act
-        var response = await Client.GetAsync("/api/transactions/summary");
+        var response = await Client.GetAsync(
+            $"/api/transactions/summary?FromDate={fromDate}&ToDate={toDate}");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -364,19 +370,31 @@ public class TransactionEndpointTests : IntegrationTestBase
     [Fact]
     public async Task Summary_DefaultWindow_EchoesTheCurrentUtcMonth()
     {
-        // Arrange
+        // Arrange — capture "now" on both sides of the call so a month rollover mid-test
+        // cannot flake the assertion (the resolved month must match one of the captures).
         var (token, _, _) = await RegisterTestUserAsync();
         SetAuthHeader(token);
+        var beforeUtc = DateTime.UtcNow;
 
         // Act
         var response = await Client.GetAsync("/api/transactions/summary");
+        var afterUtc = DateTime.UtcNow;
 
-        // Assert — the applied default window is observable in the response
+        // Assert — the applied default window is observable in the response:
+        // FromDate = first instant of the CURRENT UTC month, ToDate ≈ now.
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var result = await response.Content
             .ReadFromJsonAsync<ApiResponse<TransactionSummaryResponse>>(JsonOptions);
-        result!.Data!.FromDate.Day.Should().Be(1);
-        result.Data.FromDate.Should().BeOnOrBefore(result.Data.ToDate);
+        var fromDate = result!.Data!.FromDate;
+        fromDate.Day.Should().Be(1);
+        fromDate.TimeOfDay.Should().Be(TimeSpan.Zero);
+        var matchesACapturedMonth =
+            (fromDate.Year == beforeUtc.Year && fromDate.Month == beforeUtc.Month)
+            || (fromDate.Year == afterUtc.Year && fromDate.Month == afterUtc.Month);
+        matchesACapturedMonth.Should().BeTrue(
+            "the default FromDate must be the first day of the current UTC month");
+        result.Data.ToDate.Should().BeOnOrAfter(fromDate);
+        result.Data.ToDate.Should().BeCloseTo(afterUtc, TimeSpan.FromMinutes(1));
     }
 
     #endregion

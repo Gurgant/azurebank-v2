@@ -257,26 +257,20 @@ public class TransactionService : ITransactionService
                 "FromDate must be earlier than or equal to ToDate.", "INVALID_DATE_RANGE");
         }
 
-        // Same ownership scoping as GetTransactionsAsync.
-        var userAccountIds = await _context.Accounts
-            .AsNoTracking()
-            .Where(a => a.UserId == userId && !a.IsDeleted)
-            .Select(a => a.Id)
-            .ToListAsync();
-
         var summary = new TransactionSummaryResponse { FromDate = from, ToDate = to };
 
-        if (userAccountIds.Count == 0)
-        {
-            return summary;
-        }
-
-        // One round trip — the conditional aggregates translate to SUM(CASE WHEN …).
+        // ONE round trip: ownership scoping rides the aggregate itself via the Account
+        // navigation (JOIN on the FK) — unlike GetTransactionsAsync there is no
+        // caller-supplied AccountId to pre-validate, so materializing the account ids
+        // first would only add a second query and an unbounded IN list. A user with no
+        // accounts simply aggregates zero rows (null totals → zero-valued summary).
         // Only Completed transactions count toward money totals: Pending/Failed/Reversed
-        // must not inflate income or expenses.
+        // must not inflate income or expenses; the conditional aggregates translate to
+        // SUM(CASE WHEN …).
         var totals = await _context.Transactions
             .AsNoTracking()
-            .Where(t => userAccountIds.Contains(t.AccountId)
+            .Where(t => t.Account.UserId == userId
+                && !t.Account.IsDeleted
                 && t.CreatedAt >= from
                 && t.CreatedAt <= to)
             .GroupBy(_ => 1)
