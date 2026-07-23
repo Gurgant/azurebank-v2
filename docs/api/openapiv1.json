@@ -247,7 +247,7 @@
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
           },
           "422": {
-            "description": "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
+            "description": "Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance).",
             "content": {
               "application/json": {
                 "schema": {
@@ -938,6 +938,96 @@
                         }
                       },
                       "description": "Validation errors keyed by property name"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transactions/summary": {
+      "get": {
+        "tags": [
+          "Transaction"
+        ],
+        "summary": "Get aggregated income/expenses/net and pending count over a date window\r\n(defaults to the current UTC calendar month).",
+        "parameters": [
+          {
+            "name": "FromDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "ToDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfTransactionSummaryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+          },
+          "403": {
+            "description": "Forbidden - You don't have permission to access this resource."
+          },
+          "422": {
+            "description": "Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary (e.g., 'Business Rule Violation')"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the business rule violation"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
                     },
                     "traceId": {
                       "type": "string",
@@ -2261,6 +2351,27 @@
           }
         }
       },
+      "ApiResponseOfTransactionSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TransactionSummaryResponse"
+              }
+            ]
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ApiResponseOfTransferResponse": {
         "type": "object",
         "properties": {
@@ -2917,6 +3028,50 @@
         ],
         "type": "string",
         "description": "Transaction Statuses: Pending, Completed, Failed, Reversed"
+      },
+      "TransactionSummaryResponse": {
+        "required": [
+          "totalIncome",
+          "totalExpenses",
+          "netChange",
+          "pendingCount",
+          "fromDate",
+          "toDate"
+        ],
+        "type": "object",
+        "properties": {
+          "totalIncome": {
+            "type": "number",
+            "description": "Sum of Completed Deposit + TransferIn amounts inside the window.",
+            "format": "double"
+          },
+          "totalExpenses": {
+            "type": "number",
+            "description": "Sum of Completed Withdrawal + TransferOut amounts inside the window.",
+            "format": "double"
+          },
+          "netChange": {
+            "type": "number",
+            "description": "decimal TransactionSummaryResponse.TotalIncome minus decimal TransactionSummaryResponse.TotalExpenses.",
+            "format": "double"
+          },
+          "pendingCount": {
+            "type": "integer",
+            "description": "Count of Pending transactions inside the window.",
+            "format": "int32"
+          },
+          "fromDate": {
+            "type": "string",
+            "description": "Resolved inclusive window start (echoes the applied default when omitted).",
+            "format": "date-time"
+          },
+          "toDate": {
+            "type": "string",
+            "description": "Resolved inclusive window end (echoes the applied default when omitted).",
+            "format": "date-time"
+          }
+        },
+        "description": "Aggregated money movement over a date window, computed server-side (SQL SUM) and\r\nscoped to the caller's accounts. Amounts are unsigned and direction comes from the\r\ntransaction type: income = Deposit + TransferIn, expenses = Withdrawal + TransferOut.\r\nOnly Completed transactions count toward the sums — Pending/Failed/Reversed must not\r\ninflate money totals; in-flight items surface separately via int TransactionSummaryResponse.PendingCount."
       },
       "TransactionType": {
         "enum": [

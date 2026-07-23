@@ -242,6 +242,64 @@ public class TransactionService : ITransactionService
     }
 
     /// <inheritdoc />
+    public async Task<TransactionSummaryResponse> GetSummaryAsync(Guid userId, TransactionSummaryFilter filter)
+    {
+        // Resolve the window: default = the current UTC calendar month so far.
+        var now = DateTime.UtcNow;
+        var from = filter.FromDate ?? new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var to = filter.ToDate ?? now;
+
+        // Guard the RESOLVED window too — the filter's model validation only sees the
+        // explicitly-provided pair (a lone future FromDate lands here, not there).
+        if (from > to)
+        {
+            throw new BusinessRuleException(
+                "FromDate must be earlier than or equal to ToDate.", "INVALID_DATE_RANGE");
+        }
+
+        var summary = new TransactionSummaryResponse { FromDate = from, ToDate = to };
+
+        // ONE round trip: ownership scoping rides the aggregate itself via the Account
+        // navigation (JOIN on the FK) — unlike GetTransactionsAsync there is no
+        // caller-supplied AccountId to pre-validate, so materializing the account ids
+        // first would only add a second query and an unbounded IN list. A user with no
+        // accounts simply aggregates zero rows (null totals → zero-valued summary).
+        // Only Completed transactions count toward money totals: Pending/Failed/Reversed
+        // must not inflate income or expenses; the conditional aggregates translate to
+        // SUM(CASE WHEN …).
+        var totals = await _context.Transactions
+            .AsNoTracking()
+            .Where(t => t.Account.UserId == userId
+                && !t.Account.IsDeleted
+                && t.CreatedAt >= from
+                && t.CreatedAt <= to)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Income = g
+                    .Where(t => t.Status == TransactionStatus.Completed
+                        && (t.Type == TransactionType.Deposit || t.Type == TransactionType.TransferIn))
+                    .Sum(t => (decimal?)t.Amount) ?? 0m,
+                Expenses = g
+                    .Where(t => t.Status == TransactionStatus.Completed
+                        && (t.Type == TransactionType.Withdrawal || t.Type == TransactionType.TransferOut))
+                    .Sum(t => (decimal?)t.Amount) ?? 0m,
+                Pending = g.Count(t => t.Status == TransactionStatus.Pending)
+            })
+            .FirstOrDefaultAsync();
+
+        if (totals != null)
+        {
+            summary.TotalIncome = totals.Income;
+            summary.TotalExpenses = totals.Expenses;
+            summary.NetChange = totals.Income - totals.Expenses;
+            summary.PendingCount = totals.Pending;
+        }
+
+        return summary;
+    }
+
+    /// <inheritdoc />
     public async Task<TransactionResponse> GetTransactionByIdAsync(Guid transactionId, Guid userId)
     {
         var transaction = await _context.Transactions

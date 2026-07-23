@@ -84,8 +84,15 @@ public class TransactionServiceTests : IDisposable
         };
     }
 
-    private Transaction CreateTestTransaction(Guid accountId, decimal amount, TransactionType type)
+    private Transaction CreateTestTransaction(
+        Guid accountId,
+        decimal amount,
+        TransactionType type,
+        TransactionStatus status = TransactionStatus.Completed)
     {
+        // NOTE: CreatedAt is server-stamped by AzureBankDbContext.UpdateTimestamps() on
+        // save (and transactions are immutable afterwards), so tests can never backdate
+        // a transaction — window tests move the WINDOW around "now" instead.
         return new Transaction
         {
             Id = Guid.NewGuid(),
@@ -95,7 +102,7 @@ public class TransactionServiceTests : IDisposable
             Amount = amount,
             BalanceBefore = 0,
             BalanceAfter = type == TransactionType.Deposit ? amount : -amount,
-            Status = TransactionStatus.Completed,
+            Status = status,
             CreatedAt = DateTime.UtcNow,
             Account = null! // Navigation property not needed for unit tests
         };
@@ -784,6 +791,183 @@ public class TransactionServiceTests : IDisposable
         await act.Should()
             .ThrowAsync<AuthorizationException>()
             .WithMessage("*do not have access*");
+    }
+
+    #endregion
+
+    #region GetSummaryAsync Tests
+
+    [Fact]
+    public async Task GetSummaryAsync_ComposesIncomeExpensesAndNet()
+    {
+        // Arrange — income = Deposit + TransferIn, expenses = Withdrawal + TransferOut
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId);
+        _context.Accounts.Add(account);
+        _context.Transactions.AddRange(
+            CreateTestTransaction(account.Id, 100m, TransactionType.Deposit),
+            CreateTestTransaction(account.Id, 50m, TransactionType.TransferIn),
+            CreateTestTransaction(account.Id, 30m, TransactionType.Withdrawal),
+            CreateTestTransaction(account.Id, 20m, TransactionType.TransferOut));
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetSummaryAsync(userId, new TransactionSummaryFilter());
+
+        // Assert
+        result.TotalIncome.Should().Be(150m);
+        result.TotalExpenses.Should().Be(50m);
+        result.NetChange.Should().Be(100m);
+        result.PendingCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_CountsOnlyTransactionsInsideTheWindow()
+    {
+        // Arrange — CreatedAt is server-stamped on save and transactions are immutable,
+        // so the window filter is exercised by moving the WINDOW around a "now"
+        // transaction: one window contains it, one (entirely in the past) does not.
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId);
+        _context.Accounts.Add(account);
+        _context.Transactions.Add(CreateTestTransaction(account.Id, 100m, TransactionType.Deposit));
+        await _context.SaveChangesAsync();
+
+        var containingWindow = new TransactionSummaryFilter
+        {
+            FromDate = DateTime.UtcNow.AddHours(-1),
+            ToDate = DateTime.UtcNow.AddHours(1)
+        };
+        var pastWindow = new TransactionSummaryFilter
+        {
+            FromDate = DateTime.UtcNow.AddDays(-7),
+            ToDate = DateTime.UtcNow.AddDays(-1)
+        };
+
+        // Act
+        var inWindow = await _sut.GetSummaryAsync(userId, containingWindow);
+        var outsideWindow = await _sut.GetSummaryAsync(userId, pastWindow);
+
+        // Assert — the same transaction is counted or not purely by the window,
+        // and the explicit bounds are echoed back verbatim
+        inWindow.TotalIncome.Should().Be(100m);
+        inWindow.FromDate.Should().Be(containingWindow.FromDate.Value);
+        inWindow.ToDate.Should().Be(containingWindow.ToDate.Value);
+        outsideWindow.TotalIncome.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_ExcludesNonCompletedFromSums_AndCountsPending()
+    {
+        // Arrange — Pending/Failed/Reversed must not inflate the money totals
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId);
+        _context.Accounts.Add(account);
+        _context.Transactions.AddRange(
+            CreateTestTransaction(account.Id, 100m, TransactionType.Deposit, TransactionStatus.Pending),
+            CreateTestTransaction(account.Id, 50m, TransactionType.Deposit, TransactionStatus.Failed),
+            CreateTestTransaction(account.Id, 25m, TransactionType.Withdrawal, TransactionStatus.Reversed),
+            CreateTestTransaction(account.Id, 10m, TransactionType.Deposit));
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetSummaryAsync(userId, new TransactionSummaryFilter());
+
+        // Assert
+        result.TotalIncome.Should().Be(10m);
+        result.TotalExpenses.Should().Be(0m);
+        result.NetChange.Should().Be(10m);
+        result.PendingCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithNoAccounts_ReturnsZeros()
+    {
+        // Act — a user with no accounts short-circuits before the aggregate query
+        var result = await _sut.GetSummaryAsync(Guid.NewGuid(), new TransactionSummaryFilter());
+
+        // Assert
+        result.TotalIncome.Should().Be(0m);
+        result.TotalExpenses.Should().Be(0m);
+        result.NetChange.Should().Be(0m);
+        result.PendingCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithNoTransactionsInWindow_ReturnsZeros()
+    {
+        // Arrange — an account exists but the window is empty (no grouping row comes back)
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetSummaryAsync(userId, new TransactionSummaryFilter());
+
+        // Assert
+        result.TotalIncome.Should().Be(0m);
+        result.TotalExpenses.Should().Be(0m);
+        result.NetChange.Should().Be(0m);
+        result.PendingCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_IgnoresOtherUsersTransactions()
+    {
+        // Arrange — two users with their own accounts and money movement
+        var userId = Guid.NewGuid();
+        var otherUserId = Guid.NewGuid();
+        var account = CreateTestAccount(userId);
+        var otherAccount = CreateTestAccount(otherUserId);
+        _context.Accounts.AddRange(account, otherAccount);
+        _context.Transactions.AddRange(
+            CreateTestTransaction(account.Id, 100m, TransactionType.Deposit),
+            CreateTestTransaction(otherAccount.Id, 9_999m, TransactionType.Deposit));
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetSummaryAsync(userId, new TransactionSummaryFilter());
+
+        // Assert — only the caller's account feeds the aggregate
+        result.TotalIncome.Should().Be(100m);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_DefaultsToTheCurrentUtcMonth()
+    {
+        // Arrange — capture "now" on both sides so a month rollover mid-test cannot flake
+        var beforeUtc = DateTime.UtcNow;
+
+        // Act — no bounds provided
+        var result = await _sut.GetSummaryAsync(Guid.NewGuid(), new TransactionSummaryFilter());
+        var afterUtc = DateTime.UtcNow;
+
+        // Assert — resolved window = first instant of the CURRENT UTC month up to "now"
+        result.FromDate.Day.Should().Be(1);
+        result.FromDate.TimeOfDay.Should().Be(TimeSpan.Zero);
+        var matchesACapturedMonth =
+            (result.FromDate.Year == beforeUtc.Year && result.FromDate.Month == beforeUtc.Month)
+            || (result.FromDate.Year == afterUtc.Year && result.FromDate.Month == afterUtc.Month);
+        matchesACapturedMonth.Should().BeTrue(
+            "the default FromDate must be the first day of the current UTC month");
+        result.FromDate.Should().BeOnOrBefore(result.ToDate);
+        result.ToDate.Should().BeCloseTo(afterUtc, TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithFutureFromDateAndDefaultToDate_ThrowsInvalidDateRange()
+    {
+        // Arrange — the filter's own validation cannot see this (ToDate is omitted);
+        // the service must reject the RESOLVED inverted window.
+        var filter = new TransactionSummaryFilter { FromDate = DateTime.UtcNow.AddDays(10) };
+
+        // Act
+        var act = () => _sut.GetSummaryAsync(Guid.NewGuid(), filter);
+
+        // Assert
+        var thrown = await act.Should().ThrowAsync<BusinessRuleException>();
+        thrown.Which.ErrorCode.Should().Be("INVALID_DATE_RANGE");
     }
 
     #endregion

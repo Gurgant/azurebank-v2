@@ -280,4 +280,122 @@ public class TransactionEndpointTests : IntegrationTestBase
     }
 
     #endregion
+
+    #region Summary Tests
+
+    [Fact]
+    public async Task Summary_AggregatesTheUsersTransactions()
+    {
+        // Arrange — 1000 + 500 in, 200 out. Queried through an EXPLICIT ±1-day window so
+        // the test cannot flake across a UTC month rollover (the default current-month
+        // window has its own dedicated test).
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token, "123456");
+        await DepositAsync(token, accountId, 1000m);
+        await DepositAsync(token, accountId, 500m);
+
+        var withdraw = new WithdrawRequest
+        {
+            AccountId = accountId,
+            Amount = 200m,
+            Pin = "123456",
+            Description = "Summary test withdrawal"
+        };
+        (await PostMonetaryAsync("/api/transactions/withdraw", withdraw))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var fromDate = Uri.EscapeDataString(DateTime.UtcNow.AddDays(-1).ToString("O"));
+        var toDate = Uri.EscapeDataString(DateTime.UtcNow.AddDays(1).ToString("O"));
+
+        // Act
+        var response = await Client.GetAsync(
+            $"/api/transactions/summary?FromDate={fromDate}&ToDate={toDate}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content
+            .ReadFromJsonAsync<ApiResponse<TransactionSummaryResponse>>(JsonOptions);
+        result!.Data!.TotalIncome.Should().Be(1500m);
+        result.Data.TotalExpenses.Should().Be(200m);
+        result.Data.NetChange.Should().Be(1300m);
+        result.Data.PendingCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Summary_WithoutToken_ReturnsUnauthorized()
+    {
+        // Arrange
+        ClearAuthHeader();
+
+        // Act
+        var response = await Client.GetAsync("/api/transactions/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Summary_WithInvertedExplicitRange_ReturnsBadRequest()
+    {
+        // Arrange — both bounds provided and inverted → the filter's model validation
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // Act
+        var response = await Client.GetAsync(
+            "/api/transactions/summary?FromDate=2026-02-01T00:00:00Z&ToDate=2026-01-01T00:00:00Z");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Summary_WithLoneFutureFromDate_ReturnsUnprocessableEntity()
+    {
+        // Arrange — only FromDate (in the future): model validation cannot see the pair,
+        // so the service's resolved-window guard must answer 422 INVALID_DATE_RANGE.
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        var from = Uri.EscapeDataString(DateTime.UtcNow.AddDays(30).ToString("O"));
+
+        // Act
+        var response = await Client.GetAsync($"/api/transactions/summary?FromDate={from}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("INVALID_DATE_RANGE");
+    }
+
+    [Fact]
+    public async Task Summary_DefaultWindow_EchoesTheCurrentUtcMonth()
+    {
+        // Arrange — capture "now" on both sides of the call so a month rollover mid-test
+        // cannot flake the assertion (the resolved month must match one of the captures).
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        var beforeUtc = DateTime.UtcNow;
+
+        // Act
+        var response = await Client.GetAsync("/api/transactions/summary");
+        var afterUtc = DateTime.UtcNow;
+
+        // Assert — the applied default window is observable in the response:
+        // FromDate = first instant of the CURRENT UTC month, ToDate ≈ now.
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content
+            .ReadFromJsonAsync<ApiResponse<TransactionSummaryResponse>>(JsonOptions);
+        var fromDate = result!.Data!.FromDate;
+        fromDate.Day.Should().Be(1);
+        fromDate.TimeOfDay.Should().Be(TimeSpan.Zero);
+        var matchesACapturedMonth =
+            (fromDate.Year == beforeUtc.Year && fromDate.Month == beforeUtc.Month)
+            || (fromDate.Year == afterUtc.Year && fromDate.Month == afterUtc.Month);
+        matchesACapturedMonth.Should().BeTrue(
+            "the default FromDate must be the first day of the current UTC month");
+        result.Data.ToDate.Should().BeOnOrAfter(fromDate);
+        result.Data.ToDate.Should().BeCloseTo(afterUtc, TimeSpan.FromMinutes(1));
+    }
+
+    #endregion
 }
