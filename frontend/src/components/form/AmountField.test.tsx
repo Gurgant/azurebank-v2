@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -54,9 +54,10 @@ describe('AmountField (G2/G3 spike)', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: '900' } });
     expect(await screen.findByText('Exceeds available balance of €830.00.')).toBeInTheDocument();
-    // Clearing back to empty silences the hint again.
+    // Clearing back to empty silences the hint again (waitFor: zodResolver validates
+    // asynchronously, so the removal can land a tick after the change event).
     fireEvent.change(input, { target: { value: '' } });
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   });
 
   it('focus-on-first-error reaches the native input through the Controller ref (G3)', async () => {

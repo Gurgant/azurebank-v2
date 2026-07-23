@@ -245,7 +245,7 @@ export function InternalTransferPage() {
 
   // ===== RHF form (source / destination / amount) =====
   const [balanceBound, setBalanceBound] = useState(0);
-  const { control, handleSubmit, setValue, watch, formState } = useForm<
+  const { control, handleSubmit, setValue, watch, formState, trigger } = useForm<
     InternalTransferFormValues,
     unknown,
     InternalTransferFormOutput
@@ -278,6 +278,11 @@ export function InternalTransferPage() {
   useEffect(() => {
     setBalanceBound(availableBalance);
   }, [availableBalance]);
+  // Re-run amount validation once the bound has actually updated (see TransferPage —
+  // an account switch alone must not leave canReview on the previous balance).
+  useEffect(() => {
+    void trigger('amount');
+  }, [balanceBound, trigger]);
 
   useEffect(() => {
     if (!keyLive) return;

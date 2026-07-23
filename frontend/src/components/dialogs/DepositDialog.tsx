@@ -597,29 +597,43 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                 name="accountId"
                 render={({ field }) => (
                   <>
-                    {accounts.map((account) => (
-                      <div
-                        key={account.id}
-                        className={`${styles.accountCard} ${
-                          field.value === account.id ? styles.accountCardSelected : ''
-                        }`}
-                        onClick={() => {
-                          // A div can't be `disabled` — guard the mid-flight edit here.
-                          if (isSubmitting) return;
-                          field.onChange(account.id);
-                          onBodyEdit();
-                        }}
-                        style={{ marginBottom: '8px' }}
-                      >
-                        <div className={styles.accountInfo}>
-                          <Text className={styles.accountName}>{account.name}</Text>
-                          <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                    {accounts.map((account) => {
+                      const selectAccount = () => {
+                        // A div can't be `disabled` — guard the mid-flight edit here.
+                        if (isSubmitting) return;
+                        field.onChange(account.id);
+                        onBodyEdit();
+                      };
+                      return (
+                        // Styled div, so the button semantics are wired by hand
+                        // (same pattern as the AccountsPage add-card).
+                        <div
+                          key={account.id}
+                          className={`${styles.accountCard} ${
+                            field.value === account.id ? styles.accountCardSelected : ''
+                          }`}
+                          role="button"
+                          tabIndex={0}
+                          aria-pressed={field.value === account.id}
+                          onClick={selectAccount}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              selectAccount();
+                            }
+                          }}
+                          style={{ marginBottom: '8px' }}
+                        >
+                          <div className={styles.accountInfo}>
+                            <Text className={styles.accountName}>{account.name}</Text>
+                            <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                          </div>
+                          <Text className={styles.accountBalance}>
+                            {formatCurrency(account.balance)}
+                          </Text>
                         </div>
-                        <Text className={styles.accountBalance}>
-                          {formatCurrency(account.balance)}
-                        </Text>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </>
                 )}
               />

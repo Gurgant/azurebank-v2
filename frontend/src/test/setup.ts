@@ -22,7 +22,9 @@ globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObse
 // findBy*/waitFor, never a bare getBy* (the P1.9 sweep).
 const matchMediaStub = (query: string): MediaQueryList =>
   ({
-    matches: query.includes('prefers-reduced-motion'),
+    // Strictly the REDUCE query — a bare 'prefers-reduced-motion' would also match
+    // '(prefers-reduced-motion: no-preference)' and lie to both-mode checks.
+    matches: query.includes('prefers-reduced-motion: reduce'),
     media: query,
     onchange: null,
     addListener: () => {},

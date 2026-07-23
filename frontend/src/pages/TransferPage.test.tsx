@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -99,10 +99,15 @@ describe('external transfer (PR-11)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
       await screen.findByText("Verify it's you");
-      // STRICT role query again (the #34 hidden:true workaround is retired): with reduced
-      // motion stubbed in setup, Fluent skips the dialog's open transition, so the surface
-      // is never stuck aria-hidden and the accessible button resolves deterministically.
-      await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+      // hidden-inclusive + fireEvent, the #34-proven pattern: even with reduced motion
+      // stubbed, tabster's aria-hidden bookkeeping is MutationObserver-driven and starves
+      // under a saturated worker — a strict role query can miss the button for 5s+ while
+      // the title (a TEXT query) proves it is really in the DOM. This test pins
+      // cancel-returns-to-review, not the dialog's aria lifecycle (the step-up suite and
+      // the live browser cover that).
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Cancel', hidden: true }, { timeout: 5000 }),
+      );
 
       // Still on review, no receipt — the user can Send again to retry step-up.
       // (Same starved-runner headroom for the exit transition.)
@@ -172,6 +177,23 @@ describe('external transfer (PR-11)', () => {
     await userEvent.type(screen.getByLabelText('Transfer amount'), '99999');
 
     expect(screen.getByText(/Exceeds available balance/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+  });
+
+  it('revalidates the amount against the NEW balance when the source account changes', async () => {
+    // CodeRabbit-caught regression guard: mode 'onChange' only revalidates the field that
+    // changed, so without the explicit trigger-on-bound-change an account switch would
+    // leave canReview reflecting the PREVIOUS account's balance (silent no-op on Send).
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    // 900 fits Main Account (1250.50) but exceeds Rainy Day (830).
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '900');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
+    expect(await screen.findByText('Exceeds available balance of €830.00.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
   });
 });

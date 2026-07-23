@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
@@ -355,7 +355,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // The balance bound is dynamic: the schema (and so the resolver) is rebuilt when the
   // selected account's balance changes — RHF revalidates through the new bounds.
   const schema = useMemo(() => withdrawFormSchema(availableBalance), [availableBalance]);
-  const { control, handleSubmit, setValue, watch, formState } = useForm<
+  const { control, handleSubmit, setValue, watch, formState, trigger } = useForm<
     WithdrawFormValues,
     unknown,
     WithdrawFormOutput
@@ -364,6 +364,13 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     mode: 'onChange',
     defaultValues: { accountId: defaultAccountId, amount: '', description: '' },
   });
+
+  // Re-run amount validation when the balance bound changes (an over-balance amount is
+  // already RESET on switch, but a kept amount's hint text embeds the balance — the
+  // cached result must not describe the previous account).
+  useEffect(() => {
+    void trigger('amount');
+  }, [availableBalance, trigger]);
 
   const amountNumber = parseAmountInput(watch('amount'));
   const selectedAccount = selectedForBalance;
@@ -589,33 +596,47 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                 name="accountId"
                 render={({ field }) => (
                   <>
-                    {accounts.map((account) => (
-                      <div
-                        key={account.id}
-                        className={`${styles.accountCard} ${
-                          field.value === account.id ? styles.accountCardSelected : ''
-                        }`}
-                        onClick={() => {
-                          field.onChange(account.id);
-                          setResolvedBalanceOf(account.id);
-                          // Switching to a smaller account may strand an over-balance
-                          // amount — clear it, exactly like the legacy handler.
-                          if (amountNumber > account.balance) {
-                            setValue('amount', '', { shouldValidate: true });
-                          }
-                          onBodyEdit();
-                        }}
-                        style={{ marginBottom: '8px' }}
-                      >
-                        <div className={styles.accountInfo}>
-                          <Text className={styles.accountName}>{account.name}</Text>
-                          <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                    {accounts.map((account) => {
+                      const selectAccount = () => {
+                        field.onChange(account.id);
+                        setResolvedBalanceOf(account.id);
+                        // Switching to a smaller account may strand an over-balance
+                        // amount — clear it, exactly like the legacy handler.
+                        if (amountNumber > account.balance) {
+                          setValue('amount', '', { shouldValidate: true });
+                        }
+                        onBodyEdit();
+                      };
+                      return (
+                        // Styled div, so the button semantics are wired by hand
+                        // (same pattern as the AccountsPage add-card).
+                        <div
+                          key={account.id}
+                          className={`${styles.accountCard} ${
+                            field.value === account.id ? styles.accountCardSelected : ''
+                          }`}
+                          role="button"
+                          tabIndex={0}
+                          aria-pressed={field.value === account.id}
+                          onClick={selectAccount}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              selectAccount();
+                            }
+                          }}
+                          style={{ marginBottom: '8px' }}
+                        >
+                          <div className={styles.accountInfo}>
+                            <Text className={styles.accountName}>{account.name}</Text>
+                            <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                          </div>
+                          <Text className={styles.accountBalance}>
+                            {formatCurrency(account.balance)}
+                          </Text>
                         </div>
-                        <Text className={styles.accountBalance}>
-                          {formatCurrency(account.balance)}
-                        </Text>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </>
                 )}
               />

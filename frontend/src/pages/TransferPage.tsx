@@ -306,7 +306,7 @@ export function TransferPage() {
   // ===== RHF step-1 form =====
   // The balance bound tracks the SELECTED account; defaults resolve once accounts load.
   const [balanceBound, setBalanceBound] = useState(0);
-  const { control, handleSubmit, setValue, watch, formState } = useForm<
+  const { control, handleSubmit, setValue, watch, formState, trigger } = useForm<
     TransferFormValues,
     unknown,
     TransferFormOutput
@@ -338,6 +338,12 @@ export function TransferPage() {
   useEffect(() => {
     setBalanceBound(availableBalance);
   }, [availableBalance]);
+  // Re-run amount validation once the bound (and thus the resolver) has actually updated:
+  // mode 'onChange' only revalidates the field that changed, so an account switch alone
+  // would leave the amount's cached validity (and canReview) on the PREVIOUS balance.
+  useEffect(() => {
+    void trigger('amount');
+  }, [balanceBound, trigger]);
 
   // Guard the ONE nav path the in-app buttons can't cover: a browser refresh / tab-close
   // while a transfer key is live. (In-app popstate needs a data-router useBlocker — deferred
