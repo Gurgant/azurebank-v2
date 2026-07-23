@@ -80,27 +80,37 @@ describe('external transfer (PR-11)', () => {
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
   });
 
-  it('cancelling the PIN modal returns to review without sending', async () => {
-    renderTransfer();
-    await screen.findByText('Main Account');
-    await verifyRecipient('friend');
-    await screen.findByText('A. Friend');
-    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
-    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+  // 15s budget: the PR-12 fix gave the Cancel lookup a 5s findByRole timeout (the Fluent
+  // alert-dialog's open transition keeps it aria-hidden briefly under load), but vitest's
+  // DEFAULT test budget is also 5s — so on a loaded runner the inner wait could never
+  // finish before the test itself timed out. The budget must exceed the inner waits.
+  it(
+    'cancelling the PIN modal returns to review without sending',
+    { timeout: 15_000 },
+    async () => {
+      renderTransfer();
+      await screen.findByText('Main Account');
+      await verifyRecipient('friend');
+      await screen.findByText('A. Friend');
+      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
-    await screen.findByText("Verify it's you");
-    // The Cancel button renders WITH the title, but findByText ignores aria-hidden while findByRole
-    // excludes it — and the Fluent alert dialog is briefly aria-hidden during its open transition.
-    // Under CI load that transition can exceed findByRole's default 1s, so give it real headroom
-    // (locally it resolves in a few ms; this only matters on a slow runner).
-    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }, { timeout: 5000 }));
+      await screen.findByText("Verify it's you");
+      // The Cancel button renders WITH the title, but findByText ignores aria-hidden while findByRole
+      // excludes it — and the Fluent alert dialog is briefly aria-hidden during its open transition.
+      // Under CI load that transition can exceed findByRole's default 1s, so give it real headroom
+      // (locally it resolves in a few ms; this only matters on a slow runner).
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Cancel' }, { timeout: 5000 }),
+      );
 
-    // Still on review, no receipt — the user can Send again to retry step-up.
-    await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Send €50.00' })).toBeInTheDocument();
-    expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
-  });
+      // Still on review, no receipt — the user can Send again to retry step-up.
+      await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
+      expect(screen.getByRole('button', { name: 'Send €50.00' })).toBeInTheDocument();
+      expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
+    },
+  );
 
   it('after IN_FLIGHT the retained key freezes Back; Send reuses the SAME key (no double-spend)', async () => {
     // The transfer returns IN_FLIGHT (a keep-key outcome) — the review Back must be disabled
