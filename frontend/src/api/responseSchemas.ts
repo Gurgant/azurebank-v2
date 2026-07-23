@@ -64,9 +64,7 @@ export const transferResponseSchema = TransferResponse as ZodType<Schemas['Trans
 export const internalTransferResponseSchema = InternalTransferResponse as ZodType<
   Schemas['InternalTransferResponse']
 >;
-export const accountsListSchema = z.array(AccountResponse) as ZodType<
-  Schemas['AccountResponse'][]
->;
+export const accountsListSchema = z.array(AccountResponse) as ZodType<Schemas['AccountResponse'][]>;
 export const transactionSummarySchema = TransactionSummaryResponse as ZodType<
   Schemas['TransactionSummaryResponse']
 >;

@@ -27,13 +27,13 @@ export function makeAmountSchema(opts: {
   return z
     .number()
     .refine((n) => Number.isFinite(n) && n >= min, {
-      message: opts.messages?.min ?? `Amount must be at least ${min}`,
+      error: opts.messages?.min ?? `Amount must be at least ${min}`,
     })
     .refine((n) => n <= opts.max, {
-      message: opts.messages?.max ?? `Amount must be at most ${opts.max}`,
+      error: opts.messages?.max ?? `Amount must be at most ${opts.max}`,
     })
     .refine((n) => opts.balance === undefined || n <= opts.balance, {
-      message: opts.messages?.balance ?? 'Amount exceeds the available balance',
+      error: opts.messages?.balance ?? 'Amount exceeds the available balance',
     });
 }
 

@@ -52,17 +52,15 @@ interface ProblemDetailsBody {
  * pass through; a wrong-typed known field fails safeParse and we fall back to {} rather than trust
  * a garbled error payload. Low risk (it's our own server's format) but keeps the error path honest.
  */
-const problemDetailsBodySchema = z
-  .object({
-    status: z.number().optional(),
-    title: z.string().optional(),
-    detail: z.string().optional(),
-    errorCode: z.string().optional(),
-    traceId: z.string().optional(),
-    errors: z.record(z.string(), z.array(z.string())).optional(),
-    retryAfterSeconds: z.number().optional(),
-  })
-  .passthrough();
+const problemDetailsBodySchema = z.looseObject({
+  status: z.number().optional(),
+  title: z.string().optional(),
+  detail: z.string().optional(),
+  errorCode: z.string().optional(),
+  traceId: z.string().optional(),
+  errors: z.record(z.string(), z.array(z.string())).optional(),
+  retryAfterSeconds: z.number().optional(),
+});
 
 function parseRetryAfterSeconds(
   body: ProblemDetailsBody | undefined,
