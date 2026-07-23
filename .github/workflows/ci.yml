@@ -152,6 +152,14 @@ jobs:
           npm run generate:api
           git diff --exit-code src/api/schema.d.ts
 
+      - name: Zod schemas up to date
+        working-directory: frontend
+        # Same gate for the RUNTIME validators: the spec-generated Zod schemas must match
+        # the committed spec, so the strict money-response parsing can never drift silently.
+        run: |
+          npm run generate:zod
+          git diff --exit-code src/api/generated/apiSchemas.ts
+
       - name: Test
         working-directory: frontend
         run: npm test
