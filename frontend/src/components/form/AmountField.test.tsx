@@ -2,7 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { withdrawFormSchema, type WithdrawFormValues } from '../../forms/moneySchemas';
+import {
+  withdrawFormSchema,
+  type WithdrawFormOutput,
+  type WithdrawFormValues,
+} from '../../forms/moneySchemas';
 import { AmountField } from './AmountField';
 
 const classNames = { wrapper: 'w', currency: 'c', input: 'i', hint: 'h' };
@@ -14,7 +18,7 @@ const classNames = { wrapper: 'w', currency: 'c', input: 'i', hint: 'h' };
  * input through the Controller ref — the pattern every money form relies on.
  */
 function Harness({ onBodyEdit }: { onBodyEdit?: () => void }) {
-  const { control, handleSubmit } = useForm<WithdrawFormValues>({
+  const { control, handleSubmit } = useForm<WithdrawFormValues, unknown, WithdrawFormOutput>({
     resolver: zodResolver(withdrawFormSchema(830)),
     mode: 'onChange',
     defaultValues: { accountId: 'a1', amount: '', description: '' },

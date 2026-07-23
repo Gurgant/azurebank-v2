@@ -3,8 +3,13 @@ import { Controller, type Control, type FieldPath, type FieldValues } from 'reac
 import { Text } from '@fluentui/react-components';
 import { sanitizeAmountInput } from '../../forms/moneySchemas';
 
-export interface AmountFieldProps<TFieldValues extends FieldValues> {
-  control: Control<TFieldValues>;
+export interface AmountFieldProps<
+  TFieldValues extends FieldValues,
+  TContext,
+  TTransformedValues extends FieldValues,
+> {
+  /** Three-generic Control: transforming Zod schemas make the form's OUTPUT ≠ INPUT. */
+  control: Control<TFieldValues, TContext, TTransformedValues>;
   name: FieldPath<TFieldValues>;
   /** Per-form accessible name ("Deposit amount" / "Withdraw amount" / "Transfer amount"). */
   ariaLabel: string;
@@ -29,7 +34,11 @@ export interface AmountFieldProps<TFieldValues extends FieldValues> {
  * (mirrors the legacy `amount > 0 &&` rule — an empty field disables the CTA silently).
  * The RHF ref lands on the native input so focus-on-first-error works.
  */
-export function AmountField<TFieldValues extends FieldValues>({
+export function AmountField<
+  TFieldValues extends FieldValues,
+  TContext,
+  TTransformedValues extends FieldValues,
+>({
   control,
   name,
   ariaLabel,
@@ -37,7 +46,7 @@ export function AmountField<TFieldValues extends FieldValues>({
   onBodyEdit,
   belowSlot,
   classNames,
-}: AmountFieldProps<TFieldValues>) {
+}: AmountFieldProps<TFieldValues, TContext, TTransformedValues>) {
   return (
     <Controller
       control={control}

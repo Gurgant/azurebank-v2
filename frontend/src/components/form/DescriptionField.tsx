@@ -1,7 +1,12 @@
 import { Controller, type Control, type FieldPath, type FieldValues } from 'react-hook-form';
 
-export interface DescriptionFieldProps<TFieldValues extends FieldValues> {
-  control: Control<TFieldValues>;
+export interface DescriptionFieldProps<
+  TFieldValues extends FieldValues,
+  TContext,
+  TTransformedValues extends FieldValues,
+> {
+  /** Three-generic Control: transforming Zod schemas make the form's OUTPUT ≠ INPUT. */
+  control: Control<TFieldValues, TContext, TTransformedValues>;
   name: FieldPath<TFieldValues>;
   disabled?: boolean;
   /** Key-rotation hook — the description is part of the idempotent body. */
@@ -11,13 +16,17 @@ export interface DescriptionFieldProps<TFieldValues extends FieldValues> {
 }
 
 /** The shared optional-description input (legacy contract: 100-char cap, plain text). */
-export function DescriptionField<TFieldValues extends FieldValues>({
+export function DescriptionField<
+  TFieldValues extends FieldValues,
+  TContext,
+  TTransformedValues extends FieldValues,
+>({
   control,
   name,
   disabled,
   onBodyEdit,
   className,
-}: DescriptionFieldProps<TFieldValues>) {
+}: DescriptionFieldProps<TFieldValues, TContext, TTransformedValues>) {
   return (
     <Controller
       control={control}

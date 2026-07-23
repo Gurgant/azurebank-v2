@@ -156,7 +156,14 @@ export function internalTransferFormSchema(availableBalance: number) {
     });
 }
 
+// RHF needs BOTH sides of the transforming schemas: the raw INPUT shape drives the form
+// state (amount as the sanitized string), the parsed OUTPUT shape reaches onSubmit
+// (amount as a bounded number) — `useForm<Input, unknown, Output>`.
 export type DepositFormValues = z.input<ReturnType<typeof depositFormSchema>>;
+export type DepositFormOutput = z.output<ReturnType<typeof depositFormSchema>>;
 export type WithdrawFormValues = z.input<ReturnType<typeof withdrawFormSchema>>;
+export type WithdrawFormOutput = z.output<ReturnType<typeof withdrawFormSchema>>;
 export type TransferFormValues = z.input<ReturnType<typeof transferFormSchema>>;
+export type TransferFormOutput = z.output<ReturnType<typeof transferFormSchema>>;
 export type InternalTransferFormValues = z.input<ReturnType<typeof internalTransferFormSchema>>;
+export type InternalTransferFormOutput = z.output<ReturnType<typeof internalTransferFormSchema>>;
