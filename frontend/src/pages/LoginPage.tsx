@@ -34,12 +34,17 @@ const loginSchema = z.object({
 
 type LoginFormData = z.infer<typeof loginSchema>;
 
-/** Navigation state this page understands (guard redirects + register dual-path). */
-interface LoginNavState {
-  from?: { pathname?: string };
-  reason?: 'expired';
-  prefillEmail?: string;
-}
+/**
+ * Navigation state this page understands (guard redirects + register dual-path). Validated at
+ * runtime with Zod: `location.state` is developer-set (low risk) but otherwise an untrusted cast —
+ * a wrong shape falls back to {} rather than feeding e.g. a bogus `reason`/`from` into the UI.
+ */
+const loginNavStateSchema = z.object({
+  from: z.object({ pathname: z.string().optional() }).optional(),
+  reason: z.literal('expired').optional(),
+  prefillEmail: z.string().optional(),
+});
+type LoginNavState = z.infer<typeof loginNavStateSchema>;
 
 const useStyles = makeStyles({
   // ========== CONTAINER ==========
@@ -329,7 +334,8 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [elapsedDeadline, setElapsedDeadline] = useState<number | null>(null);
 
-  const navState = (location.state ?? {}) as LoginNavState;
+  const navStateResult = loginNavStateSchema.safeParse(location.state ?? {});
+  const navState: LoginNavState = navStateResult.success ? navStateResult.data : {};
   const problem = error as ApiProblem | undefined;
 
   // D13: one ABSOLUTE deadline per lock/limit RESPONSE. Derived from the error object —

@@ -19,6 +19,7 @@ import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { formatCurrency } from '../../utils/format';
+import { amountIsValid } from '../../utils/amountSchema';
 
 // ============================================
 // TYPES
@@ -455,7 +456,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
     onBodyEdit();
   };
 
-  const isAmountValid = amount >= MIN_AMOUNT && amount <= MAX_AMOUNT;
+  const isAmountValid = amountIsValid(amount, { min: MIN_AMOUNT, max: MAX_AMOUNT });
   const newBalance = selectedAccount ? selectedAccount.balance + amount : 0;
 
   // Shown inline under the amount once the user has typed something invalid (the CTA
