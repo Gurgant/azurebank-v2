@@ -29,6 +29,7 @@ export type UpdateAccountRequest = Schemas['UpdateAccountRequest'];
 export type AccountNumberResponse = Schemas['AccountNumberResponse'];
 export type TransactionResponse = Schemas['TransactionResponse'];
 export type PaginatedTransactions = Schemas['PaginatedResponseOfTransactionResponse'];
+export type TransactionSummaryResponse = Schemas['TransactionSummaryResponse'];
 export type DepositRequest = Schemas['DepositRequest'];
 export type DepositResponse = Schemas['DepositResponse'];
 export type WithdrawRequest = Schemas['WithdrawRequest'];
@@ -230,6 +231,27 @@ export const apiSlice = createApi({
       providesTags: (_result, _error, id) => [{ type: 'Transaction' as const, id }],
     }),
 
+    /**
+     * Server-side aggregate for the dashboard's Monthly Summary — SQL SUM, never a
+     * fetch-a-page-and-reduce on the client. The caller sends only fromDate and leaves
+     * toDate to the server's per-request "now" default ON PURPOSE: the query carries the
+     * Transaction LIST tag, so every money mutation refetches it — a frozen toDate would
+     * exclude the very transaction that triggered the refetch. The resolved window comes
+     * back in the response.
+     */
+    getTransactionSummary: builder.query<
+      TransactionSummaryResponse,
+      { fromDate: string; toDate?: string }
+    >({
+      query: ({ fromDate, toDate }) => ({
+        url: '/api/transactions/summary',
+        params: { FromDate: fromDate, ...(toDate ? { ToDate: toDate } : {}) },
+      }),
+      transformResponse: (response: Schemas['ApiResponseOfTransactionSummaryResponse']) =>
+        unwrap(response),
+      providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
+    }),
+
     deposit: builder.mutation<WithReplay<DepositResponse>, IdempotentArg<DepositRequest>>({
       query: ({ idempotencyKey, body }) => ({
         url: '/api/transactions/deposit',
@@ -394,6 +416,7 @@ export const {
   useGetTransactionsQuery,
   useGetTransactionHistoryInfiniteQuery,
   useGetTransactionQuery,
+  useGetTransactionSummaryQuery,
   useDepositMutation,
   useWithdrawMutation,
   // Transfers

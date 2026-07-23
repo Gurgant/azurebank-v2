@@ -221,6 +221,60 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   });
 });
 
+/**
+ * GET /api/transactions/summary — enveloped aggregate over the stateful ledger,
+ * mirroring the real SQL semantics exactly: Completed-only sums (income = Deposit +
+ * TransferIn, expenses = Withdrawal + TransferOut), Pending counted separately,
+ * inclusive window, resolved bounds echoed back. Date math via Date.parse — the mock
+ * ledger uses 7-digit fractions while callers send 3-digit ISO, so lexicographic
+ * comparison would lie.
+ */
+const transactionSummary = api.get('/api/transactions/summary', ({ request, response }) => {
+  const params = new URL(request.url).searchParams;
+  // Resolve the window FIRST and use the SAME values for both the filter and the echo —
+  // they must never diverge. Defaults mirror the real API: missing ToDate = "now".
+  const fromDate = params.get('FromDate') ?? '1970-01-01T00:00:00.0000000Z';
+  const toDate = params.get('ToDate') ?? new Date().toISOString();
+  const fromMs = Date.parse(fromDate);
+  const toMs = Date.parse(toDate);
+
+  let totalIncome = 0;
+  let totalExpenses = 0;
+  let pendingCount = 0;
+  for (const t of mockState.transactions) {
+    const at = Date.parse(t.createdAt);
+    if (at < fromMs || at > toMs) {
+      continue;
+    }
+    if (t.status === 'Pending') {
+      pendingCount += 1;
+    }
+    if (t.status !== 'Completed') {
+      continue;
+    }
+    if (t.type === 'Deposit' || t.type === 'TransferIn') {
+      totalIncome += t.amount;
+    } else {
+      totalExpenses += t.amount;
+    }
+  }
+  // Money-safe rounding: float accumulation must not leak sub-cent artifacts.
+  totalIncome = Math.round(totalIncome * 100) / 100;
+  totalExpenses = Math.round(totalExpenses * 100) / 100;
+
+  return response(200).json({
+    data: {
+      totalIncome,
+      totalExpenses,
+      netChange: Math.round((totalIncome - totalExpenses) * 100) / 100,
+      pendingCount,
+      fromDate,
+      toDate,
+    },
+    message: null,
+  });
+});
+
 /** GET /api/transactions/{id} — T2 detail, enveloped; unknown ids are a real 404. */
 const getTransaction = api.get('/api/transactions/{id}', ({ params, response }) => {
   const transaction = mockState.transactions.find((t) => t.id === params.id);
@@ -981,6 +1035,7 @@ export const handlers = [
   deleteAccount,
   revealAccountNumber,
   listTransactions,
+  transactionSummary,
   getTransaction,
   deposit,
   withdraw,
