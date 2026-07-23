@@ -220,7 +220,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds). */
+                /** @description Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1032,6 +1032,93 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transactions/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get aggregated income/expenses/net and pending count over a date window
+         *     (defaults to the current UTC calendar month).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    FromDate?: string;
+                    ToDate?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfTransactionSummaryResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - You don't have permission to access this resource. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Business Rule Violation - The resolved date window is invalid (e.g., a lone future FromDate against the defaulted ToDate). */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description A URI reference identifying the problem type */
+                            type?: string;
+                            /** @description A short, human-readable summary (e.g., 'Business Rule Violation') */
+                            title?: string;
+                            /** @description The HTTP status code (422) */
+                            status?: number;
+                            /** @description A human-readable explanation of the business rule violation */
+                            detail?: string;
+                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            errorCode?: string;
+                            /** @description Request trace identifier for debugging */
+                            traceId?: string;
+                        };
+                    };
                 };
             };
         };
@@ -1966,6 +2053,10 @@ export interface components {
             data?: null | components["schemas"]["TransactionResponse"];
             message?: null | string;
         };
+        ApiResponseOfTransactionSummaryResponse: {
+            data?: null | components["schemas"]["TransactionSummaryResponse"];
+            message?: null | string;
+        };
         ApiResponseOfTransferResponse: {
             data?: null | components["schemas"]["TransferResponse"];
             message?: null | string;
@@ -2256,6 +2347,45 @@ export interface components {
          * @enum {string}
          */
         TransactionStatus: "Pending" | "Completed" | "Failed" | "Reversed";
+        /**
+         * @description Aggregated money movement over a date window, computed server-side (SQL SUM) and
+         *     scoped to the caller's accounts. Amounts are unsigned and direction comes from the
+         *     transaction type: income = Deposit + TransferIn, expenses = Withdrawal + TransferOut.
+         *     Only Completed transactions count toward the sums — Pending/Failed/Reversed must not
+         *     inflate money totals; in-flight items surface separately via int TransactionSummaryResponse.PendingCount.
+         */
+        TransactionSummaryResponse: {
+            /**
+             * Format: double
+             * @description Sum of Completed Deposit + TransferIn amounts inside the window.
+             */
+            totalIncome: number;
+            /**
+             * Format: double
+             * @description Sum of Completed Withdrawal + TransferOut amounts inside the window.
+             */
+            totalExpenses: number;
+            /**
+             * Format: double
+             * @description decimal TransactionSummaryResponse.TotalIncome minus decimal TransactionSummaryResponse.TotalExpenses.
+             */
+            netChange: number;
+            /**
+             * Format: int32
+             * @description Count of Pending transactions inside the window.
+             */
+            pendingCount: number;
+            /**
+             * Format: date-time
+             * @description Resolved inclusive window start (echoes the applied default when omitted).
+             */
+            fromDate: string;
+            /**
+             * Format: date-time
+             * @description Resolved inclusive window end (echoes the applied default when omitted).
+             */
+            toDate: string;
+        };
         /**
          * @description Types of transaction: Deposit, Withdrawal, TransferIn, TransferOut
          * @enum {string}

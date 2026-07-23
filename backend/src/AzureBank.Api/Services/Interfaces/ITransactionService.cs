@@ -30,4 +30,11 @@ public interface ITransactionService
     /// Gets a specific transaction by ID with ownership verification.
     /// </summary>
     Task<TransactionResponse> GetTransactionByIdAsync(Guid transactionId, Guid userId);
+
+    /// <summary>
+    /// Aggregates the user's transactions over a date window (defaults to the current
+    /// UTC calendar month): income/expenses/net from Completed transactions plus a
+    /// Pending count. Computed in SQL, scoped to the caller's accounts.
+    /// </summary>
+    Task<TransactionSummaryResponse> GetSummaryAsync(Guid userId, TransactionSummaryFilter filter);
 }

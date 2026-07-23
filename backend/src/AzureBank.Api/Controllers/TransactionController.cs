@@ -48,6 +48,24 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
+    /// Get aggregated income/expenses/net and pending count over a date window
+    /// (defaults to the current UTC calendar month).
+    /// </summary>
+    /// <param name="filter">Optional inclusive date window</param>
+    /// <returns>Server-side aggregated totals for the caller's accounts</returns>
+    [HttpGet("summary")]
+    [EndpointSummary("Transaction summary")]
+    [ProducesResponseType(typeof(ApiResponse<TransactionSummaryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ApiResponse<TransactionSummaryResponse>>> GetSummary(
+        [FromQuery] TransactionSummaryFilter filter)
+    {
+        var userId = GetCurrentUserId();
+        var result = await _transactionService.GetSummaryAsync(userId, filter);
+        return Ok(ApiResponse<TransactionSummaryResponse>.Success(result));
+    }
+
+    /// <summary>
     /// Get a specific transaction by ID.
     /// </summary>
     /// <param name="id">Transaction ID</param>

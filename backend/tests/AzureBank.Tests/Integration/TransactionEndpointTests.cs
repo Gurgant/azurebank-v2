@@ -280,4 +280,104 @@ public class TransactionEndpointTests : IntegrationTestBase
     }
 
     #endregion
+
+    #region Summary Tests
+
+    [Fact]
+    public async Task Summary_AggregatesTheUsersTransactions()
+    {
+        // Arrange — 1000 + 500 in, 200 out (all inside the default current-month window)
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token, "123456");
+        await DepositAsync(token, accountId, 1000m);
+        await DepositAsync(token, accountId, 500m);
+
+        var withdraw = new WithdrawRequest
+        {
+            AccountId = accountId,
+            Amount = 200m,
+            Pin = "123456",
+            Description = "Summary test withdrawal"
+        };
+        (await PostMonetaryAsync("/api/transactions/withdraw", withdraw))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Act
+        var response = await Client.GetAsync("/api/transactions/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content
+            .ReadFromJsonAsync<ApiResponse<TransactionSummaryResponse>>(JsonOptions);
+        result!.Data!.TotalIncome.Should().Be(1500m);
+        result.Data.TotalExpenses.Should().Be(200m);
+        result.Data.NetChange.Should().Be(1300m);
+        result.Data.PendingCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Summary_WithoutToken_ReturnsUnauthorized()
+    {
+        // Arrange
+        ClearAuthHeader();
+
+        // Act
+        var response = await Client.GetAsync("/api/transactions/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Summary_WithInvertedExplicitRange_ReturnsBadRequest()
+    {
+        // Arrange — both bounds provided and inverted → the filter's model validation
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // Act
+        var response = await Client.GetAsync(
+            "/api/transactions/summary?FromDate=2026-02-01T00:00:00Z&ToDate=2026-01-01T00:00:00Z");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Summary_WithLoneFutureFromDate_ReturnsUnprocessableEntity()
+    {
+        // Arrange — only FromDate (in the future): model validation cannot see the pair,
+        // so the service's resolved-window guard must answer 422 INVALID_DATE_RANGE.
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        var from = Uri.EscapeDataString(DateTime.UtcNow.AddDays(30).ToString("O"));
+
+        // Act
+        var response = await Client.GetAsync($"/api/transactions/summary?FromDate={from}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("INVALID_DATE_RANGE");
+    }
+
+    [Fact]
+    public async Task Summary_DefaultWindow_EchoesTheCurrentUtcMonth()
+    {
+        // Arrange
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // Act
+        var response = await Client.GetAsync("/api/transactions/summary");
+
+        // Assert — the applied default window is observable in the response
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content
+            .ReadFromJsonAsync<ApiResponse<TransactionSummaryResponse>>(JsonOptions);
+        result!.Data!.FromDate.Day.Should().Be(1);
+        result.Data.FromDate.Should().BeOnOrBefore(result.Data.ToDate);
+    }
+
+    #endregion
 }

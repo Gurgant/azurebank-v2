@@ -20,15 +20,23 @@ namespace AzureBank.Api.Transformers;
 public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransformer
 {
     /// <summary>
-    /// Endpoints that have business rule validations returning 422.
-    /// Format: "METHOD /path"
+    /// Endpoints that have business rule validations returning 422, with the
+    /// per-endpoint description of WHICH rule can fire (a shared generic blurb
+    /// misleads clients — a date-window endpoint has no "insufficient funds").
+    /// Format: "METHOD /path" → 422 description.
     /// </summary>
-    private static readonly HashSet<string> BusinessRuleEndpoints = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> BusinessRuleEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
-        "POST /api/transfers/internal",  // Same account, insufficient funds
-        "POST /api/transfers",           // Recipient not found, self transfer, insufficient funds
-        "POST /api/transactions/withdraw", // Insufficient funds
-        "DELETE /api/accounts/{id}"      // Primary account, non-zero balance
+        ["POST /api/transfers/internal"] =
+            "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
+        ["POST /api/transfers"] =
+            "Business Rule Violation - The request violates domain constraints (e.g., recipient not found, self transfer, insufficient funds).",
+        ["POST /api/transactions/withdraw"] =
+            "Business Rule Violation - The request violates domain constraints (e.g., insufficient funds).",
+        ["DELETE /api/accounts/{id}"] =
+            "Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance).",
+        ["GET /api/transactions/summary"] =
+            "Business Rule Violation - The resolved date window is invalid (e.g., a lone future FromDate against the defaulted ToDate)."
     };
 
     public Task TransformAsync(
@@ -48,9 +56,9 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
             {
                 var operationKey = $"{method.ToString().ToUpperInvariant()} {path}";
 
-                if (BusinessRuleEndpoints.Contains(operationKey))
+                if (BusinessRuleEndpoints.TryGetValue(operationKey, out var description))
                 {
-                    Add422Response(operation);
+                    Add422Response(operation, description);
                 }
             }
         }
@@ -58,7 +66,7 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         return Task.CompletedTask;
     }
 
-    private static void Add422Response(OpenApiOperation operation)
+    private static void Add422Response(OpenApiOperation operation, string description)
     {
         operation.Responses ??= new OpenApiResponses();
 
@@ -67,7 +75,7 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
 
         operation.Responses["422"] = new OpenApiResponse
         {
-            Description = "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
+            Description = description,
             Content = new Dictionary<string, OpenApiMediaType>
             {
                 ["application/json"] = new OpenApiMediaType
