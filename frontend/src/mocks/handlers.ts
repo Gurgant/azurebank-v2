@@ -491,6 +491,29 @@ const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) 
 });
 
 /**
+ * PATCH /api/users/me/azuretag — rename the caller's own public handle (ADR-0015). Mirrors the
+ * service: normalize to lower-case, 409 AZURE_TAG_TAKEN when another user already holds it (our
+ * seeded recipients stand in for "other users"), otherwise update the session and echo the new tag.
+ */
+const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, response }) => {
+  const body = (await request.clone().json()) as { azureTag?: string };
+  const tag = (body.azureTag ?? '').toLowerCase();
+  if (mockState.recipients.some((r) => r.azureTag === tag)) {
+    return response.untyped(
+      problem({
+        status: 409,
+        errorCode: 'AZURE_TAG_TAKEN',
+        detail: 'That handle is already taken.',
+      }),
+    );
+  }
+  if (mockState.session) {
+    mockState.session.azureTag = tag;
+  }
+  return response(200).json({ data: { azureTag: tag }, message: 'AzureTag updated' });
+});
+
+/**
  * POST /api/transfers — the level-2 step-up gate (BFF AuthLevelMiddleware, runs BEFORE the
  * API) PLUS the API's idempotency protocol. Failure order mirrors the real path: 403 gate →
  * idempotency → SELF_TRANSFER_NOT_ALLOWED → recipient not found (ACCOUNT_NOT_FOUND, the real
@@ -960,6 +983,7 @@ export const handlers = [
   deposit,
   withdraw,
   lookupRecipient,
+  renameAzureTag,
   transfer,
   transferInternal,
   verifyPin,

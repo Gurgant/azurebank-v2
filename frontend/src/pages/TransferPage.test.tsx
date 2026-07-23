@@ -90,9 +90,11 @@ describe('external transfer (PR-11)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     await screen.findByText("Verify it's you");
-    // findByRole (not getByRole): the modal title can paint a tick before its Cancel button, so
-    // wait for the button itself to avoid a CI-load race (was intermittently flaky).
-    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    // The Cancel button renders WITH the title, but findByText ignores aria-hidden while findByRole
+    // excludes it — and the Fluent alert dialog is briefly aria-hidden during its open transition.
+    // Under CI load that transition can exceed findByRole's default 1s, so give it real headroom
+    // (locally it resolves in a few ms; this only matters on a slow runner).
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }, { timeout: 5000 }));
 
     // Still on review, no receipt — the user can Send again to retry step-up.
     await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument());
