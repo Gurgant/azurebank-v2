@@ -398,16 +398,19 @@ export function RegisterPage() {
 
   const onSubmit = async (data: RegisterFormData) => {
     try {
-      await registerUser({
+      const result = await registerUser({
         azureTag: data.azureTag,
         email: data.email,
         password: data.password,
         firstName: data.firstName,
         lastName: data.lastName,
       }).unwrap();
-      // The 201 IS a login: the BFF set the session cookie and the auth slice is
-      // already 'authenticated'.
-      navigate('/dashboard', { replace: true });
+      // The 201 IS a login: the BFF set the session cookie and the auth slice is already
+      // 'authenticated'. A brand-new user has no PIN yet, so hand off to the PIN-setup wizard
+      // (it returns to the dashboard when done or skipped); an already-PIN'd user goes straight in.
+      navigate(result.user.hasPin ? '/dashboard' : '/pin-setup?returnTo=/dashboard', {
+        replace: true,
+      });
     } catch (caught) {
       const rejected = caught as ApiProblem;
       if (rejected.errorCode === 'VALIDATION_ERROR' && rejected.errors) {

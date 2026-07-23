@@ -32,6 +32,8 @@ export type TransferResponse = Schemas['TransferResponse'];
 export type InternalTransferRequest = Schemas['InternalTransferRequest'];
 export type InternalTransferResponse = Schemas['InternalTransferResponse'];
 export type RecipientLookupResponse = Schemas['RecipientLookupResponse'];
+export type UpdateAzureTagRequest = Schemas['UpdateAzureTagRequest'];
+export type UpdateAzureTagResponse = Schemas['UpdateAzureTagResponse'];
 
 /** Argument shape of every idempotent money mutation — the key comes from useIdempotentMutation. */
 export interface IdempotentArg<TBody> {
@@ -155,6 +157,18 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/api/accounts/${id}/full-number`, method: 'GET' }),
       transformResponse: (response: Schemas['ApiResponseOfAccountNumberResponse']) =>
         unwrap(response),
+    }),
+
+    // ========== USER (self) ==========
+
+    // Rename the caller's own public AzureTag handle (ADR-0015) — a payment handle, not identity.
+    // Level-1 (no step-up). On success the handle changes everywhere, so invalidate Session: the
+    // getMe probe refetches and the auth slice picks up the new tag (same pattern as setPin).
+    renameAzureTag: builder.mutation<UpdateAzureTagResponse, UpdateAzureTagRequest>({
+      query: (body) => ({ url: '/api/users/me/azuretag', method: 'PATCH', body }),
+      transformResponse: (response: Schemas['ApiResponseOfUpdateAzureTagResponse']) =>
+        unwrap(response),
+      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
     }),
 
     // ========== TRANSACTIONS ==========
@@ -362,6 +376,8 @@ export const {
   useSetPrimaryAccountMutation,
   useDeleteAccountMutation,
   useRevealAccountNumberMutation,
+  // User (self)
+  useRenameAzureTagMutation,
   // Transactions
   useGetTransactionsQuery,
   useGetTransactionHistoryInfiniteQuery,
