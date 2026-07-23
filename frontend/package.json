@@ -12,6 +12,7 @@
     "format:check": "prettier --check src",
     "preview": "vite preview",
     "generate:api": "openapi-typescript ../docs/api/openapiv1.json -o src/api/schema.d.ts",
+    "generate:zod": "typed-openapi ../docs/api/openapiv1.json --runtime zod --schemas-only -o src/api/generated/apiSchemas.ts && prettier --write src/api/generated/apiSchemas.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -47,6 +48,7 @@
     "openapi-msw": "^2.0.0",
     "openapi-typescript": "^7.13.0",
     "prettier": "^3.7.4",
+    "typed-openapi": "^3.0.1",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
     "vite": "^8.1.5",

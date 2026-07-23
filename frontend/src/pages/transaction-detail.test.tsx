@@ -8,9 +8,9 @@ import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { TransactionDetailPage } from './TransactionDetailPage';
 
-const T1_DEPOSIT = '019f7b3f-0000-7000-8000-0000000000t1';
-const T3_TRANSFER = '019f7b3f-0000-7000-8000-0000000000t3';
-const T5_REVERSED = '019f7b3f-0000-7000-8000-0000000000t5';
+const T1_DEPOSIT = '019f7b3f-0000-7000-8000-000000000b01';
+const T3_TRANSFER = '019f7b3f-0000-7000-8000-000000000b03';
+const T5_REVERSED = '019f7b3f-0000-7000-8000-000000000b05';
 
 function renderDetail(id: string) {
   return renderWithProviders(

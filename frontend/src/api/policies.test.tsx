@@ -29,9 +29,27 @@ function settle<T>(promise: Promise<T>): Promise<Settled<T>> {
   );
 }
 
+/** A FULL contract-valid receipt — the strict deposit schema parses it fail-closed. */
 function depositOk(status = 201) {
   return HttpResponse.json(
-    { data: { transaction: { transactionNumber: 'TXN-TEST' }, newBalance: 100 }, message: null },
+    {
+      data: {
+        transaction: {
+          id: '019f7b3f-0000-7000-8000-000000000e01',
+          transactionNumber: 'TXN-TEST',
+          type: 'Deposit',
+          amount: 50,
+          balanceAfter: 100,
+          description: null,
+          recipientAzureTag: null,
+          senderAzureTag: null,
+          status: 'Completed',
+          createdAt: '2026-07-22T10:00:00.0000000Z',
+        },
+        newBalance: 100,
+      },
+      message: null,
+    },
     { status },
   );
 }
@@ -225,7 +243,24 @@ describe('data-layer policies (flagship, DECISIONS §2.4)', () => {
         if (call === 1)
           return problem({ status: 401, errorCode: 'INVALID_PIN', detail: 'Invalid PIN' });
         return HttpResponse.json(
-          { data: { transaction: { transactionNumber: 'TXN-W' }, newBalance: 40 }, message: null },
+          {
+            data: {
+              transaction: {
+                id: '019f7b3f-0000-7000-8000-000000000e02',
+                transactionNumber: 'TXN-W',
+                type: 'Withdrawal',
+                amount: 60,
+                balanceAfter: 40,
+                description: null,
+                recipientAzureTag: null,
+                senderAzureTag: null,
+                status: 'Completed',
+                createdAt: '2026-07-22T11:00:00.0000000Z',
+              },
+              newBalance: 40,
+            },
+            message: null,
+          },
           { status: 200 },
         );
       }),

@@ -14,6 +14,22 @@ import {
   bffSessionStatusResponseSchema,
 } from '../../api/bffSchemas';
 import { baseQueryWithStepUp } from '../../api/baseQueryWithStepUp';
+import {
+  accountNumberResponseSchema,
+  accountResponseSchema,
+  accountsListSchema,
+  balanceResponseSchema,
+  depositResponseSchema,
+  devOnly,
+  internalTransferResponseSchema,
+  paginatedTransactionsSchema,
+  recipientLookupResponseSchema,
+  transactionResponseSchema,
+  transactionSummarySchema,
+  transferResponseSchema,
+  updateAzureTagResponseSchema,
+  withdrawResponseSchema,
+} from '../../api/responseSchemas';
 import type { components } from '../../api/schema';
 
 type Schemas = components['schemas'];
@@ -99,8 +115,10 @@ export const apiSlice = createApi({
 
     getAccounts: builder.query<AccountResponse[], void>({
       query: () => '/api/accounts',
+      // STRICT (A): balances drive every money screen — a drifted shape must fail the
+      // query, never render wrong numbers.
       transformResponse: (response: Schemas['ApiResponseOfListOfAccountResponse']) =>
-        unwrap(response),
+        unwrap(response, accountsListSchema),
       providesTags: (result) => [
         { type: 'Account' as const, id: 'LIST' },
         ...(result ?? []).map(({ id }) => ({ type: 'Account' as const, id })),
@@ -109,7 +127,8 @@ export const apiSlice = createApi({
 
     getAccount: builder.query<AccountResponse, string>({
       query: (id) => `/api/accounts/${id}`,
-      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) => unwrap(response),
+      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) =>
+        unwrap(response, devOnly(accountResponseSchema)),
       providesTags: (_result, _error, id) => [{ type: 'Account' as const, id }],
     }),
 
@@ -118,20 +137,23 @@ export const apiSlice = createApi({
         url: `/api/accounts/${id}/balance`,
         params: at ? { at } : undefined,
       }),
-      transformResponse: (response: Schemas['ApiResponseOfBalanceResponse']) => unwrap(response),
+      transformResponse: (response: Schemas['ApiResponseOfBalanceResponse']) =>
+        unwrap(response, devOnly(balanceResponseSchema)),
       providesTags: (_result, _error, { id, at }) => (at ? [] : [{ type: 'Account' as const, id }]),
     }),
 
     createAccount: builder.mutation<AccountResponse, CreateAccountRequest>({
       query: (body) => ({ url: '/api/accounts', method: 'POST', body }),
-      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) => unwrap(response),
+      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) =>
+        unwrap(response, devOnly(accountResponseSchema)),
       invalidatesTags: (_result, error) =>
         error ? [] : [{ type: 'Account' as const, id: 'LIST' }],
     }),
 
     renameAccount: builder.mutation<AccountResponse, { id: string; body: UpdateAccountRequest }>({
       query: ({ id, body }) => ({ url: `/api/accounts/${id}`, method: 'PATCH', body }),
-      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) => unwrap(response),
+      transformResponse: (response: Schemas['ApiResponseOfAccountResponse']) =>
+        unwrap(response, devOnly(accountResponseSchema)),
       invalidatesTags: (_result, error, { id }) =>
         error ? [] : [{ type: 'Account' as const, id }],
     }),
@@ -163,7 +185,7 @@ export const apiSlice = createApi({
     revealAccountNumber: builder.mutation<AccountNumberResponse, string>({
       query: (id) => ({ url: `/api/accounts/${id}/full-number`, method: 'GET' }),
       transformResponse: (response: Schemas['ApiResponseOfAccountNumberResponse']) =>
-        unwrap(response),
+        unwrap(response, devOnly(accountNumberResponseSchema)),
     }),
 
     // ========== USER (self) ==========
@@ -174,7 +196,7 @@ export const apiSlice = createApi({
     renameAzureTag: builder.mutation<UpdateAzureTagResponse, UpdateAzureTagRequest>({
       query: (body) => ({ url: '/api/users/me/azuretag', method: 'PATCH', body }),
       transformResponse: (response: Schemas['ApiResponseOfUpdateAzureTagResponse']) =>
-        unwrap(response),
+        unwrap(response, devOnly(updateAzureTagResponseSchema)),
       invalidatesTags: (_result, error) => (error ? [] : ['Session']),
     }),
 
@@ -182,6 +204,7 @@ export const apiSlice = createApi({
 
     getTransactions: builder.query<PaginatedTransactions, TransactionsQuery>({
       // T1 is one of the two BARE responses — no envelope, no unwrap, by contract.
+      // Dev/test-only validation (C): catches mock drift without a prod crash-surface.
       query: (filters) => ({
         url: '/api/transactions',
         params: {
@@ -192,6 +215,8 @@ export const apiSlice = createApi({
           PageSize: filters.pageSize,
         },
       }),
+      transformResponse: (response: PaginatedTransactions) =>
+        devOnly(paginatedTransactionsSchema)?.parse(response) ?? response,
       providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
     }),
 
@@ -221,13 +246,16 @@ export const apiSlice = createApi({
           PageSize: HISTORY_PAGE_SIZE,
         },
       }),
+      // Same dev/test-only page validation as the flat list (C).
+      transformResponse: (response: PaginatedTransactions) =>
+        devOnly(paginatedTransactionsSchema)?.parse(response) ?? response,
       providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
     }),
 
     getTransaction: builder.query<TransactionResponse, string>({
       query: (id) => `/api/transactions/${id}`,
       transformResponse: (response: Schemas['ApiResponseOfTransactionResponse']) =>
-        unwrap(response),
+        unwrap(response, devOnly(transactionResponseSchema)),
       providesTags: (_result, _error, id) => [{ type: 'Transaction' as const, id }],
     }),
 
@@ -247,8 +275,9 @@ export const apiSlice = createApi({
         url: '/api/transactions/summary',
         params: { FromDate: fromDate, ...(toDate ? { ToDate: toDate } : {}) },
       }),
+      // STRICT (A): the dashboard's money aggregate — drift must fail, not render.
       transformResponse: (response: Schemas['ApiResponseOfTransactionSummaryResponse']) =>
-        unwrap(response),
+        unwrap(response, transactionSummarySchema),
       providesTags: [{ type: 'Transaction' as const, id: 'LIST' }],
     }),
 
@@ -259,8 +288,9 @@ export const apiSlice = createApi({
         body,
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
+      // STRICT (A): a money receipt — newBalance/reference must match the contract exactly.
       transformResponse: (response: Schemas['ApiResponseOfDepositResponse'], meta) =>
-        withReplay(unwrap(response), meta),
+        withReplay(unwrap(response, depositResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error
           ? []
@@ -278,8 +308,9 @@ export const apiSlice = createApi({
         body,
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
+      // STRICT (A): a money receipt.
       transformResponse: (response: Schemas['ApiResponseOfWithdrawResponse'], meta) =>
-        withReplay(unwrap(response), meta),
+        withReplay(unwrap(response, withdrawResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error
           ? []
@@ -296,7 +327,7 @@ export const apiSlice = createApi({
     lookupRecipient: builder.query<RecipientLookupResponse, string>({
       query: (azureTag) => `/api/users/${encodeURIComponent(azureTag)}`,
       transformResponse: (response: Schemas['ApiResponseOfRecipientLookupResponse']) =>
-        unwrap(response),
+        unwrap(response, devOnly(recipientLookupResponseSchema)),
     }),
 
     transfer: builder.mutation<WithReplay<TransferResponse>, IdempotentArg<TransferRequest>>({
@@ -306,8 +337,9 @@ export const apiSlice = createApi({
         body,
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
+      // STRICT (A): a money receipt.
       transformResponse: (response: Schemas['ApiResponseOfTransferResponse'], meta) =>
-        withReplay(unwrap(response), meta),
+        withReplay(unwrap(response, transferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error
           ? []
@@ -386,8 +418,9 @@ export const apiSlice = createApi({
         body,
         headers: { 'Idempotency-Key': idempotencyKey },
       }),
+      // STRICT (A): a money receipt.
       transformResponse: (response: Schemas['ApiResponseOfInternalTransferResponse'], meta) =>
-        withReplay(unwrap(response), meta),
+        withReplay(unwrap(response, internalTransferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error
           ? []

@@ -346,7 +346,8 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   }
   const index = mockState.transactions.length;
   const transaction = {
-    id: `019f7b3f-0000-7000-8000-0000000000d${String(index).padStart(2, '0')}`,
+    // 0xd00 block (12 hex chars = a VALID uuid) — same scheme as withdraw/transfer below.
+    id: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
     transactionNumber: `TXN-20260722-${String(300 + index).padStart(6, '0')}`,
     type: 'Deposit' as const,
     amount,
