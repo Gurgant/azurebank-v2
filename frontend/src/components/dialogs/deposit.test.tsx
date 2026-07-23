@@ -283,6 +283,26 @@ describe('deposit (T3 — idempotent mutation)', () => {
     expect(screen.queryByText(/Failed to fetch/i)).not.toBeInTheDocument();
   });
 
+  it('a double-click on the CTA sends exactly ONE request (anti-double-spend, P6 matrix)', async () => {
+    let calls = 0;
+    server.use(
+      http.post('*/api/transactions/deposit', () => {
+        calls += 1;
+        return new Promise<Response>(() => {}); // hold in flight
+      }),
+    );
+    renderDeposit();
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    const cta = screen.getByRole('button', { name: 'Deposit €100.00' });
+    await userEvent.click(cta);
+    // Second click lands while the first is in flight — the isSubmitting guard
+    // (disabled CTA) must swallow it: one request, one idempotency intent.
+    await userEvent.click(cta);
+    await waitFor(() => expect(cta).toBeDisabled());
+    expect(calls).toBe(1);
+  });
+
   // ===== The Fluent-Dialog shell (the RHF rewrite's a11y upgrade) =====
 
   it('Escape dismisses the dialog when no key is live', async () => {
