@@ -122,8 +122,8 @@ describe('internal transfer (PR-11b)', () => {
                 data: {
                   transferId: '019f7b3f-0000-7000-8000-000000000d01',
                   transactionNumber: 'TXN-INT-1',
-                  fromAccountId: 'x',
-                  toAccountId: 'y',
+                  fromAccountId: '019f7b3f-0000-7000-8000-0000000000a1',
+                  toAccountId: '019f7b3f-0000-7000-8000-0000000000a2',
                   amount: 50,
                   description: null,
                   fromAccountNewBalance: 1200.5,

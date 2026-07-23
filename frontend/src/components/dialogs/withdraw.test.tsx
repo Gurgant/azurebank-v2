@@ -68,7 +68,7 @@ function withdrawSuccessBody(newBalance: number, replayed = false) {
     {
       data: {
         transaction: {
-          id: '019f7b3f-0000-7000-8000-0000000000w99',
+          id: '019f7b3f-0000-7000-8000-000000000e99',
           transactionNumber: 'TXN-20260722-000999',
           type: 'Withdrawal',
           amount: 100,

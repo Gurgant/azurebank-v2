@@ -12,13 +12,14 @@
     "format:check": "prettier --check src",
     "preview": "vite preview",
     "generate:api": "openapi-typescript ../docs/api/openapiv1.json -o src/api/schema.d.ts",
+    "generate:zod": "typed-openapi ../docs/api/openapiv1.json --runtime zod --schemas-only -o src/api/generated/apiSchemas.ts && prettier --write src/api/generated/apiSchemas.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
     "@fluentui/react-components": "^9.72.9",
     "@fluentui/react-icons": "^2.0.316",
-    "@hookform/resolvers": "^5.2.2",
+    "@hookform/resolvers": "^5.4.0",
     "@reduxjs/toolkit": "^2.11.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -27,7 +28,7 @@
     "react-hook-form": "^7.69.0",
     "react-redux": "^9.2.0",
     "react-router-dom": "^7.18.0",
-    "zod": "^4.3.4"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -47,6 +48,7 @@
     "openapi-msw": "^2.0.0",
     "openapi-typescript": "^7.13.0",
     "prettier": "^3.7.4",
+    "typed-openapi": "^3.0.1",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
     "vite": "^8.1.5",

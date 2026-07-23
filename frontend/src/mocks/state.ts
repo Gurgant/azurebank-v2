@@ -122,7 +122,7 @@ function defaultAccounts(): MockAccount[] {
 function defaultTransactions(): MockTransaction[] {
   const heroes: MockTransaction[] = [
     {
-      id: '019f7b3f-0000-7000-8000-0000000000t1',
+      id: '019f7b3f-0000-7000-8000-000000000b01',
       transactionNumber: 'TXN-20260720-000101',
       type: 'Deposit',
       amount: 1250.5,
@@ -134,7 +134,7 @@ function defaultTransactions(): MockTransaction[] {
       createdAt: '2026-07-20T09:15:00.0000000Z',
     },
     {
-      id: '019f7b3f-0000-7000-8000-0000000000t2',
+      id: '019f7b3f-0000-7000-8000-000000000b02',
       transactionNumber: 'TXN-20260720-000102',
       type: 'Withdrawal',
       amount: 50,
@@ -146,7 +146,7 @@ function defaultTransactions(): MockTransaction[] {
       createdAt: '2026-07-20T18:30:00.0000000Z',
     },
     {
-      id: '019f7b3f-0000-7000-8000-0000000000t3',
+      id: '019f7b3f-0000-7000-8000-000000000b03',
       transactionNumber: 'TXN-20260719-000103',
       type: 'TransferOut',
       amount: 200,
@@ -158,7 +158,7 @@ function defaultTransactions(): MockTransaction[] {
       createdAt: '2026-07-19T14:00:00.0000000Z',
     },
     {
-      id: '019f7b3f-0000-7000-8000-0000000000t4',
+      id: '019f7b3f-0000-7000-8000-000000000b04',
       transactionNumber: 'TXN-20260719-000104',
       type: 'TransferIn',
       amount: 75,
@@ -170,7 +170,7 @@ function defaultTransactions(): MockTransaction[] {
       createdAt: '2026-07-19T10:00:00.0000000Z',
     },
     {
-      id: '019f7b3f-0000-7000-8000-0000000000t5',
+      id: '019f7b3f-0000-7000-8000-000000000b05',
       transactionNumber: 'TXN-20260718-000105',
       type: 'Withdrawal',
       amount: 30,
@@ -183,7 +183,7 @@ function defaultTransactions(): MockTransaction[] {
     },
   ];
   const fillers: MockTransaction[] = Array.from({ length: 20 }, (_, i) => ({
-    id: `019f7b3f-0000-7000-8000-0000000000f${String(i).padStart(2, '0')}`,
+    id: `019f7b3f-0000-7000-8000-000000000f${String(i).padStart(2, '0')}`,
     transactionNumber: `TXN-20260710-${String(200 + i).padStart(6, '0')}`,
     type: 'Deposit' as const,
     amount: 10,
