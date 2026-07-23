@@ -207,7 +207,10 @@ describe('legacy money dialogs (adapter wiring)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 
     // Reopen on the OTHER card: the dialog must re-scope, never reuse stale state.
-    await userEvent.click(screen.getByRole('button', { name: 'Deposit to Main Account' }));
+    // findBy: after the modal unmounts, tabster lifts the background aria-hidden
+    // ASYNCHRONOUSLY — a bare getByRole can run before the page is accessible again
+    // (the P1.9 post-transition rule).
+    await userEvent.click(await screen.findByRole('button', { name: 'Deposit to Main Account' }));
     expect(screen.getAllByText('Main Account')).toHaveLength(2);
     expect(screen.getAllByText('Rainy Day')).toHaveLength(1);
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));

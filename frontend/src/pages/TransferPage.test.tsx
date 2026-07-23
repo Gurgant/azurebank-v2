@@ -65,7 +65,9 @@ describe('external transfer (PR-11)', () => {
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
     expect(screen.getByText('-€50.00')).toBeInTheDocument();
     expect(screen.getByText('€1,200.50')).toBeInTheDocument(); // 1250.50 - 50
-    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    // findBy: the step-up modal's EXIT is async — until its aria-hidden lifts off the
+    // background, role queries can't see the receipt buttons (P1.9 sweep).
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
 
@@ -97,13 +99,12 @@ describe('external transfer (PR-11)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
       await screen.findByText("Verify it's you");
-      // The dialog is aria-hidden during its Fluent open transition, and on a starved CI
-      // runner that transition can stall for 5s+ (two consecutive CI runs proved the strict
-      // role query NEVER resolves there, while the title — found by TEXT, which ignores
-      // aria-hidden — shows the button is really in the DOM). So query hidden-inclusive and
-      // click via fireEvent (no interactivity checks mid-transition). What this test pins is
-      // cancel-returns-to-review, not the dialog's aria lifecycle — the step-up suite and
-      // the live browser cover that.
+      // hidden-inclusive + fireEvent, the #34-proven pattern: even with reduced motion
+      // stubbed, tabster's aria-hidden bookkeeping is MutationObserver-driven and starves
+      // under a saturated worker — a strict role query can miss the button for 5s+ while
+      // the title (a TEXT query) proves it is really in the DOM. This test pins
+      // cancel-returns-to-review, not the dialog's aria lifecycle (the step-up suite and
+      // the live browser cover that).
       fireEvent.click(
         await screen.findByRole('button', { name: 'Cancel', hidden: true }, { timeout: 5000 }),
       );
@@ -176,6 +177,23 @@ describe('external transfer (PR-11)', () => {
     await userEvent.type(screen.getByLabelText('Transfer amount'), '99999');
 
     expect(screen.getByText(/Exceeds available balance/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
+  });
+
+  it('revalidates the amount against the NEW balance when the source account changes', async () => {
+    // CodeRabbit-caught regression guard: mode 'onChange' only revalidates the field that
+    // changed, so without the explicit trigger-on-bound-change an account switch would
+    // leave canReview reflecting the PREVIOUS account's balance (silent no-op on Send).
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    // 900 fits Main Account (1250.50) but exceeds Rainy Day (830).
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '900');
+    expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
+    expect(await screen.findByText('Exceeds available balance of €830.00.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
   });
 });

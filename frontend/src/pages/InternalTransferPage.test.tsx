@@ -55,7 +55,9 @@ describe('internal transfer (PR-11b)', () => {
     expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
     expect(screen.getByText('€50.00')).toBeInTheDocument();
     expect(screen.getByText('€1,200.50')).toBeInTheDocument(); // Main: 1250.50 - 50
-    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    // findBy: the step-up modal's EXIT is async — until its aria-hidden lifts off the
+    // background, role queries can't see the receipt buttons (P1.9 sweep).
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
 

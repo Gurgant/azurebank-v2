@@ -3,21 +3,37 @@ import { z } from 'zod';
 /** Smallest transactable amount (matches every money form). */
 export const MIN_MONEY_AMOUNT = 0.01;
 
+/** Per-bound override strings so each money form keeps its exact user-facing copy. */
+export interface AmountMessages {
+  min?: string;
+  max?: string;
+  balance?: string;
+}
+
 /**
  * Zod schema for a money amount, bounds parameterized per form (min / per-form max / optional
- * available balance). The shared safety-net validator for withdraw / deposit / transfer /
- * internal-transfer amounts — identical bounds to the previous imperative checks, now declarative
- * and in one place. (Full RHF+Zod adoption of these forms is a dedicated follow-up PR; this keeps
- * the amount rule shared in the meantime, so the safety net exists regardless.)
+ * available balance). The shared validator for withdraw / deposit / transfer /
+ * internal-transfer amounts — identical bounds to the previous imperative checks, declarative
+ * and in one place. `messages` lets each form keep its exact legacy copy (e.g. "Maximum
+ * withdrawal is €100,000.") — defaults preserve the original generic strings.
  */
-export function makeAmountSchema(opts: { min?: number; max: number; balance?: number }) {
+export function makeAmountSchema(opts: {
+  min?: number;
+  max: number;
+  balance?: number;
+  messages?: AmountMessages;
+}) {
   const min = opts.min ?? MIN_MONEY_AMOUNT;
   return z
     .number()
-    .refine((n) => Number.isFinite(n) && n >= min, { message: `Amount must be at least ${min}` })
-    .refine((n) => n <= opts.max, { message: `Amount must be at most ${opts.max}` })
+    .refine((n) => Number.isFinite(n) && n >= min, {
+      message: opts.messages?.min ?? `Amount must be at least ${min}`,
+    })
+    .refine((n) => n <= opts.max, {
+      message: opts.messages?.max ?? `Amount must be at most ${opts.max}`,
+    })
     .refine((n) => opts.balance === undefined || n <= opts.balance, {
-      message: 'Amount exceeds the available balance',
+      message: opts.messages?.balance ?? 'Amount exceeds the available balance',
     });
 }
 

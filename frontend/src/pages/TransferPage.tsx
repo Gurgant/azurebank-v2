@@ -15,6 +15,8 @@ import {
   Warning24Regular,
   ArrowSwap24Regular,
 } from '@fluentui/react-icons';
+import { Controller, useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { colors, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import {
@@ -25,15 +27,20 @@ import {
 } from '../features/api/apiSlice';
 import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
-import { amountIsValid } from '../utils/amountSchema';
+import {
+  normalizeAzureTag,
+  parseAmountInput,
+  transferFormSchema,
+  type TransferFormOutput,
+  type TransferFormValues,
+} from '../forms/moneySchemas';
+import { AmountField } from '../components/form/AmountField';
 
 // ============================================
 // CONSTANTS
 // ============================================
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
-const MIN_AMOUNT = 0.01;
-const MAX_AMOUNT = 100_000;
 
 type Step = 'form' | 'review';
 
@@ -269,11 +276,14 @@ const useStyles = makeStyles({
 // ============================================
 
 /**
- * PR-11 — the real external transfer (to another user's primary account by AzureTag). The
- * PIN is NOT collected here: submitting a level-2-gated transfer 403s, the root StepUpModal
- * pops via the base-query interceptor, the session elevates, and the SAME request replays
- * (same Idempotency-Key). This page only knows the transfer mutation; step-up is invisible
- * to it. Recipient is confirmed up-front by exact AzureTag lookup (ADR-0014).
+ * PR-11 — the real external transfer (to another user's primary account by AzureTag), now on
+ * RHF+Zod (the money-forms rewrite): step-1's fields (from-account, recipient handle, amount)
+ * live in react-hook-form with the balance-capped `transferFormSchema` as resolver, while the
+ * VERIFIED-recipient truth stays async component state (the exact-match lookup IS the
+ * validator, ADR-0014 — a schema cannot own server truth). The PIN is NOT collected here:
+ * submitting a level-2-gated transfer 403s, the root StepUpModal pops via the base-query
+ * interceptor, the session elevates, and the SAME request replays (same Idempotency-Key).
+ * This page only knows the transfer mutation; step-up is invisible to it.
  */
 export function TransferPage() {
   const styles = useStyles();
@@ -286,24 +296,54 @@ export function TransferPage() {
     useIdempotentMutation(transferTrigger);
 
   const [step, setStep] = useState<Step>('form');
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [recipientInput, setRecipientInput] = useState('');
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
-  const [amount, setAmount] = useState(0);
-  const [amountInput, setAmountInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
+  // ===== RHF step-1 form =====
+  // The balance bound tracks the SELECTED account; defaults resolve once accounts load.
+  const [balanceBound, setBalanceBound] = useState(0);
+  const { control, handleSubmit, setValue, watch, formState, trigger } = useForm<
+    TransferFormValues,
+    unknown,
+    TransferFormOutput
+  >({
+    resolver: zodResolver(transferFormSchema(balanceBound)),
+    mode: 'onChange',
+    defaultValues: { fromAccountId: '', recipientTag: '', amount: '' },
+  });
+
+  const watchedAccountId = watch('fromAccountId');
+  const watchedTag = watch('recipientTag');
+  const amountNumber = parseAmountInput(watch('amount'));
+
   const selectedAccount =
-    accounts.find((a) => a.id === selectedAccountId) ??
+    accounts.find((a) => a.id === watchedAccountId) ??
     accounts.find((a) => a.isPrimary) ??
     accounts[0] ??
     null;
   const availableBalance = selectedAccount?.balance ?? 0;
   const keyLive = isSubmitting || keyRetained;
+
+  // Auto-select the legacy default (primary ?? first) into the form once accounts load,
+  // and keep the schema's balance bound in lockstep with the selected account.
+  useEffect(() => {
+    if (selectedAccount && watchedAccountId !== selectedAccount.id) {
+      setValue('fromAccountId', selectedAccount.id, { shouldValidate: true });
+    }
+  }, [selectedAccount, watchedAccountId, setValue]);
+  useEffect(() => {
+    setBalanceBound(availableBalance);
+  }, [availableBalance]);
+  // Re-run amount validation once the bound (and thus the resolver) has actually updated:
+  // mode 'onChange' only revalidates the field that changed, so an account switch alone
+  // would leave the amount's cached validity (and canReview) on the PREVIOUS balance.
+  useEffect(() => {
+    void trigger('amount');
+  }, [balanceBound, trigger]);
 
   // Guard the ONE nav path the in-app buttons can't cover: a browser refresh / tab-close
   // while a transfer key is live. (In-app popstate needs a data-router useBlocker — deferred
@@ -331,28 +371,18 @@ export function TransferPage() {
 
   const handleSelectAccount = (account: AccountResponse) => {
     if (keyLive) return;
-    setSelectedAccountId(account.id);
+    setValue('fromAccountId', account.id, { shouldValidate: true });
     onBodyEdit();
   };
 
-  const handleAmountChange = (value: string) => {
+  const handleQuickAmount = (value: number) => {
     if (keyLive) return;
-    const digitsAndDots = value.replace(/[^0-9.]/g, '');
-    const firstDot = digitsAndDots.indexOf('.');
-    const singleDot =
-      firstDot === -1
-        ? digitsAndDots
-        : digitsAndDots.slice(0, firstDot + 1) +
-          digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
-    const dot = singleDot.indexOf('.');
-    const cleaned = dot === -1 ? singleDot : singleDot.slice(0, dot + 3);
-    setAmountInput(cleaned);
-    setAmount(parseFloat(cleaned) || 0);
+    setValue('amount', value.toString(), { shouldValidate: true, shouldDirty: true });
     onBodyEdit();
   };
 
   const handleVerifyRecipient = async () => {
-    const tag = recipientInput.trim().replace(/^@/, '');
+    const tag = normalizeAzureTag(watchedTag);
     if (!tag) return;
     setRecipient(null);
     setRecipientError(null);
@@ -369,36 +399,24 @@ export function TransferPage() {
     }
   };
 
-  const isAmountValid = amountIsValid(amount, {
-    min: MIN_AMOUNT,
-    max: MAX_AMOUNT,
-    balance: availableBalance,
-  });
-  const canReview = !!selectedAccount && !!recipient && isAmountValid;
-  const newBalance = availableBalance - amount;
+  // The schema owns account/tag-format/amount validity; the VERIFIED recipient is the
+  // extra, server-truth gate that Zod cannot own (D6).
+  const canReview = formState.isValid && !!selectedAccount && !!recipient;
+  const newBalance = availableBalance - amountNumber;
 
-  const amountHint =
-    amount > 0 && !isAmountValid
-      ? amount > availableBalance
-        ? `Exceeds available balance of ${formatCurrency(availableBalance)}.`
-        : amount > MAX_AMOUNT
-          ? 'Maximum transfer is €100,000.'
-          : 'Minimum transfer is €0.01.'
-      : null;
-
-  const handleSubmit = async () => {
-    if (!selectedAccount || !recipient || !isAmountValid) return;
+  const onValid = async (data: TransferFormOutput) => {
+    if (!selectedAccount || !recipient) return;
     setError(null);
     setInFlight(false);
     setIsSubmitting(true);
     try {
       const result = await submit({
-        fromAccountId: selectedAccount.id,
+        fromAccountId: data.fromAccountId,
         recipientAzureTag: recipient.azureTag,
-        amount,
+        amount: data.amount,
       });
       setSuccess({
-        amount,
+        amount: data.amount,
         recipientName: recipient.displayName,
         recipientAzureTag: recipient.azureTag,
         newBalance: result.newBalance,
@@ -622,25 +640,35 @@ export function TransferPage() {
             <div>
               <Text className={styles.sectionLabel}>To (recipient&apos;s @handle)</Text>
               <div className={styles.recipientRow} style={{ marginTop: '8px' }}>
-                <input
-                  className={styles.input}
-                  placeholder="@handle"
-                  aria-label="Recipient handle"
-                  value={recipientInput}
-                  onChange={(e) => {
-                    setRecipientInput(e.target.value);
-                    setRecipient(null);
-                    setRecipientError(null);
-                    onBodyEdit();
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void handleVerifyRecipient();
-                  }}
+                <Controller
+                  control={control}
+                  name="recipientTag"
+                  render={({ field }) => (
+                    <input
+                      className={styles.input}
+                      placeholder="@handle"
+                      aria-label="Recipient handle"
+                      ref={field.ref}
+                      name={field.name}
+                      value={field.value}
+                      disabled={keyLive}
+                      onBlur={field.onBlur}
+                      onChange={(e) => {
+                        field.onChange(e.target.value);
+                        setRecipient(null);
+                        setRecipientError(null);
+                        onBodyEdit();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void handleVerifyRecipient();
+                      }}
+                    />
+                  )}
                 />
                 <Button
                   appearance="secondary"
                   onClick={() => void handleVerifyRecipient()}
-                  disabled={!recipientInput.trim() || lookupState.isFetching}
+                  disabled={!watchedTag.trim() || lookupState.isFetching}
                 >
                   {lookupState.isFetching ? <Spinner size="tiny" /> : 'Verify'}
                 </Button>
@@ -669,33 +697,33 @@ export function TransferPage() {
             {/* Amount */}
             <div className={styles.amountSection}>
               <Text className={styles.subtle}>Amount</Text>
-              <div className={styles.amountWrapper}>
-                <span className={styles.amountCurrency}>€</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  aria-label="Transfer amount"
-                  className={styles.amountInput}
-                  value={amountInput}
-                  onChange={(e) => handleAmountChange(e.target.value)}
-                />
-              </div>
-              <Text className={styles.subtle}>Available: {formatCurrency(availableBalance)}</Text>
-              {amountHint && (
-                <Text role="alert" className={styles.hint}>
-                  {amountHint}
-                </Text>
-              )}
+              <AmountField
+                control={control}
+                name="amount"
+                ariaLabel="Transfer amount"
+                disabled={keyLive}
+                onBodyEdit={onBodyEdit}
+                classNames={{
+                  wrapper: styles.amountWrapper,
+                  currency: styles.amountCurrency,
+                  input: styles.amountInput,
+                  hint: styles.hint,
+                }}
+                belowSlot={
+                  <Text className={styles.subtle}>
+                    Available: {formatCurrency(availableBalance)}
+                  </Text>
+                }
+              />
             </div>
             <div className={styles.quickAmounts}>
               {QUICK_AMOUNTS.map((quickAmount) => (
                 <button
                   key={quickAmount}
                   className={`${styles.quickBtn} ${
-                    amount === quickAmount ? styles.quickBtnSelected : ''
+                    amountNumber === quickAmount ? styles.quickBtnSelected : ''
                   }`}
-                  onClick={() => handleAmountChange(String(quickAmount))}
+                  onClick={() => handleQuickAmount(quickAmount)}
                   disabled={quickAmount > availableBalance}
                 >
                   €{quickAmount}
@@ -735,7 +763,7 @@ export function TransferPage() {
               </div>
               <div className={styles.reviewRow}>
                 <Text className={styles.reviewLabel}>Amount</Text>
-                <Text className={styles.reviewValue}>{formatCurrency(amount)}</Text>
+                <Text className={styles.reviewValue}>{formatCurrency(amountNumber)}</Text>
               </div>
               <div className={styles.reviewRow}>
                 <Text className={styles.reviewLabel}>New balance</Text>
@@ -750,10 +778,10 @@ export function TransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={handleSubmit}
+                onClick={() => void handleSubmit(onValid)()}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amount)}`}
+                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
               </Button>
               <Button
                 appearance="secondary"
@@ -771,5 +799,3 @@ export function TransferPage() {
     </div>
   );
 }
-
-export default TransferPage;

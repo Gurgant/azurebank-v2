@@ -1,7 +1,9 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
+  Dialog,
+  DialogSurface,
   makeStyles,
   Text,
   Button,
@@ -16,13 +18,22 @@ import {
   Warning24Regular,
   LockClosed24Regular,
 } from '@fluentui/react-icons';
+import { Controller, useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { colors, transitions } from '../../theme/tokens';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { formatCurrency } from '../../utils/format';
-import { amountIsValid } from '../../utils/amountSchema';
+import {
+  parseAmountInput,
+  withdrawFormSchema,
+  type WithdrawFormOutput,
+  type WithdrawFormValues,
+} from '../../forms/moneySchemas';
+import { AmountField } from '../form/AmountField';
+import { DescriptionField } from '../form/DescriptionField';
 import { PinInput } from '../PinInput';
 
 // ============================================
@@ -56,25 +67,15 @@ interface SuccessData {
 // ============================================
 
 const useStyles = makeStyles({
-  overlay: {
-    position: 'fixed',
-    inset: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    display: 'flex',
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    zIndex: 1000,
-    '@media (min-width: 768px)': { alignItems: 'center' },
-  },
-  dialog: {
+  surface: {
     width: '100%',
+    maxWidth: '480px',
     maxHeight: '90vh',
-    backgroundColor: '#FFFFFF',
-    borderRadius: '24px 24px 0 0',
+    padding: 0,
+    borderRadius: '16px',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    '@media (min-width: 768px)': { maxWidth: '480px', borderRadius: '16px' },
   },
   header: {
     display: 'flex',
@@ -292,10 +293,6 @@ const useStyles = makeStyles({
 // ============================================
 
 const QUICK_AMOUNTS = [50, 100, 200, 500];
-const MIN_AMOUNT = 0.01;
-// Contract cap for withdrawals (WithdrawRequestValidator: 0.01 .. 100,000.00) — tighter
-// than deposit's, so the client never sends an amount the server rejects as VALIDATION.
-const MAX_AMOUNT = 100_000;
 const PIN_LENGTH = 6;
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
@@ -315,19 +312,21 @@ function formatLockHorizon(seconds: number): string {
 // ============================================
 
 /**
- * PR-10 — the withdraw twin of the deposit flow, plus the PIN-in-body gate (D1). Same
- * idempotency spine (useIdempotentMutation: KEEP on IN_FLIGHT/network/5xx, rotate on any
- * body edit — the PIN is part of the body, so editing it re-keys too). The PIN is NOT
+ * PR-10 — the withdraw twin of the deposit flow, plus the PIN-in-body gate (D1), now on
+ * RHF+Zod (the money-forms rewrite): the FORM step (account/amount/description) lives in
+ * react-hook-form with the balance-capped `withdrawFormSchema` as resolver, while the PIN
+ * step machine is deliberately untouched (plan D5 — money-critical path, minimal churn).
+ * Same idempotency spine (useIdempotentMutation: KEEP on IN_FLIGHT/network/5xx, rotate on
+ * any body edit — the PIN is part of the body, so editing it re-keys too). The PIN is NOT
  * step-up: it travels in the withdraw request and is verified server-side, so a wrong PIN
  * is a 401 INVALID_PIN that stays in this dialog (sessionMiddleware exempts it from the
  * global logout). A user with no PIN is sent to /pin-setup first. The dialog cannot be
- * dismissed while an idempotency key is still live (submitting OR IN_FLIGHT) — abandoning a
- * retained key then reopening would re-mint one and double-withdraw.
+ * dismissed while an idempotency key is still live — the Fluent shell's Esc/backdrop
+ * dismissal funnels through the SAME keyLive guard as the X button.
  */
 export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: WithdrawDialogProps) {
   const styles = useStyles();
   const navigate = useNavigate();
-  const titleId = useId();
   const errorId = useId();
   const user = useSelector(selectCurrentUser);
   // Gate only when we KNOW the user has no PIN; if unknown, let the server decide
@@ -339,12 +338,6 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     useIdempotentMutation(withdrawTrigger);
 
   const [step, setStep] = useState<Step>('form');
-  const [selectedAccount, setSelectedAccount] = useState<Account | null>(
-    accounts.length > 0 ? accounts[0] : null,
-  );
-  const [amount, setAmount] = useState(0);
-  const [amountInput, setAmountInput] = useState('');
-  const [description, setDescription] = useState('');
   const [pin, setPin] = useState('');
   const [pinNonce, setPinNonce] = useState(0); // bumped to remount PinInput (refocus box 1)
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -354,7 +347,33 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const [lockedSeconds, setLockedSeconds] = useState<number | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
-  const availableBalance = selectedAccount?.balance ?? 0;
+  const defaultAccountId = accounts.length > 0 ? accounts[0].id : '';
+  const [resolvedBalanceOf, setResolvedBalanceOf] = useState(defaultAccountId);
+  const selectedForBalance = accounts.find((a) => a.id === resolvedBalanceOf) ?? null;
+  const availableBalance = selectedForBalance?.balance ?? 0;
+
+  // The balance bound is dynamic: the schema (and so the resolver) is rebuilt when the
+  // selected account's balance changes — RHF revalidates through the new bounds.
+  const schema = useMemo(() => withdrawFormSchema(availableBalance), [availableBalance]);
+  const { control, handleSubmit, setValue, watch, formState, trigger } = useForm<
+    WithdrawFormValues,
+    unknown,
+    WithdrawFormOutput
+  >({
+    resolver: zodResolver(schema),
+    mode: 'onChange',
+    defaultValues: { accountId: defaultAccountId, amount: '', description: '' },
+  });
+
+  // Re-run amount validation when the balance bound changes (an over-balance amount is
+  // already RESET on switch, but a kept amount's hint text embeds the balance — the
+  // cached result must not describe the previous account).
+  useEffect(() => {
+    void trigger('amount');
+  }, [availableBalance, trigger]);
+
+  const amountNumber = parseAmountInput(watch('amount'));
+  const selectedAccount = selectedForBalance;
 
   // Any body-affecting edit (amount/account/description/PIN) rotates the key: the old key
   // + a new body is a raw-byte fingerprint mismatch → 422 KEY_REUSE. Never while a request
@@ -368,35 +387,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     setError(null);
   };
 
-  const handleAmountChange = (value: string) => {
-    const digitsAndDots = value.replace(/[^0-9.]/g, '');
-    const firstDot = digitsAndDots.indexOf('.');
-    const singleDot =
-      firstDot === -1
-        ? digitsAndDots
-        : digitsAndDots.slice(0, firstDot + 1) +
-          digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
-    // Clamp to 2 decimals (EUR minor units, ISO 4217) — the backend rejects a finer scale
-    // as VALIDATION_ERROR, so stop it at the source instead of round-tripping.
-    const dot = singleDot.indexOf('.');
-    const cleaned = dot === -1 ? singleDot : singleDot.slice(0, dot + 3);
-    setAmountInput(cleaned);
-    setAmount(parseFloat(cleaned) || 0);
-    onBodyEdit();
-  };
-
   const handleQuickAmount = (value: number) => {
-    setAmountInput(value.toString());
-    setAmount(value);
-    onBodyEdit();
-  };
-
-  const handleSelectAccount = (account: Account) => {
-    setSelectedAccount(account);
-    if (amount > account.balance) {
-      setAmount(0);
-      setAmountInput('');
-    }
+    setValue('amount', value.toString(), { shouldValidate: true, shouldDirty: true });
     onBodyEdit();
   };
 
@@ -416,24 +408,12 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     setInFlight(false);
   };
 
-  const isAmountValid = amountIsValid(amount, {
-    min: MIN_AMOUNT,
-    max: MAX_AMOUNT,
-    balance: availableBalance,
-  });
-  const newBalance = selectedAccount ? availableBalance - amount : 0;
+  const amountValid = amountNumber > 0 && !formState.errors.amount;
+  const newBalance = selectedAccount ? availableBalance - amountNumber : 0;
 
-  const amountHint =
-    amount > 0 && !isAmountValid
-      ? amount > availableBalance
-        ? `Exceeds available balance of ${formatCurrency(availableBalance)}.`
-        : amount > MAX_AMOUNT
-          ? 'Maximum withdrawal is €100,000.'
-          : 'Minimum withdrawal is €0.01.'
-      : null;
-
-  const handleSubmit = async () => {
-    if (!selectedAccount || !isAmountValid || pin.length !== PIN_LENGTH || lockedSeconds !== null) {
+  const onValid = async (data: WithdrawFormOutput) => {
+    const account = accounts.find((a) => a.id === data.accountId);
+    if (!account || pin.length !== PIN_LENGTH || lockedSeconds !== null) {
       return;
     }
     setError(null);
@@ -442,14 +422,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     setIsSubmitting(true);
     try {
       const result = await submit({
-        accountId: selectedAccount.id,
-        amount,
+        accountId: data.accountId,
+        amount: data.amount,
         pin,
-        description: description.trim() || undefined,
+        description: data.description,
       });
       setSuccess({
-        amount,
-        accountName: selectedAccount.name,
+        amount: data.amount,
+        accountName: account.name,
         newBalance: result.newBalance,
         transactionId: result.transaction.id,
         replayed: result.replayed,
@@ -476,7 +456,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         // Defensive: the hasPin gate should have caught this. Send them to set a PIN.
         navigate('/pin-setup?returnTo=/accounts');
       } else if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
-        // Balance shifted under us — back to the amount step to adjust (message survives).
+        // Balance shifted under us — back to the amount step to adjust (message survives:
+        // setStep directly, NOT goToStep, so the error set right after is kept).
         setStep('form');
         setError('Insufficient funds — your balance changed. Please check the amount.');
       } else if (problem.errorCode === 'VALIDATION_ERROR') {
@@ -519,17 +500,21 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const goToPinSetup = () => navigate('/pin-setup?returnTo=/accounts');
 
   return (
-    <div className={styles.overlay} onClick={requestClose}>
-      <div
-        className={styles.dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onClick={(e) => e.stopPropagation()}
+    <Dialog
+      open={isOpen}
+      modalType="modal"
+      onOpenChange={(_event, data) => {
+        if (!data.open) requestClose();
+      }}
+    >
+      <DialogSurface
+        className={styles.surface}
+        aria-label={success ? 'Withdrawal Complete' : 'Withdraw Money'}
+        aria-describedby={undefined}
       >
         {/* Header */}
         <div className={styles.header}>
-          <div className={styles.headerTitle} id={titleId}>
+          <div className={styles.headerTitle}>
             <div className={styles.headerIcon}>
               <ArrowUpload24Regular />
             </div>
@@ -606,50 +591,82 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
           <div className={styles.content}>
             <div>
               <Text className={styles.sectionLabel}>Select Account</Text>
-              {accounts.map((account) => (
-                <div
-                  key={account.id}
-                  className={`${styles.accountCard} ${
-                    selectedAccount?.id === account.id ? styles.accountCardSelected : ''
-                  }`}
-                  onClick={() => handleSelectAccount(account)}
-                  style={{ marginBottom: '8px' }}
-                >
-                  <div className={styles.accountInfo}>
-                    <Text className={styles.accountName}>{account.name}</Text>
-                    <Text className={styles.accountNumber}>{account.accountNumber}</Text>
-                  </div>
-                  <Text className={styles.accountBalance}>{formatCurrency(account.balance)}</Text>
-                </div>
-              ))}
+              <Controller
+                control={control}
+                name="accountId"
+                render={({ field }) => (
+                  <>
+                    {accounts.map((account) => {
+                      const selectAccount = () => {
+                        field.onChange(account.id);
+                        setResolvedBalanceOf(account.id);
+                        // Switching to a smaller account may strand an over-balance
+                        // amount — clear it, exactly like the legacy handler.
+                        if (amountNumber > account.balance) {
+                          setValue('amount', '', { shouldValidate: true });
+                        }
+                        onBodyEdit();
+                      };
+                      return (
+                        // Styled div, so the button semantics are wired by hand
+                        // (same pattern as the AccountsPage add-card).
+                        <div
+                          key={account.id}
+                          className={`${styles.accountCard} ${
+                            field.value === account.id ? styles.accountCardSelected : ''
+                          }`}
+                          role="button"
+                          tabIndex={0}
+                          aria-pressed={field.value === account.id}
+                          onClick={selectAccount}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              selectAccount();
+                            }
+                          }}
+                          style={{ marginBottom: '8px' }}
+                        >
+                          <div className={styles.accountInfo}>
+                            <Text className={styles.accountName}>{account.name}</Text>
+                            <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                          </div>
+                          <Text className={styles.accountBalance}>
+                            {formatCurrency(account.balance)}
+                          </Text>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              />
             </div>
 
             <div className={styles.amountSection}>
               <Text className={styles.amountLabel}>Enter amount</Text>
-              <div className={styles.amountInputWrapper}>
-                <span className={styles.amountCurrency}>€</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  aria-label="Withdraw amount"
-                  className={styles.amountInput}
-                  value={amountInput}
-                  onChange={(e) => handleAmountChange(e.target.value)}
-                />
-              </div>
-              {selectedAccount && isAmountValid ? (
-                <Text className={styles.newBalance}>New balance: {formatCurrency(newBalance)}</Text>
-              ) : (
-                <Text className={styles.newBalance}>
-                  Available: {formatCurrency(availableBalance)}
-                </Text>
-              )}
-              {amountHint && (
-                <Text role="alert" className={styles.amountHint}>
-                  {amountHint}
-                </Text>
-              )}
+              <AmountField
+                control={control}
+                name="amount"
+                ariaLabel="Withdraw amount"
+                onBodyEdit={onBodyEdit}
+                classNames={{
+                  wrapper: styles.amountInputWrapper,
+                  currency: styles.amountCurrency,
+                  input: styles.amountInput,
+                  hint: styles.amountHint,
+                }}
+                belowSlot={
+                  selectedAccount && amountValid ? (
+                    <Text className={styles.newBalance}>
+                      New balance: {formatCurrency(newBalance)}
+                    </Text>
+                  ) : (
+                    <Text className={styles.newBalance}>
+                      Available: {formatCurrency(availableBalance)}
+                    </Text>
+                  )
+                }
+              />
             </div>
 
             <div className={styles.quickAmounts}>
@@ -657,7 +674,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                 <button
                   key={quickAmount}
                   className={`${styles.quickBtn} ${
-                    amount === quickAmount ? styles.quickBtnSelected : ''
+                    amountNumber === quickAmount ? styles.quickBtnSelected : ''
                   }`}
                   onClick={() => handleQuickAmount(quickAmount)}
                   disabled={quickAmount > availableBalance}
@@ -667,17 +684,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               ))}
             </div>
 
-            <input
-              type="text"
-              placeholder="Description (optional)"
-              aria-label="Description"
-              maxLength={100}
+            <DescriptionField
+              control={control}
+              name="description"
+              onBodyEdit={onBodyEdit}
               className={styles.descriptionInput}
-              value={description}
-              onChange={(e) => {
-                setDescription(e.target.value);
-                onBodyEdit();
-              }}
             />
           </div>
         )}
@@ -688,7 +699,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             <Text className={styles.stateTitle}>Verify Withdrawal</Text>
             <Text className={styles.pinInstruction}>
               Enter your 6-digit PIN to confirm withdrawing{' '}
-              <span className={styles.pinAmount}>{formatCurrency(amount)}</span> from{' '}
+              <span className={styles.pinAmount}>{formatCurrency(amountNumber)}</span> from{' '}
               {selectedAccount?.name}.
             </Text>
             <PinInput
@@ -799,9 +810,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => goToStep('pin')}
-              disabled={!isAmountValid}
+              disabled={!formState.isValid}
             >
-              {`Continue ${amount > 0 && isAmountValid ? `· ${formatCurrency(amount)}` : ''}`.trim()}
+              {`Continue ${amountNumber > 0 && amountValid ? `· ${formatCurrency(amountNumber)}` : ''}`.trim()}
             </Button>
           ) : (
             <>
@@ -809,10 +820,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={handleSubmit}
+                onClick={() => void handleSubmit(onValid)()}
                 disabled={isSubmitting || pin.length !== PIN_LENGTH || lockedSeconds !== null}
               >
-                {isSubmitting ? <Spinner size="tiny" /> : `Withdraw ${formatCurrency(amount)}`}
+                {isSubmitting ? (
+                  <Spinner size="tiny" />
+                ) : (
+                  `Withdraw ${formatCurrency(amountNumber)}`
+                )}
               </Button>
               <Button
                 appearance="secondary"
@@ -826,8 +841,8 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             </>
           )}
         </div>
-      </div>
-    </div>
+      </DialogSurface>
+    </Dialog>
   );
 }
 
