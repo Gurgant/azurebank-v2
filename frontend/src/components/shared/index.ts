@@ -23,12 +23,9 @@ export {
   type IconContainerSize,
 } from './IconContainer';
 
-// Transaction Components
-export {
-  TransactionItem,
-  type TransactionItemProps,
-  type TransactionType,
-} from './TransactionItem';
+// Transaction Components — the transaction TYPE is the contract enum now (api/enums),
+// not a component-local alias, so the barrel exports only the component surface.
+export { TransactionItem, type TransactionItemProps } from './TransactionItem';
 
 // Action Components
 export {
