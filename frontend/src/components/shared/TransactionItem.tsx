@@ -7,26 +7,26 @@ import {
 } from '@fluentui/react-icons';
 import { format } from 'date-fns';
 import { colors, transitions } from '../../theme/tokens';
-import { IconContainer } from './IconContainer';
+import type { TransactionType } from '../../api/enums';
+import { formatTransactionAmount, isIncomeType } from '../../utils/format';
+import { IconContainer, type IconContainerVariant } from './IconContainer';
 
 // ============================================
 // TYPES
 // ============================================
 
-export type TransactionType = 'deposit' | 'withdrawal' | 'transfer-in' | 'transfer-out';
-
 export interface TransactionItemProps {
-  /** Unique transaction ID */
+  /** Unique transaction ID (TransactionResponse.id) */
   id: string;
-  /** Transaction type */
+  /** Transaction type — the contract enum (PascalCase), never a display string */
   type: TransactionType;
-  /** Amount (positive number) */
+  /** Amount as an UNSIGNED number (the API sends unsigned; the sign comes from `type`) */
   amount: number;
   /** Description or title */
   description: string;
-  /** Transaction date */
-  date: Date;
-  /** Recipient/sender name for transfers */
+  /** ISO 8601 timestamp (TransactionResponse.createdAt) */
+  date: string;
+  /** Recipient/sender label for transfers, shown in place of the description when present */
   counterparty?: string;
   /** Show navigation arrow */
   showArrow?: boolean;
@@ -89,6 +89,7 @@ const useStyles = makeStyles({
   amount: {
     fontSize: '15px',
     fontWeight: 600,
+    fontVariantNumeric: 'tabular-nums',
   },
   amountPositive: {
     color: colors.semantic.success.main,
@@ -114,45 +115,43 @@ const useStyles = makeStyles({
 
 function getTransactionIcon(type: TransactionType) {
   switch (type) {
-    case 'deposit':
+    case 'Deposit':
       return <ArrowDownload24Regular />;
-    case 'withdrawal':
+    case 'Withdrawal':
       return <ArrowUpload24Regular />;
-    case 'transfer-in':
-    case 'transfer-out':
-      return <ArrowSwap24Regular />;
     default:
       return <ArrowSwap24Regular />;
   }
 }
 
-function getIconVariant(type: TransactionType) {
-  return type as 'deposit' | 'withdrawal' | 'transfer-in' | 'transfer-out';
+function getIconVariant(type: TransactionType): IconContainerVariant {
+  switch (type) {
+    case 'Deposit':
+      return 'deposit';
+    case 'Withdrawal':
+      return 'withdrawal';
+    case 'TransferOut':
+      return 'transfer-out';
+    case 'TransferIn':
+      return 'transfer-in';
+    default:
+      return 'neutral';
+  }
 }
 
 function getTypeLabel(type: TransactionType): string {
   switch (type) {
-    case 'deposit':
+    case 'Deposit':
       return 'Deposit';
-    case 'withdrawal':
+    case 'Withdrawal':
       return 'Withdrawal';
-    case 'transfer-in':
+    case 'TransferIn':
       return 'Transfer In';
-    case 'transfer-out':
+    case 'TransferOut':
       return 'Transfer Out';
     default:
       return 'Transaction';
   }
-}
-
-function formatAmount(amount: number, type: TransactionType): string {
-  const formatted = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(amount);
-
-  const isPositive = type === 'deposit' || type === 'transfer-in';
-  return isPositive ? `+${formatted}` : `-${formatted}`;
 }
 
 // ============================================
@@ -171,7 +170,7 @@ export function TransactionItem({
   className,
 }: TransactionItemProps) {
   const styles = useStyles();
-  const isPositive = type === 'deposit' || type === 'transfer-in';
+  const positive = isIncomeType(type);
 
   const handleClick = () => {
     if (onClick) {
@@ -201,18 +200,20 @@ export function TransactionItem({
       </IconContainer>
 
       <div className={styles.content}>
-        <Text className={styles.description}>{counterparty || description}</Text>
-        <Text className={styles.meta}>{format(date, 'MMM d, yyyy')}</Text>
+        <Text className={styles.description}>
+          {counterparty || description || getTypeLabel(type)}
+        </Text>
+        <Text className={styles.meta}>{format(new Date(date), 'MMM d, yyyy')}</Text>
       </div>
 
       <div className={styles.amountContainer}>
         <Text
           className={mergeClasses(
             styles.amount,
-            isPositive ? styles.amountPositive : styles.amountNegative,
+            positive ? styles.amountPositive : styles.amountNegative,
           )}
         >
-          {formatAmount(amount, type)}
+          {formatTransactionAmount(amount, type)}
         </Text>
         <Text className={styles.typeLabel}>{getTypeLabel(type)}</Text>
       </div>
