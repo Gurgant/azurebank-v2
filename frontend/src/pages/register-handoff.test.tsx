@@ -67,7 +67,9 @@ describe('register → PIN setup handoff', () => {
                 azureTag: 'pinned_user',
                 hasPin: true,
               },
-              expiresAt: '2026-07-20T13:00:00.0000000Z',
+              // Far-future + fixed (the repo's mocks avoid Date.now()): a successful-registration
+              // fixture must not ship a pre-expired session.
+              expiresAt: '2099-01-01T00:00:00.0000000Z',
             },
             message: 'ok',
           },
