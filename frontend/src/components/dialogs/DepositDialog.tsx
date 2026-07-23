@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Dialog,
+  DialogSurface,
   makeStyles,
   Text,
   Button,
@@ -14,12 +16,21 @@ import {
   CheckmarkCircle24Filled,
   Warning24Regular,
 } from '@fluentui/react-icons';
+import { Controller, useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { colors, transitions } from '../../theme/tokens';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { formatCurrency } from '../../utils/format';
-import { amountIsValid } from '../../utils/amountSchema';
+import {
+  depositFormSchema,
+  parseAmountInput,
+  type DepositFormOutput,
+  type DepositFormValues,
+} from '../../forms/moneySchemas';
+import { AmountField } from '../form/AmountField';
+import { DescriptionField } from '../form/DescriptionField';
 
 // ============================================
 // TYPES
@@ -52,31 +63,15 @@ interface SuccessData {
 // ============================================
 
 const useStyles = makeStyles({
-  overlay: {
-    position: 'fixed',
-    inset: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    display: 'flex',
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    zIndex: 1000,
-    '@media (min-width: 768px)': {
-      alignItems: 'center',
-    },
-  },
-
-  dialog: {
+  surface: {
     width: '100%',
+    maxWidth: '480px',
     maxHeight: '90vh',
-    backgroundColor: '#FFFFFF',
-    borderRadius: '24px 24px 0 0',
+    padding: 0,
+    borderRadius: '16px',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    '@media (min-width: 768px)': {
-      maxWidth: '480px',
-      borderRadius: '16px',
-    },
   },
 
   // ========== HEADER ==========
@@ -383,20 +378,22 @@ const useStyles = makeStyles({
 // ============================================
 
 const QUICK_AMOUNTS = [50, 100, 200, 500];
-const MIN_AMOUNT = 0.01;
-const MAX_AMOUNT = 1_000_000;
 
 // ============================================
 // COMPONENT
 // ============================================
 
 /**
- * T3 — the first production idempotent mutation (PR-9). The deposit rides
- * useIdempotentMutation: a lazy in-memory Idempotency-Key that survives a KEEP error
- * (IN_FLIGHT / network / 5xx) so the user's Retry re-sends the SAME key + body, and
- * rotates on any body edit (an edited body with the old key is a 422 KEY_REUSE). A
- * replayed 2xx surfaces a polite note (D4); RESULT_UNKNOWN latches a verify-first flow
- * (§2.3). No step-up — deposit is auth level 1.
+ * T3 — the first production idempotent mutation (PR-9), now on RHF+Zod (the money-forms
+ * rewrite): the form state (account/amount/description) lives in react-hook-form with
+ * `depositFormSchema` as the resolver — the SAME #33 bounds, exact legacy copy — while the
+ * idempotency spine is untouched: useIdempotentMutation keeps the key across KEEP outcomes
+ * (IN_FLIGHT / network / 5xx) so Retry re-sends the SAME key + body, and every body edit
+ * rotates it (an edited body with the old key is a 422 KEY_REUSE). A replayed 2xx surfaces
+ * a polite note (D4); RESULT_UNKNOWN latches a verify-first flow (§2.3). No step-up —
+ * deposit is auth level 1. The shell is a Fluent Dialog now: focus trap, Escape and
+ * aria-modal come from the platform, and BOTH dismissal paths (Esc/backdrop and the X)
+ * funnel through the keyLive guard.
  */
 export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositDialogProps) {
   const styles = useStyles();
@@ -406,16 +403,29 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   const { submit, resetIntent, verifyRequired, keyRetained } =
     useIdempotentMutation(depositTrigger);
 
-  const [selectedAccount, setSelectedAccount] = useState<Account | null>(
-    accounts.length > 0 ? accounts[0] : null,
-  );
-  const [amount, setAmount] = useState(0);
-  const [amountInput, setAmountInput] = useState('');
-  const [description, setDescription] = useState('');
+  const schema = useMemo(() => depositFormSchema(), []);
+  const { control, handleSubmit, setValue, watch, formState } = useForm<
+    DepositFormValues,
+    unknown,
+    DepositFormOutput
+  >({
+    resolver: zodResolver(schema),
+    mode: 'onChange',
+    defaultValues: {
+      accountId: accounts.length > 0 ? accounts[0].id : '',
+      amount: '',
+      description: '',
+    },
+  });
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
+
+  const accountId = watch('accountId');
+  const amountNumber = parseAmountInput(watch('amount'));
+  const selectedAccount = accounts.find((account) => account.id === accountId) ?? null;
 
   // Any body-affecting edit rotates the key: the old key + a new body is a raw-byte
   // fingerprint mismatch → 422 KEY_REUSE. Also clears transient in-flight/error state.
@@ -429,62 +439,29 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
     setError(null);
   };
 
-  const handleAmountChange = (value: string) => {
-    // Strip non-numerics AND collapse to a single decimal point — "1.2.3" would
-    // desync the shown field from the parsed amount otherwise.
-    const digitsAndDots = value.replace(/[^0-9.]/g, '');
-    const firstDot = digitsAndDots.indexOf('.');
-    const cleaned =
-      firstDot === -1
-        ? digitsAndDots
-        : digitsAndDots.slice(0, firstDot + 1) +
-          digitsAndDots.slice(firstDot + 1).replace(/\./g, '');
-    setAmountInput(cleaned);
-    setAmount(parseFloat(cleaned) || 0);
-    onBodyEdit();
-  };
-
   const handleQuickAmount = (value: number) => {
-    setAmountInput(value.toString());
-    setAmount(value);
+    setValue('amount', value.toString(), { shouldValidate: true, shouldDirty: true });
     onBodyEdit();
   };
 
-  const handleSelectAccount = (account: Account) => {
-    if (isSubmitting) return; // a div can't be `disabled` — guard the mid-flight edit here
-    setSelectedAccount(account);
-    onBodyEdit();
-  };
+  const amountValid = amountNumber > 0 && !formState.errors.amount;
+  const newBalance = selectedAccount ? selectedAccount.balance + amountNumber : 0;
 
-  const isAmountValid = amountIsValid(amount, { min: MIN_AMOUNT, max: MAX_AMOUNT });
-  const newBalance = selectedAccount ? selectedAccount.balance + amount : 0;
-
-  // Shown inline under the amount once the user has typed something invalid (the CTA
-  // is also disabled) — a silently-disabled button leaves an over-limit amount
-  // unexplained.
-  const amountHint =
-    amount > 0 && !isAmountValid
-      ? amount > MAX_AMOUNT
-        ? 'Maximum deposit is €1,000,000.'
-        : 'Minimum deposit is €0.01.'
-      : null;
-
-  const handleSubmit = async () => {
-    if (!selectedAccount || !isAmountValid) {
-      return;
-    }
+  const onValid = async (data: DepositFormOutput) => {
+    const account = accounts.find((a) => a.id === data.accountId);
+    if (!account) return;
     setError(null);
     setInFlight(false);
     setIsSubmitting(true);
     try {
       const result = await submit({
-        accountId: selectedAccount.id,
-        amount,
-        description: description.trim() || undefined,
+        accountId: data.accountId,
+        amount: data.amount,
+        description: data.description,
       });
       setSuccess({
-        amount,
-        accountName: selectedAccount.name,
+        amount: data.amount,
+        accountName: account.name,
         newBalance: result.newBalance,
         transactionId: result.transaction.id,
         replayed: result.replayed,
@@ -528,7 +505,8 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   // CRITICAL: never dismiss while an idempotency key is still LIVE. `keyRetained` covers
   // submitting AND every KEEP outcome (IN_FLIGHT / network / 5xx) — the dialog is
   // mount-on-open, so unmounting with a retained key loses it, and reopening mints a fresh
-  // one so the same amount becomes a NEW intent = a real double-deposit.
+  // one so the same amount becomes a NEW intent = a real double-deposit. Esc and backdrop
+  // dismissal (Fluent onOpenChange) funnel through the same guard as the X button.
   const keyLive = isSubmitting || keyRetained;
   const requestClose = () => {
     if (!keyLive) {
@@ -537,8 +515,18 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   };
 
   return (
-    <div className={styles.overlay} onClick={requestClose}>
-      <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
+    <Dialog
+      open={isOpen}
+      modalType="modal"
+      onOpenChange={(_event, data) => {
+        if (!data.open) requestClose();
+      }}
+    >
+      <DialogSurface
+        className={styles.surface}
+        aria-label={success ? 'Deposit Complete' : 'Deposit Money'}
+        aria-describedby={undefined}
+      >
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.headerTitle}>
@@ -604,47 +592,61 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           <div className={styles.content}>
             <div>
               <Text className={styles.sectionLabel}>Select Account</Text>
-              {accounts.map((account) => (
-                <div
-                  key={account.id}
-                  className={`${styles.accountCard} ${
-                    selectedAccount?.id === account.id ? styles.accountCardSelected : ''
-                  }`}
-                  onClick={() => handleSelectAccount(account)}
-                  style={{ marginBottom: '8px' }}
-                >
-                  <div className={styles.accountInfo}>
-                    <Text className={styles.accountName}>{account.name}</Text>
-                    <Text className={styles.accountNumber}>{account.accountNumber}</Text>
-                  </div>
-                  <Text className={styles.accountBalance}>{formatCurrency(account.balance)}</Text>
-                </div>
-              ))}
+              <Controller
+                control={control}
+                name="accountId"
+                render={({ field }) => (
+                  <>
+                    {accounts.map((account) => (
+                      <div
+                        key={account.id}
+                        className={`${styles.accountCard} ${
+                          field.value === account.id ? styles.accountCardSelected : ''
+                        }`}
+                        onClick={() => {
+                          // A div can't be `disabled` — guard the mid-flight edit here.
+                          if (isSubmitting) return;
+                          field.onChange(account.id);
+                          onBodyEdit();
+                        }}
+                        style={{ marginBottom: '8px' }}
+                      >
+                        <div className={styles.accountInfo}>
+                          <Text className={styles.accountName}>{account.name}</Text>
+                          <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                        </div>
+                        <Text className={styles.accountBalance}>
+                          {formatCurrency(account.balance)}
+                        </Text>
+                      </div>
+                    ))}
+                  </>
+                )}
+              />
             </div>
 
             <div className={styles.amountSection}>
               <Text className={styles.amountLabel}>Enter amount</Text>
-              <div className={styles.amountInputWrapper}>
-                <span className={styles.amountCurrency}>€</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  aria-label="Deposit amount"
-                  className={styles.amountInput}
-                  value={amountInput}
-                  disabled={isSubmitting}
-                  onChange={(e) => handleAmountChange(e.target.value)}
-                />
-              </div>
-              {selectedAccount && isAmountValid && (
-                <Text className={styles.newBalance}>New balance: {formatCurrency(newBalance)}</Text>
-              )}
-              {amountHint && (
-                <Text role="alert" className={styles.amountHint}>
-                  {amountHint}
-                </Text>
-              )}
+              <AmountField
+                control={control}
+                name="amount"
+                ariaLabel="Deposit amount"
+                disabled={isSubmitting}
+                onBodyEdit={onBodyEdit}
+                classNames={{
+                  wrapper: styles.amountInputWrapper,
+                  currency: styles.amountCurrency,
+                  input: styles.amountInput,
+                  hint: styles.amountHint,
+                }}
+                belowSlot={
+                  selectedAccount && amountValid ? (
+                    <Text className={styles.newBalance}>
+                      New balance: {formatCurrency(newBalance)}
+                    </Text>
+                  ) : null
+                }
+              />
             </div>
 
             <div className={styles.quickAmounts}>
@@ -652,7 +654,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
                 <button
                   key={quickAmount}
                   className={`${styles.quickBtn} ${
-                    amount === quickAmount ? styles.quickBtnSelected : ''
+                    amountNumber === quickAmount ? styles.quickBtnSelected : ''
                   }`}
                   onClick={() => handleQuickAmount(quickAmount)}
                   disabled={isSubmitting}
@@ -662,18 +664,12 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               ))}
             </div>
 
-            <input
-              type="text"
-              placeholder="Description (optional)"
-              aria-label="Description"
-              maxLength={100}
-              className={styles.descriptionInput}
-              value={description}
+            <DescriptionField
+              control={control}
+              name="description"
               disabled={isSubmitting}
-              onChange={(e) => {
-                setDescription(e.target.value);
-                onBodyEdit();
-              }}
+              onBodyEdit={onBodyEdit}
+              className={styles.descriptionInput}
             />
           </div>
         )}
@@ -734,19 +730,19 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={handleSubmit}
-              disabled={isSubmitting || !isAmountValid}
+              onClick={() => void handleSubmit(onValid)()}
+              disabled={isSubmitting || !formState.isValid}
             >
               {isSubmitting ? (
                 <Spinner size="tiny" />
               ) : (
-                `Deposit ${amount > 0 ? formatCurrency(amount) : ''}`
+                `Deposit ${amountNumber > 0 ? formatCurrency(amountNumber) : ''}`
               )}
             </Button>
           )}
         </div>
-      </div>
-    </div>
+      </DialogSurface>
+    </Dialog>
   );
 }
 

@@ -282,4 +282,60 @@ describe('deposit (T3 — idempotent mutation)', () => {
     expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
     expect(screen.queryByText(/Failed to fetch/i)).not.toBeInTheDocument();
   });
+
+  // ===== The Fluent-Dialog shell (the RHF rewrite's a11y upgrade) =====
+
+  it('Escape dismisses the dialog when no key is live', async () => {
+    let closed = false;
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <DepositDialog
+              isOpen
+              onClose={() => {
+                closed = true;
+              }}
+              accounts={[seedAccount()]}
+            />
+          }
+        />
+      </Routes>,
+      { routerEntries: ['/'] },
+    );
+
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(closed).toBe(true));
+  });
+
+  it('Escape is a NO-OP mid-flight — the same keyLive guard as the X button', async () => {
+    server.use(http.post('*/api/transactions/deposit', () => new Promise<Response>(() => {})));
+    let closed = false;
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <DepositDialog
+              isOpen
+              onClose={() => {
+                closed = true;
+              }}
+              accounts={[seedAccount()]}
+            />
+          }
+        />
+      </Routes>,
+      { routerEntries: ['/'] },
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '€100' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deposit €100.00' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled());
+
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toBe(false);
+    expect(screen.getByText('Deposit Money')).toBeInTheDocument(); // still open
+  });
 });
