@@ -1,331 +1,173 @@
-# AzureBank Architecture Overview
+# How AzureBank works
 
-This document provides a comprehensive overview of the AzureBank backend architecture.
-
----
-
-## Table of Contents
-
-- [System Context](#system-context)
-- [Container View](#container-view)
-- [Component Views](#component-views)
-- [Data Flow](#data-flow)
-- [Security Architecture](#security-architecture)
-- [Database Design](#database-design)
+**The one document to read.** It is complete on its own: every rule below is stated with its
+reason, and the links are footnotes for depth, never detours you have to take. If a sentence here
+only makes sense after following a link, that is a defect — report it.
 
 ---
 
-## System Context
+## What it is
 
-The AzureBank system provides banking services to customers through web and mobile applications.
+A personal banking application: accounts, deposits, withdrawals, transfers between your own
+accounts, and transfers to another user by handle. Not a demo of CRUD — the interesting part is
+everything that has to be true *because it moves money*.
+
+Two halves, both real and wired to each other:
+
+- **`backend/`** — .NET 10, ASP.NET Core. A REST API holding the domain, and a **BFF** in front of
+  it that owns the browser session.
+- **`frontend/`** — React 19, TypeScript, Fluent UI v9, Redux Toolkit Query. A full SPA talking to
+  the real API through the BFF.
 
 ```mermaid
 flowchart LR
-    subgraph External["External Systems"]
-        Email["📧 Email System<br/><i>Sends notifications</i>"]
-        IdP["🔐 Identity Provider<br/><i>Optional OAuth2</i>"]
-    end
+    User["Browser"]
+    SPA["React SPA<br/>Vite · :5173"]
+    BFF["BFF<br/>ASP.NET Core + YARP · :5000"]
+    API["REST API<br/>ASP.NET Core · :7215"]
+    DB[("SQL Server")]
 
-    Customer["👤 Bank Customer<br/><i>End user with accounts</i>"]
-
-    subgraph AzureBank["🏦 AzureBank System"]
-        System["Banking Platform<br/><i>Manage accounts, transactions,<br/>and transfers</i>"]
-    end
-
-    Customer -->|"HTTPS"| System
-    System -->|"SMTP"| Email
-    System -.->|"OAuth2"| IdP
-
-    style Customer fill:#08427b,color:#fff
-    style System fill:#1168bd,color:#fff
-    style Email fill:#999,color:#fff
-    style IdP fill:#999,color:#fff
-```
-
-### External Actors
-
-| Actor | Description |
-|-------|-------------|
-| **Bank Customer** | End user accessing banking services |
-| **Email System** | External email provider for notifications |
-| **Identity Provider** | Optional external authentication (future) |
-
----
-
-## Container View
-
-The system is composed of multiple containers (deployable units):
-
-```mermaid
-flowchart TB
-    Customer["👤 Bank Customer"]
-
-    subgraph Frontend["Frontend Layer"]
-        SPA["⚛️ Single Page App<br/><i>React / TypeScript</i>"]
-    end
-
-    subgraph Backend["Backend Layer"]
-        BFF["🔀 BFF Gateway<br/><i>ASP.NET Core + YARP</i><br/>Port 7216"]
-        API["⚙️ REST API<br/><i>ASP.NET Core</i><br/>Port 7215"]
-    end
-
-    subgraph Data["Data Layer"]
-        DB[("🗄️ SQL Server<br/><i>Accounts, Users,<br/>Transactions</i>")]
-        Session[("💾 Session Store<br/><i>In-Memory / Redis</i>")]
-    end
-
-    Customer -->|"HTTPS"| SPA
-    SPA -->|"HTTPS + Cookie"| BFF
-    BFF -->|"HTTPS + Bearer"| API
-    BFF <-->|"Sessions"| Session
+    User --> SPA
+    SPA -->|"HttpOnly cookie"| BFF
+    BFF -->|"Bearer, added server-side"| API
     API -->|"EF Core"| DB
-
-    style Customer fill:#08427b,color:#fff
-    style SPA fill:#438dd5,color:#fff
-    style BFF fill:#1168bd,color:#fff
-    style API fill:#1168bd,color:#fff
-    style DB fill:#438dd5,color:#fff
-    style Session fill:#438dd5,color:#fff
 ```
 
-### Container Descriptions
+The arrow labels are the whole security story: **the browser holds a cookie, never a token.**
 
-| Container | Technology | Responsibility |
-|-----------|------------|----------------|
-| **SPA** | React, TypeScript | User interface (future) |
-| **BFF Gateway** | ASP.NET Core, YARP 2.3.0 | Session management, rate limiting, security headers, reverse proxy |
-| **REST API** | ASP.NET Core 10.0 | Business logic, validation, authentication, data access |
-| **Database** | SQL Server 2022 | Persistent storage for all domain data |
-| **Session Store** | In-Memory (Redis capable) | User session and token storage |
+## The one decision everything else follows from
 
----
+The SPA never receives, stores or sends a JWT. It authenticates with an `HttpOnly`, `Secure`,
+`SameSite=Strict` cookie prefixed `__Host-`; the BFF holds the access and refresh tokens
+server-side and attaches the bearer header itself as it proxies. Nothing in the frontend
+constructs an `Authorization` header, and there is nothing in web storage for a script to steal.
 
-## Component Views
+Everything downstream is a consequence:
 
-### API Components
+- **No CORS anywhere.** Same-origin topology, so there is no cross-origin grant to misconfigure.
+  Cross-site state-changing requests are rejected by Fetch-Metadata headers on top of
+  `SameSite=Strict`.
+- **The 15-minute access token is invisible.** When it expires, the BFF silently re-mints it from
+  a rotating refresh token; the user's session is bounded by inactivity and absolute timeouts, not
+  by token lifetime. Refresh tokens rotate on every use and a reuse is treated as theft — the
+  whole family is revoked.
+- **Session expiry is a data-loss event, so it is designed rather than accepted.** No unsubmitted
+  financial intent is persisted anywhere; a draft transfer is lost on expiry rather than resumed
+  against a session that may no longer be yours.
 
-| Layer | Components | Purpose |
-|-------|------------|---------|
-| **Controllers** | AuthController, AccountController, TransactionController, TransferController, UserController | HTTP endpoints |
-| **Services** | AuthService, AccountService, TransactionService, TransferService, UserService, JwtService | Business logic |
-| **Validation** | FluentValidation validators | Request validation |
-| **Data Access** | AzureBankDbContext, Mapperly mappers | Database operations |
+*Depth: ADR-0001 (BFF), ADR-0018 (origin hardening), ADR-0021 (refresh rotation), ADR-0019
+(SPA/BFF contract).*
 
-```mermaid
-graph TD
-    A[Controllers] --> B[Services]
-    A --> C[Validators]
-    B --> D[DbContext]
-    D --> E[(SQL Server)]
-```
+## Moving money exactly once
 
-### BFF Components
+The hard problem in a bank is not writing a row; it is guaranteeing you wrote it **once** when the
+network, the browser and the process are all free to fail halfway.
 
-| Layer | Components | Purpose |
-|-------|------------|---------|
-| **Middleware** | SecurityHeaders, RateLimiter, SessionActivity, AuthLevel | Request pipeline |
-| **Controllers** | BffAuthController | Session endpoints |
-| **Services** | SessionService, TokenStore, CleanupService | Session management |
-| **Proxy** | YARP ReverseProxy, BearerTokenTransform | API forwarding |
+Every mutating money endpoint requires a client-generated `Idempotency-Key` and executes **at most
+once** per user, endpoint and key. The server fingerprints the **raw request body bytes** with a
+keyed HMAC — not the parsed JSON, so a re-serialisation with different key order is correctly seen
+as a different payload.
 
-```mermaid
-graph TD
-    A[Client] --> B[Middleware]
-    B --> C[YARP Proxy]
-    B --> D[BffAuthController]
-    C --> E[Backend API]
-    D --> F[SessionService]
-```
+Five outcomes, and each one tells the client something different:
 
----
+| The server says | It means | The client |
+|---|---|---|
+| `2xx` with `Idempotency-Replayed: true` | This exact request already succeeded | Shows the stored result, byte-identical |
+| `409 IDEMPOTENCY_IN_FLIGHT` | A duplicate is still running | Keeps the key, retries later |
+| `409 IDEMPOTENCY_RESULT_UNKNOWN` | It executed but the response was lost | **Stops.** Asks the user to verify against their transactions |
+| `422 IDEMPOTENCY_KEY_REUSE` | Same key, different payload | Rotates the key |
+| Business `4xx` | Insufficient funds, wrong PIN | Releases the key; fix and retry |
 
-## Data Flow
+The client half matters as much as the server half, because a client that mints a fresh key after
+a timeout has manufactured a double-spend that the server cannot detect. So the rule is
+inverted from the intuitive one: **a failure the server might have seen keeps the key; only a
+definitive answer spends it.** `RESULT_UNKNOWN` is the one case where the correct behaviour is to
+stop and involve the user rather than guess — there is no endpoint that answers "did key X land?",
+and inventing a guess would be worse than asking.
 
-### Authentication Flow
+There are **no optimistic updates on money**. Balances come from a refetch after invalidation. In
+a bank a briefly-wrong balance is a correctness failure, not a UX blemish.
 
-**Registration:**
-1. Client → BFF: `POST /bff/auth/register`
-2. BFF → API: Forward request
-3. API: Hash password (Argon2id), create user + account
-4. API → BFF: Return token + user data
-5. BFF: Store token in session
-6. BFF → Client: Set-Cookie + user data
+The guarantee is proven, not asserted: 24 byte-identical parallel requests with one key produce
+exactly one execution, with mathematically exact balances, on both EF InMemory and real SQL
+Server, three deterministic rounds per run, in CI.
 
-**Login:**
-1. Client → BFF: `POST /bff/auth/login`
-2. BFF → API: Forward credentials
-3. API: Verify password, generate JWT
-4. BFF: Create session, store token
-5. BFF → Client: Set-Cookie + user data
+*Depth: ADR-0009 (server protocol), ADR-0022 (client protocol), ADR-0024 (why not ETag).*
 
-```mermaid
-graph LR
-    Client -->|Cookie| BFF
-    BFF -->|Bearer JWT| API
-    API --> DB[(Database)]
-```
+## A second factor that is actually a second factor
 
-### Transaction Flow
+Sensitive operations need a PIN, and the elevation lives in the **BFF session**, not in the token.
+A level-2 route hit without elevation returns `403` with `X-Auth-Level-Required`; the SPA opens a
+PIN modal, elevates, and then the original request is **replayed byte-identically at the transport
+layer** — same body bytes, same idempotency key. Rebuilding the request after elevation would
+change the fingerprint and strand the payment.
 
-**Deposit/Withdraw:**
-1. Client → BFF: `POST /api/transactions/deposit`
-2. BFF: Get JWT from session, attach as Bearer
-3. BFF → API: Forward with Bearer token
-4. API: Validate, update balance, create record
-5. API → BFF → Client: Transaction result
+Withdrawals are the exception: their PIN travels *inside* the request body, because it is part of
+what gets hashed. One component, two transports, and a third is not permitted.
 
-```mermaid
-graph LR
-    C[Client] -->|1. Request| BFF
-    BFF -->|2. Add Bearer| API
-    API -->|3. Update| DB[(Database)]
-    DB -->|4. Result| API
-    API -->|5. Response| BFF
-    BFF -->|6. Response| C
-```
+PINs are hashed with Argon2id **plus a server-side pepper** held outside the database, so a
+database dump alone cannot be brute-forced offline — six digits would otherwise fall instantly.
+Three wrong attempts lock the PIN; the failure counter is incremented atomically in SQL so
+parallel guesses cannot race past the limit.
 
-### Transfer Flow (with Step-Up Auth)
+*Depth: ADR-0008 (step-up), ADR-0011 (pepper), ADR-0010 (lockout).*
 
-**Step 1: PIN Verification Required**
-1. Client → BFF: `POST /api/transfers`
-2. BFF: Check AuthLevel = 1 (insufficient)
-3. BFF → Client: `403 STEP_UP_REQUIRED`
+## Not telling attackers who exists
 
-**Step 2: Verify PIN**
-4. Client → BFF: `POST /bff/auth/verify-pin`
-5. BFF → API: Verify PIN hash
-6. BFF: Upgrade session to AuthLevel 2
-7. BFF → Client: `{authLevel: 2}`
+Registration returns an identical, enumeration-neutral `409` whether the email or the handle
+collided; the specific reason is logged server-side only. Login is enumeration-safe and rate
+limited per IP with `429` plus `Retry-After`.
 
-**Step 3: Execute Transfer**
-8. Client → BFF: `POST /api/transfers` (retry)
-9. BFF: AuthLevel = 2 ✓, forward with Bearer
-10. API: Debit sender, credit recipient
-11. API → BFF → Client: Transfer result
+There is **no user search**. Sending money to someone requires knowing their handle exactly — the
+lookup is exact-match, rate-limited, and returns a masked display name. A substring search would
+be a harvesting endpoint with extra steps.
 
-```mermaid
-graph TD
-    A[Transfer Request] --> B{AuthLevel?}
-    B -->|Level 1| C[403 Step-Up Required]
-    C --> D[Verify PIN]
-    D --> E[Upgrade to Level 2]
-    E --> A
-    B -->|Level 2| F[Execute Transfer]
-    F --> G[Success]
-```
+The account number is masked by default and revealed only through a PIN-gated endpoint; the full
+number never appears in a list response.
 
----
+**Honest residual:** registration auto-logs-in, which means the account-existence oracle is
+narrowed rather than closed. Closing it needs out-of-band email confirmation, which needs email
+infrastructure this project does not have. That is a bounded, accepted risk, written down as a
+decision rather than left as an oversight.
 
-## Security Architecture
+*Depth: ADR-0013, ADR-0014, ADR-0020, ADR-0012.*
 
-### Defense in Depth
+## Keeping the two halves honest
 
-```mermaid
-graph TD
-    L1[Layer 1: Network] --> L2[Layer 2: Gateway]
-    L2 --> L3[Layer 3: Authentication]
-    L3 --> L4[Layer 4: Authorization]
-    L4 --> L5[Layer 5: Data]
-```
+The frontend and backend agree because agreement is **mechanically enforced**, not because someone
+remembered:
 
-| Layer | Features |
-|-------|----------|
-| **1. Network** | HTTPS/TLS 1.3, CORS Policy |
-| **2. Gateway** | Rate Limiting (100 req/min), Security Headers, HTTP-Only Cookies |
-| **3. Authentication** | JWT Validation, Session Management, Step-Up Auth (PIN) |
-| **4. Authorization** | Role-Based Access, Resource Ownership, Auth Level Check |
-| **5. Data** | Argon2id Passwords, Data Encryption, Immutable Audit Trail |
+- The API's OpenAPI spec generates the frontend's TypeScript types, and CI regenerates them and
+  fails on any diff. A contract change that skips the frontend is a red build.
+- The same spec generates **Zod schemas**, so the shapes are checked at runtime too, not just at
+  compile time. Money responses are validated fail-closed in production; everything else validates
+  in development and test only, where a mismatch should be loud and in production it should not
+  take the page down. The whole `/bff/auth/*` surface is fail-closed everywhere, because it has no
+  spec behind it and it gates authentication.
+- Errors arrive as RFC 9457 ProblemDetails on one channel, carrying a `traceId` that pastes
+  straight into the trace search.
 
-### Security Features by Layer
+That last point is not decoration. A user reporting "it failed" can hand over a 32-character
+identifier that resolves to the exact request across the SPA, the BFF, the API and SQL — one
+trace, because the trace context propagates through the proxy hop.
 
-| Layer | Feature | Implementation |
-|-------|---------|----------------|
-| **Network** | TLS | HTTPS enforced |
-| **Network** | CORS | Origin whitelist |
-| **Gateway** | Rate Limiting | 100 req/min fixed window |
-| **Gateway** | Security Headers | OWASP recommended |
-| **Gateway** | Cookie Security | HTTP-only, Secure, SameSite=Strict |
-| **Auth** | Token Management | JWT (15 min) + Refresh (60 min) |
-| **Auth** | Session | Server-side with crypto ID |
-| **Auth** | Step-Up | PIN for sensitive operations |
-| **Authz** | Access Control | User owns resources |
-| **Data** | Passwords | Argon2id hashing |
-| **Data** | Audit | Immutable transactions |
+*Depth: ADR-0023 (validation), ADR-0016 (observability), ADR-0017 (PII-safe logs).*
 
----
+## What proves it
 
-## Database Design
+- **618 backend tests** passing, plus 33 held behind a SQL Server flag that run in CI against a
+  real database — those are the concurrency proofs, and they are skipped locally rather than
+  faked.
+- **188 frontend tests**, against MSW mocks that are themselves validated against the real
+  contract, so a mock that drifts fails the suite instead of passing quietly.
+- **Architecture tests** that fail the build on a layer-dependency violation.
+- **Schemathesis** contract tests driving the API from its own spec.
+- Every pull request runs the full suite, CodeQL on three languages, and an AI review, and a
+  human merges.
 
-### Entity Relationship Diagram
+## Where to go next
 
-```mermaid
-erDiagram
-    AspNetUsers ||--o{ Accounts : "owns"
-    AspNetUsers ||--o{ RefreshTokens : "has"
-    Accounts ||--o{ Transactions : "contains"
-
-    AspNetUsers {
-        uniqueidentifier Id PK
-        nvarchar Email UK
-        nvarchar AzureTag UK
-        nvarchar PasswordHash
-        nvarchar PinHash
-        nvarchar FirstName
-        nvarchar LastName
-        datetime2 CreatedAt
-        datetime2 UpdatedAt
-    }
-
-    Accounts {
-        uniqueidentifier Id PK
-        uniqueidentifier UserId FK
-        nvarchar AccountNumber UK
-        nvarchar Name
-        int Type
-        decimal Balance
-        bit IsPrimary
-        bit IsDeleted
-        rowversion RowVersion
-        datetime2 CreatedAt
-        datetime2 UpdatedAt
-    }
-
-    Transactions {
-        uniqueidentifier Id PK
-        uniqueidentifier AccountId FK
-        int Type
-        decimal Amount
-        int Status
-        nvarchar Description
-        datetime2 CreatedAt
-    }
-
-    RefreshTokens {
-        uniqueidentifier Id PK
-        uniqueidentifier UserId FK
-        nvarchar TokenHash
-        datetime2 ExpiresAt
-        datetime2 RevokedAt
-        datetime2 CreatedAt
-    }
-```
-
-### Key Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| **UUID v7 for IDs** | Time-ordered, globally unique, no coordination |
-| **Soft Delete** | Preserve account history, regulatory compliance |
-| **Optimistic Concurrency** | RowVersion prevents lost updates |
-| **Immutable Transactions** | Audit trail integrity |
-| **Decimal Precision** | Balance (19,4), Amount (18,2) for currency |
-
----
-
-## Related Documentation
-
-- [ADR-0001: BFF Pattern](../adr/0001-bff-pattern.md)
-- [ADR-0002: YARP Proxy](../adr/0002-yarp-proxy.md)
-- [ADR-0003: Argon2id Hashing](../adr/0003-argon2id-password-hashing.md)
-- [Database Schema](./database-schema.md)
-- [API Reference](https://localhost:7215/scalar/v1)
+`docs/adr/` holds the decisions with their alternatives and residuals — the index names four to
+start with. `docs/engineering-traps.md` collects the things that fail silently. `SECURITY.md` has
+the security posture in one place, and `docs/engineering-practices.md` explains how to run and
+change the project.

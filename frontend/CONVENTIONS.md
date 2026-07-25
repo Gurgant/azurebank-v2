@@ -23,9 +23,13 @@ time — but `unwrap(envelope, schema?)` takes the schema **optionally**, and wi
 `envelope.data` as-is. A compile-time type is a claim about what the server sends, not a check.
 Server drift on an unvalidated endpoint reaches the RTK Query cache silently.
 
-Fail-closed runtime checking happens only where a schema is passed. ADR-0023 says which surfaces
-those are and why the rest are deliberately dev-and-test only. (One case is guarded regardless: a
-2xx with a null `data` throws rather than letting `undefined` into the cache.)
+Fail-closed runtime checking happens only where a schema is passed, and the set is deliberate: the
+**four money receipts** (deposit, withdraw, transfer, internal transfer), the **accounts list** and
+the **transaction summary** — plus the whole `/bff/auth/*` surface, which has no OpenAPI contract
+behind it and gates authentication. Everything else on `/api/*` validates in development and test
+only, where a mismatch should be loud, rather than in production where it would take the page down
+over a field nobody renders. (One case is guarded regardless: a 2xx with a null `data` throws
+rather than letting `undefined` into the cache.) ADR-0023 has the rejected alternatives.
 
 **422 routing is on `errorCode`, four ways** — the business rule that failed decides the message and
 the affected field. Never route on the status alone: several unrelated rules share 422.
