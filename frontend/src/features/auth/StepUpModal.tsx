@@ -47,7 +47,7 @@ const useStyles = makeStyles({
 });
 
 /**
- * The single, root-mounted step-up (PIN elevation) modal (DECISIONS §2.2). It is driven
+ * The single, root-mounted step-up (PIN elevation) modal (ADR-0022). It is driven
  * entirely by the module-level stepUpController: when a level-2-gated request 403s, the
  * base-query wrapper calls requestStepUp() and this modal appears. The user's PIN elevates
  * the SESSION via /bff/auth/verify-pin (the PIN never touches the transfer body); on

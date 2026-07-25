@@ -6,6 +6,19 @@ This directory contains Architecture Decision Records (ADRs) for the AzureBank p
 
 An ADR is a document that captures an important architectural decision made along with its context and consequences.
 
+## When something earns an ADR
+
+An ADR requires a decision that is **binding on future work**, **not already recorded** in another
+ADR, and **not recoverable by reading** the code, the types, the tests or the CI gates. If a
+competent reader could recover the rule by opening the repository, writing it down here creates a
+second copy that will eventually go stale and start lying — which is worse than never having
+written it.
+
+Preferences, task lists, status reports and deferrals are not ADRs. The best candidates are the
+ones with nothing to read: a **rejection** (no code exists for the thing you decided not to build),
+a constraint on something **outside the repository**, or a hard-won **negative finding** whose only
+alternative record is running the same experiment again.
+
 ## ADR Index
 
 | ID | Title | Status | Date |
@@ -32,6 +45,10 @@ An ADR is a document that captures an important architectural decision made alon
 | [ADR-0019](0019-spa-bff-integration.md) | SPA–BFF Integration Architecture (Cookie Auth, One Error Channel) | Accepted | 2026-07-20 |
 | [ADR-0020](0020-account-number-reveal.md) | On-Demand Account-Number Reveal (Masked-by-Default + PIN-Gated) | Accepted | 2026-07-21 |
 | [ADR-0021](0021-refresh-token-rotation-bff-remint.md) | Refresh-Token Rotation with Reuse-Detection (+ BFF Silent Re-Mint) | Accepted | 2026-07-22 |
+| [ADR-0022](0022-client-money-mutation-protocol.md) | Client-side money-mutation protocol | Accepted | 2026-07-25 |
+| [ADR-0023](0023-runtime-response-validation.md) | Runtime response validation — spec-generated Zod, fail-closed on money | Accepted | 2026-07-25 |
+| [ADR-0024](0024-no-client-facing-optimistic-concurrency.md) | No client-facing optimistic concurrency — ETag/If-Match rejected | Accepted | 2026-07-25 |
+| [ADR-0025](0025-originals-reference-mine.md) | The originals are a reference mine, not a code source | Accepted | 2026-07-25 |
 
 ## Creating a New ADR
 

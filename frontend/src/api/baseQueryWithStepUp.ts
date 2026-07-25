@@ -4,7 +4,7 @@ import type { ApiProblem } from './problemBaseQuery';
 import { requestStepUp } from '../features/auth/stepUpController';
 
 /**
- * The step-up interceptor (DECISIONS §2.2, X1/X2). Wraps problemBaseQuery — which has
+ * The step-up interceptor (ADR-0022, X1/X2). Wraps problemBaseQuery — which has
  * ALREADY normalized a level-2 403 to `STEP_UP_REQUIRED` (reading X-Auth-Level-Required
  * before body parsing, D2) and never auto-retries mutations. On that code we drive one
  * shared modal via requestStepUp(); on elevation we replay the request EXACTLY ONCE with

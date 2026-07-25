@@ -13,7 +13,7 @@ import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { StepUpModal } from './StepUpModal';
 
 /**
- * PR-11 — the step-up interceptor end to end (DECISIONS §2.2). A level-2-gated transfer 403s,
+ * PR-11 — the step-up interceptor end to end (ADR-0022). A level-2-gated transfer 403s,
  * the root StepUpModal appears, verify-pin elevates the session, and the ORIGINAL request is
  * replayed ONCE with the identical Idempotency-Key — the money-critical no-double-spend
  * property. Also pins cancel (STEP_UP_CANCELLED, no replay) and wrong-PIN-stays.

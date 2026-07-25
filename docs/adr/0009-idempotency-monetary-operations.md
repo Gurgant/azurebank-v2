@@ -181,6 +181,8 @@ guesswork into a provable state machine.
 - New EF migration `AddIdempotencyRecords`.
 - Frontend (R3) must generate a UUID per user-intent and reuse it across
   retries of that intent (note for the wiring session).
+  *(The client half of this protocol — the keep/rotate table per outcome, byte-identical
+  step-up replay, and the RESULT_UNKNOWN verify latch — is now specified in ADR-0022.)*
 
 ## Validation
 

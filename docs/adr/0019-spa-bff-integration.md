@@ -51,6 +51,10 @@ and three 429 sources.
    `BffResponses.cs` — the OpenAPI spec covers the API surface only. Request bodies
    reuse the generated API types (the BFF forwards them verbatim). The mirror is the
    accepted cost until the BFF surface joins the spec (BE-2 backlog).
+   *(Superseded: ADR-0023 inverts the direction of truth — `bffSchemas.ts` holds Zod
+   schemas validated at runtime, and `bffTypes.ts` is now `z.infer` of them, so the type
+   and the validator cannot disagree. Do not "restore" hand-written types here: that
+   deletes a live runtime guard on the weakest boundary in the system.)*
 7. **One form system.** react-hook-form + zod with Fluent `Field`/`Input` and
    `register()` spread; the unused hand-rolled `FormField` is deleted, and the
    previously planned Controller→Field adapter is dropped as unnecessary — the pages

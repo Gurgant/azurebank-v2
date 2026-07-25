@@ -13,7 +13,7 @@ import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
 import type { ApiProblem } from './problemBaseQuery';
 
 /**
- * The six flagship policy tests (DECISIONS §2.4) — the data-layer contract as executable
+ * The six flagship policy tests (ADR-0022) — the data-layer contract as executable
  * ADR. Tests 4 and 5 pin their FOUNDATION half here; their full-flow forms (interceptor
  * byte-identity replay, sessionExpired dispatch) land with PR-11 and PR-4/PR-10.
  */
@@ -72,7 +72,7 @@ function useWithdrawIntent() {
   return useIdempotentMutation(trigger);
 }
 
-describe('data-layer policies (flagship, DECISIONS §2.4)', () => {
+describe('data-layer policies (flagship, ADR-0022)', () => {
   it('1 — keeps the same Idempotency-Key across 503 + user Retry; a fresh key only after 422 + edit', async () => {
     const keys: string[] = [];
     let call = 0;
