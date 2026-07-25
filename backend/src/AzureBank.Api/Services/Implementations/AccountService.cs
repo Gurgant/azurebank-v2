@@ -85,9 +85,8 @@ public class AccountService : IAccountService
 
         // Sanitize the user-controlled name before logging — defence-in-depth against
         // log-forging into the plain-text sink (the structured template already mitigates most).
-        // Central LogSanitizer (not inline Replace): one audited contract, pinned by tests. It is
-        // also declared to CodeQL as a log-injection barrier under .github/codeql, but that pack
-        // is inert under default setup — see the note on LogSanitizer itself.
+        // Central LogSanitizer (not inline Replace): one audited contract, pinned by tests and
+        // declared to CodeQL as a log-injection barrier (see the model pack under .github/codeql).
         var safeName = LogSanitizer.Sanitize(request.Name);
         _logger.LogInformation("Updated account {AccountId} name to '{Name}'", accountId, safeName);
 

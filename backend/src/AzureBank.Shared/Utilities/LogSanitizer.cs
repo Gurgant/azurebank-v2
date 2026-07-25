@@ -13,17 +13,13 @@ namespace AzureBank.Shared.Utilities;
 /// CONTRACT (do not weaken): the return value contains no character that can start a new log
 /// line or alter terminal rendering. This exact guarantee is
 ///   1. pinned by AzureBank.Tests.Unit.Utilities.LogSanitizerTests, and
-///   2. declared to CodeQL as a barrierModel row (kind "log-injection") in
+///   2. asserted to CodeQL as a barrierModel row (kind "log-injection") in
 ///      .github/codeql/extensions/azurebank-csharp-models/models/logsanitizer.model.yml, which
 ///      matches this EXACT namespace/type/name/signature
 ///      ("AzureBank.Shared.Utilities", "LogSanitizer", "Sanitize", "(System.String)").
 ///      Renaming, moving, or adding overloads silently orphans that row — update the YAML if
-///      you touch this API.
-///      ⚠ THAT ROW IS NOT IN EFFECT TODAY: code scanning runs in **default setup**, which does
-///      not load repository model packs, so CodeQL still reports log-forging through this
-///      sanitizer and each report has to be dismissed by hand. The pack is staged for a planned
-///      migration to advanced setup (own codeql.yml loading the pack); until that lands, treat
-///      point 2 as intent, not as an active control. Point 1 — the tests — is the real guarantee.
+///      you touch this API. Repository model packs under .github/codeql/extensions are picked up
+///      automatically by code scanning (default setup included), so that row is live today.
 ///
 /// Scope: safe for LOG output only. Not an HTML/SQL/header/path sanitizer.
 /// </summary>
