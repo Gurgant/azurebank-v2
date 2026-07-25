@@ -17,9 +17,15 @@ live in [`docs/engineering-traps.md`](../docs/engineering-traps.md).
 changing which one moves state on two rows; and historical snapshots (`?at=`) stay **tag-less**,
 because a past balance cannot become stale and tagging it would evict it on every mutation.
 
-**Every endpoint declares its response type through `unwrap`.** The seam is per-endpoint and typed,
-so a response shape that stops matching the contract is a compile error rather than a runtime
-surprise. See ADR-0023 for which surfaces validate at runtime and where.
+**Every endpoint unwraps its envelope through `unwrap`, and typing is not validation.** The seam is
+per-endpoint and typed, so the *declared* shape is checked against the generated contract at compile
+time — but `unwrap(envelope, schema?)` takes the schema **optionally**, and without one it returns
+`envelope.data` as-is. A compile-time type is a claim about what the server sends, not a check.
+Server drift on an unvalidated endpoint reaches the RTK Query cache silently.
+
+Fail-closed runtime checking happens only where a schema is passed. ADR-0023 says which surfaces
+those are and why the rest are deliberately dev-and-test only. (One case is guarded regardless: a
+2xx with a null `data` throws rather than letting `undefined` into the cache.)
 
 **422 routing is on `errorCode`, four ways** — the business rule that failed decides the message and
 the affected field. Never route on the status alone: several unrelated rules share 422.

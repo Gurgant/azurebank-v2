@@ -63,9 +63,11 @@ These are properties of the shipped SPA, not aspirations. Each is stated as a pr
 each is easier to violate by accident than to add deliberately, and because a reviewer can check
 them in a minute.
 
-- **Nothing security-relevant is stored in the browser.** No tokens, session identifiers, PINs or
-  personal data in `localStorage`, `sessionStorage`, IndexedDB or a persisted Redux store. An empty
-  Application/Storage panel in DevTools is the check, and it should stay empty.
+- **No tokens, session identifiers, PINs or personal data in web storage** — not in
+  `localStorage`, not in `sessionStorage`, not in IndexedDB, and not in a persisted Redux store.
+  The `__Host-` session cookie described above is the deliberate exception and the only one: it is
+  `HttpOnly`, so the page cannot read it, which is exactly why it is the right place for that
+  state.
 - **The SPA never constructs an `Authorization` header.** Access tokens live server-side in the BFF
   and are attached by its proxy transform (ADR-0001, ADR-0021). Frontend code that builds a bearer
   header is a defect regardless of where it got the token.

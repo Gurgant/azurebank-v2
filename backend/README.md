@@ -603,7 +603,8 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+How this project is built and kept correct — setup, gates, style, merge policy — is in
+[Engineering practices](../docs/engineering-practices.md).
 
 ### Quick Start
 

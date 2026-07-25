@@ -31,8 +31,10 @@ identity table.** "Cleaning up" duplicates during a migration destroys user rows
 rows are gone before anyone notices the migration succeeded. Failing the migration is the correct
 outcome: it forces a human to decide which row survives.
 
-**`WITH (ONLINE = ON)` is unavailable here** — it is an Enterprise feature and it breaks LocalDB
-outright. Index migrations run offline.
+**`WITH (ONLINE = ON)` is unavailable here.** Online index operations are edition- and
+version-dependent — newer SQL Server releases widened where they are supported — but the target
+that matters for local development is **LocalDB**, which runs the Express engine and does not
+support them at all. Index migrations run offline.
 
 **SQL Server only.** Provider-specific migration SQL is deliberate. Do not "make it portable": the
 portability would be untested, and the specificity is buying correctness we rely on.
@@ -84,12 +86,19 @@ mistaken for evidence that it was configured in the base file — check the sour
 solution-style, so `--noEmit` skips project references and misses errors the build catches. This has
 already shipped a red CI once: a stale barrel re-export passed locally and failed on push.
 
-**Run the whole solution's tests: `dotnet test AzureBank.slnx`.** Never narrow it with
-`--filter ~AzureBank.Tests`. That filter is a *substring* match on the fully-qualified test name,
-and BFF tests are namespaced `AzureBank.Bff.Tests.*` — which does not contain the string
-`AzureBank.Tests`. So the whole BFF suite is excluded, and the run reports success for the tests it
-did execute. The trap is that the filter looks like it means "the AzureBank test projects" and
-actually means "names containing this substring".
+**Run the whole solution's tests: `dotnet test AzureBank.slnx`.** Narrowing it with a filter has
+two distinct failure modes, both verified on this solution:
+
+- **`--filter ~AzureBank.Tests` is malformed.** The condition needs a property name; without one
+  the discoverer throws `Invalid Condition` and dotnet itself warns that *"the incorrect format can
+  lead to no test getting executed"*. A run that executes nothing is not a run that passed.
+- **`--filter FullyQualifiedName~AzureBank.Tests` is well-formed and still wrong.** It selects
+  **590 of 651** tests — the match is a substring of the fully-qualified name, and BFF tests are
+  namespaced `AzureBank.Bff.Tests.*`, which does not contain `AzureBank.Tests`. All 61 BFF tests
+  are excluded and the run reports success.
+
+The trap in both cases is that the filter reads as "the AzureBank test projects" and means
+"fully-qualified names containing this substring". Name the solution instead.
 
 The remaining frontend testing traps — Fluent and jsdom behaviour — live in
 [`frontend/CONVENTIONS.md`](../frontend/CONVENTIONS.md), next to the conventions they constrain.
