@@ -25,11 +25,20 @@ and silently delete a live runtime guard. **A wrong ADR is more dangerous than a
 
 ## Decision
 
-1. **BFF schemas are the source of truth.** `src/api/bffSchemas.ts` holds the Zod schemas and
-   `src/api/bffTypes.ts` is `z.infer` of them, so the type and the validator cannot disagree.
-   Validation is **fail-closed** on `getMe`, `login`, `register`, `session-status` and `verify-pin`
-   through the `unwrap(envelope, schema?)` seam. `location.state` and error bodies use `safeParse`
-   with a fallback — soft on purpose, because a garbled error payload should not replace the error.
+The two surfaces get different treatment, and items 1 and 4–5 below must be read as scoped to one
+each: **the BFF surface** (`/bff/auth/*`) is fail-closed in its entirety, because it is small and
+every response on it gates authentication; **the API surface** (`/api/*`) is fail-closed only where
+money is displayed. Confusing the two produces either a needless production crash surface or a
+missing guard.
+
+1. **On the BFF surface, schemas are the source of truth and validation is fail-closed —
+   everywhere, production included.** `src/api/bffSchemas.ts` holds the Zod schemas and
+   `src/api/bffTypes.ts` is `z.infer` of them, so the type and the validator cannot disagree. All
+   five responses — `getMe`, `login`, `register`, `session-status`, `verify-pin` — parse through
+   the `unwrap(envelope, schema?)` seam with no environment gate. This is the boundary with no
+   spec behind it, so it gets the strictest treatment. `location.state` and error bodies are the
+   exception and use `safeParse` with a fallback — soft on purpose, because a garbled error
+   payload should not replace the error it was carrying.
 
 2. **Zod for `/api/*` is generated, never hand-written.** `typed-openapi` with
    `--runtime zod --schemas-only`, output **committed** to `src/api/generated/`, behind
@@ -43,13 +52,13 @@ and silently delete a live runtime guard. **A wrong ADR is more dangerous than a
    overhead. `orval`'s Zod-4 migration was still settling. `hey-api` is an acceptable fallback if
    schema-filtering needs ever grow.
 
-4. **Fail-closed in production is limited to the money surfaces**: the four mutation receipts
-   (deposit, withdraw, transfer, internal transfer), the accounts list, and the transaction summary
-   — about six schemas. These are the responses where silent contract drift means *wrong money on
-   the screen*.
+4. **On the API surface, fail-closed in production is limited to the money surfaces**: the four
+   mutation receipts (deposit, withdraw, transfer, internal transfer), the accounts list, and the
+   transaction summary — about six schemas. These are the responses where silent contract drift
+   means *wrong money on the screen*.
 
-5. **Everything else validates in development and test only**, gated on `import.meta.env` inside the
-   same seam. This catches MSW mock drift in vitest and local integration drift with **zero
+5. **Every other `/api/*` response validates in development and test only**, gated on
+   `import.meta.env` inside the same seam. This catches MSW mock drift in vitest and local integration drift with **zero
    production crash surface**. The asymmetry is deliberate: someone who sees a conditional and
    "simplifies" it, or who decides validation ought to be uniform, breaks either the money guarantee
    or the production safety margin depending on which way they go.

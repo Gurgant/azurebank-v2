@@ -135,8 +135,8 @@ displaying an attempts counter; optimistic patching of any money-bearing cache e
 
 ## Verification
 
-Pinned by `frontend/src/api/policies.test.tsx`, `src/mocks/idempotency.test.ts`,
-`src/mocks/stepup.test.ts` and `src/mocks/withdrawHandler.test.ts`. Deleting any of these tests is
+Pinned by `frontend/src/api/policies.test.tsx`, `frontend/src/mocks/idempotency.test.ts`,
+`frontend/src/mocks/stepup.test.ts` and `frontend/src/mocks/withdrawHandler.test.ts`. Deleting any of these tests is
 a reversal of this decision, not a test cleanup. The six behaviours they hold:
 
 1. The same key survives a 503 and a user-driven Retry; a new key appears only after a 422 plus an

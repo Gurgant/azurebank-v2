@@ -17,9 +17,10 @@ the same investigation again.
 Here that is not hypothetical: a live to-do list actively resurrects it. The originals audit
 schedules ETag/If-Match as a backend item — "adapt, low priority, warrants its own ADR" — and a
 research pass two days later parked it after a sourced investigation. Anyone working that audit's
-list top to bottom will build a feature that was researched and explicitly rejected. There are
-currently **zero occurrences of `If-Match` anywhere in `backend/src` or `frontend/src`**, and no
-ADR mentions it, so the parking decision exists only in a document that is about to be archived.
+list top to bottom will build a feature that was researched and explicitly rejected. Before this
+ADR there were **zero occurrences of `If-Match` anywhere in `backend/src` or `frontend/src`** and
+no ADR mentioned it, so the parking decision lived only in a planning document headed for the
+archive.
 
 ## Decision
 

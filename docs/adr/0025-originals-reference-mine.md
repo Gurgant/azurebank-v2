@@ -21,9 +21,9 @@ verification passes, three knowledge graphs, roughly 1.9 million tokens and 481 
 highest-severity finding is that **porting the originals' idempotency filter would reintroduce a
 real double-spend window** into code that currently does not have one.
 
-None of that is recorded anywhere versioned. The canonical path of the preserved copies appears in
-**zero** repository files, and the findings live in a planning document that is being archived. So
-the cheapest way to re-learn any of it is to run the investigation again.
+Before this ADR none of that was recorded anywhere versioned. The canonical path of the preserved
+copies appeared in **zero** repository files, and the findings lived in a planning document headed
+for the archive — so the cheapest way to re-learn any of it was to run the investigation again.
 
 ## Decision
 
