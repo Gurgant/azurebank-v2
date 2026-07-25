@@ -8,6 +8,12 @@ name: Contract tests (manual)
 on:
   workflow_dispatch:
 
+# Least privilege for the GITHUB_TOKEN, inherited by both jobs (CodeQL
+# actions/missing-workflow-permissions). These jobs only read the repo, stand up SQL Server
+# and the API, and upload artifacts — none of that writes back through this token.
+permissions:
+  contents: read
+
 env:
   DOTNET_NOLOGO: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true

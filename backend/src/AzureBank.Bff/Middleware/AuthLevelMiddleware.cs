@@ -50,6 +50,12 @@ public class AuthLevelMiddleware
         // uses the raw path: sanitizing could alter which rules match).
         var safePath = LogSanitizer.Sanitize(path);
         var method = context.Request.Method;
+        // Kestrel rejects a request line whose method token holds CR/LF, so this is belt-and-braces
+        // rather than a live hole — but the log sink cannot tell where its input came from, and one
+        // sanitized value beside one raw value in the same statement is a pattern that invites the
+        // wrong copy later. Route matching keeps using the raw `method` for the same reason `path`
+        // does: sanitizing could change which rules match.
+        var safeMethod = LogSanitizer.Sanitize(method);
 
         // The browser must NEVER drive refresh-token rotation: only the BFF holds refresh tokens
         // (server-side) and re-mints access tokens itself via the YARP transform (ADR-0021, PR-2).
@@ -77,7 +83,7 @@ public class AuthLevelMiddleware
                 {
                     _logger.LogWarning(
                         "Access denied: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
-                        authLevel, method, safePath);
+                        authLevel, safeMethod, safePath);
 
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
                     context.Response.Headers.Append("X-Auth-Level-Required", "2");

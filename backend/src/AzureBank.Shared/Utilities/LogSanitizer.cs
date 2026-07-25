@@ -18,7 +18,8 @@ namespace AzureBank.Shared.Utilities;
 ///      matches this EXACT namespace/type/name/signature
 ///      ("AzureBank.Shared.Utilities", "LogSanitizer", "Sanitize", "(System.String)").
 ///      Renaming, moving, or adding overloads silently orphans that row — update the YAML if
-///      you touch this API.
+///      you touch this API. Repository model packs under .github/codeql/extensions are picked up
+///      automatically by code scanning (default setup included), so that row is live today.
 ///
 /// Scope: safe for LOG output only. Not an HTML/SQL/header/path sanitizer.
 /// </summary>
