@@ -1,0 +1,85 @@
+# Frontend conventions
+
+Rules that hold across the SPA. They are here rather than in an ADR because none of them is a
+decision with a weighed alternative — they are the shape this codebase already has, written down so
+a change reads as a change.
+
+Decisions live in [`docs/adr/`](../docs/adr/README.md); in particular ADR-0019 (SPA/BFF
+integration), ADR-0022 (money mutations) and ADR-0023 (runtime validation). Cross-cutting traps
+live in [`docs/engineering-traps.md`](../docs/engineering-traps.md).
+
+---
+
+## Data layer
+
+**Cache tags are the invalidation contract.** Two clauses are not obvious and are worth stating:
+`set-primary` invalidates the blanket `Account` tag, because exactly one account is primary and
+changing which one moves state on two rows; and historical snapshots (`?at=`) stay **tag-less**,
+because a past balance cannot become stale and tagging it would evict it on every mutation.
+
+**Every endpoint unwraps its envelope through `unwrap`, and typing is not validation.** The seam is
+per-endpoint and typed, so the *declared* shape is checked against the generated contract at compile
+time — but `unwrap(envelope, schema?)` takes the schema **optionally**, and without one it returns
+`envelope.data` as-is. A compile-time type is a claim about what the server sends, not a check.
+Server drift on an unvalidated endpoint reaches the RTK Query cache silently.
+
+Fail-closed runtime checking happens only where a schema is passed. ADR-0023 says which surfaces
+those are and why the rest are deliberately dev-and-test only. (One case is guarded regardless: a
+2xx with a null `data` throws rather than letting `undefined` into the cache.)
+
+**422 routing is on `errorCode`, four ways** — the business rule that failed decides the message and
+the affected field. Never route on the status alone: several unrelated rules share 422.
+
+**429 appears in three places** — login lockout, PIN lockout, and per-user API rate limiting — and
+in all three the countdown is **computed client-side from the response's `retryAfterSeconds`**.
+Never trust an absolute `lockedUntil` timestamp from the server: the browser's clock is not the
+server's, and a skewed clock either unlocks early or hangs forever.
+
+**Errors surface through one root `<Toaster>`.** Error toasts persist rather than auto-dismissing,
+and they carry a copyable `traceId` — that identifier is the only bridge between what a user saw and
+the server-side trace (ADR-0016, ADR-0017). A toast that drops the traceId breaks the only link.
+
+**Region discipline for async state**: a first load renders a skeleton shaped like the content it
+replaces; a background refetch keeps the stale data and shows a small inline indicator; a failed
+region renders an inline retry rather than blanking. Mutations show pending state on the button that
+started them, never as a page-level overlay.
+
+## Money and formatting
+
+**Amounts are always positive; direction lives in `type`.** A negative amount in the UI layer means
+somebody re-derived a sign that the contract already encodes, and the two will eventually disagree.
+
+**One `formatCurrency`.** EUR, one implementation, no local `Intl.NumberFormat` calls. A second
+formatter is how two screens end up disagreeing about what €1.005 rounds to.
+
+## UI stack
+
+**Fluent UI v9 with Griffel, and nothing else.** No third-party toast, skeleton, grid or modal
+library — Fluent covers all four, and a second system means two focus models, two theme sources and
+two sets of accessibility behaviour.
+
+**MSW is a test tool.** `dev:mock` exists for click-throughs and demos; it must never become *the*
+development path, because a frontend developed only against mocks drifts from the real contract and
+nobody finds out until integration.
+
+## Testing with Fluent and jsdom
+
+These four have each cost a debugging session, and none of them fails in a way that points at the
+cause.
+
+**Never put `contentBefore` on an input inside a dialog.** Typing into it closes the modal. The test
+failure reads as "the element disappeared", which sends you looking at your own unmount logic.
+
+**`userEvent.type` truncates Fluent inputs.** Use `fireEvent.change` with the complete value. The
+symptom is an assertion failing on a string that is missing its first characters.
+
+**Never assert on `input.value` under react-hook-form's `register`.** RHF owns the DOM node and the
+value you read is not necessarily the value in form state. Assert on submitted values or on rendered
+output instead.
+
+**The `matchMedia` stub in `src/test/setup.ts` is load-bearing.** It reports `prefers-reduced-motion:
+reduce`, which makes Fluent skip dialog animations and gives deterministic ARIA state. Removing it
+reintroduces a whole class of flake. Two consequences follow: after any async transition, query with
+`findBy*` or wrap in `waitFor`, because tabster lifts background `aria-hidden` asynchronously; and
+since jsdom never evaluates media queries, elements hidden behind a mobile-first breakpoint are
+present but hidden, so they need `{ hidden: true }` to be found.

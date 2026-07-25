@@ -57,6 +57,48 @@ Out of scope:
 - CSRF protection: SameSite=Strict backed by Fetch-Metadata rejection of cross-site state-changing requests
 - Same-origin topology — the BFF registers no CORS; the JWT never reaches the browser (ADR-0001)
 
+### Browser-side invariants
+
+These are properties of the shipped SPA, not aspirations. Each is stated as a prohibition because
+each is easier to violate by accident than to add deliberately, and because a reviewer can check
+them in a minute.
+
+- **No tokens, session identifiers, PINs or personal data in web storage** — not in
+  `localStorage`, not in `sessionStorage`, not in IndexedDB, and not in a persisted Redux store.
+  The `__Host-` session cookie described above is the deliberate exception and the only one: it is
+  `HttpOnly`, so the page cannot read it, which is exactly why it is the right place for that
+  state.
+- **The SPA never constructs an `Authorization` header.** Access tokens live server-side in the BFF
+  and are attached by its proxy transform (ADR-0001, ADR-0021). Frontend code that builds a bearer
+  header is a defect regardless of where it got the token.
+- **No JS-readable claims cookie.** Session state reaches the SPA only as data from
+  `/bff/auth/me`, never as a cookie the page can parse.
+- **No client-side "encryption" of secrets.** Obfuscating a value the browser must also decrypt
+  adds no security and hides the fact that the value should not be there.
+- **No personal data in URLs.** Not in paths, not in query strings — URLs land in browser history,
+  server logs and referrer headers. Identifiers in paths are opaque UUIDs, never emails or handles.
+- **No `dangerouslySetInnerHTML`,** and no equivalent raw-HTML injection. Server strings render as
+  text.
+- **No unsubmitted financial intent survives a session boundary** (ADR-0019). A draft transfer is
+  lost on expiry rather than resumed against a stale session.
+
+### Runtime response validation
+
+Two surfaces, two rules, and they are not the same rule:
+
+- **`/bff/auth/*`** has no OpenAPI contract behind it, so **every response carrying a payload** is
+  validated fail-closed at runtime, in production included — login, register, `me`,
+  `session-status` and `verify-pin`. The Zod schemas are also the source of the TypeScript types,
+  so the type and the validator cannot disagree. (`logout` and `set-pin` return no payload, so
+  there is nothing to validate.)
+- **`/api/*`** is validated fail-closed in production only on the **money** responses — the four
+  mutation receipts, the accounts list and the transaction summary. Everything else on that
+  surface validates in development and test only, deliberately: the contract there is already
+  guarded by generated types, a drift gate and contract tests, and a wrong field on a transaction
+  list should not take the page down.
+
+See ADR-0023 for the reasoning and the CI gates that hold it.
+
 ## Dependencies
 
 We use Central Package Management (ADR-0004) to maintain consistent, auditable dependencies. Security updates are applied promptly.

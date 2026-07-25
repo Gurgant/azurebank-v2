@@ -173,7 +173,8 @@ Conventional Commits is deliberately not used: its payoff (auto CHANGELOG + SemV
 needs release automation this repo intentionally doesn't run, and a consistent plain log
 reads better than a half-applied taxonomy. Architectural decisions live as
 [ADRs](docs/adr/); every change ships behind a reviewed PR (CodeRabbit + CodeQL default
-setup). Full rule in [CONTRIBUTING](CONTRIBUTING.md#commit--pr-titles).
+setup). Full rule in
+[Engineering practices](docs/engineering-practices.md#commit-and-pull-request-titles).
 
 ## Honest status
 
