@@ -1,5 +1,5 @@
 /**
- * Step-up bridge (DECISIONS §2.2). Connects the non-React base-query wrapper
+ * Step-up bridge (ADR-0022). Connects the non-React base-query wrapper
  * (baseQueryWithStepUp) to the single root <StepUpModal/>: when a request comes back
  * `STEP_UP_REQUIRED`, the wrapper calls `requestStepUp()` and awaits the returned promise;
  * the modal captures the PIN, elevates the session via /bff/auth/verify-pin, and calls

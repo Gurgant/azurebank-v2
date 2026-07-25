@@ -107,7 +107,7 @@ export const HISTORY_PAGE_SIZE = 20;
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
-  // Step-up interceptor (DECISIONS §2.2): transparently elevates + replays on a level-2 403.
+  // Step-up interceptor (ADR-0022): transparently elevates + replays on a level-2 403.
   baseQuery: baseQueryWithStepUp,
   tagTypes: ['Account', 'Transaction', 'Session'],
   endpoints: (builder) => ({

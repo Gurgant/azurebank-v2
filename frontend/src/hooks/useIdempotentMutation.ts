@@ -8,7 +8,7 @@ type IdempotentTrigger<TBody, TResult> = (arg: IdempotentArg<TBody>) => {
 };
 
 /**
- * KEEP outcomes (DECISIONS §2.3): the server may have recorded — or may still record —
+ * KEEP outcomes (ADR-0022): the server may have recorded — or may still record —
  * this key, so re-sending with a FRESH key is a client-manufactured double-spend. The
  * user-driven Retry must reuse the same key + same body bytes. Everything else DROPS.
  */
@@ -26,7 +26,7 @@ function shouldKeepKey(problem: ApiProblem): boolean {
  *
  * `IDEMPOTENCY_RESULT_UNKNOWN` drops the key and latches `verifyRequired`: submit
  * refuses to mint a new key until the owning flow's explicit "it didn't go through —
- * try again" action calls `resetIntent` (after the verify-transactions dialog, §2.3).
+ * try again" action calls `resetIntent` (after the verify-transactions dialog, ADR-0022).
  */
 export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger<TBody, TResult>) {
   const keyRef = useRef<string | null>(null);

@@ -1,9 +1,24 @@
+> ## ⚠️ SUPERSEDED — historical planning document, not a decision record
+>
+> This file was written before implementation and its "ADR-00N" headings are **not** ADRs. The
+> real, binding decision records live in [`docs/adr/`](../adr/README.md); when the two disagree,
+> `docs/adr/` wins and this file is wrong.
+>
+> The specific trap: this document marks **Axios** as the ACCEPTED HTTP client and shows an
+> `axiosBaseQuery` sample. Axios is **not a dependency of this project and must not become one** —
+> the data layer is RTK Query over a custom `problemBaseQuery`, with step-up and idempotency
+> behaviour specified in ADR-0019 and ADR-0022. Following the sample below would delete live
+> guards.
+>
+> Kept for provenance: it records what was planned in December 2025 and how the thinking changed.
+> Read it as history, never as instruction.
+
 # Technology Stack Decisions
 ## Architecture Decision Records (ADRs)
 
 **Document Version**: 1.0
 **Created**: 2025-12-16
-**Status**: DRAFT - Pending Phase 1 Completion
+**Status**: SUPERSEDED (2026-07-25) — see the banner above; was "DRAFT - Pending Phase 1 Completion"
 
 ---
 

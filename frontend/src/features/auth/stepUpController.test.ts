@@ -7,7 +7,7 @@ import {
 } from './stepUpController';
 
 /**
- * PR-11 — the single-flight mutex at the heart of the step-up bridge (DECISIONS §2.2):
+ * PR-11 — the single-flight mutex at the heart of the step-up bridge (ADR-0022):
  * N concurrent 403s must share ONE modal + ONE promise, and one settle resolves them all.
  * (test/setup.ts also resets the controller between cases.)
  */
