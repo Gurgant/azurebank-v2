@@ -206,6 +206,42 @@ Add the architecture diagram to the README
 
 ---
 
+## Quality gates and merge policy
+
+These govern every change and are stated here — rather than in any contributor's local tooling
+config — so they are versioned and reviewable like the code.
+
+**A quality gate is a delta against `main`, never an absolute count.** "This pull request
+introduces no new alert" survives an untriaged backlog; "zero open alerts" dies at the first one
+and then gets ignored, which is how eight security alerts once accumulated while a note still
+recorded zero.
+
+**Never dismiss an alert or a finding to make a number look good.** A dismissal needs a reason
+that still convinces on re-reading in six months. If you cannot write one, it is not a false
+positive — and weakening the check to pass it defeats the only thing the check was for.
+
+**Never blind-apply an automated fix.** Review-bot suggestions are frequently right and
+occasionally confidently wrong; verify each against the current code before taking it. The same
+applies to a bot that challenges something you wrote: check the primary source, then concede or
+push back on evidence.
+
+**Merging is a human act.** The repository requires a pull request, permits squash only, and
+allows no bypass. Automated contributors open pull requests and stop there.
+
+**No green without runnable proof.** "Should work" is not a test result. If a change is
+observable in a browser, verify it in a browser and attach the evidence.
+
+**Contract changes ship as two pull requests.** The endpoint, the regenerated OpenAPI spec and
+the generated types land together in the backend change; the UI that consumes them follows. A
+single pull request spanning both makes the contract diff unreviewable.
+
+**Integration is verified against the real stack before a release.** A green mock-mode test run
+proves the client's model of the protocol, never that the server agrees.
+
+**Branches are not deleted after merge.** Several are cited as evidence in decision records — one
+holds the only pinned reproduction of a library incompatibility — and a deleted branch turns that
+citation into a dead end.
+
 ## Pull Request Process
 
 ### Before Submitting
@@ -219,9 +255,21 @@ Add the architecture diagram to the README
 2. **Run all checks**:
    ```bash
    dotnet build
-   dotnet test
+   dotnet test AzureBank.slnx
    dotnet format --verify-no-changes
    ```
+
+   Name the solution. A bare `dotnet test` — or worse, `--filter ~AzureBank.Tests` — silently
+   skips `AzureBank.Bff.Tests` and still reports success.
+
+   Frontend changes additionally need, from `frontend/`:
+
+   ```bash
+   npm run format:check && npm run lint && npm run build && npx vitest run
+   ```
+
+   The type gate is `npm run build` (`tsc -b`), **not** `tsc --noEmit`: the root tsconfig is
+   solution-style, so `--noEmit` skips project references and misses errors the build catches.
 
 3. **Update documentation** if needed
 

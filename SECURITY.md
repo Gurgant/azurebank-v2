@@ -57,6 +57,36 @@ Out of scope:
 - CSRF protection: SameSite=Strict backed by Fetch-Metadata rejection of cross-site state-changing requests
 - Same-origin topology — the BFF registers no CORS; the JWT never reaches the browser (ADR-0001)
 
+### Browser-side invariants
+
+These are properties of the shipped SPA, not aspirations. Each is stated as a prohibition because
+each is easier to violate by accident than to add deliberately, and because a reviewer can check
+them in a minute.
+
+- **Nothing security-relevant is stored in the browser.** No tokens, session identifiers, PINs or
+  personal data in `localStorage`, `sessionStorage`, IndexedDB or a persisted Redux store. An empty
+  Application/Storage panel in DevTools is the check, and it should stay empty.
+- **The SPA never constructs an `Authorization` header.** Access tokens live server-side in the BFF
+  and are attached by its proxy transform (ADR-0001, ADR-0021). Frontend code that builds a bearer
+  header is a defect regardless of where it got the token.
+- **No JS-readable claims cookie.** Session state reaches the SPA only as data from
+  `/bff/auth/me`, never as a cookie the page can parse.
+- **No client-side "encryption" of secrets.** Obfuscating a value the browser must also decrypt
+  adds no security and hides the fact that the value should not be there.
+- **No personal data in URLs.** Not in paths, not in query strings — URLs land in browser history,
+  server logs and referrer headers. Identifiers in paths are opaque UUIDs, never emails or handles.
+- **No `dangerouslySetInnerHTML`,** and no equivalent raw-HTML injection. Server strings render as
+  text.
+- **No unsubmitted financial intent survives a session boundary** (ADR-0019). A draft transfer is
+  lost on expiry rather than resumed against a stale session.
+
+### Runtime response validation
+
+The BFF surface (`/bff/auth/*`) has no OpenAPI contract behind it, so every response is validated
+fail-closed at runtime against Zod schemas that are also the source of its TypeScript types — the
+type and the validator cannot disagree. On the API surface, the money responses are validated
+fail-closed in production and the rest in development and test only. See ADR-0023.
+
 ## Dependencies
 
 We use Central Package Management (ADR-0004) to maintain consistent, auditable dependencies. Security updates are applied promptly.
