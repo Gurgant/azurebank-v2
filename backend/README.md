@@ -597,31 +597,16 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | -------------------------------------- | ------------------- | ----------- |
 | `ASPNETCORE_ENVIRONMENT`               | Runtime environment | Development |
 | `ConnectionStrings__DefaultConnection` | Database connection | -           |
-| `Jwt__SecretKey`                       | JWT signing key     | -           |
+| `Jwt__Secret`                          | JWT signing key     | -           |
 
 ---
 
 ## Contributing
 
-How this project is built and kept correct — setup, gates, style, merge policy — is in
-[Engineering practices](../docs/engineering-practices.md).
-
-### Quick Start
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests (`dotnet test`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
-
-### Development Guidelines
-
-- Follow [C# Coding Conventions](https://docs.microsoft.com/en-us/dotnet/csharp/fundamentals/coding-style/coding-conventions)
-- Write unit tests for new features
-- Update documentation as needed
-- Ensure all tests pass before submitting PR
+How this project is built and kept correct — local setup, quality gates, code style, merge policy —
+is in [Engineering practices](../docs/engineering-practices.md). Two things from there are worth
+repeating because getting them wrong looks like success: run `dotnet test AzureBank.slnx` and name
+the solution, and use `npm run build` rather than `tsc --noEmit` as the frontend type gate.
 
 ---
 

@@ -15,16 +15,27 @@ Decisions live in [`adr/`](adr/README.md). Sharp edges that fail silently live i
 
 Configuration comes from **user-secrets**, never from a committed settings file. The API fails at
 startup without them, by design — `ValidateOnStart` refuses to run a bank with a missing pepper.
-Both the API and `tools/AzureBank.Seeder` need their own:
+
+The API and the seeder have **separate secret stores** (different `UserSecretsId`), so every value
+has to be set twice — `--project` is not optional here:
 
 ```bash
-dotnet user-secrets set "Jwt:Secret" "<64+ chars>"
-dotnet user-secrets set "Idempotency:HashKey" "<32+ chars>"
-dotnet user-secrets set "Security:PinPepper" "<32+ chars, IDENTICAL in both projects>"
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=(localdb)\\MSSQLLocalDB;Database=AzureBankDev;Trusted_Connection=True;TrustServerCertificate=True"
+API=backend/src/AzureBank.Api
+SEEDER=backend/tools/AzureBank.Seeder
+CONN='Server=(localdb)\MSSQLLocalDB;Database=AzureBankDev;Trusted_Connection=True;TrustServerCertificate=True'
+PEPPER='<32+ chars>'   # the SAME value goes to both projects
+
+dotnet user-secrets --project $API    set "Jwt:Secret" "<64+ chars>"
+dotnet user-secrets --project $API    set "Idempotency:HashKey" "<32+ chars>"
+dotnet user-secrets --project $API    set "Security:PinPepper" "$PEPPER"
+dotnet user-secrets --project $API    set "ConnectionStrings:DefaultConnection" "$CONN"
+
+dotnet user-secrets --project $SEEDER set "Security:PinPepper" "$PEPPER"
+dotnet user-secrets --project $SEEDER set "ConnectionStrings:DefaultConnection" "$CONN"
 ```
 
-The pepper must match across the two projects or seeded PINs cannot be verified.
+If the two peppers differ, seeding succeeds and every seeded PIN then fails verification — the
+failure surfaces at login, far from its cause.
 
 **Database — one command, not `dotnet ef`:**
 
@@ -148,7 +159,7 @@ Feature code is organised by role: `Controllers/`, `Services/{Interfaces,Impleme
 
 ## Tests
 
-```
+```text
 tests/AzureBank.Tests/
 ├── Unit/           # validators, services, utilities
 ├── Integration/    # API endpoints against a real host

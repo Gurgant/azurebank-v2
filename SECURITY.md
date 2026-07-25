@@ -84,10 +84,20 @@ them in a minute.
 
 ### Runtime response validation
 
-The BFF surface (`/bff/auth/*`) has no OpenAPI contract behind it, so every response is validated
-fail-closed at runtime against Zod schemas that are also the source of its TypeScript types — the
-type and the validator cannot disagree. On the API surface, the money responses are validated
-fail-closed in production and the rest in development and test only. See ADR-0023.
+Two surfaces, two rules, and they are not the same rule:
+
+- **`/bff/auth/*`** has no OpenAPI contract behind it, so **every response carrying a payload** is
+  validated fail-closed at runtime, in production included — login, register, `me`,
+  `session-status` and `verify-pin`. The Zod schemas are also the source of the TypeScript types,
+  so the type and the validator cannot disagree. (`logout` and `set-pin` return no payload, so
+  there is nothing to validate.)
+- **`/api/*`** is validated fail-closed in production only on the **money** responses — the four
+  mutation receipts, the accounts list and the transaction summary. Everything else on that
+  surface validates in development and test only, deliberately: the contract there is already
+  guarded by generated types, a drift gate and contract tests, and a wrong field on a transaction
+  list should not take the page down.
+
+See ADR-0023 for the reasoning and the CI gates that hold it.
 
 ## Dependencies
 
