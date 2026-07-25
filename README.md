@@ -86,16 +86,21 @@ AZUREBANK_TEST_SQLSERVER="Server=(localdb)\\MSSQLLocalDB;Database=AzureBankProof
 
 ## Observability
 
-Both services emit traces, metrics and logs over OpenTelemetry, correlated end to end. A request
+Both services emit traces, metrics and logs over OpenTelemetry, correlated end-to-end. A request
 through the BFF is **one trace** — BFF span, YARP forwarder, HttpClient, API, SQL — and every
 ProblemDetails carries the bare 32-hex `traceId` that pastes straight into Tempo search.
 
 ```bash
 docker compose -f observability/docker-compose.yml up -d   # Grafana LGTM on 127.0.0.1:3000
-# then set on each service (use 127.0.0.1, not localhost — Windows/Docker IPv6 gotcha):
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+
+# Export in the terminal that starts each service — a bare assignment stays shell-local
+# and the child process never sees it. Use 127.0.0.1, not localhost: on Windows the name
+# resolves to ::1 first and the collector is listening on IPv4.
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 ```
+
+In PowerShell: `$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"`.
 
 Export is opt-in: without the variable, tests and dev runs emit nothing. Telemetry is PII-safe by
 design — emails are masked through the .NET compliance stack, amounts never appear in log lines,
@@ -109,7 +114,7 @@ idempotent and concurrency-safe under 24 parallel duplicates.
 
 **Frontend** — fully wired to the real API through the BFF: authentication, accounts, transaction
 history, the four money flows with idempotency keys and step-up PIN, and the dashboard on real
-aggregates. 188 tests. Verified end to end against the running stack, not only against mocks.
+aggregates. 188 tests. Verified end-to-end against the running stack, not only against mocks.
 
 **Known gaps**, tracked rather than hidden: no end-to-end browser test suite yet; the accessibility
 sweep is a dedicated phase not yet run; one dialog still lacks Tab containment; the production CSP
