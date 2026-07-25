@@ -42,9 +42,21 @@ Out of scope:
 ## Security Measures
 
 ### Authentication
-- Argon2id password hashing (ADR-0003)
-- JWT with a 15-min access token, silently re-minted by the BFF from a 7-day rotating refresh token (ADR-0021) — an active session is bounded by the inactivity/absolute timeouts, not the 15-min JWT
-- PIN-based step-up authentication for sensitive operations (ADR-0008)
+- **Argon2id password hashing** — memory-hard, so GPU and ASIC attacks lose most of their
+  advantage over a defender's commodity hardware (ADR-0003).
+- **A 15-minute access token, silently re-minted** by the BFF from a 7-day rotating refresh token.
+  Short-lived so a leaked token is nearly worthless; re-minted server-side so the user never sees
+  an expiry. An active session is bounded by inactivity and absolute timeouts, not by the token
+  (ADR-0021).
+- **Refresh tokens rotate on every use, and a reuse revokes the whole family** — a replayed
+  refresh token is the signature of theft, so the response is to end every session descended from
+  it rather than to serve the request (ADR-0021).
+- **PIN step-up for sensitive operations**, with the elevation held in the BFF session rather than
+  in the token, so it cannot be replayed from a captured bearer (ADR-0008).
+- **PINs are peppered before hashing** with a server-side secret held outside the database: six
+  digits is a space you can exhaust instantly, so a stolen database must not be enough (ADR-0011).
+  Three wrong attempts lock the PIN, counted atomically in SQL so parallel guesses cannot race
+  past the limit (ADR-0010).
 
 ### Data Protection
 - TLS 1.3 for all connections
@@ -52,10 +64,15 @@ Out of scope:
 - No secrets in source code
 
 ### Session Security
-- `__Host-` prefixed, HTTP-only, Secure, SameSite=Strict session cookie in production (ADR-0018)
-- Session cookie (no Expires) — lifetime enforced server-side: inactivity + absolute timeouts
-- CSRF protection: SameSite=Strict backed by Fetch-Metadata rejection of cross-site state-changing requests
-- Same-origin topology — the BFF registers no CORS; the JWT never reaches the browser (ADR-0001)
+- **`__Host-` prefixed, HttpOnly, Secure, SameSite=Strict session cookie** in production. The
+  prefix is what makes the cookie unforgeable by a subdomain; HttpOnly is what makes it invisible
+  to a script that gets injected (ADR-0018).
+- **No `Expires` on the cookie** — the lifetime is enforced server-side by inactivity and absolute
+  timeouts, so a copied cookie cannot outlive the session it came from.
+- **CSRF defence in two layers**: `SameSite=Strict` plus Fetch-Metadata headers, which reject
+  cross-site state-changing requests on the server rather than trusting the browser alone.
+- **Same-origin topology, so there is no CORS to misconfigure.** The BFF registers none, and the
+  JWT never reaches the browser at all (ADR-0001).
 
 ### Browser-side invariants
 
