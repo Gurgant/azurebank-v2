@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege for the GITHUB_TOKEN, inherited by every job (CodeQL
+# actions/missing-workflow-permissions). Nothing here writes to the repo: the steps are
+# checkout, setup-*, build/test and upload-artifact — and upload-artifact@v4 authenticates
+# with the Actions runtime token, not this one. A job that ever needs more declares its own
+# narrower block rather than widening this default.
+permissions:
+  contents: read
+
 env:
   DOTNET_NOLOGO: true
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
