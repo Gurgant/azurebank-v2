@@ -8,6 +8,7 @@ import {
   Spinner,
   MessageBar,
   MessageBarBody,
+  tokens,
 } from '@fluentui/react-components';
 import { LockClosed24Regular, CheckmarkCircle24Filled } from '@fluentui/react-icons';
 import { colors, transitions } from '../theme/tokens';
@@ -32,7 +33,7 @@ const useStyles = makeStyles({
   card: {
     width: '100%',
     maxWidth: '420px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     border: `1px solid ${colors.neutral[200]}`,
     padding: '32px 28px',

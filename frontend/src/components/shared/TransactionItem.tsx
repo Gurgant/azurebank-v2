@@ -1,4 +1,4 @@
-import { makeStyles, mergeClasses, Text } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import {
   ArrowDownload24Regular,
   ArrowUpload24Regular,
@@ -46,7 +46,7 @@ const useStyles = makeStyles({
     alignItems: 'center',
     padding: '16px',
     gap: '12px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[100]}`,
     transition: `background-color ${transitions.fast}`,
   },

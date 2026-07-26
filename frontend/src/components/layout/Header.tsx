@@ -1,4 +1,4 @@
-import { makeStyles, mergeClasses, Text } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import { ChevronLeft24Regular, MoreHorizontal24Regular } from '@fluentui/react-icons';
 import { colors, componentSizes, zIndex, transitions } from '../../theme/tokens';
 
@@ -47,7 +47,7 @@ const useStyles = makeStyles({
   },
 
   headerDefault: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[100]}`,
   },
 

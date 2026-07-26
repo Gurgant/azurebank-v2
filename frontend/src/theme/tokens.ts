@@ -1,18 +1,39 @@
 /**
- * Design Tokens for AzureBank
- * Based on design-tokens/tokens.json from Figma export
+ * Design tokens for AzureBank — and this file is the source of truth, not a derivative of one.
+ *
+ * `design-tokens/tokens.json` at the repo root began as the Figma export these values came from,
+ * and the old wording here ("based on") pointed at it as the authority. It is not: nothing in the
+ * build reads it, and it went on declaring the brand as `#006DE2` — the blue this project measured
+ * against the mark and rejected — for as long as the pointer stood. It has since been synced by
+ * hand and carries a `$note` saying which way the dependency runs. When a colour changes, it
+ * changes here first.
  */
 
 export const colors = {
+  /**
+   * The legacy brand palette, read directly by component code.
+   *
+   * This is NOT the Fluent ramp in `brandRamp.ts`, and the two must not be conflated. Fluent indexes
+   * for its own token generator; this one is indexed by the original Figma export and its shades are
+   * consumed as literal values. Swapping one for the other by index is destructive, and measurably
+   * so: the Fluent ramp's index 120 is #81B3E4 at luminance 0.425, where this palette's 120 is a
+   * near-white #E6F0FC at 0.862 — a drop of 0.44 under the dark text that sits on it at nine call
+   * sites (the active sidebar item, Avatar, IconContainer, QuickActionButton, ConfirmDialog).
+   *
+   * Only the three shades that mean "the brand" and its hover and pressed states have been recoloured
+   * onto #0077b6, so the app does not show two different blues at once. The pale end keeps its
+   * values: the new ramp has no equivalent that light, and those call sites migrate to Fluent's
+   * neutral and brand-tint tokens later in U1 rather than to a wrong index now.
+   */
   brand: {
     10: '#001D3D',
     20: '#002D5E',
     30: '#003D7F',
-    40: '#004DA0', // Primary hover/pressed
-    50: '#005DC1',
-    60: '#006DE2', // Primary brand - main CTA
-    70: '#1A7FE8',
-    80: '#4D99ED', // Brand hover light
+    40: '#003F64', // pressed — from the Fluent ramp's index 40
+    50: '#004C77',
+    60: '#0077B6', // the brand. Fluent calls this index 80; this palette has always called it 60.
+    70: '#0068A1', // hover — from the Fluent ramp's index 70
+    80: '#4D99ED',
     90: '#80B3F2',
     100: '#B3CDF7',
     110: '#CCE0FA',
@@ -55,6 +76,31 @@ export const colors = {
       main: '#0EA5E9',
       dark: '#0369A1',
     },
+
+    /**
+     * Positive and negative values rendered ON a brand surface.
+     *
+     * `success.main` and `error.main` are tuned for a white ground and all but vanish against the
+     * brand panel, so the history summary invented these two tints inline. That was a real gap in
+     * the palette rather than carelessness — naming it here is what stops the next dark surface
+     * inventing its own.
+     *
+     * **These are barely tinted, and that is arithmetic rather than timidity.** The first values
+     * here were `#86EFAC` and `#FCA5A5`, which measure 3.47:1 and 2.56:1 against `#0077b6` — the
+     * lighter stop of the gradient they sit on, and so the worst case. Their consumer is 16px at
+     * weight 700, which WCAG does not count as large text (that starts at 18.66px bold), so the
+     * threshold is 4.5:1 and both failed; the red failed even the large-text exception.
+     *
+     * Reaching 4.5:1 on a ground of luminance 0.16 takes a foreground at roughly 94% lightness.
+     * The hue and saturation below are the originals, untouched — only lightness moved — but at
+     * that lightness a hue reads as a hint, not a colour. **So do not let these carry the +/−
+     * distinction on their own.** The sign and the label do that; this is emphasis on top of it.
+     * Encoding meaning in colour alone would fail WCAG 1.4.1 no matter how the contrast came out.
+     */
+    onBrand: {
+      positive: '#E5FCEE', // 4.51:1 on #0077b6, 10.27:1 on the gradient's dark stop
+      negative: '#FFF4F4', // 4.52:1 on #0077b6, 10.28:1 on the gradient's dark stop
+    },
   },
   transaction: {
     deposit: {
@@ -80,72 +126,33 @@ export const colors = {
   },
 } as const;
 
-export const typography = {
-  fontFamily: {
-    base: "'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif",
-    mono: "Consolas, 'Courier New', Courier, monospace",
-  },
-  fontSize: {
-    xs: '10px',
-    sm: '12px',
-    base: '14px',
-    md: '16px',
-    lg: '20px',
-    xl: '24px',
-    '2xl': '28px',
-    '3xl': '32px',
-    '4xl': '40px',
-    '5xl': '48px',
-  },
-  fontWeight: {
-    regular: 400,
-    medium: 500,
-    semibold: 600,
-    bold: 700,
-  },
-  lineHeight: {
-    tight: 1.2,
-    normal: 1.5,
-    relaxed: 1.75,
-  },
-} as const;
-
-export const spacing = {
-  0: '0px',
-  1: '4px',
-  2: '8px',
-  3: '12px',
-  4: '16px',
-  5: '20px',
-  6: '24px',
-  8: '32px',
-  10: '40px',
-  12: '48px',
-  16: '64px',
-} as const;
-
-export const borderRadius = {
-  none: '0px',
-  sm: '2px',
-  md: '4px',
-  lg: '6px',
-  xl: '8px',
-  '2xl': '12px',
-  full: '9999px',
-} as const;
-
 export const shadows = {
   sm: '0px 1px 2px rgba(0, 0, 0, 0.05)',
   md: '0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06)',
-  lg: '0px 10px 15px -3px rgba(0, 0, 0, 0.1), 0px 4px 6px -2px rgba(0, 0, 0, 0.05)',
   xl: '0px 20px 25px -5px rgba(0, 0, 0, 0.1), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
+  /**
+   * The lift under a brand-coloured surface, tinted rather than neutral: a saturated card casting a
+   * grey shadow reads as pasted on rather than raised.
+   *
+   * `rgb(0, 119, 182)` is `#0077b6`. The Dashboard balance card spelled this out inline as
+   * `rgb(0, 109, 226)` — which is `#006DE2`, the blue this project measured and rejected (10° off
+   * in hue, see docs/brand-assets.md). It was invisible as a defect because a shadow at 0.3 alpha
+   * does not announce its hue, and because the U1 hex rule cannot see inside an `rgba()` call.
+   */
+  brand: '0px 8px 24px rgba(0, 119, 182, 0.3)',
 } as const;
 
+/**
+ * Superseded by `theme/breakpoints.ts`, and kept alive only by `AppLayout`.
+ *
+ * The new scale is min-width only; this one is read by AppLayout's `max-width: ${tablet - 1}px`
+ * rule, which cannot be expressed there by design. That rule disappears when AppLayout moves to
+ * CSS-first layout — it already has the `hiddenMobile`/`hiddenDesktop` classes for it, written and
+ * never applied — and this block goes with it. `mobile` and `wide` had no readers and are gone.
+ */
 export const breakpoints = {
-  mobile: 375,
   tablet: 768,
   desktop: 1024,
-  wide: 1440,
 } as const;
 
 // ============================================
@@ -153,20 +160,6 @@ export const breakpoints = {
 // ============================================
 
 export const componentSizes = {
-  // Buttons
-  button: {
-    small: { height: '36px', heightDesktop: '40px', fontSize: '14px', padding: '0 16px' },
-    medium: { height: '44px', heightDesktop: '48px', fontSize: '15px', padding: '0 20px' },
-    large: { height: '48px', heightDesktop: '52px', fontSize: '16px', padding: '0 24px' },
-  },
-
-  // Inputs
-  input: {
-    small: { height: '40px', heightDesktop: '44px' },
-    medium: { height: '48px', heightDesktop: '52px' },
-    large: { height: '56px', heightDesktop: '64px' },
-  },
-
   // Avatars
   avatar: {
     sm: { size: '32px', fontSize: '12px' },
@@ -199,45 +192,22 @@ export const componentSizes = {
     width: '240px',
     collapsedWidth: '72px',
   },
-
-  // Cards
-  card: {
-    maxWidth: {
-      mobile: '343px', // 375 - 32px padding
-      desktop: '440px',
-      wide: '480px',
-    },
-    padding: {
-      none: '0',
-      small: { mobile: '16px', desktop: '20px' },
-      medium: { mobile: '24px', desktop: '32px' },
-      large: { mobile: '24px', desktop: '48px' },
-    },
-    radius: '16px',
-  },
-} as const;
-
-// ============================================
-// MEDIA QUERY HELPERS
-// ============================================
-
-export const mediaQueries = {
-  mobile: `(max-width: ${breakpoints.tablet - 1}px)`,
-  tablet: `(min-width: ${breakpoints.tablet}px) and (max-width: ${breakpoints.desktop - 1}px)`,
-  desktop: `(min-width: ${breakpoints.desktop}px)`,
-  touch: `(max-width: ${breakpoints.desktop - 1}px)`,
-  wide: `(min-width: ${breakpoints.wide}px)`,
 } as const;
 
 // ============================================
 // ANIMATION TOKENS
 // ============================================
 
+/**
+ * Two durations and one easing, which is the whole measured surface.
+ *
+ * `slow` (300ms) went with BottomSheet, its only consumer. `spring` was declared and never used —
+ * a second easing that no screen ever asked for. Motion here is deliberately narrow: a token set
+ * wider than its call sites invites inconsistency rather than preventing it.
+ */
 export const transitions = {
   fast: '150ms ease',
   normal: '200ms ease',
-  slow: '300ms ease',
-  spring: '300ms cubic-bezier(0.34, 1.56, 0.64, 1)',
 } as const;
 
 // ============================================
@@ -245,12 +215,17 @@ export const transitions = {
 // ============================================
 
 export const gradients = {
-  brand: 'linear-gradient(135deg, #006DE2 0%, #004DA0 100%)',
+  // Dark-to-dark on purpose: white text sits on this, and the logo's cyan #39b8db would drop it to
+  // 2.4:1. Both stops come from the brand ramp — index 80 into index 40.
+  brand: 'linear-gradient(135deg, #0077B6 0%, #003F64 100%)',
   success: 'linear-gradient(135deg, #E6F4EA 0%, #D4EDDA 100%)',
   error: 'linear-gradient(135deg, #FCE8E6 0%, #FADBD8 100%)',
   warning: 'linear-gradient(135deg, #FEF3E2 0%, #FDE9CC 100%)',
   info: 'linear-gradient(135deg, #E0F2FE 0%, #D1E4FC 100%)',
   primary: 'linear-gradient(135deg, #E6F0FC 0%, #D1E4FC 100%)',
+  // The palest brand tint, for a surface that must recede rather than compete. Spelled out at the
+  // Dashboard help card before it had a name.
+  brandTint: 'linear-gradient(135deg, #F0F6FE 0%, #E6F0FC 100%)',
 } as const;
 
 // ============================================

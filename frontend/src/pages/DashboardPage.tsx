@@ -8,6 +8,7 @@ import {
   MessageBarBody,
   Spinner,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ArrowDownload24Regular,
@@ -16,6 +17,8 @@ import {
 } from '@fluentui/react-icons';
 import { format, startOfMonth } from 'date-fns';
 import { colors, shadows, gradients } from '../theme/tokens';
+import { TransactionListSkeleton } from '../components/shared/TransactionListSkeleton';
+import { useDelayedFlag } from '../hooks/useDelayedFlag';
 import { useAppSelector } from '../app/hooks';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import type { ApiProblem } from '../api/problemBaseQuery';
@@ -41,6 +44,9 @@ interface LegacyDialogAccount {
 // ============================================
 // STYLES
 // ============================================
+
+/** The dashboard shows the five most recent transactions. Skeleton and query share it. */
+const RECENT_PAGE_SIZE = 5;
 
 const useStyles = makeStyles({
   // ========== CONTAINER ==========
@@ -130,7 +136,7 @@ const useStyles = makeStyles({
   },
 
   emptyStateCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     boxShadow: shadows.md,
     padding: '32px 24px',
@@ -156,7 +162,7 @@ const useStyles = makeStyles({
     minHeight: '180px',
     background: gradients.brand,
     borderRadius: '16px',
-    boxShadow: '0px 8px 24px rgba(0, 109, 226, 0.3)',
+    boxShadow: shadows.brand,
     padding: '24px',
     display: 'flex',
     flexDirection: 'column',
@@ -200,7 +206,7 @@ const useStyles = makeStyles({
   balanceAmount: {
     fontSize: '36px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     letterSpacing: '-0.02em',
     fontVariantNumeric: 'tabular-nums',
   },
@@ -214,7 +220,7 @@ const useStyles = makeStyles({
       flexDirection: 'column',
       justifyContent: 'space-between',
       minHeight: '180px',
-      backgroundColor: '#FFFFFF',
+      backgroundColor: tokens.colorNeutralBackground1,
       border: `1px solid ${colors.neutral[200]}`,
       borderRadius: '16px',
       padding: '24px',
@@ -262,7 +268,7 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     gap: '12px',
     '@media (min-width: 1024px)': {
-      backgroundColor: '#FFFFFF',
+      backgroundColor: tokens.colorNeutralBackground1,
       borderRadius: '16px',
       boxShadow: shadows.md,
       padding: '24px',
@@ -294,7 +300,7 @@ const useStyles = makeStyles({
   },
 
   transactionsList: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '12px',
     overflow: 'hidden',
     '@media (min-width: 1024px)': {
@@ -308,7 +314,7 @@ const useStyles = makeStyles({
 
   // ========== SIDEBAR CARDS (Desktop) ==========
   summaryCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     boxShadow: shadows.md,
     padding: '24px',
@@ -362,7 +368,7 @@ const useStyles = makeStyles({
   },
 
   helpCard: {
-    background: 'linear-gradient(135deg, #F0F6FE 0%, #E6F0FC 100%)',
+    background: gradients.brandTint,
     borderRadius: '16px',
     padding: '24px',
     display: 'flex',
@@ -436,7 +442,11 @@ export function DashboardPage() {
     isLoading: recentLoading,
     error: recentError,
     refetch: refetchRecent,
-  } = useGetTransactionsQuery({ page: 1, pageSize: 5 });
+  } = useGetTransactionsQuery({ page: 1, pageSize: RECENT_PAGE_SIZE });
+
+  // The skeleton stands in for a KNOWN number of rows, so the count comes from the same constant
+  // the query uses. Two literals would drift, and the drift would show as a jump on every load.
+  const showRecentSkeleton = useDelayedFlag(recentLoading);
 
   // Month start computed ONCE per mount (local month). toDate is deliberately NOT sent:
   // the server defaults it to "now" per request, so the LIST-tag refetch after a money
@@ -591,10 +601,11 @@ export function DashboardPage() {
                   </Link>
                 </div>
 
-                {recentLoading && (
-                  <div className={styles.sectionState}>
-                    <Spinner size="small" aria-label="Loading recent transactions" />
-                  </div>
+                {recentLoading && showRecentSkeleton && (
+                  <TransactionListSkeleton
+                    rows={RECENT_PAGE_SIZE}
+                    label="Loading recent transactions"
+                  />
                 )}
 
                 {!recentLoading && recentError !== undefined && (

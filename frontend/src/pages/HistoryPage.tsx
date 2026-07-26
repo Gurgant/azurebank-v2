@@ -8,6 +8,7 @@ import {
   MessageBarBody,
   Spinner,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
@@ -50,7 +51,7 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     minHeight: '100vh',
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.neutral[50],
   },
 
   // ========== HEADER ==========
@@ -60,7 +61,7 @@ const useStyles = makeStyles({
     justifyContent: 'space-between',
     height: '56px',
     padding: '0 16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[200]}`,
   },
 
@@ -103,7 +104,7 @@ const useStyles = makeStyles({
     display: 'flex',
     padding: '12px 16px',
     gap: '8px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[200]}`,
     overflowX: 'auto',
     flexShrink: 0,
@@ -128,7 +129,7 @@ const useStyles = makeStyles({
 
   filterTabActive: {
     backgroundColor: colors.brand[60],
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     ':hover': {
       backgroundColor: colors.brand[40],
     },
@@ -155,34 +156,38 @@ const useStyles = makeStyles({
   summaryLabel: {
     fontSize: '12px',
     fontWeight: 400,
-    color: 'rgba(255, 255, 255, 0.8)',
+    // Was rgba(255,255,255,0.8), which is 3.69:1 on this card's lighter gradient stop — a second
+    // failure on the same surface, found while measuring the one the bot flagged. Dimming white to
+    // suggest hierarchy is the reflex; here it bought 1.18 of contrast away from 12px text. The
+    // hierarchy is already carried by size and weight against the 16px/700 value beside it.
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   summaryValue: {
     fontSize: '16px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   summaryValuePositive: {
-    color: '#86EFAC',
+    color: colors.semantic.onBrand.positive,
   },
 
   summaryValueNegative: {
-    color: '#FCA5A5',
+    color: colors.semantic.onBrand.negative,
   },
 
   // ========== TRANSACTION LIST ==========
   transactionList: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     overflowY: 'auto',
   },
 
   // ========== DATE HEADER ==========
   dateHeader: {
     padding: '16px',
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.neutral[50],
   },
 
   dateText: {
@@ -230,13 +235,13 @@ const useStyles = makeStyles({
   },
 
   iconTransferOut: {
-    backgroundColor: '#FEF3E2',
-    color: '#F59E0B',
+    backgroundColor: colors.transaction.transferOut.background,
+    color: colors.transaction.transferOut.icon,
   },
 
   iconTransferIn: {
-    backgroundColor: '#E0F2FE',
-    color: '#0EA5E9',
+    backgroundColor: colors.transaction.transferIn.background,
+    color: colors.transaction.transferIn.icon,
   },
 
   iconFallback: {
@@ -317,7 +322,7 @@ const useStyles = makeStyles({
     display: 'flex',
     justifyContent: 'center',
     padding: '16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
   },
 
   // ========== EMPTY STATE ==========

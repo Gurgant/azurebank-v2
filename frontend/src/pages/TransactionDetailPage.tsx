@@ -8,6 +8,7 @@ import {
   mergeClasses,
   Spinner,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
@@ -39,7 +40,7 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: '8px',
     padding: '12px 16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[200]}`,
   },
 
@@ -80,7 +81,7 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: '12px',
     padding: '24px 16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     boxShadow: shadows.sm,
   },
@@ -153,13 +154,13 @@ const useStyles = makeStyles({
     color: colors.semantic.success.main,
   },
   statusPending: {
-    backgroundColor: '#FEF3E2',
+    backgroundColor: colors.semantic.warning.light,
   },
   statusPendingDot: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: colors.semantic.warning.main,
   },
   statusPendingText: {
-    color: '#B45309',
+    color: colors.semantic.warning.dark,
   },
   statusFailed: {
     backgroundColor: colors.semantic.error.light,
@@ -182,7 +183,7 @@ const useStyles = makeStyles({
 
   // ========== DETAILS CARD ==========
   detailsCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     padding: '8px 16px',
     boxShadow: shadows.sm,

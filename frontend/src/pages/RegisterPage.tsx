@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { Link as FluentLink } from '@fluentui/react-components';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { Logo } from '../components/shared/Logo';
 import { useRegisterMutation } from '../features/api/apiSlice';
 
 // Validation schema — mirrors the backend contract (ValidationRules): AzureTag pattern
@@ -93,22 +94,10 @@ const useStyles = makeStyles({
     marginBottom: '48px',
   },
 
-  logoIcon: {
-    width: '48px',
-    height: '48px',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#FFFFFF',
-    fontSize: '24px',
-  },
-
   logoText: {
     fontSize: '32px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   tagline: {
@@ -117,7 +106,7 @@ const useStyles = makeStyles({
     lineHeight: '1.15',
     marginBottom: '20px',
     maxWidth: '480px',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   taglineSubtext: {
@@ -126,7 +115,7 @@ const useStyles = makeStyles({
     marginBottom: '48px',
     maxWidth: '440px',
     lineHeight: '1.6',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   features: {
@@ -149,7 +138,7 @@ const useStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     fontSize: '20px',
     flexShrink: 0,
   },
@@ -157,7 +146,7 @@ const useStyles = makeStyles({
   featureText: {
     fontSize: '15px',
     fontWeight: 500,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   // ========== RIGHT PANEL - FORM ==========
@@ -196,18 +185,6 @@ const useStyles = makeStyles({
     '@media (min-width: 1024px)': {
       display: 'none',
     },
-  },
-
-  mobileLogoIcon: {
-    width: '36px',
-    height: '36px',
-    backgroundColor: tokens.colorBrandBackground,
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#FFFFFF',
-    fontSize: '18px',
   },
 
   mobileLogoText: {
@@ -440,9 +417,7 @@ export function RegisterPage() {
       {/* ========== LEFT PANEL - Desktop Only ========== */}
       <div className={styles.leftPanel}>
         <div className={styles.brandLogo}>
-          <div className={styles.logoIcon}>
-            <Globe24Regular />
-          </div>
+          <Logo size={48} />
           <span className={styles.logoText}>AzureBank</span>
         </div>
 
@@ -482,9 +457,7 @@ export function RegisterPage() {
         <div className={styles.formContainer}>
           {/* Mobile Logo */}
           <div className={styles.mobileLogo}>
-            <div className={styles.mobileLogoIcon}>
-              <Globe24Regular />
-            </div>
+            <Logo size={36} />
             <span className={styles.mobileLogoText}>AzureBank</span>
           </div>
 

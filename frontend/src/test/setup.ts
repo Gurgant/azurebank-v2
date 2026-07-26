@@ -3,6 +3,12 @@ import { resetServerActivity } from '../features/auth/sessionActivity';
 import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
 import { resetMockState } from '../mocks/state';
+import {
+  TEST_VIEWPORT_HEIGHT,
+  TEST_VIEWPORT_WIDTH,
+  matchMediaStub,
+  resetMediaEnvironment,
+} from './viewport';
 
 // jsdom has no ResizeObserver; Fluent's MessageBar (reflow) requires one.
 class ResizeObserverStub {
@@ -12,27 +18,14 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
 
-// jsdom has no matchMedia either — and WITHOUT it Fluent's useIsReducedMotion silently keeps
-// animations ENABLED. On a starved CI runner a dialog's open transition can then stall for
-// seconds with the surface still aria-hidden, so role queries miss buttons that are really
-// there (the PR #34 PIN-modal Cancel saga). Report reduced motion as PREFERRED so Fluent
-// skips its animations entirely: dialog enter/exit becomes synchronous and deterministic on
-// any runner. Every other query reports no match (jsdom-neutral). NOTE: skipping animations
-// also makes modal EXIT commit sooner — queries that follow an async transition must be
-// findBy*/waitFor, never a bare getBy* (the P1.9 sweep).
-const matchMediaStub = (query: string): MediaQueryList =>
-  ({
-    // Strictly the REDUCE query — a bare 'prefers-reduced-motion' would also match
-    // '(prefers-reduced-motion: no-preference)' and lie to both-mode checks.
-    matches: query.includes('prefers-reduced-motion: reduce'),
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  }) as unknown as MediaQueryList;
+// jsdom has no matchMedia either. `test/viewport.ts` supplies it, along with the two defaults this
+// suite depends on and the setters that let one test opt out of either: 1024x768 (which is exactly
+// the `lg` breakpoint, so every test renders the DESKTOP tree unless it says otherwise) and reduced
+// motion reported as PREFERRED (which is what keeps Fluent's dialog transitions synchronous, and
+// therefore what keeps role queries from missing buttons that are really there). The reasoning for
+// both, and the flake each one prevents, lives beside the code that implements them.
+window.innerWidth = TEST_VIEWPORT_WIDTH;
+window.innerHeight = TEST_VIEWPORT_HEIGHT;
 window.matchMedia ??= matchMediaStub;
 
 // MSW lifecycle: every unhandled request is an ERROR — tests must declare the traffic they
@@ -45,5 +38,8 @@ afterEach(() => {
   resetServerActivity();
   // Module-level step-up bridge (mirrors mockState.authLevel reset) — no inflight leak.
   __resetStepUpController();
+  // A test that narrowed the viewport must not hand the next one a phone, and one that turned
+  // animations back on must not hand it the flake the stub exists to prevent.
+  resetMediaEnvironment();
 });
 afterAll(() => server.close());

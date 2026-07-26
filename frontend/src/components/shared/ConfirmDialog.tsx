@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { makeStyles, mergeClasses, Text, Button } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, Text, Button, tokens } from '@fluentui/react-components';
 import { Warning24Regular, Dismiss24Regular } from '@fluentui/react-icons';
 import { colors, zIndex, transitions, shadows } from '../../theme/tokens';
 
@@ -57,7 +57,7 @@ const useStyles = makeStyles({
   },
 
   dialog: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     width: '100%',
     maxWidth: '340px',
@@ -166,7 +166,7 @@ const useStyles = makeStyles({
 
   confirmButtonDefault: {
     backgroundColor: colors.brand[60],
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     border: 'none',
     ':hover': {
       backgroundColor: colors.brand[40],
@@ -175,10 +175,10 @@ const useStyles = makeStyles({
 
   confirmButtonDanger: {
     backgroundColor: colors.semantic.error.main,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundStaticInverted,
     border: 'none',
     ':hover': {
-      backgroundColor: '#C62828',
+      backgroundColor: colors.semantic.error.dark,
     },
   },
 });

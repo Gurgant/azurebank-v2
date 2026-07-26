@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { makeStyles, Text, Button, Badge } from '@fluentui/react-components';
+import { makeStyles, Text, Button, Badge, tokens } from '@fluentui/react-components';
 import {
   LockClosed24Regular,
   Alert24Regular,
@@ -71,7 +71,7 @@ const useStyles = makeStyles({
   },
 
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     boxShadow: shadows.sm,
     overflow: 'hidden',

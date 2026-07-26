@@ -1,5 +1,5 @@
 import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
-import { makeStyles, mergeClasses } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
 import { Eye16Regular, EyeOff16Regular } from '@fluentui/react-icons';
 import { colors, transitions } from '../theme/tokens';
 
@@ -31,7 +31,7 @@ const useStyles = makeStyles({
     border: `1px solid ${colors.neutral[500]}`,
     borderRadius: '12px',
     outline: 'none',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     transition: `all ${transitions.fast}`,
     caretColor: colors.brand[60],
     ':focus': {
