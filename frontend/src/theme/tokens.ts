@@ -157,10 +157,16 @@ export const componentSizes = {
 // ANIMATION TOKENS
 // ============================================
 
+/**
+ * Two durations and one easing, which is the whole measured surface.
+ *
+ * `slow` (300ms) went with BottomSheet, its only consumer. `spring` was declared and never used —
+ * a second easing that no screen ever asked for. Motion here is deliberately narrow: a token set
+ * wider than its call sites invites inconsistency rather than preventing it.
+ */
 export const transitions = {
   fast: '150ms ease',
   normal: '200ms ease',
-  slow: '300ms ease',
 } as const;
 
 // ============================================
