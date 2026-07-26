@@ -1,6 +1,12 @@
 /**
- * Design Tokens for AzureBank
- * Based on design-tokens/tokens.json from Figma export
+ * Design tokens for AzureBank — and this file is the source of truth, not a derivative of one.
+ *
+ * `design-tokens/tokens.json` at the repo root began as the Figma export these values came from,
+ * and the old wording here ("based on") pointed at it as the authority. It is not: nothing in the
+ * build reads it, and it went on declaring the brand as `#006DE2` — the blue this project measured
+ * against the mark and rejected — for as long as the pointer stood. It has since been synced by
+ * hand and carries a `$note` saying which way the dependency runs. When a colour changes, it
+ * changes here first.
  */
 
 export const colors = {
@@ -112,6 +118,16 @@ export const shadows = {
   sm: '0px 1px 2px rgba(0, 0, 0, 0.05)',
   md: '0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06)',
   xl: '0px 20px 25px -5px rgba(0, 0, 0, 0.1), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
+  /**
+   * The lift under a brand-coloured surface, tinted rather than neutral: a saturated card casting a
+   * grey shadow reads as pasted on rather than raised.
+   *
+   * `rgb(0, 119, 182)` is `#0077b6`. The Dashboard balance card spelled this out inline as
+   * `rgb(0, 109, 226)` — which is `#006DE2`, the blue this project measured and rejected (10° off
+   * in hue, see docs/brand-assets.md). It was invisible as a defect because a shadow at 0.3 alpha
+   * does not announce its hue, and because the U1 hex rule cannot see inside an `rgba()` call.
+   */
+  brand: '0px 8px 24px rgba(0, 119, 182, 0.3)',
 } as const;
 
 /**

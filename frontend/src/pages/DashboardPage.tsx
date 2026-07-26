@@ -162,7 +162,7 @@ const useStyles = makeStyles({
     minHeight: '180px',
     background: gradients.brand,
     borderRadius: '16px',
-    boxShadow: '0px 8px 24px rgba(0, 109, 226, 0.3)',
+    boxShadow: shadows.brand,
     padding: '24px',
     display: 'flex',
     flexDirection: 'column',
