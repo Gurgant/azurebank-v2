@@ -95,72 +95,23 @@ export const colors = {
   },
 } as const;
 
-export const typography = {
-  fontFamily: {
-    base: "'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif",
-    mono: "Consolas, 'Courier New', Courier, monospace",
-  },
-  fontSize: {
-    xs: '10px',
-    sm: '12px',
-    base: '14px',
-    md: '16px',
-    lg: '20px',
-    xl: '24px',
-    '2xl': '28px',
-    '3xl': '32px',
-    '4xl': '40px',
-    '5xl': '48px',
-  },
-  fontWeight: {
-    regular: 400,
-    medium: 500,
-    semibold: 600,
-    bold: 700,
-  },
-  lineHeight: {
-    tight: 1.2,
-    normal: 1.5,
-    relaxed: 1.75,
-  },
-} as const;
-
-export const spacing = {
-  0: '0px',
-  1: '4px',
-  2: '8px',
-  3: '12px',
-  4: '16px',
-  5: '20px',
-  6: '24px',
-  8: '32px',
-  10: '40px',
-  12: '48px',
-  16: '64px',
-} as const;
-
-export const borderRadius = {
-  none: '0px',
-  sm: '2px',
-  md: '4px',
-  lg: '6px',
-  xl: '8px',
-  '2xl': '12px',
-  full: '9999px',
-} as const;
-
 export const shadows = {
   sm: '0px 1px 2px rgba(0, 0, 0, 0.05)',
   md: '0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06)',
-  lg: '0px 10px 15px -3px rgba(0, 0, 0, 0.1), 0px 4px 6px -2px rgba(0, 0, 0, 0.05)',
   xl: '0px 20px 25px -5px rgba(0, 0, 0, 0.1), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
 } as const;
 
+/**
+ * Superseded by `theme/breakpoints.ts`, and kept alive only by `AppLayout`.
+ *
+ * The new scale is min-width only; this one is read by AppLayout's `max-width: ${tablet - 1}px`
+ * rule, which cannot be expressed there by design. That rule disappears when AppLayout moves to
+ * CSS-first layout — it already has the `hiddenMobile`/`hiddenDesktop` classes for it, written and
+ * never applied — and this block goes with it. `mobile` and `wide` had no readers and are gone.
+ */
 export const breakpoints = {
-  mobile: 375,
   tablet: 768,
   desktop: 1024,
-  wide: 1440,
 } as const;
 
 // ============================================
@@ -168,20 +119,6 @@ export const breakpoints = {
 // ============================================
 
 export const componentSizes = {
-  // Buttons
-  button: {
-    small: { height: '36px', heightDesktop: '40px', fontSize: '14px', padding: '0 16px' },
-    medium: { height: '44px', heightDesktop: '48px', fontSize: '15px', padding: '0 20px' },
-    large: { height: '48px', heightDesktop: '52px', fontSize: '16px', padding: '0 24px' },
-  },
-
-  // Inputs
-  input: {
-    small: { height: '40px', heightDesktop: '44px' },
-    medium: { height: '48px', heightDesktop: '52px' },
-    large: { height: '56px', heightDesktop: '64px' },
-  },
-
   // Avatars
   avatar: {
     sm: { size: '32px', fontSize: '12px' },
@@ -214,34 +151,6 @@ export const componentSizes = {
     width: '240px',
     collapsedWidth: '72px',
   },
-
-  // Cards
-  card: {
-    maxWidth: {
-      mobile: '343px', // 375 - 32px padding
-      desktop: '440px',
-      wide: '480px',
-    },
-    padding: {
-      none: '0',
-      small: { mobile: '16px', desktop: '20px' },
-      medium: { mobile: '24px', desktop: '32px' },
-      large: { mobile: '24px', desktop: '48px' },
-    },
-    radius: '16px',
-  },
-} as const;
-
-// ============================================
-// MEDIA QUERY HELPERS
-// ============================================
-
-export const mediaQueries = {
-  mobile: `(max-width: ${breakpoints.tablet - 1}px)`,
-  tablet: `(min-width: ${breakpoints.tablet}px) and (max-width: ${breakpoints.desktop - 1}px)`,
-  desktop: `(min-width: ${breakpoints.desktop}px)`,
-  touch: `(max-width: ${breakpoints.desktop - 1}px)`,
-  wide: `(min-width: ${breakpoints.wide}px)`,
 } as const;
 
 // ============================================
@@ -252,7 +161,6 @@ export const transitions = {
   fast: '150ms ease',
   normal: '200ms ease',
   slow: '300ms ease',
-  spring: '300ms cubic-bezier(0.34, 1.56, 0.64, 1)',
 } as const;
 
 // ============================================
