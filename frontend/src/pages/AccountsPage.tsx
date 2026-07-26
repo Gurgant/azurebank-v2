@@ -93,7 +93,7 @@ const useStyles = makeStyles({
   headerTitle: {
     fontSize: '24px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   addButton: {
@@ -106,7 +106,7 @@ const useStyles = makeStyles({
     justifyContent: 'center',
     cursor: 'pointer',
     border: 'none',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     transition: `all ${transitions.fast}`,
     ':hover': {
       background: 'rgba(255, 255, 255, 0.3)',
@@ -128,7 +128,7 @@ const useStyles = makeStyles({
   totalValue: {
     fontSize: '32px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   // ========== MAIN CONTENT ==========
@@ -195,7 +195,7 @@ const useStyles = makeStyles({
     border: 'none',
     borderRadius: '8px',
     cursor: 'pointer',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     transition: `all ${transitions.fast}`,
     ':hover': {
       backgroundColor: colors.brand[50],
@@ -205,7 +205,7 @@ const useStyles = makeStyles({
   desktopAddButtonText: {
     fontSize: '14px',
     fontWeight: 500,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   // ========== ACCOUNTS GRID ==========

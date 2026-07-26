@@ -101,7 +101,7 @@ const useStyles = makeStyles({
   // Highlighted icon
   iconHighlighted: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   // Label
@@ -111,7 +111,7 @@ const useStyles = makeStyles({
     color: colors.neutral[700],
   },
   labelHighlighted: {
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 });
 

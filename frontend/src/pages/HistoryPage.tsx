@@ -129,7 +129,7 @@ const useStyles = makeStyles({
 
   filterTabActive: {
     backgroundColor: colors.brand[60],
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     ':hover': {
       backgroundColor: colors.brand[40],
     },
@@ -162,7 +162,7 @@ const useStyles = makeStyles({
   summaryValue: {
     fontSize: '16px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   summaryValuePositive: {

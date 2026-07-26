@@ -101,14 +101,14 @@ const useStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     fontSize: '24px',
   },
 
   logoText: {
     fontSize: '32px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   tagline: {
@@ -117,7 +117,7 @@ const useStyles = makeStyles({
     lineHeight: '1.15',
     marginBottom: '20px',
     maxWidth: '480px',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   taglineSubtext: {
@@ -126,7 +126,7 @@ const useStyles = makeStyles({
     marginBottom: '48px',
     maxWidth: '440px',
     lineHeight: '1.6',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   features: {
@@ -149,7 +149,7 @@ const useStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     fontSize: '20px',
     flexShrink: 0,
   },
@@ -157,7 +157,7 @@ const useStyles = makeStyles({
   featureText: {
     fontSize: '15px',
     fontWeight: 500,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   // ========== RIGHT PANEL - FORM ==========
@@ -206,7 +206,7 @@ const useStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     fontSize: '18px',
   },
 

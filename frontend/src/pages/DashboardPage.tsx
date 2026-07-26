@@ -201,7 +201,7 @@ const useStyles = makeStyles({
   balanceAmount: {
     fontSize: '36px',
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     letterSpacing: '-0.02em',
     fontVariantNumeric: 'tabular-nums',
   },

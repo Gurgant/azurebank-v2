@@ -166,7 +166,7 @@ const useStyles = makeStyles({
 
   confirmButtonDefault: {
     backgroundColor: colors.brand[60],
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     border: 'none',
     ':hover': {
       backgroundColor: colors.brand[40],
@@ -175,7 +175,7 @@ const useStyles = makeStyles({
 
   confirmButtonDanger: {
     backgroundColor: colors.semantic.error.main,
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundStaticInverted,
     border: 'none',
     ':hover': {
       backgroundColor: '#C62828',

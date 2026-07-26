@@ -153,7 +153,7 @@ const useStyles = makeStyles({
     height: '40px',
     borderRadius: '50%',
     backgroundColor: colors.brand[60],
-    color: '#FFFFFF',
+    color: tokens.colorNeutralForegroundOnBrand,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
