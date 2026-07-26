@@ -70,6 +70,19 @@ export const colors = {
       main: '#0EA5E9',
       dark: '#0369A1',
     },
+
+    /**
+     * Positive and negative values rendered ON a brand surface.
+     *
+     * `success.main` and `error.main` are tuned for a white ground and all but vanish against the
+     * brand panel, so the history summary invented these two tints inline. That was a real gap in
+     * the palette rather than carelessness — naming it here is what stops the next dark surface
+     * inventing its own.
+     */
+    onBrand: {
+      positive: '#86EFAC',
+      negative: '#FCA5A5',
+    },
   },
   transaction: {
     deposit: {
@@ -182,6 +195,9 @@ export const gradients = {
   warning: 'linear-gradient(135deg, #FEF3E2 0%, #FDE9CC 100%)',
   info: 'linear-gradient(135deg, #E0F2FE 0%, #D1E4FC 100%)',
   primary: 'linear-gradient(135deg, #E6F0FC 0%, #D1E4FC 100%)',
+  // The palest brand tint, for a surface that must recede rather than compete. Spelled out at the
+  // Dashboard help card before it had a name.
+  brandTint: 'linear-gradient(135deg, #F0F6FE 0%, #E6F0FC 100%)',
 } as const;
 
 // ============================================

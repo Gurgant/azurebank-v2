@@ -51,7 +51,7 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     minHeight: '100vh',
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.neutral[50],
   },
 
   // ========== HEADER ==========
@@ -166,11 +166,11 @@ const useStyles = makeStyles({
   },
 
   summaryValuePositive: {
-    color: '#86EFAC',
+    color: colors.semantic.onBrand.positive,
   },
 
   summaryValueNegative: {
-    color: '#FCA5A5',
+    color: colors.semantic.onBrand.negative,
   },
 
   // ========== TRANSACTION LIST ==========
@@ -183,7 +183,7 @@ const useStyles = makeStyles({
   // ========== DATE HEADER ==========
   dateHeader: {
     padding: '16px',
-    backgroundColor: '#F7F8FA',
+    backgroundColor: colors.neutral[50],
   },
 
   dateText: {
@@ -231,13 +231,13 @@ const useStyles = makeStyles({
   },
 
   iconTransferOut: {
-    backgroundColor: '#FEF3E2',
-    color: '#F59E0B',
+    backgroundColor: colors.transaction.transferOut.background,
+    color: colors.transaction.transferOut.icon,
   },
 
   iconTransferIn: {
-    backgroundColor: '#E0F2FE',
-    color: '#0EA5E9',
+    backgroundColor: colors.transaction.transferIn.background,
+    color: colors.transaction.transferIn.icon,
   },
 
   iconFallback: {

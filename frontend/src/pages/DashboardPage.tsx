@@ -363,7 +363,7 @@ const useStyles = makeStyles({
   },
 
   helpCard: {
-    background: 'linear-gradient(135deg, #F0F6FE 0%, #E6F0FC 100%)',
+    background: gradients.brandTint,
     borderRadius: '16px',
     padding: '24px',
     display: 'flex',

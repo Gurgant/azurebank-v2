@@ -307,12 +307,12 @@ const useStyles = makeStyles({
   warningIcon: {
     width: '80px',
     height: '80px',
-    backgroundColor: '#FEF3E2',
+    backgroundColor: colors.semantic.warning.light,
     borderRadius: '50%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: '#B45309',
+    color: colors.semantic.warning.dark,
   },
 
   successTitle: {

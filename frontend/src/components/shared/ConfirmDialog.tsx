@@ -178,7 +178,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForegroundStaticInverted,
     border: 'none',
     ':hover': {
-      backgroundColor: '#C62828',
+      backgroundColor: colors.semantic.error.dark,
     },
   },
 });

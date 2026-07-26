@@ -154,13 +154,13 @@ const useStyles = makeStyles({
     color: colors.semantic.success.main,
   },
   statusPending: {
-    backgroundColor: '#FEF3E2',
+    backgroundColor: colors.semantic.warning.light,
   },
   statusPendingDot: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: colors.semantic.warning.main,
   },
   statusPendingText: {
-    color: '#B45309',
+    color: colors.semantic.warning.dark,
   },
   statusFailed: {
     backgroundColor: colors.semantic.error.light,
