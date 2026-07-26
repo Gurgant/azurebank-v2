@@ -262,6 +262,34 @@ export function markMockActivity(): void {
   if (mockState.session) mockState.sessionLastActivity = Date.now();
 }
 
+/**
+ * End the mock session if either deadline has passed, and report whether it is gone.
+ *
+ * Every authenticated handler must call this BEFORE marking activity. Without it the mock has no
+ * expiry at all: `/bff/auth/me` would revive a session that died an hour ago simply by touching it,
+ * and the status probe would keep answering `isAuthenticated: true` forever. A client that only
+ * ever meets an immortal session cannot be tested against the one behaviour that matters here.
+ *
+ * The effective deadline is the EARLIER of the two rules, which is what the real BFF enforces.
+ */
+export function expireMockSessionIfDue(now: number = Date.now()): boolean {
+  if (!mockState.session) return true;
+  const due = Math.min(
+    mockState.sessionLastActivity + mockState.sessionInactivityWindowMs,
+    mockState.sessionCreatedAt + mockState.sessionAbsoluteWindowMs,
+  );
+  if (now >= due) {
+    mockState.session = null;
+    return true;
+  }
+  return false;
+}
+
+/** The absolute deadline as the login/register responses report it. */
+export function mockAbsoluteExpiry(): string {
+  return new Date(mockState.sessionCreatedAt + mockState.sessionAbsoluteWindowMs).toISOString();
+}
+
 export function resetMockState(): void {
   mockState.idempotency.clear();
   mockState.authLevel = 1;

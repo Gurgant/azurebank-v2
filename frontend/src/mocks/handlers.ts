@@ -6,7 +6,9 @@ import { problem } from './problem';
 import {
   MOCK_PASSWORD,
   MOCK_USER,
+  expireMockSessionIfDue,
   markMockActivity,
+  mockAbsoluteExpiry,
   mockState,
   type MockSessionUser,
 } from './state';
@@ -946,7 +948,9 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   mockState.sessionCreatedAt = Date.now();
   mockState.sessionLastActivity = Date.now();
   return HttpResponse.json({
-    data: { user: { ...MOCK_USER }, expiresAt: '2099-01-01T00:00:00.0000000Z' },
+    // The real deadline, not a far-future constant: a client that seeds expiry state from the
+    // login response must see the same clock every later response reports.
+    data: { user: { ...MOCK_USER }, expiresAt: mockAbsoluteExpiry() },
     message: 'Login successful',
   });
 });
@@ -993,7 +997,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   ];
   return HttpResponse.json(
     {
-      data: { user, expiresAt: '2099-01-01T00:00:00.0000000Z' },
+      data: { user, expiresAt: mockAbsoluteExpiry() },
       message: 'Registration successful',
     },
     { status: 201 },
@@ -1001,7 +1005,10 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
 });
 
 const me = http.get('*/bff/auth/me', () => {
-  if (!mockState.session) {
+  // Expiry is checked BEFORE activity is marked. The other order revives a session that died an
+  // hour ago simply because something touched it — which is exactly the bug the real BFF avoids by
+  // evaluating the deadline in the session store, not in the middleware.
+  if (expireMockSessionIfDue() || !mockState.session) {
     // The BFF's own 401: ProblemDetails WITHOUT errorCode.
     return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
@@ -1041,6 +1048,9 @@ const logout = http.post('*/bff/auth/logout', () => {
 });
 
 const sessionStatus = http.get('*/bff/auth/session-status', () => {
+  // Checked here too, and still without marking activity: the probe must be able to report a dead
+  // session, which is the whole reason the client can trust it at the zero crossing.
+  expireMockSessionIfDue();
   // BARE by contract — the second non-envelope response besides GET /api/transactions.
   if (!mockState.session) {
     return HttpResponse.json({

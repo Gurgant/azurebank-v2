@@ -59,20 +59,32 @@ export const bffMeResponseSchema = z.object({
  *
  * Both optional for the same deploy-order reason as `inactivityExpiresAt` above.
  */
-export const bffSessionStatusResponseSchema = z.object({
-  isAuthenticated: z.boolean(),
-  authLevel: z.number().nullable(),
-  isPinVerified: z.boolean().nullable(),
+export const bffSessionStatusResponseSchema = z
+  .object({
+    isAuthenticated: z.boolean(),
+    authLevel: z.number().nullable(),
+    isPinVerified: z.boolean().nullable(),
+    /**
+     * The server's clock at the moment it answered — what makes the two deadlines usable as
+     * DURATIONS. Subtracting a deadline from this is pure server arithmetic; subtracting it from
+     * `Date.now()` would smuggle the reader's clock skew back in, which is what publishing deadlines
+     * was supposed to remove.
+     */
+    serverTime: z.string().nullish(),
+    inactivityExpiresAt: z.string().nullish(),
+    absoluteExpiresAt: z.string().nullish(),
+  })
   /**
-   * The server's clock at the moment it answered — what makes the two deadlines usable as
-   * DURATIONS. Subtracting a deadline from this is pure server arithmetic; subtracting it from
-   * `Date.now()` would smuggle the reader's clock skew back in, which is what publishing deadlines
-   * was supposed to remove.
+   * A deadline without `serverTime` is not merely incomplete, it is unusable: converting it to a
+   * duration would need the reader's clock, which is the skew this whole contract exists to remove.
+   * The consumer already refuses to act on such a response, but silently — so a BFF that shipped
+   * one deadline and forgot the anchor would look like a working session that simply never warns.
+   * Failing the parse turns that into a visible error instead of a quiet no-op.
    */
-  serverTime: z.string().nullish(),
-  inactivityExpiresAt: z.string().nullish(),
-  absoluteExpiresAt: z.string().nullish(),
-});
+  .refine((v) => !(v.inactivityExpiresAt || v.absoluteExpiresAt) || Boolean(v.serverTime), {
+    error: 'session-status sent a deadline without serverTime; a deadline is unusable without it',
+    path: ['serverTime'],
+  });
 
 export const bffPinVerificationResponseSchema = z.object({
   verified: z.boolean(),
