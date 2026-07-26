@@ -1047,6 +1047,7 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
       isAuthenticated: false,
       authLevel: null,
       isPinVerified: null,
+      serverTime: null,
       inactivityExpiresAt: null,
       absoluteExpiresAt: null,
     });
@@ -1057,6 +1058,8 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
     isAuthenticated: true,
     authLevel: mockState.authLevel,
     isPinVerified: mockState.authLevel === 2,
+    // The server's clock, so the client can compute a remaining duration without touching its own.
+    serverTime: new Date().toISOString(),
     inactivityExpiresAt: new Date(
       mockState.sessionLastActivity + mockState.sessionInactivityWindowMs,
     ).toISOString(),

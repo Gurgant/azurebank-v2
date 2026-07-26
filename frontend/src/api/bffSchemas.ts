@@ -63,6 +63,13 @@ export const bffSessionStatusResponseSchema = z.object({
   isAuthenticated: z.boolean(),
   authLevel: z.number().nullable(),
   isPinVerified: z.boolean().nullable(),
+  /**
+   * The server's clock at the moment it answered — what makes the two deadlines usable as
+   * DURATIONS. Subtracting a deadline from this is pure server arithmetic; subtracting it from
+   * `Date.now()` would smuggle the reader's clock skew back in, which is what publishing deadlines
+   * was supposed to remove.
+   */
+  serverTime: z.string().nullish(),
   inactivityExpiresAt: z.string().nullish(),
   absoluteExpiresAt: z.string().nullish(),
 });

@@ -328,6 +328,7 @@ public class BffAuthController : ControllerBase
             IsAuthenticated = true,
             AuthLevel = _sessionService.GetAuthLevel(session.SessionId),
             IsPinVerified = _sessionService.IsPinVerificationValid(session.SessionId),
+            ServerTime = DateTime.UtcNow,
             InactivityExpiresAt = session.LastActivity.AddMinutes(_sessionOptions.InactivityTimeoutMinutes),
             AbsoluteExpiresAt = session.SessionCreated.AddMinutes(_sessionOptions.AbsoluteTimeoutMinutes)
         });

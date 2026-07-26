@@ -74,6 +74,19 @@ export function SessionExpiryWarning() {
     return () => window.clearInterval(id);
   }, [status]);
 
+  // Recover a policy this component never saw. Authenticated with no known deadline means it can do
+  // nothing at all — no warning, no sign-out — and nothing else would ever repair that: there is no
+  // polling, and the bootstrap probe has already run. One request fixes it, once per mount.
+  //
+  // It should never fire in production, where the module lives as long as the page. It fires
+  // constantly under HMR, which is how the gap was found: a module reload resets the policy, the
+  // dialog silently stopped working, and the countdown never appeared. A silent no-op with no route
+  // back is worth one request to close, whatever caused it.
+  useEffect(() => {
+    if (status !== 'authenticated' || getSessionDeadline() !== null) return;
+    void dispatch(apiSlice.endpoints.getMe.initiate(undefined, { forceRefetch: true }));
+  }, [status, dispatch]);
+
   // A backgrounded tab is where this tab's idea of the deadline goes stale: its own timers are
   // throttled while another tab may be keeping the session alive. One probe on return costs a
   // request nobody notices and is the only thing that corrects the drift.

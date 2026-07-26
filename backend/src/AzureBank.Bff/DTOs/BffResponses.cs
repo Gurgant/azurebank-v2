@@ -101,6 +101,17 @@ public class BffSessionStatusResponse
     public bool? IsPinVerified { get; set; }
 
     /// <summary>
+    /// The server's clock at the moment it answered. Null when unauthenticated.
+    /// </summary>
+    /// <remarks>
+    /// Without it a client cannot turn either deadline below into a remaining DURATION without
+    /// subtracting its own clock, which reintroduces exactly the skew that publishing deadlines was
+    /// meant to remove: a fast client warns early, a slow one late, and neither can tell. Subtracting
+    /// this from a deadline is pure server arithmetic, and the result is anchored locally at receipt.
+    /// </remarks>
+    public DateTime? ServerTime { get; set; }
+
+    /// <summary>
     /// When the session expires from inactivity. Null when unauthenticated.
     /// </summary>
     /// <remarks>

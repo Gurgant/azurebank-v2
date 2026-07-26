@@ -84,16 +84,22 @@ export function learnSessionPolicy(session: {
  * moments where this tab's idea of the deadline is least trustworthy, because another tab may have
  * kept the session warm in the meantime.
  */
-export function syncFromProbe(status: { inactivityExpiresAt?: string | null }): void {
+export function syncFromProbe(status: {
+  serverTime?: string | null;
+  inactivityExpiresAt?: string | null;
+}): void {
   const inactivityExpires = status.inactivityExpiresAt
     ? Date.parse(status.inactivityExpiresAt)
     : Number.NaN;
-  if (!Number.isFinite(inactivityExpires) || policy === null) return;
+  const serverNow = status.serverTime ? Date.parse(status.serverTime) : Number.NaN;
+  if (!Number.isFinite(inactivityExpires) || !Number.isFinite(serverNow) || policy === null) return;
 
-  // Only the REMAINING time is read, never the absolute instant — the difference is what keeps a
-  // skewed clock from mattering. Walking that remainder back by the known window recovers the
-  // server's true last-activity moment, which is exactly what this tab may have fallen behind on.
-  const remainingMs = inactivityExpires - Date.now();
+  // The remainder is computed from TWO SERVER VALUES and only then anchored to the local clock.
+  // The first version of this subtracted `Date.now()` from the server's deadline, which is the
+  // very skew the rest of the module is built to avoid — a fast client would have warned early and
+  // a slow one late, with nothing to reveal which. `serverTime` exists so the arithmetic can stay
+  // entirely on the server's side of the wire.
+  const remainingMs = inactivityExpires - serverNow;
   lastServerActivity = Date.now() - (policy.inactivityWindowMs - remainingMs);
 
   // The absolute cap is deliberately NOT re-read here. It is fixed at session creation and never
