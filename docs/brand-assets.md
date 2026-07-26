@@ -36,6 +36,62 @@ Two artefacts of the generative source survive and cannot be fixed by any amount
 source raster's edges rise over about 6 pixels rather than 1–2, and the mark carries a slight
 asymmetry in the arrowhead that is far outside noise and was preserved as character.
 
+## The plate
+
+The favicon sits on a **white plate with an 18% corner radius, the mark inset 5% on each side**.
+`Logo.tsx` renders the same file, so the tile in the browser tab and the tile in the app are one
+object rather than two things that resemble each other.
+
+It was chosen by measurement and then decided against part of the measurement, which is worth
+recording honestly.
+
+Four candidates were rendered at 16/20/32/48px over five tab-strip colours sampled out of Chrome's
+own icon cache — transparent, white plate, brand plate with an all-white mark, and brand plate
+keeping the cyan arrow — and scored by the alpha-weighted share of the mark's ink falling below 3:1
+against whatever sat behind it.
+
+| candidate | white strip | light blue | saturated blue | dark | plate vs strip |
+| --- | --- | --- | --- | --- | --- |
+| transparent (what shipped before) | 70% | 71% | **100%** | 54% | — |
+| white plate | 69% | 69% | 69% | 69% | 1.00 – 16.33 |
+| brand plate, white mark | 33% | 33% | 33% | 33% | 1.84 – 4.87 |
+| brand plate, cyan arrow | 58% | 58% | 58% | 58% | 1.84 – 4.87 |
+
+**Re-run it rather than trusting it**, with `node frontend/scripts/favicon-contrast.js`. Same master,
+same rasteriser, same pin as the icon generator. Two of these numbers moved when the measurement was
+made reproducible — the light-blue column was rounded a point low, and the white plate's separation
+range had been quoted from the light strips alone, which understated it: on a dark strip a white
+tile is 16.33:1, and that is where the plate does its real work.
+
+The percentages above are the comparison **as judged**, at the 14% inset all three plated candidates
+were drawn with. What ships is a 5% inset, and it measures **66%** — the mark is larger, so slightly
+more of it is the soft edge that the metric punishes.
+
+**The transparent mark loses 100% of its ink on a saturated blue strip.** It does not degrade, it
+disappears: the mark's dark blue and that strip are the same colour. This is the defect the plate
+fixes, and it is why the plated rows are identical across every column — a plate makes legibility
+independent of what the browser paints behind it. That is the whole argument for having one.
+
+**White rather than brand, decided against the numbers.** A brand plate scores roughly twice as
+well, but only by turning the mark into a white silhouette, which is a different logo; contrast is
+a proxy and recognition is what a favicon is actually for. And the 69% is almost entirely the cyan
+at 2.32:1 on white — the same cyan this app already renders on every white surface it has. Holding
+the favicon to a stricter standard than the product would have been incoherent.
+
+The white plate's one real weakness is that it is invisible on a white strip (1.00:1), so on
+Chrome's light active tab it buys nothing. It costs nothing there either, once the inset is small.
+
+**5% inset, and the inset is why.** 14% left the mark visibly timid — a plate that eats 28% of the
+tile gives back a smaller mark than the unplated original. 2% left no white margin at all, so on a
+dark strip the mark's edge met the dark directly and the plate stopped reading as a plate. Note what
+the number governs: the mark is 4:3, so a square plate always has generous room above and below it.
+The inset controls the left and right margins alone, and at 16px 5% is 0.8px — sub-pixel. What makes
+the plate read as a plate at that size is the vertical margin, not the horizontal one.
+
+`theme-color` is `#0077b6` **because** the plate is white: the tile reads at 4.87:1 against the
+browser UI it tints. The two are coupled, and changing one without the other dissolves the icon into
+the bar it sits on.
+
 ## Regenerating the icons
 
 ```bash
@@ -72,14 +128,19 @@ Three decisions are baked in that a generic generator gets wrong:
 **Coverage differs by role, on purpose.** Maskable icons are cropped by Android to a circle of
 radius 40%, so the mark stays at 60% of the width — and the script _asserts_ the bounding box's
 half-diagonal fits that circle, because a wide mark can pass a width check and still lose its
-corners. The apple-touch icon is opaque and padded, because iOS composites on black and a
-transparent icon acquires a dark halo. A plain favicon is never cropped and runs to 94%, since at
-16px every pixel of mark is worth having.
+corners. The apple-touch icon is opaque, square and padded, because iOS composites on black, applies
+its own rounded mask, and a transparent icon acquires a dark halo. The favicon family is never
+cropped by anyone, so it carries its own rounded corners and runs to 90%.
 
-**The ICO carries three natively-rendered frames.** Building one by handing a writer a single image
-and a list of sizes downscales it — the very thing the script exists to avoid. Worse, some writers
-silently drop sizes larger than the base image, so an ICO built from the 16px frame comes out
-containing only 16px _and saves without error_. A failure that looks exactly like success.
+**The ICO carries six natively-rendered frames**, 16 through 256. Building one by handing a writer a
+single image and a list of sizes downscales it — the very thing the script exists to avoid. Worse,
+some writers silently drop sizes larger than the base image, so an ICO built from the 16px frame
+comes out containing only 16px _and saves without error_. A failure that looks exactly like success.
+
+16, 32 and 48 are what a browser asks for; 64 through 256 are what Windows asks for, in Explorer's
+large views, on a desktop shortcut and on a high-DPI taskbar. Without them Windows stretches the
+48px frame. Six frames cost about 16 KB on a file no modern browser reaches for anyway — each one
+takes the SVG from the link tag first.
 
 **16px is a real limit, not a rendering problem.** At that size the arrow is one pixel wide and
 cannot read, and the wave at the lower left turns into a smudge across the letter. Dropping the
