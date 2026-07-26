@@ -1,36 +1,27 @@
-import { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
-import { breakpoints } from '../theme/tokens';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { media } from '../theme/breakpoints';
 
 /**
- * Hook for responsive design - detects current viewport size
+ * Viewport flags, derived from matchMedia.
+ *
+ * This used to hold three pieces of state, seed them to `isDesktop: true`, and correct them in an
+ * effect. On a phone that meant render #1 produced the full desktop shell — 240px sidebar, centred
+ * 1200px content — which then unmounted on render #2, remounting every child underneath it. One
+ * real frame of the wrong layout, plus a subtree remount, on every load.
+ *
+ * `useSyncExternalStore` returns the true value on the first render, so there is no false frame and
+ * no cascade. The hook it delegates to was already in this file, already correct, and used by
+ * nothing.
  */
 export function useResponsive() {
-  const [isMobile, setIsMobile] = useState(false);
-  const [isTablet, setIsTablet] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(true);
-
-  useEffect(() => {
-    const checkBreakpoints = () => {
-      const width = window.innerWidth;
-      setIsMobile(width < breakpoints.tablet);
-      setIsTablet(width >= breakpoints.tablet && width < breakpoints.desktop);
-      setIsDesktop(width >= breakpoints.desktop);
-    };
-
-    // Check on mount
-    checkBreakpoints();
-
-    // Listen for resize events
-    window.addEventListener('resize', checkBreakpoints);
-
-    return () => window.removeEventListener('resize', checkBreakpoints);
-  }, []);
+  const isDesktop = useMediaQuery(media.lg);
+  const isTablet = useMediaQuery(media.md) && !isDesktop;
 
   return {
-    isMobile,
+    isMobile: !isDesktop && !isTablet,
     isTablet,
     isDesktop,
-    isTouch: isMobile || isTablet,
+    isTouch: !isDesktop,
   };
 }
 
