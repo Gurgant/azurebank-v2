@@ -3,7 +3,15 @@ import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
 import { problem } from './problem';
-import { MOCK_PASSWORD, MOCK_USER, mockState, type MockSessionUser } from './state';
+import {
+  MOCK_PASSWORD,
+  MOCK_USER,
+  expireMockSessionIfDue,
+  markMockActivity,
+  mockAccessTokenExpiry,
+  mockState,
+  type MockSessionUser,
+} from './state';
 
 /**
  * Contract-faithful MSW handlers. Success bodies go through openapi-msw's TYPED response
@@ -935,8 +943,14 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
     });
   }
   mockState.session = { ...MOCK_USER };
+  // A login starts the session clock. Without this the fixtures sit at epoch 0 and every
+  // subsequent request looks like a session that expired in 1970.
+  mockState.sessionCreatedAt = Date.now();
+  mockState.sessionLastActivity = Date.now();
   return HttpResponse.json({
-    data: { user: { ...MOCK_USER }, expiresAt: '2099-01-01T00:00:00.0000000Z' },
+    // The access token's expiry, which is what the real controller forwards here — NOT the
+    // session's absolute cap. They are separate rules with separate lengths.
+    data: { user: { ...MOCK_USER }, expiresAt: mockAccessTokenExpiry() },
     message: 'Login successful',
   });
 });
@@ -965,6 +979,9 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
     hasPin: false,
   };
   mockState.session = user;
+  // Registration IS a login: the BFF sets the cookie on the 201, so the clock starts here too.
+  mockState.sessionCreatedAt = Date.now();
+  mockState.sessionLastActivity = Date.now();
   // Real registration (AuthService) atomically creates the user's primary account:
   // 'Primary Account', Checking, balance 0, isPrimary true — mirror it.
   mockState.accounts = [
@@ -980,7 +997,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   ];
   return HttpResponse.json(
     {
-      data: { user, expiresAt: '2099-01-01T00:00:00.0000000Z' },
+      data: { user, expiresAt: mockAccessTokenExpiry() },
       message: 'Registration successful',
     },
     { status: 201 },
@@ -988,18 +1005,32 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
 });
 
 const me = http.get('*/bff/auth/me', () => {
-  if (!mockState.session) {
+  // Expiry is checked BEFORE activity is marked. The other order revives a session that died an
+  // hour ago simply because something touched it — which is exactly the bug the real BFF avoids by
+  // evaluating the deadline in the session store, not in the middleware.
+  if (expireMockSessionIfDue() || !mockState.session) {
     // The BFF's own 401: ProblemDetails WITHOUT errorCode.
     return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
+  // /me IS activity: the BFF slides LastActivity on every cookie-bearing request and excludes only
+  // the session-status probe (ADR-0018). Modelled here so `inactivityExpiresAt` on this endpoint
+  // always reads "now plus the full window" — exactly as it does against a real BFF, which is why a
+  // client that polled it for a countdown would see a frozen number in tests too, not just in a
+  // browser.
+  markMockActivity();
   return HttpResponse.json({
     data: {
       user: { ...mockState.session },
       session: {
         authLevel: mockState.authLevel,
-        createdAt: '2026-07-20T12:00:00.0000000Z',
-        lastActivity: '2026-07-20T12:10:00.0000000Z',
-        expiresAt: '2099-01-01T00:00:00.0000000Z',
+        createdAt: new Date(mockState.sessionCreatedAt).toISOString(),
+        lastActivity: new Date(mockState.sessionLastActivity).toISOString(),
+        expiresAt: new Date(
+          mockState.sessionCreatedAt + mockState.sessionAbsoluteWindowMs,
+        ).toISOString(),
+        inactivityExpiresAt: new Date(
+          mockState.sessionLastActivity + mockState.sessionInactivityWindowMs,
+        ).toISOString(),
         isPinVerified: mockState.authLevel === 2,
         // Future (before the session's own expiry) so a PIN-verified fixture is self-consistent —
         // isPinVerified:true must not ship an already-elapsed pinExpiresAt.
@@ -1017,18 +1048,67 @@ const logout = http.post('*/bff/auth/logout', () => {
 });
 
 const sessionStatus = http.get('*/bff/auth/session-status', () => {
+  // Checked here too, and still without marking activity: the probe must be able to report a dead
+  // session, which is the whole reason the client can trust it at the zero crossing.
+  expireMockSessionIfDue();
   // BARE by contract — the second non-envelope response besides GET /api/transactions.
   if (!mockState.session) {
-    return HttpResponse.json({ isAuthenticated: false, authLevel: null, isPinVerified: null });
+    return HttpResponse.json({
+      isAuthenticated: false,
+      authLevel: null,
+      isPinVerified: null,
+      serverTime: null,
+      inactivityExpiresAt: null,
+      absoluteExpiresAt: null,
+    });
   }
+  // Deliberately does NOT mark activity. That exclusion (ADR-0018) is the only reason a client-side
+  // countdown is possible, so a mock that slid the clock here would let a broken client pass.
   return HttpResponse.json({
     isAuthenticated: true,
     authLevel: mockState.authLevel,
     isPinVerified: mockState.authLevel === 2,
+    // The server's clock, so the client can compute a remaining duration without touching its own.
+    serverTime: new Date().toISOString(),
+    inactivityExpiresAt: new Date(
+      mockState.sessionLastActivity + mockState.sessionInactivityWindowMs,
+    ).toISOString(),
+    absoluteExpiresAt: new Date(
+      mockState.sessionCreatedAt + mockState.sessionAbsoluteWindowMs,
+    ).toISOString(),
   });
 });
 
+/**
+ * The session-activity middleware, modelled where the real one lives.
+ *
+ * `SessionActivityMiddleware` runs BEFORE routing and slides `LastActivity` on EVERY cookie-bearing
+ * request, excluding only the session-status probe (ADR-0018). Modelling that per-endpoint would
+ * have meant repeating it in fifteen handlers and forgetting it in the sixteenth, so it sits in
+ * front of `/api/*` the same way the real one sits in front of everything.
+ *
+ * Until this existed the mock clock ran FAST relative to the server. Only `/bff/auth/me` marked
+ * activity, so a user reading accounts, filtering history or sending a transfer looked idle to the
+ * mock while the real BFF counted every one of those as activity — and a countdown read against
+ * that clock would expire someone the server considered perfectly alive.
+ *
+ * The 401 is narrow on purpose: it fires only when a session EXISTED and has just died, never when
+ * there was none to begin with. These handlers have never gated on authentication — most tests call
+ * them with no session at all — and turning them into a gate is a separate change with a twenty-file
+ * blast radius. What matters here is that a session cannot outlive its own deadline.
+ */
+const sessionActivity = http.all('*/api/*', () => {
+  const hadSession = mockState.session !== null;
+  if (expireMockSessionIfDue() && hadSession) {
+    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  }
+  markMockActivity();
+  // Returning nothing falls through to the endpoint handler below.
+  return undefined;
+});
+
 export const handlers = [
+  sessionActivity,
   listAccounts,
   createAccount,
   renameAccount,

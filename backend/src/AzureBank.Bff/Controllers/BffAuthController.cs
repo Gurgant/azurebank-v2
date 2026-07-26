@@ -226,6 +226,7 @@ public class BffAuthController : ControllerBase
                     CreatedAt = session.SessionCreated,
                     LastActivity = session.LastActivity,
                     ExpiresAt = session.SessionCreated.AddMinutes(_sessionOptions.AbsoluteTimeoutMinutes),
+                    InactivityExpiresAt = session.LastActivity.AddMinutes(_sessionOptions.InactivityTimeoutMinutes),
                     IsPinVerified = isPinVerified,
                     PinExpiresAt = isPinVerified
                         ? session.PinVerifiedAt?.AddMinutes(_securityOptions.PinValidityMinutes)
@@ -319,11 +320,17 @@ public class BffAuthController : ControllerBase
             });
         }
 
+        // LastActivity is trustworthy here and nowhere else: SessionActivityMiddleware excludes this
+        // probe (ADR-0018), so reading the deadline does not push it forward. That exclusion is what
+        // makes a client-side countdown possible at all.
         return Ok(new BffSessionStatusResponse
         {
             IsAuthenticated = true,
             AuthLevel = _sessionService.GetAuthLevel(session.SessionId),
-            IsPinVerified = _sessionService.IsPinVerificationValid(session.SessionId)
+            IsPinVerified = _sessionService.IsPinVerificationValid(session.SessionId),
+            ServerTime = DateTime.UtcNow,
+            InactivityExpiresAt = session.LastActivity.AddMinutes(_sessionOptions.InactivityTimeoutMinutes),
+            AbsoluteExpiresAt = session.SessionCreated.AddMinutes(_sessionOptions.AbsoluteTimeoutMinutes)
         });
     }
 

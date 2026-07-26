@@ -102,4 +102,62 @@ public class SessionActivityTests : IClassFixture<WebApplicationFactory<Program>
         sessions.GetSession(sessionId)!.LastActivity.Should().BeAfter(baseline,
             "/bff/auth/me is the deliberate keep-alive — 'Stay signed in' depends on it");
     }
+
+    /// <summary>
+    /// The probe must report a deadline that FALLS. That is the whole reason the frontend can show
+    /// a countdown at all: every other endpoint slides LastActivity as a side effect of being
+    /// called, so the deadline it reports is always the full window and never moves.
+    /// </summary>
+    [Fact]
+    public async Task SessionStatusProbe_ReportsAnInactivityDeadlineThatCountsDown()
+    {
+        var (sessionId, cookieName, _) = CreateSession();
+        var client = _factory.CreateClient();
+
+        var first = await ReadProbeDeadlines(client, cookieName, sessionId);
+        await Task.Delay(1100);
+        var second = await ReadProbeDeadlines(client, cookieName, sessionId);
+
+        // Identical deadlines across two probes a second apart: probing did not push them out.
+        second.Inactivity.Should().Be(first.Inactivity);
+        second.Absolute.Should().Be(first.Absolute);
+        // And the remaining time genuinely shrank, which is what a countdown needs. Measured at
+        // each probe rather than derived afterwards — comparing a fixed deadline against a later
+        // clock reading is true by arithmetic and would assert nothing.
+        second.Remaining.Should().BeLessThan(first.Remaining);
+    }
+
+    /// <summary>
+    /// The two rules are independent, and a client that watches only one of them is wrong half the
+    /// time. Activity slides the inactivity deadline; nothing moves the absolute one.
+    /// </summary>
+    [Fact]
+    public async Task Me_SlidesTheInactivityDeadlineButNotTheAbsoluteOne()
+    {
+        var (sessionId, cookieName, _) = CreateSession();
+        var client = _factory.CreateClient();
+
+        var before = await ReadProbeDeadlines(client, cookieName, sessionId);
+        await Task.Delay(1100);
+        (await client.SendAsync(Get("/bff/auth/me", cookieName, sessionId)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        var after = await ReadProbeDeadlines(client, cookieName, sessionId);
+
+        after.Inactivity.Should().BeAfter(before.Inactivity);
+        after.Absolute.Should().Be(before.Absolute);
+    }
+
+    private async Task<(DateTime Inactivity, DateTime Absolute, TimeSpan Remaining)> ReadProbeDeadlines(
+        HttpClient client, string cookieName, string sessionId)
+    {
+        var response = await client.SendAsync(Get("/bff/auth/session-status", cookieName, sessionId));
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+        var inactivity = root.GetProperty("inactivityExpiresAt").GetDateTime();
+        return (
+            inactivity,
+            root.GetProperty("absoluteExpiresAt").GetDateTime(),
+            inactivity - DateTime.UtcNow);
+    }
 }

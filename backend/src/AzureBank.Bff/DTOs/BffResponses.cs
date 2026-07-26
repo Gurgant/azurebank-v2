@@ -48,6 +48,29 @@ public class BffSessionInfo
     public DateTime ExpiresAt { get; set; }
 
     /// <summary>
+    /// When the session would expire from INACTIVITY: <see cref="LastActivity"/> plus the
+    /// configured inactivity window.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>On this endpoint it reports the WINDOW, never the time remaining.</b> Fetching
+    /// <c>/bff/auth/me</c> is itself activity — <c>SessionActivityMiddleware</c> slides
+    /// <c>LastActivity</c> on every cookie-bearing request and excludes only the session-status
+    /// probe (ADR-0018) — so this value is always "now plus the full window" by the time a caller
+    /// reads it. Measured: two <c>/me</c> calls six seconds apart returned <c>LastActivity</c> six
+    /// seconds apart. A countdown driven off this field would freeze at the window and never move.
+    /// </para>
+    /// <para>
+    /// It is here so a client can learn the POLICY rather than hardcode it. The frontend duplicated
+    /// the inactivity window as a constant that was wrong by 3x against a Development configuration
+    /// and ignored the absolute cap entirely, so its warning could only ever fire after the session
+    /// was already dead. For time REMAINING, poll the session-status probe, which does not disturb
+    /// what it measures. The effective deadline is the EARLIER of the two rules.
+    /// </para>
+    /// </remarks>
+    public DateTime InactivityExpiresAt { get; set; }
+
+    /// <summary>
     /// Whether PIN verification is currently valid.
     /// </summary>
     public bool IsPinVerified { get; set; }
@@ -76,4 +99,38 @@ public class BffSessionStatusResponse
     public bool IsAuthenticated { get; set; }
     public int? AuthLevel { get; set; }
     public bool? IsPinVerified { get; set; }
+
+    /// <summary>
+    /// The server's clock at the moment it answered. Null when unauthenticated.
+    /// </summary>
+    /// <remarks>
+    /// Without it a client cannot turn either deadline below into a remaining DURATION without
+    /// subtracting its own clock, which reintroduces exactly the skew that publishing deadlines was
+    /// meant to remove: a fast client warns early, a slow one late, and neither can tell. Subtracting
+    /// this from a deadline is pure server arithmetic, and the result is anchored locally at receipt.
+    /// </remarks>
+    public DateTime? ServerTime { get; set; }
+
+    /// <summary>
+    /// When the session expires from inactivity. Null when unauthenticated.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the only endpoint where a remaining-time value means anything.</b>
+    /// <c>SessionActivityMiddleware</c> slides <c>LastActivity</c> on every cookie-bearing request
+    /// and excludes exactly one route — this probe (ADR-0018). Everywhere else, reading the deadline
+    /// resets it, so the answer is always "now plus the full window" and a countdown built on it
+    /// would never move. Here the value genuinely counts down.
+    /// </remarks>
+    public DateTime? InactivityExpiresAt { get; set; }
+
+    /// <summary>
+    /// When the session expires regardless of activity. Null when unauthenticated.
+    /// </summary>
+    /// <remarks>
+    /// Spelled out rather than called <c>ExpiresAt</c> like the field on <c>/bff/auth/me</c>, because
+    /// two expiry rules are in force and a bare name cannot say which one it means. The effective
+    /// deadline is the EARLIER of this and <see cref="InactivityExpiresAt"/>; a client that watches
+    /// only one of them is wrong half the time. Nothing warned about this rule at all until now.
+    /// </remarks>
+    public DateTime? AbsoluteExpiresAt { get; set; }
 }

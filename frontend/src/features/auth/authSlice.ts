@@ -58,6 +58,22 @@ const authSlice = createSlice({
       state.status = 'expired';
       state.user = null;
     },
+    /**
+     * A deliberate sign-out that could not be confirmed by a successful logout call.
+     *
+     * `'anonymous'` was reachable only through the logout-fulfilled matcher below, which means a
+     * user who asked to sign out of a session the server had ALREADY destroyed had nowhere to go:
+     * the call answers 401, the matcher never fires, and they stay on screen. A 401 there is the
+     * outcome they wanted, not a failure, and this is how it gets recorded.
+     *
+     * It is NOT a substitute for the mutation. Anything other than success-or-401 leaves the
+     * cookie's fate unknown, and the caller must use `sessionExpired` for that instead — the
+     * honest description of a session whose end could not be verified.
+     */
+    signedOut: (state) => {
+      state.status = 'anonymous';
+      state.user = null;
+    },
   },
   extraReducers: (builder) => {
     // Matchers are STRING-based on the RTK Query action shape ('api/...' +
@@ -85,7 +101,7 @@ const authSlice = createSlice({
   },
 });
 
-export const { sessionExpired } = authSlice.actions;
+export const { sessionExpired, signedOut } = authSlice.actions;
 export const authReducer = authSlice.reducer;
 
 export const selectAuthStatus = (state: { auth: AuthState }) => state.auth.status;

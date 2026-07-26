@@ -26,6 +26,16 @@ export const bffSessionInfoSchema = z.object({
   expiresAt: z.string(),
   isPinVerified: z.boolean(),
   pinExpiresAt: z.string().nullable(),
+  /**
+   * Optional on purpose, and the reason is a deploy-order trap rather than uncertainty about the
+   * contract. This file fails CLOSED on a missing required field, so a frontend that demanded this
+   * before the BFF emitted it would reject every response and log the user out — the exact failure
+   * the field exists to prevent. It becomes required once a BFF carrying it has shipped.
+   *
+   * On THIS endpoint it declares the inactivity WINDOW, not time remaining: fetching /bff/auth/me is
+   * itself activity, so the value is always "now plus the window" by the time it is read.
+   */
+  inactivityExpiresAt: z.string().optional(),
 });
 
 export const bffLoginResponseSchema = z.object({
@@ -38,12 +48,43 @@ export const bffMeResponseSchema = z.object({
   session: bffSessionInfoSchema,
 });
 
-/** B5 — bare (non-envelope) response. */
-export const bffSessionStatusResponseSchema = z.object({
-  isAuthenticated: z.boolean(),
-  authLevel: z.number().nullable(),
-  isPinVerified: z.boolean().nullable(),
-});
+/**
+ * B5 — bare (non-envelope) response.
+ *
+ * The two deadlines are meaningful HERE and nowhere else. `SessionActivityMiddleware` slides the
+ * server's `LastActivity` on every cookie-bearing request and excludes exactly one route — this
+ * probe (ADR-0018) — so reading these does not push them forward. Measured on a running BFF: three
+ * probes over eleven seconds returned an identical `inactivityExpiresAt` while the remaining time
+ * fell 599s → 593s → 589s, and a single `/bff/auth/me` in between jumped it back to the full window.
+ *
+ * Both optional for the same deploy-order reason as `inactivityExpiresAt` above.
+ */
+export const bffSessionStatusResponseSchema = z
+  .object({
+    isAuthenticated: z.boolean(),
+    authLevel: z.number().nullable(),
+    isPinVerified: z.boolean().nullable(),
+    /**
+     * The server's clock at the moment it answered — what makes the two deadlines usable as
+     * DURATIONS. Subtracting a deadline from this is pure server arithmetic; subtracting it from
+     * `Date.now()` would smuggle the reader's clock skew back in, which is what publishing deadlines
+     * was supposed to remove.
+     */
+    serverTime: z.string().nullish(),
+    inactivityExpiresAt: z.string().nullish(),
+    absoluteExpiresAt: z.string().nullish(),
+  })
+  /**
+   * A deadline without `serverTime` is not merely incomplete, it is unusable: converting it to a
+   * duration would need the reader's clock, which is the skew this whole contract exists to remove.
+   * The consumer already refuses to act on such a response, but silently — so a BFF that shipped
+   * one deadline and forgot the anchor would look like a working session that simply never warns.
+   * Failing the parse turns that into a visible error instead of a quiet no-op.
+   */
+  .refine((v) => !(v.inactivityExpiresAt || v.absoluteExpiresAt) || Boolean(v.serverTime), {
+    error: 'session-status sent a deadline without serverTime; a deadline is unusable without it',
+    path: ['serverTime'],
+  });
 
 export const bffPinVerificationResponseSchema = z.object({
   verified: z.boolean(),
