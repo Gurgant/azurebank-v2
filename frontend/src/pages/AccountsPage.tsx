@@ -13,6 +13,7 @@ import {
   MessageBarBody,
   Spinner,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ArrowSwap24Regular,
@@ -221,7 +222,7 @@ const useStyles = makeStyles({
 
   // ========== ACCOUNT CARD ==========
   accountCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     padding: '20px',
     display: 'flex',
@@ -387,7 +388,7 @@ const useStyles = makeStyles({
 
   // ========== ADD ACCOUNT CARD ==========
   addAccountCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     border: `2px dashed ${colors.neutral[300]}`,
     borderRadius: '16px',
     padding: '24px',

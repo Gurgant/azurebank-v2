@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { makeStyles, mergeClasses, Text } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import {
   Home24Regular,
   Home24Filled,
@@ -86,7 +86,7 @@ const useStyles = makeStyles({
     left: 0,
     right: 0,
     height: componentSizes.bottomNav.height,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderTop: `1px solid ${colors.neutral[100]}`,
     display: 'flex',
     alignItems: 'center',

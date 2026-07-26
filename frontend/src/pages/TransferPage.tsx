@@ -7,6 +7,7 @@ import {
   Spinner,
   MessageBar,
   MessageBarBody,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
@@ -76,7 +77,7 @@ const useStyles = makeStyles({
     justifyContent: 'space-between',
     height: '56px',
     padding: '0 12px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[200]}`,
   },
   headerBtn: {
@@ -106,7 +107,7 @@ const useStyles = makeStyles({
   card: {
     width: '100%',
     padding: '14px 16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${colors.neutral[200]}`,
     borderRadius: '12px',
     display: 'flex',
@@ -168,7 +169,7 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: '8px',
     padding: '16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${colors.neutral[200]}`,
     borderRadius: '12px',
   },
@@ -192,7 +193,7 @@ const useStyles = makeStyles({
     minWidth: '60px',
     height: '34px',
     padding: '0 14px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${colors.neutral[200]}`,
     borderRadius: '8px',
     cursor: 'pointer',
@@ -208,7 +209,7 @@ const useStyles = makeStyles({
     color: colors.brand[60],
   },
   reviewCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${colors.neutral[200]}`,
     borderRadius: '12px',
     padding: '4px 16px',

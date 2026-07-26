@@ -1,4 +1,4 @@
-import { makeStyles, mergeClasses, Text } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import { colors, shadows, transitions } from '../../theme/tokens';
 
 // ============================================
@@ -37,7 +37,7 @@ const useStyles = makeStyles({
     gap: '8px',
     flex: 1,
     height: '80px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '12px',
     border: 'none',
     cursor: 'pointer',

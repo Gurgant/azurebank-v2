@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { makeStyles, mergeClasses, Text, Button } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, Text, Button, tokens } from '@fluentui/react-components';
 import { Warning24Regular, Dismiss24Regular } from '@fluentui/react-icons';
 import { colors, zIndex, transitions, shadows } from '../../theme/tokens';
 
@@ -57,7 +57,7 @@ const useStyles = makeStyles({
   },
 
   dialog: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     width: '100%',
     maxWidth: '340px',

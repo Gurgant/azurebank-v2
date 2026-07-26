@@ -8,6 +8,7 @@ import {
   MessageBarBody,
   Spinner,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ArrowDownload24Regular,
@@ -130,7 +131,7 @@ const useStyles = makeStyles({
   },
 
   emptyStateCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     boxShadow: shadows.md,
     padding: '32px 24px',
@@ -214,7 +215,7 @@ const useStyles = makeStyles({
       flexDirection: 'column',
       justifyContent: 'space-between',
       minHeight: '180px',
-      backgroundColor: '#FFFFFF',
+      backgroundColor: tokens.colorNeutralBackground1,
       border: `1px solid ${colors.neutral[200]}`,
       borderRadius: '16px',
       padding: '24px',
@@ -262,7 +263,7 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     gap: '12px',
     '@media (min-width: 1024px)': {
-      backgroundColor: '#FFFFFF',
+      backgroundColor: tokens.colorNeutralBackground1,
       borderRadius: '16px',
       boxShadow: shadows.md,
       padding: '24px',
@@ -294,7 +295,7 @@ const useStyles = makeStyles({
   },
 
   transactionsList: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '12px',
     overflow: 'hidden',
     '@media (min-width: 1024px)': {
@@ -308,7 +309,7 @@ const useStyles = makeStyles({
 
   // ========== SIDEBAR CARDS (Desktop) ==========
   summaryCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: '16px',
     boxShadow: shadows.md,
     padding: '24px',

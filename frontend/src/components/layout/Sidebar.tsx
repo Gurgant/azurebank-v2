@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { makeStyles, mergeClasses, Text } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import {
   Home24Regular,
   Home24Filled,
@@ -87,7 +87,7 @@ const useStyles = makeStyles({
   sidebar: {
     width: componentSizes.sidebar.width,
     minHeight: '100vh',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRight: `1px solid ${colors.neutral[100]}`,
     display: 'flex',
     flexDirection: 'column',

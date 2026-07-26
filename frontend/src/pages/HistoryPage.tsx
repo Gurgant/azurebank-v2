@@ -8,6 +8,7 @@ import {
   MessageBarBody,
   Spinner,
   Text,
+  tokens,
 } from '@fluentui/react-components';
 import {
   ChevronLeft24Regular,
@@ -60,7 +61,7 @@ const useStyles = makeStyles({
     justifyContent: 'space-between',
     height: '56px',
     padding: '0 16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[200]}`,
   },
 
@@ -103,7 +104,7 @@ const useStyles = makeStyles({
     display: 'flex',
     padding: '12px 16px',
     gap: '8px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${colors.neutral[200]}`,
     overflowX: 'auto',
     flexShrink: 0,
@@ -175,7 +176,7 @@ const useStyles = makeStyles({
   // ========== TRANSACTION LIST ==========
   transactionList: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     overflowY: 'auto',
   },
 
@@ -317,7 +318,7 @@ const useStyles = makeStyles({
     display: 'flex',
     justifyContent: 'center',
     padding: '16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
   },
 
   // ========== EMPTY STATE ==========

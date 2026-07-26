@@ -9,6 +9,7 @@ import {
   Spinner,
   MessageBar,
   MessageBarBody,
+  tokens,
 } from '@fluentui/react-components';
 import {
   Dismiss24Regular,
@@ -140,7 +141,7 @@ const useStyles = makeStyles({
   accountCard: {
     width: '100%',
     padding: '16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${colors.neutral[200]}`,
     borderRadius: '12px',
     display: 'flex',
@@ -248,7 +249,7 @@ const useStyles = makeStyles({
     minWidth: '70px',
     height: '36px',
     padding: '0 16px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${colors.neutral[200]}`,
     borderRadius: '8px',
     cursor: 'pointer',
