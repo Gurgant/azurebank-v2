@@ -17,6 +17,8 @@ import {
 } from '@fluentui/react-icons';
 import { format, startOfMonth } from 'date-fns';
 import { colors, shadows, gradients } from '../theme/tokens';
+import { TransactionListSkeleton } from '../components/shared/TransactionListSkeleton';
+import { useDelayedFlag } from '../hooks/useDelayedFlag';
 import { useAppSelector } from '../app/hooks';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import type { ApiProblem } from '../api/problemBaseQuery';
@@ -42,6 +44,9 @@ interface LegacyDialogAccount {
 // ============================================
 // STYLES
 // ============================================
+
+/** The dashboard shows the five most recent transactions. Skeleton and query share it. */
+const RECENT_PAGE_SIZE = 5;
 
 const useStyles = makeStyles({
   // ========== CONTAINER ==========
@@ -437,7 +442,11 @@ export function DashboardPage() {
     isLoading: recentLoading,
     error: recentError,
     refetch: refetchRecent,
-  } = useGetTransactionsQuery({ page: 1, pageSize: 5 });
+  } = useGetTransactionsQuery({ page: 1, pageSize: RECENT_PAGE_SIZE });
+
+  // The skeleton stands in for a KNOWN number of rows, so the count comes from the same constant
+  // the query uses. Two literals would drift, and the drift would show as a jump on every load.
+  const showRecentSkeleton = useDelayedFlag(recentLoading);
 
   // Month start computed ONCE per mount (local month). toDate is deliberately NOT sent:
   // the server defaults it to "now" per request, so the LIST-tag refetch after a money
@@ -592,10 +601,11 @@ export function DashboardPage() {
                   </Link>
                 </div>
 
-                {recentLoading && (
-                  <div className={styles.sectionState}>
-                    <Spinner size="small" aria-label="Loading recent transactions" />
-                  </div>
+                {recentLoading && showRecentSkeleton && (
+                  <TransactionListSkeleton
+                    rows={RECENT_PAGE_SIZE}
+                    label="Loading recent transactions"
+                  />
                 )}
 
                 {!recentLoading && recentError !== undefined && (
