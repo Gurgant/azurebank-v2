@@ -382,9 +382,14 @@ export const apiSlice = createApi({
     }),
 
     getSessionStatus: builder.query<BffSessionStatusResponse, void>({
-      // B5 — BARE by contract (no envelope). The cheap guard re-check: the BFF
-      // deliberately does NOT count it as session activity, so it can never
-      // keep a session alive (ADR-0018). Never poll it on a timer regardless.
+      // B5 — BARE by contract (no envelope). The BFF deliberately does NOT count it as session
+      // activity, so it can never keep a session alive (ADR-0018) — which is also what makes it the
+      // only endpoint whose expiry timestamps mean anything. Everywhere else, reading the deadline
+      // resets it.
+      //
+      // Still never polled on a timer. SessionExpiryWarning probes it exactly twice: when the tab
+      // becomes visible again, and once at the moment its countdown reaches zero, to confirm the
+      // session really is gone before ending it. Both are events, not a heartbeat.
       query: () => '/bff/auth/session-status',
       // Bare response — validate the raw body directly (no envelope to unwrap).
       transformResponse: (response: BffSessionStatusResponse) =>

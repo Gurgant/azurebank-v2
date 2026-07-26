@@ -3,7 +3,13 @@ import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
 import { problem } from './problem';
-import { MOCK_PASSWORD, MOCK_USER, mockState, type MockSessionUser } from './state';
+import {
+  MOCK_PASSWORD,
+  MOCK_USER,
+  markMockActivity,
+  mockState,
+  type MockSessionUser,
+} from './state';
 
 /**
  * Contract-faithful MSW handlers. Success bodies go through openapi-msw's TYPED response
@@ -935,6 +941,10 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
     });
   }
   mockState.session = { ...MOCK_USER };
+  // A login starts the session clock. Without this the fixtures sit at epoch 0 and every
+  // subsequent request looks like a session that expired in 1970.
+  mockState.sessionCreatedAt = Date.now();
+  mockState.sessionLastActivity = Date.now();
   return HttpResponse.json({
     data: { user: { ...MOCK_USER }, expiresAt: '2099-01-01T00:00:00.0000000Z' },
     message: 'Login successful',
@@ -965,6 +975,9 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
     hasPin: false,
   };
   mockState.session = user;
+  // Registration IS a login: the BFF sets the cookie on the 201, so the clock starts here too.
+  mockState.sessionCreatedAt = Date.now();
+  mockState.sessionLastActivity = Date.now();
   // Real registration (AuthService) atomically creates the user's primary account:
   // 'Primary Account', Checking, balance 0, isPrimary true — mirror it.
   mockState.accounts = [
@@ -992,14 +1005,25 @@ const me = http.get('*/bff/auth/me', () => {
     // The BFF's own 401: ProblemDetails WITHOUT errorCode.
     return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
+  // /me IS activity: the BFF slides LastActivity on every cookie-bearing request and excludes only
+  // the session-status probe (ADR-0018). Modelled here so `inactivityExpiresAt` on this endpoint
+  // always reads "now plus the full window" — exactly as it does against a real BFF, which is why a
+  // client that polled it for a countdown would see a frozen number in tests too, not just in a
+  // browser.
+  markMockActivity();
   return HttpResponse.json({
     data: {
       user: { ...mockState.session },
       session: {
         authLevel: mockState.authLevel,
-        createdAt: '2026-07-20T12:00:00.0000000Z',
-        lastActivity: '2026-07-20T12:10:00.0000000Z',
-        expiresAt: '2099-01-01T00:00:00.0000000Z',
+        createdAt: new Date(mockState.sessionCreatedAt).toISOString(),
+        lastActivity: new Date(mockState.sessionLastActivity).toISOString(),
+        expiresAt: new Date(
+          mockState.sessionCreatedAt + mockState.sessionAbsoluteWindowMs,
+        ).toISOString(),
+        inactivityExpiresAt: new Date(
+          mockState.sessionLastActivity + mockState.sessionInactivityWindowMs,
+        ).toISOString(),
         isPinVerified: mockState.authLevel === 2,
         // Future (before the session's own expiry) so a PIN-verified fixture is self-consistent —
         // isPinVerified:true must not ship an already-elapsed pinExpiresAt.
@@ -1019,12 +1043,26 @@ const logout = http.post('*/bff/auth/logout', () => {
 const sessionStatus = http.get('*/bff/auth/session-status', () => {
   // BARE by contract — the second non-envelope response besides GET /api/transactions.
   if (!mockState.session) {
-    return HttpResponse.json({ isAuthenticated: false, authLevel: null, isPinVerified: null });
+    return HttpResponse.json({
+      isAuthenticated: false,
+      authLevel: null,
+      isPinVerified: null,
+      inactivityExpiresAt: null,
+      absoluteExpiresAt: null,
+    });
   }
+  // Deliberately does NOT mark activity. That exclusion (ADR-0018) is the only reason a client-side
+  // countdown is possible, so a mock that slid the clock here would let a broken client pass.
   return HttpResponse.json({
     isAuthenticated: true,
     authLevel: mockState.authLevel,
     isPinVerified: mockState.authLevel === 2,
+    inactivityExpiresAt: new Date(
+      mockState.sessionLastActivity + mockState.sessionInactivityWindowMs,
+    ).toISOString(),
+    absoluteExpiresAt: new Date(
+      mockState.sessionCreatedAt + mockState.sessionAbsoluteWindowMs,
+    ).toISOString(),
   });
 });
 

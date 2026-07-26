@@ -60,6 +60,23 @@ interface MockState {
   authLevel: 1 | 2;
   /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
   session: MockSessionUser | null;
+
+  /**
+   * The server-side session clock, modelled the way the BFF actually keeps it.
+   *
+   * Windows rather than deadlines, because that is the shape the real configuration has
+   * (`Session:InactivityTimeoutMinutes` / `AbsoluteTimeoutMinutes`) and the shape the client now
+   * learns from a response. Deadlines are computed per request, so a test that advances the clock
+   * sees the same countdown a browser would instead of a frozen fixture.
+   *
+   * `sessionLastActivity` slides on `/bff/auth/me` and NOT on `/bff/auth/session-status` — the one
+   * asymmetry the whole warning depends on (ADR-0018). A mock that slid both would let a broken
+   * client look correct.
+   */
+  sessionInactivityWindowMs: number;
+  sessionAbsoluteWindowMs: number;
+  sessionCreatedAt: number;
+  sessionLastActivity: number;
   /**
    * The session user's PIN — the value withdraw (PIN-in-body, D1) verifies against. Set-pin
    * overwrites it and flips session.hasPin; it defaults to MOCK_PIN so the seeded MOCK_USER
@@ -211,10 +228,18 @@ export const MOCK_PASSWORD = 'Password1!';
 /** The one seeded PIN the mock verifies withdrawals (and step-up) against. */
 export const MOCK_PIN = '123456';
 
+/** Matches the BFF's base appsettings (30/60). Development runs 10/20; tests set what they need. */
+export const MOCK_INACTIVITY_WINDOW_MS = 30 * 60_000;
+export const MOCK_ABSOLUTE_WINDOW_MS = 60 * 60_000;
+
 export const mockState: MockState = {
   idempotency: new Map(),
   authLevel: 1,
   session: null,
+  sessionInactivityWindowMs: MOCK_INACTIVITY_WINDOW_MS,
+  sessionAbsoluteWindowMs: MOCK_ABSOLUTE_WINDOW_MS,
+  sessionCreatedAt: 0,
+  sessionLastActivity: 0,
   pin: MOCK_PIN,
   pinAttempts: 0,
   pinLockedUntil: null,
@@ -226,12 +251,25 @@ export const mockState: MockState = {
 /** Test helper: start authenticated without walking the login flow. */
 export function seedMockSession(user: MockSessionUser = MOCK_USER): void {
   mockState.session = { ...user };
+  // A seeded session starts its clock now, exactly as a real login would. Leaving it at 0 would
+  // hand every test a session that expired in 1970 and make the warning fire on the first tick.
+  mockState.sessionCreatedAt = Date.now();
+  mockState.sessionLastActivity = Date.now();
+}
+
+/** The BFF slides LastActivity on every cookie-bearing request EXCEPT the session-status probe. */
+export function markMockActivity(): void {
+  if (mockState.session) mockState.sessionLastActivity = Date.now();
 }
 
 export function resetMockState(): void {
   mockState.idempotency.clear();
   mockState.authLevel = 1;
   mockState.session = null;
+  mockState.sessionInactivityWindowMs = MOCK_INACTIVITY_WINDOW_MS;
+  mockState.sessionAbsoluteWindowMs = MOCK_ABSOLUTE_WINDOW_MS;
+  mockState.sessionCreatedAt = 0;
+  mockState.sessionLastActivity = 0;
   mockState.pin = MOCK_PIN;
   mockState.pinAttempts = 0;
   mockState.pinLockedUntil = null;
