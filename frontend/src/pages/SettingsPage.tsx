@@ -119,13 +119,23 @@ const useStyles = makeStyles({
     color: colors.brand[60],
   },
 
+  /**
+   * The same run-together defect as the sidebar, and `as="p"` is why it hid.
+   *
+   * Fluent's `Text` styles its root `display: inline` regardless of the element it renders, so
+   * `as="p"` changed the TAG without changing the layout: name and email ran together as
+   * "Demo Userdemo@azurebank.dev". The class is merged after Fluent's, so declaring the display
+   * here is what actually settles it.
+   */
   profileName: {
+    display: 'block',
     fontSize: '20px',
     fontWeight: 600,
     color: colors.neutral[800],
   },
 
   profileEmail: {
+    display: 'block',
     fontSize: '14px',
     fontWeight: 400,
     color: colors.neutral[500],

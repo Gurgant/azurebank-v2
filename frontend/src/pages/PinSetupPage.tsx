@@ -11,7 +11,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { LockClosed24Regular, CheckmarkCircle24Filled } from '@fluentui/react-icons';
-import { colors, transitions } from '../theme/tokens';
+import { colors, surfaces, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
@@ -22,13 +22,14 @@ import { PinInput } from '../components/PinInput';
 // ============================================
 
 const useStyles = makeStyles({
+  // Full-screen flow, outside the app shell: it owns its canvas, from the shell's token.
   page: {
-    minHeight: '100vh',
+    minHeight: '100dvh',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     padding: '20px',
-    backgroundColor: colors.neutral[50],
+    backgroundColor: surfaces.canvas,
   },
   card: {
     width: '100%',

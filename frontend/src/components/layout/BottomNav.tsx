@@ -12,7 +12,7 @@ import {
   Person24Regular,
   Person24Filled,
 } from '@fluentui/react-icons';
-import { colors, componentSizes, zIndex, transitions, shadows } from '../../theme/tokens';
+import { colors, componentSizes, surfaces, zIndex, transitions, shadows } from '../../theme/tokens';
 
 // ============================================
 // TYPES
@@ -87,7 +87,9 @@ const useStyles = makeStyles({
     right: 0,
     height: componentSizes.bottomNav.height,
     backgroundColor: tokens.colorNeutralBackground1,
-    borderTop: `1px solid ${colors.neutral[100]}`,
+    // Same reasoning as the sidebar's right edge: this seam separates chrome from the canvas, and
+    // it cannot be the canvas's own colour.
+    borderTop: `1px solid ${surfaces.border}`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-around',

@@ -18,7 +18,7 @@ import {
 } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { colors, transitions } from '../theme/tokens';
+import { colors, surfaces, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import {
   useGetAccountsQuery,
@@ -49,7 +49,8 @@ interface SuccessData {
 }
 
 const useStyles = makeStyles({
-  page: { minHeight: '100vh', backgroundColor: colors.neutral[50] },
+  // Full-screen wizard, outside the app shell: it owns its canvas, from the shell's token.
+  page: { minHeight: '100dvh', backgroundColor: surfaces.canvas },
   header: {
     display: 'flex',
     alignItems: 'center',

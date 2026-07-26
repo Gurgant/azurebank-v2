@@ -126,6 +126,48 @@ export const colors = {
   },
 } as const;
 
+/**
+ * The surfaces the app is built from, named by ROLE rather than by shade.
+ *
+ * Before this existed there were two colours doing four jobs, and the result was measurable: every
+ * shell page painted its own `neutral[50]` canvas, so the ground was decided by whichever page you
+ * happened to be on. Four pages painted it and `SettingsPage` did not — which is why Settings
+ * rendered white beside a white sidebar with a `#F3F4F6` hairline between them, a boundary that
+ * measures **1.10:1** and is not visible to anyone.
+ *
+ * Naming them fixes the deeper problem too. The old canvas was `neutral[50]` at **1.04:1** against
+ * the white cards standing on it — a separation the eye cannot resolve, which is the real reason
+ * the app read flat rather than any lack of shadows. `canvas` is a step darker, so a card now has
+ * something to be raised ABOVE.
+ *
+ * Some roles are deliberately NOT exported here, because a named constant with no call site is just
+ * a claim. `chrome` and `card` are Fluent's `colorNeutralBackground1` and forty call sites across
+ * twenty components already say so; a synonym would be a second name for one value.
+ *
+ * `neutral[50]` keeps what is left, and it is honestly TWO jobs rather than one: a hover tint on a
+ * white row (ten of its seventeen remaining call sites) and a static fill for something recessed
+ * into a card — read-only fields, list stripes, the summary rows, and one action button (the other
+ * seven). Both belong on top of a card rather than under it, so both are correctly lighter than the
+ * ground the card stands on, and neither moved. They are described here rather than aliased because
+ * naming a role means auditing every site that claims it, and a rename sweep that changes no pixel
+ * does not belong in the same commit as a visual fix.
+ *
+ * U7 (dark mode) remaps what is here and nothing else — that is the point of naming it.
+ */
+export const surfaces = {
+  /** The app's ground. Painted ONCE, by the shell, edge to edge. */
+  canvas: '#F3F4F6',
+  /**
+   * The edge between chrome and canvas, and between rows inside a card.
+   *
+   * `neutral[100]` was doing this job while ALSO being the canvas candidate and the nav hover fill;
+   * a border cannot be the same value as the thing it borders. At 1.24:1 against white this is
+   * still a hairline rather than a rule, which is the intent — the boundary is carried by the fill
+   * change from `canvas` to chrome, and this only sharpens it.
+   */
+  border: '#E5E7EB',
+} as const;
+
 export const shadows = {
   sm: '0px 1px 2px rgba(0, 0, 0, 0.05)',
   md: '0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06)',
@@ -140,19 +182,6 @@ export const shadows = {
    * does not announce its hue, and because the U1 hex rule cannot see inside an `rgba()` call.
    */
   brand: '0px 8px 24px rgba(0, 119, 182, 0.3)',
-} as const;
-
-/**
- * Superseded by `theme/breakpoints.ts`, and kept alive only by `AppLayout`.
- *
- * The new scale is min-width only; this one is read by AppLayout's `max-width: ${tablet - 1}px`
- * rule, which cannot be expressed there by design. That rule disappears when AppLayout moves to
- * CSS-first layout — it already has the `hiddenMobile`/`hiddenDesktop` classes for it, written and
- * never applied — and this block goes with it. `mobile` and `wide` had no readers and are gone.
- */
-export const breakpoints = {
-  tablet: 768,
-  desktop: 1024,
 } as const;
 
 // ============================================

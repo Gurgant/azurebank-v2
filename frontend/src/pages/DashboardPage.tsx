@@ -50,11 +50,12 @@ const RECENT_PAGE_SIZE = 5;
 
 const useStyles = makeStyles({
   // ========== CONTAINER ==========
+  // The canvas belongs to the shell (AppLayout), not to each page. No `flex: 1` here, unlike
+  // History and TransactionDetail: this page has no state that centres itself in the viewport,
+  // so it sizes to its content.
   container: {
     display: 'flex',
     flexDirection: 'column',
-    minHeight: '100vh',
-    backgroundColor: colors.neutral[50],
   },
 
   // ========== MAIN CONTENT ==========
