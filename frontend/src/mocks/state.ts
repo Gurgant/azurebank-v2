@@ -280,6 +280,11 @@ export function expireMockSessionIfDue(now: number = Date.now()): boolean {
   );
   if (now >= due) {
     mockState.session = null;
+    // Same reset the logout handler performs, and for the same reason: a dead session takes its
+    // elevation with it. Clearing only `session` would let the NEXT seeded login start already
+    // PIN-verified, so a test could walk past step-up without ever verifying a PIN — the gate
+    // silently absent rather than visibly broken.
+    mockState.authLevel = 1;
     return true;
   }
   return false;
