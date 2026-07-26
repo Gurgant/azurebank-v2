@@ -107,6 +107,30 @@ describe('SessionExpiryWarning', () => {
     expect(store.getState().auth.status).toBe('authenticated');
   });
 
+  it('an ordinary API request slides the SERVER clock, not just the client mirror', async () => {
+    const store = await boot();
+    const probe = () =>
+      store
+        .dispatch(apiSlice.endpoints.getSessionStatus.initiate(undefined, { forceRefetch: true }))
+        .unwrap();
+
+    const before = await probe();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    // An ordinary read, not a keep-alive. The real BFF slides LastActivity on every cookie-bearing
+    // request except the status probe, so this must move the deadline. Until the mock modelled that,
+    // only /bff/auth/me counted and the mock clock ran FAST against the server: someone actively
+    // using the app would be warned and then signed out while the server considered them alive.
+    await store.dispatch(apiSlice.endpoints.getAccounts.initiate()).unwrap();
+    const after = await probe();
+
+    // Asserted against the PROBE, not against the dialog. The dialog would close either way — the
+    // client mirror slides on any fulfilled api/ action regardless of what the server recorded — so
+    // watching it would have tested the client middleware and quietly proved nothing about the mock.
+    expect(Date.parse(after.inactivityExpiresAt!)).toBeGreaterThan(
+      Date.parse(before.inactivityExpiresAt!),
+    );
+  });
+
   it('"Sign out now" ends the session without waiting for the deadline', async () => {
     const store = await boot();
     vi.useFakeTimers({ shouldAdvanceTime: true });

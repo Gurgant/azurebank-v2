@@ -8,7 +8,7 @@ import {
   MOCK_USER,
   expireMockSessionIfDue,
   markMockActivity,
-  mockAbsoluteExpiry,
+  mockAccessTokenExpiry,
   mockState,
   type MockSessionUser,
 } from './state';
@@ -948,9 +948,9 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   mockState.sessionCreatedAt = Date.now();
   mockState.sessionLastActivity = Date.now();
   return HttpResponse.json({
-    // The real deadline, not a far-future constant: a client that seeds expiry state from the
-    // login response must see the same clock every later response reports.
-    data: { user: { ...MOCK_USER }, expiresAt: mockAbsoluteExpiry() },
+    // The access token's expiry, which is what the real controller forwards here — NOT the
+    // session's absolute cap. They are separate rules with separate lengths.
+    data: { user: { ...MOCK_USER }, expiresAt: mockAccessTokenExpiry() },
     message: 'Login successful',
   });
 });
@@ -997,7 +997,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   ];
   return HttpResponse.json(
     {
-      data: { user, expiresAt: mockAbsoluteExpiry() },
+      data: { user, expiresAt: mockAccessTokenExpiry() },
       message: 'Registration successful',
     },
     { status: 201 },
@@ -1079,7 +1079,36 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
   });
 });
 
+/**
+ * The session-activity middleware, modelled where the real one lives.
+ *
+ * `SessionActivityMiddleware` runs BEFORE routing and slides `LastActivity` on EVERY cookie-bearing
+ * request, excluding only the session-status probe (ADR-0018). Modelling that per-endpoint would
+ * have meant repeating it in fifteen handlers and forgetting it in the sixteenth, so it sits in
+ * front of `/api/*` the same way the real one sits in front of everything.
+ *
+ * Until this existed the mock clock ran FAST relative to the server. Only `/bff/auth/me` marked
+ * activity, so a user reading accounts, filtering history or sending a transfer looked idle to the
+ * mock while the real BFF counted every one of those as activity — and a countdown read against
+ * that clock would expire someone the server considered perfectly alive.
+ *
+ * The 401 is narrow on purpose: it fires only when a session EXISTED and has just died, never when
+ * there was none to begin with. These handlers have never gated on authentication — most tests call
+ * them with no session at all — and turning them into a gate is a separate change with a twenty-file
+ * blast radius. What matters here is that a session cannot outlive its own deadline.
+ */
+const sessionActivity = http.all('*/api/*', () => {
+  const hadSession = mockState.session !== null;
+  if (expireMockSessionIfDue() && hadSession) {
+    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  }
+  markMockActivity();
+  // Returning nothing falls through to the endpoint handler below.
+  return undefined;
+});
+
 export const handlers = [
+  sessionActivity,
   listAccounts,
   createAccount,
   renameAccount,

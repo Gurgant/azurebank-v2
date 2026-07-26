@@ -290,9 +290,19 @@ export function expireMockSessionIfDue(now: number = Date.now()): boolean {
   return false;
 }
 
-/** The absolute deadline as the login/register responses report it. */
-export function mockAbsoluteExpiry(): string {
-  return new Date(mockState.sessionCreatedAt + mockState.sessionAbsoluteWindowMs).toISOString();
+/**
+ * What login and registration report as `expiresAt`: the ACCESS TOKEN's expiry.
+ *
+ * Not the session's absolute cap, which is a different rule with a different length —
+ * `BffAuthController.Login` forwards `loginResponse.ExpiresAt` straight from the API, and the API's
+ * `Jwt:ExpirationMinutes` is 15 against a session cap of 20 (Development) or 60 (base). Reporting
+ * the cap here would make the two look like one value that happens to be configured twice, which is
+ * exactly the kind of accidental invariant a later reader builds on.
+ */
+const MOCK_ACCESS_TOKEN_WINDOW_MS = 15 * 60_000;
+
+export function mockAccessTokenExpiry(): string {
+  return new Date(mockState.sessionCreatedAt + MOCK_ACCESS_TOKEN_WINDOW_MS).toISOString();
 }
 
 export function resetMockState(): void {
