@@ -11,7 +11,7 @@
  * geometry in hand to decide where the antialiasing goes. At 512 it makes no visible difference,
  * which is exactly why the shortcut survives unnoticed.
  *
- *   npm install --no-save @resvg/resvg-js   (not a dependency — see docs/brand-assets.md)
+ *   npm install --no-save @resvg/resvg-js@2.6.2   (pinned, and not a dependency — see docs/brand-assets.md)
  *   npm run generate:icons
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -27,8 +27,10 @@ try {
   console.error(
     'This script needs @resvg/resvg-js, which is not a permanent devDependency because it is a\n' +
       'native module and the icons change roughly never — carrying it would tax every CI install\n' +
-      'for a script nobody runs. Install it when you need it:\n\n' +
-      '  npm install --no-save @resvg/resvg-js\n',
+      'for a script nobody runs. Install it when you need it — and keep the pin: the committed\n' +
+      'icons are artifacts of one rasteriser, so a newer release would rewrite every one of them\n' +
+      'with no change to logo.svg to explain the diff.\n\n' +
+      '  npm install --no-save @resvg/resvg-js@2.6.2\n',
   );
   process.exit(1);
 }

@@ -40,21 +40,25 @@ asymmetry in the arrowhead that is far outside noise and was preserved as charac
 
 ```bash
 cd frontend
-npm install --no-save @resvg/resvg-js   # deliberately not a dependency
+npm install --no-save @resvg/resvg-js@2.6.2
 npm run generate:icons
 ```
 
 That writes `favicon.svg`, `favicon.ico`, `favicon-96x96.png`, `apple-touch-icon.png` and both
 `web-app-manifest-*.png` into `frontend/public/`. Only `logo.svg` is hand-maintained.
 
-`@resvg/resvg-js` is a native module and the icons change roughly never, so carrying it as a
-permanent devDependency would tax every CI install for a script nobody runs. `--no-save` keeps it out of
-`package.json`, and leaves the lockfile untouched too, so the install needs no cleanup afterwards.
-The script exits with that exact command if the module is missing.
+Two things about that command are deliberate.
 
-Do not reach for `--no-package-lock` as well: with that flag npm installs **nothing at all** — the
-package directory comes out empty and the import fails, which reads like a broken package rather
-than a wrong flag.
+**`--no-save`.** `@resvg/resvg-js` is a native module and the icons change roughly never, so
+carrying it as a permanent devDependency would tax every CI install for a script nobody runs.
+`--no-save` installs it while leaving both `package.json` and the lockfile untouched, so there is
+nothing to clean up afterwards. The script exits with this exact command if the module is missing.
+
+**The version is pinned**, and that matters more than it looks. The committed PNGs and ICO are
+build artifacts of a specific rasteriser: a future release that changes antialiasing by a hair
+would rewrite every icon on the next regeneration, with no change to `logo.svg` to explain the
+diff. 2.6.2 is the version these assets were produced and verified with. Upgrading it is a real
+decision — bump it here, regenerate, and look at the result.
 
 ## Why the generator exists rather than a favicon website
 
