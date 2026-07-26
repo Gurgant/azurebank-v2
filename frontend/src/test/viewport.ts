@@ -50,10 +50,52 @@ function matchesWidth(query: string): boolean {
   );
 }
 
+/**
+ * Reduced motion, defaulting to PREFERRED — and that default is load-bearing, not an oversight.
+ *
+ * Without it Fluent's `useIsReducedMotion` keeps animations enabled. On a starved runner a dialog's
+ * open transition then stalls for seconds with the surface still `aria-hidden`, so role queries miss
+ * buttons that are really there — the PR #34 PIN-modal Cancel saga, and still live: that same test
+ * flaked once during this session's gate runs. Reporting `reduce` makes dialog enter and exit
+ * synchronous and deterministic on any runner.
+ *
+ * The cost is that the normal-motion path goes unexercised, which is real. {@link setReducedMotion}
+ * is the way out: flip it for the one test that needs the other branch, rather than paying the flake
+ * across the whole suite for coverage that two tests want.
+ *
+ * NOTE: skipping animations also makes a modal EXIT commit sooner — queries that follow an async
+ * transition must be `findBy*`/`waitFor`, never a bare `getBy*` (the P1.9 sweep).
+ */
+let reducedMotion = true;
+
 function evaluate(query: string): boolean {
   // Strictly the REDUCE query — a bare 'prefers-reduced-motion' would also match
   // '(prefers-reduced-motion: no-preference)' and lie to both-mode checks.
-  return query.includes('prefers-reduced-motion: reduce') || matchesWidth(query);
+  const wantsReduce = query.includes('prefers-reduced-motion: reduce');
+  const hasWidth = /\((?:min|max)-width:/.test(query);
+
+  // Unrecognised query: no match, the jsdom-neutral answer.
+  if (!wantsReduce && !hasWidth) return false;
+
+  // ANDed, because that is what CSS does with two conditions in one query. This used to be an OR,
+  // which no query in the app exercised and which would have answered "yes" to a narrow-viewport
+  // rule purely because motion was reduced.
+  return (!wantsReduce || reducedMotion) && (!hasWidth || matchesWidth(query));
+}
+
+/** Snapshot, mutate, then notify only the queries whose answer actually moved. */
+function applyAndNotify(mutate: () => void): void {
+  const before = new Map([...live].map((q) => [q, q.matches]));
+  mutate();
+
+  for (const mql of live) {
+    if (mql.matches === before.get(mql)) continue;
+    const event = Object.assign(new Event('change'), {
+      matches: mql.matches,
+      media: mql.media,
+    }) as unknown as MediaQueryListEvent;
+    for (const listener of [...mql.__listeners]) listener(event);
+  }
 }
 
 export function matchMediaStub(query: string): MediaQueryList {
@@ -87,26 +129,35 @@ export function matchMediaStub(query: string): MediaQueryList {
  * would let a broken hook look correct, because any re-render would appear to be a reaction.
  */
 export function setViewportWidth(width: number): void {
-  const before = new Map([...live].map((q) => [q, q.matches]));
-  window.innerWidth = width;
-
-  for (const mql of live) {
-    if (mql.matches === before.get(mql)) continue;
-    const event = Object.assign(new Event('change'), {
-      matches: mql.matches,
-      media: mql.media,
-    }) as unknown as MediaQueryListEvent;
-    for (const listener of [...mql.__listeners]) listener(event);
-  }
-
+  applyAndNotify(() => {
+    window.innerWidth = width;
+  });
   // Anything still reading window size directly rather than through a query.
   window.dispatchEvent(new Event('resize'));
 }
 
-/** Back to the desktop default, so one test's viewport never decides the next one's. */
-export function resetViewport(): void {
+/**
+ * Flip the reduced-motion preference for one test.
+ *
+ * Pass `false` to reach the animated path, which the suite-wide default deliberately hides. Call it
+ * inside `act()` when something is already mounted; `afterEach` puts it back.
+ */
+export function setReducedMotion(prefers: boolean): void {
+  applyAndNotify(() => {
+    reducedMotion = prefers;
+  });
+}
+
+/**
+ * Back to the defaults, so one test's environment never decides the next one's.
+ *
+ * Runs in `afterEach`. Both halves matter: a narrowed viewport would hand the next test a phone,
+ * and a test that turned animations back on would hand it the flake this stub exists to prevent.
+ */
+export function resetMediaEnvironment(): void {
   setViewportWidth(TEST_VIEWPORT_WIDTH);
+  setReducedMotion(true);
   // Lists from an unmounted tree cannot be reached again and would otherwise accumulate for the
-  // whole file — a leak that only ever costs time, but costs it on every subsequent resize.
+  // whole file — a leak that only ever costs time, but costs it on every subsequent change.
   live.clear();
 }
