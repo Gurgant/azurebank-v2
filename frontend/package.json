@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "generate:api": "openapi-typescript ../docs/api/openapiv1.json -o src/api/schema.d.ts",
     "generate:zod": "typed-openapi ../docs/api/openapiv1.json --runtime zod --schemas-only -o src/api/generated/apiSchemas.ts && prettier --write src/api/generated/apiSchemas.ts",
+    "generate:icons": "node scripts/generate-icons.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

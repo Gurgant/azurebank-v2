@@ -1,9 +1,15 @@
 {
   "name": "AzureBank",
   "short_name": "AzBank",
-  "description": "Modern banking application",
+  "description": "Personal banking — accounts, transfers and transaction history.",
   "start_url": "/",
   "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
     {
       "src": "/web-app-manifest-192x192.png",
       "sizes": "192x192",
