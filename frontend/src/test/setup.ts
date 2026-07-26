@@ -3,6 +3,12 @@ import { resetServerActivity } from '../features/auth/sessionActivity';
 import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
 import { resetMockState } from '../mocks/state';
+import {
+  TEST_VIEWPORT_HEIGHT,
+  TEST_VIEWPORT_WIDTH,
+  matchMediaStub,
+  resetViewport,
+} from './viewport';
 
 // jsdom has no ResizeObserver; Fluent's MessageBar (reflow) requires one.
 class ResizeObserverStub {
@@ -20,43 +26,13 @@ globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObse
 // any runner. Every other query reports no match (jsdom-neutral). NOTE: skipping animations
 // also makes modal EXIT commit sooner — queries that follow an async transition must be
 // findBy*/waitFor, never a bare getBy* (the P1.9 sweep).
-// jsdom's default viewport is 1024x768 and nothing states it, which matters more than it looks:
-// 1024 is exactly the `lg` breakpoint, so `width >= lg` is true and every test has always rendered
-// the DESKTOP tree. The mobile tree has never been exercised by a single test. Pinning the value
-// here does not change that — it makes it a decision instead of a coincidence, so a test that wants
-// the narrow tree can say so by setting this and firing a resize.
-const TEST_VIEWPORT_WIDTH = 1024;
+// jsdom's default viewport is 1024x768 and nothing stated it, which matters more than it looks:
+// 1024 is exactly the `lg` breakpoint, so `width >= lg` is true and every test rendered the DESKTOP
+// tree. Pinning it makes that a decision instead of a coincidence — and `test/viewport.ts` now makes
+// the other half true as well, because a test that wants the narrow tree can call
+// `setViewportWidth` and have mounted components actually react to it.
 window.innerWidth = TEST_VIEWPORT_WIDTH;
-window.innerHeight = 768;
-
-/**
- * Resolve a width condition against the pinned viewport.
- *
- * Only min-width and max-width are handled, which is enough: the app's breakpoint module is
- * min-width only by design. Anything else falls through to "no match", the jsdom-neutral answer.
- */
-const matchesWidth = (query: string): boolean => {
-  const conditions = [...query.matchAll(/\((min|max)-width:\s*(\d+(?:\.\d+)?)px\)/g)];
-  if (conditions.length === 0) return false;
-  // Multiple conditions in one query string are ANDed — the same way CSS reads `and`.
-  return conditions.every(([, kind, px]) =>
-    kind === 'min' ? window.innerWidth >= Number(px) : window.innerWidth <= Number(px),
-  );
-};
-
-const matchMediaStub = (query: string): MediaQueryList =>
-  ({
-    // Strictly the REDUCE query — a bare 'prefers-reduced-motion' would also match
-    // '(prefers-reduced-motion: no-preference)' and lie to both-mode checks.
-    matches: query.includes('prefers-reduced-motion: reduce') || matchesWidth(query),
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  }) as unknown as MediaQueryList;
+window.innerHeight = TEST_VIEWPORT_HEIGHT;
 window.matchMedia ??= matchMediaStub;
 
 // MSW lifecycle: every unhandled request is an ERROR — tests must declare the traffic they
@@ -69,5 +45,7 @@ afterEach(() => {
   resetServerActivity();
   // Module-level step-up bridge (mirrors mockState.authLevel reset) — no inflight leak.
   __resetStepUpController();
+  // A test that narrowed the viewport must not hand the next one a phone.
+  resetViewport();
 });
 afterAll(() => server.close());
