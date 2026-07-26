@@ -33,14 +33,18 @@ export default defineConfig([
       // surface that cannot follow a theme.
       //
       // Matched on string content rather than on the CSS property, because a colour reaches a style
-      // through a variable, a template literal or a prop just as often as through `color:`. Three
-      // selectors, because one cannot express it: a 6- or 8-digit hex is unambiguous enough to catch
-      // ANYWHERE inside a string (`1px solid #ff0000` is the common shape), a 3- or 4-digit one is
-      // only matched as a whole string because un-anchored it would hit URL fragments and ids, and
-      // template literals are `TemplateElement` nodes that a `Literal` selector never sees at all.
+      // through a variable, a template literal or a prop just as often as through `color:`.
+      //
+      // Two shapes × two node types, so four selectors. A 6- or 8-digit hex is unambiguous enough to
+      // catch ANYWHERE inside a string (`1px solid #ff0000` is the common one); a 3- or 4-digit one
+      // is matched only as a whole string, because un-anchored it would hit URL fragments and ids.
+      // Both then have to be repeated for `TemplateElement`, which a `Literal` selector never visits
+      // — and the pairs must stay symmetric. They were not at first: the template side carried only
+      // the long form, so a bare `` `#fff` `` walked straight through the rule that exists to stop
+      // exactly that. Add a shape to one side, add it to the other.
       //
       // What it still does NOT catch, stated plainly so nobody trusts it further than it goes:
-      // `rgba()` and `hsl()` calls, and a short hex embedded in a longer string. There are 14
+      // `rgba()` and `hsl()` calls, and a SHORT hex embedded in a longer string. There are 11
       // `rgba()` literals left in src/ for that reason. Anything that survives this rule is caught
       // by reading, not by tooling.
       'no-restricted-syntax': [
@@ -55,6 +59,10 @@ export default defineConfig([
         },
         {
           selector: "TemplateElement[value.raw=/#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})(?![0-9a-fA-F])/]",
+          message: HEX_MESSAGE,
+        },
+        {
+          selector: "TemplateElement[value.raw=/^#[0-9a-fA-F]{3,4}$/]",
           message: HEX_MESSAGE,
         },
       ],
