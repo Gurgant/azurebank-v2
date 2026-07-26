@@ -84,10 +84,22 @@ export const colors = {
      * brand panel, so the history summary invented these two tints inline. That was a real gap in
      * the palette rather than carelessness — naming it here is what stops the next dark surface
      * inventing its own.
+     *
+     * **These are barely tinted, and that is arithmetic rather than timidity.** The first values
+     * here were `#86EFAC` and `#FCA5A5`, which measure 3.47:1 and 2.56:1 against `#0077b6` — the
+     * lighter stop of the gradient they sit on, and so the worst case. Their consumer is 16px at
+     * weight 700, which WCAG does not count as large text (that starts at 18.66px bold), so the
+     * threshold is 4.5:1 and both failed; the red failed even the large-text exception.
+     *
+     * Reaching 4.5:1 on a ground of luminance 0.16 takes a foreground at roughly 94% lightness.
+     * The hue and saturation below are the originals, untouched — only lightness moved — but at
+     * that lightness a hue reads as a hint, not a colour. **So do not let these carry the +/−
+     * distinction on their own.** The sign and the label do that; this is emphasis on top of it.
+     * Encoding meaning in colour alone would fail WCAG 1.4.1 no matter how the contrast came out.
      */
     onBrand: {
-      positive: '#86EFAC',
-      negative: '#FCA5A5',
+      positive: '#E5FCEE', // 4.51:1 on #0077b6, 10.27:1 on the gradient's dark stop
+      negative: '#FFF4F4', // 4.52:1 on #0077b6, 10.28:1 on the gradient's dark stop
     },
   },
   transaction: {

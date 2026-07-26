@@ -156,7 +156,11 @@ const useStyles = makeStyles({
   summaryLabel: {
     fontSize: '12px',
     fontWeight: 400,
-    color: 'rgba(255, 255, 255, 0.8)',
+    // Was rgba(255,255,255,0.8), which is 3.69:1 on this card's lighter gradient stop — a second
+    // failure on the same surface, found while measuring the one the bot flagged. Dimming white to
+    // suggest hierarchy is the reflex; here it bought 1.18 of contrast away from 12px text. The
+    // hierarchy is already carried by size and weight against the 16px/700 value beside it.
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   summaryValue: {
