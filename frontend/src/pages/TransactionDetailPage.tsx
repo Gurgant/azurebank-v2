@@ -28,9 +28,15 @@ import { formatDateHeading, formatCurrency, formatTime, isIncomeType } from '../
 // ============================================
 
 const useStyles = makeStyles({
+  /**
+   * The canvas belongs to the shell (AppLayout); the height is CLAIMED from it with `flex: 1`.
+   *
+   * The loading spinner and the "Transaction not found" state below centre themselves with
+   * `flex: 1`, so this container has to be taller than its content for either to land in the
+   * middle of the page rather than under the header.
+   */
   container: {
-    minHeight: '100vh',
-    backgroundColor: colors.neutral[50],
+    flex: 1,
     display: 'flex',
     flexDirection: 'column',
   },

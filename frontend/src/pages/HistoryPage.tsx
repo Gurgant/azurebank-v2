@@ -47,11 +47,19 @@ interface GroupedTransactions {
 // ============================================
 
 const useStyles = makeStyles({
+  /**
+   * The canvas belongs to the shell (AppLayout); the height is CLAIMED from it.
+   *
+   * `flex: 1` is not decoration. This page centres its loading, empty and not-found states with
+   * `flex: 1` further down, and those need a parent that is taller than its content. That used to
+   * come from `minHeight: 100vh` right here — which also cost 48px of phantom scroll on every
+   * page — and now comes from the shell's content box, which is a column flex container for
+   * exactly this reason. Drop this line and the empty state stops centring.
+   */
   container: {
+    flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    minHeight: '100vh',
-    backgroundColor: colors.neutral[50],
   },
 
   // ========== HEADER ==========

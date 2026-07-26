@@ -18,7 +18,7 @@ import {
 } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { colors, transitions } from '../theme/tokens';
+import { colors, surfaces, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import {
   useGetAccountsQuery,
@@ -70,7 +70,9 @@ function initials(name: string): string {
 // ============================================
 
 const useStyles = makeStyles({
-  page: { minHeight: '100vh', backgroundColor: colors.neutral[50] },
+  // A full-screen wizard sits deliberately OUTSIDE the app shell (see App.tsx), so unlike a shell
+  // page it does own its canvas — but it takes the shell's value rather than inventing one.
+  page: { minHeight: '100dvh', backgroundColor: surfaces.canvas },
   header: {
     display: 'flex',
     alignItems: 'center',

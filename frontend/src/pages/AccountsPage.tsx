@@ -64,9 +64,10 @@ interface LegacyDialogAccount {
 // ============================================
 
 const useStyles = makeStyles({
+  // The canvas belongs to the shell (AppLayout), not to each page. No `flex: 1` here, unlike
+  // History and TransactionDetail: this page has no state that centres itself in the viewport,
+  // so it sizes to its content.
   container: {
-    minHeight: '100vh',
-    backgroundColor: colors.neutral[50],
     display: 'flex',
     flexDirection: 'column',
   },

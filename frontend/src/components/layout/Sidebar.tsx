@@ -12,7 +12,7 @@ import {
   Settings24Regular,
   SignOut24Regular,
 } from '@fluentui/react-icons';
-import { colors, componentSizes, shadows, transitions } from '../../theme/tokens';
+import { colors, componentSizes, shadows, surfaces, transitions } from '../../theme/tokens';
 import { Avatar } from '../shared/Avatar';
 import { Logo } from '../shared/Logo';
 
@@ -85,11 +85,26 @@ const defaultNavItems: NavItem[] = [
 // ============================================
 
 const useStyles = makeStyles({
+  /**
+   * `minHeight: 100vh` used to live here as well as on the shell container. It was redundant —
+   * a flex child stretches to its container by default, and the container is already full height —
+   * and it was the wrong unit on a phone. What actually separates this from the content is the
+   * fill: chrome is white, the canvas beside it is `surfaces.canvas`.
+   *
+   * The border had to move with the canvas. It was `neutral[100]`, which is the value the canvas
+   * now uses, so it would have gone from invisible against white (1.10:1, measured) to invisible
+   * against the canvas — the same defect reflected. `surfaces.border` is a step darker and reads
+   * against both.
+   *
+   * `shadows.sm` stays, but it is not what defines the seam: `0px 1px 2px rgba(0,0,0,0.05)` is
+   * offset downward and its 2px blur bleeds about a pixel sideways at five percent alpha, which is
+   * below anything the eye resolves against a near-white canvas. The vertical edge is carried by
+   * the fill change and the border, not by this.
+   */
   sidebar: {
     width: componentSizes.sidebar.width,
-    minHeight: '100vh',
     backgroundColor: tokens.colorNeutralBackground1,
-    borderRight: `1px solid ${colors.neutral[100]}`,
+    borderRight: `1px solid ${surfaces.border}`,
     display: 'flex',
     flexDirection: 'column',
     boxShadow: shadows.sm,
@@ -102,7 +117,7 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: '10px',
     padding: '0 24px',
-    borderBottom: `1px solid ${colors.neutral[100]}`,
+    borderBottom: `1px solid ${surfaces.border}`,
   },
 
   brandText: {
@@ -114,7 +129,7 @@ const useStyles = makeStyles({
   // User profile section
   userSection: {
     padding: '20px',
-    borderBottom: `1px solid ${colors.neutral[100]}`,
+    borderBottom: `1px solid ${surfaces.border}`,
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
@@ -125,7 +140,17 @@ const useStyles = makeStyles({
     minWidth: 0,
   },
 
+  /**
+   * `display: block` is load-bearing, not tidying.
+   *
+   * Fluent's `Text` renders a `<span>`, so these two stacked as `display: inline` and the sidebar
+   * read **"Demo Userdemo@azurebank.dev"** — one run-on string, no space, in the app's most
+   * permanent piece of chrome. It survived because `text-overflow: ellipsis` and `white-space:
+   * nowrap` were already here: the rules that make a block truncate cleanly do nothing on an inline
+   * box, so the styling LOOKED complete while the layout it assumed had never applied.
+   */
   userName: {
+    display: 'block',
     fontSize: '15px',
     fontWeight: 600,
     color: colors.neutral[800],
@@ -135,6 +160,7 @@ const useStyles = makeStyles({
   },
 
   userEmail: {
+    display: 'block',
     fontSize: '13px',
     color: colors.neutral[500],
     overflow: 'hidden',
@@ -206,7 +232,7 @@ const useStyles = makeStyles({
   // Footer section
   footer: {
     padding: '16px 12px',
-    borderTop: `1px solid ${colors.neutral[100]}`,
+    borderTop: `1px solid ${surfaces.border}`,
     display: 'flex',
     flexDirection: 'column',
     gap: '4px',
