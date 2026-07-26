@@ -45,23 +45,47 @@ object rather than two things that resemble each other.
 It was chosen by measurement and then decided against part of the measurement, which is worth
 recording honestly.
 
-Four candidates were rendered at 16/20/32/48px over five tab-strip colours sampled out of Chrome's
-own icon cache — transparent, white plate, brand plate with an all-white mark, and brand plate
-keeping the cyan arrow — and scored by the alpha-weighted share of the mark's ink falling below 3:1
-against whatever sat behind it.
+Four candidates — transparent, white plate, brand plate with an all-white mark, and brand plate
+keeping the cyan arrow — were rendered over five tab-strip colours sampled out of Chrome's own icon
+cache, and scored by the alpha-weighted share of the mark's ink falling below 3:1 against whatever
+sat behind it. **At 16px**, the size a tab strip asks for at 100% scaling and the one the choice was
+made on:
 
-| candidate | white strip | light blue | saturated blue | dark | plate vs strip |
-| --- | --- | --- | --- | --- | --- |
-| transparent (what shipped before) | 70% | 71% | **100%** | 54% | — |
-| white plate | 69% | 69% | 69% | 69% | 1.00 – 16.33 |
-| brand plate, white mark | 33% | 33% | 33% | 33% | 1.84 – 4.87 |
-| brand plate, cyan arrow | 58% | 58% | 58% | 58% | 1.84 – 4.87 |
+| candidate | white strip | light blue | saturated blue | dark | dark blue | plate vs strip |
+| --- | --- | --- | --- | --- | --- | --- |
+| transparent (what shipped before) | 70% | 71% | **100%** | 54% | 54% | — |
+| white plate | 69% | 69% | 69% | 69% | 69% | 1.00 – 16.33 |
+| brand plate, white mark | 33% | 33% | 33% | 33% | 33% | 1.84 – 4.87 |
+| brand plate, cyan arrow | 58% | 58% | 58% | 58% | 58% | 1.84 – 4.87 |
 
-**Re-run it rather than trusting it**, with `node frontend/scripts/favicon-contrast.js`. Same master,
-same rasteriser, same pin as the icon generator. Two of these numbers moved when the measurement was
-made reproducible — the light-blue column was rounded a point low, and the white plate's separation
-range had been quoted from the light strips alone, which understated it: on a dark strip a white
-tile is 16.33:1, and that is where the plate does its real work.
+Every plated row is flat across all five columns, and that is the argument for a plate in one line:
+it makes legibility independent of what the browser paints behind it.
+
+16px is the worst case, which is a claim worth checking rather than taking. Worst strip at each of
+the four sizes a 16px slot resolves to — 100%, 125%, 200% scaling, and the Windows shortcut:
+
+| candidate | 16px | 20px | 32px | 48px |
+| --- | --- | --- | --- | --- |
+| transparent (what shipped before) | 100% | 100% | 100% | 100% |
+| white plate | 69% | 66% | 64% | 62% |
+| brand plate, white mark | 33% | 20% | 15% | 12% |
+| brand plate, cyan arrow | 58% | 52% | 50% | 48% |
+
+The transparent mark is the one row that never improves. Resolution is not its problem — its dark
+blue and the strip are the same colour at every size.
+
+**Both tables are emitted by the script, not transcribed into it.** Run
+`node frontend/scripts/favicon-contrast.js` and it prints them as markdown, ready to paste. That is
+deliberate: the first version of this section showed four strip columns where the script produced
+five, and claimed four measured sizes where the script measured one. A document that says "re-run
+this" and then shows a table the run does not produce borrows the authority of a measurement without
+accepting its discipline. Emitting the markdown makes that drift impossible rather than merely
+discouraged.
+
+Two numbers moved when the measurement was first made reproducible — the light-blue column was
+rounded a point low, and the white plate's separation range had been quoted from the light strips
+alone, which understated it: on a dark strip a white tile is 16.33:1, and that is where the plate
+does its real work.
 
 The percentages above are the comparison **as judged**, at the 14% inset all three plated candidates
 were drawn with. What ships is a 5% inset, and it measures **66%** — the mark is larger, so slightly

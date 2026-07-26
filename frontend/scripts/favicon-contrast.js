@@ -129,7 +129,7 @@ function weakPercent(pixels, backdrop) {
 // Reproducing the comparison means reproducing its parameters, not today's.
 const JUDGED_COVERAGE = 0.72;
 const CANDIDATES = [
-  ['transparent (was shipping)', null, null, 0.96],
+  ['transparent (what shipped before)', null, null, 0.96],
   ['white plate', WHITE, null, JUDGED_COVERAGE],
   ['brand plate, white mark', BRAND, Array(5).fill(WHITE), JUDGED_COVERAGE],
   [
@@ -140,32 +140,85 @@ const CANDIDATES = [
   ],
 ];
 
-const SIZE = 16;
-console.log(`master ${paths.length} paths · ${SIZE}px · ink below 3:1, alpha-weighted\n`);
-console.log(['candidate'.padEnd(28), ...STRIPS.map(([n]) => n.padStart(15))].join(''));
+// 16 is what a tab strip asks for at 100% scaling and the size the choice was made on; 20, 32 and
+// 48 are the same slot at 125%, 200%, and the Windows shortcut. All four are measured because the
+// claim that 16 is the worst case is one a reader should be able to check rather than take.
+const SIZES = [16, 20, 32, 48];
+const DECIDING_SIZE = 16;
 
+/** Every candidate × every strip × every size, computed once and read from twice. */
+const matrix = new Map();
 for (const [name, plate, colours, coverage] of CANDIDATES) {
-  const ink = renderInk(colours, coverage, SIZE);
-  const row = STRIPS.map(([, hex]) => {
-    // A plate makes the backdrop constant. That is the whole point of one, and it is why the
-    // plated rows come out identical across every column.
-    const backdrop = rgb(plate ?? hex);
-    return `${weakPercent(ink, backdrop).toFixed(0)}%`.padStart(15);
-  });
-  console.log(name.padEnd(28) + row.join(''));
+  for (const size of SIZES) {
+    const ink = renderInk(colours, coverage, size);
+    for (const [strip, hex] of STRIPS) {
+      // A plate makes the backdrop constant. That is the whole point of one, and it is why the
+      // plated rows come out identical across every column.
+      matrix.set(`${name}|${size}|${strip}`, weakPercent(ink, rgb(plate ?? hex)));
+    }
+  }
+}
+
+const pct = (v) => `${v.toFixed(0)}%`;
+const plateRange = (plate) => {
+  if (!plate) return '—';
+  const v = STRIPS.map(([, hex]) => contrast(rgb(plate), rgb(hex)));
+  return `${Math.min(...v).toFixed(2)} – ${Math.max(...v).toFixed(2)}`;
+};
+
+console.log(`master ${paths.length} paths · ink below 3:1, alpha-weighted\n`);
+for (const size of SIZES) {
+  console.log(
+    `${String(size).padStart(3)}px`.padEnd(36) + STRIPS.map(([n]) => n.padStart(15)).join(''),
+  );
+  for (const [name, plate] of CANDIDATES) {
+    const row = STRIPS.map(([s]) => pct(matrix.get(`${name}|${size}|${s}`)).padStart(15));
+    console.log(`  ${name}`.padEnd(36) + row.join(''));
+  }
+  console.log('');
 }
 
 // What actually ships, which is the white plate at a 5% inset rather than the 14% it was judged at.
-const shipped = weakPercent(renderInk(null, 0.9, SIZE), rgb(WHITE));
-console.log(`\nshipped geometry (white plate, 5% inset): ${shipped.toFixed(0)}% of ink below 3:1\n`);
+const shipped = weakPercent(renderInk(null, 0.9, DECIDING_SIZE), rgb(WHITE));
+console.log(`shipped geometry (white plate, 5% inset, 16px): ${pct(shipped)} of ink below 3:1\n`);
 
 // Does the tile separate from the strip at all? Distinct from the question above, which asks
 // whether the mark separates from the tile.
-console.log('plate vs strip'.padEnd(28) + STRIPS.map(([n]) => n.padStart(15)).join(''));
+console.log('plate vs strip'.padEnd(36) + STRIPS.map(([n]) => n.padStart(15)).join(''));
 for (const [label, plate] of [
   ['white', WHITE],
   ['brand', BRAND],
 ]) {
   const row = STRIPS.map(([, hex]) => contrast(rgb(plate), rgb(hex)).toFixed(2).padStart(15));
-  console.log(label.padEnd(28) + row.join(''));
+  console.log(`  ${label}`.padEnd(36) + row.join(''));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The block below is what docs/brand-assets.md publishes, emitted rather than transcribed.
+//
+// A doc that says "re-run this" and then shows a table the run does not produce is worse than one
+// that shows nothing: it borrows the authority of a measurement without accepting its discipline.
+// The first version of that section did exactly this — four columns against the script's five, and
+// a size claim the script never made. Emitting the markdown makes the drift impossible rather than
+// merely discouraged.
+// ---------------------------------------------------------------------------------------------
+const emphasise = (name, strip, v) =>
+  name.startsWith('transparent') && v >= 99.5 ? `**${pct(v)}**` : pct(v);
+
+console.log('\n--- markdown for docs/brand-assets.md (paste verbatim) ---\n');
+console.log(`| candidate | ${STRIPS.map(([n]) => n).join(' | ')} | plate vs strip |`);
+console.log(`| --- |${' --- |'.repeat(STRIPS.length + 1)}`);
+for (const [name, plate] of CANDIDATES) {
+  const cells = STRIPS.map(([s]) => emphasise(name, s, matrix.get(`${name}|${DECIDING_SIZE}|${s}`)));
+  console.log(`| ${name} | ${cells.join(' | ')} | ${plateRange(plate)} |`);
+}
+
+console.log(`\n| candidate | ${SIZES.map((s) => `${s}px`).join(' | ')} |`);
+console.log(`| --- |${' --- |'.repeat(SIZES.length)}`);
+for (const [name] of CANDIDATES) {
+  // Worst strip at each size: the number that decides whether a candidate survives anywhere.
+  const cells = SIZES.map((size) =>
+    pct(Math.max(...STRIPS.map(([s]) => matrix.get(`${name}|${size}|${s}`)))),
+  );
+  console.log(`| ${name} | ${cells.join(' | ')} |`);
 }
