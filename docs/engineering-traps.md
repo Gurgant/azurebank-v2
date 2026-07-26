@@ -58,7 +58,7 @@ particular time cannot write one: it must **move the window**, not the data. Tes
 **Money aggregates are computed in SQL, count `Completed` only, and use unsigned amounts** with the
 direction carried by `Type`. Summing signed amounts client-side gives a different — wrong — answer.
 
-**The client sends `fromDate` only.** The server defaults `toDate` to *now* per request, which is
+**The client sends `fromDate` only.** The server defaults `toDate` to _now_ per request, which is
 what lets a tag-invalidated refetch include the very mutation that triggered it. Sending an explicit
 `toDate` from the client freezes the window at render time and the new transaction disappears from
 the summary until the next reload.
@@ -80,6 +80,21 @@ API on `http`/5068 produces a BFF that builds, starts, and fails every proxied c
 never appear in the base file. Be aware that stale `bin/Release` artifacts can still carry it and be
 mistaken for evidence that it was configured in the base file — check the source, not the output.
 
+**The `Access-Control-Allow-Origin` header you see in dev comes from Vite, not from this
+application.** Neither service emits it — measured directly, with the Origin header set:
+
+| Response from                                   | `Access-Control-Allow-Origin` |
+| ----------------------------------------------- | ----------------------------- |
+| BFF on `:5000`                                  | absent                        |
+| API on `:7215`                                  | absent                        |
+| the same call through the Vite proxy on `:5173` | **present**                   |
+
+This matters because "no CORS anywhere" is a load-bearing claim: the topology is same-origin, so
+there is no cross-origin grant to misconfigure, and cross-site state-changing requests are rejected
+by Fetch-Metadata on top of `SameSite=Strict`. Reading the dev network tab and concluding the app
+has CORS configured is the wrong conclusion from real evidence — check against `:5000` or `:7215`
+directly before acting on it.
+
 ## Frontend test infrastructure
 
 **The frontend type gate is `npm run build` (`tsc -b`), not `tsc --noEmit`.** The root tsconfig is
@@ -90,8 +105,8 @@ already shipped a red CI once: a stale barrel re-export passed locally and faile
 two distinct failure modes, both verified on this solution:
 
 - **`--filter ~AzureBank.Tests` is malformed.** The condition needs a property name; without one
-  the discoverer throws `Invalid Condition` and dotnet itself warns that *"the incorrect format can
-  lead to no test getting executed"*. A run that executes nothing is not a run that passed.
+  the discoverer throws `Invalid Condition` and dotnet itself warns that _"the incorrect format can
+  lead to no test getting executed"_. A run that executes nothing is not a run that passed.
 - **`--filter FullyQualifiedName~AzureBank.Tests` is well-formed and still wrong.** It selects
   **590 of 651** tests — the match is a substring of the fully-qualified name, and BFF tests are
   namespaced `AzureBank.Bff.Tests.*`, which does not contain `AzureBank.Tests`. All 61 BFF tests
