@@ -20,5 +20,32 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // Colour belongs in src/theme/ and nowhere else.
+      //
+      // This ships as an ERROR rather than a warning because the count is already zero: 90 literals
+      // across 20 files were migrated to Fluent tokens and the local palette during U1, so there is
+      // nothing to grandfather. A warning nobody violates is noise; an error nobody violates is a
+      // closed door, and it is what makes dark mode possible at U7 — every hardcoded hex is a
+      // surface that cannot follow a theme.
+      //
+      // Matched on the string literal itself rather than on the CSS property, because a colour can
+      // reach a style through a variable, a template literal or a prop.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "Literal[value=/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/]",
+          message:
+            'Hardcoded colour. Use a Fluent token (tokens.colorNeutralBackground1, tokens.colorNeutralForegroundOnBrand, …) for anything the theme should drive, or the local palette in src/theme/tokens.ts for what Fluent has no name for. See docs/brand-assets.md and frontend/CONVENTIONS.md.',
+        },
+      ],
+    },
+  },
+  {
+    // src/theme/ is where colour is allowed to be spelled out — it is the definition, not a use.
+    files: ['src/theme/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
   },
 ])
