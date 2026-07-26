@@ -14,6 +14,7 @@ import {
 } from '@fluentui/react-icons';
 import { colors, componentSizes, shadows, transitions } from '../../theme/tokens';
 import { Avatar } from '../shared/Avatar';
+import { Logo } from '../shared/Logo';
 
 // ============================================
 // TYPES
@@ -99,6 +100,7 @@ const useStyles = makeStyles({
     height: componentSizes.header.height,
     display: 'flex',
     alignItems: 'center',
+    gap: '10px',
     padding: '0 24px',
     borderBottom: `1px solid ${colors.neutral[100]}`,
   },
@@ -270,6 +272,10 @@ export function Sidebar({
     <aside className={mergeClasses(styles.sidebar, className)}>
       {/* Brand */}
       <div className={styles.brand}>
+        {/* The tile is square but the mark inside it is 4:3, so the visible mark is two thirds of
+            this number — 32 puts a 21px mark beside the 20px wordmark. Sizing it to match the text
+            optically rather than nominally is why this is not 20. */}
+        <Logo size={32} />
         <Text className={styles.brandText}>AzureBank</Text>
       </div>
 

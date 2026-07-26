@@ -24,6 +24,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
+import { Logo } from '../components/shared/Logo';
 import { useLoginMutation } from '../features/api/apiSlice';
 
 // Validation schema
@@ -79,18 +80,6 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: '12px',
     marginBottom: '48px',
-  },
-
-  logoIcon: {
-    width: '48px',
-    height: '48px',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: tokens.colorNeutralForegroundOnBrand,
-    fontSize: '24px',
   },
 
   logoText: {
@@ -184,18 +173,6 @@ const useStyles = makeStyles({
     '@media (min-width: 1024px)': {
       display: 'none',
     },
-  },
-
-  mobileLogoIcon: {
-    width: '36px',
-    height: '36px',
-    backgroundColor: tokens.colorBrandBackground,
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: tokens.colorNeutralForegroundOnBrand,
-    fontSize: '18px',
   },
 
   mobileLogoText: {
@@ -380,9 +357,7 @@ export function LoginPage() {
       {/* ========== LEFT PANEL - Desktop Only ========== */}
       <div className={styles.leftPanel}>
         <div className={styles.brandLogo}>
-          <div className={styles.logoIcon}>
-            <Globe24Regular />
-          </div>
+          <Logo size={48} />
           <span className={styles.logoText}>AzureBank</span>
         </div>
 
@@ -422,9 +397,7 @@ export function LoginPage() {
         <div className={styles.formContainer}>
           {/* Mobile Logo */}
           <div className={styles.mobileLogo}>
-            <div className={styles.mobileLogoIcon}>
-              <Globe24Regular />
-            </div>
+            <Logo size={36} />
             <span className={styles.mobileLogoText}>AzureBank</span>
           </div>
 
