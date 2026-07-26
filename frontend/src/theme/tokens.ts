@@ -4,15 +4,30 @@
  */
 
 export const colors = {
+  /**
+   * The legacy brand palette, read directly by component code.
+   *
+   * This is NOT the Fluent ramp in `brandRamp.ts`, and the two must not be conflated. Fluent indexes
+   * for its own token generator; this one is indexed by the original Figma export and its shades are
+   * consumed as literal values. Swapping one for the other by index is destructive, and measurably
+   * so: the Fluent ramp's index 120 is #81B3E4 at luminance 0.425, where this palette's 120 is a
+   * near-white #E6F0FC at 0.862 — a drop of 0.44 under the dark text that sits on it at nine call
+   * sites (the active sidebar item, Avatar, IconContainer, QuickActionButton, ConfirmDialog).
+   *
+   * Only the three shades that mean "the brand" and its hover and pressed states have been recoloured
+   * onto #0077b6, so the app does not show two different blues at once. The pale end keeps its
+   * values: the new ramp has no equivalent that light, and those call sites migrate to Fluent's
+   * neutral and brand-tint tokens later in U1 rather than to a wrong index now.
+   */
   brand: {
     10: '#001D3D',
     20: '#002D5E',
     30: '#003D7F',
-    40: '#004DA0', // Primary hover/pressed
-    50: '#005DC1',
-    60: '#006DE2', // Primary brand - main CTA
-    70: '#1A7FE8',
-    80: '#4D99ED', // Brand hover light
+    40: '#003F64', // pressed — from the Fluent ramp's index 40
+    50: '#004C77',
+    60: '#0077B6', // the brand. Fluent calls this index 80; this palette has always called it 60.
+    70: '#0068A1', // hover — from the Fluent ramp's index 70
+    80: '#4D99ED',
     90: '#80B3F2',
     100: '#B3CDF7',
     110: '#CCE0FA',
@@ -245,7 +260,9 @@ export const transitions = {
 // ============================================
 
 export const gradients = {
-  brand: 'linear-gradient(135deg, #006DE2 0%, #004DA0 100%)',
+  // Dark-to-dark on purpose: white text sits on this, and the logo's cyan #39b8db would drop it to
+  // 2.4:1. Both stops come from the brand ramp — index 80 into index 40.
+  brand: 'linear-gradient(135deg, #0077B6 0%, #003F64 100%)',
   success: 'linear-gradient(135deg, #E6F4EA 0%, #D4EDDA 100%)',
   error: 'linear-gradient(135deg, #FCE8E6 0%, #FADBD8 100%)',
   warning: 'linear-gradient(135deg, #FEF3E2 0%, #FDE9CC 100%)',
