@@ -8,7 +8,7 @@ import appSource from '../../App.tsx?raw';
 import { azureBankLightTheme } from '../../theme/fluentTheme';
 import { BottomNav } from './BottomNav';
 import { Sidebar } from './Sidebar';
-import { NAV_PLACES, navCurrent } from './navItems';
+import { NAV_PLACES, navCurrent, resolveNavPlace } from './navItems';
 
 /**
  * One information architecture, asserted on BOTH surfaces at once.
@@ -132,6 +132,21 @@ describe('navCurrent', () => {
     // The guard against the obvious fix: stripping trailing slashes unconditionally maps '/' to
     // '', which drops Home entirely — a worse bug than the one being fixed.
     expect(navCurrent(NAV_PLACES[0], '/')).toBe('page');
+  });
+
+  it('pairs the filled icon with the active state, and only then', () => {
+    // Nothing else asserts WHICH icon renders, so before both surfaces derived this from one
+    // function an inverted ternary on either of them was invisible to the whole suite.
+    for (const place of NAV_PLACES) {
+      const onIt = resolveNavPlace(place, place.matches[place.matches.length - 1]);
+      expect(onIt.active).toBe(true);
+      expect(onIt.Icon).toBe(place.activeIcon);
+
+      const elsewhere = resolveNavPlace(place, '/nowhere');
+      expect(elsewhere.active).toBe(false);
+      expect(elsewhere.Icon).toBe(place.icon);
+      expect(elsewhere.current).toBeUndefined();
+    }
   });
 
   it('refuses prefixes that are not whole segments', () => {

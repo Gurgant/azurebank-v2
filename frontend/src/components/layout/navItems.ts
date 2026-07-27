@@ -153,9 +153,27 @@ function canonicalPathname(pathname: string): string {
   return pathname.replace(/\/+$/, '') || '/';
 }
 
-export const isNavPlaceActive = (place: NavPlace, pathname: string): boolean =>
-  navCurrent(place, pathname) !== undefined;
+/**
+ * Everything a nav surface needs about one place at one pathname.
+ *
+ * The three derivations here — the `aria-current` value, the boolean the classes switch on, and
+ * which of the two icons to render — used to sit inline in both Sidebar and BottomNav. That is the
+ * same two-copies shape this module exists to remove, one level down: the matcher was shared but
+ * its interpretation was not.
+ *
+ * The icon pairing is the reason this is worth a function rather than a convention. Nothing asserts
+ * which icon renders, so a surface could ship `active ? place.icon : place.activeIcon` — inverted —
+ * and the whole suite would stay green. Deriving it once makes that unrepresentable instead of
+ * merely unlikely.
+ *
+ * `Icon` is capitalised because it is a component the caller renders as `<Icon />`, not a value.
+ */
+export function resolveNavPlace(place: NavPlace, pathname: string) {
+  const current = navCurrent(place, pathname);
+  const active = current !== undefined;
+  return { current, active, Icon: active ? place.activeIcon : place.icon };
+}
 
 /** The place a pathname belongs to. PageHeader will read its title and back target from this. */
 export const findActiveNavPlace = (pathname: string): NavPlace | undefined =>
-  NAV_PLACES.find((place) => isNavPlaceActive(place, pathname));
+  NAV_PLACES.find((place) => navCurrent(place, pathname) !== undefined);

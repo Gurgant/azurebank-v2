@@ -16,7 +16,7 @@ export {
   NAV_PLACES,
   TRANSFER_ACTION,
   navCurrent,
-  isNavPlaceActive,
+  resolveNavPlace,
   findActiveNavPlace,
   type NavPlace,
   type NavCurrent,

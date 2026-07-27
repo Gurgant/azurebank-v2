@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import { colors, componentSizes, surfaces, zIndex, transitions, shadows } from '../../theme/tokens';
-import { NAV_PLACES, TRANSFER_ACTION, navCurrent } from './navItems';
+import { NAV_PLACES, TRANSFER_ACTION, resolveNavPlace } from './navItems';
 
 // ============================================
 // TYPES
@@ -187,9 +187,7 @@ export function BottomNav({ className }: BottomNavProps) {
   const before = [home, accounts];
 
   const renderPlace = (place: (typeof NAV_PLACES)[number]) => {
-    const current = navCurrent(place, location.pathname);
-    const active = current !== undefined;
-    const Icon = active ? place.activeIcon : place.icon;
+    const { current, active, Icon } = resolveNavPlace(place, location.pathname);
 
     return (
       <Link

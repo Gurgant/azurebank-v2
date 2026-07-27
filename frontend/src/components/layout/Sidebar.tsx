@@ -4,7 +4,7 @@ import { SignOut24Regular } from '@fluentui/react-icons';
 import { colors, componentSizes, shadows, surfaces, transitions } from '../../theme/tokens';
 import { Avatar } from '../shared/Avatar';
 import { Logo } from '../shared/Logo';
-import { NAV_PLACES, TRANSFER_ACTION, navCurrent } from './navItems';
+import { NAV_PLACES, TRANSFER_ACTION, resolveNavPlace } from './navItems';
 
 // ============================================
 // TYPES
@@ -361,9 +361,7 @@ export function Sidebar({
         </button>
 
         {NAV_PLACES.map((place) => {
-          const current = navCurrent(place, location.pathname);
-          const active = current !== undefined;
-          const Icon = active ? place.activeIcon : place.icon;
+          const { current, active, Icon } = resolveNavPlace(place, location.pathname);
 
           return (
             <Link
