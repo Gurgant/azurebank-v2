@@ -208,6 +208,7 @@ export function LoginPage() {
             type="email"
             placeholder="name@example.com"
             size="large"
+            autoComplete="username"
             {...register('email')}
             aria-invalid={errors.email ? 'true' : 'false'}
           />
@@ -224,6 +225,7 @@ export function LoginPage() {
               placeholder="Enter your password"
               size="large"
               className={styles.passwordInput}
+              autoComplete="current-password"
               {...register('password')}
               aria-invalid={errors.password ? 'true' : 'false'}
             />

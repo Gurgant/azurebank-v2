@@ -334,6 +334,7 @@ export function RegisterPage() {
             type="email"
             placeholder="john.doe@example.com"
             size="large"
+            autoComplete="email"
             {...register('email')}
             aria-invalid={errors.email ? 'true' : 'false'}
           />
@@ -352,6 +353,7 @@ export function RegisterPage() {
               placeholder="Enter your password"
               size="large"
               className={styles.passwordInput}
+              autoComplete="new-password"
               {...register('password')}
               aria-invalid={errors.password ? 'true' : 'false'}
             />
@@ -379,6 +381,7 @@ export function RegisterPage() {
               placeholder="Confirm your password"
               size="large"
               className={styles.passwordInput}
+              autoComplete="new-password"
               {...register('confirmPassword')}
               aria-invalid={errors.confirmPassword ? 'true' : 'false'}
             />
