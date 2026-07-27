@@ -1,8 +1,6 @@
 import { makeStyles, mergeClasses } from '@fluentui/react-components';
-import { componentSizes, surfaces, zIndex } from '../../theme/tokens';
+import { componentSizes, surfaces } from '../../theme/tokens';
 import { useResponsive } from '../../hooks/useResponsive';
-import { Header } from './Header';
-import type { HeaderProps } from './Header';
 import { BottomNav } from './BottomNav';
 import { Sidebar } from './Sidebar';
 
@@ -13,10 +11,6 @@ import { Sidebar } from './Sidebar';
 export interface AppLayoutProps {
   /** Page content */
   children: React.ReactNode;
-  /** Header props */
-  header?: Omit<HeaderProps, 'className'>;
-  /** Hide header */
-  hideHeader?: boolean;
   /** Hide bottom navigation (mobile) */
   hideBottomNav?: boolean;
   /** Hide sidebar (desktop) */
@@ -136,13 +130,6 @@ const useStyles = makeStyles({
     margin: '0 auto',
     width: '100%',
   },
-
-  desktopHeader: {
-    position: 'sticky',
-    top: 0,
-    zIndex: zIndex.header,
-    borderBottom: 'none',
-  },
 });
 
 // ============================================
@@ -151,8 +138,6 @@ const useStyles = makeStyles({
 
 export function AppLayout({
   children,
-  header,
-  hideHeader = false,
   hideBottomNav = false,
   hideSidebar = false,
   user,
@@ -178,9 +163,6 @@ export function AppLayout({
 
         {/* Main Content Area */}
         <main className={styles.desktopMain}>
-          {/* Desktop Header (optional - usually shows page title) */}
-          {!hideHeader && header && <Header {...header} className={styles.desktopHeader} />}
-
           {/* Page Content */}
           <div className={mergeClasses(styles.desktopContent, className)}>{children}</div>
         </main>
@@ -191,9 +173,6 @@ export function AppLayout({
   // Mobile layout
   return (
     <div className={styles.mobileContainer}>
-      {/* Mobile Header */}
-      {!hideHeader && header && <Header {...header} />}
-
       {/* Page Content */}
       <main
         className={mergeClasses(

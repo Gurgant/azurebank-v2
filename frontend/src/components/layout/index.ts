@@ -3,9 +3,10 @@
 // ============================================
 
 export { AppLayout, type AppLayoutProps } from './AppLayout';
-export { Header, type HeaderProps } from './Header';
 export { BottomNav, type BottomNavProps } from './BottomNav';
 export { Sidebar, type SidebarProps } from './Sidebar';
+export { PageHeader, type PageHeaderProps } from './PageHeader';
+export { AuthLayout, AuthDivider, AuthCrossLink, type AuthLayoutProps } from './AuthLayout';
 export { ProtectedRoute } from './ProtectedRoute';
 export { ProtectedShell } from './ProtectedShell';
 

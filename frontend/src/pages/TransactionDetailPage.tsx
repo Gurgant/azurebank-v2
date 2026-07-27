@@ -11,7 +11,6 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import {
-  ChevronLeft24Regular,
   ArrowDownload24Regular,
   ArrowUpload24Regular,
   ArrowSwap24Regular,
@@ -19,6 +18,7 @@ import {
 } from '@fluentui/react-icons';
 import { colors, shadows } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { PageHeader } from '../components/layout/PageHeader';
 import type { TransactionStatus, TransactionType } from '../api/enums';
 import { useGetTransactionQuery } from '../features/api/apiSlice';
 import { formatDateHeading, formatCurrency, formatTime, isIncomeType } from '../utils/format';
@@ -39,37 +39,6 @@ const useStyles = makeStyles({
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-  },
-
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '12px 16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-  },
-
-  backButton: {
-    width: '40px',
-    height: '40px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    borderRadius: '8px',
-    color: colors.neutral[800],
-    ':hover': {
-      backgroundColor: colors.neutral[100],
-    },
-  },
-
-  headerTitle: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: colors.neutral[800],
   },
 
   content: {
@@ -316,16 +285,11 @@ export function TransactionDetailPage() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <button
-          className={styles.backButton}
-          aria-label="Go back"
-          onClick={() => void navigate(-1)}
-        >
-          <ChevronLeft24Regular />
-        </button>
-        <Text className={styles.headerTitle}>Transaction Details</Text>
-      </div>
+      {/* A leaf inside History, so back goes to the SECTION ROOT — deterministically, not
+          `navigate(-1)`. Opened from the dashboard's recent feed, the old back returned to the
+          dashboard while the navigation insisted History was the current place: a header and a nav
+          contradicting each other on one screen. */}
+      <PageHeader title="Transaction Details" onBack={() => navigate('/history')} />
 
       {isLoading && (
         <div className={styles.stateContainer}>
