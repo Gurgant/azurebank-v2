@@ -1,79 +1,16 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
-import {
-  Home24Regular,
-  Home24Filled,
-  Wallet24Regular,
-  Wallet24Filled,
-  History24Regular,
-  History24Filled,
-  ArrowSwap24Regular,
-  ArrowSwap24Filled,
-  Person24Regular,
-  Person24Filled,
-} from '@fluentui/react-icons';
 import { colors, componentSizes, surfaces, zIndex, transitions, shadows } from '../../theme/tokens';
+import { NAV_PLACES, TRANSFER_ACTION, navCurrent } from './navItems';
 
 // ============================================
 // TYPES
 // ============================================
 
-export interface NavItem {
-  /** Route path */
-  path: string;
-  /** Display label */
-  label: string;
-  /** Regular (inactive) icon */
-  icon: React.ReactNode;
-  /** Filled (active) icon */
-  activeIcon: React.ReactNode;
-}
-
 export interface BottomNavProps {
-  /** Custom navigation items (overrides default) */
-  items?: NavItem[];
   /** Additional CSS class */
   className?: string;
 }
-
-// ============================================
-// DEFAULT NAV ITEMS
-// ============================================
-
-// The app's REAL information architecture. The History entry previously pointed at
-// the non-existent /transactions (label said History, path lied) — fixed for good.
-const defaultNavItems: NavItem[] = [
-  {
-    path: '/dashboard',
-    label: 'Home',
-    icon: <Home24Regular />,
-    activeIcon: <Home24Filled />,
-  },
-  {
-    path: '/accounts',
-    label: 'Accounts',
-    icon: <Wallet24Regular />,
-    activeIcon: <Wallet24Filled />,
-  },
-  {
-    path: '/transfer',
-    label: 'Transfer',
-    icon: <ArrowSwap24Regular />,
-    activeIcon: <ArrowSwap24Filled />,
-  },
-  {
-    path: '/history',
-    label: 'History',
-    icon: <History24Regular />,
-    activeIcon: <History24Filled />,
-  },
-  {
-    path: '/profile',
-    label: 'Profile',
-    icon: <Person24Regular />,
-    activeIcon: <Person24Filled />,
-  },
-];
 
 // ============================================
 // STYLES
@@ -99,7 +36,15 @@ const useStyles = makeStyles({
     boxShadow: shadows.sm,
   },
 
+  /**
+   * One cell shape for all five slots — four places and the act — so the act reads as the same
+   * species of control, differing only in what it is made of.
+   *
+   * `position: relative` anchors the rail. At a 320px viewport a cell is (320 - 16) / 5 = 60.8px
+   * wide against the bar's 72px height, so every target clears 44x44 in both directions.
+   */
   navItem: {
+    position: 'relative',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -111,35 +56,67 @@ const useStyles = makeStyles({
     backgroundColor: 'transparent',
     border: 'none',
     cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
+    textDecoration: 'none',
+    transition: `color ${transitions.fast}`,
     padding: '8px 4px',
 
     ':focus-visible': {
       outline: `2px solid ${colors.brand[60]}`,
+      // Inset, so the fixed bar cannot clip the ring.
       outlineOffset: '-2px',
       borderRadius: '8px',
     },
   },
 
+  /**
+   * The same rail as the sidebar, rotated: 3px thick and 24px long — exactly the width of the icon
+   * below it — drawn on the cell's leading cross-axis edge, which on a horizontal bar is the top
+   * seam.
+   *
+   * It replaces a 4px dot that floated at `top: -2px` above the icon, a shape that appeared nowhere
+   * else in the application.
+   */
   navItemActive: {
-    color: colors.brand[60],
+    color: colors.neutral[900],
+
+    '::before': {
+      content: '""',
+      position: 'absolute',
+      top: 0,
+      left: '50%',
+      width: '24px',
+      height: '3px',
+      transform: 'translateX(-50%)',
+      borderRadius: '999px',
+      backgroundColor: colors.brand[60],
+    },
   },
 
+  /**
+   * `neutral[400]` measured **2.539:1** on white. That fails 1.4.3 for the 11px label and fails
+   * 1.4.11 for the 24px icon — on the primary navigation of a banking app. `neutral[600]` is
+   * 7.557:1 and is already what the sidebar uses for inactive, so closing the failure also puts
+   * the two surfaces on one token.
+   *
+   * This visibly darkens the whole bar. That is the correct trade, and it is the change someone
+   * will notice before they notice why.
+   */
   navItemInactive: {
-    color: colors.neutral[400],
+    color: colors.neutral[600],
     ':hover': {
-      color: colors.neutral[600],
+      color: colors.neutral[800],
     },
   },
 
   icon: {
     width: '24px',
     height: '24px',
-    transition: `transform ${transitions.fast}`,
   },
 
+  // The label carries the darkness, the icon carries the brand. The old `scale(1.1)` here was a
+  // wobble rather than a signal, and the rail now does that job.
   iconActive: {
-    transform: 'scale(1.1)',
+    color: colors.brand[60],
   },
 
   label: {
@@ -153,23 +130,45 @@ const useStyles = makeStyles({
     fontWeight: 600,
   },
 
-  // Indicator dot above active item
-  indicator: {
-    position: 'absolute',
-    top: '-2px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    width: '4px',
-    height: '4px',
+  /**
+   * The ACT, in the centre slot: the same cell as a place, saturated only in the icon's container.
+   *
+   * The disc is 40px and not 44px, and the arithmetic is the reason — including the part that is
+   * easy to drop. `box-sizing: border-box` is global, so the bar's 72px
+   * (`componentSizes.bottomNav.height`) is a BORDER box and its own 1px `borderTop` comes out of
+   * it: 71px of content. The cell's `height: 100%` resolves against that and is border-box too, so
+   * `padding: '8px 4px'` leaves **55px**. The stack is 40 (disc) + 4 (gap) + 11 (label at
+   * `lineHeight: 1`) = 55. It fits exactly, with nothing spare — measured in Chrome, not derived.
+   *
+   * So this is already at the limit rather than one pixel from it. Raising `gap` to 5px, or the
+   * bar's height token shrinking, is enough. What happens then is NOT the overhang the paragraph
+   * below refuses: the disc is a flex item at the default `flex-shrink: 1`, so it silently
+   * compresses into an ellipse instead of clipping. That is the failure to watch for — a quiet
+   * deformation, not a visible break.
+   *
+   * No notch, no overhang, no floating circle above the bar's edge — nothing overflows, so there is
+   * no z-index and no safe-area interaction to get wrong. A raised disc hovering over a banking tab
+   * bar is the loudest assembled-from-a-template signal available, and it is refused on purpose.
+   * Same shape as a tab, different species.
+   */
+  transferDisc: {
+    width: '40px',
+    height: '40px',
     borderRadius: '50%',
     backgroundColor: colors.brand[60],
+    color: tokens.colorNeutralForegroundOnBrand,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: `background-color ${transitions.fast}`,
   },
 
-  navItemWrapper: {
-    position: 'relative',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
+  transferLabel: {
+    fontSize: '11px',
+    fontWeight: 600,
+    lineHeight: 1,
+    // 4.868:1 on white, above the 4.5:1 this 11px text needs.
+    color: colors.brand[60],
   },
 });
 
@@ -177,53 +176,60 @@ const useStyles = makeStyles({
 // COMPONENT
 // ============================================
 
-export function BottomNav({ items = defaultNavItems, className }: BottomNavProps) {
+export function BottomNav({ className }: BottomNavProps) {
   const styles = useStyles();
   const location = useLocation();
   const navigate = useNavigate();
 
-  const isActive = (path: string) => {
-    // Exact match for home, startsWith for others
-    if (path === '/dashboard') {
-      return location.pathname === path;
-    }
-    // /profile and /settings alias the same page; the shell's Settings action
-    // navigates to /settings — the Profile tab must light up for both.
-    if (path === '/profile' && location.pathname.startsWith('/settings')) {
-      return true;
-    }
-    return location.pathname.startsWith(path);
+  // Four places, then the act in the middle, then the rest — DOM order equals visual order equals
+  // focus order, which is what centring the action forces and what makes it worth doing.
+  const [home, accounts, ...rest] = NAV_PLACES;
+  const before = [home, accounts];
+
+  const renderPlace = (place: (typeof NAV_PLACES)[number]) => {
+    const current = navCurrent(place, location.pathname);
+    const active = current !== undefined;
+    const Icon = active ? place.activeIcon : place.icon;
+
+    return (
+      <Link
+        key={place.path}
+        to={place.path}
+        className={mergeClasses(
+          styles.navItem,
+          active ? styles.navItemActive : styles.navItemInactive,
+        )}
+        aria-current={current}
+      >
+        {/* No aria-label: Fluent icons are aria-hidden when untitled, so the accessible name comes
+            from the visible text alone. That is what makes "the accessible name is the label"
+            worth asserting instead of tautological. */}
+        <Icon className={mergeClasses(styles.icon, active && styles.iconActive)} />
+        <Text className={mergeClasses(styles.label, active && styles.labelActive)}>
+          {place.label}
+        </Text>
+      </Link>
+    );
   };
 
   return (
     <nav className={mergeClasses(styles.nav, className)} aria-label="Main navigation">
-      {items.map((item) => {
-        const active = isActive(item.path);
+      {before.map(renderPlace)}
 
-        return (
-          <button
-            key={item.path}
-            className={mergeClasses(
-              styles.navItem,
-              active ? styles.navItemActive : styles.navItemInactive,
-            )}
-            onClick={() => navigate(item.path)}
-            aria-label={item.label}
-            aria-current={active ? 'page' : undefined}
-            type="button"
-          >
-            <div className={styles.navItemWrapper}>
-              {active && <div className={styles.indicator} />}
-              <div className={mergeClasses(styles.icon, active && styles.iconActive)}>
-                {active ? item.activeIcon : item.icon}
-              </div>
-            </div>
-            <Text className={mergeClasses(styles.label, active && styles.labelActive)}>
-              {item.label}
-            </Text>
-          </button>
-        );
-      })}
+      {/* The one non-place control in this landmark. A button, never a link, and it carries no
+          aria-current under any route. */}
+      <button
+        className={styles.navItem}
+        onClick={() => navigate(TRANSFER_ACTION.path)}
+        type="button"
+      >
+        <div className={styles.transferDisc}>
+          <TRANSFER_ACTION.icon className={styles.icon} />
+        </div>
+        <Text className={styles.transferLabel}>{TRANSFER_ACTION.label}</Text>
+      </button>
+
+      {rest.map(renderPlace)}
     </nav>
   );
 }

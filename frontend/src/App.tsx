@@ -87,14 +87,11 @@ function App() {
                 </ProtectedShell>
               }
             />
-            <Route
-              path="/profile"
-              element={
-                <ProtectedShell>
-                  <SettingsPage />
-                </ProtectedShell>
-              }
-            />
+            {/* /profile is this app's old name for the settings page. ONE canonical URL now: the
+                nav label, the page heading and the address bar must never disagree again — the last
+                time they did, mobile lit "Profile" on /settings while desktop lit nothing at all.
+                `replace` so the back button does not bounce off the redirect. */}
+            <Route path="/profile" element={<Navigate to="/settings" replace />} />
 
             {/* Full-screen wizards: deliberately NO app shell */}
             <Route

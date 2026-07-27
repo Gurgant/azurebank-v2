@@ -29,8 +29,6 @@ export interface AppLayoutProps {
   };
   /** Logout handler */
   onLogout?: () => void;
-  /** Settings handler */
-  onSettings?: () => void;
   /** Additional CSS class for main content */
   className?: string;
 }
@@ -159,7 +157,6 @@ export function AppLayout({
   hideSidebar = false,
   user,
   onLogout,
-  onSettings,
   className,
 }: AppLayoutProps) {
   const styles = useStyles();
@@ -176,7 +173,6 @@ export function AppLayout({
             userEmail={user?.email}
             userAvatar={user?.avatar}
             onLogout={onLogout}
-            onSettings={onSettings}
           />
         )}
 
