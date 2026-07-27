@@ -1,30 +1,22 @@
 import { useMemo, useState } from 'react';
-import { useLocation, useNavigate, Link } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   tokens,
-  Text,
   Input,
   Button,
-  Link as FluentLink,
   Spinner,
   MessageBar,
   MessageBarBody,
   Field,
 } from '@fluentui/react-components';
-import {
-  Eye24Regular,
-  EyeOff24Regular,
-  ShieldCheckmark24Regular,
-  LockClosed24Regular,
-  Globe24Regular,
-} from '@fluentui/react-icons';
+import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
-import { Logo } from '../components/shared/Logo';
+import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { useLoginMutation } from '../features/api/apiSlice';
 
 // Validation schema
@@ -48,171 +40,13 @@ const loginNavStateSchema = z.object({
 type LoginNavState = z.infer<typeof loginNavStateSchema>;
 
 const useStyles = makeStyles({
-  // ========== CONTAINER ==========
-  container: {
-    display: 'flex',
-    minHeight: '100vh',
-    width: '100%',
-    flexDirection: 'column',
-    '@media (min-width: 1024px)': {
-      flexDirection: 'row',
-    },
-  },
-
-  // ========== LEFT PANEL - BRANDING (Desktop Only) ==========
-  leftPanel: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'flex-start',
-      width: '50%',
-      minWidth: '480px',
-      maxWidth: '720px',
-      backgroundColor: tokens.colorBrandBackground,
-      padding: '64px 80px',
-    },
-  },
-
-  brandLogo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    marginBottom: '48px',
-  },
-
-  logoText: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  tagline: {
-    fontSize: '44px',
-    fontWeight: 700,
-    lineHeight: '1.15',
-    marginBottom: '20px',
-    maxWidth: '480px',
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  taglineSubtext: {
-    fontSize: '17px',
-    opacity: 0.9,
-    marginBottom: '48px',
-    maxWidth: '440px',
-    lineHeight: '1.6',
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  features: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px',
-  },
-
-  featureItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '14px',
-  },
-
-  featureIcon: {
-    width: '42px',
-    height: '42px',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: '10px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: tokens.colorNeutralForegroundOnBrand,
-    fontSize: '20px',
-    flexShrink: 0,
-  },
-
-  featureText: {
-    fontSize: '15px',
-    fontWeight: 500,
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  // ========== RIGHT PANEL - FORM ==========
-  rightPanel: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: '32px 20px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    minHeight: '100vh',
-    '@media (min-width: 480px)': {
-      padding: '40px 32px',
-    },
-    '@media (min-width: 1024px)': {
-      padding: '64px 48px',
-      minHeight: 'auto',
-    },
-  },
-
-  formContainer: {
-    width: '100%',
-    maxWidth: '380px',
-    '@media (min-width: 1024px)': {
-      maxWidth: '400px',
-    },
-  },
-
-  // ========== MOBILE LOGO ==========
-  mobileLogo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    marginBottom: '28px',
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  mobileLogoText: {
-    fontSize: '22px',
-    fontWeight: 700,
-    color: tokens.colorBrandForeground1,
-  },
-
-  // ========== FORM HEADER (Title + Subtitle) ==========
-  formHeader: {
-    marginBottom: '28px',
-  },
-
-  formTitle: {
-    display: 'block', // CRITICAL: Force block display
-    fontSize: '26px',
-    fontWeight: 600,
-    lineHeight: '1.2',
-    color: tokens.colorNeutralForeground1,
-    marginBottom: '8px', // Space between title and subtitle
-    '@media (min-width: 480px)': {
-      fontSize: '28px',
-    },
-  },
-
-  formSubtitle: {
-    display: 'block', // CRITICAL: Force block display
-    fontSize: '14px',
-    lineHeight: '1.5',
-    color: tokens.colorNeutralForeground2,
-    '@media (min-width: 480px)': {
-      fontSize: '15px',
-    },
-  },
-
-  // ========== FORM ==========
+  // What is left after AuthLayout took the frame: the form itself and the two things that hang
+  // off it. Everything else — panel, column, heading, footer, divider — is declared once there.
   form: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '18px',
+    // 16px, matching registration. This page said 18px and nobody could say why.
+    gap: '16px',
   },
 
   passwordWrapper: {
@@ -238,14 +72,6 @@ const useStyles = makeStyles({
     },
   },
 
-  rememberRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: '8px',
-  },
-
   submitButton: {
     width: '100%',
     height: '44px',
@@ -253,50 +79,6 @@ const useStyles = makeStyles({
     fontWeight: 600,
   },
 
-  // ========== DIVIDER ==========
-  divider: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    margin: '24px 0',
-  },
-
-  dividerLine: {
-    flex: 1,
-    height: '1px',
-    backgroundColor: tokens.colorNeutralStroke2,
-  },
-
-  dividerText: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: '13px',
-  },
-
-  // ========== REGISTER LINK ==========
-  registerLink: {
-    textAlign: 'center',
-  },
-
-  registerText: {
-    fontSize: '14px',
-    color: tokens.colorNeutralForeground2,
-  },
-
-  // ========== FOOTER ==========
-  footer: {
-    marginTop: '40px',
-    textAlign: 'center',
-    '@media (min-width: 1024px)': {
-      marginTop: '48px',
-    },
-  },
-
-  footerText: {
-    fontSize: '12px',
-    color: tokens.colorNeutralForeground3,
-  },
-
-  // ========== ERROR MESSAGE ==========
   errorMessage: {
     marginBottom: '16px',
   },
@@ -353,193 +135,130 @@ export function LoginPage() {
   };
 
   return (
-    <div className={styles.container}>
-      {/* ========== LEFT PANEL - Desktop Only ========== */}
-      <div className={styles.leftPanel}>
-        <div className={styles.brandLogo}>
-          <Logo size={48} />
-          <span className={styles.logoText}>AzureBank</span>
-        </div>
+    <AuthLayout
+      headline="Banking Made Simple, Secure, and Smart"
+      intro="Manage your finances with confidence. Experience modern banking with powerful tools designed for your success."
+      title="Welcome back"
+      subtitle="Sign in to your account to continue"
+      footer="Protected by bank-grade encryption. We never share your details."
+    >
+      {/* Session-expiry note: only ever set by a post-boot 401 (D3/D6) */}
+      {navState.reason === 'expired' && !problem && (
+        <MessageBar intent="warning" className={styles.errorMessage}>
+          <MessageBarBody>Your session has expired. Please sign in again.</MessageBarBody>
+        </MessageBar>
+      )}
 
-        <h1 className={styles.tagline}>Banking Made Simple, Secure, and Smart</h1>
+      {problem?.errorCode === 'INVALID_CREDENTIALS' && (
+        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
+          <MessageBarBody>Invalid email or password.</MessageBarBody>
+        </MessageBar>
+      )}
 
-        <p className={styles.taglineSubtext}>
-          Manage your finances with confidence. Experience modern banking with powerful tools
-          designed for your success.
-        </p>
+      {/* `role="alert"` because nothing else announces this. Fluent's MessageBar is `role="group"`,
+          not a live region, and the submit button unmounts when the lock lands (D13) — so focus
+          falls to <body> and a screen reader is told nothing at all. Making the button `disabled`
+          instead does NOT help: measured in Chrome, disabling a focused button also drops focus to
+          <body>. The announcement is the fix; the button's behaviour is not the problem. */}
+      {accountLocked && lockDeadline !== null && (
+        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
+          <MessageBarBody>
+            Too many failed sign-in attempts — your account is temporarily locked.{' '}
+            <RetryCountdown
+              deadline={lockDeadline}
+              onElapsed={() => setElapsedDeadline(lockDeadline)}
+            />
+          </MessageBarBody>
+        </MessageBar>
+      )}
 
-        <div className={styles.features}>
-          <div className={styles.featureItem}>
-            <div className={styles.featureIcon}>
-              <ShieldCheckmark24Regular />
-            </div>
-            <span className={styles.featureText}>Bank-grade security protection</span>
-          </div>
+      {problem &&
+        !['INVALID_CREDENTIALS', 'ACCOUNT_LOCKED', 'RATE_LIMIT_EXCEEDED'].includes(
+          problem.errorCode,
+        ) && (
+          <MessageBar intent="error" role="alert" className={styles.errorMessage}>
+            <MessageBarBody>
+              {problem.detail || 'Something went wrong. Please try again.'}
+            </MessageBarBody>
+          </MessageBar>
+        )}
 
-          <div className={styles.featureItem}>
-            <div className={styles.featureIcon}>
-              <LockClosed24Regular />
-            </div>
-            <span className={styles.featureText}>Instant transfers & payments</span>
-          </div>
+      <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
+        <Field
+          label="Email address"
+          validationState={errors.email ? 'error' : 'none'}
+          validationMessage={errors.email?.message}
+        >
+          <Input
+            type="email"
+            placeholder="name@example.com"
+            size="large"
+            // `username`, not `email`: this is the identifier the credential pair is keyed on, and
+            // registration must agree — see RegisterPage's email field.
+            autoComplete="username"
+            {...register('email')}
+            aria-invalid={errors.email ? 'true' : 'false'}
+          />
+        </Field>
 
-          <div className={styles.featureItem}>
-            <div className={styles.featureIcon}>
-              <Globe24Regular />
-            </div>
-            <span className={styles.featureText}>24/7 account access</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ========== RIGHT PANEL - Form ========== */}
-      <div className={styles.rightPanel}>
-        <div className={styles.formContainer}>
-          {/* Mobile Logo */}
-          <div className={styles.mobileLogo}>
-            <Logo size={36} />
-            <span className={styles.mobileLogoText}>AzureBank</span>
-          </div>
-
-          {/* Form Header - Title and Subtitle on SEPARATE lines */}
-          <div className={styles.formHeader}>
-            <Text as="h1" className={styles.formTitle}>
-              Welcome back
-            </Text>
-            <Text as="p" className={styles.formSubtitle}>
-              Sign in to your account to continue
-            </Text>
-          </div>
-
-          {/* Session-expiry note: only ever set by a post-boot 401 (D3/D6) */}
-          {navState.reason === 'expired' && !problem && (
-            <MessageBar intent="warning" className={styles.errorMessage}>
-              <MessageBarBody>Your session has expired. Please sign in again.</MessageBarBody>
-            </MessageBar>
-          )}
-
-          {problem?.errorCode === 'INVALID_CREDENTIALS' && (
-            <MessageBar intent="error" className={styles.errorMessage}>
-              <MessageBarBody>Invalid email or password.</MessageBarBody>
-            </MessageBar>
-          )}
-
-          {accountLocked && lockDeadline !== null && (
-            <MessageBar intent="error" className={styles.errorMessage}>
-              <MessageBarBody>
-                Too many failed sign-in attempts — your account is temporarily locked.{' '}
-                <RetryCountdown
-                  deadline={lockDeadline}
-                  onElapsed={() => setElapsedDeadline(lockDeadline)}
-                />
-              </MessageBarBody>
-            </MessageBar>
-          )}
-
-          {problem &&
-            !['INVALID_CREDENTIALS', 'ACCOUNT_LOCKED', 'RATE_LIMIT_EXCEEDED'].includes(
-              problem.errorCode,
-            ) && (
-              <MessageBar intent="error" className={styles.errorMessage}>
-                <MessageBarBody>
-                  {problem.detail || 'Something went wrong. Please try again.'}
-                </MessageBarBody>
-              </MessageBar>
-            )}
-
-          {/* Login Form */}
-          <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
-            <Field
-              label="Email address"
-              validationState={errors.email ? 'error' : 'none'}
-              validationMessage={errors.email?.message}
+        <Field
+          label="Password"
+          validationState={errors.password ? 'error' : 'none'}
+          validationMessage={errors.password?.message}
+        >
+          <div className={styles.passwordWrapper}>
+            <Input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Enter your password"
+              size="large"
+              className={styles.passwordInput}
+              autoComplete="current-password"
+              {...register('password')}
+              aria-invalid={errors.password ? 'true' : 'false'}
+            />
+            <Button
+              appearance="transparent"
+              className={styles.passwordToggle}
+              onClick={() => setShowPassword(!showPassword)}
+              type="button"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
-              <Input
-                type="email"
-                placeholder="name@example.com"
-                size="large"
-                {...register('email')}
-                aria-invalid={errors.email ? 'true' : 'false'}
+              {showPassword ? <EyeOff24Regular /> : <Eye24Regular />}
+            </Button>
+          </div>
+        </Field>
+
+        {/* ACCOUNT_LOCKED replaces the submit entirely (D13); the banner above
+            carries the countdown. */}
+        {!accountLocked && (
+          <Button
+            appearance="primary"
+            size="large"
+            className={styles.submitButton}
+            type="submit"
+            disabled={isLoading || rateLimited}
+          >
+            {isLoading ? <Spinner size="tiny" /> : 'Sign in'}
+          </Button>
+        )}
+
+        {rateLimited && lockDeadline !== null && (
+          <MessageBar intent="warning" role="alert">
+            <MessageBarBody>
+              Too many attempts from your connection.{' '}
+              <RetryCountdown
+                deadline={lockDeadline}
+                onElapsed={() => setElapsedDeadline(lockDeadline)}
               />
-            </Field>
+            </MessageBarBody>
+          </MessageBar>
+        )}
+      </form>
 
-            <Field
-              label="Password"
-              validationState={errors.password ? 'error' : 'none'}
-              validationMessage={errors.password?.message}
-            >
-              <div className={styles.passwordWrapper}>
-                <Input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  size="large"
-                  className={styles.passwordInput}
-                  {...register('password')}
-                  aria-invalid={errors.password ? 'true' : 'false'}
-                />
-                <Button
-                  appearance="transparent"
-                  className={styles.passwordToggle}
-                  onClick={() => setShowPassword(!showPassword)}
-                  type="button"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff24Regular /> : <Eye24Regular />}
-                </Button>
-              </div>
-            </Field>
+      <AuthDivider />
 
-            {/* ACCOUNT_LOCKED replaces the submit entirely (D13); the banner above
-                carries the countdown. */}
-            {!accountLocked && (
-              <Button
-                appearance="primary"
-                size="large"
-                className={styles.submitButton}
-                type="submit"
-                disabled={isLoading || rateLimited}
-              >
-                {isLoading ? <Spinner size="tiny" /> : 'Sign in'}
-              </Button>
-            )}
-
-            {rateLimited && lockDeadline !== null && (
-              <MessageBar intent="warning">
-                <MessageBarBody>
-                  Too many attempts from your connection.{' '}
-                  <RetryCountdown
-                    deadline={lockDeadline}
-                    onElapsed={() => setElapsedDeadline(lockDeadline)}
-                  />
-                </MessageBarBody>
-              </MessageBar>
-            )}
-          </form>
-
-          {/* Divider */}
-          <div className={styles.divider}>
-            <div className={styles.dividerLine} />
-            <span className={styles.dividerText}>or</span>
-            <div className={styles.dividerLine} />
-          </div>
-
-          {/* Register Link */}
-          <div className={styles.registerLink}>
-            <Text className={styles.registerText}>
-              Don't have an account?{' '}
-              <Link to="/register" style={{ color: 'inherit' }}>
-                <FluentLink as="span">Create account</FluentLink>
-              </Link>
-            </Text>
-          </div>
-
-          {/* Footer */}
-          <div className={styles.footer}>
-            <Text className={styles.footerText}>© 2024 AzureBank. All rights reserved.</Text>
-          </div>
-        </div>
-      </div>
-    </div>
+      <AuthCrossLink prompt="Don't have an account?" to="/register" label="Create account" />
+    </AuthLayout>
   );
 }
 
