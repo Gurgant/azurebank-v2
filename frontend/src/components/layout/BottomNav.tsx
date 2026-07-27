@@ -1,15 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import {
-  Avatar,
-  DrawerBody,
-  makeStyles,
-  mergeClasses,
-  OverlayDrawer,
-  Text,
-  tokens,
-} from '@fluentui/react-components';
-import { SignOut24Regular } from '@fluentui/react-icons';
+import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
+import { ChevronDown24Regular, ChevronUp24Regular, SignOut24Regular } from '@fluentui/react-icons';
 import { colors, componentSizes, surfaces, zIndex, transitions, shadows } from '../../theme/tokens';
 import {
   NAV_PLACES,
@@ -26,11 +18,11 @@ import {
 export interface BottomNavProps {
   /** Additional CSS class */
   className?: string;
-  /** Seeds the avatar's initials. The avatar is `aria-hidden`; the cell is named by its label. */
-  userName?: string;
   /** Sign out. Omit and the sheet simply does not offer it. */
   onLogout?: () => void;
 }
+
+const UTILITY_ROW_ID = 'bottom-nav-utility-row';
 
 // ============================================
 // STYLES
@@ -42,7 +34,15 @@ const useStyles = makeStyles({
     bottom: 0,
     left: 0,
     right: 0,
-    height: componentSizes.bottomNav.height,
+    // A COLUMN, not a row. The bar is pinned to the bottom edge and sized by its content, so a
+    // second row appended AFTER the main one pushes the main one up by exactly one row height:
+    // the row you were already using lifts, and the new options land in the space it vacated.
+    // That is the whole gesture — the bar grows, it does not cover the screen with a panel.
+    flexDirection: 'column',
+    // NO fixed height: the bar is as tall as its rows. `mainRow` keeps the original 72px, so
+    // closed the bar is exactly what it always was; open, it is 72 + the utility row, and
+    // because it is pinned to `bottom: 0` the growth pushes the main row up rather than
+    // pushing the new row off the bottom of the screen — which is what a fixed height did.
     backgroundColor: tokens.colorNeutralBackground1,
     // Same reasoning as the sidebar's right edge: this seam separates chrome from the canvas, and
     // it cannot be the canvas's own colour.
@@ -63,6 +63,28 @@ const useStyles = makeStyles({
    * `position: relative` anchors the rail. At a 320px viewport a cell is (320 - 16) / 5 = 60.8px
    * wide against the bar's 72px height, so every target clears 44x44 in both directions.
    */
+  /** The always-present row. Keeps the height the bar had before it could grow. */
+  mainRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    width: '100%',
+    height: componentSizes.bottomNav.height,
+  },
+
+  /**
+   * The row that appears above it. Same cell shape, same height, so the lift reads as the bar
+   * getting taller rather than as a different object arriving.
+   */
+  utilityRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    width: '100%',
+    height: componentSizes.bottomNav.height,
+    borderTop: `1px solid ${surfaces.border}`,
+  },
+
   sheetBody: {
     display: 'flex',
     flexDirection: 'column',
@@ -223,9 +245,10 @@ const useStyles = makeStyles({
 // COMPONENT
 // ============================================
 
-export function BottomNav({ className, userName, onLogout }: BottomNavProps) {
+export function BottomNav({ className, onLogout }: BottomNavProps) {
   const styles = useStyles();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -272,90 +295,108 @@ export function BottomNav({ className, userName, onLogout }: BottomNavProps) {
   };
 
   return (
-    <nav className={mergeClasses(styles.nav, className)} aria-label="Main navigation">
-      {before.map(renderPlace)}
+    <nav
+      className={mergeClasses(styles.nav, className)}
+      aria-label="Main navigation"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && sheetOpen) {
+          setSheetOpen(false);
+          toggleRef.current?.focus();
+        }
+      }}
+    >
+      <div className={styles.mainRow}>
+        {before.map(renderPlace)}
 
-      {/* The one non-place control in this landmark. A button, never a link, and it carries no
+        {/* The one non-place control in this landmark. A button, never a link, and it carries no
           aria-current under any route. */}
-      <button
-        className={styles.navItem}
-        onClick={() => navigate(TRANSFER_ACTION.path)}
-        type="button"
-      >
-        <div className={styles.transferDisc}>
-          <TRANSFER_ACTION.icon className={styles.icon} />
-        </div>
-        <Text className={styles.transferLabel}>{TRANSFER_ACTION.label}</Text>
-      </button>
+        <button
+          className={styles.navItem}
+          onClick={() => navigate(TRANSFER_ACTION.path)}
+          type="button"
+        >
+          <div className={styles.transferDisc}>
+            <TRANSFER_ACTION.icon className={styles.icon} />
+          </div>
+          <Text className={styles.transferLabel}>{TRANSFER_ACTION.label}</Text>
+        </button>
 
-      {rest.map(renderPlace)}
+        {rest.map(renderPlace)}
 
-      {/* The SECOND non-place control in this landmark, and the reason the docblock below had to
-          change: it used to say "exactly ONE". Utility navigation needed a host on mobile, and the
-          surveyed banks that have a header all use the avatar for it (Revolut, N26, Starling,
-          Wise, bunq, PayPal, Nubank). We have no mobile header, so the avatar comes down into the
-          bar — which also, finally, puts Logout on the phone instead of two levels inside Settings.
+        {/* The SECOND non-place control in this landmark, and the reason the docblock below no
+          longer says "exactly ONE". Utility navigation needed a host on mobile; the surveyed banks
+          that have a header all use one (Revolut, N26, Starling, Wise, bunq, PayPal, Nubank) and we
+          have no mobile header.
 
-          `aria-expanded` and `aria-haspopup` make it a disclosure, and `aria-current` is set when
-          the open page is one of the ones it hides. */}
-      <button
-        className={mergeClasses(
-          styles.navItem,
-          utilityCurrent ? styles.navItemActive : styles.navItemInactive,
-        )}
-        type="button"
-        onClick={() => setSheetOpen(true)}
-        aria-haspopup="dialog"
-        aria-expanded={sheetOpen}
-        aria-current={utilityCurrent ? 'true' : undefined}
-      >
-        <Avatar name={userName} size={24} color="brand" aria-hidden />
-        <Text className={mergeClasses(styles.label, utilityCurrent && styles.labelActive)}>
-          More
-        </Text>
-      </button>
+          A chevron, not an avatar: the bar LIFTS, and a chevron is the one glyph that says which
+          way. Up when closed, down when open — the icon is the instruction. An avatar said "you"
+          when the thing behind it is mostly "this app". */}
+        <button
+          className={mergeClasses(
+            styles.navItem,
+            utilityCurrent && !sheetOpen ? styles.navItemActive : styles.navItemInactive,
+          )}
+          type="button"
+          ref={toggleRef}
+          onClick={() => setSheetOpen((v) => !v)}
+          aria-expanded={sheetOpen}
+          aria-controls={UTILITY_ROW_ID}
+          aria-current={utilityCurrent && !sheetOpen ? 'true' : undefined}
+        >
+          {sheetOpen ? (
+            <ChevronDown24Regular className={styles.icon} />
+          ) : (
+            <ChevronUp24Regular
+              className={mergeClasses(styles.icon, utilityCurrent && styles.iconActive)}
+            />
+          )}
+          <Text className={mergeClasses(styles.label, utilityCurrent && styles.labelActive)}>
+            More
+          </Text>
+        </button>
+      </div>
 
-      <OverlayDrawer
-        open={sheetOpen}
-        position="bottom"
-        onOpenChange={(_, data) => setSheetOpen(data.open)}
-        aria-label="More"
-      >
-        <DrawerBody className={styles.sheetBody}>
+      {sheetOpen && (
+        <div className={styles.utilityRow} id={UTILITY_ROW_ID}>
           {utility.map((place) => {
             const { current, active, Icon } = resolveNavPlace(place, location.pathname);
             return (
               <Link
                 key={place.path}
                 to={place.path}
-                className={styles.sheetRow}
+                className={mergeClasses(
+                  styles.navItem,
+                  active ? styles.navItemActive : styles.navItemInactive,
+                )}
                 aria-current={current}
                 onClick={() => setSheetOpen(false)}
               >
                 <Icon className={mergeClasses(styles.icon, active && styles.iconActive)} />
-                <Text className={active ? styles.labelActive : undefined}>{place.label}</Text>
+                <Text className={mergeClasses(styles.label, active && styles.labelActive)}>
+                  {place.label}
+                </Text>
               </Link>
             );
           })}
 
-          {/* Logout is an act, like Transfer: a button, no href, never lit. It was unreachable from
-              the bottom bar entirely — a phone user had to go into Settings to sign out, on the
-              surface where signing out matters most. */}
+          {/* An act, like Transfer: a button, no href, never lit. It was unreachable from the bar
+              entirely — signing out meant going two levels into Settings, on the surface where
+              signing out matters most. */}
           {onLogout && (
             <button
               type="button"
-              className={styles.sheetRow}
+              className={mergeClasses(styles.navItem, styles.navItemInactive)}
               onClick={() => {
                 setSheetOpen(false);
                 onLogout();
               }}
             >
               <SignOut24Regular className={styles.icon} />
-              <Text>Logout</Text>
+              <Text className={styles.label}>Logout</Text>
             </button>
           )}
-        </DrawerBody>
-      </OverlayDrawer>
+        </div>
+      )}
     </nav>
   );
 }

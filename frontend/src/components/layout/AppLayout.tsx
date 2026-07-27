@@ -185,7 +185,7 @@ export function AppLayout({
       </main>
 
       {/* Bottom Navigation */}
-      {!hideBottomNav && <BottomNav userName={user?.name} onLogout={onLogout} />}
+      {!hideBottomNav && <BottomNav onLogout={onLogout} />}
     </div>
   );
 }
