@@ -54,9 +54,19 @@ describe('ProtectedShell (app shell adoption)', () => {
     expect(screen.getByText('PAGE_CONTENT')).toBeInTheDocument();
     // The session user — not the hardcoded 'John Doe' the old page shells rendered.
     expect(screen.getByText('Demo User')).toBeInTheDocument();
-    for (const label of ['Dashboard', 'Accounts', 'History', 'Transfer']) {
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+
+    // The four PLACES are links with real hrefs. They used to be buttons calling navigate(), which
+    // put no href in the accessibility tree — see nav-ia.test.tsx for the full contract.
+    for (const [label, href] of [
+      ['Home', '/dashboard'],
+      ['Accounts', '/accounts'],
+      ['History', '/history'],
+      ['Settings', '/settings'],
+    ]) {
+      expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
     }
+    // Transfer is the one ACT, so it stays reachable from the shell — as a button.
+    expect(screen.getByRole('button', { name: 'Transfer' })).toBeInTheDocument();
   });
 
   it('sidebar History navigates to /history — the dead /transactions path is gone', async () => {
@@ -64,7 +74,7 @@ describe('ProtectedShell (app shell adoption)', () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness />, { store, routerEntries: ['/dashboard'] });
 
-    await user.click(screen.getByRole('button', { name: 'History' }));
+    await user.click(screen.getByRole('link', { name: 'History' }));
 
     expect(screen.getByText('HISTORY_PAGE')).toBeInTheDocument();
   });

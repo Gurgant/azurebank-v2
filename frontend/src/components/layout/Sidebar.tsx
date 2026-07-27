@@ -1,35 +1,14 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
-import {
-  Home24Regular,
-  Home24Filled,
-  Wallet24Regular,
-  Wallet24Filled,
-  History24Regular,
-  History24Filled,
-  ArrowSwap24Regular,
-  ArrowSwap24Filled,
-  Settings24Regular,
-  SignOut24Regular,
-} from '@fluentui/react-icons';
+import { SignOut24Regular } from '@fluentui/react-icons';
 import { colors, componentSizes, shadows, surfaces, transitions } from '../../theme/tokens';
 import { Avatar } from '../shared/Avatar';
 import { Logo } from '../shared/Logo';
+import { NAV_PLACES, TRANSFER_ACTION, resolveNavPlace } from './navItems';
 
 // ============================================
 // TYPES
 // ============================================
-
-export interface NavItem {
-  /** Route path */
-  path: string;
-  /** Display label */
-  label: string;
-  /** Regular (inactive) icon */
-  icon: React.ReactNode;
-  /** Filled (active) icon */
-  activeIcon: React.ReactNode;
-}
 
 export interface SidebarProps {
   /** User's full name */
@@ -40,45 +19,9 @@ export interface SidebarProps {
   userAvatar?: string;
   /** Logout handler */
   onLogout?: () => void;
-  /** Settings handler */
-  onSettings?: () => void;
   /** Additional CSS class */
   className?: string;
 }
-
-// ============================================
-// DEFAULT NAV ITEMS
-// ============================================
-
-// The app's REAL information architecture (routes in App.tsx). History previously
-// pointed at the non-existent /transactions — the exact drift the shared shell
-// exists to prevent. Profile/Settings live in the sidebar footer, not here.
-const defaultNavItems: NavItem[] = [
-  {
-    path: '/dashboard',
-    label: 'Dashboard',
-    icon: <Home24Regular />,
-    activeIcon: <Home24Filled />,
-  },
-  {
-    path: '/accounts',
-    label: 'Accounts',
-    icon: <Wallet24Regular />,
-    activeIcon: <Wallet24Filled />,
-  },
-  {
-    path: '/history',
-    label: 'History',
-    icon: <History24Regular />,
-    activeIcon: <History24Filled />,
-  },
-  {
-    path: '/transfer',
-    label: 'Transfer',
-    icon: <ArrowSwap24Regular />,
-    activeIcon: <ArrowSwap24Filled />,
-  },
-];
 
 // ============================================
 // STYLES
@@ -177,7 +120,16 @@ const useStyles = makeStyles({
     gap: '4px',
   },
 
+  /**
+   * `position: relative` is the rail's anchor and is load-bearing — without it the `::before`
+   * below attaches to the nearest positioned ancestor and lands somewhere else entirely.
+   *
+   * The transition was `all`, which is a declaration that does not say what it does. Only colour
+   * changes here, so only colour is named. Nothing in this component transforms or moves, which is
+   * why the reduced-motion default costs it nothing.
+   */
   navItem: {
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
@@ -186,9 +138,10 @@ const useStyles = makeStyles({
     backgroundColor: 'transparent',
     border: 'none',
     cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
+    transition: `background-color ${transitions.fast}, color ${transitions.fast}`,
     width: '100%',
     textAlign: 'left',
+    textDecoration: 'none',
 
     ':focus-visible': {
       outline: `2px solid ${colors.brand[60]}`,
@@ -196,12 +149,45 @@ const useStyles = makeStyles({
     },
   },
 
+  /**
+   * The active row: a rail, a filled icon, a heavier label and a DARKER one — four signals, only
+   * one of which is colour, so none of them is doing the job alone (WCAG 1.4.1).
+   *
+   * The brand-tinted pill that used to live here was deleted because it was the defect. Measured
+   * from the tokens: `brand[60]` on `brand[120]` is **4.227:1**, and the label is 15px at weight
+   * 600 — which WCAG does not count as large text, that starts at 18.66px bold — so the threshold
+   * is 4.5:1 and the app's active navigation item was failing 1.4.3. Lightening the pill could not
+   * have fixed it: `brand[60]` reaches only 4.868:1 on pure white, so it is marginal by
+   * construction.
+   *
+   * Moving the label to `neutral[900]` gives 17.740:1 against `neutral[600]`'s 7.557:1 for
+   * inactive — active is now darker AND heavier, a monotone increase on both axes. The brand stays
+   * on the rail and the icon, where 1.4.11's 3:1 for non-text applies and 4.868:1 clears it.
+   *
+   * There is a second reason, and it is the design one: in a bank the brand colour is scarce and
+   * belongs on the control that moves money. After this the sidebar contains exactly one saturated
+   * object, and it is Transfer.
+   */
   navItemActive: {
-    backgroundColor: colors.brand[120],
-    color: colors.brand[60],
+    color: colors.neutral[900],
 
     ':hover': {
-      backgroundColor: colors.brand[110],
+      backgroundColor: colors.neutral[100],
+    },
+
+    // The rail: 3px across, exactly as tall as the 24px icon it sits beside, on the row's leading
+    // edge. A pseudo-element rather than a span — no extra DOM, and invisible to assistive
+    // technology by construction rather than by an aria-hidden anyone could drop.
+    '::before': {
+      content: '""',
+      position: 'absolute',
+      left: 0,
+      top: '50%',
+      width: '3px',
+      height: '24px',
+      transform: 'translateY(-50%)',
+      borderRadius: '999px',
+      backgroundColor: colors.brand[60],
     },
   },
 
@@ -220,6 +206,12 @@ const useStyles = makeStyles({
     flexShrink: 0,
   },
 
+  // Fluent icons paint with `fill: currentColor`, so the brand has to be set on the icon's own
+  // container — left to inherit, it would take the row's neutral[900].
+  navIconActive: {
+    color: colors.brand[60],
+  },
+
   navLabel: {
     fontSize: '15px',
     fontWeight: 500,
@@ -227,6 +219,48 @@ const useStyles = makeStyles({
 
   navLabelActive: {
     fontWeight: 600,
+  },
+
+  /**
+   * The ACT: the one saturated object in the chrome, and the only `<button>` among four links.
+   *
+   * `shadows.sm`, not `shadows.brand` — that token is documented as the lift under the Dashboard's
+   * 180px balance card, and a 0/8/24 at 0.3 alpha under a 44px row reads as a floating chip. Flat
+   * fill, not `gradients.brand`: a 135° gradient across 44px is imperceptible and spends the app's
+   * most distinctive asset on nothing. No lift on hover either — lifts are for cards, not chrome.
+   *
+   * White on `brand[60]` measures 4.868:1, on the hover stop 6.009:1, on the pressed stop
+   * 11.082:1. All clear 4.5:1 for the 15px/600 label.
+   */
+  transferAction: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    width: '100%',
+    minHeight: '44px',
+    marginBottom: '8px',
+    padding: '0 16px',
+    borderRadius: '10px',
+    border: 'none',
+    cursor: 'pointer',
+    backgroundColor: colors.brand[60],
+    color: tokens.colorNeutralForegroundOnBrand,
+    boxShadow: shadows.sm,
+    transition: `background-color ${transitions.fast}`,
+
+    ':hover': { backgroundColor: colors.brand[70] },
+    ':active': { backgroundColor: colors.brand[40] },
+    ':focus-visible': {
+      outline: `2px solid ${colors.brand[60]}`,
+      outlineOffset: '2px',
+    },
+  },
+
+  transferLabel: {
+    fontSize: '15px',
+    fontWeight: 600,
+    color: tokens.colorNeutralForegroundOnBrand,
   },
 
   // Footer section
@@ -280,19 +314,11 @@ export function Sidebar({
   userEmail,
   userAvatar,
   onLogout,
-  onSettings,
   className,
 }: SidebarProps) {
   const styles = useStyles();
   const location = useLocation();
   const navigate = useNavigate();
-
-  const isActive = (path: string) => {
-    if (path === '/dashboard') {
-      return location.pathname === path;
-    }
-    return location.pathname.startsWith(path);
-  };
 
   return (
     <aside className={mergeClasses(styles.sidebar, className)}>
@@ -314,39 +340,52 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* Navigation */}
+      {/*
+        This landmark holds exactly ONE non-place control. It is a <button>, never a <Link>, and it
+        must never carry aria-current — a landmark may contain an action, but it may not contain a
+        second thing claiming to be current.
+
+        The places are links because they ARE links: the old <button onClick={navigate}> gave them
+        no href in the accessibility tree, and no cmd-click, middle-click or status-bar preview
+        either. Places are links, the act is a button — which turns the distinction from a claim in
+        a comment into something a test can read off the DOM.
+      */}
       <nav className={styles.nav} aria-label="Main navigation">
-        {defaultNavItems.map((item) => {
-          const active = isActive(item.path);
+        <button
+          className={styles.transferAction}
+          onClick={() => navigate(TRANSFER_ACTION.path)}
+          type="button"
+        >
+          <TRANSFER_ACTION.icon className={styles.navIcon} />
+          <Text className={styles.transferLabel}>{TRANSFER_ACTION.label}</Text>
+        </button>
+
+        {NAV_PLACES.map((place) => {
+          const { current, active, Icon } = resolveNavPlace(place, location.pathname);
 
           return (
-            <button
-              key={item.path}
+            <Link
+              key={place.path}
+              to={place.path}
               className={mergeClasses(
                 styles.navItem,
                 active ? styles.navItemActive : styles.navItemInactive,
               )}
-              onClick={() => navigate(item.path)}
-              aria-current={active ? 'page' : undefined}
-              type="button"
+              aria-current={current}
             >
-              <div className={styles.navIcon}>{active ? item.activeIcon : item.icon}</div>
+              <Icon className={mergeClasses(styles.navIcon, active && styles.navIconActive)} />
               <Text className={mergeClasses(styles.navLabel, active && styles.navLabelActive)}>
-                {item.label}
+                {place.label}
               </Text>
-            </button>
+            </Link>
           );
         })}
       </nav>
 
-      {/* Footer Actions */}
+      {/* Sign-out is an action, so it stays a button and stays OUTSIDE the nav landmark. Settings
+          moved into the list above: reaching it through a callback here while mobile reached it
+          through the table is exactly why only mobile ever lit it. */}
       <div className={styles.footer}>
-        {onSettings && (
-          <button className={styles.footerButton} onClick={onSettings} type="button">
-            <Settings24Regular className={styles.navIcon} />
-            <Text className={styles.navLabel}>Settings</Text>
-          </button>
-        )}
         {onLogout && (
           <button
             className={mergeClasses(styles.footerButton, styles.logoutButton)}

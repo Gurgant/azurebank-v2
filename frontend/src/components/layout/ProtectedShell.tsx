@@ -51,7 +51,6 @@ function ShellWithSession({ children }: ProtectedShellProps) {
       onLogout={() => {
         void handleLogout();
       }}
-      onSettings={() => navigate('/settings')}
     >
       {children}
     </AppLayout>
