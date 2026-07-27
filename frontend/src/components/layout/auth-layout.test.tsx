@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { renderWithProviders } from '../../test/renderWithProviders';
@@ -60,7 +61,7 @@ describe.each(PAGES)('$name', ({ ui, entry, title }) => {
 });
 
 describe('the two auth pages', () => {
-  const panelTextOf = (ui: React.ReactElement, entry: string) => {
+  const panelTextOf = (ui: ReactElement, entry: string) => {
     const { container, unmount } = renderWithProviders(ui, { routerEntries: [entry] });
     const text = container.querySelector('aside')?.textContent ?? '';
     unmount();

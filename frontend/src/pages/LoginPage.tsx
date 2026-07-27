@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useLocation, useNavigate, Link } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   tokens,
-  Text,
   Input,
   Button,
-  Link as FluentLink,
   Spinner,
   MessageBar,
   MessageBarBody,
@@ -18,7 +16,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
-import { AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
+import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { useLoginMutation } from '../features/api/apiSlice';
 
 // Validation schema
@@ -79,20 +77,6 @@ const useStyles = makeStyles({
     height: '44px',
     marginTop: '4px',
     fontWeight: 600,
-  },
-
-  crossLink: {
-    textAlign: 'center',
-  },
-
-  crossLinkText: {
-    fontSize: '14px',
-    color: tokens.colorNeutralForeground2,
-  },
-
-  footerText: {
-    fontSize: '12px',
-    color: tokens.colorNeutralForeground3,
   },
 
   errorMessage: {
@@ -156,11 +140,7 @@ export function LoginPage() {
       intro="Manage your finances with confidence. Experience modern banking with powerful tools designed for your success."
       title="Welcome back"
       subtitle="Sign in to your account to continue"
-      footer={
-        <Text className={styles.footerText}>
-          Protected by bank-grade encryption. We never share your details.
-        </Text>
-      }
+      footer="Protected by bank-grade encryption. We never share your details."
     >
       {/* Session-expiry note: only ever set by a post-boot 401 (D3/D6) */}
       {navState.reason === 'expired' && !problem && (
@@ -170,13 +150,18 @@ export function LoginPage() {
       )}
 
       {problem?.errorCode === 'INVALID_CREDENTIALS' && (
-        <MessageBar intent="error" className={styles.errorMessage}>
+        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
           <MessageBarBody>Invalid email or password.</MessageBarBody>
         </MessageBar>
       )}
 
+      {/* `role="alert"` because nothing else announces this. Fluent's MessageBar is `role="group"`,
+          not a live region, and the submit button unmounts when the lock lands (D13) — so focus
+          falls to <body> and a screen reader is told nothing at all. Making the button `disabled`
+          instead does NOT help: measured in Chrome, disabling a focused button also drops focus to
+          <body>. The announcement is the fix; the button's behaviour is not the problem. */}
       {accountLocked && lockDeadline !== null && (
-        <MessageBar intent="error" className={styles.errorMessage}>
+        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
           <MessageBarBody>
             Too many failed sign-in attempts — your account is temporarily locked.{' '}
             <RetryCountdown
@@ -191,7 +176,7 @@ export function LoginPage() {
         !['INVALID_CREDENTIALS', 'ACCOUNT_LOCKED', 'RATE_LIMIT_EXCEEDED'].includes(
           problem.errorCode,
         ) && (
-          <MessageBar intent="error" className={styles.errorMessage}>
+          <MessageBar intent="error" role="alert" className={styles.errorMessage}>
             <MessageBarBody>
               {problem.detail || 'Something went wrong. Please try again.'}
             </MessageBarBody>
@@ -208,6 +193,8 @@ export function LoginPage() {
             type="email"
             placeholder="name@example.com"
             size="large"
+            // `username`, not `email`: this is the identifier the credential pair is keyed on, and
+            // registration must agree — see RegisterPage's email field.
             autoComplete="username"
             {...register('email')}
             aria-invalid={errors.email ? 'true' : 'false'}
@@ -256,7 +243,7 @@ export function LoginPage() {
         )}
 
         {rateLimited && lockDeadline !== null && (
-          <MessageBar intent="warning">
+          <MessageBar intent="warning" role="alert">
             <MessageBarBody>
               Too many attempts from your connection.{' '}
               <RetryCountdown
@@ -270,14 +257,7 @@ export function LoginPage() {
 
       <AuthDivider />
 
-      <div className={styles.crossLink}>
-        <Text className={styles.crossLinkText}>
-          Don&apos;t have an account?{' '}
-          <Link to="/register" style={{ color: 'inherit' }}>
-            <FluentLink as="span">Create account</FluentLink>
-          </Link>
-        </Text>
-      </div>
+      <AuthCrossLink prompt="Don't have an account?" to="/register" label="Create account" />
     </AuthLayout>
   );
 }

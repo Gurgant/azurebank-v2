@@ -3,21 +3,20 @@ import { useNavigate, Link } from 'react-router-dom';
 import {
   makeStyles,
   tokens,
-  Text,
   Input,
   Button,
   Spinner,
   MessageBar,
   MessageBarBody,
   Field,
+  Link as FluentLink,
 } from '@fluentui/react-components';
 import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Link as FluentLink } from '@fluentui/react-components';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import { AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
+import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
 import { useRegisterMutation } from '../features/api/apiSlice';
 
@@ -100,20 +99,6 @@ const useStyles = makeStyles({
     height: '48px',
     marginTop: '8px',
     fontWeight: 600,
-  },
-
-  crossLink: {
-    textAlign: 'center',
-  },
-
-  crossLinkText: {
-    fontSize: '14px',
-    color: tokens.colorNeutralForeground2,
-  },
-
-  footerText: {
-    fontSize: '12px',
-    color: tokens.colorNeutralForeground3,
   },
 
   errorMessage: {
@@ -222,11 +207,7 @@ export function RegisterPage() {
       intro="Join thousands of customers who trust AzureBank for their everyday banking needs. Quick setup, powerful features."
       title="Create Account"
       subtitle="Join AzureBank today"
-      footer={
-        <Text className={styles.footerText}>
-          By creating an account, you agree to our Terms of Service and Privacy Policy
-        </Text>
-      }
+      footer="By creating an account, you agree to our Terms of Service and Privacy Policy"
     >
       {/* D15: tag-collision-blind dual-path banner — FORM-level, never field-attached,
           neutral copy, "Sign in" pre-fills the typed email via route state. */}
@@ -247,7 +228,7 @@ export function RegisterPage() {
       )}
 
       {rateLimited && lockDeadline !== null && (
-        <MessageBar intent="warning" className={styles.errorMessage}>
+        <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
           <MessageBarBody>
             Too many attempts from your connection.{' '}
             <RetryCountdown
@@ -259,7 +240,7 @@ export function RegisterPage() {
       )}
 
       {errors.root?.message && (
-        <MessageBar intent="error" className={styles.errorMessage}>
+        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
           <MessageBarBody>{errors.root.message}</MessageBarBody>
         </MessageBar>
       )}
@@ -288,6 +269,7 @@ export function RegisterPage() {
             <Input
               placeholder="John"
               size="large"
+              autoComplete="given-name"
               {...register('firstName')}
               aria-invalid={errors.firstName ? 'true' : 'false'}
             />
@@ -302,6 +284,7 @@ export function RegisterPage() {
             <Input
               placeholder="Doe"
               size="large"
+              autoComplete="family-name"
               {...register('lastName')}
               aria-invalid={errors.lastName ? 'true' : 'false'}
             />
@@ -318,7 +301,10 @@ export function RegisterPage() {
           <Input
             placeholder="john_doe"
             size="large"
-            autoComplete="username"
+            // NOT `username`. Sign-in accepts an email and nothing else (`z.email()`), so a manager
+            // that saved this handle as the username would offer it into a field that rejects it.
+            // The credential identity belongs to whatever sign-in accepts.
+            autoComplete="nickname"
             {...register('azureTag')}
             aria-invalid={errors.azureTag ? 'true' : 'false'}
           />
@@ -334,7 +320,8 @@ export function RegisterPage() {
             type="email"
             placeholder="john.doe@example.com"
             size="large"
-            autoComplete="email"
+            // The credential identity, matching LoginPage — this is what sign-in accepts.
+            autoComplete="username"
             {...register('email')}
             aria-invalid={errors.email ? 'true' : 'false'}
           />
@@ -410,14 +397,7 @@ export function RegisterPage() {
 
       <AuthDivider />
 
-      <div className={styles.crossLink}>
-        <Text className={styles.crossLinkText}>
-          Already have an account?{' '}
-          <Link to="/login" style={{ color: 'inherit' }}>
-            <FluentLink as="span">Sign In</FluentLink>
-          </Link>
-        </Text>
-      </div>
+      <AuthCrossLink prompt="Already have an account?" to="/login" label="Sign In" />
     </AuthLayout>
   );
 }

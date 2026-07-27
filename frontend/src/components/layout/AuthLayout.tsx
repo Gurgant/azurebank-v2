@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { makeStyles, Text, tokens } from '@fluentui/react-components';
+import { Link as FluentLink, makeStyles, Text, tokens } from '@fluentui/react-components';
+import { Link } from 'react-router-dom';
 import { atMedia } from '../../theme/breakpoints';
 import { Logo } from '../shared/Logo';
 import { AuthBrandingPanel } from './AuthBrandingPanel';
@@ -113,13 +114,23 @@ const useStyles = makeStyles({
     },
   },
 
+  // The size and colour live here rather than in each page, so the slot's contents inherit them
+  // and neither page needs a `footerText` class of its own.
   footer: {
     marginTop: '40px',
     textAlign: 'center',
+    fontSize: '12px',
+    color: tokens.colorNeutralForeground3,
 
     [atMedia.lg]: {
       marginTop: '48px',
     },
+  },
+
+  crossLink: {
+    textAlign: 'center',
+    fontSize: '14px',
+    color: tokens.colorNeutralForeground2,
   },
 
   // ===== The divider between the form and its cross-link =====
@@ -211,6 +222,35 @@ export function AuthDivider({ label = 'or' }: { label?: string }) {
       <div className={styles.dividerLine} />
       <Text className={styles.dividerLabel}>{label}</Text>
       <div className={styles.dividerLine} />
+    </div>
+  );
+}
+
+/**
+ * The link from one auth page to the other — "Don't have an account? Create account".
+ *
+ * Its two style keys were byte-identical in both pages, which is the same shape this module exists
+ * to remove. The prompt and the link text differ; the box does not.
+ */
+export function AuthCrossLink({
+  prompt,
+  to,
+  label,
+}: {
+  prompt: string;
+  to: string;
+  label: string;
+}) {
+  const styles = useStyles();
+
+  // One element, not a styled box wrapping a styled `Text` — the size and colour inherit, so the
+  // second copy of the class was doing nothing but claiming otherwise.
+  return (
+    <div className={styles.crossLink}>
+      {prompt}{' '}
+      <Link to={to} style={{ color: 'inherit' }}>
+        <FluentLink as="span">{label}</FluentLink>
+      </Link>
     </div>
   );
 }
