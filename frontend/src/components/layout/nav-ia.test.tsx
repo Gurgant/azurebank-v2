@@ -209,11 +209,29 @@ describe('Sidebar footer', () => {
  */
 describe('routing table', () => {
   /** Each `<Route …>` block, paired with whether it renders inside the app shell. */
-  const routes = appSource
-    .split('<Route')
+  /**
+   * COMMENTS STRIPPED BEFORE ANY OF THIS IS SCANNED.
+   *
+   * `App.tsx` explains its own routing at length, so a scan for the thing the prose is ABOUT
+   * matches the prose. The gate test below was written, run green, and then falsified by replacing
+   * `import.meta.env.DEV &&` with `true &&` — it stayed green, because the sentence explaining why
+   * the gate exists still contained the words. It found a comment, not a guard.
+   *
+   * Same shape as the `useNavigate` scan in `page-header.test.tsx`, which failed for the same
+   * reason a few hours earlier. Stripping is also strictly safer for `<ProtectedShell` below: a
+   * comment mentioning the shell would otherwise count as rendering inside it.
+   */
+  const code = appSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  const chunks = code.split('<Route');
+
+  const routes = chunks
     .slice(1)
-    .map((chunk: string) => ({
+    .map((chunk: string, i: number) => ({
       path: /path="([^"]+)"/.exec(chunk)?.[1],
+      // The text between the PREVIOUS `<Route` and this one — where a wrapping conditional lands
+      // once the source is split this way. Exact, not a character-window guess.
+      preamble: chunks[i],
       // `'<ProtectedShell'` without the closing bracket, deliberately. Matching `'<ProtectedShell>'`
       // recognised the shell ONLY when written with zero attributes, so `<ProtectedShell key="t">`
       // read as out-of-shell and BOTH guards below went green with the transfer wizard rendering
@@ -221,7 +239,21 @@ describe('routing table', () => {
       // declaration and is invisible to tsc, so nothing else would have caught it.
       inShell: chunk.includes('<ProtectedShell'),
     }))
-    .filter((r): r is { path: string; inShell: boolean } => typeof r.path === 'string');
+    .filter(
+      (r): r is { path: string; preamble: string; inShell: boolean } => typeof r.path === 'string',
+    );
+
+  /**
+   * Scratch routes under `/dev/`, exempt from the nav-place rule and from nothing else.
+   *
+   * They are in the shell on purpose — a design being judged has to sit next to the real sidebar,
+   * because the sidebar's 240px is part of what the layout has to survive — but giving one a nav
+   * place would put scratch work in the product's navigation. The exemption is narrow (`/dev/`
+   * prefix only) and self-deleting: it goes when the gallery does.
+   *
+   * The price of the exemption is the test below, which is stricter than what it excuses.
+   */
+  const isScratch = (path: string) => path.startsWith('/dev/');
 
   it('finds the routes it is supposed to be guarding', () => {
     // Without this the two assertions below would both pass against a parser that found nothing.
@@ -229,8 +261,25 @@ describe('routing table', () => {
     expect(routes.filter((r) => r.inShell).length).toBeGreaterThanOrEqual(6);
   });
 
+  it('keeps every scratch route behind a build-time gate', () => {
+    // `import.meta.env.DEV` is replaced with `false` when Vite builds, so Rollup drops the branch
+    // and then the module — which is what keeps a scratch route out of production. That is a
+    // property of the SOURCE, so it is checked here rather than left to somebody remembering to
+    // grep `dist/`. This repo deleted `DEV_BYPASS_AUTH` in A3 because a dev-only door that nobody
+    // re-checks quietly stops being dev-only.
+    //
+    // Passes vacuously once the gallery is deleted and no `/dev/` route exists — which is correct:
+    // the rule is "if a scratch route exists it must be gated", not "a scratch route must exist".
+    for (const route of routes.filter((r) => isScratch(r.path))) {
+      expect(
+        route.preamble,
+        `scratch route ${route.path} must sit inside import.meta.env.DEV`,
+      ).toContain('import.meta.env.DEV');
+    }
+  });
+
   it('gives every in-shell route exactly one nav place', () => {
-    for (const route of routes.filter((r) => r.inShell)) {
+    for (const route of routes.filter((r) => r.inShell && !isScratch(r.path))) {
       const pathname = route.path.replace(/:[^/]+/g, TX_ID);
       const lit = NAV_PLACES.filter((place) => navCurrent(place, pathname) !== undefined);
       expect(
