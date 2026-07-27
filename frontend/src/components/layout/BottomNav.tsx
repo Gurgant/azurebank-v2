@@ -1,7 +1,23 @@
+import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
+import {
+  Avatar,
+  DrawerBody,
+  makeStyles,
+  mergeClasses,
+  OverlayDrawer,
+  Text,
+  tokens,
+} from '@fluentui/react-components';
+import { SignOut24Regular } from '@fluentui/react-icons';
 import { colors, componentSizes, surfaces, zIndex, transitions, shadows } from '../../theme/tokens';
-import { NAV_PLACES, TRANSFER_ACTION, resolveNavPlace } from './navItems';
+import {
+  NAV_PLACES,
+  TRANSFER_ACTION,
+  primaryPlaces,
+  resolveNavPlace,
+  utilityPlaces,
+} from './navItems';
 
 // ============================================
 // TYPES
@@ -10,6 +26,10 @@ import { NAV_PLACES, TRANSFER_ACTION, resolveNavPlace } from './navItems';
 export interface BottomNavProps {
   /** Additional CSS class */
   className?: string;
+  /** Seeds the avatar's initials. The avatar is `aria-hidden`; the cell is named by its label. */
+  userName?: string;
+  /** Sign out. Omit and the sheet simply does not offer it. */
+  onLogout?: () => void;
 }
 
 // ============================================
@@ -43,6 +63,33 @@ const useStyles = makeStyles({
    * `position: relative` anchors the rail. At a 320px viewport a cell is (320 - 16) / 5 = 60.8px
    * wide against the bar's 72px height, so every target clears 44x44 in both directions.
    */
+  sheetBody: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+  },
+
+  sheetRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '14px',
+    width: '100%',
+    padding: '14px 8px',
+    // 48px minimum target, which is the floor Material states for a touch control.
+    minHeight: '48px',
+    background: 'none',
+    border: 'none',
+    borderRadius: '10px',
+    font: 'inherit',
+    color: colors.neutral[800],
+    textDecoration: 'none',
+    cursor: 'pointer',
+    textAlign: 'left',
+    ':hover': { backgroundColor: colors.neutral[50] },
+    ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '-2px' },
+  },
+
   navItem: {
     position: 'relative',
     display: 'flex',
@@ -176,15 +223,29 @@ const useStyles = makeStyles({
 // COMPONENT
 // ============================================
 
-export function BottomNav({ className }: BottomNavProps) {
+export function BottomNav({ className, userName, onLogout }: BottomNavProps) {
   const styles = useStyles();
+  const [sheetOpen, setSheetOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Four places, then the act in the middle, then the rest — DOM order equals visual order equals
-  // focus order, which is what centring the action forces and what makes it worth doing.
-  const [home, accounts, ...rest] = NAV_PLACES;
-  const before = [home, accounts];
+  // Split by CATEGORY, never by index. This was `const [home, accounts, ...rest] = NAV_PLACES`,
+  // which put the act after position 2 by counting — so adding any place before Settings silently
+  // slid the Transfer disc off centre, and nothing in the suite would have said so.
+  //
+  // Three primary places and the act make four cells plus the avatar: two left, disc, two right.
+  // The act stays centred because the arithmetic that centres it is now "half the primary places",
+  // not the literal number 2.
+  const bar = primaryPlaces();
+  const utility = utilityPlaces();
+  const mid = Math.ceil(bar.length / 2);
+  const before = bar.slice(0, mid);
+  const rest = bar.slice(mid);
+
+  // The avatar lights when the page you are on lives INSIDE the sheet. Without this, standing on
+  // /settings or /about would leave the whole bar dark — which is the exact defect PR #47 fixed on
+  // /settings, reintroduced one level down.
+  const utilityCurrent = utility.find((p) => resolveNavPlace(p, location.pathname).active);
 
   const renderPlace = (place: (typeof NAV_PLACES)[number]) => {
     const { current, active, Icon } = resolveNavPlace(place, location.pathname);
@@ -228,6 +289,73 @@ export function BottomNav({ className }: BottomNavProps) {
       </button>
 
       {rest.map(renderPlace)}
+
+      {/* The SECOND non-place control in this landmark, and the reason the docblock below had to
+          change: it used to say "exactly ONE". Utility navigation needed a host on mobile, and the
+          surveyed banks that have a header all use the avatar for it (Revolut, N26, Starling,
+          Wise, bunq, PayPal, Nubank). We have no mobile header, so the avatar comes down into the
+          bar — which also, finally, puts Logout on the phone instead of two levels inside Settings.
+
+          `aria-expanded` and `aria-haspopup` make it a disclosure, and `aria-current` is set when
+          the open page is one of the ones it hides. */}
+      <button
+        className={mergeClasses(
+          styles.navItem,
+          utilityCurrent ? styles.navItemActive : styles.navItemInactive,
+        )}
+        type="button"
+        onClick={() => setSheetOpen(true)}
+        aria-haspopup="dialog"
+        aria-expanded={sheetOpen}
+        aria-current={utilityCurrent ? 'true' : undefined}
+      >
+        <Avatar name={userName} size={24} color="brand" aria-hidden />
+        <Text className={mergeClasses(styles.label, utilityCurrent && styles.labelActive)}>
+          More
+        </Text>
+      </button>
+
+      <OverlayDrawer
+        open={sheetOpen}
+        position="bottom"
+        onOpenChange={(_, data) => setSheetOpen(data.open)}
+        aria-label="More"
+      >
+        <DrawerBody className={styles.sheetBody}>
+          {utility.map((place) => {
+            const { current, active, Icon } = resolveNavPlace(place, location.pathname);
+            return (
+              <Link
+                key={place.path}
+                to={place.path}
+                className={styles.sheetRow}
+                aria-current={current}
+                onClick={() => setSheetOpen(false)}
+              >
+                <Icon className={mergeClasses(styles.icon, active && styles.iconActive)} />
+                <Text className={active ? styles.labelActive : undefined}>{place.label}</Text>
+              </Link>
+            );
+          })}
+
+          {/* Logout is an act, like Transfer: a button, no href, never lit. It was unreachable from
+              the bottom bar entirely — a phone user had to go into Settings to sign out, on the
+              surface where signing out matters most. */}
+          {onLogout && (
+            <button
+              type="button"
+              className={styles.sheetRow}
+              onClick={() => {
+                setSheetOpen(false);
+                onLogout();
+              }}
+            >
+              <SignOut24Regular className={styles.icon} />
+              <Text>Logout</Text>
+            </button>
+          )}
+        </DrawerBody>
+      </OverlayDrawer>
     </nav>
   );
 }

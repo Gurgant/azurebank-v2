@@ -5,6 +5,8 @@ import {
   Home24Filled,
   Home24Regular,
   Settings24Filled,
+  Headset24Regular,
+  Headset24Filled,
   Settings24Regular,
   Wallet24Filled,
   Wallet24Regular,
@@ -52,6 +54,22 @@ export interface NavPlace {
    */
   icon: FluentIcon;
   activeIcon: FluentIcon;
+  /**
+   * Which KIND of place this is — not where to render it.
+   *
+   * `primary` is a banking destination: the reason a person opened the app. `utility` is what
+   * Carbon and NN/g call utility navigation — "accessible anywhere, not tied to primary journeys",
+   * with NN/g naming *contact* as its canonical example. Settings joins it because it is about the
+   * app rather than about money.
+   *
+   * This is a category, deliberately, and not a `showIn: ['sidebar']` layout flag. A layout flag
+   * encodes where a thing is drawn, which is the renderer's business and goes stale the moment a
+   * surface is added; a category encodes what the thing IS, and each surface decides for itself
+   * what to do with it. The sidebar has room to show both groups flat. The bottom bar gives its
+   * four cells to primary places and puts utility behind the avatar, which is where every bank we
+   * surveyed with a header puts it — Revolut, N26, Starling, Wise, bunq, PayPal, Nubank.
+   */
+  group: 'primary' | 'utility';
 }
 
 export const NAV_PLACES: NavPlace[] = [
@@ -63,6 +81,7 @@ export const NAV_PLACES: NavPlace[] = [
     matches: ['/', '/dashboard'],
     icon: Home24Regular,
     activeIcon: Home24Filled,
+    group: 'primary',
   },
   {
     path: '/accounts',
@@ -70,6 +89,7 @@ export const NAV_PLACES: NavPlace[] = [
     matches: ['/accounts'],
     icon: Wallet24Regular,
     activeIcon: Wallet24Filled,
+    group: 'primary',
   },
   {
     path: '/history',
@@ -79,6 +99,7 @@ export const NAV_PLACES: NavPlace[] = [
     matches: ['/history', '/transactions'],
     icon: History24Regular,
     activeIcon: History24Filled,
+    group: 'primary',
   },
   {
     path: '/settings',
@@ -89,8 +110,23 @@ export const NAV_PLACES: NavPlace[] = [
     matches: ['/settings'],
     icon: Settings24Regular,
     activeIcon: Settings24Filled,
+    group: 'utility',
+  },
+  {
+    path: '/about',
+    label: 'Contact',
+    matches: ['/about'],
+    icon: Headset24Regular,
+    activeIcon: Headset24Filled,
+    group: 'utility',
   },
 ];
+
+/** The places that earn a cell in the bottom bar. */
+export const primaryPlaces = () => NAV_PLACES.filter((p) => p.group === 'primary');
+
+/** The places the bottom bar puts behind the avatar, and the sidebar shows below a rule. */
+export const utilityPlaces = () => NAV_PLACES.filter((p) => p.group === 'utility');
 
 /**
  * The ACT, and it is deliberately not a `NavPlace`.

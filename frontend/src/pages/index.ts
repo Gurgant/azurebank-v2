@@ -15,3 +15,4 @@ export { TransactionDetailPage } from './TransactionDetailPage';
 export { TransferPage } from './TransferPage';
 export { InternalTransferPage } from './InternalTransferPage';
 export { SettingsPage } from './SettingsPage';
+export { AboutPage } from './AboutPage';
