@@ -5,6 +5,7 @@ import { DirectionA } from './directions/DirectionA';
 import { DirectionB } from './directions/DirectionB';
 import { DirectionC } from './directions/DirectionC';
 import { DirectionD } from './directions/DirectionD';
+import { DirectionE } from './directions/DirectionE';
 
 /**
  * SCRATCH. Deleted in the same PR that picks a winner — U3 is the programme's one generative step
@@ -29,6 +30,7 @@ const DIRECTIONS = [
   { key: 'b', label: 'B — the page is a launchpad', Component: DirectionB },
   { key: 'c', label: 'C — the page is a ledger', Component: DirectionC },
   { key: 'd', label: 'D — hybrid', Component: DirectionD },
+  { key: 'e', label: 'E — scope is the spine', Component: DirectionE },
 ] as const;
 
 const useStyles = makeStyles({
