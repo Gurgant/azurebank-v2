@@ -13,6 +13,14 @@ import { findActiveNavPlace } from './navItems';
  * detail. (Accounts' mobile header is deliberately NOT here: it is a brand-coloured page hero laid
  * out in a column, a different species that happens to sit at the top.)
  *
+ * The unified axes are height, padding, alignment **and type size**. That last one is easy to leave
+ * off the list and it is the one with a visible cost: History and the transaction detail set their
+ * title at 18px, both wizards at 16px, and 16px wins here because it was already the majority and
+ * this is compact chrome rather than a page hero. Two pages lose 2px. Saying "three shapes that
+ * disagreed on height, padding and alignment" and stopping there invites a reader to assume type
+ * survived untouched, which is the sort of accurate-but-incomplete sentence that reads as a lie
+ * the first time somebody diffs it.
+ *
  * **This component never navigates.** It takes handlers and calls them; it imports no `useNavigate`
  * and synthesises no destination. That is not stylistic — the transfer wizards' Back and Close
  * carry `disabled={keyLive}`, which is the anti-double-spend guard, and every exit routes through
@@ -87,10 +95,17 @@ const useStyles = makeStyles({
   },
 
   title: {
+    // 16px, which is what four of the six bars already said; History and the transaction detail
+    // said 18px and lose 2px here. Typography is one of the unified axes, not a casualty of
+    // unifying the others — see the list above.
     fontSize: '16px',
     fontWeight: 600,
     color: colors.neutral[800],
     textAlign: 'center',
+    // `as="h1"` brings the UA's `margin-block: 0.67em` with it. Symmetric margins are invisible
+    // under `alignItems: center`, but only until someone changes the bar's height or padding, so
+    // this makes the zero explicit rather than incidental.
+    margin: 0,
     // The title yields before the two 40px edges do, so a long one truncates instead of shoving
     // the affordances off the bar.
     minWidth: 0,
@@ -145,7 +160,21 @@ export function PageHeader({
         )}
       </div>
 
-      <Text className={styles.title}>{heading}</Text>
+      {/*
+        The page's one `<h1>`, and on four of these pages the ONLY heading of any level: measured
+        live, `/history`, `/transactions/:id`, `/transfer` and `/transfer/internal` each exposed an
+        empty heading tree at every width, so heading navigation found nothing while `/settings` and
+        `/login` worked. `as="h1"` matches what `SettingsPage` and `AuthLayout` already do.
+
+        Rendered only when there is something to announce. An empty `<h1>` is worse than no heading —
+        it puts a blank entry in the rotor. Not reachable today (the sole title-less caller is
+        History, whose path always matches a nav place), which is exactly why it would rot silently.
+      */}
+      {heading && (
+        <Text as="h1" className={styles.title}>
+          {heading}
+        </Text>
+      )}
 
       <div className={mergeClasses(styles.slot, styles.slotEnd)}>
         {onClose && (

@@ -70,6 +70,10 @@ describe('PageHeader', () => {
 
     expect(left).toHaveStyle({ width: '40px' });
     expect(right).toHaveStyle({ width: '40px' });
+    // Equal edges alone do NOT centre anything — they only make the two ends symmetric. What puts
+    // the title in the middle is the bar's own distribution, and without this line the test passed
+    // 9/9 with `justifyContent` deleted from the component. Verified by deleting it.
+    expect(bar).toHaveStyle({ justifyContent: 'space-between' });
   });
 
   it('is one bar height, where there used to be three', () => {
@@ -78,6 +82,35 @@ describe('PageHeader', () => {
     renderHeader(<PageHeader />, '/history');
     const bar = screen.getByText('History').parentElement as HTMLElement;
     expect(bar).toHaveStyle({ height: '56px' });
+  });
+
+  it('puts the title in the heading tree, exactly once', () => {
+    // Measured before this was added: /history, /transactions/:id, /transfer and /transfer/internal
+    // each rendered ZERO headings of any level at 500px and at 1440px, while /settings and /login
+    // in the same app rendered one. Heading navigation found nothing on four pages.
+    //
+    // h1 rather than h2 is safe here BECAUSE of that emptiness — there is no competing heading to
+    // rank under. The failure shape to avoid is the one PR #48 fixed on the auth pages, where two
+    // elements both claimed h1 and one of them was hidden behind a media query. PageHeader has no
+    // media query and each page renders exactly one of it.
+    const { container } = renderHeader(<PageHeader title="Send Money" />);
+
+    const headings = container.querySelectorAll('h1');
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent('Send Money');
+    // No heading of any other level sneaks in alongside it.
+    expect(container.querySelectorAll('h2,h3,h4,h5,h6')).toHaveLength(0);
+  });
+
+  it('announces no heading at all rather than an empty one', () => {
+    // `heading` falls back to '' when a caller omits `title` on a path that matches no nav place.
+    // Unreachable in the app today, which is precisely why it would rot unnoticed: an empty <h1>
+    // is worse than none, because it puts a blank entry in the rotor that leads nowhere.
+    const { container } = renderHeader(<PageHeader />, '/nowhere-in-the-nav');
+
+    expect(container.querySelectorAll('h1')).toHaveLength(0);
+    // The bar still renders, with both edges reserved, so nothing shifts.
+    expect(container.querySelector('button')).toBeNull();
   });
 
   it('calls the handler it was given, and nothing else', async () => {
