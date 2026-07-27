@@ -10,8 +10,6 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import {
-  ChevronLeft24Regular,
-  Dismiss24Regular,
   CheckmarkCircle24Filled,
   Warning24Regular,
   ArrowSwap24Regular,
@@ -20,6 +18,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors, surfaces, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
   useTransferInternalMutation,
@@ -51,30 +50,6 @@ interface SuccessData {
 const useStyles = makeStyles({
   // Full-screen wizard, outside the app shell: it owns its canvas, from the shell's token.
   page: { minHeight: '100dvh', backgroundColor: surfaces.canvas },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: '56px',
-    padding: '0 12px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-  },
-  headerBtn: {
-    width: '40px',
-    height: '40px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    borderRadius: '8px',
-    color: colors.neutral[800],
-    ':hover': { backgroundColor: colors.neutral[100] },
-    ':disabled': { opacity: 0.4, cursor: 'not-allowed' },
-  },
-  headerTitle: { fontSize: '16px', fontWeight: 600, color: colors.neutral[800] },
   body: {
     maxWidth: '480px',
     margin: '0 auto',
@@ -397,11 +372,9 @@ export function InternalTransferPage() {
   if (success) {
     return (
       <div className={styles.page}>
-        <div className={styles.header}>
-          <span style={{ width: '40px' }} />
-          <Text className={styles.headerTitle}>Transfer Complete</Text>
-          <span style={{ width: '40px' }} />
-        </div>
+        {/* No exits: the money has moved, so there is nothing to abandon, and the body's two
+            buttons are the way on. */}
+        <PageHeader title="Transfer Complete" />
         <div className={styles.body}>
           <div className={styles.centeredView}>
             <div className={styles.successIcon}>
@@ -453,11 +426,10 @@ export function InternalTransferPage() {
   if (verifyRequired) {
     return (
       <div className={styles.page}>
-        <div className={styles.header}>
-          <span style={{ width: '40px' }} />
-          <Text className={styles.headerTitle}>Move Money</Text>
-          <span style={{ width: '40px' }} />
-        </div>
+        {/* Deliberately no exits. This is the state where the transfer may or may not have
+            gone through; a stray Close here would let someone leave without checking, and the
+            copy below says retrying blindly could send twice. */}
+        <PageHeader title="Move Money" />
         <div className={styles.body}>
           <div className={styles.centeredView}>
             <div className={styles.warningIcon}>
@@ -497,27 +469,17 @@ export function InternalTransferPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.header}>
-        <button
-          className={styles.headerBtn}
-          aria-label="Back"
-          disabled={keyLive}
-          onClick={() => (step === 'review' ? setStep('form') : requestLeave('/dashboard'))}
-        >
-          <ChevronLeft24Regular />
-        </button>
-        <Text className={styles.headerTitle}>
-          {step === 'review' ? 'Review Transfer' : 'Move Money'}
-        </Text>
-        <button
-          className={styles.headerBtn}
-          aria-label="Close"
-          disabled={keyLive}
-          onClick={() => requestLeave('/dashboard')}
-        >
-          <Dismiss24Regular />
-        </button>
-      </div>
+      {/* THE GUARDED HEADER — same handlers, same `disabled={keyLive}`, and every exit still
+          routes through this page's own `requestLeave`, which re-checks it. PageHeader takes
+          handlers and calls them; it never decides a destination, which is why moving this bar into
+          a shared component cannot quietly delete the anti-double-spend guard. */}
+      <PageHeader
+        title={step === 'review' ? 'Review Transfer' : 'Move Money'}
+        onBack={() => (step === 'review' ? setStep('form') : requestLeave('/dashboard'))}
+        backDisabled={keyLive}
+        onClose={() => requestLeave('/dashboard')}
+        closeDisabled={keyLive}
+      />
 
       <div className={styles.body}>
         {error && (

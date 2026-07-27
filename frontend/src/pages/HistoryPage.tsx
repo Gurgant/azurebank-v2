@@ -11,7 +11,6 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import {
-  ChevronLeft24Regular,
   History24Filled,
   ArrowDownload24Regular,
   ArrowUpload24Regular,
@@ -20,6 +19,7 @@ import {
 } from '@fluentui/react-icons';
 import { colors, gradients, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { PageHeader } from '../components/layout/PageHeader';
 import type { TransactionType } from '../api/enums';
 import type { TransactionResponse } from '../features/api/apiSlice';
 import { useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
@@ -63,41 +63,6 @@ const useStyles = makeStyles({
   },
 
   // ========== HEADER ==========
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: '56px',
-    padding: '0 16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-  },
-
-  headerButton: {
-    width: '40px',
-    height: '40px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    borderRadius: '8px',
-    color: colors.neutral[800],
-    ':hover': {
-      backgroundColor: colors.neutral[100],
-    },
-  },
-
-  headerTitle: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  headerSpacer: {
-    width: '40px',
-  },
 
   // ========== CONTENT ==========
   content: {
@@ -484,18 +449,10 @@ export function HistoryPage() {
 
   return (
     <div className={styles.container}>
-      {/* Header */}
-      <div className={styles.header}>
-        <button
-          className={styles.headerButton}
-          aria-label="Go back"
-          onClick={() => void navigate(-1)}
-        >
-          <ChevronLeft24Regular />
-        </button>
-        <Text className={styles.headerTitle}>Transaction History</Text>
-        <div className={styles.headerSpacer} />
-      </div>
+      {/* A nav destination, so no back affordance: a tab has no parent, and the navigation that
+          got you here is on screen and lit. The title comes from the same table the nav reads —
+          "History" — rather than being re-typed here as "Transaction History". */}
+      <PageHeader />
 
       {/* Content */}
       <div className={styles.content}>
