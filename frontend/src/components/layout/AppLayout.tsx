@@ -74,7 +74,10 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     // See `desktopContent`: this is the containment that `overflowY: 'auto'` was silently providing.
     overflowX: 'auto',
-    paddingBottom: componentSizes.bottomNav.height,
+    // The bar floats 10px off the bottom edge and clears the home indicator, so the space it
+    // occupies is its own height PLUS that inset — padding of just the height leaves the last row
+    // of content under the card.
+    paddingBottom: `calc(${componentSizes.bottomNav.height} + 10px + env(safe-area-inset-bottom, 0px))`,
   },
 
   mobileContentNoNav: {
