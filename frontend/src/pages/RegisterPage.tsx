@@ -11,20 +11,14 @@ import {
   MessageBarBody,
   Field,
 } from '@fluentui/react-components';
-import {
-  Eye24Regular,
-  EyeOff24Regular,
-  ShieldCheckmark24Regular,
-  LockClosed24Regular,
-  Globe24Regular,
-} from '@fluentui/react-icons';
+import { Eye24Regular, EyeOff24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Link as FluentLink } from '@fluentui/react-components';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
-import { Logo } from '../components/shared/Logo';
 import { useRegisterMutation } from '../features/api/apiSlice';
 
 // Validation schema — mirrors the backend contract (ValidationRules): AzureTag pattern
@@ -60,167 +54,8 @@ type RegisterFormData = z.infer<typeof registerSchema>;
 const REGISTER_FIELDS = ['firstName', 'lastName', 'azureTag', 'email', 'password'] as const;
 
 const useStyles = makeStyles({
-  // ========== CONTAINER ==========
-  container: {
-    display: 'flex',
-    minHeight: '100vh',
-    width: '100%',
-    flexDirection: 'column',
-    '@media (min-width: 1024px)': {
-      flexDirection: 'row',
-    },
-  },
-
-  // ========== LEFT PANEL - BRANDING (Desktop Only) ==========
-  leftPanel: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'flex-start',
-      width: '50%',
-      minWidth: '480px',
-      maxWidth: '720px',
-      backgroundColor: tokens.colorBrandBackground,
-      padding: '64px 80px',
-    },
-  },
-
-  brandLogo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    marginBottom: '48px',
-  },
-
-  logoText: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  tagline: {
-    fontSize: '44px',
-    fontWeight: 700,
-    lineHeight: '1.15',
-    marginBottom: '20px',
-    maxWidth: '480px',
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  taglineSubtext: {
-    fontSize: '17px',
-    opacity: 0.9,
-    marginBottom: '48px',
-    maxWidth: '440px',
-    lineHeight: '1.6',
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  features: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px',
-  },
-
-  featureItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '14px',
-  },
-
-  featureIcon: {
-    width: '42px',
-    height: '42px',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: '10px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: tokens.colorNeutralForegroundOnBrand,
-    fontSize: '20px',
-    flexShrink: 0,
-  },
-
-  featureText: {
-    fontSize: '15px',
-    fontWeight: 500,
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  // ========== RIGHT PANEL - FORM ==========
-  rightPanel: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: '32px 20px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    minHeight: '100vh',
-    '@media (min-width: 480px)': {
-      padding: '40px 32px',
-    },
-    '@media (min-width: 1024px)': {
-      padding: '64px 48px',
-      minHeight: 'auto',
-    },
-  },
-
-  formContainer: {
-    width: '100%',
-    maxWidth: '380px',
-    '@media (min-width: 1024px)': {
-      maxWidth: '440px',
-    },
-  },
-
-  // ========== MOBILE LOGO ==========
-  mobileLogo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    marginBottom: '28px',
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  mobileLogoText: {
-    fontSize: '22px',
-    fontWeight: 700,
-    color: tokens.colorBrandForeground1,
-  },
-
-  // ========== FORM HEADER ==========
-  formHeader: {
-    marginBottom: '28px',
-  },
-
-  formTitle: {
-    display: 'block',
-    fontSize: '26px',
-    fontWeight: 600,
-    lineHeight: '1.2',
-    color: tokens.colorNeutralForeground1,
-    marginBottom: '8px',
-    '@media (min-width: 480px)': {
-      fontSize: '28px',
-    },
-  },
-
-  formSubtitle: {
-    display: 'block',
-    fontSize: '14px',
-    lineHeight: '1.5',
-    color: tokens.colorNeutralForeground2,
-    '@media (min-width: 480px)': {
-      fontSize: '15px',
-    },
-  },
-
-  // ========== FORM ==========
+  // What is left after AuthLayout took the frame. Everything else — panel, column, heading,
+  // footer, divider — is declared once there.
   form: {
     display: 'flex',
     flexDirection: 'column',
@@ -267,42 +102,13 @@ const useStyles = makeStyles({
     fontWeight: 600,
   },
 
-  // ========== DIVIDER ==========
-  divider: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    margin: '24px 0',
-  },
-
-  dividerLine: {
-    flex: 1,
-    height: '1px',
-    backgroundColor: tokens.colorNeutralStroke2,
-  },
-
-  dividerText: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: '13px',
-  },
-
-  // ========== LOGIN LINK ==========
-  loginLink: {
+  crossLink: {
     textAlign: 'center',
   },
 
-  loginText: {
+  crossLinkText: {
     fontSize: '14px',
     color: tokens.colorNeutralForeground2,
-  },
-
-  // ========== FOOTER ==========
-  footer: {
-    marginTop: '40px',
-    textAlign: 'center',
-    '@media (min-width: 1024px)': {
-      marginTop: '48px',
-    },
   },
 
   footerText: {
@@ -310,12 +116,10 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
   },
 
-  // ========== ERROR MESSAGE ==========
   errorMessage: {
     marginBottom: '16px',
   },
 
-  // ========== PASSWORD REQUIREMENTS ==========
   passwordHint: {
     fontSize: '12px',
     color: tokens.colorNeutralForeground3,
@@ -413,272 +217,205 @@ export function RegisterPage() {
   };
 
   return (
-    <div className={styles.container}>
-      {/* ========== LEFT PANEL - Desktop Only ========== */}
-      <div className={styles.leftPanel}>
-        <div className={styles.brandLogo}>
-          <Logo size={48} />
-          <span className={styles.logoText}>AzureBank</span>
-        </div>
-
-        <h1 className={styles.tagline}>Start Your Financial Journey Today</h1>
-
-        <p className={styles.taglineSubtext}>
-          Join thousands of customers who trust AzureBank for their everyday banking needs. Quick
-          setup, powerful features.
-        </p>
-
-        <div className={styles.features}>
-          <div className={styles.featureItem}>
-            <div className={styles.featureIcon}>
-              <ShieldCheckmark24Regular />
-            </div>
-            <span className={styles.featureText}>Bank-grade security protection</span>
-          </div>
-
-          <div className={styles.featureItem}>
-            <div className={styles.featureIcon}>
-              <LockClosed24Regular />
-            </div>
-            <span className={styles.featureText}>Instant transfers & payments</span>
-          </div>
-
-          <div className={styles.featureItem}>
-            <div className={styles.featureIcon}>
-              <Globe24Regular />
-            </div>
-            <span className={styles.featureText}>24/7 account access</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ========== RIGHT PANEL - Form ========== */}
-      <div className={styles.rightPanel}>
-        <div className={styles.formContainer}>
-          {/* Mobile Logo */}
-          <div className={styles.mobileLogo}>
-            <Logo size={36} />
-            <span className={styles.mobileLogoText}>AzureBank</span>
-          </div>
-
-          {/* Form Header */}
-          <div className={styles.formHeader}>
-            <Text as="h1" className={styles.formTitle}>
-              Create Account
-            </Text>
-            <Text as="p" className={styles.formSubtitle}>
-              Join AzureBank today
-            </Text>
-          </div>
-
-          {/* D15: tag-collision-blind dual-path banner — FORM-level, never field-attached,
-              neutral copy, "Sign in" pre-fills the typed email via route state. */}
-          {problem?.errorCode === 'REGISTRATION_FAILED' && (
-            <MessageBar
-              intent="error"
-              className={styles.errorMessage}
-              ref={bannerRef}
-              tabIndex={-1}
+    <AuthLayout
+      headline="Start Your Financial Journey Today"
+      intro="Join thousands of customers who trust AzureBank for their everyday banking needs. Quick setup, powerful features."
+      title="Create Account"
+      subtitle="Join AzureBank today"
+      footer={
+        <Text className={styles.footerText}>
+          By creating an account, you agree to our Terms of Service and Privacy Policy
+        </Text>
+      }
+    >
+      {/* D15: tag-collision-blind dual-path banner — FORM-level, never field-attached,
+          neutral copy, "Sign in" pre-fills the typed email via route state. */}
+      {problem?.errorCode === 'REGISTRATION_FAILED' && (
+        <MessageBar intent="error" className={styles.errorMessage} ref={bannerRef} tabIndex={-1}>
+          <MessageBarBody>
+            We couldn't create an account with these details. If you already have an account,{' '}
+            <Link
+              to="/login"
+              state={{ prefillEmail: getValues('email') }}
+              style={{ color: 'inherit' }}
             >
-              <MessageBarBody>
-                We couldn't create an account with these details. If you already have an account,{' '}
-                <Link
-                  to="/login"
-                  state={{ prefillEmail: getValues('email') }}
-                  style={{ color: 'inherit' }}
-                >
-                  <FluentLink as="span">sign in with this email</FluentLink>
-                </Link>{' '}
-                — or try a different AzureTag.
-              </MessageBarBody>
-            </MessageBar>
-          )}
+              <FluentLink as="span">sign in with this email</FluentLink>
+            </Link>{' '}
+            — or try a different AzureTag.
+          </MessageBarBody>
+        </MessageBar>
+      )}
 
-          {rateLimited && lockDeadline !== null && (
-            <MessageBar intent="warning" className={styles.errorMessage}>
-              <MessageBarBody>
-                Too many attempts from your connection.{' '}
-                <RetryCountdown
-                  deadline={lockDeadline}
-                  onElapsed={() => setElapsedDeadline(lockDeadline)}
-                />
-              </MessageBarBody>
-            </MessageBar>
-          )}
+      {rateLimited && lockDeadline !== null && (
+        <MessageBar intent="warning" className={styles.errorMessage}>
+          <MessageBarBody>
+            Too many attempts from your connection.{' '}
+            <RetryCountdown
+              deadline={lockDeadline}
+              onElapsed={() => setElapsedDeadline(lockDeadline)}
+            />
+          </MessageBarBody>
+        </MessageBar>
+      )}
 
-          {errors.root?.message && (
-            <MessageBar intent="error" className={styles.errorMessage}>
-              <MessageBarBody>{errors.root.message}</MessageBarBody>
-            </MessageBar>
-          )}
+      {errors.root?.message && (
+        <MessageBar intent="error" className={styles.errorMessage}>
+          <MessageBarBody>{errors.root.message}</MessageBarBody>
+        </MessageBar>
+      )}
 
-          {problem &&
-            !['REGISTRATION_FAILED', 'RATE_LIMIT_EXCEEDED', 'VALIDATION_ERROR'].includes(
-              problem.errorCode,
-            ) && (
-              <MessageBar intent="error" className={styles.errorMessage}>
-                <MessageBarBody>
-                  {problem.detail || 'Registration failed. Please try again.'}
-                </MessageBarBody>
-              </MessageBar>
-            )}
+      {problem &&
+        !['REGISTRATION_FAILED', 'RATE_LIMIT_EXCEEDED', 'VALIDATION_ERROR'].includes(
+          problem.errorCode,
+        ) && (
+          <MessageBar intent="error" className={styles.errorMessage}>
+            <MessageBarBody>
+              {problem.detail || 'Registration failed. Please try again.'}
+            </MessageBarBody>
+          </MessageBar>
+        )}
 
-          {/* Register Form */}
-          <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
-            {/* Name Row */}
-            <div className={styles.nameRow}>
-              <Field
-                label="First Name"
-                validationState={errors.firstName ? 'error' : 'none'}
-                validationMessage={errors.firstName?.message}
-                className={styles.nameField}
-              >
-                <Input
-                  placeholder="John"
-                  size="large"
-                  {...register('firstName')}
-                  aria-invalid={errors.firstName ? 'true' : 'false'}
-                />
-              </Field>
-
-              <Field
-                label="Last Name"
-                validationState={errors.lastName ? 'error' : 'none'}
-                validationMessage={errors.lastName?.message}
-                className={styles.nameField}
-              >
-                <Input
-                  placeholder="Doe"
-                  size="large"
-                  {...register('lastName')}
-                  aria-invalid={errors.lastName ? 'true' : 'false'}
-                />
-              </Field>
-            </div>
-
-            {/* AzureTag — the public handle other users send money to */}
-            <Field
-              label="AzureTag"
-              hint="Your public handle for receiving transfers — lowercase letters, numbers, underscores"
-              validationState={errors.azureTag ? 'error' : 'none'}
-              validationMessage={errors.azureTag?.message}
-            >
-              <Input
-                placeholder="john_doe"
-                size="large"
-                autoComplete="username"
-                {...register('azureTag')}
-                aria-invalid={errors.azureTag ? 'true' : 'false'}
-              />
-            </Field>
-
-            {/* Email */}
-            <Field
-              label="Email"
-              validationState={errors.email ? 'error' : 'none'}
-              validationMessage={errors.email?.message}
-            >
-              <Input
-                type="email"
-                placeholder="john.doe@example.com"
-                size="large"
-                {...register('email')}
-                aria-invalid={errors.email ? 'true' : 'false'}
-              />
-            </Field>
-
-            {/* Password */}
-            <Field
-              label="Password"
-              validationState={errors.password ? 'error' : 'none'}
-              validationMessage={errors.password?.message}
-              hint="Min 8 characters, 1 uppercase, 1 lowercase, 1 number"
-            >
-              <div className={styles.passwordWrapper}>
-                <Input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  size="large"
-                  className={styles.passwordInput}
-                  {...register('password')}
-                  aria-invalid={errors.password ? 'true' : 'false'}
-                />
-                <Button
-                  appearance="transparent"
-                  className={styles.passwordToggle}
-                  onClick={() => setShowPassword(!showPassword)}
-                  type="button"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff24Regular /> : <Eye24Regular />}
-                </Button>
-              </div>
-            </Field>
-
-            {/* Confirm Password */}
-            <Field
-              label="Confirm Password"
-              validationState={errors.confirmPassword ? 'error' : 'none'}
-              validationMessage={errors.confirmPassword?.message}
-            >
-              <div className={styles.passwordWrapper}>
-                <Input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="Confirm your password"
-                  size="large"
-                  className={styles.passwordInput}
-                  {...register('confirmPassword')}
-                  aria-invalid={errors.confirmPassword ? 'true' : 'false'}
-                />
-                <Button
-                  appearance="transparent"
-                  className={styles.passwordToggle}
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  type="button"
-                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showConfirmPassword ? <EyeOff24Regular /> : <Eye24Regular />}
-                </Button>
-              </div>
-            </Field>
-
-            <Button
-              appearance="primary"
+      {/* Register Form */}
+      <form className={styles.form} onSubmit={handleSubmit(onSubmit)}>
+        {/* Name Row */}
+        <div className={styles.nameRow}>
+          <Field
+            label="First Name"
+            validationState={errors.firstName ? 'error' : 'none'}
+            validationMessage={errors.firstName?.message}
+            className={styles.nameField}
+          >
+            <Input
+              placeholder="John"
               size="large"
-              className={styles.submitButton}
-              type="submit"
-              disabled={isLoading || rateLimited}
-            >
-              {isLoading ? <Spinner size="tiny" /> : 'Create Account'}
-            </Button>
-          </form>
+              {...register('firstName')}
+              aria-invalid={errors.firstName ? 'true' : 'false'}
+            />
+          </Field>
 
-          {/* Divider */}
-          <div className={styles.divider}>
-            <div className={styles.dividerLine} />
-            <span className={styles.dividerText}>or</span>
-            <div className={styles.dividerLine} />
-          </div>
-
-          {/* Login Link */}
-          <div className={styles.loginLink}>
-            <Text className={styles.loginText}>
-              Already have an account?{' '}
-              <Link to="/login" style={{ color: 'inherit' }}>
-                <FluentLink as="span">Sign In</FluentLink>
-              </Link>
-            </Text>
-          </div>
-
-          {/* Footer */}
-          <div className={styles.footer}>
-            <Text className={styles.footerText}>
-              By creating an account, you agree to our Terms of Service and Privacy Policy
-            </Text>
-          </div>
+          <Field
+            label="Last Name"
+            validationState={errors.lastName ? 'error' : 'none'}
+            validationMessage={errors.lastName?.message}
+            className={styles.nameField}
+          >
+            <Input
+              placeholder="Doe"
+              size="large"
+              {...register('lastName')}
+              aria-invalid={errors.lastName ? 'true' : 'false'}
+            />
+          </Field>
         </div>
+
+        {/* AzureTag — the public handle other users send money to */}
+        <Field
+          label="AzureTag"
+          hint="Your public handle for receiving transfers — lowercase letters, numbers, underscores"
+          validationState={errors.azureTag ? 'error' : 'none'}
+          validationMessage={errors.azureTag?.message}
+        >
+          <Input
+            placeholder="john_doe"
+            size="large"
+            autoComplete="username"
+            {...register('azureTag')}
+            aria-invalid={errors.azureTag ? 'true' : 'false'}
+          />
+        </Field>
+
+        {/* Email */}
+        <Field
+          label="Email"
+          validationState={errors.email ? 'error' : 'none'}
+          validationMessage={errors.email?.message}
+        >
+          <Input
+            type="email"
+            placeholder="john.doe@example.com"
+            size="large"
+            {...register('email')}
+            aria-invalid={errors.email ? 'true' : 'false'}
+          />
+        </Field>
+
+        {/* Password */}
+        <Field
+          label="Password"
+          validationState={errors.password ? 'error' : 'none'}
+          validationMessage={errors.password?.message}
+          hint="Min 8 characters, 1 uppercase, 1 lowercase, 1 number"
+        >
+          <div className={styles.passwordWrapper}>
+            <Input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Enter your password"
+              size="large"
+              className={styles.passwordInput}
+              {...register('password')}
+              aria-invalid={errors.password ? 'true' : 'false'}
+            />
+            <Button
+              appearance="transparent"
+              className={styles.passwordToggle}
+              onClick={() => setShowPassword(!showPassword)}
+              type="button"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeOff24Regular /> : <Eye24Regular />}
+            </Button>
+          </div>
+        </Field>
+
+        {/* Confirm Password */}
+        <Field
+          label="Confirm Password"
+          validationState={errors.confirmPassword ? 'error' : 'none'}
+          validationMessage={errors.confirmPassword?.message}
+        >
+          <div className={styles.passwordWrapper}>
+            <Input
+              type={showConfirmPassword ? 'text' : 'password'}
+              placeholder="Confirm your password"
+              size="large"
+              className={styles.passwordInput}
+              {...register('confirmPassword')}
+              aria-invalid={errors.confirmPassword ? 'true' : 'false'}
+            />
+            <Button
+              appearance="transparent"
+              className={styles.passwordToggle}
+              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              type="button"
+              aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+            >
+              {showConfirmPassword ? <EyeOff24Regular /> : <Eye24Regular />}
+            </Button>
+          </div>
+        </Field>
+
+        <Button
+          appearance="primary"
+          size="large"
+          className={styles.submitButton}
+          type="submit"
+          disabled={isLoading || rateLimited}
+        >
+          {isLoading ? <Spinner size="tiny" /> : 'Create Account'}
+        </Button>
+      </form>
+
+      <AuthDivider />
+
+      <div className={styles.crossLink}>
+        <Text className={styles.crossLinkText}>
+          Already have an account?{' '}
+          <Link to="/login" style={{ color: 'inherit' }}>
+            <FluentLink as="span">Sign In</FluentLink>
+          </Link>
+        </Text>
       </div>
-    </div>
+    </AuthLayout>
   );
 }
 
