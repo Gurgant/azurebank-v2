@@ -53,8 +53,6 @@ interface SuccessData {
 // STYLES
 // ============================================
 
-const useStyles = useMoneyDialogStyles;
-
 // ============================================
 // CONSTANTS
 // ============================================
@@ -78,7 +76,7 @@ const QUICK_AMOUNTS = [50, 100, 200, 500];
  * funnel through the keyLive guard.
  */
 export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositDialogProps) {
-  const styles = useStyles();
+  const styles = useMoneyDialogStyles();
   const navigate = useNavigate();
 
   const [depositTrigger] = useDepositMutation();

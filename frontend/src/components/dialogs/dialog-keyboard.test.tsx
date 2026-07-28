@@ -121,12 +121,17 @@ describe('money dialogs and the keyboard', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: '€100' }));
     await userEvent.click(within(dialog).getByRole('button', { name: /Deposit €100/ }));
 
-    // Aimed AT the surface. `userEvent.keyboard` targets `document.activeElement`, which after a
-    // submit is a disabled button that swallows it — the first version of this test passed with
-    // the guard deleted, which is the only reason I know that.
-    await userEvent.type(dialog, '{Escape}');
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-
-    release();
+    try {
+      // Aimed AT the surface. `userEvent.keyboard` targets `document.activeElement`, which after a
+      // submit is a disabled button that swallows it — the first version of this test passed with
+      // the guard deleted, which is the only reason I know that.
+      await userEvent.type(dialog, '{Escape}');
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    } finally {
+      // In a `finally` because the handler is parked on this promise. If the assertion throws and
+      // the release never runs, the request never settles, the state update lands after teardown,
+      // and a clear failure here becomes a hang or a stray rejection in whatever runs next.
+      release();
+    }
   });
 });

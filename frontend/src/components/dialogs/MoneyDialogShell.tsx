@@ -74,6 +74,13 @@ export function MoneyDialogShell({
             {title}
           </div>
           <button
+            // Convention, not a live fix. A bare <button> is type="submit", but MEASURED here it
+            // can never act as one: Fluent portals DialogSurface to document.body, so even with a
+            // caller wrapping the whole shell in a <form> this button reports no form owner
+            // (`close.form === null`, `closest('form') === null`). Kept because it costs nothing
+            // and states the intent — NOT because deleting it breaks anything, and deliberately
+            // not defended by a test, since any such test would pass with it removed.
+            type="button"
             className={styles.closeButton}
             aria-label="Close"
             onClick={onClose}
