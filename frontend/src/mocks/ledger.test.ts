@@ -166,6 +166,36 @@ describe('GET /api/transactions honours AccountId', () => {
     expect(one.data).not.toHaveProperty('accountId');
   });
 
+  it.each([
+    ['a missing account', '/api/transactions/deposit', 'Account'],
+    [
+      'a missing transaction',
+      '/api/transactions/019f7b3f-0000-7000-8000-0000000000ff',
+      'Transaction',
+    ],
+  ])('says %s the way NotFoundException says it', async (_case, url, resource) => {
+    // The two-argument constructor puts the RESOURCE NAME first — "Account with identifier 'x' was
+    // not found." — and hard-codes ACCOUNT_NOT_FOUND whatever the resource is. The mock had drifted
+    // from both halves at once: five handlers invented a NOT_FOUND code the API cannot emit, and
+    // three invented "No account was found with identifier '…'." One builder emits both now.
+    const res =
+      url === '/api/transactions/deposit'
+        ? await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3396',
+            },
+            body: JSON.stringify({ accountId: 'nope', amount: 25 }),
+          })
+        : await fetch(url);
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(body.detail).toMatch(new RegExp(`^${resource} with identifier '.+' was not found\\.$`));
+  });
+
   it('403s on an account that is not the callers, like the real service does', async () => {
     const res = await fetch('/api/transactions?AccountId=019f7b3f-0000-7000-8000-0000000000ff');
 

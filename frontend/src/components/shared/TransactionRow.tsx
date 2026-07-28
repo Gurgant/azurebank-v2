@@ -92,15 +92,7 @@ export function TransactionRow({
       )}
 
       <td className={styles.td}>
-        <span
-          className={mergeClasses(
-            styles.pill,
-            t.status === 'Pending' && styles.pillPending,
-            t.status === 'Completed' && styles.pillDone,
-          )}
-        >
-          {t.status}
-        </span>
+        <StatusPill status={t.status} />
       </td>
     </tr>
   );
@@ -171,8 +163,13 @@ export function TransactionRowSkeleton({ showBalance = false }: { showBalance?: 
 }
 
 /**
- * The status, on its own, for the places that show one outside a table — the dashboard's "needs
- * attention" list. Same vocabulary, same colours, same never-colour-alone rule.
+ * The status pill — every one of them, in the row above and in the places that show one outside a
+ * table (the dashboard's "needs attention" list).
+ *
+ * The row used to inline its own copy of this. Byte-identical logic, and still wrong: a file whose
+ * whole subject is that two copies of one rule drift apart had two copies of the status rule in it.
+ * Caught in review, which is the point — the version that renders correctly and the version that is
+ * structurally safe are not the same thing, and only the second one survives the next edit.
  */
 export function StatusPill({ status }: { status: TransactionResponse['status'] }) {
   const styles = useStyles();

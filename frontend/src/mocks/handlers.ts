@@ -90,6 +90,30 @@ function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
 }
 
 /**
+ * The 404 every missing resource produces, mirroring `NotFoundException(resource, identifier)`.
+ *
+ * Read the constructor before changing this — it is surprising, and the mock had it wrong in two
+ * different directions before these were one function:
+ *
+ *  - The message is `"{resource} with identifier '{id}' was not found."` — the resource name leads.
+ *    Three handlers had invented "No account was found with identifier '…'." instead.
+ *  - The code is `ErrorCodes.AccountNotFound` — **for every resource**, Account, User, Transaction
+ *    and Recipient alike. The two-argument constructor hard-codes it and never looks at
+ *    `TransactionNotFound` or `UserNotFound`, which exist but are unreachable from this path. Five
+ *    handlers had guessed a plausible `NOT_FOUND` that the API cannot emit.
+ *
+ * Mirroring the quirk is the point. A mock that "corrects" the server teaches a client to expect a
+ * code it will never receive, and the bug then belongs to production rather than to this file.
+ */
+function notFound(resource: 'Account' | 'Transaction' | 'Recipient', identifier: unknown) {
+  return problem({
+    status: 404,
+    errorCode: 'ACCOUNT_NOT_FOUND',
+    detail: `${resource} with identifier '${String(identifier)}' was not found.`,
+  });
+}
+
+/**
  * The API never exposes the full number (AccountMapper masks it server-side), so the mock holds
  * none. Synthesize a deterministic unmasked value from the visible last group for the reveal
  * endpoint: `AB-****-****-90` → `AB-1234-5678-90`.
@@ -132,13 +156,7 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
 const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   const body = (await request.clone().json()) as { name?: string };
   account.name = body.name ?? account.name;
@@ -149,13 +167,7 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
 const setPrimaryAccount = api.patch('/api/accounts/{id}/set-primary', ({ params, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   for (const a of mockState.accounts) {
     a.isPrimary = false;
@@ -171,13 +183,7 @@ const setPrimaryAccount = api.patch('/api/accounts/{id}/set-primary', ({ params,
 const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   if (account.balance !== 0) {
     return response.untyped(
@@ -212,13 +218,7 @@ const revealAccountNumber = api.get('/api/accounts/{id}/full-number', ({ params,
   }
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   return response(200).json({
     data: { accountId: account.id, accountNumber: unmaskForMock(account.accountNumber) },
@@ -341,13 +341,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
 const getTransaction = api.get('/api/transactions/{id}', ({ params, response }) => {
   const transaction = mockState.transactions.find((t) => t.id === params.id);
   if (!transaction) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Transaction with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Transaction', params.id));
   }
   return response(200).json({ data: toWire(transaction), message: null });
 });
@@ -417,13 +411,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     use a seeded account, which costs them nothing.
   */
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'ACCOUNT_NOT_FOUND',
-        detail: `No account was found with identifier '${body.accountId}'.`,
-      }),
-    );
+    return response.untyped(notFound('Account', body.accountId));
   }
   const newBalance = account.balance + amount;
   account.balance = newBalance;
@@ -579,13 +567,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   // exist first: see the note on deposit above.
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'ACCOUNT_NOT_FOUND',
-        detail: `No account was found with identifier '${body.accountId}'.`,
-      }),
-    );
+    return response.untyped(notFound('Account', body.accountId));
   }
   const available = account.balance;
   if (amount > available) {
@@ -749,25 +731,14 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
   const recipient = mockState.recipients.find((r) => r.azureTag === tag);
   if (!recipient) {
-    // Recipient-not-found surfaces as ACCOUNT_NOT_FOUND — NotFoundException hard-codes it.
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'ACCOUNT_NOT_FOUND',
-        detail: `No user was found with the handle '${tag}'.`,
-      }),
-    );
+    // `TransferService` throws NotFoundException("Recipient", tag) here — hence the resource name
+    // and the ACCOUNT_NOT_FOUND code, which that constructor uses for every resource.
+    return response.untyped(notFound('Recipient', tag));
   }
 
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'ACCOUNT_NOT_FOUND',
-        detail: `No account was found with identifier '${body.fromAccountId}'.`,
-      }),
-    );
+    return response.untyped(notFound('Account', body.fromAccountId));
   }
   const available = account.balance;
   if (amount > available) {
@@ -888,16 +859,16 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       }),
     );
   }
+  // Checked in turn, source first, because `InternalTransferAsync` resolves them that way through
+  // two separate `GetAccountWithOwnershipCheckAsync` calls — so the 404 names the account it could
+  // not find rather than shrugging at "one of the accounts".
   const from = mockState.accounts.find((a) => a.id === body.fromAccountId);
+  if (!from) {
+    return response.untyped(notFound('Account', body.fromAccountId));
+  }
   const to = mockState.accounts.find((a) => a.id === body.toAccountId);
-  if (!from || !to) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'ACCOUNT_NOT_FOUND',
-        detail: 'One of the accounts could not be found.',
-      }),
-    );
+  if (!to) {
+    return response.untyped(notFound('Account', body.toAccountId));
   }
   if (amount > from.balance) {
     return response.untyped(
