@@ -152,6 +152,71 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   return response(201).json({ data: account, message: 'Account created successfully.' });
 });
 
+/**
+ * GET /api/accounts/{id} — the single account, enveloped like every other read.
+ *
+ * Had no handler at all while `getAccount`/`useGetAccountQuery` sat exported from the barrel. The
+ * sentinel at the bottom of this file is what makes that impossible to repeat quietly.
+ */
+const getAccount = api.get('/api/accounts/{id}', ({ params, response }) => {
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(notFound('Account', params.id));
+  }
+  return response(200).json({ data: account, message: null });
+});
+
+/**
+ * GET /api/accounts/{id}/balance — current, or as of a moment in the past.
+ *
+ * `AccountService.GetBalanceAsync` has two branches and the boundary is not the obvious one: `at`
+ * omitted OR `at >= now` both mean CURRENT, so a client asking about the future is answered about
+ * the present with `isHistorical: false`. The historical branch takes the `balanceAfter` of the
+ * most recent entry at or before `at`, and 0 when the account had no entries yet — not the opening
+ * balance, zero.
+ *
+ * Reproducible here only because the ledger gained per-account entries: before that, "the most
+ * recent transaction on THIS account" was not a question the mock could answer.
+ */
+const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, request, response }) => {
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(notFound('Account', params.id));
+  }
+
+  const at = new URL(request.url).searchParams.get('at');
+  const atMs = at ? Date.parse(at) : Number.NaN;
+  const now = new Date();
+
+  if (!at || Number.isNaN(atMs) || atMs >= now.getTime()) {
+    return response(200).json({
+      data: {
+        accountId: account.id,
+        balance: account.balance,
+        currency: 'EUR',
+        asOf: now.toISOString(),
+        isHistorical: false,
+      },
+      message: null,
+    });
+  }
+
+  const priorEntry = mockState.transactions
+    .filter((t) => t.accountId === account.id && Date.parse(t.createdAt) <= atMs)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+
+  return response(200).json({
+    data: {
+      accountId: account.id,
+      balance: priorEntry ? priorEntry.balanceAfter : 0,
+      currency: 'EUR',
+      asOf: new Date(atMs).toISOString(),
+      isHistorical: true,
+    },
+    message: null,
+  });
+});
+
 /** PATCH /api/accounts/{id} — rename (A5): name only, per the contract. */
 const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
@@ -1181,9 +1246,38 @@ const sessionActivity = http.all('*/api/*', () => {
   return undefined;
 });
 
+/**
+ * The last handler in the list, and the reason the list can be trusted.
+ *
+ * `sessionActivity` above is registered as `http.all('*/ api; /*')` and returns `undefined` so the
+ * real endpoint handler runs after it. MSW treats that as a MATCH, so a request to an `/api` route
+ * with no handler at all is "handled" — and `onUnhandledRequest: 'error'` never fires. Measured:
+ * fetching an unmocked `/api/...` inside vitest throws a bare `fetch failed`, exactly like a
+ * network outage, because the request escaped MSW entirely. In `dev:mock` (`bypass`) it escapes to
+ * Vite, which answers with HTML and the query dies on a parse error.
+ *
+ * That is how `GET /api/accounts/{id}` and `/{id}/balance` sat unmocked while both of their RTK
+ * Query hooks were exported: nothing anywhere said so. A mock that cannot report its own gaps is
+ * an oracle you cannot audit.
+ *
+ * So: an explicit sentinel, LAST, reached only when every real handler has declined. It names the
+ * method and the path, which is the sentence the developer needed in the first place.
+ */
+const unmockedApiRoute = http.all('*/api/*', ({ request }) => {
+  const { pathname } = new URL(request.url);
+  return problem({
+    status: 501,
+    errorCode: 'MOCK_HANDLER_MISSING',
+    title: 'Not Implemented',
+    detail: `No mock handler for ${request.method} ${pathname}. The API has this route; add a handler in src/mocks/handlers.ts.`,
+  });
+});
+
 export const handlers = [
   sessionActivity,
   listAccounts,
+  getAccount,
+  getAccountBalance,
   createAccount,
   renameAccount,
   setPrimaryAccount,
@@ -1205,4 +1299,6 @@ export const handlers = [
   me,
   logout,
   sessionStatus,
+  // LAST, always. Everything above declines before this speaks.
+  unmockedApiRoute,
 ];
