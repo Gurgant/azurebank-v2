@@ -234,3 +234,38 @@ describe('the two shapes every error inherits', () => {
     expect(ok.status).toBe(200);
   });
 });
+
+describe('a date that will not parse', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it.each(['/api/transactions/summary', '/api/transactions'])(
+    '%s rejects it instead of silently unfiltering',
+    async (url) => {
+      // NaN poisons every comparison quietly: `NaN > NaN` is false so the range guard passes, and
+      // `at < NaN` / `at > NaN` are both false so the filter keeps everything. The summary answered
+      // 200 with all-time totals and echoed `fromDate: "notadate"` straight back — the exact
+      // failure the window fix had just been written to prevent. `[FromQuery] DateTime?` never
+      // binds, so the API answers from model binding before its own code runs.
+      const res = await fetch(`${url}?FromDate=notadate`);
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.errors.FromDate).toEqual(["The value 'notadate' is not valid."]);
+    },
+  );
+
+  it('names every bad bound, not just the first', async () => {
+    const body = await fetch('/api/transactions?FromDate=nope&ToDate=alsonope').then((r) =>
+      r.json(),
+    );
+
+    expect(Object.keys(body.errors).sort()).toEqual(['FromDate', 'ToDate']);
+  });
+
+  it('still accepts a well-formed window', async () => {
+    const res = await fetch('/api/transactions/summary?FromDate=2026-07-01T00:00:00Z');
+    expect(res.status).toBe(200);
+  });
+});

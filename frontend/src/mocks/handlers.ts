@@ -90,6 +90,37 @@ function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
 }
 
 /**
+ * A query-string date that will not parse, rejected the way MODEL BINDING rejects it.
+ *
+ * `Date.parse('garbage')` is `NaN`, and NaN poisons every comparison silently: `NaN > NaN` is
+ * false, so a range guard passes, and `at < NaN` / `at > NaN` are both false, so a filter includes
+ * everything. The summary answered 200 with all-time totals and echoed the garbage straight back
+ * as `fromDate` — the precise failure the window fix had just been written to prevent.
+ *
+ * The API never reaches its own code here: `[FromQuery] DateTime?` fails to bind and ASP.NET's
+ * default `InvalidModelStateResponseFactory` answers first, keyed by the BOUND PARAMETER NAME
+ * (PascalCase, unlike the camelCase keys FluentValidation produces) with the framework's own
+ * sentence.
+ *
+ * The envelope is the one this mock already builds. The real model-binding failure carries the
+ * framework's `ValidationProblemDetails` — title "One or more validation errors occurred.", an
+ * rfc7231 `type`, no detail — which differs from the app's `ValidationExceptionHandler`. Modelling
+ * two 400 envelopes was not worth it for a difference no client branches on; the key and the
+ * message, which one might, are exact.
+ */
+function rejectUnparseableDates(
+  raw: Record<string, string | null>,
+): ReturnType<typeof problem> | null {
+  const errors: Record<string, string[]> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (value !== null && Number.isNaN(Date.parse(value))) {
+      errors[name] = [`The value '${value}' is not valid.`];
+    }
+  }
+  return Object.keys(errors).length > 0 ? problem({ status: 400, errors }) : null;
+}
+
+/**
  * The 404 every missing resource produces, mirroring `NotFoundException(resource, identifier)`.
  *
  * Read the constructor before changing this — it is surprising, and the mock had it wrong in two
@@ -348,6 +379,13 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     callers send 3, so lexicographic ordering would put `…09:15:00.0000000Z` after
     `…09:15:00.000Z` and drop rows on an exact boundary.
   */
+  const badDates = rejectUnparseableDates({
+    FromDate: params.get('FromDate'),
+    ToDate: params.get('ToDate'),
+  });
+  if (badDates) {
+    return response.untyped(badDates);
+  }
   const fromMs = params.get('FromDate') ? Date.parse(params.get('FromDate') as string) : null;
   const toMs = params.get('ToDate') ? Date.parse(params.get('ToDate') as string) : null;
 
@@ -401,6 +439,14 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     whose whole label is "July so far", was quietly reporting all time. Missing ToDate is `now`,
     which the mock did have right.
   */
+  const badSummaryDates = rejectUnparseableDates({
+    FromDate: params.get('FromDate'),
+    ToDate: params.get('ToDate'),
+  });
+  if (badSummaryDates) {
+    return response.untyped(badSummaryDates);
+  }
+
   const now = new Date();
   const monthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
