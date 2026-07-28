@@ -125,3 +125,21 @@ hidden, so `requestAnimationFrame` never fires and React 19 freezes partway thro
 update: the network response arrives with a 200 and the spinner spins forever. This is a harness
 defect and must never be written up as an application bug. Drive the real browser instead, and when
 anything looks hung, check the network tab and the DOM before believing it.
+
+## MSW mocks
+
+**A block comment cannot quote the glob `*` + `/api/*`.** The `*` followed by `/` in the middle of
+it closes the comment, and everything after becomes code. Documenting `handlers.ts`'s catch-all did
+exactly that: it left a live `api;` expression statement in the file and rewrote the docblock to
+quote a pattern that does not exist. It compiled, the build passed and all tests passed — only
+eslint's `no-unused-expressions` noticed. Describe the glob in prose, or put it in a `//` line
+comment.
+
+**A catch-all that returns `undefined` disables `onUnhandledRequest`.** `sessionActivity` is
+registered over every `/api` path so it can expire the session, and it returns `undefined` to fall
+through to the real handler. MSW counts that as a MATCH, so a route with NO handler is "handled" —
+`onUnhandledRequest: 'error'` never fires and the request escapes to the network. Measured: an
+unmocked `/api` path throws a bare `fetch failed` in vitest, indistinguishable from an outage, and
+in `dev:mock` it reaches Vite and dies on an HTML parse error. Two real API routes stayed unmocked
+for months behind exported hooks because of it. A sentinel handler registered LAST answers
+`501 MOCK_HANDLER_MISSING` and names the route.

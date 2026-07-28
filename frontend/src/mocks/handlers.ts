@@ -1326,8 +1326,8 @@ const sessionActivity = http.all('*/api/*', () => {
 /**
  * The last handler in the list, and the reason the list can be trusted.
  *
- * `sessionActivity` above is registered as `http.all('*/ api; /*')` and returns `undefined` so the
- * real endpoint handler runs after it. MSW treats that as a MATCH, so a request to an `/api` route
+ * `sessionActivity` above is an `http.all` catch-all over every `/api` path, and it returns
+ * `undefined` so the real endpoint handler runs after it. MSW treats that as a MATCH, so a request to an `/api` route
  * with no handler at all is "handled" — and `onUnhandledRequest: 'error'` never fires. Measured:
  * fetching an unmocked `/api/...` inside vitest throws a bare `fetch failed`, exactly like a
  * network outage, because the request escaped MSW entirely. In `dev:mock` (`bypass`) it escapes to
@@ -1340,6 +1340,10 @@ const sessionActivity = http.all('*/api/*', () => {
  * So: an explicit sentinel, LAST, reached only when every real handler has declined. It names the
  * method and the path, which is the sentence the developer needed in the first place.
  */
+// NB: never quote this glob inside a BLOCK comment. The `*` + `/` in the middle of it closes the
+// comment early, and what follows becomes code — that mistake put a live `api;` statement in this
+// file, which compiled, passed the tests, and left the docblock quoting a pattern that does not
+// exist. Only eslint's no-unused-expressions caught it.
 const unmockedApiRoute = http.all('*/api/*', ({ request }) => {
   const { pathname } = new URL(request.url);
   return problem({
