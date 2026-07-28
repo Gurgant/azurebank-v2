@@ -19,8 +19,6 @@ import {
   SettingsPage,
   AboutPage,
 } from './pages';
-// U3 SCRATCH — see the gated route below. Removed with it.
-import { DevDashboardGallery } from './pages/dev/DevDashboardGallery';
 
 // ============================================
 // APP COMPONENT
@@ -131,24 +129,6 @@ function App() {
                 </ProtectedRoute>
               }
             />
-
-            {/* U3 SCRATCH — deleted in the same PR that picks a winner.
-                Three dashboard directions rendered inside the real shell, because the defect they
-                have to solve is caused partly by the shell's own 240px sidebar.
-                `import.meta.env.DEV` is replaced with `false` at build time, so Rollup drops the
-                branch and then the import. That is the theory; the practice is checked by grepping
-                a production build for `U3-SCRATCH-DASHBOARD-DIRECTIONS`. A dev-only door nobody
-                re-checks stops being dev-only — which is why A3 deleted `DEV_BYPASS_AUTH`. */}
-            {import.meta.env.DEV && (
-              <Route
-                path="/dev/dashboard/:variant"
-                element={
-                  <ProtectedShell>
-                    <DevDashboardGallery />
-                  </ProtectedShell>
-                }
-              />
-            )}
 
             {/* Fallback - Redirect unknown routes to dashboard */}
             <Route path="*" element={<Navigate to="/" replace />} />

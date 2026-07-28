@@ -1,19 +1,23 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { http, HttpResponse } from 'msw';
-import { format } from 'date-fns';
+import { http } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { DashboardPage } from './DashboardPage';
 
 /**
- * F1 — the LAST page off mock data. Pins: real accounts (EUR, masked numbers, primary
- * first), the recent feed with REAL ids navigating to the detail route, the money dialogs
- * opening over the real account list, the server-side monthly summary, and the D22
- * page/sectional state split (accounts gate the page; feed and summary fail alone).
+ * The dashboard, and the one property the whole design hangs on.
+ *
+ * **A running balance beside a cross-account total cannot reconcile.** `balanceAfter` is
+ * per-account; the hero is a sum. Printing both is how the old screen came to show €2,200.50 on its
+ * newest row under a €2,080.50 heading — two numbers contradicting each other on a banking home
+ * page, which is the kind of thing that costs trust rather than points.
+ *
+ * So the scope selector is not decoration: it decides what the page is ABOUT, and the Balance
+ * column exists only when the answer is one account. That is what most of this file asserts.
  */
 
 function renderDashboard() {
@@ -22,131 +26,160 @@ function renderDashboard() {
       <Route path="/" element={<DashboardPage />} />
       <Route path="/transactions/:id" element={<div>TX DETAIL</div>} />
       <Route path="/accounts" element={<div>ACCOUNTS PAGE</div>} />
-      <Route path="/transfer" element={<div>TRANSFER PAGE</div>} />
+      <Route path="/about" element={<div>ABOUT PAGE</div>} />
     </Routes>,
     { routerEntries: ['/'] },
   );
 }
 
-describe('dashboard (F1)', () => {
-  it('renders the real accounts: EUR balances, display-masked numbers, primary first', async () => {
+/** The ledger's column headers, which are the observable side of the thesis. */
+const columns = () => [...document.querySelectorAll('th')].map((th) => th.textContent?.trim());
+
+describe('the scope decides what the page is about', () => {
+  it('sums every account, and prints NO running balance while it does', async () => {
     renderDashboard();
+    const heading = await screen.findByRole('heading', { level: 1 });
 
-    // Primary hero card = the isPrimary account, EUR, bullet-masked (never raw asterisks).
-    expect(await screen.findByText('Main Account')).toBeInTheDocument();
-    expect(screen.getByText('€1,250.50')).toBeInTheDocument();
-    expect(screen.getByText('AB-••••-••••-90')).toBeInTheDocument();
-    expect(screen.queryByText('AB-****-****-90')).not.toBeInTheDocument();
+    // 1250.50 + 830.00
+    expect(heading).toHaveTextContent('€2,080.50');
+    expect(screen.getByText(/Across 2 accounts/)).toBeInTheDocument();
 
-    // Secondary (desktop) card.
-    expect(screen.getByText('Rainy Day')).toBeInTheDocument();
-    expect(screen.getByText('€830.00')).toBeInTheDocument();
-
-    // Accounts Overview does the real math.
-    expect(screen.getByText('€2,080.50')).toBeInTheDocument();
-    expect(screen.getByText('Total Accounts')).toBeInTheDocument();
-
-    // The mock-era USD world is gone.
-    expect(screen.queryByText(/\$\d/)).not.toBeInTheDocument();
+    // The load-bearing absence. A Balance column here would be a per-account figure under a
+    // cross-account heading.
+    expect(columns()).toEqual(['When', 'Entry', 'Amount', 'Status']);
   });
 
-  it('shows the recent feed with real data; a row navigates to the transaction detail', async () => {
-    const user = userEvent.setup();
+  it('re-points the heading at one account and only THEN shows the balance column', async () => {
     renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
 
-    // Newest-first heroes from the stateful ledger, signed by TYPE (unsigned contract amounts).
-    expect(await screen.findByText('Salary — July')).toBeInTheDocument();
-    expect(screen.getByText('+€1,250.50')).toBeInTheDocument();
-    // Transfer rows lead with the counterparty handle.
-    expect(screen.getByText('To @john_d')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Main Account/ }));
 
-    // A REAL id rides the click into the detail route (the mock era navigated to
-    // fabricated ids that 404'd).
-    await user.click(screen.getByText('Salary — July'));
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('€1,250.50');
+    expect(columns()).toEqual(['When', 'Entry', 'Amount', 'Balance', 'Status']);
+    expect(screen.getByRole('button', { name: /Main Account/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('names the accounts by their masked numbers, and marks the primary one', async () => {
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    const main = screen.getByRole('button', { name: /Main Account/ });
+    // The tail is how a person tells two accounts apart; the full number never appears here.
+    // `maskAccountNumber` renders `AB-••••-••••-90`: the bank prefix and the last two digits.
+    expect(main.textContent).toMatch(/AB-.*90/);
+    expect(main).toHaveTextContent('PRIMARY');
+    expect(screen.getByRole('button', { name: /Rainy Day/ })).toHaveTextContent('€830.00');
+  });
+
+  it('says the month is all-accounts, because the API cannot yet scope it', async () => {
+    // `getTransactionSummary` takes { fromDate, toDate } and no AccountId. Rendering a total that
+    // silently disagrees with the ledger beside it would be worse than saying so.
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+    await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
+
+    expect(await screen.findByText(/cannot yet be filtered to one/)).toBeInTheDocument();
+  });
+});
+
+describe('the ledger', () => {
+  it('opens a transaction, and strikes through one that did not stand', async () => {
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    // A reversed withdrawal put the money back. A bare minus sign says it did not.
+    const reversed = screen.getByText('ATM — disputed').closest('tr')!;
+    expect(within(reversed).getByText('Reversed')).toBeInTheDocument();
+    expect(within(reversed).getByText(/-€30\.00/)).toHaveStyle({ textDecoration: 'line-through' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Salary — July' }));
     expect(await screen.findByText('TX DETAIL')).toBeInTheDocument();
   });
 
-  it('opens the real DepositDialog over the full account list from the quick action', async () => {
-    const user = userEvent.setup();
+  it('marks each entry Completed, Pending or Reversed in words, not only in colour', async () => {
     renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
 
-    await screen.findByText('Main Account');
-    // By ROLE with the exact name: the recent rows also contain "Deposit" as a type label,
-    // but their accessible name is the full row concatenation, so only the quick action matches.
-    await user.click(screen.getByRole('button', { name: 'Deposit' }));
+    const statuses = [...document.querySelectorAll('tbody tr')].map((tr) =>
+      tr.lastElementChild?.textContent?.trim(),
+    );
+    expect(statuses).toEqual(['Completed', 'Completed', 'Pending', 'Completed', 'Reversed']);
+  });
+});
 
-    // The dialog mounts on open with the real accounts to pick from.
-    expect(await screen.findByText('Deposit Money')).toBeInTheDocument();
-    expect(screen.getAllByText('Main Account').length).toBeGreaterThan(1);
+describe('the rest of the page', () => {
+  it('turns the one pending item into a task you can open', async () => {
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    const attention = screen.getByText('Needs attention').closest('section')!;
+    await userEvent.click(within(attention).getByRole('button', { name: /Dinner split/ }));
+    expect(await screen.findByText('TX DETAIL')).toBeInTheDocument();
   });
 
-  it('renders the monthly summary aggregate from the server-side endpoint', async () => {
-    // Fixed override: the rendering contract is pinned independently of the clock and
-    // the ledger's dates (the stateful handler's math is mock infra, not page behavior).
+  it('offers a way to reach a human that goes somewhere real', async () => {
+    // The old copy promised a support team available 24/7. There is no team — this is a portfolio
+    // project — and a link to nowhere is the same defect as a button that cannot do what it says.
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    expect(screen.queryByText(/24\/7/)).toBeNull();
+    await userEvent.click(screen.getByRole('link', { name: /Get in touch/ }));
+    expect(await screen.findByText('ABOUT PAGE')).toBeInTheDocument();
+  });
+
+  it('hides every figure at once when asked, and says which state it is in', async () => {
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Hide balances' }));
+
+    expect(await screen.findByRole('heading', { level: 1 })).not.toHaveTextContent('€2,080.50');
+    // The chips must go too: hiding the total while printing its parts underneath hides nothing.
+    expect(screen.getByRole('button', { name: /Main Account/ })).not.toHaveTextContent('1,250.50');
+    expect(screen.getByRole('button', { name: 'Show balances' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('opens the deposit dialog over the real account list', async () => {
+    renderDashboard();
+    await screen.findByRole('heading', { level: 1 });
+
+    await userEvent.click(screen.getByRole('button', { name: /Deposit/ }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+describe('a partial failure', () => {
+  it('keeps the summary sectional: the ledger and the balance survive it', async () => {
     server.use(
       http.get('*/api/transactions/summary', () =>
-        HttpResponse.json({
-          data: {
-            totalIncome: 2000,
-            totalExpenses: 500,
-            netChange: 1500,
-            pendingCount: 1,
-            fromDate: '2026-07-01T00:00:00.0000000Z',
-            toDate: '2026-07-23T12:00:00.0000000Z',
-          },
-          message: null,
-        }),
+        problem({ status: 500, detail: 'Summary unavailable' }),
       ),
     );
     renderDashboard();
 
-    // Month-labelled card with signed EUR rows and the pending count.
-    const monthLabel = format(new Date(), 'MMMM');
-    expect(await screen.findByText(`${monthLabel} Summary`)).toBeInTheDocument();
-    expect(await screen.findByText('+€2,000.00')).toBeInTheDocument();
-    expect(screen.getByText('-€500.00')).toBeInTheDocument();
-    expect(screen.getByText('+€1,500.00')).toBeInTheDocument();
-    expect(screen.getByText('Pending Transactions')).toBeInTheDocument();
+    // D22: accounts gate the page, everything else fails alone.
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('€2,080.50');
+    expect(await screen.findByText(/Could not load this month/)).toBeInTheDocument();
+    expect(screen.getByText('Salary — July')).toBeInTheDocument();
   });
 
-  it('an accounts failure gates the page: problem detail + Retry, no stale cards', async () => {
+  it('gates the whole page when the accounts themselves fail', async () => {
     server.use(
-      http.get('*/api/accounts', () =>
-        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Something broke.' }),
-      ),
+      http.get('*/api/accounts', () => problem({ status: 500, detail: 'Accounts unavailable' })),
     );
     renderDashboard();
 
-    expect(await screen.findByText(/Something broke\./)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(screen.queryByText('Main Account')).not.toBeInTheDocument();
-  });
-
-  it('a summary failure stays SECTIONAL: inline retry while the rest of the page lives', async () => {
-    server.use(
-      http.get('*/api/transactions/summary', () =>
-        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Aggregate down.' }),
-      ),
-    );
-    renderDashboard();
-
-    // The page (accounts + feed) is intact…
-    expect(await screen.findByText('Main Account')).toBeInTheDocument();
-    expect(await screen.findByText('Salary — July')).toBeInTheDocument();
-    // …and only the summary card degrades, with its own retry. hidden:true because the
-    // desktop right column is display:none mobile-first and jsdom never evaluates the
-    // desktop media query — role queries would exclude it while text queries find it.
-    expect(await screen.findByText('Could not load the summary.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry', hidden: true })).toBeInTheDocument();
-  });
-
-  it('zero accounts → the create-first-account CTA routes to the accounts page', async () => {
-    const user = userEvent.setup();
-    server.use(http.get('*/api/accounts', () => HttpResponse.json({ data: [], message: null })));
-    renderDashboard();
-
-    const cta = await screen.findByRole('button', { name: 'Create your first account' });
-    await user.click(cta);
-    expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Could not load your accounts|Accounts unavailable/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
   });
 });
