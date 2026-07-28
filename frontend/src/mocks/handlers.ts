@@ -121,6 +121,102 @@ function rejectUnparseableDates(
 }
 
 /**
+ * The account-name and handle rules, which the mock enforced nowhere.
+ *
+ * Four dialogs — create-account, rename-account, rename-handle and deposit — each contain a branch
+ * that reads `errorCode === 'VALIDATION_ERROR'`, walks `problem.errors` and maps the messages onto
+ * their own form fields. **Not one of those branches had ever executed**, because the mock accepted
+ * every body it was given: an empty name became "New Account", an unknown type was cast straight
+ * through, and any handle was lower-cased and stored.
+ *
+ * So the code that turns a server's field errors into red text under the right input was written,
+ * shipped, and never once run. Adding the rules here is what makes those branches reachable at all
+ * — the alternative is a mock that can only ever exercise the happy path of the surfaces whose
+ * whole job is the unhappy one.
+ *
+ * Bounds and wording are the validators' own: `Length(2, 100)` with
+ * `AccountNameLengthMessage`, `IsInEnum` with its sentence, and the `AzureTagPattern` regex that
+ * `[AzureTagQuery]` compiles.
+ */
+/**
+ * Read a request body without letting the read itself decide the status code.
+ *
+ * Two separate traps, and the second was found only because the first was fixed badly.
+ *
+ * **`as { name?: string }` is a compile-time fiction.** `JSON.parse('null')` is `null` and
+ * `JSON.parse('"x"')` is a string; reading `.name` off either throws. That much the previous
+ * version guarded.
+ *
+ * **But the PARSE throws first, and MSW turns a thrown handler into a 500.** An empty body, or
+ * `not json`, never reached the guard at all — measured: `POST /api/accounts` with a malformed
+ * body answered **500** where the API answers 400, and so did deposit, withdraw and both
+ * transfers. Fifteen handlers parsed a body and not one of them survived an unreadable one, so a
+ * client could not distinguish "you sent nonsense" from "the server fell over".
+ *
+ * Returns the RAW text alongside the object because the money handlers fingerprint the exact bytes
+ * for idempotency (`IdempotencyMiddleware` hashes bytes, not a re-serialisation) — reading it once
+ * here keeps that byte-exact rather than round-tripping through `JSON.stringify`.
+ */
+async function readJsonBody(
+  request: Request,
+): Promise<{ raw: string; body: Record<string, unknown> } | null> {
+  const raw = await request.clone().text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  return { raw, body: parsed as Record<string, unknown> };
+}
+
+/**
+ * The 400 an unreadable body earns.
+ *
+ * Model binding rejects it before any action runs, so this is a validation shape and not a domain
+ * error. The empty-body sentence is ASP.NET's own and is stable; the malformed-JSON one is an
+ * approximation on purpose — the framework's text embeds the parse position
+ * ("'n' is an invalid start of a value. Path: $ | LineNumber: 0 …"), which depends on the payload
+ * and would be fake precision to imitate. The KEY is faithful: `$`, the JSON path.
+ */
+function badRequestBody(raw: string) {
+  return raw.trim().length === 0
+    ? problem({ status: 400, errors: { $: ['A non-empty request body is required.'] } })
+    : problem({ status: 400, errors: { $: ['The request body could not be read as JSON.'] } });
+}
+
+// `satisfies` rather than a bare array: `AccountType` is generated from the spec, so if the enum
+// ever changes this stops being a hand-maintained list that can drift in silence.
+const ACCOUNT_TYPES = ['Checking', 'Savings', 'Investment'] satisfies AccountType[];
+
+/**
+ * A type guard, not an `includes` — and the distinction is the whole point.
+ *
+ * `['Checking']` stringifies to `"Checking"`, so a membership test that coerces (`includes(String(
+ * body.type))`) ACCEPTS the array and then stores the array on the account, where the response
+ * contract promises a string. Identical in shape to the `RegExp.test(['abc'])` trap documented on
+ * the azureTag handler below — which is where this rule was already written down, and which did
+ * not stop me writing the coercing version here first.
+ */
+function isAccountType(value: unknown): value is AccountType {
+  return typeof value === 'string' && (ACCOUNT_TYPES as readonly string[]).includes(value);
+}
+const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
+
+function rejectBadAccountName(name: unknown): string[] | null {
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    return ['Account name is required.'];
+  }
+  if (name.length < 2 || name.length > 100) {
+    return ['Account name must be between 2 and 100 characters.'];
+  }
+  return null;
+}
+
+/**
  * The 404 every missing resource produces, mirroring `NotFoundException(resource, identifier)`.
  *
  * Read the constructor before changing this — it is surprising, and the mock had it wrong in two
@@ -168,13 +264,32 @@ const listAccounts = api.get('/api/accounts', ({ response }) => {
  * account or the separate set-primary operation.
  */
 const createAccount = api.post('/api/accounts', async ({ request, response }) => {
-  const body = (await request.clone().json()) as { name?: string; type?: string };
+  const parsed = await readJsonBody(request);
+  if (!parsed) {
+    return response.untyped(badRequestBody(await request.clone().text()));
+  }
+  const { body } = parsed;
+
+  const errors: Record<string, string[]> = {};
+  const nameError = rejectBadAccountName(body.name);
+  if (nameError) {
+    errors.name = nameError;
+  }
+  if (body.type !== undefined && !isAccountType(body.type)) {
+    errors.type = ['Invalid account type. Must be Checking, Savings, or Investment.'];
+  }
+  if (Object.keys(errors).length > 0) {
+    return response.untyped(problem({ status: 400, errors }));
+  }
+
   const index = mockState.accounts.length;
   const account = {
     id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
     accountNumber: `AB-****-****-${70 + index}`,
-    name: body.name ?? 'New Account',
-    type: (body.type ?? 'Checking') as AccountType,
+    // No casts: `rejectBadAccountName` has proven `name` is a string and the guard above has
+    // proven `type` is an `AccountType`, so both narrow honestly instead of being asserted.
+    name: String(body.name),
+    type: isAccountType(body.type) ? body.type : 'Checking',
     balance: 0,
     isPrimary: false,
     createdAt: '2026-07-21T12:00:00.0000000Z',
@@ -262,8 +377,15 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
   if (!account) {
     return response.untyped(notFound('Account', params.id));
   }
-  const body = (await request.clone().json()) as { name?: string };
-  account.name = body.name ?? account.name;
+  const parsed = await readJsonBody(request);
+  if (!parsed) {
+    return response.untyped(badRequestBody(await request.clone().text()));
+  }
+  const renameError = rejectBadAccountName(parsed.body.name);
+  if (renameError) {
+    return response.untyped(problem({ status: 400, errors: { name: renameError } }));
+  }
+  account.name = parsed.body.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });
 });
 
@@ -563,7 +685,11 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     );
   }
 
-  const raw = await request.clone().text();
+  const parsedBody = await readJsonBody(request);
+  if (!parsedBody) {
+    return response.untyped(badRequestBody(await request.clone().text()));
+  }
+  const raw = parsedBody.raw;
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`deposit|${key}`);
   if (stored) {
@@ -585,7 +711,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     );
   }
 
-  const body = JSON.parse(raw) as { accountId?: string; amount?: number; description?: string };
+  const body = parsedBody.body as { accountId?: string; amount?: number; description?: string };
   const badAmount = rejectBadAmount(body.amount);
   if (badAmount) {
     return response.untyped(badAmount);
@@ -672,7 +798,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     );
   }
 
-  const raw = await request.clone().text();
+  const parsedBody = await readJsonBody(request);
+  if (!parsedBody) {
+    return response.untyped(badRequestBody(await request.clone().text()));
+  }
+  const raw = parsedBody.raw;
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`withdraw|${key}`);
   if (stored) {
@@ -693,7 +823,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     );
   }
 
-  const body = JSON.parse(raw) as {
+  const body = parsedBody.body as {
     accountId?: string;
     amount?: number;
     pin?: string;
@@ -842,8 +972,38 @@ const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) 
  * seeded recipients stand in for "other users"), otherwise update the session and echo the new tag.
  */
 const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, response }) => {
-  const body = (await request.clone().json()) as { azureTag?: string };
-  const tag = (body.azureTag ?? '').toLowerCase();
+  const parsed = await readJsonBody(request);
+  if (!parsed) {
+    return response.untyped(badRequestBody(await request.clone().text()));
+  }
+  const body = parsed.body;
+
+  /*
+    `[AzureTagQuery]` is model validation, so it runs before the controller and therefore before the
+    taken-handle conflict. The mock lower-cased whatever arrived and accepted it, which meant
+    RenameAzureTagDialog's field-error branch could never fire — and a handle the API would refuse
+    looked available here.
+
+    The `typeof` is not defensive noise. `RegExp.test` stringifies its argument, so
+    `AZURE_TAG_RE.test(['abc'])` tests the string "abc", passes, and the ARRAY is what gets stored
+    on the session. The type annotation that used to sit here promised a string and checked
+    nothing.
+  */
+  const rawTag = body?.azureTag;
+  const tag = typeof rawTag === 'string' ? rawTag : '';
+  if (!AZURE_TAG_RE.test(tag)) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: {
+          azureTag: [
+            'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.',
+          ],
+        },
+      }),
+    );
+  }
+
   if (mockState.recipients.some((r) => r.azureTag === tag)) {
     return response.untyped(
       problem({
@@ -892,7 +1052,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     );
   }
 
-  const raw = await request.clone().text();
+  const parsedBody = await readJsonBody(request);
+  if (!parsedBody) {
+    return response.untyped(badRequestBody(await request.clone().text()));
+  }
+  const raw = parsedBody.raw;
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`transfer|${key}`);
   if (stored) {
@@ -913,7 +1077,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     );
   }
 
-  const body = JSON.parse(raw) as {
+  const body = parsedBody.body as {
     fromAccountId?: string;
     recipientAzureTag?: string;
     amount?: number;
@@ -1031,7 +1195,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     );
   }
 
-  const raw = await request.clone().text();
+  const parsedBody = await readJsonBody(request);
+  if (!parsedBody) {
+    return response.untyped(badRequestBody(await request.clone().text()));
+  }
+  const raw = parsedBody.raw;
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`internal|${key}`);
   if (stored) {
@@ -1052,7 +1220,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     );
   }
 
-  const body = JSON.parse(raw) as {
+  const body = parsedBody.body as {
     fromAccountId?: string;
     toAccountId?: string;
     amount?: number;
@@ -1153,7 +1321,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
  * (mockState.pinAttempts/pinLockedUntil) so the 3rd consecutive miss is a 429 PIN_LOCKED.
  */
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
-  const { pin } = (await request.json()) as { pin?: string };
+  const authBody = await readJsonBody(request);
+  if (!authBody) {
+    return badRequestBody(await request.clone().text());
+  }
+  const pin = authBody.body.pin as string | undefined;
   const now = Date.now();
   if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
     const retryAfterSeconds = Math.ceil((Date.parse(mockState.pinLockedUntil) - now) / 1000);
@@ -1200,7 +1372,11 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
  * prior lock so the freshly-set PIN works immediately.
  */
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
-  const { pin } = (await request.json()) as { pin?: string };
+  const authBody = await readJsonBody(request);
+  if (!authBody) {
+    return badRequestBody(await request.clone().text());
+  }
+  const pin = authBody.body.pin as string | undefined;
   if (!pin || !/^\d{6}$/.test(pin)) {
     return problem({ status: 400, errors: { pin: ['PIN must be exactly 6 digits.'] } });
   }
@@ -1221,7 +1397,12 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
  * errorCode (the BFF's own shape — normalizes to HTTP_401 client-side).
  */
 const login = http.post('*/bff/auth/login', async ({ request }) => {
-  const { email, password } = (await request.json()) as { email?: string; password?: string };
+  const authBody = await readJsonBody(request);
+  if (!authBody) {
+    return badRequestBody(await request.clone().text());
+  }
+  const email = authBody.body.email as string | undefined;
+  const password = authBody.body.password as string | undefined;
   if (email !== MOCK_USER.email || password !== MOCK_PASSWORD) {
     return problem({
       status: 401,
@@ -1244,7 +1425,11 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
 });
 
 const register = http.post('*/bff/auth/register', async ({ request }) => {
-  const body = (await request.json()) as {
+  const registerBody = await readJsonBody(request);
+  if (!registerBody) {
+    return badRequestBody(await request.clone().text());
+  }
+  const body = registerBody.body as {
     azureTag?: string;
     email?: string;
     firstName?: string;

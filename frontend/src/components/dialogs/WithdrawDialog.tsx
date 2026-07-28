@@ -2,18 +2,14 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
-  Dialog,
-  DialogSurface,
   makeStyles,
   Text,
   Button,
   Spinner,
   MessageBar,
   MessageBarBody,
-  tokens,
 } from '@fluentui/react-components';
 import {
-  Dismiss24Regular,
   ArrowUpload24Regular,
   CheckmarkCircle24Filled,
   Warning24Regular,
@@ -21,12 +17,14 @@ import {
 } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { colors, transitions } from '../../theme/tokens';
+import { colors } from '../../theme/tokens';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { formatCurrency } from '../../utils/format';
+import { MoneyDialogShell } from './MoneyDialogShell';
+import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
   parseAmountInput,
   withdrawFormSchema,
@@ -67,153 +65,12 @@ interface SuccessData {
 // STYLES  (mirrors DepositDialog; adds the PIN step + lock view)
 // ============================================
 
-const useStyles = makeStyles({
-  surface: {
-    width: '100%',
-    maxWidth: '480px',
-    maxHeight: '90vh',
-    padding: 0,
-    borderRadius: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '20px 20px 16px 20px',
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-  },
-  headerTitle: {
-    fontSize: '20px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-  headerIcon: {
-    width: '32px',
-    height: '32px',
-    borderRadius: '8px',
-    backgroundColor: colors.brand[130],
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.brand[60],
-  },
-  closeButton: {
-    width: '40px',
-    height: '40px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    borderRadius: '8px',
-    color: colors.neutral[500],
-    ':hover': { backgroundColor: colors.neutral[100] },
-    ':disabled': { opacity: 0.5, cursor: 'not-allowed' },
-  },
-  content: {
-    flex: 1,
-    padding: '24px 20px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px',
-    overflowY: 'auto',
-  },
-  sectionLabel: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-    marginBottom: '8px',
-  },
-  accountCard: {
-    width: '100%',
-    padding: '16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
-    ':hover': { backgroundColor: colors.neutral[50] },
-  },
-  accountCardSelected: {
-    border: `2px solid ${colors.brand[60]}`,
-    backgroundColor: colors.brand[130],
-  },
-  accountInfo: { display: 'flex', flexDirection: 'column', gap: '2px' },
-  accountName: { fontSize: '16px', fontWeight: 500, color: colors.neutral[800] },
-  accountNumber: {
-    fontSize: '14px',
-    fontFamily: 'Consolas, monospace',
-    color: colors.neutral[500],
-  },
-  accountBalance: { fontSize: '16px', fontWeight: 600, color: colors.neutral[800] },
-  amountSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '16px',
-    backgroundColor: colors.neutral[50],
-    borderRadius: '12px',
-  },
-  amountLabel: { fontSize: '14px', fontWeight: 400, color: colors.neutral[500] },
-  amountInputWrapper: { display: 'flex', alignItems: 'baseline', gap: '4px' },
-  amountCurrency: { fontSize: '32px', fontWeight: 300, color: colors.neutral[800] },
-  amountInput: {
-    fontSize: '48px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-    border: 'none',
-    outline: 'none',
-    background: 'transparent',
-    textAlign: 'center',
-    width: '180px',
-    '::placeholder': { color: colors.neutral[300] },
-  },
-  newBalance: { fontSize: '13px', color: colors.neutral[500] },
-  amountHint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
-  quickAmounts: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' },
-  quickBtn: {
-    minWidth: '70px',
-    height: '36px',
-    padding: '0 16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-    transition: `all ${transitions.fast}`,
-    ':hover': { backgroundColor: colors.neutral[50] },
-    ':disabled': { opacity: 0.5, cursor: 'not-allowed' },
-  },
-  quickBtnSelected: {
-    backgroundColor: colors.brand[120],
-    border: `1px solid ${colors.brand[60]}`,
-    color: colors.brand[60],
-  },
-  descriptionInput: {
-    width: '100%',
-    padding: '12px',
-    borderRadius: '8px',
-    border: `1px solid ${colors.neutral[200]}`,
-    fontSize: '14px',
-    fontFamily: 'inherit',
-    color: colors.neutral[800],
-    outline: 'none',
-    ':focus': { border: `1px solid ${colors.brand[60]}` },
-  },
-  // ===== PIN STEP =====
+/**
+ * The PIN step's own three keys. They stay here on purpose: they belong to a step deposit does not
+ * have, and moving them into the shared module would make it a place where things are put rather
+ * than a place where shared things live.
+ */
+const usePinStyles = makeStyles({
   pinStep: {
     flex: 1,
     padding: '24px 20px',
@@ -230,63 +87,6 @@ const useStyles = makeStyles({
     lineHeight: '1.5',
   },
   pinAmount: { fontWeight: 700, color: colors.neutral[800] },
-  // ===== STATE VIEWS =====
-  centeredView: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '16px',
-    padding: '32px 20px',
-    textAlign: 'center',
-  },
-  successIcon: {
-    width: '80px',
-    height: '80px',
-    backgroundColor: colors.semantic.success.light,
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.semantic.success.main,
-  },
-  warningIcon: {
-    width: '80px',
-    height: '80px',
-    backgroundColor: colors.semantic.warning.light,
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.semantic.warning.dark,
-  },
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.main },
-  stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
-  successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
-  stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
-  detailsCard: {
-    width: '100%',
-    backgroundColor: colors.neutral[50],
-    borderRadius: '12px',
-    padding: '4px 16px',
-    marginTop: '8px',
-  },
-  detailRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: '12px 0',
-    borderBottom: `1px solid ${colors.neutral[100]}`,
-    ':last-child': { borderBottom: 'none' },
-  },
-  detailLabel: { fontSize: '14px', color: colors.neutral[500] },
-  detailValue: { fontSize: '14px', fontWeight: 600, color: colors.neutral[800] },
-  footer: {
-    padding: '16px 20px 24px 20px',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-  errorMessage: { marginBottom: '4px' },
 });
 
 // ============================================
@@ -326,7 +126,8 @@ function formatLockHorizon(seconds: number): string {
  * dismissal funnels through the SAME keyLive guard as the X button.
  */
 export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: WithdrawDialogProps) {
-  const styles = useStyles();
+  const styles = useMoneyDialogStyles();
+  const pinStyles = usePinStyles();
   const navigate = useNavigate();
   const errorId = useId();
   const user = useSelector(selectCurrentUser);
@@ -501,349 +302,322 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const goToPinSetup = () => navigate('/pin-setup?returnTo=/accounts');
 
   return (
-    <Dialog
+    <MoneyDialogShell
       open={isOpen}
-      modalType="modal"
-      onOpenChange={(_event, data) => {
-        if (!data.open) requestClose();
-      }}
+      title={success ? 'Withdrawal Complete' : 'Withdraw Money'}
+      icon={<ArrowUpload24Regular />}
+      tone="debit"
+      onClose={requestClose}
+      closeDisabled={keyLive}
     >
-      <DialogSurface
-        className={styles.surface}
-        aria-label={success ? 'Withdrawal Complete' : 'Withdraw Money'}
-        aria-describedby={undefined}
-      >
-        {/* Header */}
-        <div className={styles.header}>
-          <div className={styles.headerTitle}>
-            <div className={styles.headerIcon}>
-              <ArrowUpload24Regular />
-            </div>
-            {success ? 'Withdrawal Complete' : 'Withdraw Money'}
+      {/* Success */}
+      {success && (
+        <div className={styles.centeredView}>
+          <div className={styles.successIcon}>
+            <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
           </div>
-          <button
-            className={styles.closeButton}
-            aria-label="Close"
-            onClick={requestClose}
-            disabled={keyLive}
-          >
-            <Dismiss24Regular />
-          </button>
-        </div>
-
-        {/* Success */}
-        {success && (
-          <div className={styles.centeredView}>
-            <div className={styles.successIcon}>
-              <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
+          <Text className={styles.successTitle}>Withdrawal Successful!</Text>
+          <Text className={styles.successAmount}>-{formatCurrency(success.amount)}</Text>
+          {success.replayed && (
+            <MessageBar intent="info">
+              <MessageBarBody>
+                This withdrawal was already processed — showing the existing result.
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <div className={styles.detailsCard}>
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>From</Text>
+              <Text className={styles.detailValue}>{success.accountName}</Text>
             </div>
-            <Text className={styles.successTitle}>Withdrawal Successful!</Text>
-            <Text className={styles.successAmount}>-{formatCurrency(success.amount)}</Text>
-            {success.replayed && (
-              <MessageBar intent="info">
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>New balance</Text>
+              <Text className={styles.detailValue}>{formatCurrency(success.newBalance)}</Text>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RESULT_UNKNOWN — verify-first (§2.3) */}
+      {!success && verifyRequired && (
+        <div className={styles.centeredView}>
+          <div className={styles.warningIcon}>
+            <Warning24Regular style={{ width: '40px', height: '40px' }} />
+          </div>
+          <Text className={styles.stateTitle}>We couldn&apos;t confirm your withdrawal</Text>
+          <Text className={styles.stateBody}>
+            The request may or may not have gone through. Check your recent transactions before
+            trying again — retrying blindly could withdraw twice.
+          </Text>
+        </div>
+      )}
+
+      {/* Needs a PIN first */}
+      {!success && !verifyRequired && needsPinSetup && (
+        <div className={styles.centeredView}>
+          <div className={styles.warningIcon}>
+            <LockClosed24Regular style={{ width: '40px', height: '40px' }} />
+          </div>
+          <Text className={styles.stateTitle}>Set up a PIN to withdraw</Text>
+          <Text className={styles.stateBody}>
+            Withdrawals need a 6-digit PIN. Set one up and you&apos;ll come right back to your
+            accounts.
+          </Text>
+        </div>
+      )}
+
+      {/* Form step */}
+      {showForm && (
+        <div className={styles.content}>
+          <div>
+            <Text className={styles.sectionLabel}>Select Account</Text>
+            <Controller
+              control={control}
+              name="accountId"
+              render={({ field }) => (
+                <>
+                  {accounts.map((account) => {
+                    const selectAccount = () => {
+                      field.onChange(account.id);
+                      setResolvedBalanceOf(account.id);
+                      // Switching to a smaller account may strand an over-balance
+                      // amount — clear it, exactly like the legacy handler.
+                      if (amountNumber > account.balance) {
+                        setValue('amount', '', { shouldValidate: true });
+                      }
+                      onBodyEdit();
+                    };
+                    return (
+                      // Styled div, so the button semantics are wired by hand
+                      // (same pattern as the AccountsPage add-card).
+                      <div
+                        key={account.id}
+                        className={`${styles.accountCard} ${
+                          field.value === account.id ? styles.accountCardSelected : ''
+                        }`}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={field.value === account.id}
+                        onClick={selectAccount}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            selectAccount();
+                          }
+                        }}
+                        style={{ marginBottom: '8px' }}
+                      >
+                        <div className={styles.accountInfo}>
+                          <Text className={styles.accountName}>{account.name}</Text>
+                          <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                        </div>
+                        <Text className={styles.accountBalance}>
+                          {formatCurrency(account.balance)}
+                        </Text>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            />
+          </div>
+
+          <div className={styles.amountSection}>
+            <Text className={styles.amountLabel}>Enter amount</Text>
+            <AmountField
+              control={control}
+              name="amount"
+              ariaLabel="Withdraw amount"
+              onBodyEdit={onBodyEdit}
+              classNames={{
+                wrapper: styles.amountInputWrapper,
+                currency: styles.amountCurrency,
+                input: styles.amountInput,
+                hint: styles.amountHint,
+              }}
+              belowSlot={
+                selectedAccount && amountValid ? (
+                  <Text className={styles.newBalance}>
+                    New balance: {formatCurrency(newBalance)}
+                  </Text>
+                ) : (
+                  <Text className={styles.newBalance}>
+                    Available: {formatCurrency(availableBalance)}
+                  </Text>
+                )
+              }
+            />
+          </div>
+
+          <div className={styles.quickAmounts}>
+            {QUICK_AMOUNTS.map((quickAmount) => (
+              <button
+                key={quickAmount}
+                className={`${styles.quickBtn} ${
+                  amountNumber === quickAmount ? styles.quickBtnSelected : ''
+                }`}
+                onClick={() => handleQuickAmount(quickAmount)}
+                disabled={quickAmount > availableBalance}
+              >
+                €{quickAmount}
+              </button>
+            ))}
+          </div>
+
+          <DescriptionField
+            control={control}
+            name="description"
+            onBodyEdit={onBodyEdit}
+            className={styles.descriptionInput}
+          />
+        </div>
+      )}
+
+      {/* PIN step */}
+      {showPin && (
+        <div className={pinStyles.pinStep}>
+          <Text className={styles.stateTitle}>Verify Withdrawal</Text>
+          <Text className={pinStyles.pinInstruction}>
+            Enter your 6-digit PIN to confirm withdrawing{' '}
+            <span className={pinStyles.pinAmount}>{formatCurrency(amountNumber)}</span> from{' '}
+            {selectedAccount?.name}.
+          </Text>
+          <PinInput
+            key={pinNonce}
+            value={pin}
+            onChange={handlePinChange}
+            length={PIN_LENGTH}
+            disabled={isSubmitting || lockedSeconds !== null}
+            error={pinError}
+            autoFocus
+            ariaLabel="Enter your PIN"
+            ariaDescribedBy={error || lockedSeconds !== null ? errorId : undefined}
+          />
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className={styles.footer}>
+        {(error || lockedSeconds !== null) && (
+          <div role="alert" id={errorId}>
+            {error && (
+              <MessageBar intent="error" className={styles.errorMessage}>
+                <MessageBarBody>{error}</MessageBarBody>
+              </MessageBar>
+            )}
+            {lockedSeconds !== null && (
+              <MessageBar intent="warning" className={styles.errorMessage}>
                 <MessageBarBody>
-                  This withdrawal was already processed — showing the existing result.
+                  Too many incorrect PIN attempts. Try again in about{' '}
+                  {formatLockHorizon(lockedSeconds)}.
                 </MessageBarBody>
               </MessageBar>
             )}
-            <div className={styles.detailsCard}>
-              <div className={styles.detailRow}>
-                <Text className={styles.detailLabel}>From</Text>
-                <Text className={styles.detailValue}>{success.accountName}</Text>
-              </div>
-              <div className={styles.detailRow}>
-                <Text className={styles.detailLabel}>New balance</Text>
-                <Text className={styles.detailValue}>{formatCurrency(success.newBalance)}</Text>
-              </div>
-            </div>
+          </div>
+        )}
+        {inFlight && (
+          <div role="status">
+            <MessageBar intent="info" className={styles.errorMessage}>
+              <MessageBarBody>Still processing — tap Withdraw again to check.</MessageBarBody>
+            </MessageBar>
           </div>
         )}
 
-        {/* RESULT_UNKNOWN — verify-first (§2.3) */}
-        {!success && verifyRequired && (
-          <div className={styles.centeredView}>
-            <div className={styles.warningIcon}>
-              <Warning24Regular style={{ width: '40px', height: '40px' }} />
-            </div>
-            <Text className={styles.stateTitle}>We couldn&apos;t confirm your withdrawal</Text>
-            <Text className={styles.stateBody}>
-              The request may or may not have gone through. Check your recent transactions before
-              trying again — retrying blindly could withdraw twice.
-            </Text>
-          </div>
-        )}
-
-        {/* Needs a PIN first */}
-        {!success && !verifyRequired && needsPinSetup && (
-          <div className={styles.centeredView}>
-            <div className={styles.warningIcon}>
-              <LockClosed24Regular style={{ width: '40px', height: '40px' }} />
-            </div>
-            <Text className={styles.stateTitle}>Set up a PIN to withdraw</Text>
-            <Text className={styles.stateBody}>
-              Withdrawals need a 6-digit PIN. Set one up and you&apos;ll come right back to your
-              accounts.
-            </Text>
-          </div>
-        )}
-
-        {/* Form step */}
-        {showForm && (
-          <div className={styles.content}>
-            <div>
-              <Text className={styles.sectionLabel}>Select Account</Text>
-              <Controller
-                control={control}
-                name="accountId"
-                render={({ field }) => (
-                  <>
-                    {accounts.map((account) => {
-                      const selectAccount = () => {
-                        field.onChange(account.id);
-                        setResolvedBalanceOf(account.id);
-                        // Switching to a smaller account may strand an over-balance
-                        // amount — clear it, exactly like the legacy handler.
-                        if (amountNumber > account.balance) {
-                          setValue('amount', '', { shouldValidate: true });
-                        }
-                        onBodyEdit();
-                      };
-                      return (
-                        // Styled div, so the button semantics are wired by hand
-                        // (same pattern as the AccountsPage add-card).
-                        <div
-                          key={account.id}
-                          className={`${styles.accountCard} ${
-                            field.value === account.id ? styles.accountCardSelected : ''
-                          }`}
-                          role="button"
-                          tabIndex={0}
-                          aria-pressed={field.value === account.id}
-                          onClick={selectAccount}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              selectAccount();
-                            }
-                          }}
-                          style={{ marginBottom: '8px' }}
-                        >
-                          <div className={styles.accountInfo}>
-                            <Text className={styles.accountName}>{account.name}</Text>
-                            <Text className={styles.accountNumber}>{account.accountNumber}</Text>
-                          </div>
-                          <Text className={styles.accountBalance}>
-                            {formatCurrency(account.balance)}
-                          </Text>
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-              />
-            </div>
-
-            <div className={styles.amountSection}>
-              <Text className={styles.amountLabel}>Enter amount</Text>
-              <AmountField
-                control={control}
-                name="amount"
-                ariaLabel="Withdraw amount"
-                onBodyEdit={onBodyEdit}
-                classNames={{
-                  wrapper: styles.amountInputWrapper,
-                  currency: styles.amountCurrency,
-                  input: styles.amountInput,
-                  hint: styles.amountHint,
-                }}
-                belowSlot={
-                  selectedAccount && amountValid ? (
-                    <Text className={styles.newBalance}>
-                      New balance: {formatCurrency(newBalance)}
-                    </Text>
-                  ) : (
-                    <Text className={styles.newBalance}>
-                      Available: {formatCurrency(availableBalance)}
-                    </Text>
-                  )
-                }
-              />
-            </div>
-
-            <div className={styles.quickAmounts}>
-              {QUICK_AMOUNTS.map((quickAmount) => (
-                <button
-                  key={quickAmount}
-                  className={`${styles.quickBtn} ${
-                    amountNumber === quickAmount ? styles.quickBtnSelected : ''
-                  }`}
-                  onClick={() => handleQuickAmount(quickAmount)}
-                  disabled={quickAmount > availableBalance}
-                >
-                  €{quickAmount}
-                </button>
-              ))}
-            </div>
-
-            <DescriptionField
-              control={control}
-              name="description"
-              onBodyEdit={onBodyEdit}
-              className={styles.descriptionInput}
-            />
-          </div>
-        )}
-
-        {/* PIN step */}
-        {showPin && (
-          <div className={styles.pinStep}>
-            <Text className={styles.stateTitle}>Verify Withdrawal</Text>
-            <Text className={styles.pinInstruction}>
-              Enter your 6-digit PIN to confirm withdrawing{' '}
-              <span className={styles.pinAmount}>{formatCurrency(amountNumber)}</span> from{' '}
-              {selectedAccount?.name}.
-            </Text>
-            <PinInput
-              key={pinNonce}
-              value={pin}
-              onChange={handlePinChange}
-              length={PIN_LENGTH}
-              disabled={isSubmitting || lockedSeconds !== null}
-              error={pinError}
-              autoFocus
-              ariaLabel="Enter your PIN"
-              ariaDescribedBy={error || lockedSeconds !== null ? errorId : undefined}
-            />
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className={styles.footer}>
-          {(error || lockedSeconds !== null) && (
-            <div role="alert" id={errorId}>
-              {error && (
-                <MessageBar intent="error" className={styles.errorMessage}>
-                  <MessageBarBody>{error}</MessageBarBody>
-                </MessageBar>
-              )}
-              {lockedSeconds !== null && (
-                <MessageBar intent="warning" className={styles.errorMessage}>
-                  <MessageBarBody>
-                    Too many incorrect PIN attempts. Try again in about{' '}
-                    {formatLockHorizon(lockedSeconds)}.
-                  </MessageBarBody>
-                </MessageBar>
-              )}
-            </div>
-          )}
-          {inFlight && (
-            <div role="status">
-              <MessageBar intent="info" className={styles.errorMessage}>
-                <MessageBarBody>Still processing — tap Withdraw again to check.</MessageBarBody>
-              </MessageBar>
-            </div>
-          )}
-
-          {success ? (
-            <>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => void navigate(`/transactions/${success.transactionId}`)}
-              >
-                View Transaction
-              </Button>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={onClose}
-              >
-                Done
-              </Button>
-            </>
-          ) : verifyRequired ? (
-            <>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => void navigate('/history')}
-              >
-                Check recent transactions
-              </Button>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => {
-                  resetIntent();
-                  setPin('');
-                  goToStep('form');
-                }}
-              >
-                It didn&apos;t go through — try again
-              </Button>
-            </>
-          ) : needsPinSetup ? (
-            <>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={goToPinSetup}
-              >
-                Set up PIN
-              </Button>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={onClose}
-              >
-                Cancel
-              </Button>
-            </>
-          ) : step === 'form' ? (
+        {success ? (
+          <>
             <Button
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => goToStep('pin')}
-              disabled={!formState.isValid}
+              onClick={() => void navigate(`/transactions/${success.transactionId}`)}
             >
-              {`Continue ${amountNumber > 0 && amountValid ? `· ${formatCurrency(amountNumber)}` : ''}`.trim()}
+              View Transaction
             </Button>
-          ) : (
-            <>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => void handleSubmit(onValid)()}
-                disabled={isSubmitting || pin.length !== PIN_LENGTH || lockedSeconds !== null}
-              >
-                {isSubmitting ? (
-                  <Spinner size="tiny" />
-                ) : (
-                  `Withdraw ${formatCurrency(amountNumber)}`
-                )}
-              </Button>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => goToStep('form')}
-                disabled={isSubmitting}
-              >
-                Back
-              </Button>
-            </>
-          )}
-        </div>
-      </DialogSurface>
-    </Dialog>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={onClose}
+            >
+              Done
+            </Button>
+          </>
+        ) : verifyRequired ? (
+          <>
+            <Button
+              appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => void navigate('/history')}
+            >
+              Check recent transactions
+            </Button>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => {
+                resetIntent();
+                setPin('');
+                goToStep('form');
+              }}
+            >
+              It didn&apos;t go through — try again
+            </Button>
+          </>
+        ) : needsPinSetup ? (
+          <>
+            <Button
+              appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={goToPinSetup}
+            >
+              Set up PIN
+            </Button>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+          </>
+        ) : step === 'form' ? (
+          <Button
+            appearance="primary"
+            size="large"
+            style={{ width: '100%', height: '48px' }}
+            onClick={() => goToStep('pin')}
+            disabled={!formState.isValid}
+          >
+            {`Continue ${amountNumber > 0 && amountValid ? `· ${formatCurrency(amountNumber)}` : ''}`.trim()}
+          </Button>
+        ) : (
+          <>
+            <Button
+              appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => void handleSubmit(onValid)()}
+              disabled={isSubmitting || pin.length !== PIN_LENGTH || lockedSeconds !== null}
+            >
+              {isSubmitting ? <Spinner size="tiny" /> : `Withdraw ${formatCurrency(amountNumber)}`}
+            </Button>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => goToStep('form')}
+              disabled={isSubmitting}
+            >
+              Back
+            </Button>
+          </>
+        )}
+      </div>
+    </MoneyDialogShell>
   );
 }
 
