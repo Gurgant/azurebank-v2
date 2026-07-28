@@ -210,16 +210,24 @@ const getAccount = api.get('/api/accounts/{id}', ({ params, response }) => {
  * recent transaction on THIS account" was not a question the mock could answer.
  */
 const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, request, response }) => {
+  // Model binding runs BEFORE the action, so a malformed `at` is a 400 and never reaches the
+  // account lookup. Swallowing it as "current" — which is what `Number.isNaN(atMs)` used to do
+  // below — answered 200 with today's balance for a question nobody could have asked.
+  const at = new URL(request.url).searchParams.get('at');
+  const badAt = rejectUnparseableDates({ at });
+  if (badAt) {
+    return response.untyped(badAt);
+  }
+
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
     return response.untyped(notFound('Account', params.id));
   }
 
-  const at = new URL(request.url).searchParams.get('at');
   const atMs = at ? Date.parse(at) : Number.NaN;
   const now = new Date();
 
-  if (!at || Number.isNaN(atMs) || atMs >= now.getTime()) {
+  if (!at || atMs >= now.getTime()) {
     return response(200).json({
       data: {
         accountId: account.id,
@@ -352,10 +360,35 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     return response.untyped(problem({ status: 400, errors: pageErrors }));
   }
 
-  // `AccountId` used to be ignored outright, so both accounts returned byte-identical feeds and the
-  // dashboard's scope control appeared to do nothing. The real service filters on it, and 403s
-  // first when the account is not one of the caller's — a mock that answered 200 with somebody
-  // else's ledger would let a broken client look correct.
+  /*
+    Every one of these is model-bound before the action body runs: `TransactionFilter` declares
+    `Guid? AccountId`, `DateTime? FromDate`, `DateTime? ToDate` and two `[Range]` ints. So a
+    malformed value of ANY of them is a 400 that the action never sees — which puts all of it
+    above the service's own 403, not interleaved with it.
+
+    The mock had the 403 in the middle: a request with both a foreign AccountId and an unparseable
+    FromDate answered 403, where the API answers 400. Ordering was this PR's whole subject and the
+    handler it added got it wrong in the same way.
+  */
+  if (accountId && !UUID_RE.test(accountId)) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: { AccountId: [`The value '${accountId}' is not valid.`] },
+      }),
+    );
+  }
+  const badDates = rejectUnparseableDates({
+    FromDate: params.get('FromDate'),
+    ToDate: params.get('ToDate'),
+  });
+  if (badDates) {
+    return response.untyped(badDates);
+  }
+
+  // Ownership is the SERVICE's check, so it comes after everything the framework does. `AccountId`
+  // used to be ignored outright, so both accounts returned byte-identical feeds and the dashboard's
+  // scope control appeared to do nothing.
   if (accountId && !mockState.accounts.some((a) => a.id === accountId)) {
     return response.untyped(
       problem({
@@ -379,13 +412,6 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     callers send 3, so lexicographic ordering would put `…09:15:00.0000000Z` after
     `…09:15:00.000Z` and drop rows on an exact boundary.
   */
-  const badDates = rejectUnparseableDates({
-    FromDate: params.get('FromDate'),
-    ToDate: params.get('ToDate'),
-  });
-  if (badDates) {
-    return response.untyped(badDates);
-  }
   const fromMs = params.get('FromDate') ? Date.parse(params.get('FromDate') as string) : null;
   const toMs = params.get('ToDate') ? Date.parse(params.get('ToDate') as string) : null;
 

@@ -269,3 +269,50 @@ describe('a date that will not parse', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('model binding runs before the action, and the action before the service', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it('a malformed `at` on the balance route is a 400, not today’s balance', async () => {
+    // `[FromQuery] DateTime? at` fails to bind, so the action never runs. The handler used to
+    // treat NaN as "no `at` given" and answer 200 with the CURRENT balance — a confident answer
+    // to a question that was never validly asked.
+    const res = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/balance?at=garbage`);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors.at).toEqual(["The value 'garbage' is not valid."]);
+  });
+
+  it('binding beats the 404: a bad `at` on an unknown account is still a 400', async () => {
+    const res = await fetch('/api/accounts/019f7b3f-0000-7000-8000-0000000000ff/balance?at=nope');
+    expect(res.status).toBe(400);
+  });
+
+  it('binding beats the 403: a bad date with a foreign AccountId is a 400', async () => {
+    // The service's ownership check is the LAST of the three. The mock had it in the middle, so
+    // this exact request answered 403 where the API answers 400.
+    const res = await fetch(
+      '/api/transactions?AccountId=019f7b3f-0000-7000-8000-0000000000ff&FromDate=notadate',
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors.FromDate).toBeDefined();
+  });
+
+  it('a malformed AccountId is a binding failure, not an access denial', async () => {
+    // `Guid? AccountId` — "abc" never becomes a Guid, so the request dies before the service can
+    // form an opinion about whose account it is.
+    const res = await fetch('/api/transactions?AccountId=abc');
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors.AccountId).toEqual(["The value 'abc' is not valid."]);
+  });
+
+  it('still 403s a well-formed id that is not yours', async () => {
+    const res = await fetch('/api/transactions?AccountId=019f7b3f-0000-7000-8000-0000000000ff');
+    expect(res.status).toBe(403);
+    expect((await res.json()).errorCode).toBe('ACCESS_DENIED');
+  });
+});
