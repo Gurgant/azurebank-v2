@@ -121,6 +121,37 @@ function rejectUnparseableDates(
 }
 
 /**
+ * The account-name and handle rules, which the mock enforced nowhere.
+ *
+ * Four dialogs — create-account, rename-account, rename-handle and deposit — each contain a branch
+ * that reads `errorCode === 'VALIDATION_ERROR'`, walks `problem.errors` and maps the messages onto
+ * their own form fields. **Not one of those branches had ever executed**, because the mock accepted
+ * every body it was given: an empty name became "New Account", an unknown type was cast straight
+ * through, and any handle was lower-cased and stored.
+ *
+ * So the code that turns a server's field errors into red text under the right input was written,
+ * shipped, and never once run. Adding the rules here is what makes those branches reachable at all
+ * — the alternative is a mock that can only ever exercise the happy path of the surfaces whose
+ * whole job is the unhappy one.
+ *
+ * Bounds and wording are the validators' own: `Length(2, 100)` with
+ * `AccountNameLengthMessage`, `IsInEnum` with its sentence, and the `AzureTagPattern` regex that
+ * `[AzureTagQuery]` compiles.
+ */
+const ACCOUNT_TYPES = ['Checking', 'Savings', 'Investment'];
+const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
+
+function rejectBadAccountName(name: unknown): string[] | null {
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    return ['Account name is required.'];
+  }
+  if (name.length < 2 || name.length > 100) {
+    return ['Account name must be between 2 and 100 characters.'];
+  }
+  return null;
+}
+
+/**
  * The 404 every missing resource produces, mirroring `NotFoundException(resource, identifier)`.
  *
  * Read the constructor before changing this — it is surprising, and the mock had it wrong in two
@@ -169,6 +200,19 @@ const listAccounts = api.get('/api/accounts', ({ response }) => {
  */
 const createAccount = api.post('/api/accounts', async ({ request, response }) => {
   const body = (await request.clone().json()) as { name?: string; type?: string };
+
+  const errors: Record<string, string[]> = {};
+  const nameError = rejectBadAccountName(body.name);
+  if (nameError) {
+    errors.name = nameError;
+  }
+  if (body.type !== undefined && !ACCOUNT_TYPES.includes(body.type)) {
+    errors.type = ['Invalid account type. Must be Checking, Savings, or Investment.'];
+  }
+  if (Object.keys(errors).length > 0) {
+    return response.untyped(problem({ status: 400, errors }));
+  }
+
   const index = mockState.accounts.length;
   const account = {
     id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
@@ -263,7 +307,11 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
     return response.untyped(notFound('Account', params.id));
   }
   const body = (await request.clone().json()) as { name?: string };
-  account.name = body.name ?? account.name;
+  const renameError = rejectBadAccountName(body.name);
+  if (renameError) {
+    return response.untyped(problem({ status: 400, errors: { name: renameError } }));
+  }
+  account.name = body.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });
 });
 
@@ -843,7 +891,25 @@ const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) 
  */
 const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, response }) => {
   const body = (await request.clone().json()) as { azureTag?: string };
-  const tag = (body.azureTag ?? '').toLowerCase();
+
+  // `[AzureTagQuery]` is model validation, so it runs before the controller and therefore before
+  // the taken-handle conflict. The mock lower-cased whatever arrived and accepted it, which meant
+  // RenameAzureTagDialog's field-error branch could never fire — and that a handle the API would
+  // refuse looked available here.
+  const tag = body.azureTag ?? '';
+  if (!AZURE_TAG_RE.test(tag)) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: {
+          azureTag: [
+            'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.',
+          ],
+        },
+      }),
+    );
+  }
+
   if (mockState.recipients.some((r) => r.azureTag === tag)) {
     return response.untyped(
       problem({
