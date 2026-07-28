@@ -138,6 +138,19 @@ function rejectUnparseableDates(
  * `AccountNameLengthMessage`, `IsInEnum` with its sentence, and the `AzureTagPattern` regex that
  * `[AzureTagQuery]` compiles.
  */
+/**
+ * A parsed body that is actually an object.
+ *
+ * `as { name?: string }` is a compile-time fiction: `JSON.parse('null')` is `null` and
+ * `JSON.parse('"x"')` is a string, and reading `.name` off either throws inside the handler before
+ * it can answer anything. The API binds the body to a DTO, so a non-object is a 400 there too.
+ */
+function asBody(parsed: unknown): Record<string, unknown> | null {
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
+}
+
 const ACCOUNT_TYPES = ['Checking', 'Savings', 'Investment'];
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
@@ -199,14 +212,19 @@ const listAccounts = api.get('/api/accounts', ({ response }) => {
  * account or the separate set-primary operation.
  */
 const createAccount = api.post('/api/accounts', async ({ request, response }) => {
-  const body = (await request.clone().json()) as { name?: string; type?: string };
+  const body = asBody(await request.clone().json());
+  if (!body) {
+    return response.untyped(
+      problem({ status: 400, errors: { request: ['A request body is required.'] } }),
+    );
+  }
 
   const errors: Record<string, string[]> = {};
   const nameError = rejectBadAccountName(body.name);
   if (nameError) {
     errors.name = nameError;
   }
-  if (body.type !== undefined && !ACCOUNT_TYPES.includes(body.type)) {
+  if (body.type !== undefined && !ACCOUNT_TYPES.includes(body.type as string)) {
     errors.type = ['Invalid account type. Must be Checking, Savings, or Investment.'];
   }
   if (Object.keys(errors).length > 0) {
@@ -217,8 +235,8 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   const account = {
     id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
     accountNumber: `AB-****-****-${70 + index}`,
-    name: body.name ?? 'New Account',
-    type: (body.type ?? 'Checking') as AccountType,
+    name: body.name as string,
+    type: ((body.type as string) ?? 'Checking') as AccountType,
     balance: 0,
     isPrimary: false,
     createdAt: '2026-07-21T12:00:00.0000000Z',
@@ -306,12 +324,12 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
   if (!account) {
     return response.untyped(notFound('Account', params.id));
   }
-  const body = (await request.clone().json()) as { name?: string };
-  const renameError = rejectBadAccountName(body.name);
+  const body = asBody(await request.clone().json());
+  const renameError = rejectBadAccountName(body?.name);
   if (renameError) {
     return response.untyped(problem({ status: 400, errors: { name: renameError } }));
   }
-  account.name = body.name as string;
+  account.name = body?.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });
 });
 
@@ -890,13 +908,21 @@ const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) 
  * seeded recipients stand in for "other users"), otherwise update the session and echo the new tag.
  */
 const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, response }) => {
-  const body = (await request.clone().json()) as { azureTag?: string };
+  const body = asBody(await request.clone().json());
 
-  // `[AzureTagQuery]` is model validation, so it runs before the controller and therefore before
-  // the taken-handle conflict. The mock lower-cased whatever arrived and accepted it, which meant
-  // RenameAzureTagDialog's field-error branch could never fire — and that a handle the API would
-  // refuse looked available here.
-  const tag = body.azureTag ?? '';
+  /*
+    `[AzureTagQuery]` is model validation, so it runs before the controller and therefore before the
+    taken-handle conflict. The mock lower-cased whatever arrived and accepted it, which meant
+    RenameAzureTagDialog's field-error branch could never fire — and a handle the API would refuse
+    looked available here.
+
+    The `typeof` is not defensive noise. `RegExp.test` stringifies its argument, so
+    `AZURE_TAG_RE.test(['abc'])` tests the string "abc", passes, and the ARRAY is what gets stored
+    on the session. The type annotation that used to sit here promised a string and checked
+    nothing.
+  */
+  const rawTag = body?.azureTag;
+  const tag = typeof rawTag === 'string' ? rawTag : '';
   if (!AZURE_TAG_RE.test(tag)) {
     return response.untyped(
       problem({
