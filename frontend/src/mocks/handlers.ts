@@ -364,15 +364,32 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay
   // branch above returns the stored bytes without re-applying them (idempotent).
   const account = mockState.accounts.find((a) => a.id === body.accountId);
-  const newBalance = (account?.balance ?? 1000) + amount;
-  if (account) {
-    account.balance = newBalance;
+  /*
+    An unknown account is a 404, exactly as `GetAccountWithOwnershipCheckAsync` makes it one.
+
+    This used to fabricate a 1000 balance and answer 201 with a transaction that no account and no
+    ledger row owned — a phantom success. Withholding the ledger write instead was worse in one
+    specific way: ids and transaction numbers are derived from `mockState.transactions.length`, so
+    the phantom's identifiers were handed straight back to the next real write. The only thing the
+    fabrication ever bought was letting the protocol fixtures post to a synthetic id, and those now
+    use a seeded account, which costs them nothing.
+  */
+  if (!account) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'ACCOUNT_NOT_FOUND',
+        detail: `No account was found with identifier '${body.accountId}'.`,
+      }),
+    );
   }
+  const newBalance = account.balance + amount;
+  account.balance = newBalance;
   const index = mockState.transactions.length;
   const transaction = {
     // 0xd00 block (12 hex chars = a VALID uuid) — same scheme as withdraw/transfer below.
     id: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
-    accountId: account?.id ?? NIL_UUID,
+    accountId: account.id,
     transactionNumber: `TXN-20260722-${String(300 + index).padStart(6, '0')}`,
     type: 'Deposit' as const,
     amount,
@@ -389,9 +406,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   // models the protocol faithfully, but an entry whose `balanceAfter` belongs to no account would
   // sit in the cross-account feed reconciling with nothing — the exact defect the derived seed was
   // written to remove. Same rule at every write site below.
-  if (account) {
-    mockState.transactions.push(transaction);
-  }
+  mockState.transactions.push(transaction);
 
   const payload = {
     data: { transaction: toWire(transaction), newBalance },
@@ -516,9 +531,19 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   // Correct PIN clears the attempt counter.
   mockState.pinAttempts = 0;
 
-  // INSUFFICIENT_FUNDS — after the PIN passes, like the backend orders it.
+  // INSUFFICIENT_FUNDS — after the PIN passes, like the backend orders it. The account has to
+  // exist first: see the note on deposit above.
   const account = mockState.accounts.find((a) => a.id === body.accountId);
-  const available = account?.balance ?? 0;
+  if (!account) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'ACCOUNT_NOT_FOUND',
+        detail: `No account was found with identifier '${body.accountId}'.`,
+      }),
+    );
+  }
+  const available = account.balance;
   if (amount > available) {
     return response.untyped(
       problem({
@@ -532,15 +557,13 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
 
   // Success — debit, record, store (once), reply.
   const newBalance = available - amount;
-  if (account) {
-    account.balance = newBalance;
-  }
+  account.balance = newBalance;
   const index = mockState.transactions.length;
   const transaction = {
     id: `019f7b3f-0000-7000-8000-${(0x400 + index).toString(16).padStart(12, '0')}`,
     // An unseeded account id is tolerated here (see the fabricated balance above); NIL_UUID keeps
     // the entry out of every per-account feed rather than attributing it to the wrong one.
-    accountId: account?.id ?? NIL_UUID,
+    accountId: account.id,
     transactionNumber: `TXN-20260722-${String(400 + index).padStart(6, '0')}`,
     type: 'Withdrawal' as const,
     amount,
@@ -551,9 +574,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     status: 'Completed' as const,
     createdAt: `2026-07-22T11:${String(index).padStart(2, '0')}:00.0000000Z`,
   };
-  if (account) {
-    mockState.transactions.push(transaction);
-  }
+  mockState.transactions.push(transaction);
 
   const payload = {
     data: { transaction: toWire(transaction), newBalance },
@@ -693,7 +714,16 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
 
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
-  const available = account?.balance ?? 1000; // tolerate a missing fromAccount (stepup.test)
+  if (!account) {
+    return response.untyped(
+      problem({
+        status: 404,
+        errorCode: 'ACCOUNT_NOT_FOUND',
+        detail: `No account was found with identifier '${body.fromAccountId}'.`,
+      }),
+    );
+  }
+  const available = account.balance;
   if (amount > available) {
     return response.untyped(
       problem({
@@ -706,25 +736,21 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
 
   const newBalance = available - amount;
-  if (account) {
-    account.balance = newBalance;
-  }
+  account.balance = newBalance;
   const index = mockState.transactions.length;
-  if (account) {
-    mockState.transactions.push({
-      id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
-      accountId: account.id,
-      transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
-      type: 'TransferOut',
-      amount,
-      balanceAfter: newBalance,
-      description: body.description ?? null,
-      recipientAzureTag: tag,
-      senderAzureTag: null,
-      status: 'Completed',
-      createdAt: `2026-07-22T12:${String(index).padStart(2, '0')}:00.0000000Z`,
-    });
-  }
+  mockState.transactions.push({
+    id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
+    accountId: account.id,
+    transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
+    type: 'TransferOut',
+    amount,
+    balanceAfter: newBalance,
+    description: body.description ?? null,
+    recipientAzureTag: tag,
+    senderAzureTag: null,
+    status: 'Completed',
+    createdAt: `2026-07-22T12:${String(index).padStart(2, '0')}:00.0000000Z`,
+  });
 
   const payload = {
     data: {

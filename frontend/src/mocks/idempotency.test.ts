@@ -3,7 +3,13 @@
  * These are the semantics the product's useIdempotentMutation will be tested against.
  */
 
+import { mockState } from './state';
+
 const DEPOSIT_URL = '/api/transactions/deposit';
+// A SEEDED account. It used to be the literal 'a': the handler tolerated an unknown id by
+// fabricating a balance, which meant a 201 for a transaction no account owned. The protocol this
+// file pins does not care which account it is, so it may as well be a real one.
+const ACCOUNT = () => mockState.accounts[0].id;
 const KEY = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 
 function deposit(key: string | null, body: unknown) {
@@ -14,10 +20,10 @@ function deposit(key: string | null, body: unknown) {
 
 describe('idempotency handler (ADR-0009 semantics)', () => {
   it('replays the same key + same body BYTE-identically with the replay marker', async () => {
-    const first = await deposit(KEY, { accountId: 'a', amount: 50 });
+    const first = await deposit(KEY, { accountId: ACCOUNT(), amount: 50 });
     const firstText = await first.text();
 
-    const second = await deposit(KEY, { accountId: 'a', amount: 50 });
+    const second = await deposit(KEY, { accountId: ACCOUNT(), amount: 50 });
     const secondText = await second.text();
 
     expect(first.status).toBe(201);
@@ -29,8 +35,8 @@ describe('idempotency handler (ADR-0009 semantics)', () => {
   });
 
   it('rejects the same key with a DIFFERENT body: 422 IDEMPOTENCY_KEY_REUSE', async () => {
-    await deposit(KEY, { accountId: 'a', amount: 50 });
-    const reuse = await deposit(KEY, { accountId: 'a', amount: 99 });
+    await deposit(KEY, { accountId: ACCOUNT(), amount: 50 });
+    const reuse = await deposit(KEY, { accountId: ACCOUNT(), amount: 99 });
 
     expect(reuse.status).toBe(422);
     const body = await reuse.json();
@@ -39,14 +45,14 @@ describe('idempotency handler (ADR-0009 semantics)', () => {
   });
 
   it('rejects a missing key: 400 IDEMPOTENCY_KEY_MISSING', async () => {
-    const res = await deposit(null, { accountId: 'a', amount: 50 });
+    const res = await deposit(null, { accountId: ACCOUNT(), amount: 50 });
 
     expect(res.status).toBe(400);
     expect((await res.json()).errorCode).toBe('IDEMPOTENCY_KEY_MISSING');
   });
 
   it('rejects a malformed key: 400 IDEMPOTENCY_KEY_INVALID', async () => {
-    const res = await deposit('not-a-uuid', { accountId: 'a', amount: 50 });
+    const res = await deposit('not-a-uuid', { accountId: ACCOUNT(), amount: 50 });
 
     expect(res.status).toBe(400);
     expect((await res.json()).errorCode).toBe('IDEMPOTENCY_KEY_INVALID');

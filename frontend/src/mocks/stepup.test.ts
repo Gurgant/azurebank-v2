@@ -3,6 +3,8 @@
  * BffAuthController semantics). The product's step-up interceptor is built against these.
  */
 
+import { mockState } from './state';
+
 const TRANSFER_URL = '/api/transfers';
 const VERIFY_URL = '/bff/auth/verify-pin';
 const KEY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
@@ -11,7 +13,11 @@ function transfer() {
   return fetch(TRANSFER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': KEY },
-    body: JSON.stringify({ fromAccountId: 'a', recipientAzureTag: 'friend', amount: 25 }),
+    body: JSON.stringify({
+      fromAccountId: mockState.accounts[0].id,
+      recipientAzureTag: 'friend',
+      amount: 25,
+    }),
   });
 }
 

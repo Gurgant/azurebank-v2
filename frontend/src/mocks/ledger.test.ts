@@ -110,10 +110,11 @@ describe('writing to the ledger', () => {
     expect(mockState.accounts.find((a) => a.id === SAVINGS_ACCOUNT_ID)?.balance).toBe(opening + 25);
   });
 
-  it('files NOTHING for an account that does not exist', async () => {
-    // The handler tolerates a synthetic account id, because the idempotency-protocol fixtures post
-    // to one. What it must not do is file the entry: its balanceAfter comes from a fabricated
-    // balance no account holds, so it would sit in the cross-account feed reconciling with nothing.
+  it('404s on an account that does not exist, and files nothing', async () => {
+    // This used to fabricate a balance and answer 201 with a transaction that no account and no
+    // ledger row owned. Withholding only the ledger write was not enough either: ids come from
+    // `mockState.transactions.length`, so the phantom handed its identifiers to the next real
+    // write. `GetAccountWithOwnershipCheckAsync` makes an unknown account a 404, and so does this.
     const before = [...mockState.transactions];
 
     const res = await fetch('/api/transactions/deposit', {
@@ -125,8 +126,8 @@ describe('writing to the ledger', () => {
       body: JSON.stringify({ accountId: 'not-an-account', amount: 25 }),
     });
 
-    // The protocol still answers — only the bookkeeping is withheld.
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
     expect(mockState.transactions).toEqual(before);
   });
 });
