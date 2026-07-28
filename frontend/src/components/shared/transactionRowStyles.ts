@@ -27,6 +27,12 @@ export const useTransactionRowStyles = makeStyles({
     whiteSpace: 'nowrap',
   },
 
+  note: {
+    display: 'block',
+    fontSize: '12px',
+    color: colors.neutral[500],
+  },
+
   when: {
     fontSize: '13px',
     color: colors.neutral[600],
@@ -125,10 +131,20 @@ export const useTransactionRowStyles = makeStyles({
  * re-derived this, and they did not agree.
  */
 export function transactionLabel(t: TransactionResponse): string {
-  if (t.description) return t.description;
+  // The counterparty wins over the description on a transfer, and that resolves a genuine
+  // disagreement rather than a formatting one: the dashboard printed "Dinner split" where History
+  // printed "To @john_d" for the SAME row. WHO the money went to is the identifying fact on a
+  // ledger — the note is why, and it survives as the second line below.
   if (t.type === 'TransferOut' && t.recipientAzureTag) return `To @${t.recipientAzureTag}`;
   if (t.type === 'TransferIn' && t.senderAzureTag) return `From @${t.senderAzureTag}`;
+  if (t.description) return t.description;
   return t.type;
+}
+
+/** The note under the label, when it says something the label does not. */
+export function transactionNote(t: TransactionResponse): string | null {
+  const label = transactionLabel(t);
+  return t.description && t.description !== label ? t.description : null;
 }
 
 /** True when the entry did not stand, so its amount should not read as money that moved. */

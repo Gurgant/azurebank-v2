@@ -5,6 +5,7 @@ import { formatCurrency, formatTime, isIncomeType } from '../../utils/format';
 import {
   isVoided,
   transactionLabel,
+  transactionNote,
   useTransactionRowStyles as useStyles,
 } from './transactionRowStyles';
 
@@ -69,6 +70,7 @@ export function TransactionRow({
         ) : (
           transactionLabel(t)
         )}
+        {transactionNote(t) && <Text className={styles.note}>{transactionNote(t)}</Text>}
       </td>
 
       <td

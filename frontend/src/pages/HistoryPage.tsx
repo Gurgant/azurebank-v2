@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -10,26 +10,20 @@ import {
   Text,
   tokens,
 } from '@fluentui/react-components';
-import {
-  History24Filled,
-  ArrowDownload24Regular,
-  ArrowUpload24Regular,
-  ArrowRight24Regular,
-  ArrowLeft24Regular,
-} from '@fluentui/react-icons';
+import { History24Filled } from '@fluentui/react-icons';
 import { colors, gradients, transitions } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { PageHeader } from '../components/layout/PageHeader';
+import {
+  TransactionDayRow,
+  TransactionHead,
+  TransactionRow,
+  TransactionTable,
+} from '../components/shared/TransactionRow';
 import type { TransactionType } from '../api/enums';
 import type { TransactionResponse } from '../features/api/apiSlice';
 import { useGetTransactionHistoryInfiniteQuery } from '../features/api/apiSlice';
-import {
-  formatCurrency,
-  formatDateHeading,
-  formatTime,
-  formatTransactionAmount,
-  isIncomeType,
-} from '../utils/format';
+import { formatCurrency, formatDateHeading, isIncomeType } from '../utils/format';
 
 // ============================================
 // TYPES
@@ -158,124 +152,12 @@ const useStyles = makeStyles({
   },
 
   // ========== DATE HEADER ==========
-  dateHeader: {
-    padding: '16px',
-    backgroundColor: colors.neutral[50],
-  },
-
-  dateText: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: colors.neutral[500],
-  },
 
   // ========== TRANSACTION ITEM ==========
-  transactionItem: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '16px',
-    borderBottom: `1px solid ${colors.neutral[100]}`,
-    gap: '12px',
-    cursor: 'pointer',
-    transition: `background ${transitions.fast}`,
-    width: '100%',
-    textAlign: 'left',
-    backgroundColor: 'transparent',
-    border: 'none',
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-    },
-  },
-
-  transactionIcon: {
-    width: '44px',
-    height: '44px',
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-
-  iconDeposit: {
-    backgroundColor: colors.semantic.success.light,
-    color: colors.semantic.success.main,
-  },
-
-  iconWithdrawal: {
-    backgroundColor: colors.semantic.error.light,
-    color: colors.semantic.error.main,
-  },
-
-  iconTransferOut: {
-    backgroundColor: colors.transaction.transferOut.background,
-    color: colors.transaction.transferOut.icon,
-  },
-
-  iconTransferIn: {
-    backgroundColor: colors.transaction.transferIn.background,
-    color: colors.transaction.transferIn.icon,
-  },
 
   iconFallback: {
     backgroundColor: colors.neutral[100],
     color: colors.neutral[500],
-  },
-
-  transactionDetails: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-    minWidth: 0,
-  },
-
-  transactionTitle: {
-    fontSize: '15px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-
-  transactionSubtitle: {
-    fontSize: '13px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  transactionRight: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    gap: '4px',
-  },
-
-  transactionAmount: {
-    fontSize: '16px',
-    fontWeight: 600,
-    fontFamily: 'Consolas, monospace',
-  },
-
-  amountPositive: {
-    color: colors.semantic.success.main,
-  },
-
-  amountNegative: {
-    color: colors.semantic.error.main,
-  },
-
-  transactionTime: {
-    fontSize: '12px',
-    fontWeight: 400,
-    color: colors.neutral[400],
-  },
-
-  statusText: {
-    fontSize: '12px',
-    fontWeight: 600,
-    color: colors.semantic.warning.main,
   },
 
   // ========== STATES (D22) ==========
@@ -338,34 +220,6 @@ const useStyles = makeStyles({
 // HELPER FUNCTIONS
 // ============================================
 
-function getTransactionIcon(type: TransactionType) {
-  switch (type) {
-    case 'Deposit':
-      return ArrowDownload24Regular;
-    case 'Withdrawal':
-      return ArrowUpload24Regular;
-    case 'TransferOut':
-      return ArrowRight24Regular;
-    case 'TransferIn':
-      return ArrowLeft24Regular;
-    default:
-      // A beyond-contract type must degrade to a generic icon, never crash the
-      // render (an undefined component would) — same posture as AccountsPage.
-      return History24Filled;
-  }
-}
-
-/** The row's headline: counterparty first, then description, then the bare type. */
-function getRowTitle(transaction: TransactionResponse): string {
-  if (transaction.type === 'TransferOut' && transaction.recipientAzureTag) {
-    return `To @${transaction.recipientAzureTag}`;
-  }
-  if (transaction.type === 'TransferIn' && transaction.senderAzureTag) {
-    return `From @${transaction.senderAzureTag}`;
-  }
-  return transaction.description ?? transaction.type;
-}
-
 const FILTER_TYPES: Record<Exclude<FilterType, 'all'>, TransactionType[]> = {
   deposits: ['Deposit'],
   withdrawals: ['Withdrawal'],
@@ -402,7 +256,27 @@ export function HistoryPage() {
     useGetTransactionHistoryInfiniteQuery({});
   const problem = error as ApiProblem | undefined;
 
-  const transactions = useMemo(() => (data?.pages ?? []).flatMap((p) => p.data ?? []), [data]);
+  /**
+   * How many of the loaded pages are SHOWN. Pages are never dropped from the cache — hiding them
+   * costs nothing and re-expanding repeats no request — so this is a view cap, not a data change.
+   */
+  const [visiblePages, setVisiblePages] = useState(1);
+  const loadedPages = data?.pages?.length ?? 0;
+
+  /** Reveal an already-loaded page if there is one, otherwise fetch the next. */
+  const showMore = async () => {
+    if (visiblePages < loadedPages) {
+      setVisiblePages((n) => n + 1);
+      return;
+    }
+    await fetchNextPage();
+    setVisiblePages((n) => n + 1);
+  };
+
+  const transactions = useMemo(
+    () => (data?.pages ?? []).slice(0, visiblePages).flatMap((p) => p.data ?? []),
+    [data, visiblePages],
+  );
 
   // Client-side tabs over the LOADED pages — the API has no type filter, and the
   // honest alternative to filtering what we have would be lying about totals.
@@ -431,21 +305,6 @@ export function HistoryPage() {
       .reduce((sum, t) => sum + t.amount, 0);
     return { income, expenses, net: income - expenses };
   }, [transactions]);
-
-  const getIconStyle = (type: TransactionType) => {
-    switch (type) {
-      case 'Deposit':
-        return styles.iconDeposit;
-      case 'Withdrawal':
-        return styles.iconWithdrawal;
-      case 'TransferOut':
-        return styles.iconTransferOut;
-      case 'TransferIn':
-        return styles.iconTransferIn;
-      default:
-        return styles.iconFallback;
-    }
-  };
 
   return (
     <div className={styles.container}>
@@ -519,68 +378,44 @@ export function HistoryPage() {
             {/* Transaction List */}
             {filteredTransactions.length > 0 ? (
               <div className={styles.transactionList}>
-                {groupedTransactions.map((group) => (
-                  <div key={group.date}>
-                    <div className={styles.dateHeader}>
-                      <span className={styles.dateText}>{group.date}</span>
-                    </div>
+                <TransactionTable>
+                  <TransactionHead />
+                  <tbody>
+                    {groupedTransactions.map((group) => (
+                      <Fragment key={group.date}>
+                        <TransactionDayRow label={group.date} columns={4} />
+                        {group.transactions.map((transaction) => (
+                          <TransactionRow
+                            key={transaction.id}
+                            transaction={transaction}
+                            onOpen={(id) => navigate(`/transactions/${id}`)}
+                          />
+                        ))}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </TransactionTable>
 
-                    {group.transactions.map((transaction) => {
-                      const IconComponent = getTransactionIcon(transaction.type);
-                      return (
-                        <button
-                          key={transaction.id}
-                          className={styles.transactionItem}
-                          onClick={() => void navigate(`/transactions/${transaction.id}`)}
-                        >
-                          <div
-                            className={`${styles.transactionIcon} ${getIconStyle(transaction.type)}`}
-                          >
-                            <IconComponent />
-                          </div>
-                          <div className={styles.transactionDetails}>
-                            <Text className={styles.transactionTitle}>
-                              {getRowTitle(transaction)}
-                            </Text>
-                            <Text className={styles.transactionSubtitle}>
-                              {transaction.transactionNumber}
-                            </Text>
-                          </div>
-                          <div className={styles.transactionRight}>
-                            <Text
-                              className={`${styles.transactionAmount} ${
-                                isIncomeType(transaction.type)
-                                  ? styles.amountPositive
-                                  : styles.amountNegative
-                              }`}
-                            >
-                              {formatTransactionAmount(transaction.amount, transaction.type)}
-                            </Text>
-                            {transaction.status === 'Completed' ? (
-                              <Text className={styles.transactionTime}>
-                                {formatTime(transaction.createdAt)}
-                              </Text>
-                            ) : (
-                              <Text className={styles.statusText}>{transaction.status}</Text>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
-
-                {hasNextPage && (
-                  <div className={styles.loadMoreContainer}>
+                {/* Expanding used to be one-way: every press added a page and nothing took one
+                    away, so a long history left you with hundreds of rows and only a reload to get
+                    back. "Show less" hides pages rather than dropping them — the cache keeps them,
+                    so re-expanding costs nothing and no request is repeated. */}
+                <div className={styles.loadMoreContainer}>
+                  {(hasNextPage || visiblePages < loadedPages) && (
                     <Button
                       appearance="secondary"
                       disabled={isFetchingNextPage}
-                      onClick={() => void fetchNextPage()}
+                      onClick={() => void showMore()}
                     >
                       {isFetchingNextPage ? <Spinner size="tiny" /> : 'Load more'}
                     </Button>
-                  </div>
-                )}
+                  )}
+                  {visiblePages > 1 && (
+                    <Button appearance="transparent" onClick={() => setVisiblePages(1)}>
+                      Show less
+                    </Button>
+                  )}
+                </div>
               </div>
             ) : (
               <div className={styles.emptyState}>

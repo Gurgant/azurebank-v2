@@ -74,6 +74,29 @@ describe('history feed (T1)', () => {
     expect(screen.queryByText('Salary — July')).not.toBeInTheDocument();
   });
 
+  it('can shrink again after loading more, without refetching anything', async () => {
+    // Expanding used to be one-way. Every press added a page and nothing took one away, so a long
+    // history left hundreds of rows on screen and only a reload to get back.
+    //
+    // "Show less" hides pages instead of dropping them: the cache still holds them, so pressing
+    // "Load more" again neither repeats a request nor waits. That is why this asserts on rows
+    // rather than on request counts — the point is what the reader sees, and the absence of a
+    // refetch is what makes it instant.
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+    await screen.findByText('Salary — July');
+
+    const rowsNow = () => document.querySelectorAll('tbody tr').length;
+    const firstPage = rowsNow();
+    expect(screen.queryByRole('button', { name: 'Show less' })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(rowsNow()).toBeGreaterThan(firstPage));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
+    await waitFor(() => expect(rowsNow()).toBe(firstPage));
+    expect(screen.queryByRole('button', { name: 'Show less' })).toBeNull();
+  });
+
   it('a load failure shows the problem detail and Retry recovers (D22)', async () => {
     server.use(
       http.get('*/api/transactions', () =>

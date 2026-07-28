@@ -137,7 +137,10 @@ describe('the rest of the page', () => {
     await screen.findByRole('heading', { level: 1 });
 
     const attention = screen.getByText('Needs attention').closest('section')!;
-    await userEvent.click(within(attention).getByRole('button', { name: /Dinner split/ }));
+    // "To @john_d", not "Dinner split": the counterparty leads on a transfer now, because WHO the
+    // money went to is the identifying fact and the note is why. The two screens used to disagree
+    // about which of them to show for the same row.
+    await userEvent.click(within(attention).getByRole('button', { name: /To @john_d/ }));
     expect(await screen.findByText('TX DETAIL')).toBeInTheDocument();
   });
 
