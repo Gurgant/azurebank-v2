@@ -443,11 +443,9 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     // Latest timestamp so it leads the newest-first history feed.
     createdAt: `2026-07-22T10:${String(index).padStart(2, '0')}:00.0000000Z`,
   };
-  // Filed only when the account is real. The unknown-account fallback above (a fabricated balance)
-  // is there for the idempotency-protocol fixtures, which post to synthetic ids: the response still
-  // models the protocol faithfully, but an entry whose `balanceAfter` belongs to no account would
-  // sit in the cross-account feed reconciling with nothing — the exact defect the derived seed was
-  // written to remove. Same rule at every write site below.
+  // The account is guaranteed real by the 404 above, so this always files against something that
+  // exists — which is the whole point: an entry whose `balanceAfter` belonged to no account would
+  // sit in the cross-account feed reconciling with nothing.
   mockState.transactions.push(transaction);
 
   const payload = {
@@ -607,8 +605,6 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   const index = mockState.transactions.length;
   const transaction = {
     id: `019f7b3f-0000-7000-8000-${(0x400 + index).toString(16).padStart(12, '0')}`,
-    // An unseeded account id is tolerated here (see the fabricated balance above); NIL_UUID keeps
-    // the entry out of every per-account feed rather than attributing it to the wrong one.
     accountId: account.id,
     transactionNumber: `TXN-20260722-${String(400 + index).padStart(6, '0')}`,
     type: 'Withdrawal' as const,

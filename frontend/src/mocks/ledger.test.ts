@@ -103,8 +103,12 @@ describe('writing to the ledger', () => {
     expect(res.status).toBe(201);
 
     expect(mockState.transactions.length).toBe(before + 1);
-    const filed = mockState.transactions.find((t) => t.amount === 25 && t.type === 'Deposit');
-    expect(filed?.accountId).toBe(SAVINGS_ACCOUNT_ID);
+    // Scoped by account as well as by amount: matching on amount alone would silently pick a
+    // seeded row if the seed ever grew a €25 deposit, and then assert against the wrong entry.
+    const filed = mockState.transactions.find(
+      (t) => t.accountId === SAVINGS_ACCOUNT_ID && t.amount === 25 && t.type === 'Deposit',
+    );
+    expect(filed).toBeDefined();
     // The new entry lands on the account's new balance — the same property the seed guarantees.
     expect(filed?.balanceAfter).toBe(opening + 25);
     expect(mockState.accounts.find((a) => a.id === SAVINGS_ACCOUNT_ID)?.balance).toBe(opening + 25);
