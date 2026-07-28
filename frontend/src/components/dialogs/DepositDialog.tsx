@@ -1,29 +1,19 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Text, Button, Spinner, MessageBar, MessageBarBody } from '@fluentui/react-components';
 import {
-  Dialog,
-  DialogSurface,
-  makeStyles,
-  Text,
-  Button,
-  Spinner,
-  MessageBar,
-  MessageBarBody,
-  tokens,
-} from '@fluentui/react-components';
-import {
-  Dismiss24Regular,
   ArrowDownload24Regular,
   CheckmarkCircle24Filled,
   Warning24Regular,
 } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { colors, transitions } from '../../theme/tokens';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useDepositMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { formatCurrency } from '../../utils/format';
+import { MoneyDialogShell } from './MoneyDialogShell';
+import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
   depositFormSchema,
   parseAmountInput,
@@ -63,316 +53,7 @@ interface SuccessData {
 // STYLES
 // ============================================
 
-const useStyles = makeStyles({
-  surface: {
-    width: '100%',
-    maxWidth: '480px',
-    maxHeight: '90vh',
-    padding: 0,
-    borderRadius: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-  },
-
-  // ========== HEADER ==========
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '20px 20px 16px 20px',
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-  },
-
-  headerTitle: {
-    fontSize: '20px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-
-  headerIcon: {
-    width: '32px',
-    height: '32px',
-    borderRadius: '8px',
-    backgroundColor: colors.semantic.success.light,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.semantic.success.main,
-  },
-
-  closeButton: {
-    width: '40px',
-    height: '40px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    borderRadius: '8px',
-    color: colors.neutral[500],
-    ':hover': {
-      backgroundColor: colors.neutral[100],
-    },
-  },
-
-  // ========== CONTENT ==========
-  content: {
-    flex: 1,
-    padding: '24px 20px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px',
-    overflowY: 'auto',
-  },
-
-  // ========== ACCOUNT SELECTOR ==========
-  sectionLabel: {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-    marginBottom: '8px',
-  },
-
-  accountCard: {
-    width: '100%',
-    padding: '16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-    },
-  },
-
-  accountCardSelected: {
-    border: `2px solid ${colors.brand[60]}`,
-    backgroundColor: colors.brand[130],
-  },
-
-  accountInfo: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '2px',
-  },
-
-  accountName: {
-    fontSize: '16px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-  },
-
-  accountNumber: {
-    fontSize: '14px',
-    fontFamily: 'Consolas, monospace',
-    color: colors.neutral[500],
-  },
-
-  accountBalance: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: colors.neutral[800],
-  },
-
-  // ========== AMOUNT INPUT ==========
-  amountSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '16px',
-    backgroundColor: colors.neutral[50],
-    borderRadius: '12px',
-  },
-
-  amountLabel: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: colors.neutral[500],
-  },
-
-  amountInputWrapper: {
-    display: 'flex',
-    alignItems: 'baseline',
-    gap: '4px',
-  },
-
-  amountCurrency: {
-    fontSize: '32px',
-    fontWeight: 300,
-    color: colors.neutral[800],
-  },
-
-  amountInput: {
-    fontSize: '48px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-    border: 'none',
-    outline: 'none',
-    background: 'transparent',
-    textAlign: 'center',
-    width: '180px',
-    '::placeholder': {
-      color: colors.neutral[300],
-    },
-  },
-
-  newBalance: {
-    fontSize: '13px',
-    color: colors.neutral[500],
-  },
-
-  amountHint: {
-    fontSize: '13px',
-    fontWeight: 500,
-    color: colors.semantic.error.main,
-  },
-
-  // ========== QUICK AMOUNTS ==========
-  quickAmounts: {
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-  },
-
-  quickBtn: {
-    minWidth: '70px',
-    height: '36px',
-    padding: '0 16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.neutral[50],
-    },
-  },
-
-  quickBtnSelected: {
-    backgroundColor: colors.brand[120],
-    border: `1px solid ${colors.brand[60]}`,
-    color: colors.brand[60],
-  },
-
-  // ========== DESCRIPTION ==========
-  descriptionInput: {
-    width: '100%',
-    padding: '12px',
-    borderRadius: '8px',
-    border: `1px solid ${colors.neutral[200]}`,
-    fontSize: '14px',
-    fontFamily: 'inherit',
-    color: colors.neutral[800],
-    outline: 'none',
-    ':focus': {
-      border: `1px solid ${colors.brand[60]}`,
-    },
-  },
-
-  // ========== SUCCESS / STATE VIEWS ==========
-  centeredView: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '16px',
-    padding: '32px 20px',
-    textAlign: 'center',
-  },
-
-  successIcon: {
-    width: '80px',
-    height: '80px',
-    backgroundColor: colors.semantic.success.light,
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.semantic.success.main,
-  },
-
-  warningIcon: {
-    width: '80px',
-    height: '80px',
-    backgroundColor: colors.semantic.warning.light,
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.semantic.warning.dark,
-  },
-
-  successTitle: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: colors.semantic.success.main,
-  },
-
-  stateTitle: {
-    fontSize: '20px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-  },
-
-  successAmount: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-  },
-
-  stateBody: {
-    fontSize: '15px',
-    color: colors.neutral[500],
-    lineHeight: '1.5',
-  },
-
-  detailsCard: {
-    width: '100%',
-    backgroundColor: colors.neutral[50],
-    borderRadius: '12px',
-    padding: '4px 16px',
-    marginTop: '8px',
-  },
-
-  detailRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: '12px 0',
-    borderBottom: `1px solid ${colors.neutral[100]}`,
-    ':last-child': {
-      borderBottom: 'none',
-    },
-  },
-
-  detailLabel: { fontSize: '14px', color: colors.neutral[500] },
-  detailValue: { fontSize: '14px', fontWeight: 600, color: colors.neutral[800] },
-
-  // ========== FOOTER ==========
-  footer: {
-    padding: '16px 20px 24px 20px',
-    borderTop: `1px solid ${colors.neutral[200]}`,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-
-  errorMessage: {
-    marginBottom: '4px',
-  },
-});
+const useStyles = useMoneyDialogStyles;
 
 // ============================================
 // CONSTANTS
@@ -516,248 +197,225 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
   };
 
   return (
-    <Dialog
+    <MoneyDialogShell
       open={isOpen}
-      modalType="modal"
-      onOpenChange={(_event, data) => {
-        if (!data.open) requestClose();
-      }}
+      title={success ? 'Deposit Complete' : 'Deposit Money'}
+      icon={<ArrowDownload24Regular />}
+      tone="credit"
+      onClose={requestClose}
+      closeDisabled={keyLive}
     >
-      <DialogSurface
-        className={styles.surface}
-        aria-label={success ? 'Deposit Complete' : 'Deposit Money'}
-        aria-describedby={undefined}
-      >
-        {/* Header */}
-        <div className={styles.header}>
-          <div className={styles.headerTitle}>
-            <div className={styles.headerIcon}>
-              <ArrowDownload24Regular />
-            </div>
-            {success ? 'Deposit Complete' : 'Deposit Money'}
+      {/* Success */}
+      {success && (
+        <div className={styles.centeredView}>
+          <div className={styles.successIcon}>
+            <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
           </div>
-          <button
-            className={styles.closeButton}
-            aria-label="Close"
-            onClick={requestClose}
-            disabled={keyLive}
-          >
-            <Dismiss24Regular />
-          </button>
+          <Text className={styles.successTitle}>Deposit Successful!</Text>
+          <Text className={styles.successAmount}>+{formatCurrency(success.amount)}</Text>
+          {success.replayed && (
+            <MessageBar intent="info">
+              <MessageBarBody>
+                This deposit was already processed — showing the existing result.
+              </MessageBarBody>
+            </MessageBar>
+          )}
+          <div className={styles.detailsCard}>
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>To</Text>
+              <Text className={styles.detailValue}>{success.accountName}</Text>
+            </div>
+            <div className={styles.detailRow}>
+              <Text className={styles.detailLabel}>New balance</Text>
+              <Text className={styles.detailValue}>{formatCurrency(success.newBalance)}</Text>
+            </div>
+          </div>
         </div>
+      )}
 
-        {/* Success */}
-        {success && (
-          <div className={styles.centeredView}>
-            <div className={styles.successIcon}>
-              <CheckmarkCircle24Filled style={{ width: '48px', height: '48px' }} />
-            </div>
-            <Text className={styles.successTitle}>Deposit Successful!</Text>
-            <Text className={styles.successAmount}>+{formatCurrency(success.amount)}</Text>
-            {success.replayed && (
-              <MessageBar intent="info">
-                <MessageBarBody>
-                  This deposit was already processed — showing the existing result.
-                </MessageBarBody>
-              </MessageBar>
-            )}
-            <div className={styles.detailsCard}>
-              <div className={styles.detailRow}>
-                <Text className={styles.detailLabel}>To</Text>
-                <Text className={styles.detailValue}>{success.accountName}</Text>
-              </div>
-              <div className={styles.detailRow}>
-                <Text className={styles.detailLabel}>New balance</Text>
-                <Text className={styles.detailValue}>{formatCurrency(success.newBalance)}</Text>
-              </div>
-            </div>
+      {/* RESULT_UNKNOWN — verify-first (§2.3) */}
+      {!success && verifyRequired && (
+        <div className={styles.centeredView}>
+          <div className={styles.warningIcon}>
+            <Warning24Regular style={{ width: '40px', height: '40px' }} />
           </div>
-        )}
+          <Text className={styles.stateTitle}>We couldn&apos;t confirm your deposit</Text>
+          <Text className={styles.stateBody}>
+            The request may or may not have gone through. Check your recent transactions before
+            trying again — retrying blindly could deposit twice.
+          </Text>
+        </div>
+      )}
 
-        {/* RESULT_UNKNOWN — verify-first (§2.3) */}
-        {!success && verifyRequired && (
-          <div className={styles.centeredView}>
-            <div className={styles.warningIcon}>
-              <Warning24Regular style={{ width: '40px', height: '40px' }} />
-            </div>
-            <Text className={styles.stateTitle}>We couldn&apos;t confirm your deposit</Text>
-            <Text className={styles.stateBody}>
-              The request may or may not have gone through. Check your recent transactions before
-              trying again — retrying blindly could deposit twice.
-            </Text>
-          </div>
-        )}
-
-        {/* Form */}
-        {showForm && (
-          <div className={styles.content}>
-            <div>
-              <Text className={styles.sectionLabel}>Select Account</Text>
-              <Controller
-                control={control}
-                name="accountId"
-                render={({ field }) => (
-                  <>
-                    {accounts.map((account) => {
-                      const selectAccount = () => {
-                        // A div can't be `disabled` — guard the mid-flight edit here.
-                        if (isSubmitting) return;
-                        field.onChange(account.id);
-                        onBodyEdit();
-                      };
-                      return (
-                        // Styled div, so the button semantics are wired by hand
-                        // (same pattern as the AccountsPage add-card).
-                        <div
-                          key={account.id}
-                          className={`${styles.accountCard} ${
-                            field.value === account.id ? styles.accountCardSelected : ''
-                          }`}
-                          role="button"
-                          tabIndex={0}
-                          aria-pressed={field.value === account.id}
-                          onClick={selectAccount}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              selectAccount();
-                            }
-                          }}
-                          style={{ marginBottom: '8px' }}
-                        >
-                          <div className={styles.accountInfo}>
-                            <Text className={styles.accountName}>{account.name}</Text>
-                            <Text className={styles.accountNumber}>{account.accountNumber}</Text>
-                          </div>
-                          <Text className={styles.accountBalance}>
-                            {formatCurrency(account.balance)}
-                          </Text>
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-              />
-            </div>
-
-            <div className={styles.amountSection}>
-              <Text className={styles.amountLabel}>Enter amount</Text>
-              <AmountField
-                control={control}
-                name="amount"
-                ariaLabel="Deposit amount"
-                disabled={isSubmitting}
-                onBodyEdit={onBodyEdit}
-                classNames={{
-                  wrapper: styles.amountInputWrapper,
-                  currency: styles.amountCurrency,
-                  input: styles.amountInput,
-                  hint: styles.amountHint,
-                }}
-                belowSlot={
-                  selectedAccount && amountValid ? (
-                    <Text className={styles.newBalance}>
-                      New balance: {formatCurrency(newBalance)}
-                    </Text>
-                  ) : null
-                }
-              />
-            </div>
-
-            <div className={styles.quickAmounts}>
-              {QUICK_AMOUNTS.map((quickAmount) => (
-                <button
-                  key={quickAmount}
-                  className={`${styles.quickBtn} ${
-                    amountNumber === quickAmount ? styles.quickBtnSelected : ''
-                  }`}
-                  onClick={() => handleQuickAmount(quickAmount)}
-                  disabled={isSubmitting}
-                >
-                  €{quickAmount}
-                </button>
-              ))}
-            </div>
-
-            <DescriptionField
+      {/* Form */}
+      {showForm && (
+        <div className={styles.content}>
+          <div>
+            <Text className={styles.sectionLabel}>Select Account</Text>
+            <Controller
               control={control}
-              name="description"
-              disabled={isSubmitting}
-              onBodyEdit={onBodyEdit}
-              className={styles.descriptionInput}
+              name="accountId"
+              render={({ field }) => (
+                <>
+                  {accounts.map((account) => {
+                    const selectAccount = () => {
+                      // A div can't be `disabled` — guard the mid-flight edit here.
+                      if (isSubmitting) return;
+                      field.onChange(account.id);
+                      onBodyEdit();
+                    };
+                    return (
+                      // Styled div, so the button semantics are wired by hand
+                      // (same pattern as the AccountsPage add-card).
+                      <div
+                        key={account.id}
+                        className={`${styles.accountCard} ${
+                          field.value === account.id ? styles.accountCardSelected : ''
+                        }`}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={field.value === account.id}
+                        onClick={selectAccount}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            selectAccount();
+                          }
+                        }}
+                        style={{ marginBottom: '8px' }}
+                      >
+                        <div className={styles.accountInfo}>
+                          <Text className={styles.accountName}>{account.name}</Text>
+                          <Text className={styles.accountNumber}>{account.accountNumber}</Text>
+                        </div>
+                        <Text className={styles.accountBalance}>
+                          {formatCurrency(account.balance)}
+                        </Text>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             />
           </div>
+
+          <div className={styles.amountSection}>
+            <Text className={styles.amountLabel}>Enter amount</Text>
+            <AmountField
+              control={control}
+              name="amount"
+              ariaLabel="Deposit amount"
+              disabled={isSubmitting}
+              onBodyEdit={onBodyEdit}
+              classNames={{
+                wrapper: styles.amountInputWrapper,
+                currency: styles.amountCurrency,
+                input: styles.amountInput,
+                hint: styles.amountHint,
+              }}
+              belowSlot={
+                selectedAccount && amountValid ? (
+                  <Text className={styles.newBalance}>
+                    New balance: {formatCurrency(newBalance)}
+                  </Text>
+                ) : null
+              }
+            />
+          </div>
+
+          <div className={styles.quickAmounts}>
+            {QUICK_AMOUNTS.map((quickAmount) => (
+              <button
+                key={quickAmount}
+                className={`${styles.quickBtn} ${
+                  amountNumber === quickAmount ? styles.quickBtnSelected : ''
+                }`}
+                onClick={() => handleQuickAmount(quickAmount)}
+                disabled={isSubmitting}
+              >
+                €{quickAmount}
+              </button>
+            ))}
+          </div>
+
+          <DescriptionField
+            control={control}
+            name="description"
+            disabled={isSubmitting}
+            onBodyEdit={onBodyEdit}
+            className={styles.descriptionInput}
+          />
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className={styles.footer}>
+        {error && (
+          <MessageBar intent="error" className={styles.errorMessage}>
+            <MessageBarBody>{error}</MessageBarBody>
+          </MessageBar>
+        )}
+        {inFlight && (
+          <MessageBar intent="info" className={styles.errorMessage}>
+            <MessageBarBody>Still processing — tap Deposit again to check.</MessageBarBody>
+          </MessageBar>
         )}
 
-        {/* Footer */}
-        <div className={styles.footer}>
-          {error && (
-            <MessageBar intent="error" className={styles.errorMessage}>
-              <MessageBarBody>{error}</MessageBarBody>
-            </MessageBar>
-          )}
-          {inFlight && (
-            <MessageBar intent="info" className={styles.errorMessage}>
-              <MessageBarBody>Still processing — tap Deposit again to check.</MessageBarBody>
-            </MessageBar>
-          )}
-
-          {success ? (
-            <>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => void navigate(`/transactions/${success.transactionId}`)}
-              >
-                View Transaction
-              </Button>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={onClose}
-              >
-                Done
-              </Button>
-            </>
-          ) : verifyRequired ? (
-            <>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => void navigate('/history')}
-              >
-                Check recent transactions
-              </Button>
-              <Button
-                appearance="secondary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={resetIntent}
-              >
-                It didn&apos;t go through — try again
-              </Button>
-            </>
-          ) : (
+        {success ? (
+          <>
             <Button
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => void handleSubmit(onValid)()}
-              disabled={isSubmitting || !formState.isValid}
+              onClick={() => void navigate(`/transactions/${success.transactionId}`)}
             >
-              {isSubmitting ? (
-                <Spinner size="tiny" />
-              ) : (
-                `Deposit ${amountNumber > 0 ? formatCurrency(amountNumber) : ''}`
-              )}
+              View Transaction
             </Button>
-          )}
-        </div>
-      </DialogSurface>
-    </Dialog>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={onClose}
+            >
+              Done
+            </Button>
+          </>
+        ) : verifyRequired ? (
+          <>
+            <Button
+              appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => void navigate('/history')}
+            >
+              Check recent transactions
+            </Button>
+            <Button
+              appearance="secondary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={resetIntent}
+            >
+              It didn&apos;t go through — try again
+            </Button>
+          </>
+        ) : (
+          <Button
+            appearance="primary"
+            size="large"
+            style={{ width: '100%', height: '48px' }}
+            onClick={() => void handleSubmit(onValid)()}
+            disabled={isSubmitting || !formState.isValid}
+          >
+            {isSubmitting ? (
+              <Spinner size="tiny" />
+            ) : (
+              `Deposit ${amountNumber > 0 ? formatCurrency(amountNumber) : ''}`
+            )}
+          </Button>
+        )}
+      </div>
+    </MoneyDialogShell>
   );
 }
 
