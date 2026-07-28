@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
 import { server } from '../mocks/server';
+import { mockState } from '../mocks/state';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { DashboardPage } from './DashboardPage';
@@ -75,11 +76,25 @@ describe('the scope decides what the page is about', () => {
     expect(screen.getByRole('button', { name: /Rainy Day/ })).toHaveTextContent('€830.00');
   });
 
-  // NOT COVERED: the single-account case, where a lone account is implicitly the scope and the
-  // Balance column therefore renders without any chip being pressed. The behaviour is implemented
-  // (DashboardPage.tsx, `selected`) but overriding the accounts handler with a one-account
-  // response kept failing the response schema, and a fixture I cannot get valid is not a test —
-  // it is a red suite. Recorded here rather than deleted silently.
+  it('treats a lone account as the scope, chips or no chips', async () => {
+    // One account means "all accounts" IS that account: one ledger, so the running balance
+    // reconciles, and withholding the column would be the rule declining to apply itself where it
+    // is trivially true. No chips render in that case — nothing to choose between — so nothing
+    // else would ever set the scope.
+    //
+    // The state is trimmed rather than the handler overridden. A hand-written response has to
+    // reproduce the envelope AND the field names exactly, and my first attempt got both wrong
+    // (`message` missing, `accountType`/`currency` instead of `type`), so the page rendered its
+    // accounts-error state and the test failed for a reason that had nothing to do with scope.
+    // Trimming the seed cannot drift from the handler, because the handler still builds it.
+    mockState.accounts = mockState.accounts.slice(0, 1);
+    renderDashboard();
+
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('€1,250.50');
+    expect(columns()).toEqual(['When', 'Entry', 'Amount', 'Balance', 'Status']);
+    expect(screen.queryByRole('button', { name: /All accounts/ })).toBeNull();
+  });
+
   it('says the month is all-accounts, because the API cannot yet scope it', async () => {
     // `getTransactionSummary` takes { fromDate, toDate } and no AccountId. Rendering a total that
     // silently disagrees with the ledger beside it would be worse than saying so.
