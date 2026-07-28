@@ -393,7 +393,7 @@ export function Sidebar({
             type="button"
           >
             <SignOut24Regular className={styles.navIcon} />
-            <Text className={styles.navLabel}>Logout</Text>
+            <Text className={styles.navLabel}>Sign out</Text>
           </button>
         )}
       </div>

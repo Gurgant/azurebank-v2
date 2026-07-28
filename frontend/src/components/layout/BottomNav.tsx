@@ -31,14 +31,21 @@ const UTILITY_ROW_ID = 'bottom-nav-utility-row';
 const useStyles = makeStyles({
   nav: {
     position: 'fixed',
-    // Detached from the edges: a floating card, not a bar welded to the bottom of the glass.
-    // `env(safe-area-inset-bottom)` is ADDED to the inset rather than used as padding, so on a
-    // notched phone the card clears the home indicator instead of tucking under it.
-    bottom: 'calc(10px + env(safe-area-inset-bottom, 0px))',
-    left: '10px',
-    right: '10px',
-    borderRadius: '22px',
-    border: `1px solid ${surfaces.border}`,
+    // Attached to the bottom edge, with only the TOP corners rounded.
+    //
+    // Floating it 10px off every edge was worse for two measurable reasons. The home indicator
+    // then sits over PAGE CONTENT visible through the gap, where iOS expects it over the bar's own
+    // surface; and content scrolls THROUGH that gap on three sides, so slivers of transactions slide
+    // past beside and beneath the card. Attached, the content disappears behind one clean edge.
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: '22px',
+    borderTopRightRadius: '22px',
+    // Internal padding, not an outer inset: the card's surface reaches under the home indicator
+    // while its contents stay clear of it.
+    paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+    borderTop: `1px solid ${surfaces.border}`,
     // Clips the utility row's corners to the card's radius when it opens.
     overflow: 'hidden',
     // A COLUMN, not a row. The bar is pinned to the bottom edge and sized by its content, so a
@@ -89,7 +96,7 @@ const useStyles = makeStyles({
     display: 'flex',
     gap: '8px',
     width: '100%',
-    padding: '10px 10px 2px',
+    padding: '2px 10px 10px',
   },
 
   /** The same tile the dashboard uses for Deposit and Withdraw. No new shapes. */
@@ -333,45 +340,6 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
         }
       }}
     >
-      {sheetOpen && (
-        <div className={styles.utilityRow} id={UTILITY_ROW_ID}>
-          {utility.map((place) => {
-            const { current, active, Icon } = resolveNavPlace(place, location.pathname);
-            return (
-              <Link
-                key={place.path}
-                to={place.path}
-                className={mergeClasses(styles.utilityTile, active && styles.navItemActive)}
-                aria-current={current}
-                onClick={() => setSheetOpen(false)}
-              >
-                <Icon className={mergeClasses(styles.icon, active && styles.iconActive)} />
-                <Text className={mergeClasses(styles.label, active && styles.labelActive)}>
-                  {place.label}
-                </Text>
-              </Link>
-            );
-          })}
-
-          {/* An act, like Transfer: a button, no href, never lit. It was unreachable from the bar
-              entirely — signing out meant going two levels into Settings, on the surface where
-              signing out matters most. */}
-          {onLogout && (
-            <button
-              type="button"
-              className={styles.utilityTile}
-              onClick={() => {
-                setSheetOpen(false);
-                onLogout();
-              }}
-            >
-              <SignOut24Regular className={styles.icon} />
-              <Text className={styles.label}>Sign out</Text>
-            </button>
-          )}
-        </div>
-      )}
-
       <div className={styles.mainRow}>
         {before.map(renderPlace)}
 
@@ -422,6 +390,45 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
           </Text>
         </button>
       </div>
+
+      {sheetOpen && (
+        <div className={styles.utilityRow} id={UTILITY_ROW_ID}>
+          {utility.map((place) => {
+            const { current, active, Icon } = resolveNavPlace(place, location.pathname);
+            return (
+              <Link
+                key={place.path}
+                to={place.path}
+                className={mergeClasses(styles.utilityTile, active && styles.navItemActive)}
+                aria-current={current}
+                onClick={() => setSheetOpen(false)}
+              >
+                <Icon className={mergeClasses(styles.icon, active && styles.iconActive)} />
+                <Text className={mergeClasses(styles.label, active && styles.labelActive)}>
+                  {place.label}
+                </Text>
+              </Link>
+            );
+          })}
+
+          {/* An act, like Transfer: a button, no href, never lit. It was unreachable from the bar
+              entirely — signing out meant going two levels into Settings, on the surface where
+              signing out matters most. */}
+          {onLogout && (
+            <button
+              type="button"
+              className={styles.utilityTile}
+              onClick={() => {
+                setSheetOpen(false);
+                onLogout();
+              }}
+            >
+              <SignOut24Regular className={styles.icon} />
+              <Text className={styles.label}>Sign out</Text>
+            </button>
+          )}
+        </div>
+      )}
     </nav>
   );
 }
