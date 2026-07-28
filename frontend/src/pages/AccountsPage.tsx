@@ -95,15 +95,21 @@ const useStyles = makeStyles({
     gap: '16px',
   },
 
-  // The dashboard's label idiom, verbatim: 12px uppercase with letter-spacing. It reads as a field
-  // name rather than as prose, which is what keeps the number below it the loudest thing here.
+  // The dashboard's label idiom — 12px uppercase with letter-spacing, so it reads as a field name
+  // rather than prose and the number below it stays the loudest thing here.
+  //
+  // One deliberate departure: `neutral[600]`, not the dashboard's `neutral[500]`. The dashboard's
+  // label sits on a white CARD (4.83:1, passing); this one sits on the canvas, which is darker, and
+  // the same colour measures **4.39:1** there — under the 4.5:1 AA floor for 12px text. Copying a
+  // colour without its ground is how a passing token becomes a failing one; `neutral[600]` is
+  // 6.87:1 on the canvas.
   summaryLabel: {
     display: 'block',
     fontSize: '12px',
     fontWeight: 600,
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
-    color: colors.neutral[500],
+    color: colors.neutral[600],
   },
 
   // `clamp` rather than a breakpoint ramp, for the reason the dashboard's hero gives: Griffel does
