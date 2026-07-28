@@ -10,6 +10,7 @@ import {
   markMockActivity,
   mockAccessTokenExpiry,
   mockState,
+  toWire,
   type MockSessionUser,
 } from './state';
 
@@ -208,13 +209,28 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const params = new URL(request.url).searchParams;
   const page = Number(params.get('Page') ?? 1);
   const pageSize = Number(params.get('PageSize') ?? 20);
+  const accountId = params.get('AccountId');
 
-  const ordered = [...mockState.transactions].sort((a, b) =>
-    b.createdAt.localeCompare(a.createdAt),
-  );
+  // `AccountId` used to be ignored outright, so both accounts returned byte-identical feeds and the
+  // dashboard's scope control appeared to do nothing. The real service filters on it, and 403s
+  // first when the account is not one of the caller's — a mock that answered 200 with somebody
+  // else's ledger would let a broken client look correct.
+  if (accountId && !mockState.accounts.some((a) => a.id === accountId)) {
+    return response.untyped(
+      problem({
+        status: 403,
+        errorCode: 'ACCESS_DENIED',
+        detail: 'You do not have access to this account.',
+      }),
+    );
+  }
+
+  const ordered = [...mockState.transactions]
+    .filter((t) => !accountId || t.accountId === accountId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const totalItems = ordered.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-  const data = ordered.slice((page - 1) * pageSize, page * pageSize);
+  const data = ordered.slice((page - 1) * pageSize, page * pageSize).map(toWire);
 
   return response(200).json({
     data,
@@ -295,7 +311,7 @@ const getTransaction = api.get('/api/transactions/{id}', ({ params, response }) 
       }),
     );
   }
-  return response(200).json({ data: transaction, message: null });
+  return response(200).json({ data: toWire(transaction), message: null });
 });
 
 /** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
@@ -356,6 +372,9 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   const transaction = {
     // 0xd00 block (12 hex chars = a VALID uuid) — same scheme as withdraw/transfer below.
     id: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
+    // An unseeded account id is tolerated here (see the fabricated balance above); NIL_UUID keeps
+    // the entry out of every per-account feed rather than attributing it to the wrong one.
+    accountId: account?.id ?? body.accountId ?? NIL_UUID,
     transactionNumber: `TXN-20260722-${String(300 + index).padStart(6, '0')}`,
     type: 'Deposit' as const,
     amount,
@@ -370,7 +389,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   mockState.transactions.push(transaction);
 
   const payload = {
-    data: { transaction, newBalance },
+    data: { transaction: toWire(transaction), newBalance },
     message: 'Deposit completed successfully.',
   };
   const text = JSON.stringify(payload);
@@ -514,6 +533,9 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   const index = mockState.transactions.length;
   const transaction = {
     id: `019f7b3f-0000-7000-8000-${(0x400 + index).toString(16).padStart(12, '0')}`,
+    // An unseeded account id is tolerated here (see the fabricated balance above); NIL_UUID keeps
+    // the entry out of every per-account feed rather than attributing it to the wrong one.
+    accountId: account?.id ?? body.accountId ?? NIL_UUID,
     transactionNumber: `TXN-20260722-${String(400 + index).padStart(6, '0')}`,
     type: 'Withdrawal' as const,
     amount,
@@ -526,7 +548,10 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   };
   mockState.transactions.push(transaction);
 
-  const payload = { data: { transaction, newBalance }, message: 'Withdrawal successful' };
+  const payload = {
+    data: { transaction: toWire(transaction), newBalance },
+    message: 'Withdrawal successful',
+  };
   const text = JSON.stringify(payload);
   mockState.idempotency.set(`withdraw|${key}`, { bodyFingerprint: fp, status: 201, body: text });
   return response(201).json(payload);
@@ -680,6 +705,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const index = mockState.transactions.length;
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
+    accountId: account?.id ?? body.fromAccountId ?? NIL_UUID,
     transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
     type: 'TransferOut',
     amount,
@@ -816,6 +842,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   const at = `2026-07-22T13:${String(index).padStart(2, '0')}:00.0000000Z`;
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0xc00 + index).toString(16).padStart(12, '0')}`,
+    accountId: from.id,
     transactionNumber,
     type: 'TransferOut',
     amount,
@@ -828,6 +855,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   });
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0xc00 + index + 1).toString(16).padStart(12, '0')}`,
+    accountId: to.id,
     transactionNumber: `TXN-20260722-${String(600 + index + 1).padStart(6, '0')}`,
     type: 'TransferIn',
     amount,

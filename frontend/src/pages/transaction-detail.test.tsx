@@ -5,12 +5,22 @@ import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
+import { mockState } from '../mocks/state';
+import { formatCurrency } from '../utils/format';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { TransactionDetailPage } from './TransactionDetailPage';
 
 const T1_DEPOSIT = '019f7b3f-0000-7000-8000-000000000b01';
 const T3_TRANSFER = '019f7b3f-0000-7000-8000-000000000b03';
 const T5_REVERSED = '019f7b3f-0000-7000-8000-000000000b05';
+
+function seededBalanceAfter(id: string): number {
+  const entry = mockState.transactions.find((t) => t.id === id);
+  if (!entry) {
+    throw new Error(`No seeded transaction ${id}`);
+  }
+  return entry.balanceAfter;
+}
 
 function renderDetail(id: string) {
   return renderWithProviders(
@@ -36,7 +46,10 @@ describe('transaction detail (T2)', () => {
     expect(screen.getByText('TXN-20260720-000101')).toBeInTheDocument();
     expect(screen.getByText(/July 20, 2026/)).toBeInTheDocument();
     expect(screen.getByText('Salary — July')).toBeInTheDocument();
-    expect(screen.getByText('€2,250.50')).toBeInTheDocument(); // balance after
+    // Balance after. Read from the seed rather than typed, because the seed DERIVES it — the
+    // running balance is computed backwards from the account's real balance, so a hand-copied
+    // literal here would be a second source of truth that goes stale on the next seed edit.
+    expect(screen.getByText(formatCurrency(seededBalanceAfter(T1_DEPOSIT)))).toBeInTheDocument();
   });
 
   it('shows the transfer counterparty and the Pending status', async () => {

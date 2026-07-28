@@ -39,6 +39,7 @@ export interface MockAccount {
   createdAt: string;
 }
 
+/** Exactly the wire shape of `TransactionResponse`. Nothing here that the real API does not send. */
 export interface MockTransaction {
   id: string;
   transactionNumber: string;
@@ -51,6 +52,64 @@ export interface MockTransaction {
   senderAzureTag: string | null;
   status: TransactionStatus;
   createdAt: string;
+}
+
+/**
+ * What the mock's ledger STORES: the wire shape plus the column the database has and the API does
+ * not return.
+ *
+ * `Transaction.AccountId` is a real column — `TransactionService` filters on it and 403s when the
+ * account is not the caller's — but `TransactionResponse` has no such field, so a client cannot
+ * tell which account a row belongs to. That asymmetry is not a mock detail: it is why the dashboard
+ * shows a running-balance column only when the feed is scoped to one account. A cross-account list
+ * has rows whose `balanceAfter` cannot be attributed to anything.
+ *
+ * It is stripped on the way out by `toWire`, so the mock cannot let a client depend on a field the
+ * real API will never send.
+ */
+export interface MockLedgerEntry extends MockTransaction {
+  accountId: string;
+}
+
+/**
+ * Projects a ledger entry onto the wire shape. Every response path goes through this.
+ *
+ * An allow-list rather than `const { accountId, ...wire } = entry`, and deliberately: the rest
+ * form excludes only the columns somebody remembered to name, so the NEXT ledger-only field is
+ * shipped to clients by default. Listing what goes out means a new internal column stays internal
+ * until someone decides otherwise.
+ */
+export function toWire(entry: MockLedgerEntry): MockTransaction {
+  return {
+    id: entry.id,
+    transactionNumber: entry.transactionNumber,
+    type: entry.type,
+    amount: entry.amount,
+    balanceAfter: entry.balanceAfter,
+    description: entry.description,
+    recipientAzureTag: entry.recipientAzureTag,
+    senderAzureTag: entry.senderAzureTag,
+    status: entry.status,
+    createdAt: entry.createdAt,
+  };
+}
+
+/** Money-safe: float accumulation must not leak sub-cent artifacts into a balance. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * How much an entry moved its account. `type` carries direction, so this is the one place the
+ * sign is decided — the same split the summary aggregate uses for income vs expenses.
+ *
+ * Every entry moves the balance, whatever its status. A `Pending` transfer has already been
+ * debited by the time it is recorded (see `TransferService`), and the seeded `Reversed` withdrawal
+ * moved the money too — what is missing is the compensating entry that would put it back, which
+ * this seed does not model.
+ */
+function signedDelta(entry: { type: TransactionType; amount: number }): number {
+  return entry.type === 'Deposit' || entry.type === 'TransferIn' ? entry.amount : -entry.amount;
 }
 
 interface MockState {
@@ -94,7 +153,7 @@ interface MockState {
    */
   accounts: MockAccount[];
   /** History feed, NEWEST FIRST like the real query orders it. */
-  transactions: MockTransaction[];
+  transactions: MockLedgerEntry[];
   /** Exact-match transfer-recipient directory. Looking up self returns exists:false. */
   recipients: MockRecipient[];
 }
@@ -108,10 +167,14 @@ function defaultRecipients(): MockRecipient[] {
   ];
 }
 
+/** Named so the ledger seed and the account seed cannot drift apart on a copied literal. */
+export const MAIN_ACCOUNT_ID = '019f7b3f-0000-7000-8000-0000000000a1';
+export const SAVINGS_ACCOUNT_ID = '019f7b3f-0000-7000-8000-0000000000a2';
+
 function defaultAccounts(): MockAccount[] {
   return [
     {
-      id: '019f7b3f-0000-7000-8000-0000000000a1',
+      id: MAIN_ACCOUNT_ID,
       accountNumber: 'AB-****-****-90',
       name: 'Main Account',
       type: 'Checking',
@@ -120,7 +183,7 @@ function defaultAccounts(): MockAccount[] {
       createdAt: '2026-07-01T09:00:00.0000000Z',
     },
     {
-      id: '019f7b3f-0000-7000-8000-0000000000a2',
+      id: SAVINGS_ACCOUNT_ID,
       accountNumber: 'AB-****-****-01',
       name: 'Rainy Day',
       type: 'Savings',
@@ -132,18 +195,32 @@ function defaultAccounts(): MockAccount[] {
 }
 
 /**
- * 25 seeded transactions (newest first): 5 hand-written heroes exercising every type,
- * a Pending and a Reversed status, transfer counterparties and a null description —
- * plus 20 fillers so the list spans TWO pages at the real page size of 20.
+ * The seeded ledger: 5 hand-written heroes exercising every type, a Pending and a Reversed status,
+ * transfer counterparties and a null description — plus 20 fillers, so the cross-account list spans
+ * TWO pages at the real page size of 20.
+ *
+ * **`balanceAfter` is DERIVED, not written.** It used to be typed in by hand and it reconciled with
+ * nothing: the five heroes' balances did not follow from their own amounts, none of them landed on
+ * either account's actual balance, and the fillers ran 1000, 1010, 1020... — a running balance that
+ * grew as it went further into the past. Every row said "and then you had X" and every X was
+ * fiction, which made it impossible to see whether the dashboard's per-account balance column was
+ * right, since nothing it could have shown would have been.
+ *
+ * So the facts are declared here - which account, what type, how much, when - and the running
+ * balance falls out of them, walking backwards from each account's CURRENT balance through
+ * `signedDelta`. The newest entry on an account therefore lands exactly on that account's balance,
+ * by construction rather than by arithmetic somebody has to redo by hand after every edit.
  */
-function defaultTransactions(): MockTransaction[] {
-  const heroes: MockTransaction[] = [
+type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter'>;
+
+function seedEntries(): SeedEntry[] {
+  const heroes: SeedEntry[] = [
     {
       id: '019f7b3f-0000-7000-8000-000000000b01',
+      accountId: MAIN_ACCOUNT_ID,
       transactionNumber: 'TXN-20260720-000101',
       type: 'Deposit',
       amount: 1250.5,
-      balanceAfter: 2250.5,
       description: 'Salary — July',
       recipientAzureTag: null,
       senderAzureTag: null,
@@ -152,10 +229,10 @@ function defaultTransactions(): MockTransaction[] {
     },
     {
       id: '019f7b3f-0000-7000-8000-000000000b02',
+      accountId: MAIN_ACCOUNT_ID,
       transactionNumber: 'TXN-20260720-000102',
       type: 'Withdrawal',
       amount: 50,
-      balanceAfter: 2200.5,
       description: null,
       recipientAzureTag: null,
       senderAzureTag: null,
@@ -164,10 +241,10 @@ function defaultTransactions(): MockTransaction[] {
     },
     {
       id: '019f7b3f-0000-7000-8000-000000000b03',
+      accountId: MAIN_ACCOUNT_ID,
       transactionNumber: 'TXN-20260719-000103',
       type: 'TransferOut',
       amount: 200,
-      balanceAfter: 2000.5,
       description: 'Dinner split',
       recipientAzureTag: 'john_d',
       senderAzureTag: null,
@@ -175,11 +252,13 @@ function defaultTransactions(): MockTransaction[] {
       createdAt: '2026-07-19T14:00:00.0000000Z',
     },
     {
+      // On the savings account, so the two per-account feeds differ in KIND and not only in
+      // length - scoping the dashboard to Rainy Day has to show something Main does not.
       id: '019f7b3f-0000-7000-8000-000000000b04',
+      accountId: SAVINGS_ACCOUNT_ID,
       transactionNumber: 'TXN-20260719-000104',
       type: 'TransferIn',
       amount: 75,
-      balanceAfter: 2075.5,
       description: null,
       recipientAzureTag: null,
       senderAzureTag: 'anna_k',
@@ -188,10 +267,10 @@ function defaultTransactions(): MockTransaction[] {
     },
     {
       id: '019f7b3f-0000-7000-8000-000000000b05',
+      accountId: MAIN_ACCOUNT_ID,
       transactionNumber: 'TXN-20260718-000105',
       type: 'Withdrawal',
       amount: 30,
-      balanceAfter: 2045.5,
       description: 'ATM — disputed',
       recipientAzureTag: null,
       senderAzureTag: null,
@@ -199,20 +278,44 @@ function defaultTransactions(): MockTransaction[] {
       createdAt: '2026-07-18T11:00:00.0000000Z',
     },
   ];
-  const fillers: MockTransaction[] = Array.from({ length: 20 }, (_, i) => ({
+  // Split across both accounts, so neither per-account feed is a rounding error next to the other.
+  const fillers: SeedEntry[] = Array.from({ length: 20 }, (_, i) => ({
     id: `019f7b3f-0000-7000-8000-000000000f${String(i).padStart(2, '0')}`,
+    accountId: i % 2 === 0 ? MAIN_ACCOUNT_ID : SAVINGS_ACCOUNT_ID,
     transactionNumber: `TXN-20260710-${String(200 + i).padStart(6, '0')}`,
     type: 'Deposit' as const,
     amount: 10,
-    balanceAfter: 1000 + i * 10,
     description: `Top-up #${i + 1}`,
     recipientAzureTag: null,
     senderAzureTag: null,
     status: 'Completed' as const,
-    // Descending days keep the whole array newest-first.
+    // Descending days, so a larger `i` is always further in the past.
     createdAt: `2026-07-${String(10 - Math.floor(i / 3)).padStart(2, '0')}T12:${String(59 - i).padStart(2, '0')}:00.0000000Z`,
   }));
   return [...heroes, ...fillers];
+}
+
+/**
+ * Sorts newest-first and fills in the running balance per account.
+ *
+ * The sort is what makes "newest first" TRUE rather than asserted: the hand-ordered seed had its
+ * two 20 July heroes the wrong way round (09:15 listed above 18:30) while claiming to be ordered,
+ * and the real query is `OrderByDescending(t => t.CreatedAt)`.
+ */
+function withRunningBalance(entries: SeedEntry[], accounts: MockAccount[]): MockLedgerEntry[] {
+  const ordered = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const running = new Map(accounts.map((a) => [a.id, a.balance]));
+
+  return ordered.map((entry) => {
+    const balanceAfter = round2(running.get(entry.accountId) ?? 0);
+    // Walking backwards in time: undo this entry to get the balance the PREVIOUS one left behind.
+    running.set(entry.accountId, round2(balanceAfter - signedDelta(entry)));
+    return { ...entry, balanceAfter };
+  });
+}
+
+function defaultTransactions(): MockLedgerEntry[] {
+  return withRunningBalance(seedEntries(), defaultAccounts());
 }
 
 /** The one seeded credential pair the mock login accepts. */
