@@ -201,3 +201,36 @@ describe('the query parameters the mock used to ignore', () => {
     expect((await res.json()).errorCode).toBe('INVALID_DATE_RANGE');
   });
 });
+
+describe('the two shapes every error inherits', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it('a validation 400 says Validation Failed, not Bad Request with an empty detail', async () => {
+    // `ValidationExceptionHandler` writes its OWN ProblemDetails — title "Validation Failed",
+    // detail "One or more validation errors occurred." Everything the mock built carried the
+    // generic 400 title and detail: '', so a surface rendering `problem.detail` showed nothing
+    // for the one error class that always has something to say.
+    const res = await fetch('/api/transactions?Page=0');
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.title).toBe('Validation Failed');
+    expect(body.detail).toBe('One or more validation errors occurred.');
+    expect(body.errorCode).toBeUndefined(); // validation 400s carry none
+  });
+
+  it('keys pagination errors by property, and caps PageSize at 100', async () => {
+    // `TransactionFilter` is `[Range(1, 100)]` on PageSize with that exact message, and model
+    // validation keys by property name. The mock invented a `pagination` key, a sentence no
+    // validator produces, and NO upper bound — so paging 1000 rows worked here and 400s in prod.
+    const body = await fetch('/api/transactions?PageSize=1000').then((r) => r.json());
+
+    expect(body.errors.pageSize).toEqual(['PageSize must be between 1 and 100.']);
+    expect(body.errors).not.toHaveProperty('pagination');
+
+    const ok = await fetch('/api/transactions?PageSize=100');
+    expect(ok.status).toBe(200);
+  });
+});

@@ -305,13 +305,20 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   // totalPages Infinity, and a NaN page slices to an empty list while the metadata says otherwise.
   // The real endpoint validates these; the mock has to, or a client could be built against
   // pagination that only the mock would ever produce.
-  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1) {
-    return response.untyped(
-      problem({
-        status: 400,
-        errors: { pagination: ['Page and PageSize must be positive integers.'] },
-      }),
-    );
+  // `TransactionFilter` carries `[Range(1, int.MaxValue)]` on Page and `[Range(1, 100)]` on
+  // PageSize, with those exact messages, and model validation keys the dictionary by PROPERTY
+  // name. The mock invented a `pagination` key and a sentence no validator produces, and enforced
+  // no upper bound at all — so a client could page 1000 rows at a time against the mock and be
+  // rejected in production.
+  const pageErrors: Record<string, string[]> = {};
+  if (!Number.isInteger(page) || page < 1) {
+    pageErrors.page = ['Page must be at least 1.'];
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    pageErrors.pageSize = ['PageSize must be between 1 and 100.'];
+  }
+  if (Object.keys(pageErrors).length > 0) {
+    return response.untyped(problem({ status: 400, errors: pageErrors }));
   }
 
   // `AccountId` used to be ignored outright, so both accounts returned byte-identical feeds and the

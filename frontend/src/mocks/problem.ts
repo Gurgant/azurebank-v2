@@ -39,11 +39,23 @@ export function fakeTraceId(): string {
 
 export function problemBody(init: ProblemInit) {
   const { status, errorCode, title, detail, errors, extensions } = init;
+  /*
+    A validation 400 is NOT a generic 400. `ValidationExceptionHandler` writes its own
+    ProblemDetails with `Title = "Validation Failed"` and
+    `Detail = "One or more validation errors occurred."`, where `AppExceptionHandler` would have
+    said "Bad Request" and the exception's own message. The mock was giving every validation
+    failure the generic title and an EMPTY detail, so any surface that renders `problem.detail`
+    showed nothing at all for the one class of error that always has something to say.
+
+    Keyed off `errors` rather than off the status, because that dictionary is exactly what
+    distinguishes the two handlers.
+  */
+  const isValidation = status === 400 && errors !== undefined;
   return {
     type: `https://httpstatuses.com/${status}`,
-    title: title ?? DEFAULT_TITLES[status] ?? 'Error',
+    title: title ?? (isValidation ? 'Validation Failed' : (DEFAULT_TITLES[status] ?? 'Error')),
     status,
-    detail: detail ?? '',
+    detail: detail ?? (isValidation ? 'One or more validation errors occurred.' : ''),
     traceId: fakeTraceId(),
     ...(errorCode ? { errorCode } : {}),
     ...(errors ? { errors } : {}),
