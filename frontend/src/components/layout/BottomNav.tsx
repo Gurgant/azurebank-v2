@@ -131,33 +131,6 @@ const useStyles = makeStyles({
     ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '-2px' },
   },
 
-  sheetBody: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-    paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-  },
-
-  sheetRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '14px',
-    width: '100%',
-    padding: '14px 8px',
-    // 48px minimum target, which is the floor Material states for a touch control.
-    minHeight: '48px',
-    background: 'none',
-    border: 'none',
-    borderRadius: '10px',
-    font: 'inherit',
-    color: colors.neutral[800],
-    textDecoration: 'none',
-    cursor: 'pointer',
-    textAlign: 'left',
-    ':hover': { backgroundColor: colors.neutral[50] },
-    ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '-2px' },
-  },
-
   navItem: {
     position: 'relative',
     display: 'flex',

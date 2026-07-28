@@ -75,6 +75,11 @@ describe('the scope decides what the page is about', () => {
     expect(screen.getByRole('button', { name: /Rainy Day/ })).toHaveTextContent('€830.00');
   });
 
+  // NOT COVERED: the single-account case, where a lone account is implicitly the scope and the
+  // Balance column therefore renders without any chip being pressed. The behaviour is implemented
+  // (DashboardPage.tsx, `selected`) but overriding the accounts handler with a one-account
+  // response kept failing the response schema, and a fixture I cannot get valid is not a test —
+  // it is a red suite. Recorded here rather than deleted silently.
   it('says the month is all-accounts, because the API cannot yet scope it', async () => {
     // `getTransactionSummary` takes { fromDate, toDate } and no AccountId. Rendering a total that
     // silently disagrees with the ledger beside it would be worse than saying so.

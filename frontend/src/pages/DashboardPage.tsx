@@ -535,7 +535,12 @@ export function DashboardPage() {
     refetch: refetchSummary,
   } = useGetTransactionSummaryQuery(monthWindow);
 
-  const selected = accounts.find((a) => a.id === scope);
+  // A lone account is implicitly the scope. With one account "all accounts" IS that account, its
+  // ledger is the only ledger, and the running balance therefore reconciles — so withholding the
+  // Balance column would be the thesis refusing to apply itself in the one case where it is
+  // trivially true. There are no chips to select in that case (there is nothing to choose between),
+  // so nothing else would ever set it.
+  const selected = accounts.length === 1 ? accounts[0] : accounts.find((a) => a.id === scope);
   const total = accounts.reduce((sum, a) => sum + a.balance, 0);
   const shownBalance = selected ? selected.balance : total;
   const entries = useMemo(() => recent?.data ?? [], [recent]);
@@ -882,7 +887,12 @@ export function DashboardPage() {
                     })}
                 {!recentLoading && entries.length === 0 && (
                   <tr>
-                    <td className={mergeClasses(styles.td, styles.muted)} colSpan={5}>
+                    {/* Four columns without a scope, five with — the same condition the Balance
+                        header and the tfoot placeholder already use. */}
+                    <td
+                      className={mergeClasses(styles.td, styles.muted)}
+                      colSpan={selected ? 5 : 4}
+                    >
                       No transactions yet for {scopeLabel}.
                     </td>
                   </tr>
