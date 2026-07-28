@@ -328,11 +328,37 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     );
   }
 
+  /*
+    The date window, which the mock ignored outright.
+
+    `GetTransactionsAsync` applies both bounds INCLUSIVELY and independently —
+    `if (filter.FromDate.HasValue) query.Where(t => t.CreatedAt >= ...)` and the same for ToDate
+    with `<=`. Neither has a default here: an absent bound means unbounded, unlike the summary
+    below, which defaults to the current calendar month. Two endpoints, two different rules, and
+    the mock had neither.
+
+    `Date.parse` rather than string comparison: the ledger stores 7-digit fractional seconds and
+    callers send 3, so lexicographic ordering would put `…09:15:00.0000000Z` after
+    `…09:15:00.000Z` and drop rows on an exact boundary.
+  */
+  const fromMs = params.get('FromDate') ? Date.parse(params.get('FromDate') as string) : null;
+  const toMs = params.get('ToDate') ? Date.parse(params.get('ToDate') as string) : null;
+
   const ordered = [...mockState.transactions]
     .filter((t) => !accountId || t.accountId === accountId)
+    .filter((t) => {
+      const at = Date.parse(t.createdAt);
+      if (fromMs !== null && !Number.isNaN(fromMs) && at < fromMs) {
+        return false;
+      }
+      return !(toMs !== null && !Number.isNaN(toMs) && at > toMs);
+    })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const totalItems = ordered.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  // `Math.ceil`, NOT `max(1, ...)`. An empty result is ZERO pages in `PaginatedResponse` — the
+  // no-accounts branch returns `TotalPages = 0` explicitly and the general path computes the same
+  // ceiling. Reporting 1 tells a client there is a page to show when there is not.
+  const totalPages = Math.ceil(totalItems / pageSize);
   const data = ordered.slice((page - 1) * pageSize, page * pageSize).map(toWire);
 
   return response(200).json({
@@ -358,12 +384,37 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
  */
 const transactionSummary = api.get('/api/transactions/summary', ({ request, response }) => {
   const params = new URL(request.url).searchParams;
-  // Resolve the window FIRST and use the SAME values for both the filter and the echo —
-  // they must never diverge. Defaults mirror the real API: missing ToDate = "now".
-  const fromDate = params.get('FromDate') ?? '1970-01-01T00:00:00.0000000Z';
-  const toDate = params.get('ToDate') ?? new Date().toISOString();
+  /*
+    Resolve the window FIRST and use the SAME values for the filter and the echo — they must never
+    diverge.
+
+    The default start is the FIRST DAY OF THE CURRENT UTC MONTH, not the epoch:
+    `filter.FromDate ?? new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc)`. The mock
+    used 1970, so "this month so far" summed the entire ledger — and the dashboard's month card,
+    whose whole label is "July so far", was quietly reporting all time. Missing ToDate is `now`,
+    which the mock did have right.
+  */
+  const now = new Date();
+  const monthStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+  ).toISOString();
+  const fromDate = params.get('FromDate') ?? monthStart;
+  const toDate = params.get('ToDate') ?? now.toISOString();
   const fromMs = Date.parse(fromDate);
   const toMs = Date.parse(toDate);
+
+  // The guard is on the RESOLVED window and it is unconditional — the service's own comment says
+  // the filter's model validation only sees the explicitly-provided pair, so a lone future
+  // FromDate lands here rather than there. The mock answered 200 with zeroed totals instead.
+  if (fromMs > toMs) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'INVALID_DATE_RANGE',
+        detail: 'FromDate must be earlier than or equal to ToDate.',
+      }),
+    );
+  }
 
   let totalIncome = 0;
   let totalExpenses = 0;
@@ -575,6 +626,22 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   }
   const amount = body.amount as number;
 
+  /*
+    The account is resolved FIRST, before a single PIN check, because that is the first statement
+    of `TransactionService.WithdrawAsync` — `GetAccountWithOwnershipCheckAsync` runs above the
+    PIN-set check, the lockout window and the compare.
+
+    The mock had it last, and the order is not cosmetic. Withdrawing from an id that does not
+    exist, with a wrong PIN, answered 401 INVALID_PIN here and 404 ACCOUNT_NOT_FOUND in
+    production — and worse, the mock CONSUMED a PIN attempt for it. You could lock yourself out
+    of the mock by fumbling an account id, which the real API never lets you do because it never
+    reaches the PIN.
+  */
+  const account = mockState.accounts.find((a) => a.id === body.accountId);
+  if (!account) {
+    return response.untyped(notFound('Account', body.accountId));
+  }
+
   // PIN_REQUIRED — the user never set a PIN. Gated only when a session exists; tests that
   // render the dialog without seeding a session are treated as a PIN-holder (they pass one).
   if (mockState.session && !mockState.session.hasPin) {
@@ -628,12 +695,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   // Correct PIN clears the attempt counter.
   mockState.pinAttempts = 0;
 
-  // INSUFFICIENT_FUNDS — after the PIN passes, like the backend orders it. The account has to
-  // exist first: see the note on deposit above.
-  const account = mockState.accounts.find((a) => a.id === body.accountId);
-  if (!account) {
-    return response.untyped(notFound('Account', body.accountId));
-  }
+  // INSUFFICIENT_FUNDS — last, after the PIN passes, like the backend orders it.
   const available = account.balance;
   if (amount > available) {
     return response.untyped(
@@ -785,6 +847,18 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const amount = body.amount as number;
   const tag = body.recipientAzureTag ?? '';
 
+  /*
+    Source account FIRST. `TransferService.TransferAsync` opens with
+    `GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId)` — above the sender lookup,
+    above the self-transfer guard, above the recipient lookup. The mock resolved it LAST, so a
+    transfer from an unknown account to yourself answered SELF_TRANSFER_NOT_ALLOWED where the API
+    answers ACCOUNT_NOT_FOUND, and a client branching on the code took the wrong path.
+  */
+  const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
+  if (!account) {
+    return response.untyped(notFound('Account', body.fromAccountId));
+  }
+
   if (mockState.session?.azureTag === tag) {
     return response.untyped(
       problem({
@@ -801,10 +875,6 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     return response.untyped(notFound('Recipient', tag));
   }
 
-  const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
-  if (!account) {
-    return response.untyped(notFound('Account', body.fromAccountId));
-  }
   const available = account.balance;
   if (amount > available) {
     return response.untyped(

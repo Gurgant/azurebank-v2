@@ -106,3 +106,98 @@ describe('GET /api/accounts/{id}/balance', () => {
     expect(body.data.isHistorical).toBe(true);
   });
 });
+
+describe('failure ordering matches the service, not the handler that was easiest to write', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it('withdraw resolves the account BEFORE the PIN, and spends no attempt on a bad id', async () => {
+    // `WithdrawAsync` opens with GetAccountWithOwnershipCheckAsync — above the PIN-set check, the
+    // lockout window and the compare. With the account check last, a fumbled id burned a PIN
+    // attempt and could lock you out of a mock the real API would never have let you reach.
+    const res = await fetch('/api/transactions/withdraw', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3390',
+      },
+      body: JSON.stringify({ accountId: 'no-such-account', amount: 10, pin: '000000' }),
+    });
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(mockState.pinAttempts).toBe(0);
+  });
+
+  it('transfer resolves the source account BEFORE the self-transfer guard', async () => {
+    // TransferAsync's first statement is the source-account lookup; the self-transfer guard is
+    // three statements later. Sending to your own handle FROM a bad id must be the 404.
+    mockState.authLevel = 2;
+    const res = await fetch('/api/transfers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3391',
+      },
+      body: JSON.stringify({
+        fromAccountId: 'no-such-account',
+        recipientAzureTag: mockState.session?.azureTag ?? 'demo_user',
+        amount: 10,
+      }),
+    });
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+  });
+});
+
+describe('the query parameters the mock used to ignore', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it('GET /api/transactions honours FromDate and ToDate, inclusively', async () => {
+    const all = await fetch('/api/transactions?Page=1&PageSize=100').then((r) => r.json());
+    const day = '2026-07-19';
+    const scoped = await fetch(
+      `/api/transactions?Page=1&PageSize=100&FromDate=${day}T00:00:00Z&ToDate=${day}T23:59:59Z`,
+    ).then((r) => r.json());
+
+    const expected = mockState.transactions.filter((t) => t.createdAt.startsWith(day));
+    expect(expected.length).toBeGreaterThan(0);
+    expect(scoped.pagination.totalItems).toBe(expected.length);
+    // Strictly fewer than the unfiltered feed — proof the window did something.
+    expect(scoped.pagination.totalItems).toBeLessThan(all.pagination.totalItems);
+  });
+
+  it('reports ZERO pages for an empty result, not one', async () => {
+    // PaginatedResponse computes Ceiling(0/size) = 0, and the no-accounts branch hard-codes
+    // TotalPages = 0. Saying 1 tells a client there is a page to render when there is not.
+    const body = await fetch(
+      '/api/transactions?Page=1&PageSize=20&FromDate=2001-01-01T00:00:00Z&ToDate=2001-01-02T00:00:00Z',
+    ).then((r) => r.json());
+
+    expect(body.data).toEqual([]);
+    expect(body.pagination.totalItems).toBe(0);
+    expect(body.pagination.totalPages).toBe(0);
+  });
+
+  it('summarises the current calendar month by default, not all of time', async () => {
+    // `filter.FromDate ?? new DateTime(now.Year, now.Month, 1)`. The mock defaulted to 1970, so
+    // the dashboard card labelled "<month> so far" was reporting every transaction ever recorded.
+    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
+    const body = await fetch('/api/transactions/summary').then((r) => r.json());
+
+    expect(Date.parse(body.data.fromDate)).toBe(monthStart.getTime());
+  });
+
+  it('422s a window that ends before it starts', async () => {
+    const res = await fetch(
+      '/api/transactions/summary?FromDate=2026-07-20T00:00:00Z&ToDate=2026-07-01T00:00:00Z',
+    );
+
+    expect(res.status).toBe(422);
+    expect((await res.json()).errorCode).toBe('INVALID_DATE_RANGE');
+  });
+});
