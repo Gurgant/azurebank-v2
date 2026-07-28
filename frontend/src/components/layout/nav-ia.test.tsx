@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { FluentProvider } from '@fluentui/react-components';
 import { describe, expect, it } from 'vitest';
@@ -29,9 +29,25 @@ const TX_ID = '019f7b3f-0000-7000-8000-000000000b02';
 
 type Surface = 'sidebar' | 'bottom nav';
 
+/**
+ * Reveals whatever a surface keeps behind a disclosure, so the two can be compared on equal terms.
+ *
+ * The sidebar is vertical and shows all five places at once. The bottom bar has four cells and puts
+ * the utility group behind "More". Comparing them without opening it would compare a full list
+ * against a truncated one and call the difference a bug.
+ */
+function revealAll() {
+  const more = screen.queryByRole('button', { name: 'More' });
+  if (more && more.getAttribute('aria-expanded') === 'false') fireEvent.click(more);
+}
+
 function renderNav(surface: Surface, pathname: string) {
   const ui =
-    surface === 'sidebar' ? <Sidebar userName="Demo User" onLogout={() => {}} /> : <BottomNav />;
+    surface === 'sidebar' ? (
+      <Sidebar userName="Demo User" onLogout={() => {}} />
+    ) : (
+      <BottomNav onLogout={() => {}} />
+    );
   return render(
     <FluentProvider theme={azureBankLightTheme}>
       <MemoryRouter initialEntries={[pathname]}>{ui}</MemoryRouter>
@@ -66,14 +82,18 @@ const EXPECTED: { path: string; label: string; value: 'page' | 'true' }[] = [
 describe.each(SURFACES)('%s', (surface) => {
   it.each(EXPECTED)('lights exactly $label on $path', ({ path, label, value }) => {
     renderNav(surface, path);
+    // Utility places live behind "More" on the bottom bar. Open it, or this asserts that a closed
+    // drawer contains nothing — which is true and says nothing.
+    revealAll();
 
     // "Exactly one" is half the assertion: two lit items is as wrong as none, and only one of those
     // two failures is visible in a screenshot.
     expect(currentItems()).toEqual([{ label, value }]);
   });
 
-  it('shows the four places in one order, as links with real hrefs', () => {
+  it('shows every place in one order, as links with real hrefs', () => {
     renderNav(surface, '/dashboard');
+    revealAll();
     const nav = screen.getByRole('navigation', { name: 'Main navigation' });
 
     // Links, not buttons. The old `<button onClick={navigate}>` gave these no href in the
@@ -83,12 +103,14 @@ describe.each(SURFACES)('%s', (surface) => {
       'Home',
       'Accounts',
       'History',
+      'Contact',
       'Settings',
     ]);
     expect(links.map((el) => el.getAttribute('href'))).toEqual([
       '/dashboard',
       '/accounts',
       '/history',
+      '/about',
       '/settings',
     ]);
   });
@@ -163,6 +185,7 @@ describe('the two surfaces cannot disagree', () => {
   it('renders the same places, in the same order, with the same labels', () => {
     const read = (surface: Surface) => {
       const { unmount } = renderNav(surface, '/dashboard');
+      revealAll();
       const nav = screen.getByRole('navigation', { name: 'Main navigation' });
       const shape = within(nav)
         .getAllByRole('link')
@@ -177,15 +200,51 @@ describe('the two surfaces cannot disagree', () => {
 });
 
 describe('Sidebar footer', () => {
-  it('keeps Logout an action: outside the nav landmark and never current', () => {
+  it('keeps sign-out an action: a button, never current, never a link', () => {
     renderNav('sidebar', '/settings');
 
-    const logout = screen.getByRole('button', { name: /logout/i });
-    expect(logout).not.toHaveAttribute('aria-current');
-    // Sign-out is not a destination, so it does not belong to the navigation landmark.
+    const signOut = screen.getByRole('button', { name: /sign out/i });
+    expect(signOut).not.toHaveAttribute('aria-current');
+    expect(screen.queryByRole('link', { name: /sign out/i })).toBeNull();
+    // In the sidebar it sits below the landmark entirely — there is room, and it is not a place.
     expect(screen.getByRole('navigation', { name: 'Main navigation' })).not.toContainElement(
-      logout,
+      signOut,
     );
+  });
+
+  it('offers sign-out on the phone, where it used to take two levels of Settings', () => {
+    // The invariant loosened here, deliberately, and this records why. The landmark used to hold
+    // exactly ONE non-place control (Transfer); it now holds two, because the bottom bar is the
+    // only mobile surface and sign-out was reachable only by opening Settings and scrolling — on
+    // the surface where a shared or lost phone makes signing out matter most.
+    //
+    // What did NOT loosen is what an act IS: a button, never a link, never carrying aria-current.
+    renderNav('bottom nav', '/dashboard');
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+
+    const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+    const signOut = within(nav).getByRole('button', { name: /sign out/i });
+    expect(signOut).not.toHaveAttribute('aria-current');
+    expect(within(nav).queryByRole('link', { name: /sign out/i })).toBeNull();
+  });
+
+  it('tells you the utility row is a disclosure, and which way it goes', () => {
+    renderNav('bottom nav', '/dashboard');
+    const more = screen.getByRole('button', { name: 'More' });
+
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('link', { name: 'Contact' })).toBeNull();
+
+    fireEvent.click(more);
+    expect(more).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'Contact' })).toBeInTheDocument();
+  });
+
+  it('lights the trigger when the page you are on is hidden behind it', () => {
+    // Closed on /settings, the bar would otherwise be entirely dark — which is the defect PR #47
+    // fixed on that exact route, reintroduced one level down.
+    renderNav('bottom nav', '/settings');
+    expect(screen.getByRole('button', { name: 'More' })).toHaveAttribute('aria-current', 'true');
   });
 
   it('no longer offers a second route to Settings', () => {
@@ -209,11 +268,29 @@ describe('Sidebar footer', () => {
  */
 describe('routing table', () => {
   /** Each `<Route …>` block, paired with whether it renders inside the app shell. */
-  const routes = appSource
-    .split('<Route')
+  /**
+   * COMMENTS STRIPPED BEFORE ANY OF THIS IS SCANNED.
+   *
+   * `App.tsx` explains its own routing at length, so a scan for the thing the prose is ABOUT
+   * matches the prose. The gate test below was written, run green, and then falsified by replacing
+   * `import.meta.env.DEV &&` with `true &&` — it stayed green, because the sentence explaining why
+   * the gate exists still contained the words. It found a comment, not a guard.
+   *
+   * Same shape as the `useNavigate` scan in `page-header.test.tsx`, which failed for the same
+   * reason a few hours earlier. Stripping is also strictly safer for `<ProtectedShell` below: a
+   * comment mentioning the shell would otherwise count as rendering inside it.
+   */
+  const code = appSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  const chunks = code.split('<Route');
+
+  const routes = chunks
     .slice(1)
-    .map((chunk: string) => ({
+    .map((chunk: string, i: number) => ({
       path: /path="([^"]+)"/.exec(chunk)?.[1],
+      // The text between the PREVIOUS `<Route` and this one — where a wrapping conditional lands
+      // once the source is split this way. Exact, not a character-window guess.
+      preamble: chunks[i],
       // `'<ProtectedShell'` without the closing bracket, deliberately. Matching `'<ProtectedShell>'`
       // recognised the shell ONLY when written with zero attributes, so `<ProtectedShell key="t">`
       // read as out-of-shell and BOTH guards below went green with the transfer wizard rendering
@@ -221,7 +298,9 @@ describe('routing table', () => {
       // declaration and is invisible to tsc, so nothing else would have caught it.
       inShell: chunk.includes('<ProtectedShell'),
     }))
-    .filter((r): r is { path: string; inShell: boolean } => typeof r.path === 'string');
+    .filter(
+      (r): r is { path: string; preamble: string; inShell: boolean } => typeof r.path === 'string',
+    );
 
   it('finds the routes it is supposed to be guarding', () => {
     // Without this the two assertions below would both pass against a parser that found nothing.

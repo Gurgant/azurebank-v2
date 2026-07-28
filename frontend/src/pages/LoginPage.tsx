@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   tokens,
@@ -140,7 +140,19 @@ export function LoginPage() {
       intro="Manage your finances with confidence. Experience modern banking with powerful tools designed for your success."
       title="Welcome back"
       subtitle="Sign in to your account to continue"
-      footer="Protected by bank-grade encryption. We never share your details."
+      footer={
+        <>
+          Protected by bank-grade encryption. We never share your details.
+          <br />
+          {/* The first screen anyone sees, which is the honest place to say what this is. The two
+              claims above are defensible — HTTPS, hashed passwords, and no third party to share
+              with — so they stay; what was never defensible was promising a support team. */}
+          Demo project — not a real bank.{' '}
+          <Link to="/about" style={{ color: 'inherit', textDecoration: 'underline' }}>
+            About the developer →
+          </Link>
+        </>
+      }
     >
       {/* Session-expiry note: only ever set by a post-boot 401 (D3/D6) */}
       {navState.reason === 'expired' && !problem && (

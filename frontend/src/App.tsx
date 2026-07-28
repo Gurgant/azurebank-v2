@@ -5,7 +5,7 @@ import { store } from './app/store';
 import { azureBankLightTheme } from './theme';
 import { AppToaster } from './components/feedback';
 import { AuthBootstrap, SessionExpiryWarning, StepUpModal } from './features/auth';
-import { ProtectedRoute, ProtectedShell } from './components/layout';
+import { ProtectedRoute, ProtectedShell, ShellOrBare } from './components/layout';
 import {
   LoginPage,
   RegisterPage,
@@ -17,6 +17,7 @@ import {
   TransferPage,
   InternalTransferPage,
   SettingsPage,
+  AboutPage,
 } from './pages';
 
 // ============================================
@@ -92,6 +93,16 @@ function App() {
                 time they did, mobile lit "Profile" on /settings while desktop lit nothing at all.
                 `replace` so the back button does not bounce off the redirect. */}
             <Route path="/profile" element={<Navigate to="/settings" replace />} />
+
+            {/* Public on purpose, and shell-wrapped only when signed in — see ShellOrBare. */}
+            <Route
+              path="/about"
+              element={
+                <ShellOrBare>
+                  <AboutPage />
+                </ShellOrBare>
+              }
+            />
 
             {/* Full-screen wizards: deliberately NO app shell */}
             <Route

@@ -22,3 +22,4 @@ export {
   type NavPlace,
   type NavCurrent,
 } from './navItems';
+export { ShellOrBare } from './ShellOrBare';

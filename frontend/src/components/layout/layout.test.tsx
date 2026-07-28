@@ -84,7 +84,7 @@ describe('ProtectedShell (app shell adoption)', () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness />, { store, routerEntries: ['/dashboard'] });
 
-    await user.click(screen.getByRole('button', { name: /logout/i }));
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
 
     await waitFor(() => expect(screen.getByText('LOGIN_PAGE')).toBeInTheDocument());
     expect(store.getState().auth.status).toBe('anonymous');
@@ -100,7 +100,7 @@ describe('ProtectedShell (app shell adoption)', () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness />, { store, routerEntries: ['/dashboard'] });
 
-    await user.click(screen.getByRole('button', { name: /logout/i }));
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
 
     // The error surfaces via the toast pipeline; the session cookie is still alive,
     // so the UI must stay authenticated on the page — not fake a login screen.
