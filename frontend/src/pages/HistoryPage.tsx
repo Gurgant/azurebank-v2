@@ -11,9 +11,10 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { History24Filled } from '@fluentui/react-icons';
-import { colors, gradients, transitions } from '../theme/tokens';
+import { colors, gradients } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { PageHeader } from '../components/layout/PageHeader';
+import { SegmentedFilter } from '../components/shared/SegmentedFilter';
 import {
   TransactionDayRow,
   TransactionHead,
@@ -28,6 +29,14 @@ import { formatCurrency, formatDateHeading, isIncomeType } from '../utils/format
 // ============================================
 // TYPES
 // ============================================
+
+/** The filters, and their labels, in one place rather than derived from the value by capitalising. */
+const TRANSACTION_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'deposits', label: 'Deposits' },
+  { value: 'withdrawals', label: 'Withdrawals' },
+  { value: 'transfers', label: 'Transfers' },
+] as const satisfies readonly { value: string; label: string }[];
 
 type FilterType = 'all' | 'deposits' | 'withdrawals' | 'transfers';
 
@@ -67,40 +76,6 @@ const useStyles = makeStyles({
   },
 
   // ========== FILTER TABS ==========
-  filterTabs: {
-    display: 'flex',
-    padding: '12px 16px',
-    gap: '8px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    borderBottom: `1px solid ${colors.neutral[200]}`,
-    overflowX: 'auto',
-    flexShrink: 0,
-  },
-
-  filterTab: {
-    height: '36px',
-    padding: '0 16px',
-    backgroundColor: colors.neutral[100],
-    borderRadius: '18px',
-    border: 'none',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[500],
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.neutral[200],
-    },
-  },
-
-  filterTabActive: {
-    backgroundColor: colors.brand[60],
-    color: tokens.colorNeutralForegroundOnBrand,
-    ':hover': {
-      backgroundColor: colors.brand[40],
-    },
-  },
 
   // ========== SUMMARY CARD ==========
   summaryCard: {
@@ -339,18 +314,12 @@ export function HistoryPage() {
 
         {!isLoading && !problem && (
           <>
-            {/* Filter Tabs — client-side, over the loaded pages */}
-            <div className={styles.filterTabs}>
-              {(['all', 'deposits', 'withdrawals', 'transfers'] as FilterType[]).map((filter) => (
-                <button
-                  key={filter}
-                  className={`${styles.filterTab} ${activeFilter === filter ? styles.filterTabActive : ''}`}
-                  onClick={() => setActiveFilter(filter)}
-                >
-                  {filter.charAt(0).toUpperCase() + filter.slice(1)}
-                </button>
-              ))}
-            </div>
+            <SegmentedFilter
+              label="Filter transactions by type"
+              options={TRANSACTION_FILTERS}
+              value={activeFilter}
+              onChange={setActiveFilter}
+            />
 
             {/* Summary Card — totals over the loaded, settled transactions */}
             <div className={styles.summaryCard}>

@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -72,6 +72,31 @@ describe('history feed (T1)', () => {
     expect(screen.getByText('To @john_d')).toBeInTheDocument();
     expect(screen.getByText('From @anna_k')).toBeInTheDocument();
     expect(screen.queryByText('Salary — July')).not.toBeInTheDocument();
+  });
+
+  it('announces which filter is selected, not just colours it', async () => {
+    // The inline version was four bare buttons: no aria-pressed, no group, no name for the group.
+    // Which one was active was carried by background colour ALONE, so a screen reader announced
+    // four identical controls. That is the defect the extraction exists to fix, and this is the
+    // assertion that keeps it fixed.
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+    await screen.findByText('Salary — July');
+
+    const group = screen.getByRole('group', { name: /Filter transactions/i });
+    expect(within(group).getByRole('button', { name: 'All' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await userEvent.click(within(group).getByRole('button', { name: 'Deposits' }));
+    expect(within(group).getByRole('button', { name: 'Deposits' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(group).getByRole('button', { name: 'All' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
   });
 
   it('can shrink again after loading more, without refetching anything', async () => {

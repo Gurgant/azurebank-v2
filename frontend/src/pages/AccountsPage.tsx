@@ -25,7 +25,9 @@ import {
   CurrencyDollarEuro24Regular,
   MoreHorizontal20Regular,
 } from '@fluentui/react-icons';
+import { atMedia } from '../theme/breakpoints';
 import { colors, shadows, gradients, transitions } from '../theme/tokens';
+import { PageHeader } from '../components/layout/PageHeader';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountType } from '../api/enums';
 import type { AccountResponse } from '../features/api/apiSlice';
@@ -72,66 +74,6 @@ const useStyles = makeStyles({
     flexDirection: 'column',
   },
 
-  // ========== MOBILE HEADER ==========
-  mobileHeader: {
-    background: colors.brand[60],
-    padding: '0 16px 24px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
-    '@media (min-width: 1024px)': {
-      display: 'none',
-    },
-  },
-
-  headerTop: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: '16px',
-  },
-
-  headerTitle: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
-  addButton: {
-    width: '40px',
-    height: '40px',
-    background: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    border: 'none',
-    color: tokens.colorNeutralForegroundOnBrand,
-    transition: `all ${transitions.fast}`,
-    ':hover': {
-      background: 'rgba(255, 255, 255, 0.3)',
-    },
-  },
-
-  totalBalanceSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-
-  totalLabel: {
-    fontSize: '14px',
-    fontWeight: 400,
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-
-  totalValue: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: tokens.colorNeutralForegroundOnBrand,
-  },
-
   // ========== MAIN CONTENT ==========
   mainContent: {
     flex: 1,
@@ -139,74 +81,70 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
-    marginTop: '-12px',
-    '@media (min-width: 1024px)': {
+    [atMedia.lg]: {
       padding: '32px',
-      marginTop: 0,
       gap: '24px',
     },
   },
 
-  // ========== DESKTOP PAGE HEADER ==========
-  desktopPageHeader: {
-    display: 'none',
-    '@media (min-width: 1024px)': {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-  },
-
-  pageHeaderLeft: {
+  // ========== TOTAL ==========
+  summary: {
     display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '16px',
   },
 
-  pageTitle: {
-    fontSize: '28px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-  },
-
-  desktopTotalBalance: {
-    display: 'flex',
-    alignItems: 'baseline',
-    gap: '12px',
-  },
-
-  desktopTotalLabel: {
-    fontSize: '14px',
-    fontWeight: 400,
+  // The dashboard's label idiom, verbatim: 12px uppercase with letter-spacing. It reads as a field
+  // name rather than as prose, which is what keeps the number below it the loudest thing here.
+  summaryLabel: {
+    display: 'block',
+    fontSize: '12px',
+    fontWeight: 600,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
     color: colors.neutral[500],
   },
 
-  desktopTotalValue: {
-    fontSize: '24px',
+  // `clamp` rather than a breakpoint ramp, for the reason the dashboard's hero gives: Griffel does
+  // not sort its media buckets (measured: 1024, 1366, 480, 640), so a ramp is exposed to an `sm`
+  // rule beating an `lg` one. One declaration has no ordering to get wrong.
+  summaryValue: {
+    display: 'block',
+    marginTop: '2px',
+    fontSize: 'clamp(1.75rem, 1.45rem + 1.1vw, 2.25rem)',
+    lineHeight: 1.1,
     fontWeight: 700,
-    color: colors.neutral[800],
+    color: colors.neutral[900],
+    fontVariantNumeric: 'tabular-nums',
   },
 
-  desktopAddButton: {
+  addButton: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    padding: '12px 20px',
+    flexShrink: 0,
+    height: '40px',
+    padding: '0 16px',
     backgroundColor: colors.brand[60],
     border: 'none',
     borderRadius: '8px',
     cursor: 'pointer',
     color: tokens.colorNeutralForegroundOnBrand,
     transition: `all ${transitions.fast}`,
-    ':hover': {
-      backgroundColor: colors.brand[50],
-    },
+    ':hover': { backgroundColor: colors.brand[50] },
+    ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
   },
 
-  desktopAddButtonText: {
+  addButtonText: {
     fontSize: '14px',
     fontWeight: 500,
     color: tokens.colorNeutralForegroundOnBrand,
+    // Below `md` the icon carries it alone: at 375px a labelled button and a five-figure total
+    // compete for the same row. The accessible name is on the button either way, so nothing is
+    // lost when the word is.
+    display: 'none',
+    [atMedia.md]: { display: 'inline' },
   },
 
   // ========== ACCOUNTS GRID ==========
@@ -214,7 +152,7 @@ const useStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
-    '@media (min-width: 1024px)': {
+    [atMedia.lg]: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))',
       gap: '24px',
@@ -230,7 +168,7 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     gap: '16px',
     boxShadow: shadows.sm,
-    '@media (min-width: 1024px)': {
+    [atMedia.lg]: {
       padding: '24px',
     },
   },
@@ -266,11 +204,6 @@ const useStyles = makeStyles({
     color: colors.semantic.warning.main,
   },
 
-  accountIcon: {
-    width: '24px',
-    height: '24px',
-  },
-
   accountInfo: {
     flex: 1,
     display: 'flex',
@@ -282,13 +215,6 @@ const useStyles = makeStyles({
     fontSize: '16px',
     fontWeight: 600,
     color: colors.neutral[800],
-  },
-
-  accountNumber: {
-    fontSize: '13px',
-    fontWeight: 400,
-    fontFamily: 'Consolas, "Courier New", monospace',
-    color: colors.neutral[500],
   },
 
   accountBalanceSection: {
@@ -398,12 +324,16 @@ const useStyles = makeStyles({
     alignItems: 'center',
     gap: '12px',
     cursor: 'pointer',
+    // A `<button>` does not inherit the page's font, and it had none of its own: the text inside is
+    // a `Text` with its own size, but the button's line box was still Arial 13.33px.
+    font: 'inherit',
     transition: `all ${transitions.fast}`,
     ':hover': {
       border: `2px dashed ${colors.brand[60]}`,
       backgroundColor: colors.brand[140],
     },
-    '@media (min-width: 1024px)': {
+    ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
+    [atMedia.lg]: {
       padding: '40px',
     },
   },
@@ -562,34 +492,32 @@ export function AccountsPage() {
 
   return (
     <div className={styles.container}>
-      {/* Mobile Header */}
-      <div className={styles.mobileHeader}>
-        <div className={styles.headerTop}>
-          <Text className={styles.headerTitle}>My Accounts</Text>
-          <button className={styles.addButton} aria-label="Add account" onClick={handleAddAccount}>
-            <Add24Regular />
-          </button>
-        </div>
-        <div className={styles.totalBalanceSection}>
-          <Text className={styles.totalLabel}>Total Balance</Text>
-          <Text className={styles.totalValue}>{totalDisplay}</Text>
-        </div>
-      </div>
+      {/*
+        The title comes from the nav table, like every other place in the app — so the tab and the
+        page cannot come to call this somewhere different. It also brings the page's `<h1>`: measured
+        before this change, `/accounts` exposed NO heading at any level, the only authenticated page
+        that did not, because both of its titles were `<Text>` (an inline `<span>`).
+
+        There were two headers, and they had drifted the way two copies do: a brand-blue hero on
+        mobile, a white bar on desktop, "Total Balance" against "Total Balance:", a round icon button
+        against a labelled one — the same page wearing two faces, neither of them the app's. The blue
+        block was also the last page-sized brand fill left in the signed-in app; the shell paints the
+        canvas now, and the dashboard's hero is a white card.
+      */}
+      <PageHeader />
 
       {/* Main Content — the app shell (nav/header) is provided by ProtectedShell */}
       <div className={styles.mainContent}>
-        {/* Desktop Page Header */}
-        <div className={styles.desktopPageHeader}>
-          <div className={styles.pageHeaderLeft}>
-            <Text className={styles.pageTitle}>My Accounts</Text>
-            <div className={styles.desktopTotalBalance}>
-              <Text className={styles.desktopTotalLabel}>Total Balance:</Text>
-              <Text className={styles.desktopTotalValue}>{totalDisplay}</Text>
-            </div>
+        <div className={styles.summary}>
+          <div>
+            <Text className={styles.summaryLabel}>Total balance</Text>
+            <Text className={styles.summaryValue}>{totalDisplay}</Text>
           </div>
-          <button className={styles.desktopAddButton} onClick={handleAddAccount}>
+          {/* One add affordance up here and one at the end of the grid — down from three, which is
+              what the two headers plus the dashed card added up to at ≥1024px. */}
+          <button className={styles.addButton} aria-label="Add account" onClick={handleAddAccount}>
             <Add24Regular />
-            <Text className={styles.desktopAddButtonText}>Add Account</Text>
+            <Text className={styles.addButtonText}>Add account</Text>
           </button>
         </div>
 
@@ -696,24 +624,16 @@ export function AccountsPage() {
               </div>
             ))}
 
-            {/* Add Account Card — a styled div, so it needs the button semantics by hand */}
-            <div
-              className={styles.addAccountCard}
-              role="button"
-              tabIndex={0}
-              onClick={handleAddAccount}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleAddAccount();
-                }
-              }}
-            >
+            {/* A real `<button>`. It was a `<div role="button" tabIndex={0}>` re-implementing
+                Enter and Space by hand — four lines to get back what the element gives free, and
+                still missing the rest of what a button is (form semantics, `:disabled`, the
+                platform's own focus and activation behaviour). */}
+            <button type="button" className={styles.addAccountCard} onClick={handleAddAccount}>
               <div className={styles.addAccountIcon}>
                 <Add24Regular />
               </div>
               <Text className={styles.addAccountText}>Add New Account</Text>
-            </div>
+            </button>
           </div>
         )}
       </div>
