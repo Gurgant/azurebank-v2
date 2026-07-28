@@ -29,8 +29,20 @@ import {
   useGetTransactionsQuery,
   useGetTransactionSummaryQuery,
 } from '../features/api/apiSlice';
-import { formatCurrency, formatTime, isIncomeType, maskAccountNumber } from '../utils/format';
+import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
+import {
+  TransactionHead,
+  TransactionRow,
+  TransactionTable,
+  TransactionRowSkeleton,
+  TransactionEmptyRow,
+  StatusPill,
+} from '../components/shared/TransactionRow';
+import {
+  transactionLabel,
+  useTransactionCellStyles,
+} from '../components/shared/transactionRowStyles';
 import { DepositDialog, WithdrawDialog } from '../components';
 
 /**
@@ -358,38 +370,7 @@ const useStyles = makeStyles({
     color: colors.neutral[800],
   },
 
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-    tableLayout: 'fixed',
-  },
-
-  th: {
-    padding: '8px 8px 10px',
-    fontSize: '11px',
-    fontWeight: 600,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    color: colors.neutral[500],
-    textAlign: 'left',
-    borderBottom: `1px solid ${surfaces.border}`,
-  },
-
   thNum: { textAlign: 'right' },
-
-  td: {
-    padding: '12px 8px',
-    fontSize: '14px',
-    color: colors.neutral[800],
-    borderBottom: `1px solid ${surfaces.border}`,
-    verticalAlign: 'top',
-  },
-
-  tdNum: {
-    textAlign: 'right',
-    fontVariantNumeric: 'tabular-nums',
-    whiteSpace: 'nowrap',
-  },
 
   entryLink: {
     background: 'none',
@@ -403,12 +384,6 @@ const useStyles = makeStyles({
     ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
   },
 
-  when: {
-    fontSize: '13px',
-    color: colors.neutral[600],
-    whiteSpace: 'nowrap',
-  },
-
   amountIn: { color: colors.semantic.success.dark, fontWeight: 600 },
   amountOut: { color: colors.neutral[800], fontWeight: 600 },
 
@@ -417,28 +392,10 @@ const useStyles = makeStyles({
   amountVoid: { textDecoration: 'line-through', color: colors.neutral[500] },
 
   // Never colour alone: the pill carries the word.
-  pill: {
-    display: 'inline-block',
-    padding: '2px 8px',
-    borderRadius: '999px',
-    fontSize: '11px',
-    fontWeight: 600,
-    whiteSpace: 'nowrap',
-    backgroundColor: colors.neutral[100],
-    color: colors.neutral[700],
-  },
-  pillPending: {
-    backgroundColor: colors.semantic.warning.light,
-    color: colors.semantic.warning.dark,
-  },
   pillDone: { backgroundColor: colors.semantic.success.light, color: colors.semantic.success.dark },
 
   // The running balance exists only when the scope is one account (see the file docblock) AND only
   // where there is room for a fifth column.
-  balanceCell: {
-    display: 'none',
-    [atMedia.md]: { display: 'table-cell' },
-  },
 
   tfootCell: {
     padding: '12px 8px',
@@ -474,13 +431,6 @@ const useStyles = makeStyles({
 // Helpers
 // ============================================
 
-function entryLabel(t: TransactionResponse): string {
-  if (t.description) return t.description;
-  if (t.type === 'TransferOut' && t.recipientAzureTag) return `To @${t.recipientAzureTag}`;
-  if (t.type === 'TransferIn' && t.senderAzureTag) return `From @${t.senderAzureTag}`;
-  return t.type;
-}
-
 function recentRecipients(items: TransactionResponse[], limit: number): string[] {
   const out: string[] = [];
   for (const t of items) {
@@ -497,6 +447,7 @@ function recentRecipients(items: TransactionResponse[], limit: number): string[]
 
 export function DashboardPage() {
   const styles = useStyles();
+  const cells = useTransactionCellStyles();
   const navigate = useNavigate();
 
   const [scope, setScope] = useState<Scope>('all');
@@ -758,9 +709,9 @@ export function DashboardPage() {
                   className={styles.attentionLink}
                   onClick={() => navigate(`/transactions/${t.id}`)}
                 >
-                  {entryLabel(t)} <ChevronRight16Regular />
+                  {transactionLabel(t)} <ChevronRight16Regular />
                 </button>
-                <span className={mergeClasses(styles.pill, styles.pillPending)}>Pending</span>
+                <StatusPill status="Pending" />
               </div>
             ))
           )}
@@ -787,115 +738,26 @@ export function DashboardPage() {
               </MessageBarActions>
             </MessageBar>
           ) : (
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.th} style={{ width: '22%' }}>
-                    When
-                  </th>
-                  <th className={styles.th}>Entry</th>
-                  <th className={mergeClasses(styles.th, styles.thNum)} style={{ width: '20%' }}>
-                    Amount
-                  </th>
-                  {/* Only a single-account scope has a running balance worth printing. */}
-                  {selected && (
-                    <th
-                      className={mergeClasses(styles.th, styles.thNum, styles.balanceCell)}
-                      style={{ width: '20%' }}
-                    >
-                      Balance
-                    </th>
-                  )}
-                  <th className={styles.th} style={{ width: '18%' }}>
-                    Status
-                  </th>
-                </tr>
-              </thead>
+            <TransactionTable>
+              <TransactionHead showBalance={!!selected} />
               <tbody>
                 {recentLoading
                   ? Array.from({ length: RECENT_PAGE_SIZE }, (_, i) => (
-                      <tr key={`sk-${i}`}>
-                        <td className={styles.td}>
-                          <div className={styles.skeletonBar} />
-                        </td>
-                        <td className={styles.td}>
-                          <div className={styles.skeletonBar} />
-                        </td>
-                        <td className={styles.td}>
-                          <div className={styles.skeletonBar} />
-                        </td>
-                        {selected && (
-                          <td className={mergeClasses(styles.td, styles.balanceCell)}>
-                            <div className={styles.skeletonBar} />
-                          </td>
-                        )}
-                        <td className={styles.td}>
-                          <div className={styles.skeletonBar} />
-                        </td>
-                      </tr>
+                      <TransactionRowSkeleton key={`sk-${i}`} showBalance={!!selected} />
                     ))
-                  : entries.map((t) => {
-                      const income = isIncomeType(t.type);
-                      const voided = t.status === 'Reversed' || t.status === 'Failed';
-                      return (
-                        <tr key={t.id}>
-                          <td className={mergeClasses(styles.td, styles.when)}>
-                            {format(new Date(t.createdAt), 'd MMM')}
-                            <br />
-                            {formatTime(t.createdAt)}
-                          </td>
-                          <td className={styles.td}>
-                            <button
-                              type="button"
-                              className={styles.entryLink}
-                              onClick={() => navigate(`/transactions/${t.id}`)}
-                            >
-                              {entryLabel(t)}
-                            </button>
-                          </td>
-                          <td
-                            className={mergeClasses(
-                              styles.td,
-                              styles.tdNum,
-                              income ? styles.amountIn : styles.amountOut,
-                              voided && styles.amountVoid,
-                            )}
-                          >
-                            {income ? '+' : '-'}
-                            {money(t.amount)}
-                          </td>
-                          {selected && (
-                            <td
-                              className={mergeClasses(styles.td, styles.tdNum, styles.balanceCell)}
-                            >
-                              {money(t.balanceAfter)}
-                            </td>
-                          )}
-                          <td className={styles.td}>
-                            <span
-                              className={mergeClasses(
-                                styles.pill,
-                                t.status === 'Pending' && styles.pillPending,
-                                t.status === 'Completed' && styles.pillDone,
-                              )}
-                            >
-                              {t.status}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                  : entries.map((t) => (
+                      <TransactionRow
+                        key={t.id}
+                        transaction={t}
+                        showBalance={!!selected}
+                        hidden={hidden}
+                        onOpen={(id) => navigate(`/transactions/${id}`)}
+                      />
+                    ))}
                 {!recentLoading && entries.length === 0 && (
-                  <tr>
-                    {/* Four columns without a scope, five with — the same condition the Balance
-                        header and the tfoot placeholder already use. */}
-                    <td
-                      className={mergeClasses(styles.td, styles.muted)}
-                      colSpan={selected ? 5 : 4}
-                    >
-                      No transactions yet for {scopeLabel}.
-                    </td>
-                  </tr>
+                  <TransactionEmptyRow columns={selected ? 5 : 4}>
+                    No transactions yet for {scopeLabel}.
+                  </TransactionEmptyRow>
                 )}
               </tbody>
               {!recentLoading && !summaryLoading && !summaryError && entries.length > 0 && (
@@ -905,18 +767,18 @@ export function DashboardPage() {
                       {monthLabel} so far
                       {pending.length > 0 ? ` · ${pending.length} pending` : ''}
                     </td>
-                    <td className={mergeClasses(styles.tfootCell, styles.tdNum)}>
+                    <td className={mergeClasses(styles.tfootCell, cells.number)}>
                       {(summary?.netChange ?? 0) >= 0 ? '+' : '-'}
                       {money(Math.abs(summary?.netChange ?? 0))}
                     </td>
                     {selected && (
-                      <td className={mergeClasses(styles.tfootCell, styles.balanceCell)} />
+                      <td className={mergeClasses(styles.tfootCell, cells.balanceOnly)} />
                     )}
                     <td className={styles.tfootCell} />
                   </tr>
                 </tfoot>
               )}
-            </table>
+            </TransactionTable>
           )}
         </section>
 
