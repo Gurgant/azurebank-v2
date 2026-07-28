@@ -88,9 +88,15 @@ const useStyles = makeStyles({
    * getting taller rather than as a different object arriving.
    */
   /**
-   * Opens ABOVE the main row, and that is the whole ergonomic point: the row under the thumb never
-   * moves. Putting the extras below lifted the primary row 72px on every toggle — movement under
-   * the finger is how a mis-tap happens.
+   * Opens BELOW the main row, which is why it comes after it in the DOM.
+   *
+   * Above would keep the row under the thumb still — better ergonomics, and it is what this comment
+   * used to describe after the order was flipped and the prose was not. Below wins on reading
+   * order instead: the primary row is the more important one and should be read first. The cost is
+   * real and accepted — the primary row rises one row height on every toggle.
+   *
+   * A reviewer read the stale version of this comment and proposed reordering the code to match it,
+   * which is the whole reason a comment that outlives its code is worse than no comment.
    */
   utilityRow: {
     display: 'flex',
@@ -289,6 +295,14 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
   const styles = useStyles();
   const [sheetOpen, setSheetOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
+
+  // Every control that navigates also closes the row — in its own handler, not in an effect on
+  // pathname. `react-hooks/set-state-in-effect` forbids the effect version, and it is right to:
+  // closing in response to a render that already happened is a cascade, where closing in the
+  // handler is just the thing the press means. The utility links already did this; Home, Accounts,
+  // History and Transfer did not, so opening More and tapping Home left a menu hanging over the
+  // page you had just moved to.
+  const closeSheet = () => setSheetOpen(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -322,6 +336,7 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
           active ? styles.navItemActive : styles.navItemInactive,
         )}
         aria-current={current}
+        onClick={closeSheet}
       >
         {/* No aria-label: Fluent icons are aria-hidden when untitled, so the accessible name comes
             from the visible text alone. That is what makes "the accessible name is the label"
@@ -352,7 +367,10 @@ export function BottomNav({ className, onLogout }: BottomNavProps) {
           aria-current under any route. */}
         <button
           className={styles.navItem}
-          onClick={() => navigate(TRANSFER_ACTION.path)}
+          onClick={() => {
+            closeSheet();
+            navigate(TRANSFER_ACTION.path);
+          }}
           type="button"
         >
           <div className={styles.transferDisc}>

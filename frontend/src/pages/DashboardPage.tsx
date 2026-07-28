@@ -22,8 +22,6 @@ import {
 import { format, startOfMonth } from 'date-fns';
 import { atMedia } from '../theme/breakpoints';
 import { colors, shadows, surfaces } from '../theme/tokens';
-import { useAppSelector } from '../app/hooks';
-import { selectCurrentUser } from '../features/auth/authSlice';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { AccountResponse, TransactionResponse } from '../features/api/apiSlice';
 import {
@@ -55,6 +53,14 @@ import { DepositDialog, WithdrawDialog } from '../components';
  *
  * That is also why the chips are not merely a breakdown: selecting one changes what the page is
  * about, which is the only honest justification for giving it the most prominent control on screen.
+ *
+ * ## No greeting line
+ *
+ * "Good morning, {name}" was here and is deliberately gone. It is computed from the browser's
+ * clock, so it can be wrong; but the real problem is that it earns nothing — the sidebar already
+ * names the account holder and the hero already answers the question the page exists to answer.
+ * It was the same defect as the "Here's an overview of your accounts" subtitle removed alongside
+ * it, and keeping one while deleting the other was inconsistent rather than principled.
  *
  * ## What each source contributed
  *
@@ -138,13 +144,6 @@ const useStyles = makeStyles({
     borderRadius: '14px',
     padding: '20px',
     boxShadow: shadows.sm,
-  },
-
-  greeting: {
-    display: 'block',
-    fontSize: '22px',
-    fontWeight: 600,
-    color: colors.neutral[800],
   },
 
   // ===== Zone 1: the balance, and the control that owns the page =====
@@ -475,12 +474,6 @@ const useStyles = makeStyles({
 // Helpers
 // ============================================
 
-function greetingFor(hour: number): string {
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
-}
-
 function entryLabel(t: TransactionResponse): string {
   if (t.description) return t.description;
   if (t.type === 'TransferOut' && t.recipientAzureTag) return `To @${t.recipientAzureTag}`;
@@ -505,7 +498,6 @@ function recentRecipients(items: TransactionResponse[], limit: number): string[]
 export function DashboardPage() {
   const styles = useStyles();
   const navigate = useNavigate();
-  const user = useAppSelector(selectCurrentUser);
 
   const [scope, setScope] = useState<Scope>('all');
   const [hidden, setHidden] = useState(false);
@@ -601,11 +593,6 @@ export function DashboardPage() {
 
   return (
     <div className={styles.page}>
-      <Text className={styles.greeting}>
-        {greetingFor(new Date().getHours())}
-        {user ? `, ${user.firstName}` : ''}
-      </Text>
-
       <div className={mergeClasses(styles.page, styles.pageGrid)} style={{ padding: 0 }}>
         {/* ===== Zone 1 — balance + the scope control ===== */}
         <section className={mergeClasses(styles.card, styles.areaHero)}>
