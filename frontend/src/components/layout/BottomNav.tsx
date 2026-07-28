@@ -101,6 +101,11 @@ const useStyles = makeStyles({
 
   /** The same tile the dashboard uses for Deposit and Withdraw. No new shapes. */
   utilityTile: {
+    // `navItemActive`'s rail is `position: absolute; top: 0; left: 50%`, so it anchors to the
+    // nearest POSITIONED ancestor. Without this it resolved against the `position: fixed` nav and
+    // painted a bar across the centre of the whole card's top edge — the dark mark visible in the
+    // first screenshots, which I wrongly attributed to Home's own indicator sitting on the seam.
+    position: 'relative',
     flex: 1,
     display: 'flex',
     flexDirection: 'column',

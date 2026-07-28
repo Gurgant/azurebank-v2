@@ -249,9 +249,13 @@ const useStyles = makeStyles({
     ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
   },
 
+  // Fluent's `Text` renders inline regardless of its `as` prop, and the class is merged LAST —
+  // which is the only reason this wins. Without it the heading and the link ran together as
+  // "Need help?Get in touch".
   supportTitle: {
     display: 'block',
-    marginBottom: '2px',
+    width: '100%',
+    marginBottom: '4px',
   },
 
   supportRow: {
@@ -274,6 +278,7 @@ const useStyles = makeStyles({
 
   supportLink: {
     display: 'inline-flex',
+    width: 'fit-content',
     alignItems: 'center',
     gap: '4px',
     marginTop: '2px',
