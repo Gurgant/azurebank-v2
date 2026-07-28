@@ -191,6 +191,19 @@ function badRequestBody(raw: string) {
 // `satisfies` rather than a bare array: `AccountType` is generated from the spec, so if the enum
 // ever changes this stops being a hand-maintained list that can drift in silence.
 const ACCOUNT_TYPES = ['Checking', 'Savings', 'Investment'] satisfies AccountType[];
+
+/**
+ * A type guard, not an `includes` — and the distinction is the whole point.
+ *
+ * `['Checking']` stringifies to `"Checking"`, so a membership test that coerces (`includes(String(
+ * body.type))`) ACCEPTS the array and then stores the array on the account, where the response
+ * contract promises a string. Identical in shape to the `RegExp.test(['abc'])` trap documented on
+ * the azureTag handler below — which is where this rule was already written down, and which did
+ * not stop me writing the coercing version here first.
+ */
+function isAccountType(value: unknown): value is AccountType {
+  return typeof value === 'string' && (ACCOUNT_TYPES as readonly string[]).includes(value);
+}
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
 function rejectBadAccountName(name: unknown): string[] | null {
@@ -262,12 +275,7 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   if (nameError) {
     errors.name = nameError;
   }
-  // Widened deliberately for the membership test: the point of `satisfies` is that the LIST is
-  // checked against the generated enum, not that an unknown body field is one of them.
-  if (
-    body.type !== undefined &&
-    !(ACCOUNT_TYPES as readonly string[]).includes(String(body.type))
-  ) {
+  if (body.type !== undefined && !isAccountType(body.type)) {
     errors.type = ['Invalid account type. Must be Checking, Savings, or Investment.'];
   }
   if (Object.keys(errors).length > 0) {
@@ -278,8 +286,10 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   const account = {
     id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
     accountNumber: `AB-****-****-${70 + index}`,
-    name: body.name as string,
-    type: ((body.type as string) ?? 'Checking') as AccountType,
+    // No casts: `rejectBadAccountName` has proven `name` is a string and the guard above has
+    // proven `type` is an `AccountType`, so both narrow honestly instead of being asserted.
+    name: String(body.name),
+    type: isAccountType(body.type) ? body.type : 'Checking',
     balance: 0,
     isPrimary: false,
     createdAt: '2026-07-21T12:00:00.0000000Z',

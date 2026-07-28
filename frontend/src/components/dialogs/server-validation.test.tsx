@@ -97,61 +97,98 @@ describe('the account rules the mock did not enforce', () => {
 describe('a body that cannot be read at all', () => {
   beforeEach(() => {
     resetMockState();
+    // Transfers sit behind the step-up gate, which is BFF MIDDLEWARE: unelevated they are a 403
+    // whatever the body says, because it runs before the request reaches model binding at all.
+    // Elevating once here keeps the table about bodies. (That cost this suite a first draft.)
+    mockState.authLevel = 2;
   });
 
   /*
-    The bot flagged three handlers. Measured, it was FIFTEEN — every site that parses a body,
-    including deposit, withdraw, both transfers and all four BFF auth routes. MSW v2 converts a
-    thrown handler into a 500, so an unreadable body produced a manufactured server error instead
-    of the 400 model binding gives it, and a client could not tell "you sent nonsense" from "the
-    server fell over".
-  */
-  const send = (url: string, body: string, extra: Record<string, string> = {}) =>
-    fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...extra },
-      body,
-    });
+    EVERY handler that reads a body, not a sample of them.
 
+    The review named three. I then wrote a six-row table and a comment claiming fifteen — the
+    fifteen was a count of matching LINES, not of handlers, and the mismatch is what a second
+    review caught. The real number is ELEVEN, enumerated below, and the table is now the
+    enumeration rather than a selection from it: PATCH and both transfer paths were exactly the
+    routes a POST-only table could not have protected.
+
+    Why it matters: MSW v2 converts a thrown handler into a 500, so an unreadable body produced a
+    manufactured server error where the API returns the 400 model binding gives it — and a client
+    could not tell "you sent nonsense" from "the server fell over".
+  */
   const KEY = { 'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3311' };
 
-  it.each([
-    ['create account', '/api/accounts', {}],
-    ['deposit', '/api/transactions/deposit', KEY],
-    ['withdraw', '/api/transactions/withdraw', KEY],
-    ['transfer', '/api/transfers', KEY],
-    ['login', '/bff/auth/login', {}],
-    ['register', '/bff/auth/register', {}],
-  ])('%s: malformed JSON is a 400, not a 500', async (_name, url, extra) => {
-    // Transfer sits behind the step-up gate, which is BFF MIDDLEWARE and therefore runs before the
-    // request reaches model binding at all: unelevated, it is a 403 whatever the body says. That is
-    // correct, and it cost this test a first draft to notice.
-    mockState.authLevel = 2;
+  const HANDLERS: ReadonlyArray<[string, string, string, Record<string, string>]> = [
+    ['create account', 'POST', '/api/accounts', {}],
+    ['rename account', 'PATCH', `/api/accounts/${MAIN_ACCOUNT_ID}`, {}],
+    ['deposit', 'POST', '/api/transactions/deposit', KEY],
+    ['withdraw', 'POST', '/api/transactions/withdraw', KEY],
+    ['rename azure tag', 'PATCH', '/api/users/me/azuretag', {}],
+    ['transfer', 'POST', '/api/transfers', KEY],
+    ['internal transfer', 'POST', '/api/transfers/internal', KEY],
+    ['verify pin', 'POST', '/bff/auth/verify-pin', {}],
+    ['set pin', 'POST', '/bff/auth/set-pin', {}],
+    ['login', 'POST', '/bff/auth/login', {}],
+    ['register', 'POST', '/bff/auth/register', {}],
+  ];
 
-    const res = await send(url, 'not json', extra);
+  const send = (method: string, url: string, body: string, extra: Record<string, string>) =>
+    fetch(url, { method, headers: { 'Content-Type': 'application/json', ...extra }, body });
 
-    expect(res.status).toBe(400);
-    expect((await res.json()).errors.$).toEqual(['The request body could not be read as JSON.']);
-  });
+  it.each(HANDLERS)(
+    '%s %s %s: malformed JSON is a 400, not a 500',
+    async (_n, method, url, extra) => {
+      const res = await send(method, url, 'not json', extra);
 
-  it('an EMPTY body gets the framework’s own sentence for that case', async () => {
-    // ASP.NET distinguishes the two: a missing body is "A non-empty request body is required.",
-    // stable and worth mirroring. The malformed-JSON text embeds the parse position, so that one
-    // is an honest approximation — the KEY, `$`, is faithful either way.
-    const res = await send('/api/accounts', '');
+      expect(res.status).toBe(400);
+      expect((await res.json()).errors.$).toEqual(['The request body could not be read as JSON.']);
+    },
+  );
+
+  it.each(HANDLERS)('%s %s %s: an empty body is a 400 too', async (_n, method, url, extra) => {
+    // ASP.NET distinguishes the two, and the sentence differs: a missing body is "A non-empty
+    // request body is required." The malformed-JSON text embeds a parse position, so that one is
+    // an honest approximation — the KEY, `$`, is faithful either way.
+    const res = await send(method, url, '', extra);
 
     expect(res.status).toBe(400);
     expect((await res.json()).errors.$).toEqual(['A non-empty request body is required.']);
   });
 
   it('a JSON array is not a body either', async () => {
-    // Asserting only the 400 made this test VACUOUS: with the `Array.isArray` guard deleted the
-    // array sails through as an object, `name` is undefined, and the NAME validator returns a 400
-    // of its own. Same status, different reason, test still green. The `$` key is what actually
-    // distinguishes "I could not read this" from "I read it and the name is wrong".
-    const res = await send('/api/accounts', '["Holiday Fund"]');
+    // Asserting only the 400 made this VACUOUS: with the `Array.isArray` guard deleted the array
+    // sails through as an object, `name` is undefined, and the NAME validator returns a 400 of its
+    // own. Same status, different reason, test still green. The `$` key is what distinguishes
+    // "I could not read this" from "I read it and the name is wrong".
+    const res = await send('POST', '/api/accounts', '["Holiday Fund"]', {});
 
     expect(res.status).toBe(400);
     expect((await res.json()).errors.$).toEqual(['The request body could not be read as JSON.']);
+  });
+
+  it('a readable body with an ARRAY where a string belongs is refused, and stores nothing', async () => {
+    /*
+      A different bug from the ones above, and one I introduced fixing them: I widened the account
+      -type check to `includes(String(body.type))`, and `String(['Checking'])` is `'Checking'`. So
+      the array passed validation and was then written onto `account.type`, where the response
+      contract promises a string.
+
+      The identical trap is already documented on the azureTag handler — `RegExp.test(['abc'])`
+      stringifies too — which is why the guard is a type guard now and why this asserts the STATE,
+      not just the status: a 400 alone would not have proven nothing was stored.
+    */
+    const before = mockState.accounts.length;
+    const res = await send(
+      'POST',
+      '/api/accounts',
+      JSON.stringify({ name: 'Holiday Fund', type: ['Checking'] }),
+      {},
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors.type).toEqual([
+      'Invalid account type. Must be Checking, Savings, or Investment.',
+    ]);
+    expect(mockState.accounts).toHaveLength(before);
   });
 });
