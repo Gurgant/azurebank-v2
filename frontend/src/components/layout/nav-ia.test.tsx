@@ -103,15 +103,15 @@ describe.each(SURFACES)('%s', (surface) => {
       'Home',
       'Accounts',
       'History',
-      'Settings',
       'Contact',
+      'Settings',
     ]);
     expect(links.map((el) => el.getAttribute('href'))).toEqual([
       '/dashboard',
       '/accounts',
       '/history',
-      '/settings',
       '/about',
+      '/settings',
     ]);
   });
 

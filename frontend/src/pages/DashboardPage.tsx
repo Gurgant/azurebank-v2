@@ -249,6 +249,11 @@ const useStyles = makeStyles({
     ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
   },
 
+  supportTitle: {
+    display: 'block',
+    marginBottom: '2px',
+  },
+
   supportRow: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -920,7 +925,9 @@ export function DashboardPage() {
               <Headset24Regular />
             </span>
             <div>
-              <Text className={styles.sectionTitle}>Need help?</Text>
+              <Text className={mergeClasses(styles.sectionTitle, styles.supportTitle)}>
+                Need help?
+              </Text>
               {/* NOT "our support team is available 24/7". There is no team: this is a portfolio
                   project, and a line promising staffed support is the same defect as a button that
                   cannot extend a session. The link goes somewhere real and says what it is. */}

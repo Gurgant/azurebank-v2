@@ -102,6 +102,14 @@ export const NAV_PLACES: NavPlace[] = [
     group: 'primary',
   },
   {
+    path: '/about',
+    label: 'Contact',
+    matches: ['/about'],
+    icon: Headset24Regular,
+    activeIcon: Headset24Filled,
+    group: 'utility',
+  },
+  {
     path: '/settings',
     label: 'Settings',
     // One URL. `/profile` now redirects here, which is why there is no alias to list: the page's
@@ -110,14 +118,6 @@ export const NAV_PLACES: NavPlace[] = [
     matches: ['/settings'],
     icon: Settings24Regular,
     activeIcon: Settings24Filled,
-    group: 'utility',
-  },
-  {
-    path: '/about',
-    label: 'Contact',
-    matches: ['/about'],
-    icon: Headset24Regular,
-    activeIcon: Headset24Filled,
     group: 'utility',
   },
 ];
