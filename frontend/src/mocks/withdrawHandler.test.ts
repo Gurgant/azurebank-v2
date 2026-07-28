@@ -105,7 +105,9 @@ describe('withdraw handler (PIN + idempotency contract)', () => {
   it('422 INSUFFICIENT_FUNDS (with available) when the amount exceeds the balance', async () => {
     const res = await withdraw(crypto.randomUUID(), {
       accountId: accountId(),
-      amount: 999_999,
+      // Over the balance but INSIDE the contract's range: >100,000 is now rejected as invalid
+      // input before the funds check, exactly as FluentValidation rejects it before the service.
+      amount: 50_000,
       pin: MOCK_PIN,
     });
     expect(res.status).toBe(422);

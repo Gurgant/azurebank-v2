@@ -169,4 +169,47 @@ describe('GET /api/transactions honours AccountId', () => {
     const body = await res.json();
     expect(body.errorCode).toBe('ACCESS_DENIED');
   });
+
+  it.each(['Page=0', 'Page=-1', 'Page=1.5', 'Page=x', 'PageSize=0', 'PageSize=-20'])(
+    'rejects %s instead of computing nonsense pagination',
+    async (query) => {
+      // PageSize=0 made totalPages Infinity and a non-numeric page sliced to nothing while the
+      // metadata claimed otherwise — pagination a client could be built against and no real
+      // server would ever send.
+      const res = await fetch(`/api/transactions?${query}`);
+      expect(res.status).toBe(400);
+    },
+  );
+});
+
+describe('money endpoints validate the amount before touching a balance', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  const deposit = (amount: unknown) =>
+    fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3397',
+      },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount }),
+    });
+
+  it.each([-100, 0, 0.001, 100_001, 'ten', null])(
+    'rejects an amount of %p and leaves the balance alone',
+    async (amount) => {
+      // The arithmetic is symmetric and the intent is not: a negative deposit DEBITS the account,
+      // and a negative withdrawal or transfer credits it. Only the internal transfer used to say so.
+      const opening = mockState.accounts.find((a) => a.id === MAIN_ACCOUNT_ID)?.balance;
+      const before = mockState.transactions.length;
+
+      const res = await deposit(amount);
+
+      expect(res.status).toBe(400);
+      expect(mockState.accounts.find((a) => a.id === MAIN_ACCOUNT_ID)?.balance).toBe(opening);
+      expect(mockState.transactions.length).toBe(before);
+    },
+  );
 });

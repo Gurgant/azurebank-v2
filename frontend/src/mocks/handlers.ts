@@ -65,6 +65,31 @@ function stepUp403(currentLevel: number) {
 }
 
 /**
+ * The amount guard every money endpoint runs FIRST, like FluentValidation does before the
+ * controller ever sees the request.
+ *
+ * A non-positive amount has to be rejected before any balance math, because the arithmetic is
+ * symmetric and the intent is not: a negative deposit debits the account, and a negative
+ * withdrawal or transfer credits it. The internal transfer was the only handler that said so; the
+ * other three took `body.amount ?? 0` straight into the balance. One copy, four call sites, so
+ * they cannot drift apart again.
+ *
+ * The bounds are the contract's own — `ValidationRules.TransactionMinAmount/MaxAmount`, which the
+ * generated Zod schema mirrors as `.min(0.01).max(100000)`. The message reads in dollars because
+ * the API's own message does (see `schema.d.ts`: "Amount must be between $0.01 and $100,000.00.");
+ * this is the mock quoting the contract, not the app's EUR display.
+ */
+function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0.01) {
+    return problem({ status: 400, errors: { amount: ['Amount must be at least $0.01.'] } });
+  }
+  if (amount > 100_000) {
+    return problem({ status: 400, errors: { amount: ['Amount cannot exceed $100,000.00.'] } });
+  }
+  return null;
+}
+
+/**
  * The API never exposes the full number (AccountMapper masks it server-side), so the mock holds
  * none. Synthesize a deterministic unmasked value from the visible last group for the reveal
  * endpoint: `AB-****-****-90` → `AB-1234-5678-90`.
@@ -210,6 +235,19 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const page = Number(params.get('Page') ?? 1);
   const pageSize = Number(params.get('PageSize') ?? 20);
   const accountId = params.get('AccountId');
+
+  // `Number('')` is 0 and `Number('x')` is NaN, and either reached the page math: PageSize 0 makes
+  // totalPages Infinity, and a NaN page slices to an empty list while the metadata says otherwise.
+  // The real endpoint validates these; the mock has to, or a client could be built against
+  // pagination that only the mock would ever produce.
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: { pagination: ['Page and PageSize must be positive integers.'] },
+      }),
+    );
+  }
 
   // `AccountId` used to be ignored outright, so both accounts returned byte-identical feeds and the
   // dashboard's scope control appeared to do nothing. The real service filters on it, and 403s
@@ -359,7 +397,11 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   }
 
   const body = JSON.parse(raw) as { accountId?: string; amount?: number; description?: string };
-  const amount = body.amount ?? 0;
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
+  }
+  const amount = body.amount as number;
 
   // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay
   // branch above returns the stored bytes without re-applying them (idempotent).
@@ -476,7 +518,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     pin?: string;
     description?: string;
   };
-  const amount = body.amount ?? 0;
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
+  }
+  const amount = body.amount as number;
 
   // PIN_REQUIRED — the user never set a PIN. Gated only when a session exists; tests that
   // render the dialog without seeding a session are treated as a PIN-holder (they pass one).
@@ -689,7 +735,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     amount?: number;
     description?: string;
   };
-  const amount = body.amount ?? 0;
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
+  }
+  const amount = body.amount as number;
   const tag = body.recipientAzureTag ?? '';
 
   if (mockState.session?.azureTag === tag) {
@@ -827,17 +877,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     amount?: number;
     description?: string;
   };
-  const amount = body.amount ?? 0;
-
-  // Validation runs first (like FluentValidation before the controller). A non-positive
-  // amount must be rejected BEFORE any balance math — otherwise a negative amount would
-  // invert the transfer (credit the source, debit the destination). Mirrors
-  // InternalTransferRequestValidator (Amount >= TransactionMinAmount).
-  if (amount < 0.01) {
-    return response.untyped(
-      problem({ status: 400, errors: { amount: ['Amount must be at least $0.01.'] } }),
-    );
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
   }
+  const amount = body.amount as number;
 
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
     return response.untyped(
