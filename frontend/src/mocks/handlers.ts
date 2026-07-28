@@ -90,6 +90,37 @@ function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
 }
 
 /**
+ * A query-string date that will not parse, rejected the way MODEL BINDING rejects it.
+ *
+ * `Date.parse('garbage')` is `NaN`, and NaN poisons every comparison silently: `NaN > NaN` is
+ * false, so a range guard passes, and `at < NaN` / `at > NaN` are both false, so a filter includes
+ * everything. The summary answered 200 with all-time totals and echoed the garbage straight back
+ * as `fromDate` — the precise failure the window fix had just been written to prevent.
+ *
+ * The API never reaches its own code here: `[FromQuery] DateTime?` fails to bind and ASP.NET's
+ * default `InvalidModelStateResponseFactory` answers first, keyed by the BOUND PARAMETER NAME
+ * (PascalCase, unlike the camelCase keys FluentValidation produces) with the framework's own
+ * sentence.
+ *
+ * The envelope is the one this mock already builds. The real model-binding failure carries the
+ * framework's `ValidationProblemDetails` — title "One or more validation errors occurred.", an
+ * rfc7231 `type`, no detail — which differs from the app's `ValidationExceptionHandler`. Modelling
+ * two 400 envelopes was not worth it for a difference no client branches on; the key and the
+ * message, which one might, are exact.
+ */
+function rejectUnparseableDates(
+  raw: Record<string, string | null>,
+): ReturnType<typeof problem> | null {
+  const errors: Record<string, string[]> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (value !== null && Number.isNaN(Date.parse(value))) {
+      errors[name] = [`The value '${value}' is not valid.`];
+    }
+  }
+  return Object.keys(errors).length > 0 ? problem({ status: 400, errors }) : null;
+}
+
+/**
  * The 404 every missing resource produces, mirroring `NotFoundException(resource, identifier)`.
  *
  * Read the constructor before changing this — it is surprising, and the mock had it wrong in two
@@ -150,6 +181,79 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   };
   mockState.accounts.push(account);
   return response(201).json({ data: account, message: 'Account created successfully.' });
+});
+
+/**
+ * GET /api/accounts/{id} — the single account, enveloped like every other read.
+ *
+ * Had no handler at all while `getAccount`/`useGetAccountQuery` sat exported from the barrel. The
+ * sentinel at the bottom of this file is what makes that impossible to repeat quietly.
+ */
+const getAccount = api.get('/api/accounts/{id}', ({ params, response }) => {
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(notFound('Account', params.id));
+  }
+  return response(200).json({ data: account, message: null });
+});
+
+/**
+ * GET /api/accounts/{id}/balance — current, or as of a moment in the past.
+ *
+ * `AccountService.GetBalanceAsync` has two branches and the boundary is not the obvious one: `at`
+ * omitted OR `at >= now` both mean CURRENT, so a client asking about the future is answered about
+ * the present with `isHistorical: false`. The historical branch takes the `balanceAfter` of the
+ * most recent entry at or before `at`, and 0 when the account had no entries yet — not the opening
+ * balance, zero.
+ *
+ * Reproducible here only because the ledger gained per-account entries: before that, "the most
+ * recent transaction on THIS account" was not a question the mock could answer.
+ */
+const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, request, response }) => {
+  // Model binding runs BEFORE the action, so a malformed `at` is a 400 and never reaches the
+  // account lookup. Swallowing it as "current" — which is what `Number.isNaN(atMs)` used to do
+  // below — answered 200 with today's balance for a question nobody could have asked.
+  const at = new URL(request.url).searchParams.get('at');
+  const badAt = rejectUnparseableDates({ at });
+  if (badAt) {
+    return response.untyped(badAt);
+  }
+
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(notFound('Account', params.id));
+  }
+
+  const atMs = at ? Date.parse(at) : Number.NaN;
+  const now = new Date();
+
+  if (!at || atMs >= now.getTime()) {
+    return response(200).json({
+      data: {
+        accountId: account.id,
+        balance: account.balance,
+        currency: 'EUR',
+        asOf: now.toISOString(),
+        isHistorical: false,
+      },
+      message: null,
+    });
+  }
+
+  const priorEntry = mockState.transactions
+    .filter((t) => t.accountId === account.id && Date.parse(t.createdAt) <= atMs)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+
+  return response(200).json({
+    data: {
+      accountId: account.id,
+      balance: priorEntry ? priorEntry.balanceAfter : 0,
+      currency: 'EUR',
+      asOf: new Date(atMs).toISOString(),
+      isHistorical: true,
+    },
+    message: null,
+  });
 });
 
 /** PATCH /api/accounts/{id} — rename (A5): name only, per the contract. */
@@ -240,19 +344,51 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   // totalPages Infinity, and a NaN page slices to an empty list while the metadata says otherwise.
   // The real endpoint validates these; the mock has to, or a client could be built against
   // pagination that only the mock would ever produce.
-  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1) {
+  // `TransactionFilter` carries `[Range(1, int.MaxValue)]` on Page and `[Range(1, 100)]` on
+  // PageSize, with those exact messages, and model validation keys the dictionary by PROPERTY
+  // name. The mock invented a `pagination` key and a sentence no validator produces, and enforced
+  // no upper bound at all — so a client could page 1000 rows at a time against the mock and be
+  // rejected in production.
+  const pageErrors: Record<string, string[]> = {};
+  if (!Number.isInteger(page) || page < 1) {
+    pageErrors.page = ['Page must be at least 1.'];
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    pageErrors.pageSize = ['PageSize must be between 1 and 100.'];
+  }
+  if (Object.keys(pageErrors).length > 0) {
+    return response.untyped(problem({ status: 400, errors: pageErrors }));
+  }
+
+  /*
+    Every one of these is model-bound before the action body runs: `TransactionFilter` declares
+    `Guid? AccountId`, `DateTime? FromDate`, `DateTime? ToDate` and two `[Range]` ints. So a
+    malformed value of ANY of them is a 400 that the action never sees — which puts all of it
+    above the service's own 403, not interleaved with it.
+
+    The mock had the 403 in the middle: a request with both a foreign AccountId and an unparseable
+    FromDate answered 403, where the API answers 400. Ordering was this PR's whole subject and the
+    handler it added got it wrong in the same way.
+  */
+  if (accountId && !UUID_RE.test(accountId)) {
     return response.untyped(
       problem({
         status: 400,
-        errors: { pagination: ['Page and PageSize must be positive integers.'] },
+        errors: { AccountId: [`The value '${accountId}' is not valid.`] },
       }),
     );
   }
+  const badDates = rejectUnparseableDates({
+    FromDate: params.get('FromDate'),
+    ToDate: params.get('ToDate'),
+  });
+  if (badDates) {
+    return response.untyped(badDates);
+  }
 
-  // `AccountId` used to be ignored outright, so both accounts returned byte-identical feeds and the
-  // dashboard's scope control appeared to do nothing. The real service filters on it, and 403s
-  // first when the account is not one of the caller's — a mock that answered 200 with somebody
-  // else's ledger would let a broken client look correct.
+  // Ownership is the SERVICE's check, so it comes after everything the framework does. `AccountId`
+  // used to be ignored outright, so both accounts returned byte-identical feeds and the dashboard's
+  // scope control appeared to do nothing.
   if (accountId && !mockState.accounts.some((a) => a.id === accountId)) {
     return response.untyped(
       problem({
@@ -263,11 +399,37 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     );
   }
 
+  /*
+    The date window, which the mock ignored outright.
+
+    `GetTransactionsAsync` applies both bounds INCLUSIVELY and independently —
+    `if (filter.FromDate.HasValue) query.Where(t => t.CreatedAt >= ...)` and the same for ToDate
+    with `<=`. Neither has a default here: an absent bound means unbounded, unlike the summary
+    below, which defaults to the current calendar month. Two endpoints, two different rules, and
+    the mock had neither.
+
+    `Date.parse` rather than string comparison: the ledger stores 7-digit fractional seconds and
+    callers send 3, so lexicographic ordering would put `…09:15:00.0000000Z` after
+    `…09:15:00.000Z` and drop rows on an exact boundary.
+  */
+  const fromMs = params.get('FromDate') ? Date.parse(params.get('FromDate') as string) : null;
+  const toMs = params.get('ToDate') ? Date.parse(params.get('ToDate') as string) : null;
+
   const ordered = [...mockState.transactions]
     .filter((t) => !accountId || t.accountId === accountId)
+    .filter((t) => {
+      const at = Date.parse(t.createdAt);
+      if (fromMs !== null && !Number.isNaN(fromMs) && at < fromMs) {
+        return false;
+      }
+      return !(toMs !== null && !Number.isNaN(toMs) && at > toMs);
+    })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const totalItems = ordered.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  // `Math.ceil`, NOT `max(1, ...)`. An empty result is ZERO pages in `PaginatedResponse` — the
+  // no-accounts branch returns `TotalPages = 0` explicitly and the general path computes the same
+  // ceiling. Reporting 1 tells a client there is a page to show when there is not.
+  const totalPages = Math.ceil(totalItems / pageSize);
   const data = ordered.slice((page - 1) * pageSize, page * pageSize).map(toWire);
 
   return response(200).json({
@@ -293,12 +455,45 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
  */
 const transactionSummary = api.get('/api/transactions/summary', ({ request, response }) => {
   const params = new URL(request.url).searchParams;
-  // Resolve the window FIRST and use the SAME values for both the filter and the echo —
-  // they must never diverge. Defaults mirror the real API: missing ToDate = "now".
-  const fromDate = params.get('FromDate') ?? '1970-01-01T00:00:00.0000000Z';
-  const toDate = params.get('ToDate') ?? new Date().toISOString();
+  /*
+    Resolve the window FIRST and use the SAME values for the filter and the echo — they must never
+    diverge.
+
+    The default start is the FIRST DAY OF THE CURRENT UTC MONTH, not the epoch:
+    `filter.FromDate ?? new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc)`. The mock
+    used 1970, so "this month so far" summed the entire ledger — and the dashboard's month card,
+    whose whole label is "July so far", was quietly reporting all time. Missing ToDate is `now`,
+    which the mock did have right.
+  */
+  const badSummaryDates = rejectUnparseableDates({
+    FromDate: params.get('FromDate'),
+    ToDate: params.get('ToDate'),
+  });
+  if (badSummaryDates) {
+    return response.untyped(badSummaryDates);
+  }
+
+  const now = new Date();
+  const monthStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+  ).toISOString();
+  const fromDate = params.get('FromDate') ?? monthStart;
+  const toDate = params.get('ToDate') ?? now.toISOString();
   const fromMs = Date.parse(fromDate);
   const toMs = Date.parse(toDate);
+
+  // The guard is on the RESOLVED window and it is unconditional — the service's own comment says
+  // the filter's model validation only sees the explicitly-provided pair, so a lone future
+  // FromDate lands here rather than there. The mock answered 200 with zeroed totals instead.
+  if (fromMs > toMs) {
+    return response.untyped(
+      problem({
+        status: 422,
+        errorCode: 'INVALID_DATE_RANGE',
+        detail: 'FromDate must be earlier than or equal to ToDate.',
+      }),
+    );
+  }
 
   let totalIncome = 0;
   let totalExpenses = 0;
@@ -510,6 +705,22 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   }
   const amount = body.amount as number;
 
+  /*
+    The account is resolved FIRST, before a single PIN check, because that is the first statement
+    of `TransactionService.WithdrawAsync` — `GetAccountWithOwnershipCheckAsync` runs above the
+    PIN-set check, the lockout window and the compare.
+
+    The mock had it last, and the order is not cosmetic. Withdrawing from an id that does not
+    exist, with a wrong PIN, answered 401 INVALID_PIN here and 404 ACCOUNT_NOT_FOUND in
+    production — and worse, the mock CONSUMED a PIN attempt for it. You could lock yourself out
+    of the mock by fumbling an account id, which the real API never lets you do because it never
+    reaches the PIN.
+  */
+  const account = mockState.accounts.find((a) => a.id === body.accountId);
+  if (!account) {
+    return response.untyped(notFound('Account', body.accountId));
+  }
+
   // PIN_REQUIRED — the user never set a PIN. Gated only when a session exists; tests that
   // render the dialog without seeding a session are treated as a PIN-holder (they pass one).
   if (mockState.session && !mockState.session.hasPin) {
@@ -563,12 +774,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   // Correct PIN clears the attempt counter.
   mockState.pinAttempts = 0;
 
-  // INSUFFICIENT_FUNDS — after the PIN passes, like the backend orders it. The account has to
-  // exist first: see the note on deposit above.
-  const account = mockState.accounts.find((a) => a.id === body.accountId);
-  if (!account) {
-    return response.untyped(notFound('Account', body.accountId));
-  }
+  // INSUFFICIENT_FUNDS — last, after the PIN passes, like the backend orders it.
   const available = account.balance;
   if (amount > available) {
     return response.untyped(
@@ -720,6 +926,18 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const amount = body.amount as number;
   const tag = body.recipientAzureTag ?? '';
 
+  /*
+    Source account FIRST. `TransferService.TransferAsync` opens with
+    `GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId)` — above the sender lookup,
+    above the self-transfer guard, above the recipient lookup. The mock resolved it LAST, so a
+    transfer from an unknown account to yourself answered SELF_TRANSFER_NOT_ALLOWED where the API
+    answers ACCOUNT_NOT_FOUND, and a client branching on the code took the wrong path.
+  */
+  const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
+  if (!account) {
+    return response.untyped(notFound('Account', body.fromAccountId));
+  }
+
   if (mockState.session?.azureTag === tag) {
     return response.untyped(
       problem({
@@ -736,10 +954,6 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     return response.untyped(notFound('Recipient', tag));
   }
 
-  const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
-  if (!account) {
-    return response.untyped(notFound('Account', body.fromAccountId));
-  }
   const available = account.balance;
   if (amount > available) {
     return response.untyped(
@@ -1181,9 +1395,42 @@ const sessionActivity = http.all('*/api/*', () => {
   return undefined;
 });
 
+/**
+ * The last handler in the list, and the reason the list can be trusted.
+ *
+ * `sessionActivity` above is an `http.all` catch-all over every `/api` path, and it returns
+ * `undefined` so the real endpoint handler runs after it. MSW treats that as a MATCH, so a request to an `/api` route
+ * with no handler at all is "handled" — and `onUnhandledRequest: 'error'` never fires. Measured:
+ * fetching an unmocked `/api/...` inside vitest throws a bare `fetch failed`, exactly like a
+ * network outage, because the request escaped MSW entirely. In `dev:mock` (`bypass`) it escapes to
+ * Vite, which answers with HTML and the query dies on a parse error.
+ *
+ * That is how `GET /api/accounts/{id}` and `/{id}/balance` sat unmocked while both of their RTK
+ * Query hooks were exported: nothing anywhere said so. A mock that cannot report its own gaps is
+ * an oracle you cannot audit.
+ *
+ * So: an explicit sentinel, LAST, reached only when every real handler has declined. It names the
+ * method and the path, which is the sentence the developer needed in the first place.
+ */
+// NB: never quote this glob inside a BLOCK comment. The `*` + `/` in the middle of it closes the
+// comment early, and what follows becomes code — that mistake put a live `api;` statement in this
+// file, which compiled, passed the tests, and left the docblock quoting a pattern that does not
+// exist. Only eslint's no-unused-expressions caught it.
+const unmockedApiRoute = http.all('*/api/*', ({ request }) => {
+  const { pathname } = new URL(request.url);
+  return problem({
+    status: 501,
+    errorCode: 'MOCK_HANDLER_MISSING',
+    title: 'Not Implemented',
+    detail: `No mock handler for ${request.method} ${pathname}. The API has this route; add a handler in src/mocks/handlers.ts.`,
+  });
+});
+
 export const handlers = [
   sessionActivity,
   listAccounts,
+  getAccount,
+  getAccountBalance,
   createAccount,
   renameAccount,
   setPrimaryAccount,
@@ -1205,4 +1452,6 @@ export const handlers = [
   me,
   logout,
   sessionStatus,
+  // LAST, always. Everything above declines before this speaks.
+  unmockedApiRoute,
 ];
