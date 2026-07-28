@@ -292,7 +292,6 @@ export function InternalTransferPage() {
 
   const selectTo = (account: AccountResponse) => {
     if (keyLive) return;
-    if (account.id === fromAccount?.id) return; // same-account is not selectable
     setValue('toAccountId', account.id, { shouldValidate: true });
     onBodyEdit();
   };
