@@ -29,8 +29,10 @@ describe('accounts list (A1)', () => {
     // Contract currency is EUR (en-IE), never the old mock USD.
     expect(screen.getByText('€1,250.50')).toBeInTheDocument();
     expect(screen.getByText('€830.00')).toBeInTheDocument();
-    // Total = 2080.50, rendered by BOTH responsive headers (media queries hide one).
-    expect(screen.getAllByText('€2,080.50')).toHaveLength(2);
+    // Total = 2080.50, rendered ONCE. It used to be twice — a mobile header and a desktop one,
+    // each with its own copy, one of them hidden by a media query. `getByText` throws on a second
+    // match, so this assertion is what fails if the two headers ever come back.
+    expect(screen.getByText('€2,080.50')).toBeInTheDocument();
 
     // Exactly one primary account in the seed.
     expect(screen.getAllByText('Primary')).toHaveLength(1);
@@ -44,7 +46,24 @@ describe('accounts list (A1)', () => {
 
     expect(await screen.findByText('Add New Account')).toBeInTheDocument();
     expect(screen.queryByText('Main Account')).not.toBeInTheDocument();
-    expect(screen.getAllByText('€0.00')).toHaveLength(2); // both total-balance headers
+    expect(screen.getByText('€0.00')).toBeInTheDocument(); // one total, not one per header
+  });
+
+  it('has exactly one <h1>, and it names the place the nav names', async () => {
+    renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
+    await screen.findByText('Main Account');
+
+    // Measured before U4: this page exposed NO heading at any level — the only authenticated page
+    // that did not, because both of its titles were `<Text>`, which renders an inline `<span>`.
+    // Heading navigation found nothing here.
+    const headings = screen.getAllByRole('heading');
+    expect(headings).toHaveLength(1);
+    expect(headings[0].tagName).toBe('H1');
+
+    // The title is read from the nav table rather than typed here, so the tab and the page cannot
+    // come to call this somewhere different — it said "My Accounts" while the nav said "Accounts".
+    expect(headings[0]).toHaveTextContent('Accounts');
+    expect(headings[0]).not.toHaveTextContent('My Accounts');
   });
 
   it('a load failure shows the problem detail and Retry recovers (D22 error state)', async () => {

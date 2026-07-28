@@ -16,6 +16,7 @@ import {
   ArrowSwap24Regular,
   Search24Regular,
 } from '@fluentui/react-icons';
+import { atMedia } from '../theme/breakpoints';
 import { colors, shadows } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -41,12 +42,29 @@ const useStyles = makeStyles({
     flexDirection: 'column',
   },
 
+  /**
+   * A capped, centred measure — not the two columns the plan called for.
+   *
+   * That line was written when this page carried several sections; H5 pruned it to a hero and one
+   * card, and two columns for one card is a column with nothing beside it. What was actually broken
+   * is that the page had NO media query at all, so on a 1440px screen a receipt with eight
+   * key-value rows stretched the full width and its labels ended a screen away from their values.
+   */
   content: {
     flex: 1,
     padding: '16px',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+    width: '100%',
+    maxWidth: '640px',
+    marginLeft: 'auto',
+    marginRight: 'auto',
+
+    [atMedia.md]: {
+      padding: '32px 24px',
+      gap: '24px',
+    },
   },
 
   // ========== HERO ==========

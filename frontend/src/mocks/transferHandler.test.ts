@@ -97,7 +97,9 @@ describe('transfer handler (step-up gate + failure order + idempotency)', () => 
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
-      amount: 999_999,
+      // Over the balance but INSIDE the contract's range: >100,000 is now rejected as invalid
+      // input before the funds check, exactly as FluentValidation rejects it before the service.
+      amount: 50_000,
     });
     expect(res.status).toBe(422);
     expect((await res.json()).errorCode).toBe('INSUFFICIENT_FUNDS');
@@ -181,7 +183,9 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     const res = await internal(crypto.randomUUID(), {
       fromAccountId: acct(),
       toAccountId: acct2(),
-      amount: 999_999,
+      // Over the balance but INSIDE the contract's range: >100,000 is now rejected as invalid
+      // input before the funds check, exactly as FluentValidation rejects it before the service.
+      amount: 50_000,
     });
     expect(res.status).toBe(422);
     expect((await res.json()).errorCode).toBe('INSUFFICIENT_FUNDS');

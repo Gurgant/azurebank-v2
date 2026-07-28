@@ -10,6 +10,7 @@ import {
   markMockActivity,
   mockAccessTokenExpiry,
   mockState,
+  toWire,
   type MockSessionUser,
 } from './state';
 
@@ -64,6 +65,55 @@ function stepUp403(currentLevel: number) {
 }
 
 /**
+ * The amount guard every money endpoint runs FIRST, like FluentValidation does before the
+ * controller ever sees the request.
+ *
+ * A non-positive amount has to be rejected before any balance math, because the arithmetic is
+ * symmetric and the intent is not: a negative deposit debits the account, and a negative
+ * withdrawal or transfer credits it. The internal transfer was the only handler that said so; the
+ * other three took `body.amount ?? 0` straight into the balance. One copy, four call sites, so
+ * they cannot drift apart again.
+ *
+ * The bounds are the contract's own — `ValidationRules.TransactionMinAmount/MaxAmount`, which the
+ * generated Zod schema mirrors as `.min(0.01).max(100000)`. The message reads in dollars because
+ * the API's own message does (see `schema.d.ts`: "Amount must be between $0.01 and $100,000.00.");
+ * this is the mock quoting the contract, not the app's EUR display.
+ */
+function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0.01) {
+    return problem({ status: 400, errors: { amount: ['Amount must be at least $0.01.'] } });
+  }
+  if (amount > 100_000) {
+    return problem({ status: 400, errors: { amount: ['Amount cannot exceed $100,000.00.'] } });
+  }
+  return null;
+}
+
+/**
+ * The 404 every missing resource produces, mirroring `NotFoundException(resource, identifier)`.
+ *
+ * Read the constructor before changing this — it is surprising, and the mock had it wrong in two
+ * different directions before these were one function:
+ *
+ *  - The message is `"{resource} with identifier '{id}' was not found."` — the resource name leads.
+ *    Three handlers had invented "No account was found with identifier '…'." instead.
+ *  - The code is `ErrorCodes.AccountNotFound` — **for every resource**, Account, User, Transaction
+ *    and Recipient alike. The two-argument constructor hard-codes it and never looks at
+ *    `TransactionNotFound` or `UserNotFound`, which exist but are unreachable from this path. Five
+ *    handlers had guessed a plausible `NOT_FOUND` that the API cannot emit.
+ *
+ * Mirroring the quirk is the point. A mock that "corrects" the server teaches a client to expect a
+ * code it will never receive, and the bug then belongs to production rather than to this file.
+ */
+function notFound(resource: 'Account' | 'Transaction' | 'Recipient', identifier: unknown) {
+  return problem({
+    status: 404,
+    errorCode: 'ACCOUNT_NOT_FOUND',
+    detail: `${resource} with identifier '${String(identifier)}' was not found.`,
+  });
+}
+
+/**
  * The API never exposes the full number (AccountMapper masks it server-side), so the mock holds
  * none. Synthesize a deterministic unmasked value from the visible last group for the reveal
  * endpoint: `AB-****-****-90` → `AB-1234-5678-90`.
@@ -106,13 +156,7 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
 const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   const body = (await request.clone().json()) as { name?: string };
   account.name = body.name ?? account.name;
@@ -123,13 +167,7 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
 const setPrimaryAccount = api.patch('/api/accounts/{id}/set-primary', ({ params, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   for (const a of mockState.accounts) {
     a.isPrimary = false;
@@ -145,13 +183,7 @@ const setPrimaryAccount = api.patch('/api/accounts/{id}/set-primary', ({ params,
 const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   if (account.balance !== 0) {
     return response.untyped(
@@ -186,13 +218,7 @@ const revealAccountNumber = api.get('/api/accounts/{id}/full-number', ({ params,
   }
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Account with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Account', params.id));
   }
   return response(200).json({
     data: { accountId: account.id, accountNumber: unmaskForMock(account.accountNumber) },
@@ -208,13 +234,41 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const params = new URL(request.url).searchParams;
   const page = Number(params.get('Page') ?? 1);
   const pageSize = Number(params.get('PageSize') ?? 20);
+  const accountId = params.get('AccountId');
 
-  const ordered = [...mockState.transactions].sort((a, b) =>
-    b.createdAt.localeCompare(a.createdAt),
-  );
+  // `Number('')` is 0 and `Number('x')` is NaN, and either reached the page math: PageSize 0 makes
+  // totalPages Infinity, and a NaN page slices to an empty list while the metadata says otherwise.
+  // The real endpoint validates these; the mock has to, or a client could be built against
+  // pagination that only the mock would ever produce.
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: { pagination: ['Page and PageSize must be positive integers.'] },
+      }),
+    );
+  }
+
+  // `AccountId` used to be ignored outright, so both accounts returned byte-identical feeds and the
+  // dashboard's scope control appeared to do nothing. The real service filters on it, and 403s
+  // first when the account is not one of the caller's — a mock that answered 200 with somebody
+  // else's ledger would let a broken client look correct.
+  if (accountId && !mockState.accounts.some((a) => a.id === accountId)) {
+    return response.untyped(
+      problem({
+        status: 403,
+        errorCode: 'ACCESS_DENIED',
+        detail: 'You do not have access to this account.',
+      }),
+    );
+  }
+
+  const ordered = [...mockState.transactions]
+    .filter((t) => !accountId || t.accountId === accountId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const totalItems = ordered.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-  const data = ordered.slice((page - 1) * pageSize, page * pageSize);
+  const data = ordered.slice((page - 1) * pageSize, page * pageSize).map(toWire);
 
   return response(200).json({
     data,
@@ -287,15 +341,9 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
 const getTransaction = api.get('/api/transactions/{id}', ({ params, response }) => {
   const transaction = mockState.transactions.find((t) => t.id === params.id);
   if (!transaction) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'NOT_FOUND',
-        detail: `Transaction with identifier '${params.id}' was not found.`,
-      }),
-    );
+    return response.untyped(notFound('Transaction', params.id));
   }
-  return response(200).json({ data: transaction, message: null });
+  return response(200).json({ data: toWire(transaction), message: null });
 });
 
 /** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
@@ -343,19 +391,35 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   }
 
   const body = JSON.parse(raw) as { accountId?: string; amount?: number; description?: string };
-  const amount = body.amount ?? 0;
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
+  }
+  const amount = body.amount as number;
 
   // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay
   // branch above returns the stored bytes without re-applying them (idempotent).
   const account = mockState.accounts.find((a) => a.id === body.accountId);
-  const newBalance = (account?.balance ?? 1000) + amount;
-  if (account) {
-    account.balance = newBalance;
+  /*
+    An unknown account is a 404, exactly as `GetAccountWithOwnershipCheckAsync` makes it one.
+
+    This used to fabricate a 1000 balance and answer 201 with a transaction that no account and no
+    ledger row owned — a phantom success. Withholding the ledger write instead was worse in one
+    specific way: ids and transaction numbers are derived from `mockState.transactions.length`, so
+    the phantom's identifiers were handed straight back to the next real write. The only thing the
+    fabrication ever bought was letting the protocol fixtures post to a synthetic id, and those now
+    use a seeded account, which costs them nothing.
+  */
+  if (!account) {
+    return response.untyped(notFound('Account', body.accountId));
   }
+  const newBalance = account.balance + amount;
+  account.balance = newBalance;
   const index = mockState.transactions.length;
   const transaction = {
     // 0xd00 block (12 hex chars = a VALID uuid) — same scheme as withdraw/transfer below.
     id: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
+    accountId: account.id,
     transactionNumber: `TXN-20260722-${String(300 + index).padStart(6, '0')}`,
     type: 'Deposit' as const,
     amount,
@@ -367,10 +431,13 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     // Latest timestamp so it leads the newest-first history feed.
     createdAt: `2026-07-22T10:${String(index).padStart(2, '0')}:00.0000000Z`,
   };
+  // The account is guaranteed real by the 404 above, so this always files against something that
+  // exists — which is the whole point: an entry whose `balanceAfter` belonged to no account would
+  // sit in the cross-account feed reconciling with nothing.
   mockState.transactions.push(transaction);
 
   const payload = {
-    data: { transaction, newBalance },
+    data: { transaction: toWire(transaction), newBalance },
     message: 'Deposit completed successfully.',
   };
   const text = JSON.stringify(payload);
@@ -437,7 +504,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     pin?: string;
     description?: string;
   };
-  const amount = body.amount ?? 0;
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
+  }
+  const amount = body.amount as number;
 
   // PIN_REQUIRED — the user never set a PIN. Gated only when a session exists; tests that
   // render the dialog without seeding a session are treated as a PIN-holder (they pass one).
@@ -492,9 +563,13 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   // Correct PIN clears the attempt counter.
   mockState.pinAttempts = 0;
 
-  // INSUFFICIENT_FUNDS — after the PIN passes, like the backend orders it.
+  // INSUFFICIENT_FUNDS — after the PIN passes, like the backend orders it. The account has to
+  // exist first: see the note on deposit above.
   const account = mockState.accounts.find((a) => a.id === body.accountId);
-  const available = account?.balance ?? 0;
+  if (!account) {
+    return response.untyped(notFound('Account', body.accountId));
+  }
+  const available = account.balance;
   if (amount > available) {
     return response.untyped(
       problem({
@@ -508,12 +583,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
 
   // Success — debit, record, store (once), reply.
   const newBalance = available - amount;
-  if (account) {
-    account.balance = newBalance;
-  }
+  account.balance = newBalance;
   const index = mockState.transactions.length;
   const transaction = {
     id: `019f7b3f-0000-7000-8000-${(0x400 + index).toString(16).padStart(12, '0')}`,
+    accountId: account.id,
     transactionNumber: `TXN-20260722-${String(400 + index).padStart(6, '0')}`,
     type: 'Withdrawal' as const,
     amount,
@@ -526,7 +600,10 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   };
   mockState.transactions.push(transaction);
 
-  const payload = { data: { transaction, newBalance }, message: 'Withdrawal successful' };
+  const payload = {
+    data: { transaction: toWire(transaction), newBalance },
+    message: 'Withdrawal successful',
+  };
   const text = JSON.stringify(payload);
   mockState.idempotency.set(`withdraw|${key}`, { bodyFingerprint: fp, status: 201, body: text });
   return response(201).json(payload);
@@ -636,7 +713,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     amount?: number;
     description?: string;
   };
-  const amount = body.amount ?? 0;
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
+  }
+  const amount = body.amount as number;
   const tag = body.recipientAzureTag ?? '';
 
   if (mockState.session?.azureTag === tag) {
@@ -650,18 +731,16 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
   const recipient = mockState.recipients.find((r) => r.azureTag === tag);
   if (!recipient) {
-    // Recipient-not-found surfaces as ACCOUNT_NOT_FOUND — NotFoundException hard-codes it.
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'ACCOUNT_NOT_FOUND',
-        detail: `No user was found with the handle '${tag}'.`,
-      }),
-    );
+    // `TransferService` throws NotFoundException("Recipient", tag) here — hence the resource name
+    // and the ACCOUNT_NOT_FOUND code, which that constructor uses for every resource.
+    return response.untyped(notFound('Recipient', tag));
   }
 
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
-  const available = account?.balance ?? 1000; // tolerate a missing fromAccount (stepup.test)
+  if (!account) {
+    return response.untyped(notFound('Account', body.fromAccountId));
+  }
+  const available = account.balance;
   if (amount > available) {
     return response.untyped(
       problem({
@@ -674,12 +753,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
 
   const newBalance = available - amount;
-  if (account) {
-    account.balance = newBalance;
-  }
+  account.balance = newBalance;
   const index = mockState.transactions.length;
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
+    accountId: account.id,
     transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
     type: 'TransferOut',
     amount,
@@ -766,17 +844,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     amount?: number;
     description?: string;
   };
-  const amount = body.amount ?? 0;
-
-  // Validation runs first (like FluentValidation before the controller). A non-positive
-  // amount must be rejected BEFORE any balance math — otherwise a negative amount would
-  // invert the transfer (credit the source, debit the destination). Mirrors
-  // InternalTransferRequestValidator (Amount >= TransactionMinAmount).
-  if (amount < 0.01) {
-    return response.untyped(
-      problem({ status: 400, errors: { amount: ['Amount must be at least $0.01.'] } }),
-    );
+  const badAmount = rejectBadAmount(body.amount);
+  if (badAmount) {
+    return response.untyped(badAmount);
   }
+  const amount = body.amount as number;
 
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
     return response.untyped(
@@ -787,16 +859,16 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       }),
     );
   }
+  // Checked in turn, source first, because `InternalTransferAsync` resolves them that way through
+  // two separate `GetAccountWithOwnershipCheckAsync` calls — so the 404 names the account it could
+  // not find rather than shrugging at "one of the accounts".
   const from = mockState.accounts.find((a) => a.id === body.fromAccountId);
+  if (!from) {
+    return response.untyped(notFound('Account', body.fromAccountId));
+  }
   const to = mockState.accounts.find((a) => a.id === body.toAccountId);
-  if (!from || !to) {
-    return response.untyped(
-      problem({
-        status: 404,
-        errorCode: 'ACCOUNT_NOT_FOUND',
-        detail: 'One of the accounts could not be found.',
-      }),
-    );
+  if (!to) {
+    return response.untyped(notFound('Account', body.toAccountId));
   }
   if (amount > from.balance) {
     return response.untyped(
@@ -816,6 +888,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   const at = `2026-07-22T13:${String(index).padStart(2, '0')}:00.0000000Z`;
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0xc00 + index).toString(16).padStart(12, '0')}`,
+    accountId: from.id,
     transactionNumber,
     type: 'TransferOut',
     amount,
@@ -828,6 +901,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   });
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0xc00 + index + 1).toString(16).padStart(12, '0')}`,
+    accountId: to.id,
     transactionNumber: `TXN-20260722-${String(600 + index + 1).padStart(6, '0')}`,
     type: 'TransferIn',
     amount,

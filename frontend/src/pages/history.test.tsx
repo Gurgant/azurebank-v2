@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -72,6 +72,84 @@ describe('history feed (T1)', () => {
     expect(screen.getByText('To @john_d')).toBeInTheDocument();
     expect(screen.getByText('From @anna_k')).toBeInTheDocument();
     expect(screen.queryByText('Salary — July')).not.toBeInTheDocument();
+  });
+
+  it('announces which filter is selected, not just colours it', async () => {
+    // The inline version was four bare buttons: no aria-pressed, no group, no name for the group.
+    // Which one was active was carried by background colour ALONE, so a screen reader announced
+    // four identical controls. That is the defect the extraction exists to fix, and this is the
+    // assertion that keeps it fixed.
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+    await screen.findByText('Salary — July');
+
+    const group = screen.getByRole('group', { name: /Filter transactions/i });
+    expect(within(group).getByRole('button', { name: 'All' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await userEvent.click(within(group).getByRole('button', { name: 'Deposits' }));
+    expect(within(group).getByRole('button', { name: 'Deposits' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(group).getByRole('button', { name: 'All' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
+
+  it('can shrink again after loading more, without refetching anything', async () => {
+    // Expanding used to be one-way. Every press added a page and nothing took one away, so a long
+    // history left hundreds of rows on screen and only a reload to get back.
+    //
+    // "Show less" hides pages instead of dropping them: the cache still holds them, so pressing
+    // "Load more" again neither repeats a request nor waits. That is why this asserts on rows
+    // rather than on request counts — the point is what the reader sees, and the absence of a
+    // refetch is what makes it instant.
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+    await screen.findByText('Salary — July');
+
+    const rowsNow = () => document.querySelectorAll('tbody tr').length;
+    const firstPage = rowsNow();
+    expect(screen.queryByRole('button', { name: 'Show less' })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(rowsNow()).toBeGreaterThan(firstPage));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
+    await waitFor(() => expect(rowsNow()).toBe(firstPage));
+    expect(screen.queryByRole('button', { name: 'Show less' })).toBeNull();
+  });
+
+  it('a FAILED Load more leaves no "Show less" that hides nothing', async () => {
+    // `fetchNextPage` resolves whether or not the request succeeded — RTK Query reports failure in
+    // the result rather than throwing — so incrementing the cap unconditionally put the view state
+    // ahead of the pages that actually loaded. The failure itself replaces the feed with the D22
+    // error state, so nothing looks wrong until Retry recovers: then one page is on screen and
+    // "Show less" is offered anyway, pointing at a page that was never fetched.
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+    await screen.findByText('Salary — July');
+
+    const rowsNow = () => document.querySelectorAll('tbody tr').length;
+    const firstPage = rowsNow();
+
+    // Page 1 is already cached; only the NEXT request fails.
+    server.use(
+      http.get('*/api/transactions', () =>
+        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Page two exploded.' }),
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText(/Page two exploded\./)).toBeInTheDocument();
+
+    // The backend recovers and Retry restores exactly the one page that was ever loaded.
+    server.resetHandlers();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByText('Salary — July');
+
+    expect(rowsNow()).toBe(firstPage);
+    expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
   });
 
   it('a load failure shows the problem detail and Retry recovers (D22)', async () => {
