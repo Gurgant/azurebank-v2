@@ -83,6 +83,54 @@ describe('the seeded ledger', () => {
   });
 });
 
+describe('writing to the ledger', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it('files a deposit against the account it names, and the balance still reconciles', async () => {
+    const before = mockState.transactions.length;
+    const opening = mockState.accounts.find((a) => a.id === SAVINGS_ACCOUNT_ID)?.balance ?? 0;
+
+    const res = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3399',
+      },
+      body: JSON.stringify({ accountId: SAVINGS_ACCOUNT_ID, amount: 25 }),
+    });
+    expect(res.status).toBe(201);
+
+    expect(mockState.transactions.length).toBe(before + 1);
+    const filed = mockState.transactions.find((t) => t.amount === 25 && t.type === 'Deposit');
+    expect(filed?.accountId).toBe(SAVINGS_ACCOUNT_ID);
+    // The new entry lands on the account's new balance — the same property the seed guarantees.
+    expect(filed?.balanceAfter).toBe(opening + 25);
+    expect(mockState.accounts.find((a) => a.id === SAVINGS_ACCOUNT_ID)?.balance).toBe(opening + 25);
+  });
+
+  it('files NOTHING for an account that does not exist', async () => {
+    // The handler tolerates a synthetic account id, because the idempotency-protocol fixtures post
+    // to one. What it must not do is file the entry: its balanceAfter comes from a fabricated
+    // balance no account holds, so it would sit in the cross-account feed reconciling with nothing.
+    const before = [...mockState.transactions];
+
+    const res = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3398',
+      },
+      body: JSON.stringify({ accountId: 'not-an-account', amount: 25 }),
+    });
+
+    // The protocol still answers — only the bookkeeping is withheld.
+    expect(res.status).toBe(201);
+    expect(mockState.transactions).toEqual(before);
+  });
+});
+
 describe('GET /api/transactions honours AccountId', () => {
   beforeEach(() => {
     resetMockState();

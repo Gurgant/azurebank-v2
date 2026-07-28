@@ -122,6 +122,36 @@ describe('history feed (T1)', () => {
     expect(screen.queryByRole('button', { name: 'Show less' })).toBeNull();
   });
 
+  it('a FAILED Load more leaves no "Show less" that hides nothing', async () => {
+    // `fetchNextPage` resolves whether or not the request succeeded — RTK Query reports failure in
+    // the result rather than throwing — so incrementing the cap unconditionally put the view state
+    // ahead of the pages that actually loaded. The failure itself replaces the feed with the D22
+    // error state, so nothing looks wrong until Retry recovers: then one page is on screen and
+    // "Show less" is offered anyway, pointing at a page that was never fetched.
+    renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
+    await screen.findByText('Salary — July');
+
+    const rowsNow = () => document.querySelectorAll('tbody tr').length;
+    const firstPage = rowsNow();
+
+    // Page 1 is already cached; only the NEXT request fails.
+    server.use(
+      http.get('*/api/transactions', () =>
+        problem({ status: 500, errorCode: 'INTERNAL_ERROR', detail: 'Page two exploded.' }),
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(await screen.findByText(/Page two exploded\./)).toBeInTheDocument();
+
+    // The backend recovers and Retry restores exactly the one page that was ever loaded.
+    server.resetHandlers();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByText('Salary — July');
+
+    expect(rowsNow()).toBe(firstPage);
+    expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
+  });
+
   it('a load failure shows the problem detail and Retry recovers (D22)', async () => {
     server.use(
       http.get('*/api/transactions', () =>

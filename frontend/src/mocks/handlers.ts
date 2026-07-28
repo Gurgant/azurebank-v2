@@ -372,9 +372,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   const transaction = {
     // 0xd00 block (12 hex chars = a VALID uuid) — same scheme as withdraw/transfer below.
     id: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
-    // An unseeded account id is tolerated here (see the fabricated balance above); NIL_UUID keeps
-    // the entry out of every per-account feed rather than attributing it to the wrong one.
-    accountId: account?.id ?? body.accountId ?? NIL_UUID,
+    accountId: account?.id ?? NIL_UUID,
     transactionNumber: `TXN-20260722-${String(300 + index).padStart(6, '0')}`,
     type: 'Deposit' as const,
     amount,
@@ -386,7 +384,14 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     // Latest timestamp so it leads the newest-first history feed.
     createdAt: `2026-07-22T10:${String(index).padStart(2, '0')}:00.0000000Z`,
   };
-  mockState.transactions.push(transaction);
+  // Filed only when the account is real. The unknown-account fallback above (a fabricated balance)
+  // is there for the idempotency-protocol fixtures, which post to synthetic ids: the response still
+  // models the protocol faithfully, but an entry whose `balanceAfter` belongs to no account would
+  // sit in the cross-account feed reconciling with nothing — the exact defect the derived seed was
+  // written to remove. Same rule at every write site below.
+  if (account) {
+    mockState.transactions.push(transaction);
+  }
 
   const payload = {
     data: { transaction: toWire(transaction), newBalance },
@@ -535,7 +540,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     id: `019f7b3f-0000-7000-8000-${(0x400 + index).toString(16).padStart(12, '0')}`,
     // An unseeded account id is tolerated here (see the fabricated balance above); NIL_UUID keeps
     // the entry out of every per-account feed rather than attributing it to the wrong one.
-    accountId: account?.id ?? body.accountId ?? NIL_UUID,
+    accountId: account?.id ?? NIL_UUID,
     transactionNumber: `TXN-20260722-${String(400 + index).padStart(6, '0')}`,
     type: 'Withdrawal' as const,
     amount,
@@ -546,7 +551,9 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     status: 'Completed' as const,
     createdAt: `2026-07-22T11:${String(index).padStart(2, '0')}:00.0000000Z`,
   };
-  mockState.transactions.push(transaction);
+  if (account) {
+    mockState.transactions.push(transaction);
+  }
 
   const payload = {
     data: { transaction: toWire(transaction), newBalance },
@@ -703,19 +710,21 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     account.balance = newBalance;
   }
   const index = mockState.transactions.length;
-  mockState.transactions.push({
-    id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
-    accountId: account?.id ?? body.fromAccountId ?? NIL_UUID,
-    transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
-    type: 'TransferOut',
-    amount,
-    balanceAfter: newBalance,
-    description: body.description ?? null,
-    recipientAzureTag: tag,
-    senderAzureTag: null,
-    status: 'Completed',
-    createdAt: `2026-07-22T12:${String(index).padStart(2, '0')}:00.0000000Z`,
-  });
+  if (account) {
+    mockState.transactions.push({
+      id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
+      accountId: account.id,
+      transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
+      type: 'TransferOut',
+      amount,
+      balanceAfter: newBalance,
+      description: body.description ?? null,
+      recipientAzureTag: tag,
+      senderAzureTag: null,
+      status: 'Completed',
+      createdAt: `2026-07-22T12:${String(index).padStart(2, '0')}:00.0000000Z`,
+    });
+  }
 
   const payload = {
     data: {

@@ -244,8 +244,12 @@ export function HistoryPage() {
       setVisiblePages((n) => n + 1);
       return;
     }
-    await fetchNextPage();
-    setVisiblePages((n) => n + 1);
+    // `fetchNextPage` resolves whether or not the request succeeded — RTK Query reports failure in
+    // the result, it does not throw. Incrementing unconditionally would leave the cap ahead of what
+    // actually loaded, and the visible symptom is a "Show less" button that hides nothing.
+    const result = await fetchNextPage();
+    const nowLoaded = result.data?.pages.length ?? loadedPages;
+    setVisiblePages((n) => Math.min(n + 1, nowLoaded));
   };
 
   const transactions = useMemo(
