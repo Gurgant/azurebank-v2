@@ -210,6 +210,56 @@ describe('external transfer (PR-11)', () => {
     await waitFor(() => expect(calls).toBe(2));
   });
 
+  it('a rate-limited lookup says so, instead of blaming the connection', async () => {
+    /*
+      The recipient lookup had a bare `catch` that reported every failure as connectivity. That
+      endpoint has a DEDICATED limiter — /api/users/* runs a tight per-user sliding window
+      (ADR-0014) and rejects with 429 + Retry-After — so the failure a user is most likely to
+      provoke, by tapping Verify repeatedly, told them to check a connection that was fine.
+
+      Asserted on STATUS, not on an errorCode: the BFF's rejection body is a bare ProblemDetails
+      with no errorCode, so the client synthesises HTTP_429 and there is nothing to match on.
+    */
+    server.use(
+      http.get('*/api/users/:azureTag', () =>
+        HttpResponse.json(
+          { type: 'https://httpstatuses.com/429', title: 'Too Many Requests', status: 429 },
+          { status: 429, headers: { 'Retry-After': '90' } },
+        ),
+      ),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    await verifyRecipient('friend');
+
+    expect(await screen.findByText(/Too many lookups/)).toBeInTheDocument();
+    expect(screen.getByText(/2 minutes/)).toBeInTheDocument(); // 90s, rounded up by formatLockHorizon
+    expect(screen.queryByText(/check your connection/)).not.toBeInTheDocument();
+  });
+
+  it(
+    'still blames the connection when the connection really is the problem',
+    { timeout: 15_000 },
+    async () => {
+      // Without this the test above passes just as well against a catch that says "too many lookups"
+      // for everything — the exact defect being fixed, with the wording swapped.
+      //
+      // The generous timeout is not padding: problemBaseQuery RETRIES a NETWORK failure up to three
+      // times before it ever reaches the catch, so the message cannot appear on the first tick.
+      server.use(http.get('*/api/users/:azureTag', () => HttpResponse.error()));
+      renderTransfer();
+      await screen.findByText('Main Account');
+
+      await verifyRecipient('friend');
+
+      expect(
+        await screen.findByText(/check your connection/, {}, { timeout: 8000 }),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Too many lookups/)).not.toBeInTheDocument();
+    },
+  );
+
   it('disables Review when the amount exceeds the balance', async () => {
     renderTransfer();
     await screen.findByText('Main Account');

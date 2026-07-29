@@ -24,7 +24,7 @@ import {
   type AccountResponse,
 } from '../features/api/apiSlice';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
-import { formatCurrency, maskAccountNumber } from '../utils/format';
+import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
 import {
   normalizeAzureTag,
   parseAmountInput,
@@ -219,8 +219,29 @@ export function TransferPage() {
       } else {
         setRecipientError(`We couldn't find @${tag}. Check the handle and try again.`);
       }
-    } catch {
-      setRecipientError("Couldn't reach the server — check your connection and try again.");
+    } catch (caught) {
+      /*
+        A bare catch here told every failure the same story — "check your connection" — and this
+        endpoint has a DEDICATED rate limiter: /api/users/* runs a tight per-user sliding window
+        (ADR-0014) and rejects with 429 + Retry-After. So the one failure a user is most likely to
+        provoke, by tapping Verify repeatedly, sent them to check a connection that was fine.
+
+        Branching on STATUS rather than errorCode is deliberate: the BFF's rejection body is a bare
+        ProblemDetails with no errorCode, so the client synthesises HTTP_429 and there is no code to
+        match on. `retryAfterSeconds` is read from the Retry-After header the limiter always sets.
+      */
+      const problem = caught as ApiProblem;
+      if (problem.status === 429) {
+        setRecipientError(
+          problem.retryAfterSeconds !== undefined
+            ? `Too many lookups. Try again in ${formatLockHorizon(problem.retryAfterSeconds)}.`
+            : 'Too many lookups. Please wait a moment and try again.',
+        );
+      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
+        setRecipientError("Couldn't reach the server — check your connection and try again.");
+      } else {
+        setRecipientError(problem.detail || "We couldn't check that handle. Please try again.");
+      }
     }
   };
 
