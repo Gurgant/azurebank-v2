@@ -22,7 +22,7 @@ import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
-import { formatCurrency } from '../../utils/format';
+import { formatCurrency, formatLockHorizon } from '../../utils/format';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -98,15 +98,6 @@ const PIN_LENGTH = 6;
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
 type Step = 'form' | 'pin';
-
-/** "15 minutes" / "45 seconds" — a static lock horizon; the window is minutes long. */
-function formatLockHorizon(seconds: number): string {
-  if (seconds >= 60) {
-    const minutes = Math.ceil(seconds / 60);
-    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
-  }
-  return `${seconds} second${seconds === 1 ? '' : 's'}`;
-}
 
 // ============================================
 // COMPONENT
