@@ -169,6 +169,23 @@ describe('external transfer (PR-11)', () => {
     expect(keys[0]).toBe(keys[1]); // SAME key on the retry
   });
 
+  it('the source-account cards announce their name and which one is chosen', async () => {
+    // Added with the drift fix. The internal wizard's identical cards have carried both attributes
+    // since it was written; without them a screen-reader user here heard an unnamed button and had
+    // no way to tell which account was selected — the blue border says that to sighted users only.
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    const main = screen.getByRole('button', { name: 'From Main Account' });
+    const rainy = screen.getByRole('button', { name: 'From Rainy Day' });
+    expect(main).toHaveAttribute('aria-pressed', 'true'); // primary is auto-selected
+    expect(rainy).toHaveAttribute('aria-pressed', 'false');
+
+    await userEvent.click(rainy);
+    expect(rainy).toHaveAttribute('aria-pressed', 'true');
+    expect(main).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('disables Review when the amount exceeds the balance', async () => {
     renderTransfer();
     await screen.findByText('Main Account');

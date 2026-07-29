@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Text, Button, Spinner, MessageBar, MessageBarBody } from '@fluentui/react-components';
-import {
-  CheckmarkCircle24Filled,
-  ArrowSwap24Regular,
-} from '@fluentui/react-icons';
+import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useTransferWizardStyles } from './transferWizardStyles';
@@ -204,8 +201,19 @@ export function InternalTransferPage() {
             </div>
           </div>
           <div className={styles.actions}>
+            {/* An internal transfer writes a transaction and invalidates the same list an external
+                one does, but only external's receipt offered to go and look at it. Drift, not a
+                domain difference. */}
             <Button
               appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => requestLeave('/history')}
+            >
+              View History
+            </Button>
+            <Button
+              appearance="secondary"
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => requestLeave('/dashboard')}

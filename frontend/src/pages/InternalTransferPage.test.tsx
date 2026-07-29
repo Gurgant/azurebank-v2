@@ -28,6 +28,7 @@ function renderInternal() {
         }
       />
       <Route path="/dashboard" element={<div>DASHBOARD</div>} />
+      <Route path="/history" element={<div>HISTORY</div>} />
     </Routes>,
     { routerEntries: ['/'] },
   );
@@ -59,6 +60,23 @@ describe('internal transfer (PR-11b)', () => {
     // background, role queries can't see the receipt buttons (P1.9 sweep).
     await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+  });
+
+  it('the receipt offers History as well as Done', async () => {
+    // Added with the drift fix: an internal transfer writes a transaction and invalidates the same
+    // list an external one does, but only external's receipt offered to go and look at it.
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+    await screen.findByText("Verify it's you");
+    await enterPin('123456');
+    await screen.findByText('Transfer Complete!');
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View History' }));
+    expect(await screen.findByText('HISTORY')).toBeInTheDocument();
   });
 
   it('cannot pick the source account as the destination', async () => {

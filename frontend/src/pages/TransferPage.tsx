@@ -8,10 +8,7 @@ import {
   MessageBarBody,
   tokens,
 } from '@fluentui/react-components';
-import {
-  CheckmarkCircle24Filled,
-  ArrowSwap24Regular,
-} from '@fluentui/react-icons';
+import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
@@ -367,6 +364,13 @@ export function TransferPage() {
                     className={`${styles.card} ${
                       selectedAccount?.id === account.id ? styles.cardSelected : ''
                     }`}
+                    // Drift, not a design choice: the internal wizard's identical cards have
+                    // carried both of these since it was written, so a screen-reader user picking a
+                    // source account heard "pressed" on one page and an unnamed button with no
+                    // selected state on the other. `aria-pressed` is what makes the SELECTION
+                    // audible at all — the blue border says it to sighted users only.
+                    aria-label={`From ${account.name}`}
+                    aria-pressed={selectedAccount?.id === account.id}
                     onClick={() => handleSelectAccount(account)}
                   >
                     <div className={styles.accountInfo}>
