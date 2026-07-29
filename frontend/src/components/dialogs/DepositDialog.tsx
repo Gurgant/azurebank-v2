@@ -22,6 +22,7 @@ import {
 } from '../../forms/moneySchemas';
 import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
+import { CONNECTION_FAILED } from '../../api/problemMessages';
 
 // ============================================
 // TYPES
@@ -169,7 +170,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         // Transport failure — a raw "TypeError: Failed to fetch" would leak (D17). The
         // key is KEPT (shouldKeepKey) so tapping Deposit again is a safe same-key retry.
-        setError("Couldn't reach the server — check your connection and try again.");
+        setError(CONNECTION_FAILED);
       } else {
         setError(problem.detail || 'Deposit failed. Please try again.');
       }
@@ -212,7 +213,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           <Text className={styles.successTitle}>Deposit Successful!</Text>
           <Text className={styles.successAmount}>+{formatCurrency(success.amount)}</Text>
           {success.replayed && (
-            <MessageBar intent="info">
+            <MessageBar intent="info" role="status">
               <MessageBarBody>
                 This deposit was already processed — showing the existing result.
               </MessageBarBody>
@@ -349,12 +350,12 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       {/* Footer */}
       <div className={styles.footer}>
         {error && (
-          <MessageBar intent="error" className={styles.errorMessage}>
+          <MessageBar intent="error" role="alert" className={styles.errorMessage}>
             <MessageBarBody>{error}</MessageBarBody>
           </MessageBar>
         )}
         {inFlight && (
-          <MessageBar intent="info" className={styles.errorMessage}>
+          <MessageBar intent="info" role="status" className={styles.errorMessage}>
             <MessageBarBody>Still processing — tap Deposit again to check.</MessageBarBody>
           </MessageBar>
         )}

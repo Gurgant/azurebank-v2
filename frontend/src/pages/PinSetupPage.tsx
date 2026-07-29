@@ -16,6 +16,7 @@ import type { ApiProblem } from '../api/problemBaseQuery';
 import { useSetPinMutation } from '../features/api/apiSlice';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { PinInput } from '../components/PinInput';
+import { CONNECTION_FAILED } from '../api/problemMessages';
 
 // ============================================
 // STYLES
@@ -157,7 +158,7 @@ export function PinSetupPage() {
         const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
         setError(firstFieldError ?? 'That PIN is not allowed. Please choose another.');
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setError("Couldn't reach the server — check your connection and try again.");
+        setError(CONNECTION_FAILED);
       } else {
         setError(problem.detail || 'Could not set your PIN. Please try again.');
       }

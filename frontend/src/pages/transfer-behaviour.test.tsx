@@ -297,6 +297,81 @@ describe('money flows — the behaviour the unification must preserve', () => {
     });
   });
 
+  describe('what a failure message is still about, one step later', () => {
+    /*
+      ONE RULE: every step transition clears the transient failure state, EXCEPT a failure the server
+      attributed to a value the user can still edit — that survives, and is cleared by the edit that
+      supersedes it or by the next send.
+
+      Stated honestly, because the ADR says so too: NO source decides this. Four research lanes and
+      ~40 primary sources — WCAG, GOV.UK, Fluent, Carbon, USWDS, Cloudscape, NN/g — say nothing
+      about an error message across a wizard step change. AWS Cloudscape ships a Wizard, documents a
+      review step with back-navigation AND models server errors, and is still silent. So this is a
+      reasoned decision, and these tests are what make it a decision rather than an accident.
+
+      Note also how NARROW the reachable set is: shouldKeepKey retains the key on IN_FLIGHT /
+      NETWORK / PARSE / 5xx, which makes keyLive true, which makes toForm() a no-op. So only a
+      key-DROPPING 4xx can ever follow the user back — which is exactly the two cases below.
+    */
+    const failWith = (errorCode: string, status: number) =>
+      server.use(http.post('*/api/transfers', () => problem({ status, errorCode })));
+
+    it('an attempt-scoped message does NOT follow you back to the form', async () => {
+      /*
+        Driven with IDEMPOTENCY_KEY_REUSE rather than the motivating case, STEP_UP_REQUIRED,
+        because a 403 never reaches this branch in a test: problemBaseQuery recognises step-up from
+        the X-Auth-Level-Required HEADER before any body parsing (decision D2), so it opens the PIN
+        modal instead of setting a banner. Both codes are attempt-scoped and take the identical
+        path through goToStep; this one is reachable without standing up the step-up machinery.
+
+        The motivating case is worth naming anyway: "Please tap Send and try again" landing on the
+        form step, which has no Send button at all — Send is review-only. Not merely stale:
+        unactionable.
+      */
+      failWith('IDEMPOTENCY_KEY_REUSE', 422);
+      await externalToReview();
+      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      expect(await screen.findByText(/Something went wrong/)).toBeInTheDocument();
+
+      const backs = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backs[backs.length - 1]);
+
+      expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.queryByText(/Something went wrong/)).not.toBeInTheDocument(),
+      );
+    });
+
+    it('an input-scoped message DOES survive, because the value it names is on that screen', async () => {
+      // Insufficient funds names the amount, and the amount is what you go back to change. Clearing
+      // it would bounce the user with no reason. WithdrawDialog already keeps this one deliberately;
+      // the scope makes that a typed consequence rather than a commented special case.
+      failWith('INSUFFICIENT_FUNDS', 422);
+      await externalToReview();
+      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      expect(await screen.findByText(/Insufficient funds/)).toBeInTheDocument();
+
+      const backs = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backs[backs.length - 1]);
+
+      expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
+      expect(screen.getByText(/Insufficient funds/)).toBeInTheDocument();
+    });
+
+    it('and editing the amount clears it, so it never outlives the value it describes', async () => {
+      failWith('INSUFFICIENT_FUNDS', 422);
+      await externalToReview();
+      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await screen.findByText(/Insufficient funds/);
+      const backs = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backs[backs.length - 1]);
+
+      await userEvent.click(screen.getByRole('button', { name: '€25' }));
+
+      await waitFor(() => expect(screen.queryByText(/Insufficient funds/)).not.toBeInTheDocument());
+    });
+  });
+
   describe('the receipt', () => {
     it('says so when the transfer was replayed rather than newly committed', async () => {
       // `replayed` is threaded from the base query through to SuccessData for exactly one banner,
