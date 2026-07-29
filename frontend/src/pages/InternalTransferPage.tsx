@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Text, Button, Spinner, MessageBar, MessageBarBody } from '@fluentui/react-components';
 import {
-  CheckmarkCircle24Filled,
-  Warning24Regular,
-  ArrowSwap24Regular,
-} from '@fluentui/react-icons';
+  Text,
+  Button,
+  Spinner,
+  MessageBar,
+  MessageBarBody,
+  MessageBarActions,
+} from '@fluentui/react-components';
+import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import type { ApiProblem } from '../api/problemBaseQuery';
 import { useTransferWizardStyles } from './transferWizardStyles';
+import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
@@ -46,7 +51,13 @@ interface SuccessData {
 export function InternalTransferPage() {
   const styles = useTransferWizardStyles();
 
-  const { data: accounts = [], isLoading: accountsLoading } = useGetAccountsQuery();
+  const {
+    data: accounts = [],
+    isSuccess: accountsLoaded,
+    error: accountsError,
+    refetch: refetchAccounts,
+  } = useGetAccountsQuery();
+  const accountsProblem = accountsError as ApiProblem | undefined;
   const [transferTrigger] = useTransferInternalMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
@@ -204,8 +215,19 @@ export function InternalTransferPage() {
             </div>
           </div>
           <div className={styles.actions}>
+            {/* An internal transfer writes a transaction and invalidates the same list an external
+                one does, but only external's receipt offered to go and look at it. Drift, not a
+                domain difference. */}
             <Button
               appearance="primary"
+              size="large"
+              style={{ width: '100%', height: '48px' }}
+              onClick={() => requestLeave('/history')}
+            >
+              View History
+            </Button>
+            <Button
+              appearance="secondary"
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => requestLeave('/dashboard')}
@@ -220,44 +242,12 @@ export function InternalTransferPage() {
 
   if (verifyRequired) {
     return (
-      <div className={styles.page}>
-        {/* Deliberately no exits. This is the state where the transfer may or may not have
-            gone through; a stray Close here would let someone leave without checking, and the
-            copy below says retrying blindly could send twice. */}
-        <PageHeader title="Move Money" />
-        <div className={styles.body}>
-          <div className={styles.centeredView}>
-            <div className={styles.warningIcon}>
-              <Warning24Regular style={{ width: '40px', height: '40px' }} />
-            </div>
-            <Text className={styles.stateTitle}>We couldn&apos;t confirm your transfer</Text>
-            <Text className={styles.stateBody}>
-              The request may or may not have gone through. Check your recent transactions before
-              trying again — retrying blindly could move the money twice.
-            </Text>
-          </div>
-          <div className={styles.actions}>
-            <Button
-              appearance="primary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => requestLeave('/history')}
-            >
-              Check recent transactions
-            </Button>
-            <Button
-              appearance="secondary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => {
-                wizard.startOver();
-              }}
-            >
-              It didn&apos;t go through — start over
-            </Button>
-          </div>
-        </div>
-      </div>
+      <ResultUnknownView
+        title="Move Money"
+        repeatWarning="move the money twice"
+        onCheckTransactions={() => requestLeave('/history')}
+        onStartOver={wizard.startOver}
+      />
     );
   }
 
@@ -276,6 +266,23 @@ export function InternalTransferPage() {
       />
 
       <div className={styles.body}>
+        {/* Loading/error/empty are first-class states (D22) — the convention AccountsPage and
+            DashboardPage already follow and both transfer wizards did not. Without this a failed
+            accounts load left the page standing with empty pickers and no explanation, so a
+            transient network fault silently blocked transfers. */}
+        {accountsProblem && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              {accountsProblem.detail || 'Could not load your accounts.'}
+              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button appearance="transparent" onClick={() => void refetchAccounts()}>
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
         {error && (
           <MessageBar intent="error">
             <MessageBarBody>{error}</MessageBarBody>
@@ -287,7 +294,15 @@ export function InternalTransferPage() {
           </MessageBar>
         )}
 
-        {step === 'form' ? (
+        {/* Nothing to pick from, so nothing to fill in. AccountsPage takes the same line — it
+            hides its grid while a problem is showing — and without this the amount field stays
+            editable over an empty account list, stacking "Available: €0.00" and "Exceeds available
+            balance of €0.00" underneath the real error.
+
+            Scoped to `accounts.length === 0` rather than to the problem alone, because RTK Query
+            keeps the last data when a REFETCH fails: in that case the picker still has real
+            accounts, and blanking a half-filled money form would be the worse bug. */}
+        {accountsProblem && accounts.length === 0 ? null : step === 'form' ? (
           <>
             <div>
               <Text className={styles.sectionLabel}>From</Text>
@@ -316,7 +331,12 @@ export function InternalTransferPage() {
 
             <div>
               <Text className={styles.sectionLabel}>To</Text>
-              {!accountsLoading && accounts.length < 2 && (
+              {/* `isSuccess`, NOT `!isLoading`. On a FAILED fetch RTK Query sets isLoading back
+                  to false and leaves data undefined, so `accounts` fell back to [] and this said
+                  "you need a second account" to someone who may have five — sending them off to
+                  create one to solve a network problem. The message itself is a real rule (internal
+                  transfer needs two accounts, external does not); only its gate was wrong. */}
+              {accountsLoaded && accounts.length < 2 && (
                 <Text className={styles.subtle} style={{ display: 'block', marginBottom: '8px' }}>
                   You need a second account to transfer between your own accounts.
                 </Text>

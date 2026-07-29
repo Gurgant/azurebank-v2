@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -28,6 +28,7 @@ function renderInternal() {
         }
       />
       <Route path="/dashboard" element={<div>DASHBOARD</div>} />
+      <Route path="/history" element={<div>HISTORY</div>} />
     </Routes>,
     { routerEntries: ['/'] },
   );
@@ -61,6 +62,23 @@ describe('internal transfer (PR-11b)', () => {
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
 
+  it('the receipt offers History as well as Done', async () => {
+    // Added with the drift fix: an internal transfer writes a transaction and invalidates the same
+    // list an external one does, but only external's receipt offered to go and look at it.
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+    await screen.findByText("Verify it's you");
+    await enterPin('123456');
+    await screen.findByText('Transfer Complete!');
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View History' }));
+    expect(await screen.findByText('HISTORY')).toBeInTheDocument();
+  });
+
   it('cannot pick the source account as the destination', async () => {
     renderInternal();
     await screen.findByRole('button', { name: 'From Main Account' });
@@ -92,6 +110,43 @@ describe('internal transfer (PR-11b)', () => {
     );
     renderInternal();
     expect(await screen.findByText(/You need a second account to transfer/)).toBeInTheDocument();
+  });
+
+  it('says the accounts could not be loaded, and Retry actually refetches', async () => {
+    /*
+      Two defects, one test.
+
+      The message was gated on `!accountsLoading`, and isLoading also goes false once a request has
+      FAILED — so `accounts` fell back to [] and the page told a user with five accounts they needed
+      a second one, sending them to create an account to solve a network problem.
+
+      Fixing that gate alone left SILENCE: the shell stood there with empty pickers and no
+      explanation. Both pages now follow the D22 convention AccountsPage already used — surface the
+      problem and offer a way out of it.
+    */
+    let calls = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        calls += 1;
+        return calls === 1
+          ? problem({ status: 500, errorCode: 'INTERNAL_ERROR' })
+          : HttpResponse.json({ data: [], message: null });
+      }),
+    );
+    renderInternal();
+
+    expect(await screen.findByText(/Could not load your accounts/)).toBeInTheDocument();
+    // The wrong message must NOT be there: an empty list is not evidence of a missing account.
+    expect(
+      screen.queryByText(/You need a second account to transfer between your own accounts/),
+    ).not.toBeInTheDocument();
+
+    // And the form is gone: an amount field over an empty picker would stack "Available: €0.00"
+    // and "Exceeds available balance of €0.00" underneath the real error.
+    expect(screen.queryByLabelText('Transfer amount')).not.toBeInTheDocument();
+    // Retry is not decoration — it must actually re-issue the request.
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls).toBe(2));
   });
 
   it('disables Review when the amount exceeds the source balance', async () => {

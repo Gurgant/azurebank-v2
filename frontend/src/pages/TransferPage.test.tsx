@@ -169,6 +169,47 @@ describe('external transfer (PR-11)', () => {
     expect(keys[0]).toBe(keys[1]); // SAME key on the retry
   });
 
+  it('the source-account cards announce their name and which one is chosen', async () => {
+    // Added with the drift fix. The internal wizard's identical cards have carried both attributes
+    // since it was written; without them a screen-reader user here heard an unnamed button and had
+    // no way to tell which account was selected — the blue border says that to sighted users only.
+    renderTransfer();
+    await screen.findByText('Main Account');
+
+    const main = screen.getByRole('button', { name: 'From Main Account' });
+    const rainy = screen.getByRole('button', { name: 'From Rainy Day' });
+    expect(main).toHaveAttribute('aria-pressed', 'true'); // primary is auto-selected
+    expect(rainy).toHaveAttribute('aria-pressed', 'false');
+
+    await userEvent.click(rainy);
+    expect(rainy).toHaveAttribute('aria-pressed', 'true');
+    expect(main).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('says the accounts could not be loaded, and Retry actually refetches', async () => {
+    // External had no error handling at all — a failed load simply rendered an empty account
+    // picker. Added here as well as on the internal page, because fixing one of two identical
+    // wizards is how the drift this PR removes got created in the first place.
+    let calls = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        calls += 1;
+        return calls === 1
+          ? problem({ status: 500, errorCode: 'INTERNAL_ERROR' })
+          : HttpResponse.json({ data: [], message: null });
+      }),
+    );
+    renderTransfer();
+
+    expect(await screen.findByText(/Could not load your accounts/)).toBeInTheDocument();
+
+    // And the form is gone: an amount field over an empty picker would stack "Available: €0.00"
+    // and "Exceeds available balance of €0.00" underneath the real error.
+    expect(screen.queryByLabelText('Transfer amount')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls).toBe(2));
+  });
+
   it('disables Review when the amount exceeds the balance', async () => {
     renderTransfer();
     await screen.findByText('Main Account');

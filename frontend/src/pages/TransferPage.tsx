@@ -6,17 +6,16 @@ import {
   Spinner,
   MessageBar,
   MessageBarBody,
+  MessageBarActions,
   tokens,
 } from '@fluentui/react-components';
-import {
-  CheckmarkCircle24Filled,
-  Warning24Regular,
-  ArrowSwap24Regular,
-} from '@fluentui/react-icons';
+import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
+import type { ApiProblem } from '../api/problemBaseQuery';
 import { useTransferWizardStyles } from './transferWizardStyles';
+import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
@@ -126,7 +125,12 @@ export function TransferPage() {
   // Merged so the markup keeps addressing one `styles` object.
   const styles = { ...useTransferWizardStyles(), ...useRecipientStyles() };
 
-  const { data: accounts = [] } = useGetAccountsQuery();
+  const {
+    data: accounts = [],
+    error: accountsError,
+    refetch: refetchAccounts,
+  } = useGetAccountsQuery();
+  const accountsProblem = accountsError as ApiProblem | undefined;
   const [lookup, lookupState] = useLazyLookupRecipientQuery();
   const [transferTrigger] = useTransferMutation();
   const wizard = useMoneyWizard(transferTrigger, {
@@ -316,44 +320,12 @@ export function TransferPage() {
   // ===== RESULT_UNKNOWN verify view =====
   if (verifyRequired) {
     return (
-      <div className={styles.page}>
-        {/* Deliberately no exits. This is the state where the transfer may or may not have
-            gone through; a stray Close here would let someone leave without checking, and the
-            copy below says retrying blindly could send twice. */}
-        <PageHeader title="Send Money" />
-        <div className={styles.body}>
-          <div className={styles.centeredView}>
-            <div className={styles.warningIcon}>
-              <Warning24Regular style={{ width: '40px', height: '40px' }} />
-            </div>
-            <Text className={styles.stateTitle}>We couldn&apos;t confirm your transfer</Text>
-            <Text className={styles.stateBody}>
-              The request may or may not have gone through. Check your recent transactions before
-              trying again — retrying blindly could send twice.
-            </Text>
-          </div>
-          <div className={styles.actions}>
-            <Button
-              appearance="primary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => requestLeave('/history')}
-            >
-              Check recent transactions
-            </Button>
-            <Button
-              appearance="secondary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => {
-                wizard.startOver();
-              }}
-            >
-              It didn&apos;t go through — start over
-            </Button>
-          </div>
-        </div>
-      </div>
+      <ResultUnknownView
+        title="Send Money"
+        repeatWarning="send twice"
+        onCheckTransactions={() => requestLeave('/history')}
+        onStartOver={wizard.startOver}
+      />
     );
   }
 
@@ -374,6 +346,23 @@ export function TransferPage() {
       />
 
       <div className={styles.body}>
+        {/* Loading/error/empty are first-class states (D22) — the convention AccountsPage and
+            DashboardPage already follow and both transfer wizards did not. Without this a failed
+            accounts load left the page standing with empty pickers and no explanation, so a
+            transient network fault silently blocked transfers. */}
+        {accountsProblem && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              {accountsProblem.detail || 'Could not load your accounts.'}
+              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button appearance="transparent" onClick={() => void refetchAccounts()}>
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
         {error && (
           <MessageBar intent="error">
             <MessageBarBody>{error}</MessageBarBody>
@@ -385,7 +374,15 @@ export function TransferPage() {
           </MessageBar>
         )}
 
-        {step === 'form' ? (
+        {/* Nothing to pick from, so nothing to fill in. AccountsPage takes the same line — it
+            hides its grid while a problem is showing — and without this the amount field stays
+            editable over an empty account list, stacking "Available: €0.00" and "Exceeds available
+            balance of €0.00" underneath the real error.
+
+            Scoped to `accounts.length === 0` rather than to the problem alone, because RTK Query
+            keeps the last data when a REFETCH fails: in that case the picker still has real
+            accounts, and blanking a half-filled money form would be the worse bug. */}
+        {accountsProblem && accounts.length === 0 ? null : step === 'form' ? (
           <>
             {/* From account */}
             <div>
@@ -399,6 +396,22 @@ export function TransferPage() {
                     className={`${styles.card} ${
                       selectedAccount?.id === account.id ? styles.cardSelected : ''
                     }`}
+                    // Drift, not a design choice: the internal wizard's identical cards have
+                    // carried both of these since it was written, so a screen-reader user picking a
+                    // source account heard "pressed" on one page and an unnamed button with no
+                    // selected state on the other. `aria-pressed` is what makes the SELECTION
+                    // audible at all — the blue border says it to sighted users only.
+                    //
+                    // `aria-label` REPLACES the contents-derived name, so this DOES drop the masked
+                    // number and the balance from the announcement. A review proposed folding both
+                    // into the label; measured, that breaks six assertions — including pre-existing
+                    // ones on the internal page, which queries its cards by exact accessible name —
+                    // and makes every card verbose. Declined, because the balance that governs the
+                    // transfer is already announced as "Available: …" beside the amount field on
+                    // both pages, and the number is masked. The short form also keeps the two
+                    // wizards identical, which is the point of this PR.
+                    aria-label={`From ${account.name}`}
+                    aria-pressed={selectedAccount?.id === account.id}
                     onClick={() => handleSelectAccount(account)}
                   >
                     <div className={styles.accountInfo}>
