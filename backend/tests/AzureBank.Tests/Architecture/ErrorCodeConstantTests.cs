@@ -112,5 +112,18 @@ public class ErrorCodeConstantTests
 
         values.Should().OnlyHaveUniqueItems();
         values.Should().NotBeEmpty(because: "reflection finding nothing would make this vacuous");
+
+        // Every declared value must match the SAME pattern the scanner looks for, and this is not
+        // cosmetic: a constant whose value the regex cannot match is a constant whose duplicated
+        // literal the scanner cannot see. Declaring `Foo = "lower_case"` or `Foo = ""` would leave
+        // the rule above passing while that code drifted freely — the guard would be blind to
+        // precisely the constant it was meant to protect.
+        //
+        // A review asked for a non-empty check here. This is that, generalised: an empty or
+        // whitespace value fails the pattern too, and so does every other shape the scanner cannot
+        // detect.
+        values.Should().OnlyContain(
+            value => ScreamingSnakeLiteral.IsMatch($"\"{value}\""),
+            because: "a code the scanner's own pattern cannot match is a code the scanner cannot guard");
     }
 }
