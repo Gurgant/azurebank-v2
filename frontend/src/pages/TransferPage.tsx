@@ -369,6 +369,15 @@ export function TransferPage() {
                     // source account heard "pressed" on one page and an unnamed button with no
                     // selected state on the other. `aria-pressed` is what makes the SELECTION
                     // audible at all — the blue border says it to sighted users only.
+                    //
+                    // `aria-label` REPLACES the contents-derived name, so this DOES drop the masked
+                    // number and the balance from the announcement. A review proposed folding both
+                    // into the label; measured, that breaks six assertions — including pre-existing
+                    // ones on the internal page, which queries its cards by exact accessible name —
+                    // and makes every card verbose. Declined, because the balance that governs the
+                    // transfer is already announced as "Available: …" beside the amount field on
+                    // both pages, and the number is masked. The short form also keeps the two
+                    // wizards identical, which is the point of this PR.
                     aria-label={`From ${account.name}`}
                     aria-pressed={selectedAccount?.id === account.id}
                     onClick={() => handleSelectAccount(account)}
