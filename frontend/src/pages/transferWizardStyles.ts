@@ -89,7 +89,16 @@ export const useTransferWizardStyles = makeStyles({
     fontWeight: 700,
     color: colors.neutral[800],
     border: 'none',
+    // `outline: 'none'` with nothing in its place is a WCAG 2.4.7 (AA) failure, and it was
+    // identical on both pages — a shared defect rather than drift, which is why it is fixed in the
+    // commit that extracts the key rather than deferred to the drift PR. `:focus-visible` and not
+    // `:focus`, so the ring appears for keyboard users without boxing a mouse click. The offset
+    // keeps it clear of the 48px numerals.
     outline: 'none',
+    ':focus-visible': {
+      outline: `2px solid ${colors.brand[60]}`,
+      outlineOffset: '4px',
+    },
     background: 'transparent',
     textAlign: 'center',
     width: '170px',
