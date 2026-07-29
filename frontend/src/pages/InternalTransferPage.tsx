@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Text, Button, Spinner, MessageBar, MessageBarBody } from '@fluentui/react-components';
+import {
+  Text,
+  Button,
+  Spinner,
+  MessageBar,
+  MessageBarBody,
+  MessageBarActions,
+} from '@fluentui/react-components';
 import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import type { ApiProblem } from '../api/problemBaseQuery';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -43,7 +51,13 @@ interface SuccessData {
 export function InternalTransferPage() {
   const styles = useTransferWizardStyles();
 
-  const { data: accounts = [], isSuccess: accountsLoaded } = useGetAccountsQuery();
+  const {
+    data: accounts = [],
+    isSuccess: accountsLoaded,
+    error: accountsError,
+    refetch: refetchAccounts,
+  } = useGetAccountsQuery();
+  const accountsProblem = accountsError as ApiProblem | undefined;
   const [transferTrigger] = useTransferInternalMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
@@ -252,6 +266,23 @@ export function InternalTransferPage() {
       />
 
       <div className={styles.body}>
+        {/* Loading/error/empty are first-class states (D22) — the convention AccountsPage and
+            DashboardPage already follow and both transfer wizards did not. Without this a failed
+            accounts load left the page standing with empty pickers and no explanation, so a
+            transient network fault silently blocked transfers. */}
+        {accountsProblem && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              {accountsProblem.detail || 'Could not load your accounts.'}
+              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button appearance="transparent" onClick={() => void refetchAccounts()}>
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
         {error && (
           <MessageBar intent="error">
             <MessageBarBody>{error}</MessageBarBody>

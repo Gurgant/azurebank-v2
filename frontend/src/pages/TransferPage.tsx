@@ -6,12 +6,14 @@ import {
   Spinner,
   MessageBar,
   MessageBarBody,
+  MessageBarActions,
   tokens,
 } from '@fluentui/react-components';
 import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
+import type { ApiProblem } from '../api/problemBaseQuery';
 import { useTransferWizardStyles } from './transferWizardStyles';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -123,7 +125,12 @@ export function TransferPage() {
   // Merged so the markup keeps addressing one `styles` object.
   const styles = { ...useTransferWizardStyles(), ...useRecipientStyles() };
 
-  const { data: accounts = [] } = useGetAccountsQuery();
+  const {
+    data: accounts = [],
+    error: accountsError,
+    refetch: refetchAccounts,
+  } = useGetAccountsQuery();
+  const accountsProblem = accountsError as ApiProblem | undefined;
   const [lookup, lookupState] = useLazyLookupRecipientQuery();
   const [transferTrigger] = useTransferMutation();
   const wizard = useMoneyWizard(transferTrigger, {
@@ -339,6 +346,23 @@ export function TransferPage() {
       />
 
       <div className={styles.body}>
+        {/* Loading/error/empty are first-class states (D22) — the convention AccountsPage and
+            DashboardPage already follow and both transfer wizards did not. Without this a failed
+            accounts load left the page standing with empty pickers and no explanation, so a
+            transient network fault silently blocked transfers. */}
+        {accountsProblem && (
+          <MessageBar intent="error">
+            <MessageBarBody>
+              {accountsProblem.detail || 'Could not load your accounts.'}
+              {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button appearance="transparent" onClick={() => void refetchAccounts()}>
+                Retry
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        )}
         {error && (
           <MessageBar intent="error">
             <MessageBarBody>{error}</MessageBarBody>

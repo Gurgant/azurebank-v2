@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -112,20 +112,38 @@ describe('internal transfer (PR-11b)', () => {
     expect(await screen.findByText(/You need a second account to transfer/)).toBeInTheDocument();
   });
 
-  it('does not claim you need a second account when the accounts fetch FAILS', async () => {
-    // The gate used to read `!isLoading`, which is also false once a request has failed — so a
-    // network fault rendered a message telling the user to go and create an account. The real fault
-    // was never surfaced.
+  it('says the accounts could not be loaded, and Retry actually refetches', async () => {
+    /*
+      Two defects, one test.
+
+      The message was gated on `!accountsLoading`, and isLoading also goes false once a request has
+      FAILED — so `accounts` fell back to [] and the page told a user with five accounts they needed
+      a second one, sending them to create an account to solve a network problem.
+
+      Fixing that gate alone left SILENCE: the shell stood there with empty pickers and no
+      explanation. Both pages now follow the D22 convention AccountsPage already used — surface the
+      problem and offer a way out of it.
+    */
+    let calls = 0;
     server.use(
-      http.get('*/api/accounts', () => problem({ status: 500, errorCode: 'INTERNAL_ERROR' })),
+      http.get('*/api/accounts', () => {
+        calls += 1;
+        return calls === 1
+          ? problem({ status: 500, errorCode: 'INTERNAL_ERROR' })
+          : HttpResponse.json({ data: [], message: null });
+      }),
     );
     renderInternal();
 
-    // Wait for the query to settle by observing something the failed page still renders.
-    expect(await screen.findByText('Move Money')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load your accounts/)).toBeInTheDocument();
+    // The wrong message must NOT be there: an empty list is not evidence of a missing account.
     expect(
       screen.queryByText(/You need a second account to transfer between your own accounts/),
     ).not.toBeInTheDocument();
+
+    // Retry is not decoration — it must actually re-issue the request.
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls).toBe(2));
   });
 
   it('disables Review when the amount exceeds the source balance', async () => {

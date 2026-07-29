@@ -186,6 +186,26 @@ describe('external transfer (PR-11)', () => {
     expect(main).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('says the accounts could not be loaded, and Retry actually refetches', async () => {
+    // External had no error handling at all — a failed load simply rendered an empty account
+    // picker. Added here as well as on the internal page, because fixing one of two identical
+    // wizards is how the drift this PR removes got created in the first place.
+    let calls = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        calls += 1;
+        return calls === 1
+          ? problem({ status: 500, errorCode: 'INTERNAL_ERROR' })
+          : HttpResponse.json({ data: [], message: null });
+      }),
+    );
+    renderTransfer();
+
+    expect(await screen.findByText(/Could not load your accounts/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls).toBe(2));
+  });
+
   it('disables Review when the amount exceeds the balance', async () => {
     renderTransfer();
     await screen.findByText('Main Account');
