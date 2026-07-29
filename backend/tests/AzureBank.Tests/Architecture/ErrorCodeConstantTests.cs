@@ -40,9 +40,19 @@ public class ErrorCodeConstantTests
     }
 
     /// <summary>
-    /// SCREAMING_SNAKE string literals, which is the shape every error code has. Six characters
-    /// minimum keeps ordinary constants like "DELETE" and header names out of the net.
+    /// All-caps string literals of six characters or more — the shape every error code has.
     /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT require an underscore, and a review suggestion to add one was measured
+    /// and declined: <c>ErrorCodes.Conflict</c> is <c>"CONFLICT"</c>, a real code that
+    /// <see cref="AzureBank.Shared.Exceptions.ConflictException"/> applies by default and that
+    /// therefore reaches the wire. An underscore-requiring pattern misses it, which would reopen
+    /// exactly the hole this rule was widened to close.
+    ///
+    /// The cost of being broad is false positives on all-caps non-codes ("DELETE", "HOSTNAME").
+    /// Measured in the two scanned folders: there are none, and those names live in
+    /// Program/Observability/Middleware, which are out of scope on purpose.
+    /// </remarks>
     private static readonly Regex ScreamingSnakeLiteral = new(
         "\"[A-Z][A-Z0-9_]{5,}\"", RegexOptions.Compiled);
 
