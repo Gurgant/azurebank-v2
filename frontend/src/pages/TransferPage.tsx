@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   Text,
@@ -17,7 +16,6 @@ import {
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors, surfaces, transitions } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
@@ -25,7 +23,7 @@ import {
   useTransferMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
-import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
+import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import {
   normalizeAzureTag,
@@ -41,8 +39,6 @@ import { AmountField } from '../components/form/AmountField';
 // ============================================
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
-
-type Step = 'form' | 'review';
 
 interface Recipient {
   azureTag: string;
@@ -265,20 +261,28 @@ const useStyles = makeStyles({
  */
 export function TransferPage() {
   const styles = useStyles();
-  const navigate = useNavigate();
 
   const { data: accounts = [] } = useGetAccountsQuery();
   const [lookup, lookupState] = useLazyLookupRecipientQuery();
   const [transferTrigger] = useTransferMutation();
-  const { submit, resetIntent, verifyRequired, keyRetained } =
-    useIdempotentMutation(transferTrigger);
+  const wizard = useMoneyWizard(transferTrigger, {
+    // This flow's OWN codes. Everything protocol-shaped — step-up, in-flight, key reuse, network —
+    // is the wizard's, and the type of this table makes naming one of those here a compile error.
+    // ACCOUNT_NOT_FOUND lives here rather than in the shared tail because its wording is
+    // flow-specific: "re-check the handle" is meaningless on a page with no handle.
+    messages: {
+      SELF_TRANSFER_NOT_ALLOWED: "You can't send money to yourself.",
+      ACCOUNT_NOT_FOUND: 'That recipient could not be found. Please re-check the handle.',
+    },
+    fallback: 'Transfer failed. Please try again.',
+  });
+  // Destructured under the names the markup already used, so this change is confined to the
+  // machine: not one element below moves.
+  const { step, isSubmitting, inFlight, error, verifyRequired, keyLive, onBodyEdit, requestLeave } =
+    wizard;
 
-  const [step, setStep] = useState<Step>('form');
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [inFlight, setInFlight] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
   // ===== RHF step-1 form =====
@@ -304,7 +308,6 @@ export function TransferPage() {
     accounts[0] ??
     null;
   const availableBalance = selectedAccount?.balance ?? 0;
-  const keyLive = isSubmitting || keyRetained;
 
   // Auto-select the legacy default (primary ?? first) into the form once accounts load,
   // and keep the schema's balance bound in lockstep with the selected account.
@@ -322,30 +325,6 @@ export function TransferPage() {
   useEffect(() => {
     void trigger('amount');
   }, [balanceBound, trigger]);
-
-  // Guard the ONE nav path the in-app buttons can't cover: a browser refresh / tab-close
-  // while a transfer key is live. (In-app popstate needs a data-router useBlocker — deferred
-  // with the router migration; the SPA controls below cover the common paths.)
-  useEffect(() => {
-    if (!keyLive) return;
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [keyLive]);
-
-  // Editing any body field rotates the idempotency key — blocked whenever a key is LIVE
-  // (submitting OR retained after IN_FLIGHT/NETWORK/5xx), not just while submitting. Nulling
-  // a retained key then resending mints a fresh key = a NEW intent = a double-spend if the
-  // original committed. The safe forward action on a retained key is Send-again (same key).
-  const onBodyEdit = () => {
-    if (keyLive) return;
-    resetIntent();
-    setInFlight(false);
-    setError(null);
-  };
 
   const handleSelectAccount = (account: AccountResponse) => {
     if (keyLive) return;
@@ -384,61 +363,28 @@ export function TransferPage() {
 
   const onValid = async (data: TransferFormOutput) => {
     if (!selectedAccount || !recipient) return;
-    setError(null);
-    setInFlight(false);
-    setIsSubmitting(true);
-    try {
-      const result = await submit({
-        fromAccountId: data.fromAccountId,
-        recipientAzureTag: recipient.azureTag,
-        amount: data.amount,
-      });
-      setSuccess({
-        amount: data.amount,
-        recipientName: recipient.displayName,
-        recipientAzureTag: recipient.azureTag,
-        newBalance: result.newBalance,
-        transactionNumber: result.transactionNumber,
-        replayed: result.replayed,
-      });
-    } catch (caught) {
-      const problem = caught as ApiProblem;
-      if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
-        // hook latched verifyRequired; the verify view renders.
-      } else if (problem.errorCode === 'STEP_UP_CANCELLED') {
-        // The user dismissed the PIN modal — benign. Stay on review; Send re-triggers it.
-      } else if (problem.errorCode === 'STEP_UP_REQUIRED') {
-        // The replay 403'd again (elevation didn't stick) — never leak the raw gate string.
-        setError("Verification didn't complete. Please tap Send and try again.");
-      } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
-        setInFlight(true);
-      } else if (problem.errorCode === 'SELF_TRANSFER_NOT_ALLOWED') {
-        setError("You can't send money to yourself.");
-      } else if (problem.errorCode === 'ACCOUNT_NOT_FOUND') {
-        setError('That recipient could not be found. Please re-check the handle.');
-      } else if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
-        setError('Insufficient funds for this transfer.');
-      } else if (problem.errorCode === 'VALIDATION_ERROR') {
-        const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
-        setError(firstFieldError ?? 'Please check the details and try again.');
-      } else if (
-        problem.errorCode === 'IDEMPOTENCY_KEY_REUSE' ||
-        problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
-        problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
-      ) {
-        setError('Something went wrong. Please try again.');
-      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setError("Couldn't reach the server — check your connection and try again.");
-      } else {
-        setError(problem.detail || 'Transfer failed. Please try again.');
-      }
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    // Narrowed to a const BEFORE the await, and the receipt is built from that same const. The
+    // review screen and the request therefore cannot name two different people.
+    const confirmed = recipient;
 
-  const requestLeave = (to: string) => {
-    if (!keyLive) navigate(to);
+    const result = await wizard.run({
+      fromAccountId: data.fromAccountId,
+      recipientAzureTag: confirmed.azureTag,
+      amount: data.amount,
+    });
+    // `run` resolves to undefined when it failed — and it has already set the banner, the in-flight
+    // note or the verify view. Under `strict` this early return is not optional: reading
+    // `result.newBalance` without it does not compile.
+    if (!result) return;
+
+    setSuccess({
+      amount: data.amount,
+      recipientName: confirmed.displayName,
+      recipientAzureTag: confirmed.azureTag,
+      newBalance: result.newBalance,
+      transactionNumber: result.transactionNumber,
+      replayed: result.replayed,
+    });
   };
 
   // ===== Success receipt =====
@@ -485,7 +431,7 @@ export function TransferPage() {
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => navigate('/history')}
+              onClick={() => requestLeave('/history')}
             >
               View History
             </Button>
@@ -493,7 +439,7 @@ export function TransferPage() {
               appearance="secondary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => navigate('/dashboard')}
+              onClick={() => requestLeave('/dashboard')}
             >
               Done
             </Button>
@@ -527,7 +473,7 @@ export function TransferPage() {
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => navigate('/history')}
+              onClick={() => requestLeave('/history')}
             >
               Check recent transactions
             </Button>
@@ -536,8 +482,7 @@ export function TransferPage() {
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => {
-                resetIntent();
-                setStep('form');
+                wizard.startOver();
               }}
             >
               It didn&apos;t go through — start over
@@ -550,15 +495,15 @@ export function TransferPage() {
 
   return (
     <div className={styles.page}>
-      {/* THE GUARDED HEADER. Back and Close stay exactly what they were: the same handlers, the
-          same `disabled={keyLive}`. `keyLive` is `isSubmitting || keyRetained` — an idempotency key
-          is alive, so leaving now could produce a second spend — and every exit still routes
-          through this page's own `requestLeave`, which re-checks it. PageHeader takes handlers and
-          calls them; it never decides a destination, which is why moving this bar into a shared
-          component cannot quietly delete the guard. */}
+      {/* THE GUARDED HEADER. `keyLive` now comes from the wizard, but the rule is unchanged and the
+          guard is doubled rather than moved: `disabled={keyLive}` still bars the control, and
+          `requestLeave` / `toForm` re-check it themselves, so deleting one JSX attribute no longer
+          opens the exit. PageHeader takes handlers and calls them; it never decides a destination,
+          which is why the shared bar cannot quietly delete the guard — and the wizard likewise
+          takes a destination and refuses it, rather than choosing one. */}
       <PageHeader
         title={step === 'review' ? 'Review Transfer' : 'Send Money'}
-        onBack={() => (step === 'review' ? setStep('form') : requestLeave('/dashboard'))}
+        onBack={() => (step === 'review' ? wizard.toForm() : requestLeave('/dashboard'))}
         backDisabled={keyLive}
         onClose={() => requestLeave('/dashboard')}
         closeDisabled={keyLive}
@@ -704,7 +649,7 @@ export function TransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => setStep('review')}
+                onClick={() => wizard.toReview()}
                 disabled={!canReview}
               >
                 Review Transfer
@@ -755,7 +700,7 @@ export function TransferPage() {
                 appearance="secondary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => setStep('form')}
+                onClick={() => wizard.toForm()}
                 disabled={keyLive}
               >
                 Back

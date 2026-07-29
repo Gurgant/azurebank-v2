@@ -3,7 +3,7 @@ import type { ApiProblem } from '../api/problemBaseQuery';
 import type { IdempotentArg } from '../features/api/apiSlice';
 
 /** Structural shape of an RTK Query mutation trigger taking an IdempotentArg. */
-type IdempotentTrigger<TBody, TResult> = (arg: IdempotentArg<TBody>) => {
+export type IdempotentTrigger<TBody, TResult> = (arg: IdempotentArg<TBody>) => {
   unwrap(): Promise<TResult>;
 };
 
