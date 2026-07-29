@@ -212,7 +212,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
           <Text className={styles.successTitle}>Deposit Successful!</Text>
           <Text className={styles.successAmount}>+{formatCurrency(success.amount)}</Text>
           {success.replayed && (
-            <MessageBar intent="info">
+            <MessageBar intent="info" role="status">
               <MessageBarBody>
                 This deposit was already processed — showing the existing result.
               </MessageBarBody>
@@ -349,12 +349,12 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       {/* Footer */}
       <div className={styles.footer}>
         {error && (
-          <MessageBar intent="error" className={styles.errorMessage}>
+          <MessageBar intent="error" role="alert" className={styles.errorMessage}>
             <MessageBarBody>{error}</MessageBarBody>
           </MessageBar>
         )}
         {inFlight && (
-          <MessageBar intent="info" className={styles.errorMessage}>
+          <MessageBar intent="info" role="status" className={styles.errorMessage}>
             <MessageBarBody>Still processing — tap Deposit again to check.</MessageBarBody>
           </MessageBar>
         )}

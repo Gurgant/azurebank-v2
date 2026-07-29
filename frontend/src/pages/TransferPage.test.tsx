@@ -260,6 +260,35 @@ describe('external transfer (PR-11)', () => {
     },
   );
 
+  it('a failed Send is ANNOUNCED, not just displayed', async () => {
+    /*
+      Measured before fixing: the money banners rendered a bare <MessageBar intent="error"> with no
+      role and no aria-live. Fluent's MessageBar root is role="group" — NOT a live region — and it
+      delegates announcing to useAnnounce(), whose default context is a no-op; this app mounts no
+      AnnounceProvider anywhere (grep: zero hits). So a screen-reader user was told nothing at all
+      when their transfer failed.
+
+      LoginPage already solved this and says why in a comment. The money flows never got the same
+      treatment — which also made the keep-vs-clear question below literally unobservable to those
+      users until now.
+    */
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({ status: 422, errorCode: 'INSUFFICIENT_FUNDS', detail: 'Not enough.' }),
+      ),
+    );
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Insufficient funds for this transfer.');
+  });
+
   it('disables Review when the amount exceeds the balance', async () => {
     renderTransfer();
     await screen.findByText('Main Account');

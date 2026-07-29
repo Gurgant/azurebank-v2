@@ -319,7 +319,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
           <Text className={styles.successTitle}>Withdrawal Successful!</Text>
           <Text className={styles.successAmount}>-{formatCurrency(success.amount)}</Text>
           {success.replayed && (
-            <MessageBar intent="info">
+            <MessageBar intent="info" role="status">
               <MessageBarBody>
                 This withdrawal was already processed — showing the existing result.
               </MessageBarBody>
@@ -501,12 +501,12 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         {(error || lockedSeconds !== null) && (
           <div role="alert" id={errorId}>
             {error && (
-              <MessageBar intent="error" className={styles.errorMessage}>
+              <MessageBar intent="error" role="alert" className={styles.errorMessage}>
                 <MessageBarBody>{error}</MessageBarBody>
               </MessageBar>
             )}
             {lockedSeconds !== null && (
-              <MessageBar intent="warning" className={styles.errorMessage}>
+              <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
                 <MessageBarBody>
                   Too many incorrect PIN attempts. Try again in about{' '}
                   {formatLockHorizon(lockedSeconds)}.
@@ -517,7 +517,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         )}
         {inFlight && (
           <div role="status">
-            <MessageBar intent="info" className={styles.errorMessage}>
+            <MessageBar intent="info" role="status" className={styles.errorMessage}>
               <MessageBarBody>Still processing — tap Withdraw again to check.</MessageBarBody>
             </MessageBar>
           </div>

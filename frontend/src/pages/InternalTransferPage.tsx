@@ -189,7 +189,7 @@ export function InternalTransferPage() {
             <Text className={styles.successTitle}>Transfer Complete!</Text>
             <Text className={styles.successAmount}>{formatCurrency(success.amount)}</Text>
             {success.replayed && (
-              <MessageBar intent="info">
+              <MessageBar intent="info" role="status">
                 <MessageBarBody>
                   This transfer was already processed — showing the existing result.
                 </MessageBarBody>
@@ -271,7 +271,7 @@ export function InternalTransferPage() {
             accounts load left the page standing with empty pickers and no explanation, so a
             transient network fault silently blocked transfers. */}
         {accountsProblem && (
-          <MessageBar intent="error">
+          <MessageBar intent="error" role="alert">
             <MessageBarBody>
               {accountsProblem.detail || 'Could not load your accounts.'}
               {accountsProblem.traceId ? ` Support code: ${accountsProblem.traceId}` : ''}
@@ -284,12 +284,12 @@ export function InternalTransferPage() {
           </MessageBar>
         )}
         {error && (
-          <MessageBar intent="error">
+          <MessageBar intent="error" role="alert">
             <MessageBarBody>{error}</MessageBarBody>
           </MessageBar>
         )}
         {inFlight && (
-          <MessageBar intent="info">
+          <MessageBar intent="info" role="status">
             <MessageBarBody>Still processing — tap Send again to check.</MessageBarBody>
           </MessageBar>
         )}
