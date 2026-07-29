@@ -43,7 +43,7 @@ interface SuccessData {
 export function InternalTransferPage() {
   const styles = useTransferWizardStyles();
 
-  const { data: accounts = [], isLoading: accountsLoading } = useGetAccountsQuery();
+  const { data: accounts = [], isSuccess: accountsLoaded } = useGetAccountsQuery();
   const [transferTrigger] = useTransferInternalMutation();
   const wizard = useMoneyWizard(transferTrigger, {
     // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
@@ -292,7 +292,12 @@ export function InternalTransferPage() {
 
             <div>
               <Text className={styles.sectionLabel}>To</Text>
-              {!accountsLoading && accounts.length < 2 && (
+              {/* `isSuccess`, NOT `!isLoading`. On a FAILED fetch RTK Query sets isLoading back
+                  to false and leaves data undefined, so `accounts` fell back to [] and this said
+                  "you need a second account" to someone who may have five — sending them off to
+                  create one to solve a network problem. The message itself is a real rule (internal
+                  transfer needs two accounts, external does not); only its gate was wrong. */}
+              {accountsLoaded && accounts.length < 2 && (
                 <Text className={styles.subtle} style={{ display: 'block', marginBottom: '8px' }}>
                   You need a second account to transfer between your own accounts.
                 </Text>

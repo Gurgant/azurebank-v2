@@ -112,6 +112,22 @@ describe('internal transfer (PR-11b)', () => {
     expect(await screen.findByText(/You need a second account to transfer/)).toBeInTheDocument();
   });
 
+  it('does not claim you need a second account when the accounts fetch FAILS', async () => {
+    // The gate used to read `!isLoading`, which is also false once a request has failed — so a
+    // network fault rendered a message telling the user to go and create an account. The real fault
+    // was never surfaced.
+    server.use(
+      http.get('*/api/accounts', () => problem({ status: 500, errorCode: 'INTERNAL_ERROR' })),
+    );
+    renderInternal();
+
+    // Wait for the query to settle by observing something the failed page still renders.
+    expect(await screen.findByText('Move Money')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/You need a second account to transfer between your own accounts/),
+    ).not.toBeInTheDocument();
+  });
+
   it('disables Review when the amount exceeds the source balance', async () => {
     renderInternal();
     await screen.findByRole('button', { name: 'From Main Account' });
