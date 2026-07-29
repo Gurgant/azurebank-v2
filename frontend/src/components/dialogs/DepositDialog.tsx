@@ -22,6 +22,7 @@ import {
 } from '../../forms/moneySchemas';
 import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
+import { CONNECTION_FAILED } from '../../api/problemMessages';
 
 // ============================================
 // TYPES
@@ -169,7 +170,7 @@ export function DepositDialog({ isOpen, onClose, accounts, onSuccess }: DepositD
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         // Transport failure — a raw "TypeError: Failed to fetch" would leak (D17). The
         // key is KEPT (shouldKeepKey) so tapping Deposit again is a safe same-key retry.
-        setError("Couldn't reach the server — check your connection and try again.");
+        setError(CONNECTION_FAILED);
       } else {
         setError(problem.detail || 'Deposit failed. Please try again.');
       }

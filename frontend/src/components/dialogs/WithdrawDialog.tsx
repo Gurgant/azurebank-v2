@@ -34,6 +34,7 @@ import {
 import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
 import { PinInput } from '../PinInput';
+import { CONNECTION_FAILED } from '../../api/problemMessages';
 
 // ============================================
 // TYPES
@@ -263,7 +264,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       ) {
         setError('Something went wrong. Please try again.');
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setError("Couldn't reach the server — check your connection and try again.");
+        setError(CONNECTION_FAILED);
       } else {
         setError(problem.detail || 'Withdrawal failed. Please try again.');
       }
@@ -489,8 +490,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
       {/* Footer */}
       <div className={styles.footer}>
+        {/* The div below is an `aria-describedby` target, NOT a live region. The role used to live
+            there, back when MessageBar carried none; now each banner announces itself (the pattern
+            LoginPage set), and a role there too would give one message two atomic announceable
+            ancestors — read twice, and with the error and the lock countdown merged into a single
+            utterance. The id stays: it is how someone tabbing back to the PIN field hears why the
+            attempt failed. */}
         {(error || lockedSeconds !== null) && (
-          <div role="alert" id={errorId}>
+          <div id={errorId}>
             {error && (
               <MessageBar intent="error" role="alert" className={styles.errorMessage}>
                 <MessageBarBody>{error}</MessageBarBody>
@@ -507,11 +514,9 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
           </div>
         )}
         {inFlight && (
-          <div role="status">
-            <MessageBar intent="info" role="status" className={styles.errorMessage}>
-              <MessageBarBody>Still processing — tap Withdraw again to check.</MessageBarBody>
-            </MessageBar>
-          </div>
+          <MessageBar intent="info" role="status" className={styles.errorMessage}>
+            <MessageBarBody>Still processing — tap Withdraw again to check.</MessageBarBody>
+          </MessageBar>
         )}
 
         {success ? (

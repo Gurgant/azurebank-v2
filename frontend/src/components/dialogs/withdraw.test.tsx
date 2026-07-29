@@ -7,6 +7,7 @@ import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
 import { mockState } from '../../mocks/state';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
+import { expectNoNestedLiveRegions } from '../../test/liveRegions';
 import { WithdrawDialog } from './WithdrawDialog';
 
 /**
@@ -345,5 +346,61 @@ describe('withdraw (PR-10 — PIN-in-body idempotent mutation)', () => {
     expect(screen.getByRole('button', { name: /^Withdraw/ })).toBeDisabled();
     await enterPin('123456');
     expect(screen.getByRole('button', { name: 'Withdraw €100.00' })).toBeEnabled();
+  });
+
+  /*
+    This dialog is the ONLY money surface that had hand-rolled `<div role="alert">` / `role="status"`
+    wrappers, written before `MessageBar` carried a role of its own. Giving the banners the role —
+    the pattern `LoginPage` set — therefore produced a live region inside a live region here and
+    nowhere else. These two pin the announcement to ONE element, and to the right one.
+  */
+  it('announces a failure exactly once — the banner is the live region, not its wrapper', async () => {
+    server.use(http.post('*/api/transactions/withdraw', () => HttpResponse.error()));
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    const banner = await screen.findByText(/Couldn't reach the server/);
+    expectNoNestedLiveRegions();
+
+    // Exactly one, and it is the MessageBar. The count also proves Fluent does not swallow the
+    // `role` prop — its root ships as `role="group"`, so if the prop were dropped this would be 0.
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContainElement(banner);
+
+    // The wrapper keeps its id, which is the actual reason it exists: `PinInput` points the PIN
+    // group's `aria-describedby` at it, so someone returning to the field still hears why the
+    // attempt failed. Dropping the role must not orphan that reference — this is the assertion that
+    // would catch a "cleanup" deleting the whole div. (The reference sits on the `role="group"`
+    // wrapping the six boxes, not on each box: the group is the labelled control, the boxes are
+    // its parts.)
+    const describedBy = screen
+      .getByRole('group', { name: 'Enter your PIN' })
+      .getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy as string)).toContainElement(banner);
+  });
+
+  it('announces the in-flight note exactly once, and politely', async () => {
+    server.use(
+      http.post('*/api/transactions/withdraw', () =>
+        problem({ status: 409, errorCode: 'IDEMPOTENCY_IN_FLIGHT', detail: 'Still processing.' }),
+      ),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    const note = await screen.findByText(/Still processing/);
+    expectNoNestedLiveRegions();
+
+    // `status`, not `alert`: it is a progress note about a retry that is SAFE, and interrupting
+    // someone mid-sentence to say "still working" is the assertive role being spent on nothing.
+    const statuses = screen.getAllByRole('status');
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]).toContainElement(note);
   });
 });

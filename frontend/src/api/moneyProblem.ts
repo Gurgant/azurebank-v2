@@ -1,4 +1,5 @@
 import type { ApiProblem } from './problemBaseQuery';
+import { CONNECTION_FAILED } from './problemMessages';
 
 /**
  * What a failed money request MEANS, decided once instead of in every flow's catch block.
@@ -135,7 +136,7 @@ export function classifyMoneyProblem(
     return {
       kind: 'message',
       scope: 'attempt',
-      text: "Couldn't reach the server — check your connection and try again.",
+      text: CONNECTION_FAILED,
     };
   }
   return { kind: 'message', text: problem.detail || opts.fallback, scope: 'attempt' };

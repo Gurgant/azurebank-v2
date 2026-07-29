@@ -33,6 +33,7 @@ import {
   type TransferFormValues,
 } from '../forms/moneySchemas';
 import { AmountField } from '../components/form/AmountField';
+import { CONNECTION_FAILED } from '../api/problemMessages';
 
 // ============================================
 // CONSTANTS
@@ -238,7 +239,7 @@ export function TransferPage() {
             : 'Too many lookups. Please wait a moment and try again.',
         );
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setRecipientError("Couldn't reach the server — check your connection and try again.");
+        setRecipientError(CONNECTION_FAILED);
       } else {
         setRecipientError(problem.detail || "We couldn't check that handle. Please try again.");
       }
