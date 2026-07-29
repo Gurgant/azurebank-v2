@@ -294,7 +294,15 @@ export function InternalTransferPage() {
           </MessageBar>
         )}
 
-        {step === 'form' ? (
+        {/* Nothing to pick from, so nothing to fill in. AccountsPage takes the same line — it
+            hides its grid while a problem is showing — and without this the amount field stays
+            editable over an empty account list, stacking "Available: €0.00" and "Exceeds available
+            balance of €0.00" underneath the real error.
+
+            Scoped to `accounts.length === 0` rather than to the problem alone, because RTK Query
+            keeps the last data when a REFETCH fails: in that case the picker still has real
+            accounts, and blanking a half-filled money form would be the worse bug. */}
+        {accountsProblem && accounts.length === 0 ? null : step === 'form' ? (
           <>
             <div>
               <Text className={styles.sectionLabel}>From</Text>

@@ -141,6 +141,9 @@ describe('internal transfer (PR-11b)', () => {
       screen.queryByText(/You need a second account to transfer between your own accounts/),
     ).not.toBeInTheDocument();
 
+    // And the form is gone: an amount field over an empty picker would stack "Available: €0.00"
+    // and "Exceeds available balance of €0.00" underneath the real error.
+    expect(screen.queryByLabelText('Transfer amount')).not.toBeInTheDocument();
     // Retry is not decoration — it must actually re-issue the request.
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(calls).toBe(2));

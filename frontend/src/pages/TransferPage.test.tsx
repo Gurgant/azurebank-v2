@@ -202,6 +202,10 @@ describe('external transfer (PR-11)', () => {
     renderTransfer();
 
     expect(await screen.findByText(/Could not load your accounts/)).toBeInTheDocument();
+
+    // And the form is gone: an amount field over an empty picker would stack "Available: €0.00"
+    // and "Exceeds available balance of €0.00" underneath the real error.
+    expect(screen.queryByLabelText('Transfer amount')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(calls).toBe(2));
   });
