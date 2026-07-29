@@ -10,13 +10,13 @@ import {
 } from '@fluentui/react-components';
 import {
   CheckmarkCircle24Filled,
-  Warning24Regular,
   ArrowSwap24Regular,
 } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
 import { useTransferWizardStyles } from './transferWizardStyles';
+import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
@@ -316,44 +316,12 @@ export function TransferPage() {
   // ===== RESULT_UNKNOWN verify view =====
   if (verifyRequired) {
     return (
-      <div className={styles.page}>
-        {/* Deliberately no exits. This is the state where the transfer may or may not have
-            gone through; a stray Close here would let someone leave without checking, and the
-            copy below says retrying blindly could send twice. */}
-        <PageHeader title="Send Money" />
-        <div className={styles.body}>
-          <div className={styles.centeredView}>
-            <div className={styles.warningIcon}>
-              <Warning24Regular style={{ width: '40px', height: '40px' }} />
-            </div>
-            <Text className={styles.stateTitle}>We couldn&apos;t confirm your transfer</Text>
-            <Text className={styles.stateBody}>
-              The request may or may not have gone through. Check your recent transactions before
-              trying again — retrying blindly could send twice.
-            </Text>
-          </div>
-          <div className={styles.actions}>
-            <Button
-              appearance="primary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => requestLeave('/history')}
-            >
-              Check recent transactions
-            </Button>
-            <Button
-              appearance="secondary"
-              size="large"
-              style={{ width: '100%', height: '48px' }}
-              onClick={() => {
-                wizard.startOver();
-              }}
-            >
-              It didn&apos;t go through — start over
-            </Button>
-          </div>
-        </div>
-      </div>
+      <ResultUnknownView
+        title="Send Money"
+        repeatWarning="send twice"
+        onCheckTransactions={() => requestLeave('/history')}
+        onStartOver={wizard.startOver}
+      />
     );
   }
 
