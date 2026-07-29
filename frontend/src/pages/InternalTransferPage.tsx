@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   makeStyles,
   Text,
@@ -17,14 +16,13 @@ import {
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors, surfaces, transitions } from '../theme/tokens';
-import type { ApiProblem } from '../api/problemBaseQuery';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
   useTransferInternalMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
-import { useIdempotentMutation } from '../hooks/useIdempotentMutation';
+import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import {
   internalTransferFormSchema,
@@ -35,8 +33,6 @@ import {
 import { AmountField } from '../components/form/AmountField';
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
-
-type Step = 'form' | 'review';
 
 interface SuccessData {
   amount: number;
@@ -207,17 +203,25 @@ const useStyles = makeStyles({
  */
 export function InternalTransferPage() {
   const styles = useStyles();
-  const navigate = useNavigate();
 
   const { data: accounts = [], isLoading: accountsLoading } = useGetAccountsQuery();
   const [transferTrigger] = useTransferInternalMutation();
-  const { submit, resetIntent, verifyRequired, keyRetained } =
-    useIdempotentMutation(transferTrigger);
+  const wizard = useMoneyWizard(transferTrigger, {
+    // This flow's OWN codes; the protocol's are the wizard's, and the table's type makes naming one
+    // of those here a compile error. SAME_ACCOUNT_TRANSFER is kept although it is UNREACHABLE over
+    // HTTP — the validator rejects from == to during model binding, so the wire answer is a 400 with
+    // an errors dictionary (measured against the running API in U6.1). It costs one line and covers
+    // any caller that reaches the service without that validator.
+    messages: {
+      SAME_ACCOUNT_TRANSFER: 'Choose two different accounts.',
+      ACCOUNT_NOT_FOUND: 'One of the accounts could not be found. Please re-check.',
+    },
+    fallback: 'Transfer failed. Please try again.',
+  });
+  // Destructured under the names the markup already used, so this change is confined to the machine.
+  const { step, isSubmitting, inFlight, error, verifyRequired, keyLive, onBodyEdit, requestLeave } =
+    wizard;
 
-  const [step, setStep] = useState<Step>('form');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [inFlight, setInFlight] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
   // ===== RHF form (source / destination / amount) =====
@@ -243,7 +247,6 @@ export function InternalTransferPage() {
     null;
   const toAccount = accounts.find((a) => a.id === watchedToId) ?? null;
   const availableBalance = fromAccount?.balance ?? 0;
-  const keyLive = isSubmitting || keyRetained;
 
   // Auto-select the legacy default source (primary ?? first) once accounts load, and keep
   // the schema's balance bound in lockstep with the source account.
@@ -260,25 +263,6 @@ export function InternalTransferPage() {
   useEffect(() => {
     void trigger('amount');
   }, [balanceBound, trigger]);
-
-  useEffect(() => {
-    if (!keyLive) return;
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [keyLive]);
-
-  // Blocked while a key is LIVE (submitting OR retained after IN_FLIGHT/NETWORK/5xx): nulling
-  // a retained key then resending mints a fresh key = a double-spend.
-  const onBodyEdit = () => {
-    if (keyLive) return;
-    resetIntent();
-    setInFlight(false);
-    setError(null);
-  };
 
   const selectFrom = (account: AccountResponse) => {
     if (keyLive) return;
@@ -312,61 +296,30 @@ export function InternalTransferPage() {
   const onValid = async (data: InternalTransferFormOutput) => {
     // Mirror canReview exactly (incl. from !== to) — belt-and-suspenders against a fromAccount
     // fallback converging on toAccount if the accounts list ever changed under the review step.
+    // This client guard is the REAL defence: SAME_ACCOUNT_TRANSFER never reaches the wire.
     if (!fromAccount || !toAccount || fromAccount.id === toAccount.id) return;
-    setError(null);
-    setInFlight(false);
-    setIsSubmitting(true);
-    try {
-      const result = await submit({
-        fromAccountId: data.fromAccountId,
-        toAccountId: data.toAccountId,
-        amount: data.amount,
-      });
-      setSuccess({
-        amount: data.amount,
-        fromName: fromAccount.name,
-        toName: toAccount.name,
-        fromNewBalance: result.fromAccountNewBalance,
-        transactionNumber: result.transactionNumber,
-        replayed: result.replayed,
-      });
-    } catch (caught) {
-      const problem = caught as ApiProblem;
-      if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
-        // hook latched verifyRequired; the verify view renders.
-      } else if (problem.errorCode === 'STEP_UP_CANCELLED') {
-        // The user dismissed the PIN modal — benign. Stay on review; Send re-triggers it.
-      } else if (problem.errorCode === 'STEP_UP_REQUIRED') {
-        setError("Verification didn't complete. Please tap Send and try again.");
-      } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
-        setInFlight(true);
-      } else if (problem.errorCode === 'SAME_ACCOUNT_TRANSFER') {
-        setError('Choose two different accounts.');
-      } else if (problem.errorCode === 'ACCOUNT_NOT_FOUND') {
-        setError('One of the accounts could not be found. Please re-check.');
-      } else if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
-        setError('Insufficient funds for this transfer.');
-      } else if (problem.errorCode === 'VALIDATION_ERROR') {
-        const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
-        setError(firstFieldError ?? 'Please check the details and try again.');
-      } else if (
-        problem.errorCode === 'IDEMPOTENCY_KEY_REUSE' ||
-        problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
-        problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
-      ) {
-        setError('Something went wrong. Please try again.');
-      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setError("Couldn't reach the server — check your connection and try again.");
-      } else {
-        setError(problem.detail || 'Transfer failed. Please try again.');
-      }
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    // Narrowed to consts BEFORE the await, and the receipt is built from those same consts, so the
+    // review screen and the receipt cannot name two different accounts.
+    const from = fromAccount;
+    const to = toAccount;
 
-  const requestLeave = (to: string) => {
-    if (!keyLive) navigate(to);
+    const result = await wizard.run({
+      fromAccountId: data.fromAccountId,
+      toAccountId: data.toAccountId,
+      amount: data.amount,
+    });
+    // undefined means it failed and the wizard has already set the banner, the in-flight note or
+    // the verify view. Under `strict` this early return is not optional.
+    if (!result) return;
+
+    setSuccess({
+      amount: data.amount,
+      fromName: from.name,
+      toName: to.name,
+      fromNewBalance: result.fromAccountNewBalance,
+      transactionNumber: result.transactionNumber,
+      replayed: result.replayed,
+    });
   };
 
   if (success) {
@@ -413,7 +366,7 @@ export function InternalTransferPage() {
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => navigate('/dashboard')}
+              onClick={() => requestLeave('/dashboard')}
             >
               Done
             </Button>
@@ -446,7 +399,7 @@ export function InternalTransferPage() {
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => navigate('/history')}
+              onClick={() => requestLeave('/history')}
             >
               Check recent transactions
             </Button>
@@ -455,8 +408,7 @@ export function InternalTransferPage() {
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => {
-                resetIntent();
-                setStep('form');
+                wizard.startOver();
               }}
             >
               It didn&apos;t go through — start over
@@ -475,7 +427,7 @@ export function InternalTransferPage() {
           a shared component cannot quietly delete the anti-double-spend guard. */}
       <PageHeader
         title={step === 'review' ? 'Review Transfer' : 'Move Money'}
-        onBack={() => (step === 'review' ? setStep('form') : requestLeave('/dashboard'))}
+        onBack={() => (step === 'review' ? wizard.toForm() : requestLeave('/dashboard'))}
         backDisabled={keyLive}
         onClose={() => requestLeave('/dashboard')}
         closeDisabled={keyLive}
@@ -585,7 +537,7 @@ export function InternalTransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => setStep('review')}
+                onClick={() => wizard.toReview()}
                 disabled={!canReview}
               >
                 Review Transfer
@@ -633,7 +585,7 @@ export function InternalTransferPage() {
                 appearance="secondary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => setStep('form')}
+                onClick={() => wizard.toForm()}
                 disabled={keyLive}
               >
                 Back
