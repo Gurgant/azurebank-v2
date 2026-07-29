@@ -15,7 +15,8 @@ import {
 } from '@fluentui/react-icons';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { colors, surfaces, transitions } from '../theme/tokens';
+import { colors } from '../theme/tokens';
+import { useTransferWizardStyles } from './transferWizardStyles';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
@@ -64,42 +65,11 @@ function initials(name: string): string {
 // STYLES
 // ============================================
 
-const useStyles = makeStyles({
-  // A full-screen wizard sits deliberately OUTSIDE the app shell (see App.tsx), so unlike a shell
-  // page it does own its canvas — but it takes the shell's value rather than inventing one.
-  page: { minHeight: '100dvh', backgroundColor: surfaces.canvas },
-  body: {
-    maxWidth: '480px',
-    margin: '0 auto',
-    padding: '20px 16px 32px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
-  },
-  sectionLabel: { fontSize: '14px', fontWeight: 500, color: colors.neutral[500] },
-  card: {
-    width: '100%',
-    padding: '14px 16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    cursor: 'pointer',
-    transition: `all ${transitions.fast}`,
-    ':hover': { backgroundColor: colors.neutral[50] },
-    ':disabled': { opacity: 0.5, cursor: 'not-allowed' },
-  },
-  cardSelected: { border: `2px solid ${colors.brand[60]}`, backgroundColor: colors.brand[130] },
-  accountInfo: { display: 'flex', flexDirection: 'column', gap: '2px', textAlign: 'left' },
-  accountName: { fontSize: '15px', fontWeight: 500, color: colors.neutral[800] },
-  accountNumber: {
-    fontSize: '13px',
-    fontFamily: 'Consolas, monospace',
-    color: colors.neutral[500],
-  },
-  accountBalance: { fontSize: '15px', fontWeight: 600, color: colors.neutral[800] },
+/**
+ * The six keys that belong to the recipient step — the part of this flow internal transfer does not
+ * have. Everything else comes from `useTransferWizardStyles`, which both wizards share.
+ */
+const useRecipientStyles = makeStyles({
   recipientRow: { display: 'flex', gap: '8px' },
   input: {
     flex: 1,
@@ -136,113 +106,6 @@ const useStyles = makeStyles({
   },
   recipientName: { fontSize: '15px', fontWeight: 600, color: colors.neutral[800] },
   recipientTag: { fontSize: '13px', color: colors.neutral[500] },
-  amountSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '16px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '12px',
-  },
-  amountWrapper: { display: 'flex', alignItems: 'baseline', gap: '4px' },
-  amountCurrency: { fontSize: '30px', fontWeight: 300, color: colors.neutral[800] },
-  amountInput: {
-    fontSize: '44px',
-    fontWeight: 700,
-    color: colors.neutral[800],
-    border: 'none',
-    outline: 'none',
-    background: 'transparent',
-    textAlign: 'center',
-    width: '170px',
-    '::placeholder': { color: colors.neutral[300] },
-  },
-  hint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
-  subtle: { fontSize: '13px', color: colors.neutral[500] },
-  quickAmounts: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' },
-  quickBtn: {
-    minWidth: '60px',
-    height: '34px',
-    padding: '0 14px',
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 500,
-    color: colors.neutral[800],
-    ':hover': { backgroundColor: colors.neutral[50] },
-    ':disabled': { opacity: 0.5, cursor: 'not-allowed' },
-  },
-  quickBtnSelected: {
-    backgroundColor: colors.brand[120],
-    border: `1px solid ${colors.brand[60]}`,
-    color: colors.brand[60],
-  },
-  reviewCard: {
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${colors.neutral[200]}`,
-    borderRadius: '12px',
-    padding: '4px 16px',
-  },
-  reviewRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '14px 0',
-    borderBottom: `1px solid ${colors.neutral[100]}`,
-    ':last-child': { borderBottom: 'none' },
-  },
-  reviewLabel: { fontSize: '14px', color: colors.neutral[500] },
-  reviewValue: { fontSize: '14px', fontWeight: 600, color: colors.neutral[800] },
-  actions: { display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '4px' },
-  linkBtn: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '6px',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    color: colors.brand[60],
-    fontSize: '14px',
-    fontWeight: 500,
-    padding: '8px',
-  },
-  centeredView: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '16px',
-    padding: '40px 20px',
-    textAlign: 'center',
-  },
-  successIcon: {
-    width: '80px',
-    height: '80px',
-    backgroundColor: colors.semantic.success.light,
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.semantic.success.main,
-  },
-  warningIcon: {
-    width: '80px',
-    height: '80px',
-    backgroundColor: colors.semantic.warning.light,
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: colors.semantic.warning.dark,
-  },
-  successTitle: { fontSize: '24px', fontWeight: 700, color: colors.semantic.success.main },
-  stateTitle: { fontSize: '20px', fontWeight: 700, color: colors.neutral[800] },
-  stateBody: { fontSize: '15px', color: colors.neutral[500], lineHeight: '1.5' },
-  successAmount: { fontSize: '32px', fontWeight: 700, color: colors.neutral[800] },
 });
 
 // ============================================
@@ -260,7 +123,8 @@ const useStyles = makeStyles({
  * This page only knows the transfer mutation; step-up is invisible to it.
  */
 export function TransferPage() {
-  const styles = useStyles();
+  // Merged so the markup keeps addressing one `styles` object.
+  const styles = { ...useTransferWizardStyles(), ...useRecipientStyles() };
 
   const { data: accounts = [] } = useGetAccountsQuery();
   const [lookup, lookupState] = useLazyLookupRecipientQuery();
