@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import { classifyMoneyProblem, type DomainMessages } from '../api/moneyProblem';
+import { classifyMoneyProblem, type DomainMessages, type MessageScope } from '../api/moneyProblem';
 import { useIdempotentMutation, type IdempotentTrigger } from './useIdempotentMutation';
 
 /**
@@ -82,9 +82,33 @@ export function useMoneyWizard<TBody, TResult>(
   const [step, setStep] = useState<MoneyWizardStep>('form');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inFlight, setInFlight] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Held WITH its scope, but exposed as a bare string: the scope decides lifetime, and no caller
+  // needs to know about it, so not one line of page markup moves.
+  const [failure, setFailure] = useState<{ text: string; scope: MessageScope } | null>(null);
 
   const keyLive = isSubmitting || keyRetained;
+
+  /*
+    One rule, and it is the whole policy:
+
+      every step transition clears the transient failure state, EXCEPT a failure the server
+      attributed to a value the user can still edit — that one survives, and is cleared instead by
+      the edit that supersedes it (onBodyEdit) or by the next run().
+
+    Worth being honest about in the ADR: NO source decides this. Four research lanes and ~40 primary
+    sources — WCAG, GOV.UK, Fluent, Carbon, USWDS, Cloudscape, NN/g — say nothing about what an error
+    message should do across a wizard step change. AWS Cloudscape ships a Wizard, documents a review
+    step with back-navigation AND models server errors, and still says nothing. So "clear" and "keep"
+    both have zero documented backing; this is a reasoned decision, not a standard.
+
+    What IS standards-backed is next door: WCAG 2.2 SC 3.3.7 Redundant Entry (Level A) forbids making
+    the user re-enter data. This helper only ever touches banners, never the form.
+  */
+  const goToStep = (next: MoneyWizardStep, { keepInputErrors }: { keepInputErrors: boolean }) => {
+    setInFlight(false);
+    setFailure((current) => (keepInputErrors && current?.scope === 'input' ? current : null));
+    setStep(next);
+  };
 
   // The one nav path the in-app controls cannot cover: a refresh or tab-close while a key is live.
   // (In-app popstate needs a data-router useBlocker — deferred with the router migration.)
@@ -102,12 +126,12 @@ export function useMoneyWizard<TBody, TResult>(
     step,
     isSubmitting,
     inFlight,
-    error,
+    error: failure?.text ?? null,
     verifyRequired,
     keyLive,
 
     async run(body) {
-      setError(null);
+      setFailure(null);
       setInFlight(false);
       setIsSubmitting(true);
       try {
@@ -117,7 +141,7 @@ export function useMoneyWizard<TBody, TResult>(
         if (failure.kind === 'inFlight') {
           setInFlight(true);
         } else if (failure.kind === 'message') {
-          setError(failure.text);
+          setFailure({ text: failure.text, scope: failure.scope });
         }
         // 'verify' — the hook has latched verifyRequired and that view renders; setting an error
         // too would put a red banner under a screen whose whole job is to say "we don't know".
@@ -136,11 +160,11 @@ export function useMoneyWizard<TBody, TResult>(
       if (keyLive) return;
       resetIntent();
       setInFlight(false);
-      setError(null);
+      setFailure(null);
     },
 
     toReview() {
-      setStep('review');
+      goToStep('review', { keepInputErrors: true });
     },
 
     toForm() {
@@ -148,14 +172,16 @@ export function useMoneyWizard<TBody, TResult>(
       // JSX attribute away from being deleted, and the fields behind this transition are what
       // rotate the key.
       if (keyLive) return;
-      setStep('form');
+      goToStep('form', { keepInputErrors: true });
     },
 
     startOver() {
       // Deliberately NOT guarded on keyLive: reaching this means the key was already dropped and
       // `verifyRequired` latched, and re-arming `submit` is the entire point of the action.
       resetIntent();
-      setStep('form');
+      // Unconditional, input errors included: this ABANDONS the intent, so nothing said about the
+      // previous attempt is still said about the request being rebuilt.
+      goToStep('form', { keepInputErrors: false });
     },
 
     requestLeave(to) {

@@ -41,7 +41,21 @@ export type ProtocolCode = (typeof PROTOCOL_CODES)[number];
  * the retry-safe banner, not an error — into a dead end that invites a fresh key. `never` is
  * unsatisfiable by any string, so the only way to write such a key is to delete it.
  */
-export type DomainMessages = Record<string, string> & Partial<Record<ProtocolCode, never>>;
+export type DomainMessages = Record<string, string | { text: string; scope: MessageScope }> &
+  Partial<Record<ProtocolCode, never>>;
+
+/**
+ * Whether a failure is about something the user can still EDIT, or about the attempt itself.
+ *
+ * This is what decides whether a message survives a step change, and it is a property of the
+ * failure rather than a decision taken at each call site — so a new error code cannot quietly get
+ * the wrong lifetime by being handled in the wrong place.
+ *
+ * The test a reviewer can apply without interpretation: if the message names a value that is
+ * editable on the destination step, it is 'input'. If it names an action or a system condition
+ * ("tap Send again", "check your connection", "something went wrong"), it is 'attempt'.
+ */
+export type MessageScope = 'input' | 'attempt';
 
 /** What the caller should do. Deliberately not "an error string": two outcomes are not errors. */
 export type MoneyFailure =
@@ -51,7 +65,7 @@ export type MoneyFailure =
   | { kind: 'silent' }
   /** The server is still processing the SAME key. Retry is safe and must reuse it. */
   | { kind: 'inFlight' }
-  | { kind: 'message'; text: string };
+  | { kind: 'message'; text: string; scope: MessageScope };
 
 /**
  * Classify a failed money request.
@@ -75,6 +89,9 @@ export function classifyMoneyProblem(
     // The replay 403'd again, so elevation did not stick. Never leak the raw gate string.
     return {
       kind: 'message',
+      // 'attempt': it names an ACTION, and after this the user may be sent back to a step that has
+      // no Send button at all — the sharpest instance of a message outliving its own screen.
+      scope: 'attempt',
       text: "Verification didn't complete. Please tap Send and try again.",
     };
   }
@@ -85,31 +102,41 @@ export function classifyMoneyProblem(
   // 5: the flow's own business codes. Cannot shadow the above — the type forbids it.
   const domain = opts.messages[problem.errorCode];
   if (domain !== undefined) {
-    return { kind: 'message', text: domain };
+    // The flow's own codes are 'input' by default: every one of them today rejects something
+    // chosen on the form step (a recipient, an account, a self-transfer). A flow that needs an
+    // attempt-scoped business code can pass the object form.
+    return typeof domain === 'string'
+      ? { kind: 'message', text: domain, scope: 'input' }
+      : { kind: 'message', text: domain.text, scope: domain.scope };
   }
 
   // 6-10: the shared tail. Note what is NOT here: ACCOUNT_NOT_FOUND. Its copy genuinely differs
   // per flow ("re-check the handle" reads absurd on a page with no handle), so it belongs in each
   // flow's `messages` rather than in a shared branch speaking for a flow it does not know.
   if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
-    return { kind: 'message', text: 'Insufficient funds for this transfer.' };
+    return { kind: 'message', text: 'Insufficient funds for this transfer.', scope: 'input' };
   }
   if (problem.errorCode === 'VALIDATION_ERROR') {
     const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
-    return { kind: 'message', text: firstFieldError ?? 'Please check the details and try again.' };
+    return {
+      kind: 'message',
+      scope: 'input',
+      text: firstFieldError ?? 'Please check the details and try again.',
+    };
   }
   if (
     problem.errorCode === 'IDEMPOTENCY_KEY_REUSE' ||
     problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
     problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
   ) {
-    return { kind: 'message', text: 'Something went wrong. Please try again.' };
+    return { kind: 'message', text: 'Something went wrong. Please try again.', scope: 'attempt' };
   }
   if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
     return {
       kind: 'message',
+      scope: 'attempt',
       text: "Couldn't reach the server — check your connection and try again.",
     };
   }
-  return { kind: 'message', text: problem.detail || opts.fallback };
+  return { kind: 'message', text: problem.detail || opts.fallback, scope: 'attempt' };
 }
