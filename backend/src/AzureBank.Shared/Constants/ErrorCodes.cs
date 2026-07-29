@@ -74,6 +74,13 @@ public static class ErrorCodes
     public const string IdempotencyResultUnknown = "IDEMPOTENCY_RESULT_UNKNOWN";
     public const string IdempotencyPayloadTooLarge = "IDEMPOTENCY_PAYLOAD_TOO_LARGE";
 
+    // Exception defaults. These are the fallback codes AppException subclasses apply when a
+    // thrower does not name one, and they go on the wire like any other — so they belong here
+    // rather than inline in the exception's own signature, where ErrorCodeConstantTests could
+    // not see them and a second copy could drift.
+    public const string BusinessRuleViolation = "BUSINESS_RULE_VIOLATION";
+    public const string Conflict = "CONFLICT";
+
     // System
     public const string InternalError = "INTERNAL_ERROR";
     public const string RateLimitExceeded = "RATE_LIMIT_EXCEEDED";

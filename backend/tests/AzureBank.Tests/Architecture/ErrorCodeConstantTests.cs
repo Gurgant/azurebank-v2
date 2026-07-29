@@ -46,38 +46,47 @@ public class ErrorCodeConstantTests
     private static readonly Regex ScreamingSnakeLiteral = new(
         "\"[A-Z][A-Z0-9_]{5,}\"", RegexOptions.Compiled);
 
+    /// <summary>
+    /// The folders where every error code the API emits is chosen. Both are now literal-free, which
+    /// is what lets the rule below be "none at all" rather than "none that happen to be declared".
+    /// </summary>
+    private static readonly string[] ScannedFolders =
+    [
+        Path.Combine("src", "AzureBank.Api", "Services"),
+        Path.Combine("src", "AzureBank.Shared", "Exceptions"),
+    ];
+
     [Fact]
-    public void NoServiceThrowsAnErrorCodeAsABareStringLiteral()
+    public void NoErrorCodeIsWrittenAsABareStringLiteral()
     {
-        var services = Path.Combine(RepoBackendRoot().FullName, "src", "AzureBank.Api", "Services");
-        Directory.Exists(services).Should().BeTrue(because: $"expected to scan {services}");
-
-        var declaredValues = typeof(ErrorCodes)
-            .GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)
-            .Where(f => f is { IsLiteral: true, IsInitOnly: false } && f.FieldType == typeof(string))
-            .Select(f => (string)f.GetRawConstantValue()!)
-            .ToHashSet(StringComparer.Ordinal);
-
+        // The first version of this rule only flagged literals whose value was ALREADY declared in
+        // ErrorCodes, and only scanned the services. That left two holes, and a review found both:
+        // BusinessRuleException and ConflictException chose their default codes inline, invisibly;
+        // and a brand-new code invented at a throw site — which is exactly how RECIPIENT_NO_ACCOUNT
+        // came to exist without a constant — matched nothing and passed.
+        //
+        // Since both folders now contain zero such literals, the rule can be absolute: ANY
+        // SCREAMING_SNAKE literal here is either an error code that belongs in ErrorCodes, or
+        // something that does not belong in these folders at all. Environment variables and header
+        // names live in Program/Observability/Middleware, which are deliberately not scanned.
+        var root = RepoBackendRoot();
         var offenders = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(services, "*.cs", SearchOption.AllDirectories))
-        {
-            var text = File.ReadAllText(file);
-            foreach (Match match in ScreamingSnakeLiteral.Matches(text))
-            {
-                var value = match.Value.Trim('"');
 
-                // Only codes are in scope. A SCREAMING_SNAKE literal that is NOT a known error code
-                // is something else entirely (an env var, a header) and is none of this rule's
-                // business — flagging those would make the guard noisy and therefore ignored.
-                if (declaredValues.Contains(value))
-                {
-                    offenders.Add($"{Path.GetFileName(file)}: \"{value}\" — use ErrorCodes instead");
-                }
+        foreach (var relative in ScannedFolders)
+        {
+            var folder = Path.Combine(root.FullName, relative);
+            Directory.Exists(folder).Should().BeTrue(because: $"expected to scan {folder}");
+
+            foreach (var file in Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories))
+            {
+                offenders.AddRange(
+                    ScreamingSnakeLiteral.Matches(File.ReadAllText(file))
+                        .Select(m => $"{Path.GetFileName(file)}: {m.Value} — declare it in ErrorCodes and reference it"));
             }
         }
 
         offenders.Should().BeEmpty(
-            because: "an error code duplicated as a literal drifts from its constant without failing anything");
+            because: "a code written as a literal drifts from its constant, or never gets one, without failing anything");
     }
 
     [Fact]

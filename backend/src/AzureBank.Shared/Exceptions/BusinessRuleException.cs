@@ -16,7 +16,9 @@
 ///
 /// Reference: project-docs/30-business-rule-validation-implementation-plan.md
 /// </summary>
-public class BusinessRuleException(string message, string errorCode = "BUSINESS_RULE_VIOLATION")
+public class BusinessRuleException(
+    string message,
+    string errorCode = Constants.ErrorCodes.BusinessRuleViolation)
     : AppException(message, errorCode, 422)  // 422 Unprocessable Entity (was 400)
 {
 }
