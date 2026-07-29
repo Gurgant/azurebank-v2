@@ -47,7 +47,24 @@ public static class ErrorCodes
     // is fine: the exact-match lookup already confirms handle existence (ADR-0014/0015).
     public const string AzureTagTaken = "AZURE_TAG_TAKEN";
     public const string SelfTransferNotAllowed = "SELF_TRANSFER_NOT_ALLOWED";
+    // Declared, thrown, and NOT reachable over HTTP. InternalTransferTests pins why:
+    // InternalTransferRequestValidator's NotEqual rule rejects from == to during model validation,
+    // which runs before the action, so the wire answer is a 400 with an errors dictionary and this
+    // 422 never leaves the building. The service check behind it is deliberate defence in depth for
+    // any non-HTTP caller — the code says so — and must NOT be deleted as dead. What must not
+    // happen is a client being written to expect this code from the API.
     public const string SameAccountTransfer = "SAME_ACCOUNT_TRANSFER";
+    // The recipient exists but has no account that can receive money (all deleted). Reachable, and
+    // currently unhandled by the frontend, which falls through to the generic message — tracked for
+    // the U6 frontend work rather than papered over here.
+    public const string RecipientNoAccount = "RECIPIENT_NO_ACCOUNT";
+
+    // Account lifecycle
+    public const string NonZeroBalance = "NON_ZERO_BALANCE";
+    public const string PrimaryAccountDelete = "PRIMARY_ACCOUNT_DELETE";
+
+    // Query validation
+    public const string InvalidDateRange = "INVALID_DATE_RANGE";
 
     // Idempotency (monetary operations)
     public const string IdempotencyKeyMissing = "IDEMPOTENCY_KEY_MISSING";

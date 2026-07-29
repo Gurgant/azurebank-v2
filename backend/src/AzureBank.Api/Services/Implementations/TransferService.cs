@@ -8,6 +8,7 @@ using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
 using Microsoft.EntityFrameworkCore;
+using AzureBank.Shared.Constants;
 
 namespace AzureBank.Api.Services.Implementations;
 
@@ -51,7 +52,7 @@ public class TransferService : ITransferService
         {
             throw new BusinessRuleException(
                 "Cannot transfer to yourself. Use internal account transfer instead.",
-                "SELF_TRANSFER_NOT_ALLOWED");
+                ErrorCodes.SelfTransferNotAllowed);
         }
 
         // Find recipient by AzureTag
@@ -70,7 +71,7 @@ public class TransferService : ITransferService
 
         if (recipientAccount == null)
         {
-            throw new BusinessRuleException("Recipient does not have an active account.", "RECIPIENT_NO_ACCOUNT");
+            throw new BusinessRuleException("Recipient does not have an active account.", ErrorCodes.RecipientNoAccount);
         }
 
         // Use transaction for atomicity; retry optimistic-concurrency
@@ -223,7 +224,7 @@ public class TransferService : ITransferService
         // Same account check (should be caught by validator, but double-check)
         if (request.FromAccountId == request.ToAccountId)
         {
-            throw new BusinessRuleException("Cannot transfer to the same account.", "SAME_ACCOUNT_TRANSFER");
+            throw new BusinessRuleException("Cannot transfer to the same account.", ErrorCodes.SameAccountTransfer);
         }
 
         // Use transaction for atomicity; retry optimistic-concurrency

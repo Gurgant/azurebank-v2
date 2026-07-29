@@ -6,6 +6,7 @@ using AzureBank.Shared.Entities;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
 using Microsoft.EntityFrameworkCore;
+using AzureBank.Shared.Constants;
 
 namespace AzureBank.Api.Services.Implementations;
 
@@ -129,7 +130,7 @@ public class AccountService : IAccountService
         {
             throw new BusinessRuleException(
                 $"Cannot delete account with non-zero balance. Current balance: {account.Balance:C}",
-                "NON_ZERO_BALANCE");
+                ErrorCodes.NonZeroBalance);
         }
 
         // Business rules: cannot delete primary account
@@ -137,7 +138,7 @@ public class AccountService : IAccountService
         {
             throw new BusinessRuleException(
                 "Cannot delete primary account. Set another account as primary first.",
-                "PRIMARY_ACCOUNT_DELETE");
+                ErrorCodes.PrimaryAccountDelete);
         }
 
         // Soft delete

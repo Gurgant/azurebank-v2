@@ -7,6 +7,8 @@ using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using System.Text.Json;
+using AzureBank.Shared.Constants;
 
 namespace AzureBank.Tests.Integration;
 
@@ -187,6 +189,76 @@ public class TransferEndpointTests : IntegrationTestBase
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task InternalTransfer_SameAccount_AnswersAsVALIDATION_NotAsTheServicesBusinessRule()
+    {
+        // The status alone (asserted above) does not say WHERE the 400 comes from, and that gap has
+        // already cost us once. TransferService throws BusinessRuleException(SAME_ACCOUNT_TRANSFER)
+        // for from == to, and the unit test pins that throw by calling the service directly. Read
+        // together, the two suites imply the API answers 422 SAME_ACCOUNT_TRANSFER — and the
+        // frontend was written to expect exactly that.
+        //
+        // It cannot arrive. InternalTransferRequestValidator's NotEqual rule runs during MODEL
+        // validation, before the action, so the wire answer is a validation 400: an `errors`
+        // dictionary keyed by field, and NO errorCode at all. The service check behind it is
+        // deliberate defence in depth for non-HTTP callers ("should be caught by validator, but
+        // double-check") and stays.
+        //
+        // This test pins the SHAPE so nobody wires a client to a code the API cannot emit.
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await DepositAsync(token, accountId, 1000m);
+
+        SetAuthHeader(token);
+        var response = await PostMonetaryAsync("/api/transfers/internal", new InternalTransferRequest
+        {
+            FromAccountId = accountId,
+            ToAccountId = accountId,
+            Amount = 100m
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        problem.TryGetProperty("errorCode", out _).Should().BeFalse(
+            because: "a validation 400 carries an errors dictionary instead of an errorCode");
+        problem.GetProperty("errors").GetProperty("toAccountId")[0].GetString()
+            .Should().Be("Cannot transfer to the same account.");
+    }
+
+    [Fact]
+    public async Task Transfer_UnknownRecipient_CarriesTheCodeAndSentence_NotTheHandle()
+    {
+        // The regression test for the NotFoundException overload trap, at the level the bug was
+        // actually observed: over HTTP.
+        //
+        // `new NotFoundException("Recipient", request.RecipientAzureTag)` used to bind to
+        // (string message, string errorCode) because the identifier is a string, so the wire
+        // carried {"detail":"Recipient","errorCode":"<the handle the caller typed>"}. Every unit
+        // test passed, because they all pass a Guid.
+        //
+        // Two things are asserted, and the second is the one that matters: the errorCode must be a
+        // CONSTANT, never an echo of caller input, or a client switching on it can never match and
+        // an unvalidated string leaks into a field consumers treat as a closed enum.
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await DepositAsync(token, accountId, 1000m);
+
+        const string unknownHandle = "nobody_here_at_all";
+        SetAuthHeader(token);
+        var response = await PostMonetaryAsync("/api/transfers", new TransferRequest
+        {
+            FromAccountId = accountId,
+            RecipientAzureTag = unknownHandle,
+            Amount = 100m
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.AccountNotFound);
+        problem.GetProperty("detail").GetString()
+            .Should().Be($"Recipient with identifier '{unknownHandle}' was not found.");
     }
 
     #endregion

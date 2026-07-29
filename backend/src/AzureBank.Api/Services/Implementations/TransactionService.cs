@@ -254,7 +254,7 @@ public class TransactionService : ITransactionService
         if (from > to)
         {
             throw new BusinessRuleException(
-                "FromDate must be earlier than or equal to ToDate.", "INVALID_DATE_RANGE");
+                "FromDate must be earlier than or equal to ToDate.", ErrorCodes.InvalidDateRange);
         }
 
         var summary = new TransactionSummaryResponse { FromDate = from, ToDate = to };
