@@ -371,12 +371,15 @@ export const apiSlice = createApi({
      * Password only: the BFF takes the identity from the session, so this cannot sign anyone in as
      * somebody else while their page is still on screen.
      *
-     * `invalidatesTags: ['Session']` is not bookkeeping — it is the whole client-side mechanism.
-     * `AuthBootstrap` holds a live `useGetMeQuery` subscription, so invalidating refetches `/me`,
-     * and a fulfilled `getMe` is the ONE action `sessionMiddleware` learns the session policy from.
-     * That matters because re-authentication moves the absolute deadline, and `syncFromProbe`
-     * deliberately never re-reads it — a `session-status` probe would leave the old cap in place and
-     * the warning would reopen immediately. Pinned by a test, since the mechanism is implicit.
+     * `invalidatesTags: ['Session']` is not bookkeeping — it is how the client finds out. Re-
+     * authentication moves the absolute deadline, and `AuthBootstrap` holds a live `useGetMeQuery`
+     * subscription, so invalidating refetches `/me`; a fulfilled `getMe` is the ONE action
+     * `sessionMiddleware` learns the session policy from. Pinned by a test, since nothing in this
+     * file makes the chain visible.
+     *
+     * It is not the only route, and must not be treated as one. `syncFromProbe` also adopts a LATER
+     * cap from a `session-status` probe (ADR-0026), which is what covers the refetch above never
+     * landing — a case that otherwise signs out a user seconds after they proved their password.
      */
     reauthenticate: builder.mutation<BffLoginResponse, { password: string }>({
       query: (body) => ({ url: '/bff/auth/reauthenticate', method: 'POST', body }),

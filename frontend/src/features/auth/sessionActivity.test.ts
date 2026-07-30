@@ -56,11 +56,16 @@ describe('sessionActivity — the absolute cap', () => {
     policyWithNearAbsoluteCap();
     const before = getSessionDeadline()!;
 
-    // What re-authentication produces: same user, new session, new window.
+    // What re-authentication produces: same user, new session, a window that is genuinely LONGER
+    // measured from the server's own clock. The first draft reported `serverTime + 150_000` — the
+    // same 150s remaining as the original policy, i.e. the same window merely re-quoted — so the two
+    // deadlines differed only by however many milliseconds passed between two `Date.now()` calls in
+    // this file. It passed whenever that was 1ms and failed when it was 0: a flaky test that asserted
+    // clock jitter rather than the behaviour. The gap has to come from the FIXTURE, not from timing.
     syncFromProbe({
       serverTime: iso(10_000),
       inactivityExpiresAt: iso(10_000 + 30 * MINUTE),
-      absoluteExpiresAt: iso(10_000 + 150_000),
+      absoluteExpiresAt: iso(10_000 + 300_000),
     });
 
     expect(getSessionDeadline()!).toBeGreaterThan(before);
@@ -79,7 +84,11 @@ describe('sessionActivity — the absolute cap', () => {
       absoluteExpiresAt: iso(11_000),
     });
 
-    expect(getSessionDeadline()!).toBeGreaterThanOrEqual(before);
+    // Exactly `before`, not merely 'no earlier'. The cap BINDS in this fixture, so an untouched
+    // policy can only produce the same number — and the looser comparison would also accept a guard
+    // that moved the cap FORWARD here, which is the neighbouring bug (a copy-paste that re-derives
+    // the cap from the inactivity window would do exactly that).
+    expect(getSessionDeadline()!).toBe(before);
   });
 
   it('ignores a probe with no cap at all rather than treating it as zero', () => {
@@ -93,6 +102,10 @@ describe('sessionActivity — the absolute cap', () => {
       absoluteExpiresAt: null,
     });
 
-    expect(getSessionDeadline()!).toBeGreaterThanOrEqual(before);
+    // Exactly `before`, not merely 'no earlier'. The cap BINDS in this fixture, so an untouched
+    // policy can only produce the same number — and the looser comparison would also accept a guard
+    // that moved the cap FORWARD here, which is the neighbouring bug (a copy-paste that re-derives
+    // the cap from the inactivity window would do exactly that).
+    expect(getSessionDeadline()!).toBe(before);
   });
 });
