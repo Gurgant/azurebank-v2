@@ -139,6 +139,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForegroundOnBrand,
     transition: `all ${transitions.fast}`,
     ':hover': { backgroundColor: colors.brandFill.hover },
+    ':active': { backgroundColor: colors.brandFill.pressed },
     ':focus-visible': { outline: `2px solid ${colors.brand[60]}`, outlineOffset: '2px' },
   },
 

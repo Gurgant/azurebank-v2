@@ -171,6 +171,9 @@ const useStyles = makeStyles({
     ':hover': {
       backgroundColor: colors.brandFill.hover,
     },
+    ':active': {
+      backgroundColor: colors.brandFill.pressed,
+    },
   },
 
   confirmButtonDanger: {

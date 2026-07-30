@@ -68,6 +68,7 @@ const useStyles = makeStyles({
     backgroundColor: colors.brandFill.rest,
     color: tokens.colorNeutralForegroundOnBrand,
     ':hover': { backgroundColor: colors.brandFill.hover },
+    ':active': { backgroundColor: colors.brandFill.pressed },
   },
 });
 

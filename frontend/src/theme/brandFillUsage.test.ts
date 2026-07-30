@@ -35,6 +35,13 @@ function sourceFiles(dir: string): string[] {
 const INTERACTIVE_BLOCK = /':(?:hover|active)':\s*\{[^}]*\}/g;
 const RAMP_STATE_SHADE = /backgroundColor:\s*colors\.brand\[(?:40|50|70)\]/;
 
+/**
+ * A style object that paints a brand fill, from its `rest` to the closing brace of its outermost
+ * block. Greedy to the two-space `},` that ends a `makeStyles` entry, which is the shape every
+ * style object in this codebase has.
+ */
+const BRAND_FILL_BLOCK = /backgroundColor:\s*colors\.brandFill\.rest[\s\S]*?\n {2}\},/g;
+
 describe('brand fill adoption', () => {
   it('takes every interactive state from brandFill, never from the ramp', () => {
     const offenders = sourceFiles(SRC).flatMap((file) => {
@@ -46,6 +53,37 @@ describe('brand fill adoption', () => {
 
     // Named rather than counted: a failure should say WHICH site regressed, since the whole point
     // is that the last one was invisible to a search that returned a number.
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * Declaring hover obliges you to declare pressed.
+   *
+   * Keyed on HOVER rather than on the fill, and that distinction is load-bearing: two of the eight
+   * `brandFill.rest` sites are not controls at all — the recipient avatar on the transfer page and
+   * the disc inside the bottom-nav tab. A rule that said "every brand fill needs three states"
+   * would have put a hover on an avatar. The presence of `:hover` is what marks a surface as
+   * interactive, so that is what the rule keys on.
+   *
+   * The gap this closes was real and wider than it looked: seven of eight sites were incomplete,
+   * and `Sidebar` was the only control with all three. Hover was unified in this PR because three
+   * shades for one state is drift; one control with a pressed state and five without is the same
+   * drift, and the argument that stopped at hover was inconsistent.
+   */
+  it('gives every interactive brand fill a pressed state, not just a hover', () => {
+    const offenders = sourceFiles(SRC).flatMap((file) => {
+      const source = readFileSync(file, 'utf8');
+      const blocks = source.match(BRAND_FILL_BLOCK) ?? [];
+      return blocks
+        .filter(
+          (block) => block.includes('brandFill.hover') && !block.includes('brandFill.pressed'),
+        )
+        .map(
+          (block) =>
+            `${file.slice(file.indexOf('src'))}: ${block.slice(0, 60).replace(/\s+/g, ' ')}…`,
+        );
+    });
+
     expect(offenders).toEqual([]);
   });
 
