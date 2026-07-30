@@ -102,8 +102,13 @@ const useStyles = makeStyles({
     paddingBottom: `calc(${componentSizes.bottomNav.height} + 10px + ${safeArea.bottom})`,
   },
 
+  // No bar to clear, but the home indicator is still there. This was a flat `0` until a reviewer
+  // pointed out what `viewport-fit=cover` had just changed about it: with the insets dead the two
+  // variants differed only by the bar's height, which was right; with them live, zeroing the padding
+  // also discards the inset and puts content under the indicator. Unreachable today — nothing passes
+  // `hideBottomNav` — which makes it a trap rather than a bug, and a one-word one to disarm.
   mobileContentNoNav: {
-    paddingBottom: 0,
+    paddingBottom: safeArea.bottom,
   },
 
   // Desktop layout

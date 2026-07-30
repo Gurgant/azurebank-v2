@@ -1,8 +1,10 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { AppLayout } from '../components/layout/AppLayout';
 import { BottomNav } from '../components/layout/BottomNav';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { setViewportWidth, TEST_VIEWPORT_WIDTH } from '../test/viewport';
 import { safeArea } from './tokens';
 
 /**
@@ -111,5 +113,44 @@ describe('the bar the insets were written for', () => {
     expect(emitted).toContain('var(--ab-safe-bottom)');
     expect(emitted).toContain('var(--ab-safe-left)');
     expect(emitted).toContain('var(--ab-safe-right)');
+  });
+});
+
+describe('the shell with no bottom bar', () => {
+  /**
+   * The variant a reviewer caught, asserted through the class that actually wins.
+   *
+   * Griffel emits one atomic class per property, and `mergeClasses` keeps only the last class for
+   * any given property — so the element carries exactly one `padding-bottom` class and it is the
+   * one the browser will use. Reading THAT rule is what distinguishes "the declaration exists
+   * somewhere in the stylesheet" from "the declaration applies here", and only the second is the
+   * claim: `mobileContent` also sets a padding-bottom, so an emission-level check would pass
+   * against a `0` that overrides it.
+   */
+  it('still clears the home indicator when there is no bar to clear', () => {
+    // The suite runs at 1024 — exactly `lg` — so AppLayout renders its DESKTOP tree by default and
+    // the mobile classes never appear. The first run of this test asserted against an element that
+    // had no padding-bottom class at all, which the non-vacuity check caught rather than passing.
+    setViewportWidth(390);
+
+    const { container } = renderWithProviders(
+      <AppLayout hideBottomNav>
+        <div data-testid="page" />
+      </AppLayout>,
+    );
+
+    const content = container.querySelector('[data-testid="page"]')!.parentElement!;
+    const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]);
+
+    const applied = [...content.classList]
+      .flatMap((cls) => rules.filter((rule) => rule.cssText.startsWith(`.${cls}`)))
+      .map((rule) => rule.cssText)
+      .filter((text) => /padding-bottom/.test(text));
+
+    // Non-vacuity: no padding-bottom class at all would satisfy the assertion below by default.
+    expect(applied).toHaveLength(1);
+    expect(applied[0]).toContain('var(--ab-safe-bottom)');
+
+    setViewportWidth(TEST_VIEWPORT_WIDTH);
   });
 });
