@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { colors, surfaces } from './tokens';
+import { lightPalette } from './tokens';
+import { darkPalette } from './darkPalette';
 
 /**
  * One rule, and it is the rule that actually broke: **a seam must be distinguishable from both
@@ -19,7 +20,12 @@ import { colors, surfaces } from './tokens';
  * into either neighbour, which is the failure that happened.
  */
 
-const WHITE = '#FFFFFF';
+/**
+ * The card each theme's canvas sits beside — Fluent's `colorNeutralBackground1`, measured from the
+ * two themes rather than assumed: white in light, `#292929` in dark.
+ */
+const CHROME = { light: '#FFFFFF', dark: '#292929' } as const;
+const WHITE = CHROME.light;
 
 /** WCAG 2.1 relative luminance. */
 function luminance(hex: string): number {
@@ -35,7 +41,12 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-describe('surface tokens', () => {
+describe.each([
+  ['light', lightPalette, CHROME.light],
+  ['dark', darkPalette, CHROME.dark],
+] as const)('surface tokens — %s', (_name, palette, chrome) => {
+  const { colors, surfaces } = palette;
+
   it('reproduces a known ratio, so the helper itself is trustworthy', () => {
     // Black on white is 21:1 by definition. Without this the two assertions below could both pass
     // against a broken formula.
@@ -44,25 +55,69 @@ describe('surface tokens', () => {
   });
 
   it('separates the canvas from the chrome it sits beside', () => {
-    // Chrome is Fluent's colorNeutralBackground1 — white in the light theme.
-    expect(contrast(surfaces.canvas, WHITE)).toBeGreaterThan(1.05);
+    expect(contrast(surfaces.canvas, chrome)).toBeGreaterThan(1.05);
   });
 
   it('keeps the seam visible against BOTH surfaces it separates', () => {
-    expect(contrast(surfaces.border, WHITE)).toBeGreaterThan(1.2);
+    expect(contrast(surfaces.border, chrome)).toBeGreaterThan(1.2);
     expect(contrast(surfaces.border, surfaces.canvas)).toBeGreaterThan(1.1);
   });
 
-  it('rejects the arrangement that shipped: a border the colour of what it borders', () => {
-    // The old pairing, asserted directly rather than described. `neutral[100]` was the border AND
-    // the value the canvas was about to take.
-    expect(contrast(colors.neutral[100], WHITE)).toBeLessThan(1.2);
-    expect(contrast(colors.neutral[100], surfaces.canvas)).toBeCloseTo(1, 5);
+  /**
+   * The relationship U2 fought for, and the one a naive dark theme inverts: the ground is DARKER
+   * than the card in light, so in dark it must be darker still — not lighter. Stated as a direction
+   * relative to the chrome rather than as an absolute luminance, which is what makes it one rule
+   * both themes can be held to.
+   */
+  it('keeps the canvas on the far side of the chrome from the wells recessed into it', () => {
+    const groundIsBelow = luminance(surfaces.canvas) < luminance(chrome);
+    expect(groundIsBelow).toBe(true);
+    // A well is INSET: it belongs strictly between the ground and the card, on the card's side of
+    // the ground but never past the card itself. Only the lower half of this was asserted at first,
+    // and the dark palette duly shipped a well LIGHTER than its card — a recess that reads as a
+    // bump. One-sided bounds are how a mirrored palette passes a test written for one direction.
+    const well = luminance(colors.neutral[50]);
+    const ground = luminance(surfaces.canvas);
+    const raised = luminance(chrome);
+    expect(Math.min(ground, raised)).toBeLessThan(well);
+    expect(well).toBeLessThan(Math.max(ground, raised));
   });
 
-  it('keeps the canvas darker than the wells recessed into the cards above it', () => {
-    // A well inside a raised card must stay lighter than the ground that card stands on, or the
-    // card reads as perforated rather than raised. `neutral[50]` keeps that role.
-    expect(luminance(colors.neutral[50])).toBeGreaterThan(luminance(surfaces.canvas));
+  /** Body text on the card it is printed on. WCAG 1.4.3 AA for normal text. */
+  it('prints primary text on the card at 4.5:1 or better', () => {
+    expect(contrast(colors.neutral[700], chrome)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  /** Secondary text is still text: same threshold, and the one most often quietly failed. */
+  it('prints secondary text on the card at 4.5:1 or better', () => {
+    expect(contrast(colors.neutral[500], chrome)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  /** Every status chip: pale-on-deep in dark, deep-on-pale in light — the ratio is what must hold. */
+  it.each(['deposit', 'withdrawal', 'transferOut', 'transferIn'] as const)(
+    'prints the %s chip at 4.5:1 on its own background',
+    (kind) => {
+      const chip = colors.transaction[kind];
+      expect(contrast(chip.foreground, chip.background)).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+});
+
+/**
+ * Deliberately NOT run over both palettes.
+ *
+ * This records a specific defect in the LIGHT theme — `neutral[100]` was the border and also the
+ * value the canvas was about to take, so the two would have measured 1.00:1 — and "under 1.2:1" is
+ * the evidence it was invisible, not a rule any theme should satisfy. Held against dark it fails at
+ * 1.27:1, which is the palette being CORRECT: there `neutral[100]` is the canvas and the card stands
+ * a visible step above it. A historical fact parameterised over a second theme stops being a fact.
+ */
+describe('the light-theme pairing this replaced', () => {
+  it('was a border the colour of what it borders', () => {
+    expect(contrast(lightPalette.colors.neutral[100], CHROME.light)).toBeLessThan(1.2);
+    expect(contrast(lightPalette.colors.neutral[100], lightPalette.surfaces.canvas)).toBeCloseTo(
+      1,
+      5,
+    );
   });
 });

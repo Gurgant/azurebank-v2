@@ -1,3 +1,5 @@
+import { toVarRefs, type WidenedTree } from './cssVariables';
+
 /**
  * Design tokens for AzureBank — and this file is the source of truth, not a derivative of one.
  *
@@ -9,7 +11,7 @@
  * changes here first.
  */
 
-export const colors = {
+const lightColors = {
   /**
    * The legacy brand palette, read directly by component code.
    *
@@ -154,7 +156,7 @@ export const colors = {
  *
  * U7 (dark mode) remaps what is here and nothing else — that is the point of naming it.
  */
-export const surfaces = {
+const lightSurfaces = {
   /** The app's ground. Painted ONCE, by the shell, edge to edge. */
   canvas: '#F3F4F6',
   /**
@@ -168,7 +170,7 @@ export const surfaces = {
   border: '#E5E7EB',
 } as const;
 
-export const shadows = {
+const lightShadows = {
   sm: '0px 1px 2px rgba(0, 0, 0, 0.05)',
   md: '0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06)',
   xl: '0px 20px 25px -5px rgba(0, 0, 0, 0.1), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
@@ -243,7 +245,7 @@ export const transitions = {
 // GRADIENT PRESETS
 // ============================================
 
-export const gradients = {
+const lightGradients = {
   // Dark-to-dark on purpose: white text sits on this, and the logo's cyan #39b8db would drop it to
   // 2.4:1. Both stops come from the brand ramp — index 80 into index 40.
   brand: 'linear-gradient(135deg, #0077B6 0%, #003F64 100%)',
@@ -272,3 +274,38 @@ export const zIndex = {
   tooltip: 1500,
   toast: 1600,
 } as const;
+
+// ============================================
+// THE THEME SEAM  (U7)
+// ============================================
+
+/**
+ * The literal LIGHT values, kept exported because two kinds of caller need real colours rather than
+ * `var()` references: the contrast tests, which compute luminance, and the CSS emitter, which has to
+ * write the numbers down. `darkPalette.ts` mirrors this shape exactly.
+ */
+export const lightPalette = {
+  colors: lightColors,
+  surfaces: lightSurfaces,
+  shadows: lightShadows,
+  gradients: lightGradients,
+} as const;
+
+/**
+ * The palette's SHAPE with its leaves widened to `string`.
+ *
+ * `typeof lightPalette` alone is useless as a contract: `as const` makes every leaf a literal type,
+ * so a dark palette would have to repeat the light hexes to satisfy it. Widening keeps the structural
+ * guarantee that actually matters — same keys, no more, no fewer — which is what makes a missing dark
+ * value a compile error instead of an undefined variable discovered by eye.
+ */
+export type LightPalette = WidenedTree<typeof lightPalette>;
+
+/**
+ * What components import. Identical shape, identical call sites — `colors.brand[60]` still reads as
+ * `colors.brand[60]`; it now resolves through a custom property that the active theme defines.
+ */
+export const colors = toVarRefs(lightColors, ['colors']);
+export const surfaces = toVarRefs(lightSurfaces, ['surfaces']);
+export const shadows = toVarRefs(lightShadows, ['shadows']);
+export const gradients = toVarRefs(lightGradients, ['gradients']);

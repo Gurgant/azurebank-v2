@@ -1,3 +1,149 @@
+/* ===== THEME VARIABLES — GENERATED from src/theme/{tokens,darkPalette}.ts =====
+ *
+ * Checked in rather than injected at runtime, and that is the whole point: a variable set by
+ * JavaScript cannot exist before the first paint, so the user would see a flash of the wrong theme
+ * on every load. A static stylesheet is in place before React is.
+ *
+ * Do NOT hand-edit. `themeVariables.test.ts` regenerates these blocks from the palettes and fails
+ * if they differ, so an edit here without an edit there is caught rather than shipped.
+ * ============================================================================================ */
+
+:root {
+  --ab-colors-brand-10: #001d3d;
+  --ab-colors-brand-20: #002d5e;
+  --ab-colors-brand-30: #003d7f;
+  --ab-colors-brand-40: #003f64;
+  --ab-colors-brand-50: #004c77;
+  --ab-colors-brand-60: #0077b6;
+  --ab-colors-brand-70: #0068a1;
+  --ab-colors-brand-80: #4d99ed;
+  --ab-colors-brand-90: #80b3f2;
+  --ab-colors-brand-100: #b3cdf7;
+  --ab-colors-brand-110: #cce0fa;
+  --ab-colors-brand-120: #e6f0fc;
+  --ab-colors-brand-130: #f0f6fe;
+  --ab-colors-brand-140: #f5faff;
+  --ab-colors-brand-150: #fafcff;
+  --ab-colors-brand-160: #ffffff;
+  --ab-colors-neutral-50: #f9fafb;
+  --ab-colors-neutral-100: #f3f4f6;
+  --ab-colors-neutral-200: #e5e7eb;
+  --ab-colors-neutral-300: #d1d5db;
+  --ab-colors-neutral-400: #9ca3af;
+  --ab-colors-neutral-500: #6b7280;
+  --ab-colors-neutral-600: #4b5563;
+  --ab-colors-neutral-700: #374151;
+  --ab-colors-neutral-800: #1f2937;
+  --ab-colors-neutral-900: #111827;
+  --ab-colors-semantic-success-light: #e6f4ea;
+  --ab-colors-semantic-success-main: #34a853;
+  --ab-colors-semantic-success-dark: #137333;
+  --ab-colors-semantic-error-light: #fce8e6;
+  --ab-colors-semantic-error-main: #ea4335;
+  --ab-colors-semantic-error-dark: #c5221f;
+  --ab-colors-semantic-warning-light: #fef3e2;
+  --ab-colors-semantic-warning-main: #f59e0b;
+  --ab-colors-semantic-warning-dark: #b45309;
+  --ab-colors-semantic-info-light: #e0f2fe;
+  --ab-colors-semantic-info-main: #0ea5e9;
+  --ab-colors-semantic-info-dark: #0369a1;
+  --ab-colors-semantic-onBrand-positive: #e5fcee;
+  --ab-colors-semantic-onBrand-negative: #fff4f4;
+  --ab-colors-transaction-deposit-background: #e6f4ea;
+  --ab-colors-transaction-deposit-foreground: #137333;
+  --ab-colors-transaction-deposit-icon: #34a853;
+  --ab-colors-transaction-withdrawal-background: #fce8e6;
+  --ab-colors-transaction-withdrawal-foreground: #c5221f;
+  --ab-colors-transaction-withdrawal-icon: #ea4335;
+  --ab-colors-transaction-transferOut-background: #fef3e2;
+  --ab-colors-transaction-transferOut-foreground: #b45309;
+  --ab-colors-transaction-transferOut-icon: #f59e0b;
+  --ab-colors-transaction-transferIn-background: #e0f2fe;
+  --ab-colors-transaction-transferIn-foreground: #0369a1;
+  --ab-colors-transaction-transferIn-icon: #0ea5e9;
+  --ab-surfaces-canvas: #f3f4f6;
+  --ab-surfaces-border: #e5e7eb;
+  --ab-shadows-sm: 0px 1px 2px rgba(0, 0, 0, 0.05);
+  --ab-shadows-md: 0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --ab-shadows-xl: 0px 20px 25px -5px rgba(0, 0, 0, 0.1), 0px 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --ab-shadows-brand: 0px 8px 24px rgba(0, 119, 182, 0.3);
+  --ab-gradients-brand: linear-gradient(135deg, #0077b6 0%, #003f64 100%);
+  --ab-gradients-success: linear-gradient(135deg, #e6f4ea 0%, #d4edda 100%);
+  --ab-gradients-error: linear-gradient(135deg, #fce8e6 0%, #fadbd8 100%);
+  --ab-gradients-warning: linear-gradient(135deg, #fef3e2 0%, #fde9cc 100%);
+  --ab-gradients-info: linear-gradient(135deg, #e0f2fe 0%, #d1e4fc 100%);
+  --ab-gradients-primary: linear-gradient(135deg, #e6f0fc 0%, #d1e4fc 100%);
+  --ab-gradients-brandTint: linear-gradient(135deg, #f0f6fe 0%, #e6f0fc 100%);
+}
+
+:root[data-theme='dark'] {
+  --ab-colors-brand-10: #eaf4fb;
+  --ab-colors-brand-20: #d5e9f7;
+  --ab-colors-brand-30: #bedcf2;
+  --ab-colors-brand-40: #9fcaea;
+  --ab-colors-brand-50: #7db6e0;
+  --ab-colors-brand-60: #4c95d1;
+  --ab-colors-brand-70: #67a4db;
+  --ab-colors-brand-80: #2e7fbf;
+  --ab-colors-brand-90: #1b6ca8;
+  --ab-colors-brand-100: #0f5b90;
+  --ab-colors-brand-110: #0b4b78;
+  --ab-colors-brand-120: #083d63;
+  --ab-colors-brand-130: #06304f;
+  --ab-colors-brand-140: #04243c;
+  --ab-colors-brand-150: #03192a;
+  --ab-colors-brand-160: #021019;
+  --ab-colors-neutral-50: #1f1f1f;
+  --ab-colors-neutral-100: #141414;
+  --ab-colors-neutral-200: #3d3d3d;
+  --ab-colors-neutral-300: #525252;
+  --ab-colors-neutral-400: #999999;
+  --ab-colors-neutral-500: #adadad;
+  --ab-colors-neutral-600: #c2c2c2;
+  --ab-colors-neutral-700: #d6d6d6;
+  --ab-colors-neutral-800: #ebebeb;
+  --ab-colors-neutral-900: #ffffff;
+  --ab-colors-semantic-success-light: #12301c;
+  --ab-colors-semantic-success-main: #4cb86a;
+  --ab-colors-semantic-success-dark: #8fe0a6;
+  --ab-colors-semantic-error-light: #3a1512;
+  --ab-colors-semantic-error-main: #f2685c;
+  --ab-colors-semantic-error-dark: #ffa9a1;
+  --ab-colors-semantic-warning-light: #332008;
+  --ab-colors-semantic-warning-main: #f5a623;
+  --ab-colors-semantic-warning-dark: #ffd08a;
+  --ab-colors-semantic-info-light: #0a2a3d;
+  --ab-colors-semantic-info-main: #38b6f0;
+  --ab-colors-semantic-info-dark: #8fd7f7;
+  --ab-colors-semantic-onBrand-positive: #e5fcee;
+  --ab-colors-semantic-onBrand-negative: #fff4f4;
+  --ab-colors-transaction-deposit-background: #12301c;
+  --ab-colors-transaction-deposit-foreground: #8fe0a6;
+  --ab-colors-transaction-deposit-icon: #4cb86a;
+  --ab-colors-transaction-withdrawal-background: #3a1512;
+  --ab-colors-transaction-withdrawal-foreground: #ffa9a1;
+  --ab-colors-transaction-withdrawal-icon: #f2685c;
+  --ab-colors-transaction-transferOut-background: #332008;
+  --ab-colors-transaction-transferOut-foreground: #ffd08a;
+  --ab-colors-transaction-transferOut-icon: #f5a623;
+  --ab-colors-transaction-transferIn-background: #0a2a3d;
+  --ab-colors-transaction-transferIn-foreground: #8fd7f7;
+  --ab-colors-transaction-transferIn-icon: #38b6f0;
+  --ab-surfaces-canvas: #141414;
+  --ab-surfaces-border: #3d3d3d;
+  --ab-shadows-sm: 0px 1px 2px rgba(0, 0, 0, 0.4);
+  --ab-shadows-md: 0px 4px 6px -1px rgba(0, 0, 0, 0.5), 0px 2px 4px -1px rgba(0, 0, 0, 0.4);
+  --ab-shadows-xl: 0px 20px 25px -5px rgba(0, 0, 0, 0.6), 0px 10px 10px -5px rgba(0, 0, 0, 0.4);
+  --ab-shadows-brand: 0px 8px 24px rgba(0, 0, 0, 0.55);
+  --ab-gradients-brand: linear-gradient(135deg, #0077b6 0%, #003f64 100%);
+  --ab-gradients-success: linear-gradient(135deg, #12301c 0%, #0c2415 100%);
+  --ab-gradients-error: linear-gradient(135deg, #3a1512 0%, #2b0f0d 100%);
+  --ab-gradients-warning: linear-gradient(135deg, #332008 0%, #261806 100%);
+  --ab-gradients-info: linear-gradient(135deg, #0a2a3d 0%, #07202e 100%);
+  --ab-gradients-primary: linear-gradient(135deg, #0b2338 0%, #081a2a 100%);
+  --ab-gradients-brandTint: linear-gradient(135deg, #0e2233 0%, #0a1a28 100%);
+}
+
 /* Global Reset for FluentUI */
 *,
 *::before,
