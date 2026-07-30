@@ -70,10 +70,14 @@ match the module, because the failure is silent and specific: change the key on 
 load paints light and corrects itself a frame later — exactly the flash the script exists to prevent,
 looking like a rendering quirk rather than a bug.
 
-**`ThemeProvider` deliberately does not set the attribute on mount.** The script already did. Writing
-it again would make the script look optional, and if this were the only writer every load would paint
-light first. The attribute is rewritten only when the preference CHANGES, which is the one moment the
-script cannot cover.
+**The attribute is written on mount as well, in a `useLayoutEffect`.** The first draft skipped it,
+reasoning that the pre-paint script had already done the job and that repeating the write would make
+the script look optional. That traded one idempotent `setAttribute` for a divergence nothing detects:
+if the script 404s, if another tab writes the preference between `<head>` and mount, or if no script
+ran at all, Fluent takes the stored preference while `<html>` keeps the old attribute and the app
+renders the custom properties in one theme and the component library in the other — silently. The
+script remains load-bearing for the reason it always was: it runs before the paint, and
+`useLayoutEffect` runs before the *next* one, so the correction is never a visible flicker.
 
 **The emitter lowercases hex.** Prettier does that to CSS, and the output is checked in; emitting
 uppercase would leave the formatter and the drift test in permanent disagreement, with whichever ran

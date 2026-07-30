@@ -112,6 +112,20 @@ describe('settings page', () => {
       expect(localStorage.getItem('azurebank.theme')).toBe('dark');
     });
 
+    it('the document agrees with React on load, even when nothing set the attribute', async () => {
+      // The handoff from `public/theme-init.js` to React, and the three ways it can be missed: the
+      // script 404s behind a misconfigured static host, ANOTHER TAB writes the preference between
+      // the head script and this mount, or — as here, and in every test — no script ran at all.
+      // Fluent would take the stored preference while <html> kept whatever the document had, so the
+      // custom properties and the component library would render two different themes at once.
+      localStorage.setItem('azurebank.theme', 'dark');
+
+      await renderSettings();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(screen.getByRole('radio', { name: 'Dark' })).toBeChecked();
+    });
+
     it('going back to System hands the decision to the device', async () => {
       const user = userEvent.setup();
       await renderSettings();

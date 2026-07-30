@@ -7,11 +7,14 @@ import { useThemePreference } from './themePreference';
 /**
  * Owns the preference and hands Fluent the matching theme.
  *
- * It does NOT set the `data-theme` attribute on mount, and that omission is deliberate:
- * `public/theme-init.js` has already done it before the first paint, and repeating the write here
- * would make the pre-paint script look optional. If this were the only writer, every load would
- * paint light first and correct itself — the flash the script exists to prevent. The attribute is
- * written again only when the preference CHANGES, which is the one moment the script cannot cover.
+ * The attribute IS written on mount, and this used to say the opposite. The old reasoning — that
+ * `public/theme-init.js` has already done it, so repeating the write would make the script look
+ * optional — confused a documentation worry with a correctness one. The script stays load-bearing
+ * because it runs BEFORE the paint; the mount write is a `useLayoutEffect` in `useThemePreference`
+ * that costs one idempotent `setAttribute` and closes the case where the two disagree: the script
+ * 404s, another tab wrote the preference in between, or nothing ran it at all. Without it Fluent
+ * takes the stored preference while `<html>` keeps the old attribute, and the app renders two
+ * themes at once with nothing to log.
  *
  * The two themes are the same objects `fluentTheme.ts` has exported since U1; dark has simply been
  * waiting for the palette underneath it to be theme-aware.

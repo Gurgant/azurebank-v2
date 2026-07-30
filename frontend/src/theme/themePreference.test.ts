@@ -97,6 +97,21 @@ describe('theme preference', () => {
    * fallback, never asking the system at all: the script chose light, React chose dark, and the two
    * disagreed in precisely the case the script exists for. Running it makes that a failure.
    */
+  /**
+   * A SOURCE assertion, and the only honest kind available here.
+   *
+   * The mount sync must run before the browser paints, or a corrected theme arrives as a visible
+   * flicker — the exact defect the pre-paint script exists to avoid. jsdom never paints, so
+   * `useEffect` and `useLayoutEffect` are indistinguishable to every behavioural test in this repo:
+   * swapping them leaves all seven settings tests green. Rather than leave the choice unguarded or
+   * pretend a render test covers it, the reason is written down next to the check.
+   */
+  it('syncs the document BEFORE paint, which no behavioural test here can observe', () => {
+    const source = readFileSync('src/theme/themePreference.ts', 'utf8');
+    expect(source).toContain('useLayoutEffect(() => {');
+    expect(source).toContain("document.documentElement.setAttribute('data-theme', resolved)");
+  });
+
   describe('the pre-paint script', () => {
     const runThemeInit = () => new Function(THEME_INIT)();
 

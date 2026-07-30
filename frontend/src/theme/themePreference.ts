@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 
 /**
  * The theme preference, and the one place that knows how it becomes a theme.
@@ -72,6 +72,30 @@ export function useThemePreference() {
     setPreferenceState(next);
     setResolved(applyTheme(next));
   }, []);
+
+  /**
+   * Make the document agree with React, before the browser paints.
+   *
+   * `public/theme-init.js` has normally set this already, and the first version of this hook left it
+   * alone on that reasoning. That was a mistake: it optimised away one idempotent attribute write in
+   * exchange for a divergence with no detection. Three ways the two can disagree at mount —
+   *
+   *  - the script never ran (a 404 behind a misconfigured static host, or any test harness);
+   *  - ANOTHER TAB wrote the preference between the head script and this mount;
+   *  - the stored value changed for any other reason in that window.
+   *
+   * — and in all three Fluent takes the stored preference while `<html>` keeps the old attribute, so
+   * the custom properties and the component library render two different themes at once. There is no
+   * error and nothing logs; it just looks broken.
+   *
+   * `useLayoutEffect`, not `useEffect`: a correction that lands after paint is a visible flicker,
+   * which is the thing the pre-paint script exists to avoid. Writing the attribute only — not
+   * `applyTheme` — because the value came FROM storage and writing it back would be a pointless
+   * round trip that also has to be caught when storage is denied.
+   */
+  useLayoutEffect(() => {
+    document.documentElement.setAttribute('data-theme', resolved);
+  }, [resolved]);
 
   useEffect(() => {
     if (preference !== 'system' || typeof window.matchMedia !== 'function') return;
