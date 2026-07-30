@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` is what makes `env(safe-area-inset-*)` report anything at all: without
+         it the page is laid out inside the safe area already and all four insets are 0, so the app's
+         own inset handling was dead code. With it the page extends edge to edge and the insets
+         become the app's responsibility — see the `--ab-safe-*` block in src/index.css. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 
     <title>AzureBank</title>
     <meta

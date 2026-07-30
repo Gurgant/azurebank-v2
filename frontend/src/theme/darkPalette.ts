@@ -72,6 +72,12 @@ export const darkPalette: LightPalette = {
       hover: '#0077B6',
       pressed: '#004C77',
     },
+    // Identical to light, and that is the finding rather than an oversight: both grounds it sits on
+    // are the same in both themes — `gradients.brand` is byte-identical, and `brandFill.rest` moves
+    // only from #0077B6 to #0068A1. A white veil over the same blue needs no second value. It is
+    // declared anyway because the palette's contract is that every name exists in both themes, and
+    // that contract is what makes a missing dark value a compile error rather than a dark screen.
+    onBrandPlate: 'rgba(255, 255, 255, 0.15)',
     /**
      * Neutrals are anchored to Fluent's dark foregrounds and strokes, so a heading in our palette and
      * a Fluent control's label are the same grey rather than two greys that nearly match.

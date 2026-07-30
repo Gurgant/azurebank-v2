@@ -67,6 +67,22 @@ const lightColors = {
     hover: '#0068A1',
     pressed: '#003F64',
   },
+  /**
+   * A translucent white plate that holds an icon ON a brand ground.
+   *
+   * Translucent by necessity, not by preference: one of its two uses sits on `gradients.brand`, and
+   * a solid token cannot sit on a gradient without banding against one of its stops. That is why
+   * this is the one alpha value in the palette rather than a resolved hex.
+   *
+   * It replaces two literals that differed for no recorded reason — `0.15` on the auth panel's
+   * feature tiles and `0.2` on the dashboard's highlighted quick action — both white, both holding
+   * a white icon, both on the same `#0077B6`. `0.15` is the survivor because the plate is a
+   * container and the ICON is the graphic that has to read: white on the 0.15 plate measures
+   * 3.79:1 against 3.47:1 on the 0.2 one. Both clear the 3:1 that SC 1.4.11 asks of a non-text
+   * graphic, so this is drift removed rather than a contrast defect fixed — the direction was
+   * chosen by which one leaves more headroom.
+   */
+  onBrandPlate: 'rgba(255, 255, 255, 0.15)',
   neutral: {
     50: '#F9FAFB', // Background lightest
     100: '#F3F4F6', // Background light
@@ -295,6 +311,33 @@ export const zIndex = {
   popover: 1400,
   tooltip: 1500,
   toast: 1600,
+} as const;
+
+// ============================================
+// SAFE-AREA INSETS
+// ============================================
+
+/**
+ * The display cutout, as four names.
+ *
+ * Declared in `index.css` rather than here because these are `env()` values, and the point of the
+ * indirection is that a custom property can be OVERRIDDEN from script while `env()` cannot — see
+ * the note there. What this file adds is one place for consumers to import from, in place of the
+ * two inline `env(safe-area-inset-bottom, 0px)` copies that existed before.
+ *
+ * Not part of the palette: they are lengths reported by the device, identical in both themes, and
+ * folding them into `lightPalette` would demand a dark twin for a value that has nothing to do with
+ * light or dark.
+ *
+ * These are ZERO on every browser until `index.html` carries `viewport-fit=cover`. It does; the
+ * `viewportFit` test asserts it does, because without it every consumer below silently reserves
+ * nothing and the bug looks like a device quirk.
+ */
+export const safeArea = {
+  top: 'var(--ab-safe-top)',
+  right: 'var(--ab-safe-right)',
+  bottom: 'var(--ab-safe-bottom)',
+  left: 'var(--ab-safe-left)',
 } as const;
 
 // ============================================

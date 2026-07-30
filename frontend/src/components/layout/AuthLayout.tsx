@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link as FluentLink, makeStyles, Text, tokens } from '@fluentui/react-components';
 import { Link } from 'react-router-dom';
 import { atMedia } from '../../theme/breakpoints';
+import { safeArea } from '../../theme/tokens';
 import { Logo } from '../shared/Logo';
 import { AuthBrandingPanel } from './AuthBrandingPanel';
 
@@ -44,12 +45,22 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: '32px 20px',
+    // Longhands, not the `padding` shorthand, because each side now carries a different amount: the
+    // cutout is on the top and one flank, never uniformly. The `lg` block below can go back to the
+    // shorthand because it expands to all four and, at 1024px and up, every inset is zero anyway —
+    // the widest phone with a cutout is 932 CSS px in landscape.
+    paddingTop: `calc(32px + ${safeArea.top})`,
+    paddingBottom: `calc(32px + ${safeArea.bottom})`,
+    paddingLeft: `calc(20px + ${safeArea.left})`,
+    paddingRight: `calc(20px + ${safeArea.right})`,
     backgroundColor: tokens.colorNeutralBackground1,
     minHeight: '100dvh',
 
     [atMedia.sm]: {
-      padding: '40px 32px',
+      paddingTop: `calc(40px + ${safeArea.top})`,
+      paddingBottom: `calc(40px + ${safeArea.bottom})`,
+      paddingLeft: `calc(32px + ${safeArea.left})`,
+      paddingRight: `calc(32px + ${safeArea.right})`,
     },
     [atMedia.lg]: {
       padding: '64px 48px',

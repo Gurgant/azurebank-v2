@@ -43,10 +43,17 @@ export default defineConfig([
       // the long form, so a bare `` `#fff` `` walked straight through the rule that exists to stop
       // exactly that. Add a shape to one side, add it to the other.
       //
-      // What it still does NOT catch, stated plainly so nobody trusts it further than it goes:
-      // `rgba()` and `hsl()` calls, and a SHORT hex embedded in a longer string. There are 11
-      // `rgba()` literals left in src/ for that reason. Anything that survives this rule is caught
-      // by reading, not by tooling.
+      // The functional notations are caught too, as of the theme-tokens pass. This comment used to
+      // end by admitting the opposite — "what it still does NOT catch: `rgba()` and `hsl()` calls
+      // … there are 11 `rgba()` literals left in src/ for that reason" — and that sentence had gone
+      // stale twice over: the count was down to three, and a hole a rule DOCUMENTS is still a hole.
+      // Those three are now tokens, so the same argument that made the hex rule an error applies
+      // here: the count is zero, so there is nothing to grandfather, and an error at zero is a
+      // closed door rather than noise.
+      //
+      // What it still does not catch, stated plainly so nobody trusts it further than it goes:
+      // named CSS colours (`white`, `tomato`), `color-mix()`, and a SHORT hex embedded in a longer
+      // string. Anything that survives this rule is caught by reading, not by tooling.
       'no-restricted-syntax': [
         'error',
         {
@@ -63,6 +70,16 @@ export default defineConfig([
         },
         {
           selector: "TemplateElement[value.raw=/^#[0-9a-fA-F]{3,4}$/]",
+          message: HEX_MESSAGE,
+        },
+        // Both node types again, and they must stay symmetric — the hex pair above shipped
+        // asymmetric once, and a bare `` `#fff` `` walked through the rule that existed to stop it.
+        {
+          selector: 'Literal[value=/(?:rgba?|hsla?)\\(/]',
+          message: HEX_MESSAGE,
+        },
+        {
+          selector: 'TemplateElement[value.raw=/(?:rgba?|hsla?)\\(/]',
           message: HEX_MESSAGE,
         },
       ],

@@ -5,7 +5,7 @@ import {
   ShieldCheckmark24Regular,
 } from '@fluentui/react-icons';
 import { atMedia } from '../../theme/breakpoints';
-import { gradients } from '../../theme/tokens';
+import { colors, gradients } from '../../theme/tokens';
 import { Logo } from '../shared/Logo';
 
 /**
@@ -104,12 +104,13 @@ const useStyles = makeStyles({
     gap: '14px',
   },
 
-  // The one translucent tint in the app, and it has to be one: a solid token cannot sit on a
-  // gradient without banding against one of its stops. Two copies of this literal became one here.
+  // Translucent by necessity: a solid token cannot sit on a gradient without banding against one of
+  // its stops. That is why `onBrandPlate` is the one alpha value in the palette — and why it is in
+  // the palette at all, rather than spelled out here where no theme can reach it.
   featureTile: {
     width: '42px',
     height: '42px',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: colors.onBrandPlate,
     borderRadius: '10px',
     display: 'flex',
     alignItems: 'center',

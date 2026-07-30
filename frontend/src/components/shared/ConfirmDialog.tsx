@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { makeStyles, mergeClasses, Text, Button, tokens } from '@fluentui/react-components';
 import { Warning24Regular, Dismiss24Regular } from '@fluentui/react-icons';
-import { colors, zIndex, transitions, shadows } from '../../theme/tokens';
+import { colors, safeArea, zIndex, transitions, shadows } from '../../theme/tokens';
 
 // ============================================
 // TYPES
@@ -38,10 +38,19 @@ export interface ConfirmDialogProps {
 // ============================================
 
 const useStyles = makeStyles({
+  /**
+   * The scrim, and this one was not merely un-tokenised — it disagreed.
+   *
+   * Six dialogs in the app use Fluent's `<Dialog>` and get `colorBackgroundOverlay`, which is
+   * `rgba(0,0,0,0.4)` in light and `rgba(0,0,0,0.5)` in dark. This one is hand-rolled and hardcoded
+   * 0.5 for both, so in LIGHT mode the destructive confirmation — delete an account — dimmed the
+   * page harder than every other dialog in the app, and nothing said why. In dark the two happened
+   * to coincide, which is why it never looked like a bug.
+   */
   overlay: {
     position: 'fixed',
     inset: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: tokens.colorBackgroundOverlay,
     zIndex: zIndex.modal,
     opacity: 0,
     visibility: 'hidden',
@@ -49,7 +58,13 @@ const useStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '16px',
+    // `max`, not `+`: this padding is a minimum gap, so on a device with no cutout it stays the
+    // 16px it always was, and on one with a cutout it grows only on the side that has it. Adding
+    // the inset instead would push the dialog 16px further in than intended on every edge.
+    paddingTop: `max(16px, ${safeArea.top})`,
+    paddingBottom: `max(16px, ${safeArea.bottom})`,
+    paddingLeft: `max(16px, ${safeArea.left})`,
+    paddingRight: `max(16px, ${safeArea.right})`,
   },
   overlayOpen: {
     opacity: 1,

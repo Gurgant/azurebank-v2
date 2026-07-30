@@ -101,9 +101,10 @@ const useStyles = makeStyles({
     color: colors.neutral[600],
   },
 
-  // Highlighted icon
+  // Highlighted icon. Was `rgba(255,255,255,0.2)`, one twentieth apart from the auth panel's plate
+  // for no recorded reason; `onBrandPlate` is that role, named once.
   iconHighlighted: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: colors.onBrandPlate,
     color: tokens.colorNeutralForegroundOnBrand,
   },
 
