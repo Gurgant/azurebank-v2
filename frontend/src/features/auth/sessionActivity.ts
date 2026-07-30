@@ -87,6 +87,7 @@ export function learnSessionPolicy(session: {
 export function syncFromProbe(status: {
   serverTime?: string | null;
   inactivityExpiresAt?: string | null;
+  absoluteExpiresAt?: string | null;
 }): void {
   const inactivityExpires = status.inactivityExpiresAt
     ? Date.parse(status.inactivityExpiresAt)
@@ -102,9 +103,27 @@ export function syncFromProbe(status: {
   const remainingMs = inactivityExpires - serverNow;
   lastServerActivity = Date.now() - (policy.inactivityWindowMs - remainingMs);
 
-  // The absolute cap is deliberately NOT re-read here. It is fixed at session creation and never
-  // moves, so the value learned from /bff/auth/me stays correct; re-deriving it from a raw server
-  // timestamp would only reintroduce the clock skew the rest of this module avoids.
+  // The absolute cap IS re-read, but only ever FORWARD.
+  //
+  // It used to be skipped entirely, on the grounds that the cap is fixed at session creation and
+  // never moves. That was true until re-authentication (U6.7, ADR-0026), which replaces the session
+  // and therefore replaces the cap. Without this, one specific sequence signed a user out moments
+  // after they had successfully re-authenticated: the re-auth lands, the follow-up `/me` that would
+  // teach the client the new window fails, the countdown reaches the OLD cap, and the confirming
+  // probe — which can see the new one — refused to look. The same gap covers a second tab that
+  // re-authenticated while this one was idle.
+  //
+  // Monotonic on purpose. A cap that can only move later can never cause an early sign-out, whatever
+  // a stale response or a skewed clock says; the worst it can do is warn late, which the zero
+  // crossing then re-confirms. And the arithmetic stays between two SERVER values, exactly like the
+  // line above, so the local clock is never a term in it.
+  const absoluteExpires = status.absoluteExpiresAt
+    ? Date.parse(status.absoluteExpiresAt)
+    : Number.NaN;
+  if (Number.isFinite(absoluteExpires)) {
+    const candidate = Date.now() + (absoluteExpires - serverNow);
+    if (candidate > policy.absoluteDeadline) policy.absoluteDeadline = candidate;
+  }
 }
 
 /**

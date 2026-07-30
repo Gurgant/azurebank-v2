@@ -365,6 +365,26 @@ export const apiSlice = createApi({
       invalidatesTags: (_result, error) => (error ? [] : ['Session']),
     }),
 
+    /**
+     * U6.7 — re-authenticate at the ABSOLUTE session cap, which cannot be extended.
+     *
+     * Password only: the BFF takes the identity from the session, so this cannot sign anyone in as
+     * somebody else while their page is still on screen.
+     *
+     * `invalidatesTags: ['Session']` is not bookkeeping — it is the whole client-side mechanism.
+     * `AuthBootstrap` holds a live `useGetMeQuery` subscription, so invalidating refetches `/me`,
+     * and a fulfilled `getMe` is the ONE action `sessionMiddleware` learns the session policy from.
+     * That matters because re-authentication moves the absolute deadline, and `syncFromProbe`
+     * deliberately never re-reads it — a `session-status` probe would leave the old cap in place and
+     * the warning would reopen immediately. Pinned by a test, since the mechanism is implicit.
+     */
+    reauthenticate: builder.mutation<BffLoginResponse, { password: string }>({
+      query: (body) => ({ url: '/bff/auth/reauthenticate', method: 'POST', body }),
+      transformResponse: (response: { data?: BffLoginResponse | null }) =>
+        unwrap(response, bffLoginResponseSchema),
+      invalidatesTags: (_result, error) => (error ? [] : ['Session']),
+    }),
+
     getMe: builder.query<BffMeResponse, void>({
       // B3 — the ONE bootstrap probe (D6), and the deliberate "Stay signed in"
       // keep-alive: the BFF counts it as activity.
@@ -464,6 +484,7 @@ export const {
   // BFF auth
   useLoginMutation,
   useRegisterMutation,
+  useReauthenticateMutation,
   useGetMeQuery,
   useLogoutMutation,
   useGetSessionStatusQuery,
