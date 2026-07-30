@@ -83,6 +83,50 @@ describe.each([
     expect(well).toBeLessThan(Math.max(ground, raised));
   });
 
+  /**
+   * The test that was missing, and the shape of the hole it left.
+   *
+   * Every contrast assertion here asked about text on a CARD. Nothing asked about text on a BRAND
+   * FILL — so `brand[60]` could be given a dark value tuned to read AS text (5.73:1 on the canvas)
+   * while white sat on it at 3.22:1, and the suite stayed green. A real browser showed it on the
+   * dashboard's Transfer banner.
+   *
+   * `colorNeutralForegroundOnBrand` is `#ffffff` in BOTH Fluent themes — measured against the live
+   * library, not assumed — so white is the fixed side of this ratio and the fill is the side that
+   * has to move.
+   */
+  it.each(['rest', 'hover', 'pressed'] as const)(
+    'carries white on the brand fill at %s, at 4.5:1 or better',
+    (state) => {
+      expect(contrast(WHITE, colors.brandFill[state])).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  /**
+   * The other half of the split, and the reason one token could not do both: the fill has to be
+   * dark enough for white, while the ramp has to be light enough to READ on the ground. Asserting
+   * both directions is what makes the separation load-bearing rather than cosmetic.
+   */
+  /**
+   * Contrast with white is not the only thing a fill owes.
+   *
+   * A first attempt to falsify the split moved the dark hover DARKER — the light-mode direction —
+   * and every assertion stayed green, because white reads fine on a darker blue. The mutation was
+   * expressing the wrong property: the failure there is not legibility, it is that hover stops
+   * being VISIBLE AS a state change. A hover indistinguishable from rest is a dead affordance, and
+   * nothing else in this suite would notice.
+   */
+  it.each(['hover', 'pressed'] as const)(
+    'makes %s perceptibly different from rest, so the state reads as a state',
+    (state) => {
+      expect(contrast(colors.brandFill[state], colors.brandFill.rest)).toBeGreaterThan(1.15);
+    },
+  );
+
+  it('keeps the brand READABLE on the canvas — the ramp’s job, not the fill’s', () => {
+    expect(contrast(colors.brand[60], surfaces.canvas)).toBeGreaterThanOrEqual(3);
+  });
+
   /** Body text on the card it is printed on. WCAG 1.4.3 AA for normal text. */
   it('prints primary text on the card at 4.5:1 or better', () => {
     expect(contrast(colors.neutral[700], chrome)).toBeGreaterThanOrEqual(4.5);

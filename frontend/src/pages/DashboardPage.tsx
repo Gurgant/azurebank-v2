@@ -324,11 +324,11 @@ const useStyles = makeStyles({
     padding: '18px 20px',
     borderRadius: '14px',
     border: 'none',
-    backgroundColor: colors.brand[60],
+    backgroundColor: colors.brandFill.rest,
     color: tokens.colorNeutralForegroundOnBrand,
     cursor: 'pointer',
     textAlign: 'left',
-    ':hover': { backgroundColor: colors.brand[70] },
+    ':hover': { backgroundColor: colors.brandFill.hover },
     ':focus-visible': { outline: `2px solid ${colors.neutral[900]}`, outlineOffset: '2px' },
   },
 

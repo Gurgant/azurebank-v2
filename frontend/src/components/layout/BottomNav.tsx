@@ -243,7 +243,7 @@ const useStyles = makeStyles({
     width: '40px',
     height: '40px',
     borderRadius: '50%',
-    backgroundColor: colors.brand[60],
+    backgroundColor: colors.brandFill.rest,
     color: tokens.colorNeutralForegroundOnBrand,
     display: 'flex',
     alignItems: 'center',

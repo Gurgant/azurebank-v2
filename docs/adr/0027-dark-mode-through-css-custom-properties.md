@@ -79,6 +79,20 @@ renders the custom properties in one theme and the component library in the othe
 script remains load-bearing for the reason it always was: it runs before the paint, and
 `useLayoutEffect` runs before the *next* one, so the correction is never a visible flicker.
 
+**Amended 2026-07-30, after looking at it: the brand ramp could not carry both of its jobs.**
+`brand[60]` was simultaneously a colour that sits ON surfaces (links, icons, active labels) and a
+surface white text sits on (buttons, the dashboard's Transfer banner). On white those two demands
+coincide; on a dark ground they pull apart, and the dark value chosen for readability —
+`colorBrandForeground1`, 5.73:1 against the canvas — carried white at **3.22:1**, below AA. Measured
+in a real browser, on the most prominent call-to-action in the app.
+
+Every contrast test in the suite asked about text on a CARD, so none of them could see it. The fix is
+a `brandFill` role — `rest / hover / pressed`, dark values taken from Fluent's `colorBrandBackground`
+where light values keep today's pixels — used by the eight fills that carry
+`colorNeutralForegroundOnBrand`, while the ramp keeps the text and stroke role it is actually right
+for. Three decorative marks that carry no text (two active-state rails, the PIN dot) stay on the
+ramp deliberately: they have to read AGAINST a surface, which is the ramp's job.
+
 **The emitter lowercases hex.** Prettier does that to CSS, and the output is checked in; emitting
 uppercase would leave the formatter and the drift test in permanent disagreement, with whichever ran
 last winning.

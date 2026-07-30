@@ -244,13 +244,13 @@ const useStyles = makeStyles({
     borderRadius: '10px',
     border: 'none',
     cursor: 'pointer',
-    backgroundColor: colors.brand[60],
+    backgroundColor: colors.brandFill.rest,
     color: tokens.colorNeutralForegroundOnBrand,
     boxShadow: shadows.sm,
     transition: `background-color ${transitions.fast}`,
 
-    ':hover': { backgroundColor: colors.brand[70] },
-    ':active': { backgroundColor: colors.brand[40] },
+    ':hover': { backgroundColor: colors.brandFill.hover },
+    ':active': { backgroundColor: colors.brandFill.pressed },
     ':focus-visible': {
       outline: `2px solid ${colors.brand[60]}`,
       outlineOffset: '2px',
