@@ -195,6 +195,123 @@ public class BffAuthController : ControllerBase
     }
 
     /// <summary>
+    /// Re-authenticate at the absolute session cap: proves the password, then starts a NEW session.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An absolute cap exists so a session cannot outlive its own start regardless of activity, so
+    /// it is <b>not extendable</b> — a cap you can push is decoration. Reaching it therefore has to
+    /// mint a different session: new id, new cookie, new window, and <c>AuthLevel</c> back to 1 with
+    /// no PIN elevation carried over (<see cref="ISessionService.CreateSession"/> does all four).
+    /// Same user, different object. The PIN is deliberately not accepted as the credential here: it
+    /// is auth level 2 <i>inside</i> a session, and six digits with lockout is a sound second factor
+    /// and an unsound sole credential for creating one.
+    /// </para>
+    /// <para>
+    /// <b>The old session is dropped LOCALLY and the API is never told.</b> Not an oversight — the
+    /// API's <c>/api/auth/logout</c> calls <c>RevokeAllForUserAsync</c>, which revokes <i>every</i>
+    /// refresh token the user holds. Calling it after the new pair is minted would revoke that pair
+    /// too, and the replacement session would die silently the moment its access token needed a
+    /// re-mint; calling it before means a mistyped password ends the session it was trying to save.
+    /// The old refresh token is therefore left to expire on its own, which costs nothing reachable:
+    /// its only copy lived in the session record deleted two lines below, and it was never in the
+    /// browser. The API offers no single-token revoke, so this is the whole option set.
+    /// </para>
+    /// <para>
+    /// <b>Order is load-bearing.</b> Authenticate first, mint second, revoke third. Any earlier
+    /// revocation turns a wrong password into a sign-out — strictly worse than the screen this
+    /// replaces, which at least left the user where they were.
+    /// </para>
+    /// </remarks>
+    [HttpPost("reauthenticate")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    [ProducesResponseType(typeof(ApiResponse<BffLoginResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Reauthenticate([FromBody] BffReauthenticateRequest request)
+    {
+        var session = GetCurrentSession();
+        if (session == null)
+        {
+            // Already gone: there is nothing to re-authenticate INTO, and the client's own 401
+            // handling routes to the login page, which is the correct destination.
+            return Unauthorized(new ProblemDetails
+            {
+                Title = "Unauthorized",
+                Detail = "Session expired or invalid",
+                Status = 401
+            });
+        }
+
+        try
+        {
+            // The email comes from the SESSION, never from the request body — see the request type.
+            var response = await _httpClient.PostAsJsonAsync("/api/auth/login", new LoginRequest
+            {
+                Email = session.UserInfo.Email,
+                Password = request.Password
+            });
+            var content = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // The current session is left completely intact. A wrong password, a lockout or a
+                // rate limit must leave the user exactly where they were, still signed in, still
+                // counting down — free to try again. Forwarding verbatim also means this endpoint
+                // inherits the API's login semantics for nothing: 401 INVALID_CREDENTIALS (which
+                // the client's global 401 rule already exempts from "session expired"), the
+                // AccountLocked answer, and its Retry-After.
+                return ForwardUpstreamError(response, content);
+            }
+
+            var loginResponse = JsonSerializer
+                .Deserialize<ApiResponse<LoginResponse>>(content, JsonOptions)!.Data!;
+
+            var newSessionId = _sessionService.CreateSession(
+                loginResponse.Token,
+                loginResponse.ExpiresAt,
+                loginResponse.RefreshToken,
+                loginResponse.User);
+
+            // Same cookie NAME, so the browser replaces the old value and cannot present the old id
+            // again. Session fixation is handled by construction: CreateSession generates the id.
+            SetSessionCookie(newSessionId);
+
+            _sessionService.RevokeSession(session.SessionId);
+
+            _logger.LogInformation(
+                "User {UserId} re-authenticated at the session cap; a new session was issued",
+                loginResponse.User.Id);
+
+            return Ok(new ApiResponse<BffLoginResponse>
+            {
+                Data = new BffLoginResponse
+                {
+                    User = new UserSessionInfo
+                    {
+                        Id = loginResponse.User.Id,
+                        Email = loginResponse.User.Email,
+                        FirstName = loginResponse.User.FirstName,
+                        LastName = loginResponse.User.LastName,
+                        AzureTag = loginResponse.User.AzureTag,
+                        HasPin = loginResponse.User.HasPin
+                    },
+                    ExpiresAt = loginResponse.ExpiresAt
+                },
+                Message = "Re-authenticated successfully"
+            });
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Failed to connect to backend API");
+            return Problem(
+                title: "Service Unavailable",
+                detail: "Service temporarily unavailable",
+                statusCode: 503);
+        }
+    }
+
+    /// <summary>
     /// Get current user - returns user info and session metadata.
     /// </summary>
     [HttpGet("me")]

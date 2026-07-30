@@ -1477,6 +1477,43 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   );
 });
 
+/**
+ * POST /bff/auth/reauthenticate — U6.7, the absolute cap.
+ *
+ * Models the rule that matters: this does not EXTEND the session, it replaces it. The clock restarts
+ * from now, so `expiresAt` moves — which is the whole point, and the one thing a mock that merely
+ * slid `sessionLastActivity` would get wrong (that is exactly the bug on the screen this replaces).
+ * `authLevel` drops to 1 because a new session cannot inherit a PIN elevation proved to the old one.
+ *
+ * A wrong password leaves the session completely untouched, like the real BFF: it forwards the API's
+ * 401 and never revokes anything, so a typo cannot end the session it was meant to save.
+ */
+const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }) => {
+  const parsed = await readJsonBody(request);
+  if (!parsed) {
+    return badRequestBody(await request.clone().text());
+  }
+  // Checked first, and WITHOUT marking activity: a dead session has nothing to re-authenticate into.
+  if (expireMockSessionIfDue() || !mockState.session) {
+    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  }
+  if ((parsed.body.password as string | undefined) !== MOCK_PASSWORD) {
+    return problem({
+      status: 401,
+      errorCode: 'INVALID_CREDENTIALS',
+      title: 'Unauthorized',
+      detail: 'Invalid email or password',
+    });
+  }
+  mockState.sessionCreatedAt = Date.now();
+  mockState.sessionLastActivity = Date.now();
+  mockState.authLevel = 1;
+  return HttpResponse.json({
+    data: { user: { ...mockState.session }, expiresAt: mockAccessTokenExpiry() },
+    message: 'Re-authenticated successfully',
+  });
+});
+
 const me = http.get('*/bff/auth/me', () => {
   // Expiry is checked BEFORE activity is marked. The other order revives a session that died an
   // hour ago simply because something touched it — which is exactly the bug the real BFF avoids by
@@ -1634,6 +1671,7 @@ export const handlers = [
   setPin,
   login,
   register,
+  reauthenticate,
   me,
   logout,
   sessionStatus,
