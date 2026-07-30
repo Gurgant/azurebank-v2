@@ -65,6 +65,21 @@ function blocksAfter(source: string, anchor: RegExp): string[] {
 const INTERACTIVE_ANCHOR = /':(?:hover|active)':\s*\{/g;
 const RAMP_STATE_SHADE = /backgroundColor:\s*colors\.brand\[(?:40|50|70)\]/;
 
+/**
+ * ANY ramp index as a background — and the reason it is not the rule everywhere.
+ *
+ * Banning the whole ramp from every interactive block was proposed, and it fails on code that is
+ * correct: `AccountsPage` washes two neutral surfaces with `brand[130]` and `brand[140]` on hover,
+ * a faint tint under dark text. Those are not fills, they carry no white text, and rewriting them
+ * to `brandFill.hover` would paint a solid blue tile under a dark label — the exact contrast bug
+ * this PR exists to remove, introduced in the name of consistency.
+ *
+ * The real gap is narrower and worth closing: a shade OUTSIDE 40/50/70 used as a state on a surface
+ * that IS a brand fill would pass the migration guard above. So this pattern applies only inside a
+ * `brandFill` entry, where the role split says every state comes from the fill.
+ */
+const RAMP_BACKGROUND = /backgroundColor:\s*colors\.brand\[/;
+
 /** A `makeStyles` entry: a name at two-space indent, which is the shape every style object has. */
 const STYLE_ENTRY_ANCHOR = /\n {2}\w+: \{/g;
 
@@ -75,6 +90,29 @@ const BRAND_FILL_REST_ALL = new RegExp(BRAND_FILL_REST.source, 'g');
 
 function label(file: string, block: string): string {
   return `${file.slice(file.indexOf('src'))}: ${block.slice(0, 70).replace(/\s+/g, ' ')}…`;
+}
+
+/**
+ * Every `makeStyles` entry that paints a brand fill, with the coverage guard attached.
+ *
+ * The assertion lives in here rather than in one caller because it is a precondition of BOTH rules
+ * below and is tighter than "found something": extraction that captured six of eight entries would
+ * satisfy a `> 0` check while two surfaces went unexamined. Every `brandFill.rest` in the tree must
+ * land inside exactly one extracted entry — which stays true as sites are added, with no number to
+ * update.
+ */
+function brandFillEntries(): { file: string; block: string }[] {
+  let restSites = 0;
+  const entries = sourceFiles(SRC).flatMap((file) => {
+    const source = readFileSync(file, 'utf8');
+    restSites += (source.match(BRAND_FILL_REST_ALL) ?? []).length;
+    return blocksAfter(source, STYLE_ENTRY_ANCHOR)
+      .filter((block) => BRAND_FILL_REST.test(block))
+      .map((block) => ({ file, block }));
+  });
+
+  expect(entries.length).toBe(restSites);
+  return entries;
 }
 
 describe('brand fill adoption', () => {
@@ -121,19 +159,7 @@ describe('brand fill adoption', () => {
    * drift, and the argument that stopped at hover was inconsistent.
    */
   it('gives every interactive brand fill a pressed state, not just a hover', () => {
-    let restSites = 0;
-    const fills = sourceFiles(SRC).flatMap((file) => {
-      const source = readFileSync(file, 'utf8');
-      restSites += (source.match(BRAND_FILL_REST_ALL) ?? []).length;
-      return blocksAfter(source, STYLE_ENTRY_ANCHOR)
-        .filter((block) => BRAND_FILL_REST.test(block))
-        .map((block) => ({ file, block }));
-    });
-
-    // Tighter than "found something", and deliberately so: extraction that captured six of eight
-    // entries would pass a `> 0` guard while two surfaces went unchecked. Every `brandFill.rest` in
-    // the tree must land inside exactly one extracted entry, which stays true as sites are added.
-    expect(fills.length).toBe(restSites);
+    const fills = brandFillEntries();
 
     expect(
       fills
@@ -141,6 +167,26 @@ describe('brand fill adoption', () => {
           ({ block }) => block.includes('brandFill.hover') && !block.includes('brandFill.pressed'),
         )
         .map(({ file, block }) => label(file, block)),
+    ).toEqual([]);
+  });
+
+  /**
+   * Inside a brand fill, the ramp plays no state — at ANY index.
+   *
+   * The rule above names the three shades the migration moved off, which leaves a hole a reviewer
+   * spotted: shade 90, or one added next year, would be drift the guard cannot see. Scoped HERE
+   * rather than applied to every interactive block, because the ramp is legitimately a hover tint on
+   * neutral surfaces (see `RAMP_BACKGROUND`); it is only inside a surface that already declares
+   * itself a fill that a ramp background contradicts the role split.
+   */
+  it('never takes a brand-fill state from the ramp, whatever the index', () => {
+    expect(
+      brandFillEntries()
+        .flatMap(({ file, block }) =>
+          blocksAfter(block, INTERACTIVE_ANCHOR).map((state) => ({ file, state })),
+        )
+        .filter(({ state }) => RAMP_BACKGROUND.test(state))
+        .map(({ file, state }) => label(file, state)),
     ).toEqual([]);
   });
 
