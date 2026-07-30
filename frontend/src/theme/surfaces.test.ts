@@ -123,10 +123,18 @@ describe.each([
     },
   );
 
-  it('keeps the brand READABLE on the canvas — the ramp’s job, not the fill’s', () => {
-    expect(contrast(colors.brand[60], surfaces.canvas)).toBeGreaterThanOrEqual(3);
+  it('keeps the brand READABLE as text on the card, which is the ramp’s job', () => {
+    // 4.5:1, because 26 call sites use this as `color:` on TEXT — links, active nav labels, the
+    // "See all" affordance. An earlier draft asserted 3:1, the non-text threshold, which is right
+    // for the icons that also use it and wrong for the majority.
+    //
+    // Against the CARD rather than the canvas, and that distinction is measured rather than
+    // assumed: brand text lives inside cards, and on the canvas the LIGHT value is 4.42:1 — below
+    // AA. Asserting against the canvas would fail today, which is the useful thing to know: if
+    // brand-coloured text is ever placed directly on the ground, it needs its own value. No such
+    // placement was found; finding one is U8 work, not a blind fix here.
+    expect(contrast(colors.brand[60], chrome)).toBeGreaterThanOrEqual(4.5);
   });
-
   /** Body text on the card it is printed on. WCAG 1.4.3 AA for normal text. */
   it('prints primary text on the card at 4.5:1 or better', () => {
     expect(contrast(colors.neutral[700], chrome)).toBeGreaterThanOrEqual(4.5);
