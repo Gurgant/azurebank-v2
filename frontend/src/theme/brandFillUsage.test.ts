@@ -31,29 +31,79 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** `':hover': { … }` / `':active': { … }` — non-greedy to the first closing brace. */
-const INTERACTIVE_BLOCK = /':(?:hover|active)':\s*\{[^}]*\}/g;
+/**
+ * Balanced-brace extraction, and it replaces a regex that was quietly wrong.
+ *
+ * The first version matched `\{[^}]*\}` — everything up to the FIRST closing brace. That is not a
+ * style block whenever one contains a nested brace, and one does today:
+ *
+ *     ':hover': {
+ *       border: `2px dashed ${colors.brand[60]}`,
+ *       backgroundColor: colors.brand[140],   // ← past the `}` of the interpolation
+ *     }
+ *
+ * The scan stopped at the template literal and never saw the `backgroundColor` line. Had that value
+ * been a ramp STATE shade, the test would have passed while the drift stood — the same "reported a
+ * clean number without looking" failure this file was written to end, one layer down. Counting
+ * blocks cannot detect it either, since a truncated match is still a match; only reading to the
+ * matching brace does.
+ */
+function blocksAfter(source: string, anchor: RegExp): string[] {
+  return [...source.matchAll(anchor)].map((match) => {
+    let index = match.index + match[0].length;
+    let depth = 1;
+    while (index < source.length && depth > 0) {
+      if (source[index] === '{') depth += 1;
+      else if (source[index] === '}') depth -= 1;
+      index += 1;
+    }
+    return source.slice(match.index, index);
+  });
+}
+
+/** `':hover': {` / `':active': {` — the opening brace only; `blocksAfter` finds its partner. */
+const INTERACTIVE_ANCHOR = /':(?:hover|active)':\s*\{/g;
 const RAMP_STATE_SHADE = /backgroundColor:\s*colors\.brand\[(?:40|50|70)\]/;
 
-/**
- * A style object that paints a brand fill, from its `rest` to the closing brace of its outermost
- * block. Greedy to the two-space `},` that ends a `makeStyles` entry, which is the shape every
- * style object in this codebase has.
- */
-const BRAND_FILL_BLOCK = /backgroundColor:\s*colors\.brandFill\.rest[\s\S]*?\n {2}\},/g;
+/** A `makeStyles` entry: a name at two-space indent, which is the shape every style object has. */
+const STYLE_ENTRY_ANCHOR = /\n {2}\w+: \{/g;
+
+// Two objects for one pattern, because a `/g` regex carries `lastIndex` between `.test()` calls and
+// would answer true, false, true down the list — a self-inflicted version of this file's own theme.
+const BRAND_FILL_REST = /backgroundColor:\s*colors\.brandFill\.rest/;
+const BRAND_FILL_REST_ALL = new RegExp(BRAND_FILL_REST.source, 'g');
+
+function label(file: string, block: string): string {
+  return `${file.slice(file.indexOf('src'))}: ${block.slice(0, 70).replace(/\s+/g, ' ')}…`;
+}
 
 describe('brand fill adoption', () => {
+  it('reads a style block to its matching brace, not to the first one', () => {
+    // The falsifier for the bug above, kept as a fixture rather than pointed at a real file: the
+    // corpus can lose its only nested block without anyone noticing, and then the guarantee would
+    // silently stop being tested.
+    const [block] = blocksAfter(
+      "  a: {\n    ':hover': {\n      border: `1px ${x.y}`,\n      backgroundColor: colors.brand[50],\n    },\n  },",
+      INTERACTIVE_ANCHOR,
+    );
+
+    expect(RAMP_STATE_SHADE.test(block)).toBe(true);
+  });
+
   it('takes every interactive state from brandFill, never from the ramp', () => {
-    const offenders = sourceFiles(SRC).flatMap((file) => {
-      const blocks = readFileSync(file, 'utf8').match(INTERACTIVE_BLOCK) ?? [];
-      return blocks
-        .filter((block) => RAMP_STATE_SHADE.test(block))
-        .map((block) => `${file.slice(file.indexOf('src'))}: ${block.replace(/\s+/g, ' ')}`);
-    });
+    const blocks = sourceFiles(SRC).flatMap((file) =>
+      blocksAfter(readFileSync(file, 'utf8'), INTERACTIVE_ANCHOR).map((block) => ({ file, block })),
+    );
+
+    // Non-vacuity, first: a scan that matched nothing would report no offenders just as loudly as a
+    // clean one. There are 43 today; the floor only has to prove the extractor still finds blocks.
+    expect(blocks.length).toBeGreaterThan(20);
 
     // Named rather than counted: a failure should say WHICH site regressed, since the whole point
     // is that the last one was invisible to a search that returned a number.
-    expect(offenders).toEqual([]);
+    expect(
+      blocks.filter(({ block }) => RAMP_STATE_SHADE.test(block)).map((b) => label(b.file, b.block)),
+    ).toEqual([]);
   });
 
   /**
@@ -71,25 +121,32 @@ describe('brand fill adoption', () => {
    * drift, and the argument that stopped at hover was inconsistent.
    */
   it('gives every interactive brand fill a pressed state, not just a hover', () => {
-    const offenders = sourceFiles(SRC).flatMap((file) => {
+    let restSites = 0;
+    const fills = sourceFiles(SRC).flatMap((file) => {
       const source = readFileSync(file, 'utf8');
-      const blocks = source.match(BRAND_FILL_BLOCK) ?? [];
-      return blocks
-        .filter(
-          (block) => block.includes('brandFill.hover') && !block.includes('brandFill.pressed'),
-        )
-        .map(
-          (block) =>
-            `${file.slice(file.indexOf('src'))}: ${block.slice(0, 60).replace(/\s+/g, ' ')}…`,
-        );
+      restSites += (source.match(BRAND_FILL_REST_ALL) ?? []).length;
+      return blocksAfter(source, STYLE_ENTRY_ANCHOR)
+        .filter((block) => BRAND_FILL_REST.test(block))
+        .map((block) => ({ file, block }));
     });
 
-    expect(offenders).toEqual([]);
+    // Tighter than "found something", and deliberately so: extraction that captured six of eight
+    // entries would pass a `> 0` guard while two surfaces went unchecked. Every `brandFill.rest` in
+    // the tree must land inside exactly one extracted entry, which stays true as sites are added.
+    expect(fills.length).toBe(restSites);
+
+    expect(
+      fills
+        .filter(
+          ({ block }) => block.includes('brandFill.hover') && !block.includes('brandFill.pressed'),
+        )
+        .map(({ file, block }) => label(file, block)),
+    ).toEqual([]);
   });
 
   it('finds files at all, so an empty pass cannot come from an empty scan', () => {
-    // The guard the assertion above needs: a broken path would make it vacuously green, which is
-    // the same failure mode as the grep it replaces.
+    // The guard the assertions above need: a broken path would make them vacuously green, which is
+    // the same failure mode as the grep this file replaces.
     expect(sourceFiles(SRC).length).toBeGreaterThan(50);
   });
 });
