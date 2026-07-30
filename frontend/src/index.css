@@ -168,6 +168,13 @@
  * The `0px` fallback is not decoration: without `viewport-fit=cover` in the viewport meta — which is
  * in `index.html`, and without which all four of these are 0 no matter what the device is — a UA
  * that knows nothing of `env()` would drop the whole declaration.
+ *
+ * A reviewer asked for an `@supports` guard on top of that, on the grounds that a browser with
+ * custom properties but WITHOUT `env()` would substitute an unparseable token into each consumer and
+ * invalidate the padding outright. The mechanism is real; the browser is not. `env()` shipped in
+ * Chrome 69, Safari 11.2 and Firefox 65, and this app's layout already depends on `dvh` — Chrome
+ * 108, Safari 15.4, Firefox 101. Every browser that can render the shell at all supports `env()`,
+ * so the guard would protect a configuration that cannot reach this stylesheet.
  * ========================================================================================== */
 :root {
   --ab-safe-top: env(safe-area-inset-top, 0px);
