@@ -1,10 +1,19 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { makeStyles, Text, Button, Badge, tokens } from '@fluentui/react-components';
+import { useTheme } from '../theme/themeContext';
+import type { ThemePreference } from '../theme/themePreference';
+import {
+  makeStyles,
+  Text,
+  Button,
+  Badge,
+  Radio,
+  RadioGroup,
+  tokens,
+} from '@fluentui/react-components';
 import {
   LockClosed24Regular,
   Alert24Regular,
-  WeatherMoon24Regular,
   Globe24Regular,
   Link24Regular,
   SignOut24Regular,
@@ -32,12 +41,6 @@ const COMING_SOON = [
     icon: <Alert24Regular />,
     title: 'Notifications',
     subtitle: 'Push, email, and SMS preferences',
-  },
-  {
-    id: 'appearance',
-    icon: <WeatherMoon24Regular />,
-    title: 'Dark mode',
-    subtitle: 'Switch to a dark theme',
   },
   {
     id: 'language',
@@ -277,6 +280,7 @@ const useStyles = makeStyles({
  */
 export function SettingsPage() {
   const styles = useStyles();
+  const { preference, resolved, setPreference } = useTheme();
   const navigate = useNavigate();
   const [logout] = useLogoutMutation();
   const showProblem = useProblemToast();
@@ -357,6 +361,36 @@ export function SettingsPage() {
               Change
             </Button>
           </div>
+        </div>
+      </section>
+
+      {/* ===== Appearance ===== */}
+      <section className={styles.card}>
+        <div className={styles.cardHeader}>
+          <Text className={styles.cardTitle}>Appearance</Text>
+        </div>
+        <div className={styles.cardBody}>
+          {/*
+            Three options, not a switch. "Follow the system" is a real answer rather than the absence
+            of one — a user who has never chosen wants their OS honoured, and a user who picked light
+            on a dark machine wants that kept. A two-state toggle cannot tell those apart, and the
+            one that loses is the person whose OS switches at sunset.
+          */}
+          <RadioGroup
+            layout="horizontal"
+            value={preference}
+            onChange={(_, data) => setPreference(data.value as ThemePreference)}
+            aria-label="Theme"
+          >
+            <Radio value="system" label="System" />
+            <Radio value="light" label="Light" />
+            <Radio value="dark" label="Dark" />
+          </RadioGroup>
+          <Text className={styles.comingSubtitle}>
+            {preference === 'system'
+              ? `Following your device, which is currently ${resolved}.`
+              : 'This device will stay on your choice.'}
+          </Text>
         </div>
       </section>
 

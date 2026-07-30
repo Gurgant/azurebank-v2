@@ -47,7 +47,11 @@ describe('settings page', () => {
   it('lists future settings as honest "Coming soon" rows', async () => {
     await renderSettings();
     expect(screen.getByText('Password & two-factor')).toBeInTheDocument();
-    expect(screen.getAllByText('Coming soon').length).toBeGreaterThanOrEqual(5);
+    expect(screen.getAllByText('Coming soon').length).toBeGreaterThanOrEqual(4);
+    // Dark mode used to be one of them. The row is gone because the feature arrived (U7), and this
+    // asserts the promise was REDEEMED rather than merely deleted — the control below is real.
+    expect(screen.queryByText('Dark mode')).not.toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument();
   });
 
   it('renames the public handle; a getMe refetch reflects the new one', async () => {
@@ -82,5 +86,57 @@ describe('settings page', () => {
 
     expect(await screen.findByText('That handle is already taken.')).toBeInTheDocument();
     expect(screen.getByText(`@${MOCK_USER.azureTag}`)).toBeInTheDocument(); // handle unchanged
+  });
+
+  /*
+    U7 — the toggle is the whole point of the section, so what is asserted is the EFFECT on the
+    document, not that a radio became checked. A control that changes its own state and nothing else
+    is exactly the failure mode the "Coming soon" badge was honest about.
+  */
+  describe('appearance', () => {
+    afterEach(() => {
+      localStorage.clear();
+      document.documentElement.removeAttribute('data-theme');
+    });
+
+    it('switches the document to dark and remembers the choice', async () => {
+      const user = userEvent.setup();
+      await renderSettings();
+
+      await user.click(screen.getByRole('radio', { name: 'Dark' }));
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      // Persisted as the PREFERENCE, not as the resolved theme: "dark" chosen explicitly and "dark"
+      // because the machine is dark are different states, and only the first should survive the
+      // machine changing its mind.
+      expect(localStorage.getItem('azurebank.theme')).toBe('dark');
+    });
+
+    it('the document agrees with React on load, even when nothing set the attribute', async () => {
+      // The handoff from `public/theme-init.js` to React, and the three ways it can be missed: the
+      // script 404s behind a misconfigured static host, ANOTHER TAB writes the preference between
+      // the head script and this mount, or — as here, and in every test — no script ran at all.
+      // Fluent would take the stored preference while <html> kept whatever the document had, so the
+      // custom properties and the component library would render two different themes at once.
+      localStorage.setItem('azurebank.theme', 'dark');
+
+      await renderSettings();
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(screen.getByRole('radio', { name: 'Dark' })).toBeChecked();
+    });
+
+    it('going back to System hands the decision to the device', async () => {
+      const user = userEvent.setup();
+      await renderSettings();
+
+      await user.click(screen.getByRole('radio', { name: 'Dark' }));
+      await user.click(screen.getByRole('radio', { name: 'System' }));
+
+      expect(localStorage.getItem('azurebank.theme')).toBe('system');
+      // jsdom reports no `matchMedia`, which `systemPrefersDark` treats as "not dark" — the same
+      // conservative branch a browser without the query would take.
+      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    });
   });
 });

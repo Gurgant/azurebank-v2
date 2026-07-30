@@ -2,9 +2,8 @@ import type { PropsWithChildren, ReactElement } from 'react';
 import { configureStore } from '@reduxjs/toolkit';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
-import { FluentProvider } from '@fluentui/react-components';
 import { render, type RenderOptions } from '@testing-library/react';
-import { azureBankLightTheme } from '../theme/fluentTheme';
+import { ThemeProvider } from '../theme/ThemeProvider';
 import { authReducer } from '../features/auth/authSlice';
 import { sessionMiddleware } from '../features/auth/sessionMiddleware';
 import { apiSlice } from '../features/api/apiSlice';
@@ -43,11 +42,11 @@ export function renderWithProviders(ui: ReactElement, options: ProvidersOptions 
 
   function Wrapper({ children }: PropsWithChildren) {
     return (
-      <FluentProvider theme={azureBankLightTheme}>
+      <ThemeProvider>
         <Provider store={store}>
           <MemoryRouter initialEntries={routerEntries}>{children}</MemoryRouter>
         </Provider>
-      </FluentProvider>
+      </ThemeProvider>
     );
   }
 

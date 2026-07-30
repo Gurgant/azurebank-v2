@@ -1,8 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { FluentProvider } from '@fluentui/react-components';
 import { Provider } from 'react-redux';
 import { store } from './app/store';
-import { azureBankLightTheme } from './theme';
+import { ThemeProvider } from './theme/ThemeProvider';
 import { AppToaster } from './components/feedback';
 import { AuthBootstrap, SessionExpiryWarning, StepUpModal } from './features/auth';
 import { ProtectedRoute, ProtectedShell, ShellOrBare } from './components/layout';
@@ -27,7 +26,7 @@ import {
 function App() {
   return (
     <Provider store={store}>
-      <FluentProvider theme={azureBankLightTheme}>
+      <ThemeProvider>
         <AppToaster />
         <AuthBootstrap />
         <SessionExpiryWarning />
@@ -134,7 +133,7 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
-      </FluentProvider>
+      </ThemeProvider>
     </Provider>
   );
 }

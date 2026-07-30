@@ -5,7 +5,10 @@
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
+    // "node" is here for the TESTS, not the app: `themeVariables.test.ts` reads the checked-in
+    // stylesheet to prove it still matches the palettes that generate it, and `?raw` returns an
+    // empty string under Vitest because `.css` imports are stubbed whatever the query says.
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "node"],
     "skipLibCheck": true,
 
     /* Bundler mode */

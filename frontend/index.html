@@ -30,6 +30,13 @@
          plate ever made brand-coloured, this line would have to change with it or the icon would
          dissolve into the bar it sits on. -->
     <meta name="theme-color" content="#0077b6" />
+
+    <!-- Decides light or dark BEFORE the first paint, so a dark-mode user never sees a white flash.
+         A blocking classic script in <head> runs before the body is parsed; the bundled module
+         cannot, whatever it does, because it is fetched after the document. It is an external file
+         rather than an inline block because the BFF serves `script-src 'self'` with no
+         `unsafe-inline` — inline would work under Vite and be refused in production. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
