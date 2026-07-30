@@ -51,6 +51,67 @@ describe('compareMinWidthMediaQueries', () => {
       -Math.sign(compareMinWidthMediaQueries(b, a)),
     );
   });
+
+  /**
+   * Transitivity, over every triple — and the reason it is checked exhaustively rather than by
+   * example.
+   *
+   * The first version of this comparator compared numerically when BOTH queries carried a width and
+   * fell back to the string comparison otherwise, which looks reasonable and contains a cycle:
+   * `480px < 1024px` by width, `1024px < 2rem` as text, `2rem < 480px` as text. A comparator with a
+   * cycle defines no order at all, so placement goes back to depending on insertion — the exact bug
+   * one level down. The app emits no `rem` query today, which is why the cycle was reachable only in
+   * principle; "not reachable yet" is not a property to build a cascade on.
+   *
+   * A hand-picked triple would only ever catch the cycle someone thought of. This checks all of
+   * them, including the shapes that provoked it.
+   */
+  it('never contradicts itself, over every triple of the shapes it can meet', () => {
+    const shapes = [
+      ...QUERIES,
+      '(min-width: 480px)', // a duplicate, so ties are exercised
+      '(min-width: 2rem)',
+      '(min-width: 40em)',
+      '(forced-colors: active)',
+      'screen and (prefers-reduced-motion: reduce)',
+      'print',
+    ];
+
+    const cycles = shapes.flatMap((x) =>
+      shapes.flatMap((y) =>
+        shapes
+          .filter(
+            (z) =>
+              compareMinWidthMediaQueries(x, y) < 0 &&
+              compareMinWidthMediaQueries(y, z) < 0 &&
+              compareMinWidthMediaQueries(z, x) < 0,
+          )
+          .map((z) => `${x} < ${y} < ${z} < ${x}`),
+      ),
+    );
+
+    expect(cycles).toEqual([]);
+  });
+
+  it('is antisymmetric, so no pair disagrees with itself either', () => {
+    const shapes = [...QUERIES, '(min-width: 2rem)', '(forced-colors: active)', 'print'];
+
+    // Summed rather than negated, and that is not stylistic: comparing a query with itself gives 0,
+    // `-Math.sign(0)` is `-0`, and `toBe` is `Object.is`, under which `0` and `-0` differ. The first
+    // run failed on exactly that — the comparator was right and the assertion was wrong.
+    const disagreements = shapes.flatMap((x) =>
+      shapes
+        .filter(
+          (y) =>
+            Math.sign(compareMinWidthMediaQueries(x, y)) +
+              Math.sign(compareMinWidthMediaQueries(y, x)) !==
+            0,
+        )
+        .map((y) => `${x} vs ${y}`),
+    );
+
+    expect(disagreements).toEqual([]);
+  });
 });
 
 const useFixtureStyles = makeStyles({

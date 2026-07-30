@@ -26,18 +26,27 @@
 const MIN_WIDTH = /\(min-width:\s*(\d+)px\)/;
 
 /**
- * Ascending by min-width; everything else keeps Griffel's own ordering.
+ * Two classes, then a rule inside each — and it has to be shaped that way to be an ORDER.
  *
- * The fallback is deliberate and is the reason this is a comparator rather than a numeric sort.
- * The media bucket is shared with Fluent, which emits `(forced-colors: active)` and
- * `screen and (prefers-reduced-motion: reduce)` into it. Those have no width to compare and no
- * relationship to ours, so imposing an order on them would be inventing a cascade for rules whose
- * current order is already correct. Delegating to the default keeps this change scoped to the one
- * thing that is provably wrong.
+ * The obvious version compares numerically when both queries carry a min-width and falls back to
+ * the string comparison otherwise. That is not transitive, and the cycle is easy to write down:
+ * `480px < 1024px` numerically, `1024px < 2rem` as strings, and `2rem < 480px` as strings. A
+ * comparator with a cycle has no defined result — the placement would go back to depending on
+ * insertion order, which is the bug this file exists to remove, reintroduced one level down.
+ * (On the six queries this app actually emits today there is no cycle; a `rem` breakpoint would
+ * create one, and "no cycle yet" is not a property worth relying on.)
  *
- * Min-width only is not a limitation here — `breakpoints.ts` states it as a design decision, so a
- * max-width query would be a departure from that rule, and this comparator is not the place to
- * quietly accommodate one.
+ * So width queries form one class ordered by width, everything else forms another ordered as
+ * before, and the classes never interleave. Transitive by construction.
+ *
+ * The non-width class sorts FIRST, and that is chosen to preserve today's behaviour rather than to
+ * improve on it: the media bucket is shared with Fluent, whose `(forced-colors: active)` block
+ * already lands ahead of every `(min-width: …)` sheet under the default comparator, purely because
+ * `'f' < 'm'`. Keeping it there means this change moves exactly the sheets it was written to move.
+ *
+ * Min-width only is not a limitation — `breakpoints.ts` states it as a design decision, so a
+ * max-width query would be a departure from that rule, and this is not the place to quietly
+ * accommodate one.
  */
 export function compareMinWidthMediaQueries(a: string, b: string): number {
   const widthA = MIN_WIDTH.exec(a);
@@ -46,6 +55,11 @@ export function compareMinWidthMediaQueries(a: string, b: string): number {
   if (widthA && widthB) {
     return Number(widthA[1]) - Number(widthB[1]);
   }
+
+  // One of them has a width and the other does not: the classes are separated here, never compared
+  // on their text, which is precisely what would let a cycle form.
+  if (widthA) return 1;
+  if (widthB) return -1;
 
   return a < b ? -1 : a > b ? 1 : 0;
 }

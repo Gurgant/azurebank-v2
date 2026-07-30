@@ -74,12 +74,16 @@ export default defineConfig([
         },
         // Both node types again, and they must stay symmetric — the hex pair above shipped
         // asymmetric once, and a bare `` `#fff` `` walked through the rule that existed to stop it.
+        //
+        // The `i` flag is load-bearing rather than tidy: CSS function names are case-insensitive, so
+        // `RGBA(0, 0, 0, 0.5)` is exactly as valid as the lowercase form. Without the flag it walked
+        // through — verified, not assumed, by putting one back and getting zero errors.
         {
-          selector: 'Literal[value=/(?:rgba?|hsla?)\\(/]',
+          selector: 'Literal[value=/(?:rgba?|hsla?)\\(/i]',
           message: HEX_MESSAGE,
         },
         {
-          selector: 'TemplateElement[value.raw=/(?:rgba?|hsla?)\\(/]',
+          selector: 'TemplateElement[value.raw=/(?:rgba?|hsla?)\\(/i]',
           message: HEX_MESSAGE,
         },
       ],
