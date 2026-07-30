@@ -60,9 +60,12 @@ const useStyles = makeStyles({
 
   // Highlighted (primary action)
   highlighted: {
-    backgroundColor: colors.brand[60],
+    backgroundColor: colors.brandFill.rest,
     ':hover': {
-      backgroundColor: colors.brand[40],
+      backgroundColor: colors.brandFill.hover,
+    },
+    ':active': {
+      backgroundColor: colors.brandFill.pressed,
     },
   },
 

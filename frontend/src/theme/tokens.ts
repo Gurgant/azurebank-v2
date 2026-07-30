@@ -45,6 +45,28 @@ const lightColors = {
     150: '#FAFCFF',
     160: '#FFFFFF',
   },
+  /**
+   * The brand as a FILL — a surface white text sits on, not a colour that sits on a surface.
+   *
+   * `brand[60]` was doing both, and in one theme that is invisible: on white, the same blue reads
+   * as a link AND carries white text at 4.87:1. On a dark ground the two jobs pull apart — a blue
+   * light enough to read as text (5.73:1 on the canvas) is too light to put white on (3.22:1,
+   * below AA). Measured on the dashboard's Transfer banner in a real browser; nothing in the suite
+   * could see it, because every contrast test asked about text on CARDS.
+   *
+   * Fluent has kept these separate all along — `colorBrandBackground` vs `colorBrandForeground1` —
+   * and the dark values below are exactly those. The numeric ramp stays the TEXT and STROKE role,
+   * which is what its remaining call sites use it for.
+   *
+   * `hover` is a step DARKER than rest in light and a step LIGHTER in dark, which is the direction
+   * each ground makes legible. Three call sites previously hovered to `brand[40]` — the pressed
+   * shade, nearly black — so unifying here also stops a hover that dived two steps.
+   */
+  brandFill: {
+    rest: '#0077B6',
+    hover: '#0068A1',
+    pressed: '#003F64',
+  },
   neutral: {
     50: '#F9FAFB', // Background lightest
     100: '#F3F4F6', // Background light

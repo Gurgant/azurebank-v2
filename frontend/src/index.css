@@ -25,6 +25,9 @@
   --ab-colors-brand-140: #f5faff;
   --ab-colors-brand-150: #fafcff;
   --ab-colors-brand-160: #ffffff;
+  --ab-colors-brandFill-rest: #0077b6;
+  --ab-colors-brandFill-hover: #0068a1;
+  --ab-colors-brandFill-pressed: #003f64;
   --ab-colors-neutral-50: #f9fafb;
   --ab-colors-neutral-100: #f3f4f6;
   --ab-colors-neutral-200: #e5e7eb;
@@ -93,6 +96,9 @@
   --ab-colors-brand-140: #04243c;
   --ab-colors-brand-150: #03192a;
   --ab-colors-brand-160: #021019;
+  --ab-colors-brandFill-rest: #0068a1;
+  --ab-colors-brandFill-hover: #0077b6;
+  --ab-colors-brandFill-pressed: #004c77;
   --ab-colors-neutral-50: #1f1f1f;
   --ab-colors-neutral-100: #141414;
   --ab-colors-neutral-200: #3d3d3d;

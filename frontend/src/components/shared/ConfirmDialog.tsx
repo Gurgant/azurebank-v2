@@ -165,11 +165,14 @@ const useStyles = makeStyles({
   },
 
   confirmButtonDefault: {
-    backgroundColor: colors.brand[60],
+    backgroundColor: colors.brandFill.rest,
     color: tokens.colorNeutralForegroundOnBrand,
     border: 'none',
     ':hover': {
-      backgroundColor: colors.brand[40],
+      backgroundColor: colors.brandFill.hover,
+    },
+    ':active': {
+      backgroundColor: colors.brandFill.pressed,
     },
   },
 

@@ -62,6 +62,17 @@ export const darkPalette: LightPalette = {
       160: '#021019',
     },
     /**
+     * Taken straight from Fluent's dark `colorBrandBackground`, which is what a brand FILL is for.
+     * White on `#0068A1` measures 6.01:1; white on the ramp's `#4C95D1` measures 3.22:1 — which is
+     * what shipped, and what a real browser showed on the dashboard's Transfer banner. `hover` goes
+     * LIGHTER here, the direction that reads on a dark ground, and white still clears AA at 4.87:1.
+     */
+    brandFill: {
+      rest: '#0068A1',
+      hover: '#0077B6',
+      pressed: '#004C77',
+    },
+    /**
      * Neutrals are anchored to Fluent's dark foregrounds and strokes, so a heading in our palette and
      * a Fluent control's label are the same grey rather than two greys that nearly match.
      */
