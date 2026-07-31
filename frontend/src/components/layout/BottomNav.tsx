@@ -2,7 +2,15 @@ import { useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components';
 import { ChevronDown24Regular, ChevronUp24Regular, SignOut24Regular } from '@fluentui/react-icons';
-import { colors, componentSizes, surfaces, zIndex, transitions, shadows } from '../../theme/tokens';
+import {
+  colors,
+  componentSizes,
+  safeArea,
+  surfaces,
+  zIndex,
+  transitions,
+  shadows,
+} from '../../theme/tokens';
 import {
   NAV_PLACES,
   TRANSFER_ACTION,
@@ -43,8 +51,12 @@ const useStyles = makeStyles({
     borderTopLeftRadius: '22px',
     borderTopRightRadius: '22px',
     // Internal padding, not an outer inset: the card's surface reaches under the home indicator
-    // while its contents stay clear of it.
-    paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+    // while its contents stay clear of it. The horizontal pair is the same idea one rotation on —
+    // in landscape the cutout eats into one side, and a bar pinned `left: 0; right: 0` puts a tab
+    // under it. Both were written as literal `env()` before; they are one named thing now.
+    paddingBottom: safeArea.bottom,
+    paddingLeft: safeArea.left,
+    paddingRight: safeArea.right,
     borderTop: `1px solid ${surfaces.border}`,
     // Clips the utility row's corners to the card's radius when it opens.
     overflow: 'hidden',

@@ -1,5 +1,5 @@
 import { makeStyles, mergeClasses } from '@fluentui/react-components';
-import { componentSizes, surfaces } from '../../theme/tokens';
+import { componentSizes, safeArea, surfaces } from '../../theme/tokens';
 import { useResponsive } from '../../hooks/useResponsive';
 import { BottomNav } from './BottomNav';
 import { Sidebar } from './Sidebar';
@@ -58,12 +58,30 @@ export interface AppLayoutProps {
  */
 const useStyles = makeStyles({
   // Mobile layout
+  /**
+   * The shell takes the display cutout, so no page has to.
+   *
+   * `viewport-fit=cover` lets the document reach the physical edges, which is what makes the bottom
+   * bar's inset mean anything — and hands this box the other three sides. The insets are padding
+   * rather than margin on purpose: the canvas still paints edge to edge, under the status bar and
+   * behind the cutout, and only the CONTENT steps clear. `mobileContent` has no horizontal padding
+   * of its own (pages supply theirs), so in landscape this is the only thing between a page and the
+   * notch.
+   *
+   * The desktop container below deliberately gets none of this. The insets are non-zero only on
+   * phones with a cutout, and the widest of those is 932 CSS px in landscape — the desktop layout
+   * starts at 1024 and never renders there. Adding it anyway would be four declarations that can
+   * only ever compute to zero.
+   */
   mobileContainer: {
     display: 'flex',
     flexDirection: 'column',
     minHeight: '100dvh',
     width: '100%',
     backgroundColor: surfaces.canvas,
+    paddingTop: safeArea.top,
+    paddingLeft: safeArea.left,
+    paddingRight: safeArea.right,
   },
 
   mobileContent: {
@@ -74,14 +92,23 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     // See `desktopContent`: this is the containment that `overflowY: 'auto'` was silently providing.
     overflowX: 'auto',
-    // The bar floats 10px off the bottom edge and clears the home indicator, so the space it
-    // occupies is its own height PLUS that inset — padding of just the height leaves the last row
-    // of content under the card.
-    paddingBottom: `calc(${componentSizes.bottomNav.height} + 10px + env(safe-area-inset-bottom, 0px))`,
+    // The space the bar occupies: its own height, plus the inset it reserves for the home
+    // indicator, plus 10px of gap so the last row of content does not sit flush against it.
+    //
+    // That 10px used to be justified as "the bar floats 10px off the bottom edge" — which stopped
+    // being true when the bar was attached to the edge (`bottom: 0`, only the top corners rounded).
+    // The number survived the redesign as a breathing gap, which is worth keeping; the reason for
+    // it did not.
+    paddingBottom: `calc(${componentSizes.bottomNav.height} + 10px + ${safeArea.bottom})`,
   },
 
+  // No bar to clear, but the home indicator is still there. This was a flat `0` until a reviewer
+  // pointed out what `viewport-fit=cover` had just changed about it: with the insets dead the two
+  // variants differed only by the bar's height, which was right; with them live, zeroing the padding
+  // also discards the inset and puts content under the indicator. Unreachable today — nothing passes
+  // `hideBottomNav` — which makes it a trap rather than a bug, and a one-word one to disarm.
   mobileContentNoNav: {
-    paddingBottom: 0,
+    paddingBottom: safeArea.bottom,
   },
 
   // Desktop layout

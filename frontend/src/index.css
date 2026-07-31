@@ -28,6 +28,7 @@
   --ab-colors-brandFill-rest: #0077b6;
   --ab-colors-brandFill-hover: #0068a1;
   --ab-colors-brandFill-pressed: #003f64;
+  --ab-colors-onBrandPlate: rgba(255, 255, 255, 0.15);
   --ab-colors-neutral-50: #f9fafb;
   --ab-colors-neutral-100: #f3f4f6;
   --ab-colors-neutral-200: #e5e7eb;
@@ -99,6 +100,7 @@
   --ab-colors-brandFill-rest: #0068a1;
   --ab-colors-brandFill-hover: #0077b6;
   --ab-colors-brandFill-pressed: #004c77;
+  --ab-colors-onBrandPlate: rgba(255, 255, 255, 0.15);
   --ab-colors-neutral-50: #1f1f1f;
   --ab-colors-neutral-100: #141414;
   --ab-colors-neutral-200: #3d3d3d;
@@ -148,6 +150,37 @@
   --ab-gradients-info: linear-gradient(135deg, #0a2a3d 0%, #07202e 100%);
   --ab-gradients-primary: linear-gradient(135deg, #0b2338 0%, #081a2a 100%);
   --ab-gradients-brandTint: linear-gradient(135deg, #0e2233 0%, #0a1a28 100%);
+}
+
+/* ===== SAFE-AREA INSETS — hand-written, NOT generated =====
+ *
+ * The four `env()` values, behind names, and the indirection earns its keep twice.
+ *
+ * Once because `env()` cannot be read or overridden from script: it resolves inside the browser's
+ * style engine and reports 0 on every device without a notch — which is every device available to
+ * develop on. A change that only takes effect on hardware nobody here has is a change nobody can
+ * check. Through a custom property it can be forced (`--ab-safe-top: 59px`) and the result LOOKED at,
+ * at a phone viewport, before it ships.
+ *
+ * And once because the insets were already spelled out twice inline before this, in two files, with
+ * no name saying what they were for.
+ *
+ * The `0px` fallback is not decoration: without `viewport-fit=cover` in the viewport meta — which is
+ * in `index.html`, and without which all four of these are 0 no matter what the device is — a UA
+ * that knows nothing of `env()` would drop the whole declaration.
+ *
+ * A reviewer asked for an `@supports` guard on top of that, on the grounds that a browser with
+ * custom properties but WITHOUT `env()` would substitute an unparseable token into each consumer and
+ * invalidate the padding outright. The mechanism is real; the browser is not. `env()` shipped in
+ * Chrome 69, Safari 11.2 and Firefox 65, and this app's layout already depends on `dvh` — Chrome
+ * 108, Safari 15.4, Firefox 101. Every browser that can render the shell at all supports `env()`,
+ * so the guard would protect a configuration that cannot reach this stylesheet.
+ * ========================================================================================== */
+:root {
+  --ab-safe-top: env(safe-area-inset-top, 0px);
+  --ab-safe-right: env(safe-area-inset-right, 0px);
+  --ab-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ab-safe-left: env(safe-area-inset-left, 0px);
 }
 
 /* Global Reset for FluentUI */
