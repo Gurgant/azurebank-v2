@@ -1,0 +1,66 @@
+{
+  "rasteriser": "@resvg/resvg-js@2.6.2",
+  "algorithm": "sha256",
+  "files": [
+    {
+      "path": "public/logo.svg",
+      "role": "master",
+      "mode": "text",
+      "sha256": "15e2f4a40293832b7b6e2458dc272273e692ad5019cf6cd8d9af2d288ba6f064"
+    },
+    {
+      "path": "scripts/generate-icons.js",
+      "role": "generator",
+      "mode": "text",
+      "sha256": "54c2d53accd3bed719d7870f53c03d09f4cc54a80c2bfec94d03497942ce3590"
+    },
+    {
+      "path": "public/favicon.svg",
+      "role": "generated",
+      "mode": "text",
+      "sha256": "c287ad01b39cf4b904fc37758e16a4ef1320f197886dcb5a2500e4a74f43cfcd"
+    },
+    {
+      "path": "public/favicon.ico",
+      "role": "generated",
+      "mode": "binary",
+      "sha256": "a70bb2090fddd413be4b7d9ff9218d23ff0899295af08b8684d43cbce93d710d"
+    },
+    {
+      "path": "public/favicon-96x96.png",
+      "role": "generated",
+      "mode": "binary",
+      "sha256": "5a72953751776aa4ae19307f3c285a1d098ec25f02d154a882b15b5ea5e2ba71"
+    },
+    {
+      "path": "public/apple-touch-icon.png",
+      "role": "generated",
+      "mode": "binary",
+      "sha256": "22ef95add0fa4bc6c696cbdec32dcd23926a4225dc186969f3363395ddbcbd4c"
+    },
+    {
+      "path": "public/web-app-manifest-192x192.png",
+      "role": "generated",
+      "mode": "binary",
+      "sha256": "780d991e38a3686b4f0d10f33f1ebcb74f6fb7a16bd9d48a5930e597ef94e70b"
+    },
+    {
+      "path": "public/web-app-manifest-512x512.png",
+      "role": "generated",
+      "mode": "binary",
+      "sha256": "7c79425f9ce90fbb7f0d20e11b92d2d93747f296fdbace1a27d8c96cfda3226e"
+    },
+    {
+      "path": "public/web-app-manifest-any-192x192.png",
+      "role": "generated",
+      "mode": "binary",
+      "sha256": "979dbf108dab4f73347bc66bfcb1c8b0bda798bfb111d3cd5de62b848766f57d"
+    },
+    {
+      "path": "public/web-app-manifest-any-512x512.png",
+      "role": "generated",
+      "mode": "binary",
+      "sha256": "429f9f6bea0252878e67ff90474fe5cb86f3da8ab21fbdbdb1788c570adcab65"
+    }
+  ]
+}

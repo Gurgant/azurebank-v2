@@ -124,8 +124,19 @@ npm install --no-save @resvg/resvg-js@2.6.2
 npm run generate:icons
 ```
 
-That writes `favicon.svg`, `favicon.ico`, `favicon-96x96.png`, `apple-touch-icon.png` and both
-`web-app-manifest-*.png` into `frontend/public/`. Only `logo.svg` is hand-maintained.
+That writes eight files into `frontend/public/`, and only `logo.svg` is hand-maintained:
+
+- `favicon.svg` — the square plated tile the app and the tab both use
+- `favicon.ico` — six frames, 16 through 256
+- `favicon-96x96.png`
+- `apple-touch-icon.png`
+- `web-app-manifest-192x192.png`, `web-app-manifest-512x512.png` — **maskable**, so the mark sits
+  inside Android's 40 % safe circle
+- `web-app-manifest-any-192x192.png`, `web-app-manifest-any-512x512.png` — **any**, drawn larger
+  because nothing crops them
+
+This list used to read "and both `web-app-manifest-*.png`", which undercounted: there are four of
+them, maskable and any, and the difference between the pairs is the whole reason both exist.
 
 Two things about that command are deliberate.
 
@@ -139,6 +150,32 @@ build artifacts of a specific rasteriser: a future release that changes antialia
 would rewrite every icon on the next regeneration, with no change to `logo.svg` to explain the
 diff. 2.6.2 is the version these assets were produced and verified with. Upgrading it is a real
 decision — bump it here, regenerate, and look at the result.
+
+## What stops the icons going stale
+
+`scripts/generate-icons.js` also writes `scripts/icons.lock.json` — the sha256 of the master, of
+itself, and of all eight artifacts — and `iconProvenance.test.ts` recomputes those hashes on every
+test run.
+
+The gate has to work that way round because the obvious version cannot exist. "Regenerate in CI and
+diff" needs the rasteriser, and the whole point of `--no-save` above is that CI does not have it. So
+the answer is computed once, where the rasteriser IS present, and travels in a file that a plain
+test can check with nothing installed.
+
+It catches the three things that actually go wrong, none of which is visible in review — a PNG diff
+is a wall of binary and `logo.svg` is a single line:
+
+- `logo.svg` edited and the icons left stale
+- an icon hand-edited
+- the generator changed without a regeneration
+
+It also catches the pin being bumped here without a regeneration, since the lock records the version
+and the test compares it against the command in this file.
+
+When a check fails, the fix is the command above; the failure message says so and names the file
+that moved. Verified rather than assumed at the time it was written: the pinned rasteriser was
+installed and the whole set regenerated, and all eight files came back byte-identical to what was
+committed.
 
 ## Why the generator exists rather than a favicon website
 

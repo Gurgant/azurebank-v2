@@ -11,14 +11,27 @@
  * geometry in hand to decide where the antialiasing goes. At 512 it makes no visible difference,
  * which is exactly why the shortcut survives unnoticed.
  *
- *   npm install --no-save @resvg/resvg-js@2.6.2   (pinned, and not a dependency — see docs/brand-assets.md)
+ *   npm install --no-save @resvg/resvg-js@<RASTERISER below>   (pinned, not a dependency — see
+ *   docs/brand-assets.md)
  *   npm run generate:icons
  */
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
+
+/**
+ * The pinned rasteriser, in ONE place.
+ *
+ * It was written out three times — this file's header, the missing-module error, and the docs — and
+ * the whole point of pinning is that the committed PNGs are artifacts of this exact version. A pin
+ * that is stated three times is a pin that can be bumped in two of them. It is also recorded in
+ * `icons.lock.json`, so a bump without a regeneration is a failing test rather than a silent
+ * mismatch between what the icons are and what the docs claim produced them.
+ */
+const RASTERISER = '@resvg/resvg-js@2.6.2';
 
 let Resvg;
 try {
@@ -30,7 +43,7 @@ try {
       'for a script nobody runs. Install it when you need it — and keep the pin: the committed\n' +
       'icons are artifacts of one rasteriser, so a newer release would rewrite every one of them\n' +
       'with no change to logo.svg to explain the diff.\n\n' +
-      '  npm install --no-save @resvg/resvg-js@2.6.2\n',
+      `  npm install --no-save ${RASTERISER}\n`,
   );
   process.exit(1);
 }
@@ -264,4 +277,59 @@ const ico = encodeIco(frames);
 writeFileSync(join(PUBLIC, 'favicon.ico'), ico);
 console.log(
   `${'favicon.ico'.padEnd(30)}       ${ICO_SIZES.join('/')}  ${ico.length.toLocaleString()} B`,
+);
+
+/*
+  The provenance record, and the reason it is a FILE rather than a CI step.
+
+  Everything above needs `@resvg/resvg-js`, which is deliberately not a dependency (see
+  docs/brand-assets.md): a native module taxing every install for a script nobody runs. So the
+  obvious gate — regenerate in CI and diff — cannot exist. What CAN travel is the answer: hash the
+  master, the generator and every artifact HERE, where the rasteriser is present, and let a plain
+  test recompute those hashes later with nothing installed.
+
+  That catches the drift that actually happens: `logo.svg` edited and the icons left stale, an icon
+  hand-edited, or the generator changed without a regeneration. None of them is visible in review —
+  a PNG diff is a wall of binary and an SVG one line.
+
+  `mode` is recorded per file rather than inferred, so the checker never has to re-derive the
+  decision and the two cannot disagree. Text is hashed with newlines normalised because
+  `core.autocrlf` is on in this repo: a fresh Windows clone gets CRLF where CI gets LF, and hashing
+  raw bytes would fail on one of them for a reason that has nothing to do with the icons.
+*/
+const TEXT = 'text';
+const BINARY = 'binary';
+
+/** Strips carriage returns, so CRLF and LF hash identically. */
+const normaliseNewlines = (text) => text.replace(/\r/g, '');
+
+function hashFile(relative, mode) {
+  const bytes = readFileSync(join(PUBLIC, '..', relative));
+  const payload = mode === TEXT ? Buffer.from(normaliseNewlines(bytes.toString('utf8'))) : bytes;
+  return createHash('sha256').update(payload).digest('hex');
+}
+
+const PROVENANCE = [
+  { path: 'public/logo.svg', role: 'master', mode: TEXT },
+  { path: 'scripts/generate-icons.js', role: 'generator', mode: TEXT },
+  { path: 'public/favicon.svg', role: 'generated', mode: TEXT },
+  { path: 'public/favicon.ico', role: 'generated', mode: BINARY },
+  ...TARGETS.map((t) => ({ path: `public/${t.file}`, role: 'generated', mode: BINARY })),
+];
+
+writeFileSync(
+  join(PUBLIC, '..', 'scripts', 'icons.lock.json'),
+  `${JSON.stringify(
+    {
+      rasteriser: RASTERISER,
+      algorithm: 'sha256',
+      files: PROVENANCE.map((f) => ({ ...f, sha256: hashFile(f.path, f.mode) })),
+    },
+    null,
+    2,
+  )}
+`,
+);
+console.log(
+  `${'scripts/icons.lock.json'.padEnd(30)}       provenance for ${PROVENANCE.length} files`,
 );
