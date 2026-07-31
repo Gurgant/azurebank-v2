@@ -106,11 +106,23 @@ would mean a second HTTP stack behind an `axiosBaseQuery` shim, for no capabilit
 which is the right failure: a helper that renders in a different router MODE than the app is testing
 a different application.
 
-**The blocker is exercised directly rather than through the wizard.** Driving RTK Query, an
-idempotency key and a step-up interceptor to reach a live key would test those instead. Five tests
-pin what is actually new — held, both answers offered, `/login` exempt, and a negative control with
-no key live — and two mutations prove the two decisions: removing the `/login` exemption fails the
-forced-logout test, and swapping `proceed()` for `reset()` fails the leave-anyway test.
+**The tests mount the real hook, and the first draft did not.** That draft reimplemented the
+predicate in the test file and justified it on the grounds that reaching a live key means driving
+RTK Query, an idempotency key and a step-up interceptor. That justification was wrong, and the
+recorded version of it is more useful than a clean claim would be: `useMoneyWizard` takes its
+`trigger` as a PARAMETER, and `keyLive` is `isSubmitting || keyRetained`, so a trigger whose promise
+never settles holds a key live with no infrastructure at all. What the draft actually tested was
+react-router — it would have stayed green if the hook never registered a blocker.
+
+So the suite is bound to production by mutation. Falsifying the predicate to `false` fails five of
+eight tests; removing the `/login` exemption fails the forced-logout test; swapping `proceed()` for
+`reset()` fails leave-anyway; gutting the reset effect fails the prompt-closes-itself test.
+
+**One mutation is NOT caught, and it is worth naming rather than leaving as a silent gap.** Reducing
+`keyLive` to `keyRetained` alone passes all eight, because `useIdempotentMutation` calls
+`setKeyRetained(true)` synchronously before its first await — the two flags rise and fall in the same
+render on every path a test can construct. The `isSubmitting ||` half is defensive redundancy on a
+money value, not an independently observable condition, and no honest test distinguishes it.
 
 **What is NOT closed.** Deposit and withdraw are dialogs, not routes, so Back leaves the whole page
 rather than the flow; they are covered by `beforeunload` only. And the window ADR-0022 accepts stays
