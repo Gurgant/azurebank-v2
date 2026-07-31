@@ -27,6 +27,36 @@ import { describe, expect, it } from 'vitest';
 
 const LOCK_PATH = 'scripts/icons.lock.json';
 
+/**
+ * Fixed here rather than read from the lock, and that is the difference between a check and a
+ * formality: hashing with `lock.algorithm` would make the lock its own oracle, so a file that
+ * recorded `md5` alongside md5 digests would verify perfectly against itself while the sha256
+ * provenance this whole mechanism claims had quietly stopped being true.
+ */
+const HASH_ALGORITHM = 'sha256';
+
+/**
+ * What the generator MUST cover, stated independently of what it happens to have written.
+ *
+ * A second list is the point rather than a duplication to regret: if the generator loses a target,
+ * the lock loses it too, and any assertion derived from the lock would keep passing over a file
+ * nobody is checking any more.
+ */
+const EXPECTED = {
+  master: ['public/logo.svg'],
+  generator: ['scripts/generate-icons.js'],
+  generated: [
+    'public/favicon.svg',
+    'public/favicon.ico',
+    'public/favicon-96x96.png',
+    'public/apple-touch-icon.png',
+    'public/web-app-manifest-192x192.png',
+    'public/web-app-manifest-512x512.png',
+    'public/web-app-manifest-any-192x192.png',
+    'public/web-app-manifest-any-512x512.png',
+  ],
+} as const;
+
 interface LockEntry {
   path: string;
   role: 'master' | 'generator' | 'generated';
@@ -56,19 +86,33 @@ function hashOf(entry: LockEntry): string {
   const bytes = readFileSync(entry.path);
   const payload =
     entry.mode === 'text' ? Buffer.from(bytes.toString('utf8').replace(/\r/g, '')) : bytes;
-  return createHash(lock.algorithm).update(payload).digest('hex');
+  return createHash(HASH_ALGORITHM).update(payload).digest('hex');
 }
 
 describe('the icon set still comes from the master', () => {
-  it('covers the master, the generator and every artifact', () => {
-    // Non-vacuity, and a specific one: a lock that had lost its `generated` entries would let every
-    // icon rot while the file still parsed and the loop below still passed.
-    const roles = lock.files.reduce<Record<string, number>>((acc, f) => {
-      acc[f.role] = (acc[f.role] ?? 0) + 1;
-      return acc;
-    }, {});
+  it('is hashed with the algorithm the mechanism claims', () => {
+    // Asserted separately BECAUSE the checker above no longer reads it: without this the field
+    // could say anything at all and nothing would notice, which is a different way to be wrong
+    // than the one the fixed constant prevents.
+    expect(lock.algorithm).toBe(HASH_ALGORITHM);
+  });
 
-    expect(roles).toEqual({ master: 1, generator: 1, generated: 8 });
+  it('covers exactly the files it is supposed to, by path', () => {
+    // Counted by ROLE at first, and that was too weak to be a guard: eight `generated` entries with
+    // one path repeated and another missing satisfies a count perfectly while an icon goes
+    // unchecked. Paths, exactly once each, is the claim worth making.
+    const byRole = (role: string) =>
+      lock.files
+        .filter((f) => f.role === role)
+        .map((f) => f.path)
+        .sort();
+
+    expect(byRole('master')).toEqual([...EXPECTED.master].sort());
+    expect(byRole('generator')).toEqual([...EXPECTED.generator].sort());
+    expect(byRole('generated')).toEqual([...EXPECTED.generated].sort());
+    expect(lock.files).toHaveLength(
+      EXPECTED.master.length + EXPECTED.generator.length + EXPECTED.generated.length,
+    );
   });
 
   it.each(lock.files.map((f) => [f.path, f] as const))('%s matches the lock', (_path, entry) => {

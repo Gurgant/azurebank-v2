@@ -124,8 +124,19 @@ npm install --no-save @resvg/resvg-js@2.6.2
 npm run generate:icons
 ```
 
-That writes `favicon.svg`, `favicon.ico`, `favicon-96x96.png`, `apple-touch-icon.png` and both
-`web-app-manifest-*.png` into `frontend/public/`. Only `logo.svg` is hand-maintained.
+That writes eight files into `frontend/public/`, and only `logo.svg` is hand-maintained:
+
+- `favicon.svg` — the square plated tile the app and the tab both use
+- `favicon.ico` — six frames, 16 through 256
+- `favicon-96x96.png`
+- `apple-touch-icon.png`
+- `web-app-manifest-192x192.png`, `web-app-manifest-512x512.png` — **maskable**, so the mark sits
+  inside Android's 40 % safe circle
+- `web-app-manifest-any-192x192.png`, `web-app-manifest-any-512x512.png` — **any**, drawn larger
+  because nothing crops them
+
+This list used to read "and both `web-app-manifest-*.png`", which undercounted: there are four of
+them, maskable and any, and the difference between the pairs is the whole reason both exist.
 
 Two things about that command are deliberate.
 
