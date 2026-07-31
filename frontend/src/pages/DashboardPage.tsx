@@ -102,11 +102,17 @@ import { DepositDialog, WithdrawDialog } from '../components';
  *    inside the transfer card instead — true today, and one line in `TransferPage` away from
  *    becoming an action.
  *
- * ## The one thing the scope cannot reach, stated rather than hidden
+ * ## The scope now reaches everything, including the month
  *
- * `getTransactionSummary` accepts `{ fromDate, toDate }` — there is no `AccountId`. So the month
- * summary stays all-accounts even when a single account is selected, and it SAYS SO. Making it
- * obey the scope needs a backend parameter; that is the follow-up that completes this design.
+ * This section used to be headed "the one thing the scope cannot reach", and it described a real
+ * gap: `getTransactionSummary` took `{ fromDate, toDate }` and no `AccountId`, so the month totals
+ * stayed all-accounts while the ledger beneath them narrowed. The page said so out loud rather than
+ * showing a figure that disagreed with the rows under it.
+ *
+ * The backend parameter that sentence was waiting for now exists, so the summary is a scoped query
+ * like the rest: selecting an account refetches it. The line under the totals survives, inverted —
+ * it names what the figures COVER ("Rainy Day only" / "Across all 3 accounts") instead of what they
+ * cannot do, because the numbers still change with the scope and nothing else on the card says so.
  */
 
 const RECENT_PAGE_SIZE = 5;
@@ -485,7 +491,7 @@ export function DashboardPage() {
     isLoading: summaryLoading,
     error: summaryError,
     refetch: refetchSummary,
-  } = useGetTransactionSummaryQuery(monthWindow);
+  } = useGetTransactionSummaryQuery({ ...monthWindow, accountId: scopedAccountId });
 
   // A lone account is implicitly the scope. With one account "all accounts" IS that account, its
   // ledger is the only ledger, and the running balance therefore reconciles — so withholding the
@@ -610,7 +616,7 @@ export function DashboardPage() {
           )}
         </section>
 
-        {/* ===== Month summary — all-accounts, and it says so ===== */}
+        {/* ===== Month summary — scoped like everything else on this page ===== */}
         <section className={mergeClasses(styles.card, styles.areaSummary)}>
           <Text className={styles.sectionTitle}>{monthLabel} so far</Text>
           {summaryError ? (
@@ -647,13 +653,12 @@ export function DashboardPage() {
                   {money(Math.abs(summary?.netChange ?? 0))}
                 </span>
               </div>
-              {/* The one place the scope cannot reach. Saying so beats a number that quietly
-                  disagrees with the ledger beside it. */}
-              {selected && (
-                <Text className={styles.muted}>
-                  Across all accounts — this month cannot yet be filtered to one.
-                </Text>
-              )}
+              {/* Says what the figures COVER, where it used to say what they could not do. The
+                  line stays because the answer still changes with the scope and a bare total does
+                  not carry that; it is now a label rather than an apology. */}
+              <Text className={styles.muted}>
+                {selected ? `${selected.name} only` : `Across all ${accounts.length} accounts`}
+              </Text>
             </>
           )}
         </section>

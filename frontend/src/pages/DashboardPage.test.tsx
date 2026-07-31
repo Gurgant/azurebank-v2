@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
@@ -95,14 +95,29 @@ describe('the scope decides what the page is about', () => {
     expect(screen.queryByRole('button', { name: /All accounts/ })).toBeNull();
   });
 
-  it('says the month is all-accounts, because the API cannot yet scope it', async () => {
-    // `getTransactionSummary` takes { fromDate, toDate } and no AccountId. Rendering a total that
-    // silently disagrees with the ledger beside it would be worse than saying so.
+  it('scopes the month to the selected account, figures and all', async () => {
+    // This test used to assert the opposite — that the card SAID it could not be filtered, because
+    // `getTransactionSummary` took no AccountId. It does now, so the assertion is the behaviour
+    // that replaced the apology.
+    //
+    // The money figure is what makes it an assertion rather than a label check: the seed splits
+    // transactions across both accounts on purpose, so a scoped total that still matched the
+    // all-accounts one would mean the parameter reached the query and changed nothing.
     renderDashboard();
     await screen.findByRole('heading', { level: 1 });
+
+    const moneyIn = async () => {
+      const row = (await screen.findByText('Money in')).parentElement!;
+      return row.textContent!.replace('Money in', '').trim();
+    };
+
+    expect(await screen.findByText(/Across all 2 accounts/)).toBeInTheDocument();
+    const acrossAll = await moneyIn();
+
     await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
 
-    expect(await screen.findByText(/cannot yet be filtered to one/)).toBeInTheDocument();
+    expect(await screen.findByText('Rainy Day only')).toBeInTheDocument();
+    await waitFor(async () => expect(await moneyIn()).not.toBe(acrossAll));
   });
 });
 

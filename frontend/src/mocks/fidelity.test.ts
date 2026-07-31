@@ -192,10 +192,28 @@ describe('the query parameters the mock used to ignore', () => {
     expect(Date.parse(body.data.fromDate)).toBe(monthStart.getTime());
   });
 
-  it('422s a window that ends before it starts', async () => {
+  it('400s an explicitly inverted PAIR, because model validation sees it first', async () => {
+    // This asserted 422 until the real stack was asked. `TransactionSummaryFilter` is an
+    // `IValidatableObject`, so a pair that is provided AND inverted never reaches the action —
+    // and the framework reports it on both members, since the rule names both. The backend's own
+    // `Summary_WithInvertedExplicitRange_ReturnsBadRequest` had said 400 all along; the mock said
+    // 422 and this test pinned the mock.
     const res = await fetch(
       '/api/transactions/summary?FromDate=2026-07-20T00:00:00Z&ToDate=2026-07-01T00:00:00Z',
     );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errors.FromDate).toEqual(['FromDate must be earlier than or equal to ToDate.']);
+    expect(body.errors.ToDate).toEqual(['FromDate must be earlier than or equal to ToDate.']);
+  });
+
+  it('422s a RESOLVED window that ends before it starts', async () => {
+    // The other tier, and the only one the service can reach: ToDate is omitted so it defaults to
+    // `now`, which a future FromDate is already past. Model validation cannot see this — it only
+    // ever sees the pair the caller actually sent.
+    const future = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    const res = await fetch(`/api/transactions/summary?FromDate=${future}`);
 
     expect(res.status).toBe(422);
     expect((await res.json()).errorCode).toBe('INVALID_DATE_RANGE');
@@ -314,5 +332,37 @@ describe('model binding runs before the action, and the action before the servic
     const res = await fetch('/api/transactions?AccountId=019f7b3f-0000-7000-8000-0000000000ff');
     expect(res.status).toBe(403);
     expect((await res.json()).errorCode).toBe('ACCESS_DENIED');
+  });
+
+  it('the summary inherits the same three-step order, now that it has an AccountId', async () => {
+    // Every one of these used to be moot: the summary took no AccountId at all, so there was no
+    // ownership check to sequence. It has one now, and it has to sit where the list's sits.
+    const malformed = await fetch('/api/transactions/summary?AccountId=abc');
+    expect(malformed.status).toBe(400);
+    expect((await malformed.json()).errors.AccountId).toEqual(["The value 'abc' is not valid."]);
+
+    const foreign = await fetch(
+      '/api/transactions/summary?AccountId=019f7b3f-0000-7000-8000-0000000000ff',
+    );
+    expect(foreign.status).toBe(403);
+    expect((await foreign.json()).errorCode).toBe('ACCESS_DENIED');
+  });
+
+  it('a bad window beats the 403, at BOTH tiers', async () => {
+    // Ownership is the last thing checked, so a request that is wrong about dates AND about whose
+    // account it is gets the date answer — but WHICH date answer depends on which tier catches it.
+    // Both are asserted, because getting the tier wrong is exactly the drift the real stack found.
+    const pair = await fetch(
+      '/api/transactions/summary?AccountId=019f7b3f-0000-7000-8000-0000000000ff' +
+        '&FromDate=2026-07-20T00:00:00Z&ToDate=2026-07-01T00:00:00Z',
+    );
+    expect(pair.status).toBe(400);
+
+    const future = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    const resolved = await fetch(
+      `/api/transactions/summary?AccountId=019f7b3f-0000-7000-8000-0000000000ff&FromDate=${future}`,
+    );
+    expect(resolved.status).toBe(422);
+    expect((await resolved.json()).errorCode).toBe('INVALID_DATE_RANGE');
   });
 });

@@ -587,6 +587,29 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     whose whole label is "July so far", was quietly reporting all time. Missing ToDate is `now`,
     which the mock did have right.
   */
+  /*
+    The order below is the SERVICE's order, and it is not the obvious one.
+
+    Model binding first: `TransactionSummaryFilter` declares `Guid? AccountId` alongside the two
+    dates, so a malformed value of any of them is a 400 the action never sees. Same reasoning, and
+    the same trap, as the list handler above — which once answered 403 for a request that carried
+    both a foreign AccountId and an unparseable date, where the API answers 400.
+
+    Then the RESOLVED-window guard, which is a 422 — and it comes BEFORE the ownership check,
+    because `GetSummaryAsync` resolves and validates the window first and only then asks whether
+    the account is the caller's. A request with both an inverted window and a foreign account gets
+    422, not 403.
+  */
+  const summaryAccountId = params.get('AccountId');
+  if (summaryAccountId && !UUID_RE.test(summaryAccountId)) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: { AccountId: [`The value '${summaryAccountId}' is not valid.`] },
+      }),
+    );
+  }
+
   const badSummaryDates = rejectUnparseableDates({
     FromDate: params.get('FromDate'),
     ToDate: params.get('ToDate'),
@@ -604,9 +627,29 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   const fromMs = Date.parse(fromDate);
   const toMs = Date.parse(toDate);
 
-  // The guard is on the RESOLVED window and it is unconditional — the service's own comment says
-  // the filter's model validation only sees the explicitly-provided pair, so a lone future
-  // FromDate lands here rather than there. The mock answered 200 with zeroed totals instead.
+  /*
+    An inverted window has TWO answers, and the mock had one. Found by running the real stack:
+    an explicitly-provided inverted PAIR is a 400 and a lone future FromDate is a 422.
+
+    The split is where the check lives. `TransactionSummaryFilter` is an `IValidatableObject`, so
+    the pair is caught by MODEL validation before the action runs, and the framework reports it as
+    a field error on both members — `[nameof(FromDate), nameof(ToDate)]`, hence the same message
+    twice. Only the RESOLVED window reaches the service, which is why a lone future FromDate (whose
+    ToDate defaults to `now`) is the case that throws INVALID_DATE_RANGE.
+
+    The mock answered 422 to both, and the backend's own integration test
+    (`Summary_WithInvertedExplicitRange_ReturnsBadRequest`) had been saying 400 since it was
+    written. The fidelity test that asserted 422 for the pair was pinning the mock's mistake.
+  */
+  if (params.get('FromDate') && params.get('ToDate') && fromMs > toMs) {
+    const inverted = 'FromDate must be earlier than or equal to ToDate.';
+    return response.untyped(
+      problem({ status: 400, errors: { ToDate: [inverted], FromDate: [inverted] } }),
+    );
+  }
+
+  // The service's own guard, on the RESOLVED window — reachable only when a bound was DEFAULTED,
+  // since the pair is already gone above.
   if (fromMs > toMs) {
     return response.untyped(
       problem({
@@ -617,10 +660,27 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     );
   }
 
+  // Ownership: the service's own check, so it lands after everything the framework does AND after
+  // the window guard. Unknown and foreign ids are the same refusal here as there — the API cannot
+  // tell them apart on purpose, and a mock that could would let a test pass against a contract the
+  // server does not offer.
+  if (summaryAccountId && !mockState.accounts.some((a) => a.id === summaryAccountId)) {
+    return response.untyped(
+      problem({
+        status: 403,
+        errorCode: 'ACCESS_DENIED',
+        detail: 'You do not have access to this account.',
+      }),
+    );
+  }
+
   let totalIncome = 0;
   let totalExpenses = 0;
   let pendingCount = 0;
   for (const t of mockState.transactions) {
+    if (summaryAccountId && t.accountId !== summaryAccountId) {
+      continue;
+    }
     const at = Date.parse(t.createdAt);
     if (at < fromMs || at > toMs) {
       continue;
