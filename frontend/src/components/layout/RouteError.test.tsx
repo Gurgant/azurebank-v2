@@ -6,7 +6,7 @@ import {
   RouterProvider,
 } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../../theme/ThemeProvider';
 import { RouteError } from './RouteError';
 
@@ -23,6 +23,20 @@ import { RouteError } from './RouteError';
  * React error boundary anywhere. Pinning that keeps the limit visible instead of leaving a reader
  * to assume `errorElement` covers the whole app.
  */
+
+/*
+  Both render tests stub `console.error` — RouteError logs the raw error on purpose, and React
+  itself shouts about the uncaught throw in the negative control.
+
+  Restored HERE rather than at the end of each test, and the difference is not cosmetic: an
+  in-line `mockRestore()` never runs if an assertion above it throws, so one failing test would
+  leave `console.error` stubbed for everything after it in this file — turning a single red test
+  into a silent one. Neither the vitest config nor the shared `setup.ts` restores mocks, so this
+  file has to.
+*/
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function Boom(): never {
   throw new Error('boom');
@@ -51,8 +65,7 @@ function mountWithErrorElement() {
 
 describe('RouteError', () => {
   it('catches a throwing route and shows this app’s page, not React Router’s', () => {
-    // RouteError logs the raw error on purpose; keep the suite output clean without hiding it.
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     mountWithErrorElement();
 
@@ -64,8 +77,6 @@ describe('RouteError', () => {
     ).toBeInTheDocument();
     // React Router's own default page, which this exists to replace.
     expect(screen.queryByText(/Unexpected Application Error/i)).toBeNull();
-
-    logged.mockRestore();
   });
 
   it('does NOT cover components rendered above RouterProvider', () => {
@@ -74,7 +85,7 @@ describe('RouteError', () => {
     // so a throw in any of them escapes to the root and blanks the app — there is no React error
     // boundary in this codebase to stop it. If that ever changes, this test should fail and be
     // replaced by one asserting the new boundary.
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const router = createMemoryRouter(
       createRoutesFromElements(
@@ -93,8 +104,6 @@ describe('RouteError', () => {
         </ThemeProvider>,
       ),
     ).toThrow('boom');
-
-    logged.mockRestore();
   });
 
   it('is actually wired into App, not just into this file', () => {
