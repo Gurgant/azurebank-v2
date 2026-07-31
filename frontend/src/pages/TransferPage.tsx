@@ -15,6 +15,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { useTransferWizardStyles } from './transferWizardStyles';
+import { ConfirmDialog } from '../components/shared/ConfirmDialog';
 import { ResultUnknownView } from '../components/shared/ResultUnknownView';
 import { PageHeader } from '../components/layout/PageHeader';
 import {
@@ -608,6 +609,18 @@ export function TransferPage() {
           </>
         )}
       </div>
+
+      {/* The browser's Back, held. Every other exit refuses while a key is live; this one ASKS,
+          because after a KEEP-class failure it is the only exit left (ADR-0028). */}
+      <ConfirmDialog
+        isOpen={wizard.exitPrompt !== null}
+        onClose={() => wizard.exitPrompt?.stay()}
+        onConfirm={() => wizard.exitPrompt?.leave()}
+        title="Leave without finishing?"
+        message="This transfer has not been confirmed. If it did reach the bank, leaving now means you will not see the result here — check your history before sending it again."
+        confirmText="Leave anyway"
+        cancelText="Stay on this page"
+      />
     </div>
   );
 }

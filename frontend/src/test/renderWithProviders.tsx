@@ -1,7 +1,7 @@
 import type { PropsWithChildren, ReactElement } from 'react';
 import { configureStore } from '@reduxjs/toolkit';
 import { Provider } from 'react-redux';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { render, type RenderOptions } from '@testing-library/react';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { authReducer } from '../features/auth/authSlice';
@@ -41,10 +41,26 @@ export function renderWithProviders(ui: ReactElement, options: ProvidersOptions 
   const { store = makeTestStore(), routerEntries = ['/'], ...renderOptions } = options;
 
   function Wrapper({ children }: PropsWithChildren) {
+    /*
+      A DATA memory router, not `MemoryRouter`.
+
+      The app moved to `createBrowserRouter` to reach `useBlocker` (ADR-0028), and that hook is
+      Data-mode only — under a declarative router it does not degrade, it throws
+      "useBlocker must be used within a data router". Thirty tests failed on exactly that the moment
+      the money wizard gained a blocker, which is the useful version of this discovery: the helper
+      has to render in the same MODE the app does, or the suite is testing a different application.
+
+      The subject renders at a catch-all route so `initialEntries` still decides the location, which
+      is what the `routerEntries` option has always been for.
+    */
+    const router = createMemoryRouter([{ path: '*', element: <>{children}</> }], {
+      initialEntries: routerEntries,
+    });
+
     return (
       <ThemeProvider>
         <Provider store={store}>
-          <MemoryRouter initialEntries={routerEntries}>{children}</MemoryRouter>
+          <RouterProvider router={router} />
         </Provider>
       </ThemeProvider>
     );
