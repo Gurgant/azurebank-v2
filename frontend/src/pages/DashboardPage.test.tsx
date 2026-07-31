@@ -8,6 +8,7 @@ import { mockState } from '../mocks/state';
 import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { DashboardPage } from './DashboardPage';
+import { resolveScopedAccountId } from './dashboardScope';
 
 /**
  * The dashboard, and the one property the whole design hangs on.
@@ -118,6 +119,33 @@ describe('the scope decides what the page is about', () => {
 
     expect(await screen.findByText('Rainy Day only')).toBeInTheDocument();
     await waitFor(async () => expect(await moneyIn()).not.toBe(acrossAll));
+  });
+});
+
+describe('the scope as a query argument', () => {
+  // A pure function, so the stale case is reachable at all. The version written inline in the
+  // component was covered by a render test that removed the account and re-rendered — and that test
+  // passed with the check DELETED, because a second `render` mounts a fresh component whose `scope`
+  // is back to 'all'. It asserted nothing; this asserts the rule.
+  const accounts = [{ id: 'a' }, { id: 'b' }];
+
+  it('sends the picked account while it exists', () => {
+    expect(resolveScopedAccountId('b', accounts)).toBe('b');
+  });
+
+  it('sends nothing for the all-accounts state', () => {
+    expect(resolveScopedAccountId('all', accounts)).toBeUndefined();
+  });
+
+  it('falls back to the total when the picked account is gone', () => {
+    // The one the label already got right and the query did not: an account removed from under a
+    // mounted page must not keep being asked about, or the card reports 403 for a scope the page
+    // no longer shows as selected.
+    expect(resolveScopedAccountId('b', [{ id: 'a' }])).toBeUndefined();
+  });
+
+  it('falls back while the accounts are still loading, rather than guessing', () => {
+    expect(resolveScopedAccountId('b', [])).toBeUndefined();
   });
 });
 

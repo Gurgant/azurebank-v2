@@ -29,6 +29,7 @@ import {
   useGetTransactionsQuery,
   useGetTransactionSummaryQuery,
 } from '../features/api/apiSlice';
+import { resolveScopedAccountId, type Scope } from './dashboardScope';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { QuickActionButton } from '../components/shared/QuickActionButton';
 import {
@@ -116,9 +117,6 @@ import { DepositDialog, WithdrawDialog } from '../components';
  */
 
 const RECENT_PAGE_SIZE = 5;
-
-/** `'all'` is a state, not an id, so a stale selection can only ever fall back to the total. */
-type Scope = 'all' | string;
 
 const useStyles = makeStyles({
   // ===== Layout =====
@@ -473,7 +471,7 @@ export function DashboardPage() {
   // THE SPINE: the scope is a query argument, not a display filter. Selecting an account refetches
   // the feed with `AccountId`, which is what makes the running balance below a real ledger rather
   // than five rows borrowed from two accounts.
-  const scopedAccountId = scope === 'all' ? undefined : scope;
+  const scopedAccountId = resolveScopedAccountId(scope, accounts);
   const {
     data: recent,
     isLoading: recentLoading,
