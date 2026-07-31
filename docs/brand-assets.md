@@ -140,6 +140,32 @@ would rewrite every icon on the next regeneration, with no change to `logo.svg` 
 diff. 2.6.2 is the version these assets were produced and verified with. Upgrading it is a real
 decision — bump it here, regenerate, and look at the result.
 
+## What stops the icons going stale
+
+`scripts/generate-icons.js` also writes `scripts/icons.lock.json` — the sha256 of the master, of
+itself, and of all eight artifacts — and `iconProvenance.test.ts` recomputes those hashes on every
+test run.
+
+The gate has to work that way round because the obvious version cannot exist. "Regenerate in CI and
+diff" needs the rasteriser, and the whole point of `--no-save` above is that CI does not have it. So
+the answer is computed once, where the rasteriser IS present, and travels in a file that a plain
+test can check with nothing installed.
+
+It catches the three things that actually go wrong, none of which is visible in review — a PNG diff
+is a wall of binary and `logo.svg` is a single line:
+
+- `logo.svg` edited and the icons left stale
+- an icon hand-edited
+- the generator changed without a regeneration
+
+It also catches the pin being bumped here without a regeneration, since the lock records the version
+and the test compares it against the command in this file.
+
+When a check fails, the fix is the command above; the failure message says so and names the file
+that moved. Verified rather than assumed at the time it was written: the pinned rasteriser was
+installed and the whole set regenerated, and all eight files came back byte-identical to what was
+committed.
+
 ## Why the generator exists rather than a favicon website
 
 **Each size is rasterised from the vector at its own resolution, never downscaled from one large
