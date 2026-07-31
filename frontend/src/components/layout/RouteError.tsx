@@ -5,10 +5,16 @@ import { colors, surfaces } from '../../theme/tokens';
 /**
  * What a data router shows when a route throws.
  *
- * Not a new capability — a safety net the MIGRATION made necessary. Under `<BrowserRouter>` a render
- * error propagated to the nearest React error boundary; a data router catches it first and, with no
- * `errorElement`, renders React Router's own default page. That page is unstyled, says
- * "Unexpected Application Error", and belongs to a library rather than to a bank.
+ * Not a new capability — a safety net the MIGRATION made necessary. A data router intercepts a render
+ * error thrown in the route tree and, with no `errorElement`, renders React Router's own default
+ * page: unstyled, "Unexpected Application Error", belonging to a library rather than to a bank.
+ *
+ * What it does NOT cover is worth knowing before trusting it. This is a ROUTE boundary, so it sees
+ * the route tree only — the toaster, auth bootstrap, session warning and step-up modal render as
+ * siblings ABOVE `RouterProvider` and go straight past it. Nothing else catches them either: the app
+ * has no React error boundary at all (`main.tsx` renders `<StrictMode><App /></StrictMode>`, and
+ * nothing implements `componentDidCatch`). A throw up there still blanks the screen — a pre-existing
+ * gap this narrows rather than creates. Both halves are pinned in RouteError.test.tsx.
  *
  * Deliberately plain: it must not depend on anything that could be the thing that broke, so no
  * queries, no store reads, and a full reload rather than a router navigation.

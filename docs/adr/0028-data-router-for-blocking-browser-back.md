@@ -23,7 +23,8 @@ The gap is sharper than "Back ignores the guard", and the sharp version is what 
 `verifyRequired` is only the in-flight case. So after a 502: `keyLive` is true, `verifyRequired` is
 false, and the verify view — the one screen offering "check my transactions" and "start over" — does
 not render. Back and Close are disabled. `requestLeave` no-ops. The error banner carries no action.
-**Browser Back is currently the only exit from that state short of closing the tab.**
+**Browser Back is the only exit from that state short of closing the tab** — and before this ADR it
+took that exit silently, which is the whole problem.
 
 Mechanically the situation was settled against the installed package rather than the docs site.
 `react-router` and `react-router-dom` are both **7.18.1**. The availability table in
@@ -81,10 +82,25 @@ document — the case where the user landed on `/transfer` directly rather than 
 succeed: the key clears while `blocker.state` is still `blocked`, leaving "you have unsent money"
 standing over a completed transfer.
 
-**6. Supply an `errorElement`.** A data router catches render errors instead of letting them reach a
-React error boundary, and with none supplied it renders React Router's own default page — unstyled,
-"Unexpected Application Error", belonging to a library rather than to a bank. Nothing throws today,
-which is precisely why this would have shipped unnoticed.
+**6. Supply an `errorElement`, and be exact about how little it covers.** A data router intercepts a
+render error thrown inside the route tree, and with no `errorElement` it renders React Router's own
+default page — unstyled, "Unexpected Application Error", belonging to a library rather than to a
+bank. Nothing throws today, which is precisely why a wrong wiring would have shipped unnoticed.
+
+The scope claim needs stating plainly, because the obvious reading is too generous. `errorElement` is
+a ROUTE boundary: it covers the route tree and nothing else. The four chrome components — toaster,
+auth bootstrap, session warning, step-up modal — render as SIBLINGS above `RouterProvider`, so a
+throw in any of them goes straight past it. And it lands nowhere, because **this app has no React
+error boundary anywhere**: `main.tsx` renders `<StrictMode><App /></StrictMode>` with nothing in
+between, and no component in `src/` implements `componentDidCatch` or `getDerivedStateFromError`.
+So an earlier draft of this ADR was wrong to say a data router catches errors "instead of letting
+them reach a React error boundary" — there was never one to reach. Before the migration such a throw
+blanked the screen; after it, a throw in the route tree is handled and a throw in the chrome still
+blanks the screen.
+
+That is a real gap, but a PRE-EXISTING one that this migration narrows rather than causes, so
+closing it is deliberately left out of a routing change. Both halves are pinned by test: a throwing
+route renders `RouteError`, and a sibling above `RouterProvider` is proven NOT to be covered.
 
 **7. Keep RTK Query. Do not adopt TanStack Query.** What the app uses is not the part TanStack does
 better: a custom `baseQuery` doing RFC7807 unwrapping, Zod validation at the money boundary, a
@@ -141,9 +157,9 @@ distinguish it. A render-trace assertion would catch the mutation, and is delibe
 would pin an internal sequence inside a window no user can act within, which is a test that breaks on
 React's scheduling rather than on this app's behaviour.
 
-**The retryable-5xx state is now entered rather than described.** Every test held the key with a
-PENDING request, which raises `isSubmitting` and `keyRetained` together — so the trap this ADR argues
-from was the one state the suite never reached. It is reached by letting a send FAIL retryably, and
+**The retryable-5xx state is now entered rather than described.** Before this change every test held
+the key with a PENDING request, which raises `isSubmitting` and `keyRetained` together — so the trap
+this ADR argues from was the one state the suite never reached. It is reached by letting a send FAIL retryably, and
 the failure is shaped from the REAL stack rather than invented: with the API down, the BFF answers a
 proxied POST with `502 Bad Gateway` and `Content-Length: 0`, and that empty body is not a parse
 failure — RTK's json handler returns `null`, so `toApiProblem` keeps the numeric status and
