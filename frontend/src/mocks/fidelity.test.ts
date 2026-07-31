@@ -334,6 +334,41 @@ describe('model binding runs before the action, and the action before the servic
     expect((await res.json()).errorCode).toBe('ACCESS_DENIED');
   });
 
+  it('accepts every Guid format the server does, not just the hyphenated one', async () => {
+    // `Guid.TryParse` takes N, D, B, P and X. The mock took D and answered 400 to the rest, so it
+    // was STRICTER than the server — the direction that teaches a test a contract the API does not
+    // offer. Each of these was sent to the running backend first and came back 200 with the right
+    // scoped total; MAIN_ACCOUNT_ID is this seed's equivalent.
+    const d = MAIN_ACCOUNT_ID;
+    const n = d.replace(/-/g, '');
+    const x = `{0x${n.slice(0, 8)},0x${n.slice(8, 12)},0x${n.slice(12, 16)},{${(
+      n.slice(16).match(/../g) as string[]
+    )
+      .map((b) => `0x${b}`)
+      .join(',')}}}`;
+
+    for (const form of [d, n, `{${d}}`, `(${d})`, x]) {
+      const res = await fetch(`/api/transactions/summary?AccountId=${encodeURIComponent(form)}`);
+      expect(res.status, form).toBe(200);
+    }
+  });
+
+  it('still rejects the empty guid however it is spelled', async () => {
+    // The hole the other formats would have opened: the idempotency guard compared the raw string
+    // against the dashed nil, so 32 undashed zeroes would have walked through the moment N was
+    // allowed. Parsing to the canonical form before comparing is what closes it.
+    const res = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '00000000000000000000000000000000',
+      },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 1 }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
   it('the summary inherits the same three-step order, now that it has an AccountId', async () => {
     // Every one of these used to be moot: the summary took no AccountId at all, so there was no
     // ownership check to sequence. It has one now, and it has to sit where the list's sits.

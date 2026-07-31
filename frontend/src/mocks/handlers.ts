@@ -26,8 +26,47 @@ import {
  */
 const api = createOpenApiHttp<paths>({ baseUrl: '*' });
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/*
+  `Guid.TryParse`, not "a UUID with hyphens".
+
+  Both places this is used bind through `Guid.TryParse` on the server — `Guid? AccountId` on the two
+  transaction filters, and `IdempotencyMiddleware.ReadKey`. That method accepts FIVE formats, and the
+  mock accepted one, so it answered 400 to requests the API answers 200 to. Measured against the
+  running stack rather than assumed: N, B, P and X all returned the correctly scoped total, and an
+  N-format Idempotency-Key was accepted on a deposit.
+
+  Nothing in this app sends anything but D — ids come from the API — so no client could reach the
+  gap. It is fixed because a mock that is stricter than the server teaches a test the wrong contract,
+  which is the entire failure this file's fidelity suite exists to prevent.
+*/
+// The backslashes are DOUBLED because these are template literals, not regex literals: `\(` inside
+// a template literal is just `(`, which the RegExp then reads as a group opener. Written singly at
+// first, and the P form silently became a capturing group — the format test caught it as a 400.
+const HEX = '[0-9a-f]';
+const GUID_D = `${HEX}{8}-${HEX}{4}-${HEX}{4}-${HEX}{4}-${HEX}{12}`;
+const GUID_X =
+  `\\{0x${HEX}{1,8},0x${HEX}{1,4},0x${HEX}{1,4},` + `\\{(?:0x${HEX}{1,2},){7}0x${HEX}{1,2}\\}\\}`;
+const GUID_RE = new RegExp(
+  `^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D}\\)|${GUID_X})$`,
+  'i',
+);
+
+/**
+ * Parse to the CANONICAL form, or `null`.
+ *
+ * Returning the D-form matters as much as accepting the others: the empty-guid rejections compare
+ * against `NIL_UUID`, and a nil key sent as 32 undashed zeroes would have slipped past a string
+ * comparison the moment the other formats were allowed in. `Guid.TryParse` then `== Guid.Empty`
+ * normalises first; so does this.
+ */
+function parseGuid(value: string): string | null {
+  if (!GUID_RE.test(value)) return null;
+  const hex = value.replace(/0x|[^0-9a-f]/gi, '').toLowerCase();
+  if (hex.length !== 32) return null;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /** FNV-1a over the raw body string — a cheap stand-in for the backend's byte HMAC. */
 function fingerprint(raw: string): string {
@@ -492,7 +531,8 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     FromDate answered 403, where the API answers 400. Ordering was this PR's whole subject and the
     handler it added got it wrong in the same way.
   */
-  if (accountId && !UUID_RE.test(accountId)) {
+  const canonicalAccountId = accountId ? parseGuid(accountId) : null;
+  if (accountId && !canonicalAccountId) {
     return response.untyped(
       problem({
         status: 400,
@@ -511,7 +551,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   // Ownership is the SERVICE's check, so it comes after everything the framework does. `AccountId`
   // used to be ignored outright, so both accounts returned byte-identical feeds and the dashboard's
   // scope control appeared to do nothing.
-  if (accountId && !mockState.accounts.some((a) => a.id === accountId)) {
+  if (canonicalAccountId && !mockState.accounts.some((a) => a.id === canonicalAccountId)) {
     return response.untyped(
       problem({
         status: 403,
@@ -538,7 +578,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const toMs = params.get('ToDate') ? Date.parse(params.get('ToDate') as string) : null;
 
   const ordered = [...mockState.transactions]
-    .filter((t) => !accountId || t.accountId === accountId)
+    .filter((t) => !canonicalAccountId || t.accountId === canonicalAccountId)
     .filter((t) => {
       const at = Date.parse(t.createdAt);
       if (fromMs !== null && !Number.isNaN(fromMs) && at < fromMs) {
@@ -600,12 +640,17 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     the account is the caller's. A request with both an inverted window and a foreign account gets
     422, not 403.
   */
-  const summaryAccountId = params.get('AccountId');
-  if (summaryAccountId && !UUID_RE.test(summaryAccountId)) {
+  // Parsed to the CANONICAL form immediately, and everything downstream uses that. Accepting the
+  // other four formats and then comparing the RAW string against stored ids is the same mistake one
+  // level along: the account exists, the id is valid, and the lookup misses — a 403 for an account
+  // the caller owns. Caught by the format test the moment it was written.
+  const rawSummaryAccountId = params.get('AccountId');
+  const summaryAccountId = rawSummaryAccountId ? parseGuid(rawSummaryAccountId) : null;
+  if (rawSummaryAccountId && !summaryAccountId) {
     return response.untyped(
       problem({
         status: 400,
-        errors: { AccountId: [`The value '${summaryAccountId}' is not valid.`] },
+        errors: { AccountId: [`The value '${rawSummaryAccountId}' is not valid.`] },
       }),
     );
   }
@@ -735,7 +780,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -848,7 +893,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -1102,7 +1147,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -1245,7 +1290,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
