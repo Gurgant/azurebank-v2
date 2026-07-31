@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { AppLayout } from '../components/layout/AppLayout';
 import { BottomNav } from '../components/layout/BottomNav';
 import { renderWithProviders } from '../test/renderWithProviders';
-import { setViewportWidth, TEST_VIEWPORT_WIDTH } from '../test/viewport';
+import { setViewportWidth } from '../test/viewport';
 import { safeArea } from './tokens';
 
 /**
@@ -131,6 +131,12 @@ describe('the shell with no bottom bar', () => {
     // The suite runs at 1024 — exactly `lg` — so AppLayout renders its DESKTOP tree by default and
     // the mobile classes never appear. The first run of this test asserted against an element that
     // had no padding-bottom class at all, which the non-vacuity check caught rather than passing.
+    //
+    // Narrowed and not restored, deliberately: `setup.ts` runs `resetMediaEnvironment()` in a global
+    // `afterEach`, which vitest executes whether the test passed or threw. That is the convention
+    // the suite already follows — `useResponsive.test.tsx` sets the width in eight places and
+    // restores it in none. A manual restore here was worse than redundant: it implied the cleanup
+    // was this test's job, and a reviewer reasonably read the line as a leak waiting to happen.
     setViewportWidth(390);
 
     const { container } = renderWithProviders(
@@ -150,7 +156,5 @@ describe('the shell with no bottom bar', () => {
     // Non-vacuity: no padding-bottom class at all would satisfy the assertion below by default.
     expect(applied).toHaveLength(1);
     expect(applied[0]).toContain('var(--ab-safe-bottom)');
-
-    setViewportWidth(TEST_VIEWPORT_WIDTH);
   });
 });
