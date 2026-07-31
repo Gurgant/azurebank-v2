@@ -353,6 +353,17 @@ describe('model binding runs before the action, and the action before the servic
     }
   });
 
+  it('tolerates the whitespace Guid.TryParse tolerates', async () => {
+    // Also measured against the running API before being written: a padded id came back 200 with
+    // the same scoped total as the bare one. Cheap to get wrong in the other direction — the regex
+    // is anchored, so without a trim every padded value is a 400 the server would have accepted.
+    const res = await fetch(
+      `/api/transactions/summary?AccountId=${encodeURIComponent(` ${MAIN_ACCOUNT_ID} `)}`,
+    );
+
+    expect(res.status).toBe(200);
+  });
+
   it('still rejects the empty guid however it is spelled', async () => {
     // The hole the other formats would have opened: the idempotency guard compared the raw string
     // against the dashed nil, so 32 undashed zeroes would have walked through the moment N was

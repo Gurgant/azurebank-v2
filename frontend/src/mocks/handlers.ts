@@ -62,8 +62,12 @@ const GUID_RE = new RegExp(
  * normalises first; so does this.
  */
 function parseGuid(value: string): string | null {
-  if (!GUID_RE.test(value)) return null;
-  const hex = value.replace(/0x|[^0-9a-f]/gi, '').toLowerCase();
+  // Trimmed first, because `Guid.TryParse` is documented to allow leading and trailing white space
+  // and does — measured: ` <guid> `, `<guid> ` and ` <guid>` each returned 200 with the correct
+  // scoped total from the running API. Without this the mock 400s a request the server answers.
+  const trimmed = value.trim();
+  if (!GUID_RE.test(trimmed)) return null;
+  const hex = trimmed.replace(/0x|[^0-9a-f]/gi, '').toLowerCase();
   if (hex.length !== 32) return null;
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
@@ -780,7 +784,13 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
       }),
     );
   }
-  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -796,7 +806,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`deposit|${key}`);
+  const stored = mockState.idempotency.get(`deposit|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -867,7 +877,11 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     message: 'Deposit completed successfully.',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`deposit|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`deposit|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
 
   // Round-trip through the TYPED helper so the success shape is compile-checked against
   // schema.d.ts (the stored string above replays byte-identically on retries).
@@ -893,7 +907,13 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
       }),
     );
   }
-  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -909,7 +929,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`withdraw|${key}`);
+  const stored = mockState.idempotency.get(`withdraw|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -1046,7 +1066,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     message: 'Withdrawal successful',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`withdraw|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`withdraw|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
   return response(201).json(payload);
 });
 
@@ -1147,7 +1171,13 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
       }),
     );
   }
-  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -1163,7 +1193,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`transfer|${key}`);
+  const stored = mockState.idempotency.get(`transfer|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -1264,7 +1294,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     message: 'Transfer completed successfully.',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`transfer|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`transfer|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
   return response(201).json(payload);
 });
 
@@ -1290,7 +1324,13 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       }),
     );
   }
-  if (parseGuid(key) === null || parseGuid(key) === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -1306,7 +1346,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`internal|${key}`);
+  const stored = mockState.idempotency.get(`internal|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -1415,7 +1455,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     message: 'Internal transfer completed successfully.',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`internal|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`internal|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
   return response(201).json(payload);
 });
 
