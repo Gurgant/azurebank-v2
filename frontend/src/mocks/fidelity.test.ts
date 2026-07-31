@@ -228,17 +228,28 @@ describe('the two shapes every error inherits', () => {
     resetMockState();
   });
 
-  it('a validation 400 says Validation Failed, not Bad Request with an empty detail', async () => {
-    // `ValidationExceptionHandler` writes its OWN ProblemDetails — title "Validation Failed",
-    // detail "One or more validation errors occurred." Everything the mock built carried the
-    // generic 400 title and detail: '', so a surface rendering `problem.detail` showed nothing
-    // for the one error class that always has something to say.
+  it('a model-state 400 uses the FRAMEWORK envelope, with no detail at all', async () => {
+    /*
+      This asserted "Validation Failed" + a detail, which is the OTHER envelope. Measured against
+      the running API on 2026-07-31: `TransactionController` injects validators only for deposit
+      and withdraw, so the list action never throws ValidationException and never reaches
+      `ValidationExceptionHandler`. Its 400 comes from `[ApiController]` model state, rendered by
+      the framework:
+
+        {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+         "title":"One or more validation errors occurred.","status":400,"errors":{...},
+         "traceId":"00-<32hex>-<16hex>-01"}
+
+      No `detail` member — which matters, because `HistoryPage` renders `problem.detail` for exactly
+      this endpoint and showed a sentence under MSW that production never sends. The endpoints that
+      DO have a validator keep the other envelope; see the same-account transfer test.
+    */
     const res = await fetch('/api/transactions?Page=0');
 
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.title).toBe('Validation Failed');
-    expect(body.detail).toBe('One or more validation errors occurred.');
+    expect(body.title).toBe('One or more validation errors occurred.');
+    expect(body.detail).toBeUndefined();
     expect(body.errorCode).toBeUndefined(); // validation 400s carry none
   });
 
@@ -248,7 +259,10 @@ describe('the two shapes every error inherits', () => {
     // validator produces, and NO upper bound — so paging 1000 rows worked here and 400s in prod.
     const body = await fetch('/api/transactions?PageSize=1000').then((r) => r.json());
 
-    expect(body.errors.pageSize).toEqual(['PageSize must be between 1 and 100.']);
+    // PascalCase: ASP.NET keys ValidationProblemDetails by the ModelState key, which is the bound
+    // CLR property, and `AddApiControllers` never sets a DictionaryKeyPolicy. Observed live as
+    // `{"PageSize":[...]}`; this line asserted `pageSize` and was pinning the mock's own spelling.
+    expect(body.errors.PageSize).toEqual(['PageSize must be between 1 and 100.']);
     expect(body.errors).not.toHaveProperty('pagination');
 
     const ok = await fetch('/api/transactions?PageSize=100');

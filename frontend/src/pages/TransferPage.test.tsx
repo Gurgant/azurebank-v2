@@ -8,6 +8,7 @@ import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
+import { seedMockSession } from '../mocks/state';
 
 /**
  * PR-11 — the external transfer end to end, INCLUDING the step-up interceptor: pick an
@@ -43,6 +44,19 @@ async function verifyRecipient(tag: string) {
   await userEvent.type(screen.getByLabelText('Recipient handle'), tag);
   await userEvent.click(screen.getByRole('button', { name: 'Verify' }));
 }
+
+/*
+  A session, seeded, because the step-up routes now demand one.
+
+  The mock used to answer /bff/auth/verify-pin for a caller with NO session at all, so these
+  tests never had to establish one and quietly exercised a state the product cannot reach: the
+  real BFF reads the session first and answers 401. Aligning the mock (contract gate) made that
+  visible. Seeding is the faithful fix — a user reaching a PIN prompt is, by construction,
+  already signed in.
+*/
+beforeEach(() => {
+  seedMockSession();
+});
 
 describe('external transfer (PR-11)', () => {
   it('confirms a recipient, transfers, steps up with a PIN, and shows the receipt', async () => {

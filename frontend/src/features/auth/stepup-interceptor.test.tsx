@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
-import { mockState } from '../../mocks/state';
+import { mockState, seedMockSession } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useTransferMutation } from '../api/apiSlice';
@@ -80,6 +80,19 @@ async function enterPin(pin: string) {
   await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
   await userEvent.paste(pin);
 }
+
+/*
+  A session, seeded, because the step-up routes now demand one.
+
+  The mock used to answer /bff/auth/verify-pin for a caller with NO session at all, so these
+  tests never had to establish one and quietly exercised a state the product cannot reach: the
+  real BFF reads the session first and answers 401. Aligning the mock (contract gate) made that
+  visible. Seeding is the faithful fix — a user reaching a PIN prompt is, by construction,
+  already signed in.
+*/
+beforeEach(() => {
+  seedMockSession();
+});
 
 describe('step-up interceptor (PR-11)', () => {
   it('403 → modal → verify → replays the request with the SAME idempotency key', async () => {

@@ -2,7 +2,7 @@ import { http, HttpResponse } from 'msw';
 import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
-import { problem } from './problem';
+import { modelStateProblem, problem } from './problem';
 import {
   MOCK_PASSWORD,
   MOCK_USER,
@@ -516,13 +516,13 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   // rejected in production.
   const pageErrors: Record<string, string[]> = {};
   if (!Number.isInteger(page) || page < 1) {
-    pageErrors.page = ['Page must be at least 1.'];
+    pageErrors.Page = ['Page must be at least 1.'];
   }
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
-    pageErrors.pageSize = ['PageSize must be between 1 and 100.'];
+    pageErrors.PageSize = ['PageSize must be between 1 and 100.'];
   }
   if (Object.keys(pageErrors).length > 0) {
-    return response.untyped(problem({ status: 400, errors: pageErrors }));
+    return response.untyped(modelStateProblem(pageErrors));
   }
 
   /*
@@ -538,10 +538,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const canonicalAccountId = accountId ? parseGuid(accountId) : null;
   if (accountId && !canonicalAccountId) {
     return response.untyped(
-      problem({
-        status: 400,
-        errors: { AccountId: [`The value '${accountId}' is not valid.`] },
-      }),
+      modelStateProblem({ AccountId: [`The value '${accountId}' is not valid.`] }),
     );
   }
   const badDates = rejectUnparseableDates({
@@ -652,10 +649,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   const summaryAccountId = rawSummaryAccountId ? parseGuid(rawSummaryAccountId) : null;
   if (rawSummaryAccountId && !summaryAccountId) {
     return response.untyped(
-      problem({
-        status: 400,
-        errors: { AccountId: [`The value '${rawSummaryAccountId}' is not valid.`] },
-      }),
+      modelStateProblem({ AccountId: [`The value '${rawSummaryAccountId}' is not valid.`] }),
     );
   }
 
@@ -692,9 +686,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   */
   if (params.get('FromDate') && params.get('ToDate') && fromMs > toMs) {
     const inverted = 'FromDate must be earlier than or equal to ToDate.';
-    return response.untyped(
-      problem({ status: 400, errors: { ToDate: [inverted], FromDate: [inverted] } }),
-    );
+    return response.untyped(modelStateProblem({ ToDate: [inverted], FromDate: [inverted] }));
   }
 
   // The service's own guard, on the RESOLVED window — reachable only when a bound was DEFAULTED,
@@ -1378,11 +1370,28 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   const amount = body.amount as number;
 
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
+    /*
+      A FIELD error at 400, not a domain code at 422 — three differences, and the mock had all
+      three wrong.
+
+      `InternalTransferRequestValidator` carries `ToAccountId.NotEqual(x => x.FromAccountId)`, and
+      `ValidateAndThrowAsync` runs BEFORE the service is called, so the service's own
+      `BusinessRuleException(SAME_ACCOUNT_TRANSFER)` can never reach the wire — `ErrorCodes.cs` says
+      as much, calling it defence-in-depth for non-HTTP callers. The backend is not buggy here; the
+      mock invented a code the API cannot emit, and `InternalTransferPage` still carries copy for a
+      branch only MSW could ever reach.
+
+      Observed: 400 {"type":"https://httpstatuses.com/400","title":"Validation Failed",
+                     "detail":"One or more validation errors occurred.",
+                     "errors":{"toAccountId":["Cannot transfer to the same account."]}}
+
+      camelCase key here, unlike the model-state envelope: FluentValidation reports against the
+      expression it was given, and `AddFluentValidation` is configured to camelCase those names.
+    */
     return response.untyped(
       problem({
-        status: 422,
-        errorCode: 'SAME_ACCOUNT_TRANSFER',
-        detail: 'Cannot transfer to the same account.',
+        status: 400,
+        errors: { toAccountId: ['Cannot transfer to the same account.'] },
       }),
     );
   }
@@ -1474,6 +1483,23 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   if (!authBody) {
     return badRequestBody(await request.clone().text());
   }
+  /*
+    The session gate, AFTER the body and before everything else.
+
+    That order is measured, not assumed. `BffAuthController` reads the session at the top of both
+    PIN actions, but ASP.NET binds the model BEFORE the action body runs — so a malformed or empty
+    payload is rejected by model state first. Confirmed anonymous against the real BFF:
+      '{not json' -> 400 "One or more validation errors occurred." (framework envelope)
+      valid JSON  -> 401 {"title":"Unauthorized","detail":"Session expired or invalid"} (no errorCode)
+    The first draft of this guard sat above the body check and got the two the wrong way round.
+
+    The mock used to skip the session entirely, so a caller with NO session got a 200 and, worse,
+    `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
+    to push a full transfer through, since the level is the only thing the money handlers consult.
+  */
+  if (expireMockSessionIfDue() || !mockState.session) {
+    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  }
   const pin = authBody.body.pin as string | undefined;
   const now = Date.now();
   if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
@@ -1524,6 +1550,23 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return badRequestBody(await request.clone().text());
+  }
+  /*
+    The session gate, AFTER the body and before everything else.
+
+    That order is measured, not assumed. `BffAuthController` reads the session at the top of both
+    PIN actions, but ASP.NET binds the model BEFORE the action body runs — so a malformed or empty
+    payload is rejected by model state first. Confirmed anonymous against the real BFF:
+      '{not json' -> 400 "One or more validation errors occurred." (framework envelope)
+      valid JSON  -> 401 {"title":"Unauthorized","detail":"Session expired or invalid"} (no errorCode)
+    The first draft of this guard sat above the body check and got the two the wrong way round.
+
+    The mock used to skip the session entirely, so a caller with NO session got a 200 and, worse,
+    `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
+    to push a full transfer through, since the level is the only thing the money handlers consult.
+  */
+  if (expireMockSessionIfDue() || !mockState.session) {
+    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
   const pin = authBody.body.pin as string | undefined;
   if (!pin || !/^\d{6}$/.test(pin)) {

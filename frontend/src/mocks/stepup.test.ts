@@ -3,7 +3,7 @@
  * BffAuthController semantics). The product's step-up interceptor is built against these.
  */
 
-import { mockState } from './state';
+import { mockState, seedMockSession } from './state';
 
 const TRANSFER_URL = '/api/transfers';
 const VERIFY_URL = '/bff/auth/verify-pin';
@@ -28,6 +28,19 @@ function verifyPin(pin: string) {
     body: JSON.stringify({ pin }),
   });
 }
+
+/*
+  A session, seeded, because the step-up routes now demand one.
+
+  The mock used to answer /bff/auth/verify-pin for a caller with NO session at all, so these
+  tests never had to establish one and quietly exercised a state the product cannot reach: the
+  real BFF reads the session first and answers 401. Aligning the mock (contract gate) made that
+  visible. Seeding is the faithful fix — a user reaching a PIN prompt is, by construction,
+  already signed in.
+*/
+beforeEach(() => {
+  seedMockSession();
+});
 
 describe('step-up handler (level-2 semantics)', () => {
   it('403 at level 1 with the BARE step-up body (NOT ProblemDetails) + level headers', async () => {
