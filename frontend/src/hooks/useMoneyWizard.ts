@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useBlocker, useNavigate } from 'react-router-dom';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { classifyMoneyProblem, type DomainMessages, type MessageScope } from '../api/moneyProblem';
 import { useIdempotentMutation, type IdempotentTrigger } from './useIdempotentMutation';
@@ -70,6 +70,13 @@ export interface MoneyWizard<TBody, TResult> {
   startOver: () => void;
   /** The ONLY way out. Refuses while a key is live. */
   requestLeave: (to: string) => void;
+  /**
+   * The browser's own Back, which no in-app guard can reach.
+   *
+   * `null` unless a POP is being held. When set, the page must ask — and both answers must be
+   * offered: `leave` abandons the intent, `stay` cancels the navigation.
+   */
+  exitPrompt: { leave: () => void; stay: () => void } | null;
 }
 
 export function useMoneyWizard<TBody, TResult>(
@@ -110,8 +117,49 @@ export function useMoneyWizard<TBody, TResult>(
     setStep(next);
   };
 
-  // The one nav path the in-app controls cannot cover: a refresh or tab-close while a key is live.
-  // (In-app popstate needs a data-router useBlocker — deferred with the router migration.)
+  /*
+    The browser's Back button, which the in-app guards cannot reach.
+
+    `useBlocker` is Data-mode only — the availability table in `react-router/docs/start/modes.md`
+    ticks it for Framework and Data and leaves Declarative blank — which is why this waited for the
+    router migration the comment here used to defer it to (ADR-0028).
+
+    It WARNS; it does not veto, and that is the decision the rest of the wizard argues against.
+    Every other exit refuses while a key is live: `backDisabled`, `closeDisabled`, `requestLeave`,
+    `toForm`. Matching them here would lock the last door. `shouldKeepKey` retains the key on any
+    >= 500 while `verifyRequired` stays false, so after a 502 the verify view — the one screen that
+    offers "check my transactions" and "start over" — does not render, Back and Close are disabled,
+    and `requestLeave` no-ops. Browser Back is the ONLY exit from that state short of closing the
+    tab. A blocker with no `proceed()` would make closing the tab the app's error recovery.
+
+    So the contract is the one `beforeunload` already concedes below: warn, then defer to the user.
+    It does not close the double-spend window — an abandoned key is still lost until TTL — it makes
+    the abandonment deliberate instead of silent.
+
+    The predicate is a FUNCTION, not `useBlocker(keyLive)`, and the `/login` exemption is not
+    cosmetic: `ProtectedRoute` renders `<Navigate to="/login" replace />` the moment auth leaves
+    `authenticated`, the router consults the blocker on REPLACE too, and both money routes sit
+    inside `ProtectedRoute`. A boolean blocker would put "are you sure?" in front of a FORCED
+    session-expiry logout, holding the user on a page whose credentials are already dead.
+  */
+  const blocker = useBlocker(
+    useCallback(
+      ({ nextLocation }: { nextLocation: { pathname: string } }) =>
+        keyLive && nextLocation.pathname !== '/login',
+      [keyLive],
+    ),
+  );
+
+  // The key can clear while the prompt is still up: leave the dialog open, press Send again, and a
+  // success clears the intent underneath it — leaving "you have unsent money" standing over a
+  // completed transfer. Reset closes it.
+  useEffect(() => {
+    if (blocker.state === 'blocked' && !keyLive) blocker.reset?.();
+  }, [blocker, keyLive]);
+
+  // The other path no in-app control covers: a refresh or tab-close while a key is live. Kept
+  // ALONGSIDE the blocker, not replaced by it — `useBlocker`'s own JSDoc says it "does not handle
+  // hard-reloads or cross-origin navigations", which is exactly what this catches.
   useEffect(() => {
     if (!keyLive) return;
     const warn = (event: BeforeUnloadEvent) => {
@@ -123,6 +171,10 @@ export function useMoneyWizard<TBody, TResult>(
   }, [keyLive]);
 
   return {
+    exitPrompt:
+      blocker.state === 'blocked'
+        ? { leave: () => blocker.proceed?.(), stay: () => blocker.reset?.() }
+        : null,
     step,
     isSubmitting,
     inFlight,
