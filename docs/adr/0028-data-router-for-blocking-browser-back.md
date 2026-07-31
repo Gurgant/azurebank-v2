@@ -114,15 +114,45 @@ recorded version of it is more useful than a clean claim would be: `useMoneyWiza
 never settles holds a key live with no infrastructure at all. What the draft actually tested was
 react-router — it would have stayed green if the hook never registered a blocker.
 
-So the suite is bound to production by mutation. Falsifying the predicate to `false` fails five of
-eight tests; removing the `/login` exemption fails the forced-logout test; swapping `proceed()` for
-`reset()` fails leave-anyway; gutting the reset effect fails the prompt-closes-itself test.
+So the suite is bound to production by mutation. Across eleven tests: falsifying the predicate to
+`false` fails seven; removing the `/login` exemption fails two; swapping `proceed()` for `reset()`
+fails three; gutting the reset effect fails the prompt-closes-itself test; and reducing `keyLive` to
+`isSubmitting` alone fails the retryable-5xx test.
 
-**One mutation is NOT caught, and it is worth naming rather than leaving as a silent gap.** Reducing
-`keyLive` to `keyRetained` alone passes all eight, because `useIdempotentMutation` calls
-`setKeyRetained(true)` synchronously before its first await — the two flags rise and fall in the same
-render on every path a test can construct. The `isSubmitting ||` half is defensive redundancy on a
-money value, not an independently observable condition, and no honest test distinguishes it.
+**REPLACE was asserted here before it was tested, and the assertion was load-bearing.** Decision 3
+claims the router consults blockers on REPLACE — if it did not, `ProtectedRoute`'s
+`<Navigate to="/login" replace />` could never have been held, the exemption would be dead code, and
+the decision would be wrong. Every test drove a `<Link>`, which is a PUSH. It is now checked on a
+NON-exempt path, because a REPLACE to `/login` passing through is equally consistent with "REPLACE is
+never consulted at all". Measured: a REPLACE to a non-exempt path IS held.
+
+**One mutation is still not caught, and the reason recorded here previously was wrong.** Reducing
+`keyLive` to `keyRetained` passes every test. The earlier claim was that both flags "rise and fall in
+the same render on every path a test can construct" — that is false, and a render trace shows it.
+After `verifyRequired` latches, a second Send throws inside `submit()` *before* `setKeyRetained(true)`
+runs, committing exactly one render with `isSubmitting: true, keyRetained: false`, where
+`isSubmitting ||` is the only thing holding the guard.
+
+That window is real but **not reachable by a navigation**, which was also measured rather than
+assumed: firing a synchronous Send and navigating immediately still goes through *with the correct
+code*, because the rejection microtask restores `isSubmitting: false` before the blocker is
+consulted. So the half is genuinely load-bearing for one render, and no BEHAVIOURAL test can
+distinguish it. A render-trace assertion would catch the mutation, and is deliberately not added: it
+would pin an internal sequence inside a window no user can act within, which is a test that breaks on
+React's scheduling rather than on this app's behaviour.
+
+**The retryable-5xx state is now entered rather than described.** Every test held the key with a
+PENDING request, which raises `isSubmitting` and `keyRetained` together — so the trap this ADR argues
+from was the one state the suite never reached. It is reached by letting a send FAIL retryably, and
+the failure is shaped from the REAL stack rather than invented: with the API down, the BFF answers a
+proxied POST with `502 Bad Gateway` and `Content-Length: 0`, and that empty body is not a parse
+failure — RTK's json handler returns `null`, so `toApiProblem` keeps the numeric status and
+synthesizes the code. End to end the normalization is `{ status: 502, errorCode: 'HTTP_502' }`, with
+no title, detail or traceId, because a gateway 5xx never reaches `GlobalExceptionHandler` — the only
+thing that writes an `errorCode` extension. The first draft asserted `errorCode: 'SERVER_ERROR'`,
+which nothing in this system emits. Worth pinning exactly, since `shouldKeepKey` retains on
+`status >= 500`: had the empty body normalized to `'PARSE'`, retention would come from a different
+branch and the test would prove the wrong one.
 
 **What is NOT closed.** Deposit and withdraw are dialogs, not routes, so Back leaves the whole page
 rather than the flow; they are covered by `beforeunload` only. And the window ADR-0022 accepts stays
