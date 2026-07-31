@@ -1,5 +1,5 @@
 import { createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { useBlocker } from 'react-router-dom';
@@ -43,14 +43,14 @@ function Wizard({ keyLive }: { keyLive: boolean }) {
   );
 }
 
-function renderAt(keyLive: boolean) {
+function renderAt(keyLive: boolean, initialEntries: string[] = ['/transfer']) {
   const router = createMemoryRouter(
     [
       { path: '/transfer', element: <Wizard keyLive={keyLive} /> },
       { path: '/history', element: <p>history</p> },
       { path: '/login', element: <p>sign in</p> },
     ],
-    { initialEntries: ['/transfer'] },
+    { initialEntries },
   );
   render(<RouterProvider router={router} />);
   return router;
@@ -104,6 +104,37 @@ describe('leaving a money wizard with a live key', () => {
     await userEvent.click(screen.getByRole('link', { name: 'forced logout' }));
 
     expect(await screen.findByText('sign in')).toBeInTheDocument();
+    expect(screen.queryByText('Leave without finishing?')).toBeNull();
+  });
+
+  it('holds a POP too, which is the navigation this whole change exists for', async () => {
+    // Every other test here clicks a `<Link>`, and a link is a PUSH. Browser Back is a POP, and the
+    // router handles the two differently — it cannot pre-empt a POP, so it lets the history move,
+    // then rewinds it and replays the move on `proceed()`. A suite that only ever pushed would
+    // therefore be silent about the exact navigation the ADR is written about.
+    const router = renderAt(true, ['/history', '/transfer']);
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    expect(await screen.findByText('Leave without finishing?')).toBeInTheDocument();
+    expect(screen.getByText('transfer')).toBeInTheDocument();
+    expect(screen.queryByText('history')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Leave anyway' }));
+
+    expect(await screen.findByText('history')).toBeInTheDocument();
+  });
+
+  it('lets a POP through untouched when no key is live', async () => {
+    const router = renderAt(false, ['/history', '/transfer']);
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    expect(await screen.findByText('history')).toBeInTheDocument();
     expect(screen.queryByText('Leave without finishing?')).toBeNull();
   });
 
