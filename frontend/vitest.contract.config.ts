@@ -11,11 +11,14 @@ import { defineConfig } from 'vitest/config';
  * off because the real target shares one seeded database and one session per run, so parallel files
  * would race on the PIN lockout counter and on account balances.
  *
- * The target is carried in `test.env` rather than by a shell variable, and the alternative is worth
- * naming: `CONTRACT_TARGET=real vitest` is bash-only and silently does nothing under cmd/PowerShell,
- * where a "real" run would quietly execute against the MOCK and report success. That is the exact
- * green-and-false failure this directory exists to prevent, so it is designed out rather than
- * documented around — and it costs no extra dependency.
+ * The target is carried in `test.env` rather than by a shell variable, because the shell-prefix form
+ * is POSIX-only and this repo is developed on Windows. Measured, after an earlier draft of this
+ * comment guessed wrong about it:
+ *   PowerShell -> The term 'CONTRACT_TARGET=real' is not recognized as a name of a cmdlet...
+ *   cmd        -> 'CONTRACT_TARGET' is not recognized as an internal or external command
+ * It fails before vitest starts rather than quietly running the wrong target, so the risk is an
+ * unrunnable real suite, not a false pass. Two configs make both targets work identically on every
+ * shell, and cost no extra dependency.
  */
 export const contractTest = {
   environment: 'node' as const,

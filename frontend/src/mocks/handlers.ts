@@ -496,14 +496,31 @@ const revealAccountNumber = api.get('/api/accounts/{id}/full-number', ({ params,
 });
 
 /**
+ * Query lookup that ignores case, because ASP.NET's model binder does.
+ *
+ * `URLSearchParams.get` is case-SENSITIVE, so the mock used to read `PageSize` and miss `pageSize`
+ * entirely — falling back to the default page size and answering 200 where the real stack validated
+ * the value and answered 400. Unreachable through the app (apiSlice sends PascalCase, matching the
+ * spec) but reachable by anyone hand-writing a URL, and a divergence a mock has no business having.
+ * Found by the contract gate, not by reading the code.
+ */
+function queryParam(params: URLSearchParams, name: string): string | null {
+  const wanted = name.toLowerCase();
+  for (const [key, value] of params) {
+    if (key.toLowerCase() === wanted) return value;
+  }
+  return null;
+}
+
+/**
  * GET /api/transactions — T1, one of the two BARE responses (no envelope, by
  * contract): a PaginatedResponse with real page math, newest first.
  */
 const listTransactions = api.get('/api/transactions', ({ request, response }) => {
   const params = new URL(request.url).searchParams;
-  const page = Number(params.get('Page') ?? 1);
-  const pageSize = Number(params.get('PageSize') ?? 20);
-  const accountId = params.get('AccountId');
+  const page = Number(queryParam(params, 'Page') ?? 1);
+  const pageSize = Number(queryParam(params, 'PageSize') ?? 20);
+  const accountId = queryParam(params, 'AccountId');
 
   // `Number('')` is 0 and `Number('x')` is NaN, and either reached the page math: PageSize 0 makes
   // totalPages Infinity, and a NaN page slices to an empty list while the metadata says otherwise.
@@ -542,8 +559,8 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     );
   }
   const badDates = rejectUnparseableDates({
-    FromDate: params.get('FromDate'),
-    ToDate: params.get('ToDate'),
+    FromDate: queryParam(params, 'FromDate'),
+    ToDate: queryParam(params, 'ToDate'),
   });
   if (badDates) {
     return response.untyped(badDates);
@@ -575,8 +592,12 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     callers send 3, so lexicographic ordering would put `…09:15:00.0000000Z` after
     `…09:15:00.000Z` and drop rows on an exact boundary.
   */
-  const fromMs = params.get('FromDate') ? Date.parse(params.get('FromDate') as string) : null;
-  const toMs = params.get('ToDate') ? Date.parse(params.get('ToDate') as string) : null;
+  const fromMs = queryParam(params, 'FromDate')
+    ? Date.parse(queryParam(params, 'FromDate') as string)
+    : null;
+  const toMs = queryParam(params, 'ToDate')
+    ? Date.parse(queryParam(params, 'ToDate') as string)
+    : null;
 
   const ordered = [...mockState.transactions]
     .filter((t) => !canonicalAccountId || t.accountId === canonicalAccountId)
@@ -645,7 +666,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   // other four formats and then comparing the RAW string against stored ids is the same mistake one
   // level along: the account exists, the id is valid, and the lookup misses — a 403 for an account
   // the caller owns. Caught by the format test the moment it was written.
-  const rawSummaryAccountId = params.get('AccountId');
+  const rawSummaryAccountId = queryParam(params, 'AccountId');
   const summaryAccountId = rawSummaryAccountId ? parseGuid(rawSummaryAccountId) : null;
   if (rawSummaryAccountId && !summaryAccountId) {
     return response.untyped(
@@ -654,8 +675,8 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   }
 
   const badSummaryDates = rejectUnparseableDates({
-    FromDate: params.get('FromDate'),
-    ToDate: params.get('ToDate'),
+    FromDate: queryParam(params, 'FromDate'),
+    ToDate: queryParam(params, 'ToDate'),
   });
   if (badSummaryDates) {
     return response.untyped(badSummaryDates);
@@ -665,8 +686,8 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   const monthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
   ).toISOString();
-  const fromDate = params.get('FromDate') ?? monthStart;
-  const toDate = params.get('ToDate') ?? now.toISOString();
+  const fromDate = queryParam(params, 'FromDate') ?? monthStart;
+  const toDate = queryParam(params, 'ToDate') ?? now.toISOString();
   const fromMs = Date.parse(fromDate);
   const toMs = Date.parse(toDate);
 
@@ -684,7 +705,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     (`Summary_WithInvertedExplicitRange_ReturnsBadRequest`) had been saying 400 since it was
     written. The fidelity test that asserted 422 for the pair was pinning the mock's mistake.
   */
-  if (params.get('FromDate') && params.get('ToDate') && fromMs > toMs) {
+  if (queryParam(params, 'FromDate') && queryParam(params, 'ToDate') && fromMs > toMs) {
     const inverted = 'FromDate must be earlier than or equal to ToDate.';
     return response.untyped(modelStateProblem({ ToDate: [inverted], FromDate: [inverted] }));
   }

@@ -1,6 +1,6 @@
 # ADR-0029: One suite, two backends — making mock drift fail the build
 
-**Status**: Accepted
+**Status**: Accepted — the gate is deliberately INCOMPLETE; see “What is NOT covered”
 
 **Date**: 2026-07-31
 
@@ -45,10 +45,16 @@ observed response next to it. This is the rule the whole exercise exists to enfo
 written from the mock would re-create the problem inside the thing meant to detect it.
 
 **4. The target is carried in `test.env` via a second config file, not a shell variable.**
-`CONTRACT_TARGET=real vitest` is bash-only syntax: under cmd or PowerShell it sets nothing, the run
-executes against the MOCK, and reports success. A "real" run that silently was not real is precisely
-the failure this ADR is about, so it is designed out rather than documented around — and it costs no
-extra dependency.
+`CONTRACT_TARGET=real vitest` is POSIX-only syntax, and this repo is developed on Windows. An
+earlier draft of this decision claimed the prefix form would "quietly run against the mock and
+report success" — that is wrong, and measuring it is what showed so:
+
+    PowerShell -> The term 'CONTRACT_TARGET=real' is not recognized as a name of a cmdlet...
+    cmd        -> 'CONTRACT_TARGET' is not recognized as an internal or external command
+
+It dies before vitest starts. So the real cost is not a false pass but an **unrunnable** real target
+on the platform the work happens on — which is reason enough, without the scarier story. Two configs
+work identically on every shell and add no dependency.
 
 **5. `real` FAILS when the stack is down. It never skips.** A skipped suite reports success without
 having asked the backend anything.
@@ -105,14 +111,16 @@ also more faithful — a user at a PIN prompt is by construction already signed 
   session. The first draft of the mock's session guard sat above the body check and had the two the
   wrong way round.
 
-**One divergence is recorded and deliberately NOT fixed.** ASP.NET's query binding is
-case-insensitive; the mock reads parameters case-sensitively, so `pageSize=999` is validated by the
-real stack and silently ignored by the mock. It is unreachable today because `apiSlice` sends
-PascalCase, matching the spec — so the tests assert the app's own casing, and making the mock
-case-insensitive is left as follow-up rather than smuggled in here.
+**A seventh drift, found by accident and then fixed.** ASP.NET's query binding is case-insensitive;
+`URLSearchParams.get` is not, so the mock read `PageSize` and missed `pageSize` entirely — falling
+back to the default page size and answering 200 where the real stack validated the value and
+answered 400. It surfaced because the first draft of a test used camelCase. Unreachable through the
+app, since `apiSlice` sends PascalCase per the spec, but reachable by anyone hand-writing a URL, and
+not a difference a mock has any business having. The mock now looks parameters up case-insensitively,
+and the tests assert the app's own casing so they stay about envelopes rather than about the binder.
 
-**What is NOT covered, stated as a gap and not as a footnote.** Twelve assertions is a floor, not a
-ceiling.
+**What is NOT covered — and this gate should not be called complete.** Twelve assertions is a floor,
+not a ceiling, and one hole is big enough that the ADR's status says so out loud.
 
 The largest hole is **authentication on the protected resource routes**. `/api/accounts/*` and
 `/api/transactions/*` are gated in the mock by nothing at all: no session read, no expiry check. The
