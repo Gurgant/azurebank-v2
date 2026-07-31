@@ -69,7 +69,9 @@ case.** The backend was right every time; nothing here is a backend fix.
 | PIN routes with no session | `200`, and set `authLevel = 2` | `401`, no `errorCode` |
 | Same-account internal transfer | `422 SAME_ACCOUNT_TRANSFER` | `400` + `errors.toAccountId`, no code |
 | Transactions validation envelope | "Validation Failed" + `detail` | "One or more validation errors occurred.", **no detail** |
-| Validation error keys | `pageSize` | `PageSize` |
+| Pagination error keys | `pageSize` | `PageSize` |
+| Malformed PIN, no session | `401` (session read first) | `400` — model validation runs BEFORE the action |
+| Malformed PIN error key/envelope | `pin`, validator envelope | `Pin`, framework envelope |
 
 **The API has TWO validation envelopes, and that is the finding with the longest reach.** Endpoints
 with a FluentValidation validator get `ValidationExceptionHandler`'s hand-written body (title
@@ -109,7 +111,17 @@ real stack and silently ignored by the mock. It is unreachable today because `ap
 PascalCase, matching the spec — so the tests assert the app's own casing, and making the mock
 case-insensitive is left as follow-up rather than smuggled in here.
 
-**What is NOT covered.** Eleven assertions is a floor, not a ceiling: the remaining 44 audit
-candidates are unattacked, the mock still models no authentication on `/api/accounts/*` and
-`/api/transactions/*`, and the malformed-body envelope (`errors` keyed `$` and `request`) is
-untested. The gate exists so those can be added one measured assertion at a time.
+**What is NOT covered, stated as a gap and not as a footnote.** Twelve assertions is a floor, not a
+ceiling.
+
+The largest hole is **authentication on the protected resource routes**. `/api/accounts/*` and
+`/api/transactions/*` are gated in the mock by nothing at all: no session read, no expiry check. The
+money handlers consult `authLevel` but never ask whether the session behind it is still alive, so an
+expired session still spends. The real stack rejects all of that. It is left open here deliberately
+rather than quietly — closing it changes the default state every page-level test runs in, which is a
+change of a different size and belongs in its own PR, with the same measure-then-assert discipline.
+Until then, no test in this repo proves those routes are protected.
+
+Also untested: the remaining 44 candidates from the static audit, the malformed-body envelope
+(`errors` keyed `$` and `request`), and the case-insensitive query binding recorded above. The gate
+exists so each can be added one measured assertion at a time.

@@ -1478,20 +1478,32 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
  * with verified:false, never a 4xx. Shares the SAME attempt/lock state as withdraw
  * (mockState.pinAttempts/pinLockedUntil) so the 3rd consecutive miss is a 429 PIN_LOCKED.
  */
+/** The API's own reply to a badly-shaped PIN: framework envelope, PascalCase key. */
+const response_modelState = () => modelStateProblem({ Pin: ['PIN must be exactly 6 digits.'] });
+
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return badRequestBody(await request.clone().text());
   }
+  const pin = authBody.body.pin as string | undefined;
+  // `VerifyPinRequest.Pin` carries the same DataAnnotation as the set-pin DTO, and model validation
+  // runs before the action — so a malformed PIN is a 400 even for an anonymous caller. Framework
+  // envelope, PascalCase key, both observed live.
+  if (!pin || !/^\d{6}$/.test(pin)) {
+    return response_modelState();
+  }
   /*
-    The session gate, AFTER the body and before everything else.
+    The session gate, AFTER the body and AFTER model validation.
 
-    That order is measured, not assumed. `BffAuthController` reads the session at the top of both
-    PIN actions, but ASP.NET binds the model BEFORE the action body runs — so a malformed or empty
-    payload is rejected by model state first. Confirmed anonymous against the real BFF:
-      '{not json' -> 400 "One or more validation errors occurred." (framework envelope)
-      valid JSON  -> 401 {"title":"Unauthorized","detail":"Session expired or invalid"} (no errorCode)
-    The first draft of this guard sat above the body check and got the two the wrong way round.
+    Measured anonymously against the real BFF rather than reasoned about — an earlier draft had this
+    above the body check and was wrong twice over:
+      '{not json'      -> 400 "One or more validation errors occurred." (framework envelope)
+      {}               -> 400 errors {"$": ["JSON deserialization for type ..."]}
+      {"pin":"abc"}    -> 400 errors {"Pin": ["PIN must be exactly 6 digits."]}
+      {"pin":"123456"} -> 401 {"title":"Unauthorized","detail":"Session expired or invalid"}
+    ASP.NET binds and validates the model BEFORE the action body runs, so every malformed payload is
+    a 400 even with no session at all; only a well-formed one reaches the session read.
 
     The mock used to skip the session entirely, so a caller with NO session got a 200 and, worse,
     `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
@@ -1500,7 +1512,6 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   if (expireMockSessionIfDue() || !mockState.session) {
     return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
-  const pin = authBody.body.pin as string | undefined;
   const now = Date.now();
   if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
     const retryAfterSeconds = Math.ceil((Date.parse(mockState.pinLockedUntil) - now) / 1000);
@@ -1551,15 +1562,21 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   if (!authBody) {
     return badRequestBody(await request.clone().text());
   }
+  const pin = authBody.body.pin as string | undefined;
+  if (!pin || !/^\d{6}$/.test(pin)) {
+    return response_modelState();
+  }
   /*
-    The session gate, AFTER the body and before everything else.
+    The session gate, AFTER the body and AFTER model validation.
 
-    That order is measured, not assumed. `BffAuthController` reads the session at the top of both
-    PIN actions, but ASP.NET binds the model BEFORE the action body runs — so a malformed or empty
-    payload is rejected by model state first. Confirmed anonymous against the real BFF:
-      '{not json' -> 400 "One or more validation errors occurred." (framework envelope)
-      valid JSON  -> 401 {"title":"Unauthorized","detail":"Session expired or invalid"} (no errorCode)
-    The first draft of this guard sat above the body check and got the two the wrong way round.
+    Measured anonymously against the real BFF rather than reasoned about — an earlier draft had this
+    above the body check and was wrong twice over:
+      '{not json'      -> 400 "One or more validation errors occurred." (framework envelope)
+      {}               -> 400 errors {"$": ["JSON deserialization for type ..."]}
+      {"pin":"abc"}    -> 400 errors {"Pin": ["PIN must be exactly 6 digits."]}
+      {"pin":"123456"} -> 401 {"title":"Unauthorized","detail":"Session expired or invalid"}
+    ASP.NET binds and validates the model BEFORE the action body runs, so every malformed payload is
+    a 400 even with no session at all; only a well-formed one reaches the session read.
 
     The mock used to skip the session entirely, so a caller with NO session got a 200 and, worse,
     `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
@@ -1567,10 +1584,6 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   */
   if (expireMockSessionIfDue() || !mockState.session) {
     return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
-  }
-  const pin = authBody.body.pin as string | undefined;
-  if (!pin || !/^\d{6}$/.test(pin)) {
-    return problem({ status: 400, errors: { pin: ['PIN must be exactly 6 digits.'] } });
   }
   mockState.pin = pin;
   mockState.pinAttempts = 0;

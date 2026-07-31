@@ -57,7 +57,7 @@ describe('contract: money', () => {
     */
     const id = await firstAccountId();
 
-    const { body } = await call('/api/transfers/internal', {
+    const { status, body } = await call('/api/transfers/internal', {
       method: 'POST',
       headers: { 'Idempotency-Key': idempotencyKey() },
       body: JSON.stringify({
@@ -69,6 +69,9 @@ describe('contract: money', () => {
     });
     const problem = asProblem(body);
 
+    // Asserted here too: an envelope check that never looks at the status would pass just as
+    // happily against a 500 that happened to carry the same title.
+    expect(status).toBe(400);
     expect(problem.title).toBe('Validation Failed');
     expect(problem.detail).toBe('One or more validation errors occurred.');
   });

@@ -38,7 +38,12 @@ if (CONTRACT_TARGET === 'mock') {
   */
   beforeAll(async () => {
     try {
-      const probe = await fetch(`${BASE_URL}/bff/auth/me`, { method: 'GET' });
+      // Bounded: an open-but-hung port would otherwise sit here until the hook timeout and report
+      // a vague failure instead of "nothing answered at this address".
+      const probe = await fetch(`${BASE_URL}/bff/auth/me`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5_000),
+      });
       // Any HTTP answer proves something is listening; 401 is the expected one when anonymous.
       if (probe.status === 0) throw new Error('no response');
     } catch (cause) {

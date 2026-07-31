@@ -34,6 +34,32 @@ describe('contract: endpoints that require a session', () => {
     expect(asProblem(body).errorCode).toBeUndefined();
   });
 
+  it('validates the PIN payload BEFORE it reads the session', async () => {
+    /*
+      Order matters, and it is measured, not reasoned. ASP.NET binds and validates the model before
+      the action body runs, so a malformed PIN is rejected even for a caller with no session at all
+      — the session read never happens. Observed anonymously:
+
+        {"pin":"abc"}    -> 400 {"title":"One or more validation errors occurred.",
+                                 "errors":{"Pin":["PIN must be exactly 6 digits."]}}
+        {"pin":"123456"} -> 401 (the test above)
+
+      Two contracts in one response: the ORDER, and the fact that this is the framework envelope
+      keyed by the CLR property (`Pin`) rather than the FluentValidation one keyed camelCase. The
+      mock had both wrong — it answered 401 here, and spelled the key `pin`.
+    */
+    const { status, body } = await call('/bff/auth/verify-pin', {
+      method: 'POST',
+      anonymous: true,
+      body: JSON.stringify({ pin: 'abc' }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(Object.keys(problem.errors ?? {})).toContain('Pin');
+  });
+
   it('refuses to set a PIN for a caller with no session', async () => {
     // Same gate, same observed body: both actions read the session before doing anything else.
     const { status, body } = await call('/bff/auth/set-pin', {

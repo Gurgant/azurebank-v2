@@ -36,16 +36,23 @@ export async function call(
 ): Promise<Wire> {
   const { anonymous, headers, ...rest } = init;
 
-  const response = await fetch(`${BASE_URL}${path}`, {
-    ...rest,
-    headers: {
-      ...(rest.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(headers as Record<string, string> | undefined),
-      // `anonymous` is how the "this endpoint must reject an unauthenticated caller" tests are
-      // written without having to tear the session down and rebuild it.
-      ...(!anonymous && jar ? { cookie: jar } : {}),
-    },
-  });
+  /*
+    Built through `Headers` rather than by spreading into an object literal. `RequestInit.headers`
+    legitimately accepts a Headers instance or an array of pairs as well as a record, and spreading
+    either of those yields `{}` — the header would vanish silently. On a suite whose whole job is to
+    notice small differences, a dropped `Idempotency-Key` would read as a backend bug.
+  */
+  const merged = new Headers(headers);
+  if (rest.body && !merged.has('Content-Type')) {
+    merged.set('Content-Type', 'application/json');
+  }
+  // `anonymous` is how the "this endpoint must reject an unauthenticated caller" tests are written
+  // without having to tear the session down and rebuild it.
+  if (!anonymous && jar) {
+    merged.set('cookie', jar);
+  }
+
+  const response = await fetch(`${BASE_URL}${path}`, { ...rest, headers: merged });
 
   const setCookie = response.headers.getSetCookie?.() ?? [];
   if (setCookie.length > 0) {
