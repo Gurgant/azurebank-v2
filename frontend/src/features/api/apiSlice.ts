@@ -269,11 +269,18 @@ export const apiSlice = createApi({
      */
     getTransactionSummary: builder.query<
       TransactionSummaryResponse,
-      { fromDate: string; toDate?: string }
+      { fromDate: string; toDate?: string; accountId?: string }
     >({
-      query: ({ fromDate, toDate }) => ({
+      query: ({ fromDate, toDate, accountId }) => ({
         url: '/api/transactions/summary',
-        params: { FromDate: fromDate, ...(toDate ? { ToDate: toDate } : {}) },
+        // `accountId` omitted means every account the caller owns, which is the server's default
+        // and stays the dashboard's "All accounts" case. Sent as `AccountId` to match the filter's
+        // property name, like the two dates above it.
+        params: {
+          FromDate: fromDate,
+          ...(toDate ? { ToDate: toDate } : {}),
+          ...(accountId ? { AccountId: accountId } : {}),
+        },
       }),
       // STRICT (A): the dashboard's money aggregate — drift must fail, not render.
       transformResponse: (response: Schemas['ApiResponseOfTransactionSummaryResponse']) =>

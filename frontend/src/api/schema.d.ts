@@ -1057,6 +1057,8 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Optional single-account scope; omitted, the summary covers every account the caller owns. */
+                    AccountId?: string;
                     FromDate?: string;
                     ToDate?: string;
                 };

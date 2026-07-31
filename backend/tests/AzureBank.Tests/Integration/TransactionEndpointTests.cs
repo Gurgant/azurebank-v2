@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Enums;
@@ -320,6 +321,71 @@ public class TransactionEndpointTests : IntegrationTestBase
         result.Data.TotalExpenses.Should().Be(200m);
         result.Data.NetChange.Should().Be(1300m);
         result.Data.PendingCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Summary_WithAccountId_ScopesToThatAccount()
+    {
+        // Arrange — two accounts on ONE user, money in both. The whole point of the parameter is
+        // that these figures stop being merged, so the test has to have something to separate.
+        var (token, _, firstAccountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await DepositAsync(token, firstAccountId, 1000m);
+
+        // `JsonOptions` is not optional here: the enum is serialized as a STRING by the API's
+        // converter, and the default serializer writes it as a number, which the model binder
+        // rejects with a 400. The first run of this test failed on exactly that.
+        var created = await Client.PostAsJsonAsync("/api/accounts", new CreateAccountRequest
+        {
+            Name = "Second",
+            Type = AccountType.Savings
+        }, JsonOptions);
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+        var secondAccountId = (await created.Content
+            .ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!.Id;
+        await DepositAsync(token, secondAccountId, 7m);
+
+        var fromDate = Uri.EscapeDataString(DateTime.UtcNow.AddDays(-1).ToString("O"));
+        var toDate = Uri.EscapeDataString(DateTime.UtcNow.AddDays(1).ToString("O"));
+
+        // Act — scoped to the second account, then unscoped as the control.
+        var scoped = await Client.GetAsync(
+            $"/api/transactions/summary?AccountId={secondAccountId}&FromDate={fromDate}&ToDate={toDate}");
+        var all = await Client.GetAsync(
+            $"/api/transactions/summary?FromDate={fromDate}&ToDate={toDate}");
+
+        // Assert — 7 alone, and 1007 together. Asserting both directions is what proves the
+        // parameter narrows rather than that the fixture happened to hold one account.
+        scoped.StatusCode.Should().Be(HttpStatusCode.OK);
+        var scopedResult = await scoped.Content
+            .ReadFromJsonAsync<ApiResponse<TransactionSummaryResponse>>(JsonOptions);
+        scopedResult!.Data!.TotalIncome.Should().Be(7m);
+
+        var allResult = await all.Content
+            .ReadFromJsonAsync<ApiResponse<TransactionSummaryResponse>>(JsonOptions);
+        allResult!.Data!.TotalIncome.Should().Be(1007m);
+    }
+
+    [Fact]
+    public async Task Summary_WithAnotherUsersAccountId_ReturnsForbidden()
+    {
+        // Arrange — two REAL users, and the second asks about the first's account. Through the
+        // full pipeline, because the status is the part the client sees and the service only
+        // throws an exception; the mapping to 403 lives in the handler.
+        var (ownerToken, _, ownersAccountId) = await RegisterTestUserAsync();
+        SetAuthHeader(ownerToken);
+        await DepositAsync(ownerToken, ownersAccountId, 4_242m);
+
+        var (intruderToken, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(intruderToken);
+
+        // Act
+        var response = await Client.GetAsync(
+            $"/api/transactions/summary?AccountId={ownersAccountId}");
+
+        // Assert — refused, and the body carries no figure from the account it refused.
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().NotContain("4242");
     }
 
     [Fact]

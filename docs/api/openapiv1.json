@@ -959,6 +959,15 @@
         "summary": "Get aggregated income/expenses/net and pending count over a date window\r\n(defaults to the current UTC calendar month).",
         "parameters": [
           {
+            "name": "AccountId",
+            "in": "query",
+            "description": "Optional single-account scope; omitted, the summary covers every account the caller owns.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
             "name": "FromDate",
             "in": "query",
             "schema": {

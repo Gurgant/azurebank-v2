@@ -19,6 +19,24 @@ function deposit(key: string | null, body: unknown) {
 }
 
 describe('idempotency handler (ADR-0009 semantics)', () => {
+  it('replays across SPELLINGS of the same key, not just repetitions of one', async () => {
+    // The money-safety edge that accepting N/B/P/X opened. `Guid.TryParse` makes these one key and
+    // the backend stores the parsed `Guid`, so the second call is a replay there. The mock keyed
+    // its store on the RAW header, so the two spellings were two entries and the deposit executed
+    // twice — a double credit, in the one file whose whole subject is that this cannot happen.
+    const dashed = KEY;
+    const undashed = KEY.replace(/-/g, '');
+
+    const first = await deposit(dashed, { accountId: ACCOUNT(), amount: 50 });
+    const firstText = await first.text();
+    const second = await deposit(undashed, { accountId: ACCOUNT(), amount: 50 });
+
+    expect(first.status).toBe(201);
+    expect(first.headers.get('Idempotency-Replayed')).toBeNull();
+    expect(second.headers.get('Idempotency-Replayed')).toBe('true');
+    expect(await second.text()).toBe(firstText);
+  });
+
   it('replays the same key + same body BYTE-identically with the replay marker', async () => {
     const first = await deposit(KEY, { accountId: ACCOUNT(), amount: 50 });
     const firstText = await first.text();

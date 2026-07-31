@@ -26,8 +26,51 @@ import {
  */
 const api = createOpenApiHttp<paths>({ baseUrl: '*' });
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/*
+  `Guid.TryParse`, not "a UUID with hyphens".
+
+  Both places this is used bind through `Guid.TryParse` on the server — `Guid? AccountId` on the two
+  transaction filters, and `IdempotencyMiddleware.ReadKey`. That method accepts FIVE formats, and the
+  mock accepted one, so it answered 400 to requests the API answers 200 to. Measured against the
+  running stack rather than assumed: N, B, P and X all returned the correctly scoped total, and an
+  N-format Idempotency-Key was accepted on a deposit.
+
+  Nothing in this app sends anything but D — ids come from the API — so no client could reach the
+  gap. It is fixed because a mock that is stricter than the server teaches a test the wrong contract,
+  which is the entire failure this file's fidelity suite exists to prevent.
+*/
+// The backslashes are DOUBLED because these are template literals, not regex literals: `\(` inside
+// a template literal is just `(`, which the RegExp then reads as a group opener. Written singly at
+// first, and the P form silently became a capturing group — the format test caught it as a 400.
+const HEX = '[0-9a-f]';
+const GUID_D = `${HEX}{8}-${HEX}{4}-${HEX}{4}-${HEX}{4}-${HEX}{12}`;
+const GUID_X =
+  `\\{0x${HEX}{1,8},0x${HEX}{1,4},0x${HEX}{1,4},` + `\\{(?:0x${HEX}{1,2},){7}0x${HEX}{1,2}\\}\\}`;
+const GUID_RE = new RegExp(
+  `^(?:${HEX}{32}|${GUID_D}|\\{${GUID_D}\\}|\\(${GUID_D}\\)|${GUID_X})$`,
+  'i',
+);
+
+/**
+ * Parse to the CANONICAL form, or `null`.
+ *
+ * Returning the D-form matters as much as accepting the others: the empty-guid rejections compare
+ * against `NIL_UUID`, and a nil key sent as 32 undashed zeroes would have slipped past a string
+ * comparison the moment the other formats were allowed in. `Guid.TryParse` then `== Guid.Empty`
+ * normalises first; so does this.
+ */
+function parseGuid(value: string): string | null {
+  // Trimmed first, because `Guid.TryParse` is documented to allow leading and trailing white space
+  // and does — measured: ` <guid> `, `<guid> ` and ` <guid>` each returned 200 with the correct
+  // scoped total from the running API. Without this the mock 400s a request the server answers.
+  const trimmed = value.trim();
+  if (!GUID_RE.test(trimmed)) return null;
+  const hex = trimmed.replace(/0x|[^0-9a-f]/gi, '').toLowerCase();
+  if (hex.length !== 32) return null;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /** FNV-1a over the raw body string — a cheap stand-in for the backend's byte HMAC. */
 function fingerprint(raw: string): string {
@@ -492,7 +535,8 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     FromDate answered 403, where the API answers 400. Ordering was this PR's whole subject and the
     handler it added got it wrong in the same way.
   */
-  if (accountId && !UUID_RE.test(accountId)) {
+  const canonicalAccountId = accountId ? parseGuid(accountId) : null;
+  if (accountId && !canonicalAccountId) {
     return response.untyped(
       problem({
         status: 400,
@@ -511,7 +555,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   // Ownership is the SERVICE's check, so it comes after everything the framework does. `AccountId`
   // used to be ignored outright, so both accounts returned byte-identical feeds and the dashboard's
   // scope control appeared to do nothing.
-  if (accountId && !mockState.accounts.some((a) => a.id === accountId)) {
+  if (canonicalAccountId && !mockState.accounts.some((a) => a.id === canonicalAccountId)) {
     return response.untyped(
       problem({
         status: 403,
@@ -538,7 +582,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const toMs = params.get('ToDate') ? Date.parse(params.get('ToDate') as string) : null;
 
   const ordered = [...mockState.transactions]
-    .filter((t) => !accountId || t.accountId === accountId)
+    .filter((t) => !canonicalAccountId || t.accountId === canonicalAccountId)
     .filter((t) => {
       const at = Date.parse(t.createdAt);
       if (fromMs !== null && !Number.isNaN(fromMs) && at < fromMs) {
@@ -587,6 +631,34 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     whose whole label is "July so far", was quietly reporting all time. Missing ToDate is `now`,
     which the mock did have right.
   */
+  /*
+    The order below is the SERVICE's order, and it is not the obvious one.
+
+    Model binding first: `TransactionSummaryFilter` declares `Guid? AccountId` alongside the two
+    dates, so a malformed value of any of them is a 400 the action never sees. Same reasoning, and
+    the same trap, as the list handler above — which once answered 403 for a request that carried
+    both a foreign AccountId and an unparseable date, where the API answers 400.
+
+    Then the RESOLVED-window guard, which is a 422 — and it comes BEFORE the ownership check,
+    because `GetSummaryAsync` resolves and validates the window first and only then asks whether
+    the account is the caller's. A request with both an inverted window and a foreign account gets
+    422, not 403.
+  */
+  // Parsed to the CANONICAL form immediately, and everything downstream uses that. Accepting the
+  // other four formats and then comparing the RAW string against stored ids is the same mistake one
+  // level along: the account exists, the id is valid, and the lookup misses — a 403 for an account
+  // the caller owns. Caught by the format test the moment it was written.
+  const rawSummaryAccountId = params.get('AccountId');
+  const summaryAccountId = rawSummaryAccountId ? parseGuid(rawSummaryAccountId) : null;
+  if (rawSummaryAccountId && !summaryAccountId) {
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: { AccountId: [`The value '${rawSummaryAccountId}' is not valid.`] },
+      }),
+    );
+  }
+
   const badSummaryDates = rejectUnparseableDates({
     FromDate: params.get('FromDate'),
     ToDate: params.get('ToDate'),
@@ -604,9 +676,29 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   const fromMs = Date.parse(fromDate);
   const toMs = Date.parse(toDate);
 
-  // The guard is on the RESOLVED window and it is unconditional — the service's own comment says
-  // the filter's model validation only sees the explicitly-provided pair, so a lone future
-  // FromDate lands here rather than there. The mock answered 200 with zeroed totals instead.
+  /*
+    An inverted window has TWO answers, and the mock had one. Found by running the real stack:
+    an explicitly-provided inverted PAIR is a 400 and a lone future FromDate is a 422.
+
+    The split is where the check lives. `TransactionSummaryFilter` is an `IValidatableObject`, so
+    the pair is caught by MODEL validation before the action runs, and the framework reports it as
+    a field error on both members — `[nameof(FromDate), nameof(ToDate)]`, hence the same message
+    twice. Only the RESOLVED window reaches the service, which is why a lone future FromDate (whose
+    ToDate defaults to `now`) is the case that throws INVALID_DATE_RANGE.
+
+    The mock answered 422 to both, and the backend's own integration test
+    (`Summary_WithInvertedExplicitRange_ReturnsBadRequest`) had been saying 400 since it was
+    written. The fidelity test that asserted 422 for the pair was pinning the mock's mistake.
+  */
+  if (params.get('FromDate') && params.get('ToDate') && fromMs > toMs) {
+    const inverted = 'FromDate must be earlier than or equal to ToDate.';
+    return response.untyped(
+      problem({ status: 400, errors: { ToDate: [inverted], FromDate: [inverted] } }),
+    );
+  }
+
+  // The service's own guard, on the RESOLVED window — reachable only when a bound was DEFAULTED,
+  // since the pair is already gone above.
   if (fromMs > toMs) {
     return response.untyped(
       problem({
@@ -617,10 +709,27 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     );
   }
 
+  // Ownership: the service's own check, so it lands after everything the framework does AND after
+  // the window guard. Unknown and foreign ids are the same refusal here as there — the API cannot
+  // tell them apart on purpose, and a mock that could would let a test pass against a contract the
+  // server does not offer.
+  if (summaryAccountId && !mockState.accounts.some((a) => a.id === summaryAccountId)) {
+    return response.untyped(
+      problem({
+        status: 403,
+        errorCode: 'ACCESS_DENIED',
+        detail: 'You do not have access to this account.',
+      }),
+    );
+  }
+
   let totalIncome = 0;
   let totalExpenses = 0;
   let pendingCount = 0;
   for (const t of mockState.transactions) {
+    if (summaryAccountId && t.accountId !== summaryAccountId) {
+      continue;
+    }
     const at = Date.parse(t.createdAt);
     if (at < fromMs || at > toMs) {
       continue;
@@ -675,7 +784,13 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -691,7 +806,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`deposit|${key}`);
+  const stored = mockState.idempotency.get(`deposit|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -762,7 +877,11 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     message: 'Deposit completed successfully.',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`deposit|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`deposit|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
 
   // Round-trip through the TYPED helper so the success shape is compile-checked against
   // schema.d.ts (the stored string above replays byte-identically on retries).
@@ -788,7 +907,13 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -804,7 +929,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`withdraw|${key}`);
+  const stored = mockState.idempotency.get(`withdraw|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -941,7 +1066,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     message: 'Withdrawal successful',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`withdraw|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`withdraw|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
   return response(201).json(payload);
 });
 
@@ -1042,7 +1171,13 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -1058,7 +1193,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`transfer|${key}`);
+  const stored = mockState.idempotency.get(`transfer|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -1159,7 +1294,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     message: 'Transfer completed successfully.',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`transfer|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`transfer|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
   return response(201).json(payload);
 });
 
@@ -1185,7 +1324,13 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       }),
     );
   }
-  if (!UUID_RE.test(key) || key === NIL_UUID) {
+  // Parsed ONCE, and the parsed value is what the store is keyed by. Keying on the raw header
+  // would give `<guid>` and its undashed spelling two separate entries, so the same logical key
+  // could execute a deposit twice — the backend stores a parsed `Guid`, so it replays. Accepting
+  // the alternate formats is what made that reachable; this is the third place in this file where
+  // "accept the format, then use the raw string" was the bug.
+  const parsedKey = parseGuid(key);
+  if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
         status: 400,
@@ -1201,7 +1346,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
-  const stored = mockState.idempotency.get(`internal|${key}`);
+  const stored = mockState.idempotency.get(`internal|${parsedKey}`);
   if (stored) {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
@@ -1310,7 +1455,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     message: 'Internal transfer completed successfully.',
   };
   const text = JSON.stringify(payload);
-  mockState.idempotency.set(`internal|${key}`, { bodyFingerprint: fp, status: 201, body: text });
+  mockState.idempotency.set(`internal|${parsedKey}`, {
+    bodyFingerprint: fp,
+    status: 201,
+    body: text,
+  });
   return response(201).json(payload);
 });
 
