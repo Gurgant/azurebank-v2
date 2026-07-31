@@ -970,5 +970,123 @@ public class TransactionServiceTests : IDisposable
         thrown.Which.ErrorCode.Should().Be("INVALID_DATE_RANGE");
     }
 
+    [Fact]
+    public async Task GetSummaryAsync_WithAccountId_AggregatesOnlyThatAccount()
+    {
+        // Arrange — two accounts, same owner. Without the scope these totals merge, which is
+        // exactly what the dashboard used to have to apologise for.
+        var userId = Guid.NewGuid();
+        var scoped = CreateTestAccount(userId);
+        var other = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.AddRange(scoped, other);
+        _context.Transactions.AddRange(
+            CreateTestTransaction(scoped.Id, 100m, TransactionType.Deposit),
+            CreateTestTransaction(scoped.Id, 30m, TransactionType.Withdrawal),
+            CreateTestTransaction(other.Id, 9_999m, TransactionType.Deposit));
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetSummaryAsync(
+            userId, new TransactionSummaryFilter { AccountId = scoped.Id });
+
+        // Assert — the other account's 9,999 must not appear anywhere in the figures.
+        result.TotalIncome.Should().Be(100m);
+        result.TotalExpenses.Should().Be(30m);
+        result.NetChange.Should().Be(70m);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithoutAccountId_StillAggregatesEveryAccount()
+    {
+        // Arrange — the negative control for the test above: omitting the scope must not have
+        // quietly become "the primary account only".
+        var userId = Guid.NewGuid();
+        var first = CreateTestAccount(userId);
+        var second = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.AddRange(first, second);
+        _context.Transactions.AddRange(
+            CreateTestTransaction(first.Id, 100m, TransactionType.Deposit),
+            CreateTestTransaction(second.Id, 25m, TransactionType.Deposit));
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetSummaryAsync(userId, new TransactionSummaryFilter());
+
+        // Assert
+        result.TotalIncome.Should().Be(125m);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithAnotherUsersAccountId_Throws()
+    {
+        // Arrange — the money question this parameter exists to get wrong: an id that is real,
+        // but not the caller's.
+        var userId = Guid.NewGuid();
+        var otherUserId = Guid.NewGuid();
+        var mine = CreateTestAccount(userId);
+        var theirs = CreateTestAccount(otherUserId);
+        _context.Accounts.AddRange(mine, theirs);
+        _context.Transactions.Add(CreateTestTransaction(theirs.Id, 9_999m, TransactionType.Deposit));
+        await _context.SaveChangesAsync();
+
+        // Act
+        var act = () => _sut.GetSummaryAsync(
+            userId, new TransactionSummaryFilter { AccountId = theirs.Id });
+
+        // Assert — refused, not silently emptied: a zeroed summary would also be a leak, since it
+        // would confirm the id parses and the window is valid.
+        await act.Should().ThrowAsync<AuthorizationException>()
+            .WithMessage("*do not have access*");
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithUnknownAccountId_ThrowsTheSameWayAsAForeignOne()
+    {
+        // Arrange — the anti-oracle property, and the reason it is its own test: if "not yours"
+        // and "does not exist" answered differently, the endpoint would let anyone sort guessed
+        // GUIDs into real and unreal. The two cases must be indistinguishable from outside.
+        var userId = Guid.NewGuid();
+        _context.Accounts.Add(CreateTestAccount(userId));
+        await _context.SaveChangesAsync();
+
+        var foreignAccount = CreateTestAccount(Guid.NewGuid());
+        _context.Accounts.Add(foreignAccount);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var unknown = await Record.ExceptionAsync(() => _sut.GetSummaryAsync(
+            userId, new TransactionSummaryFilter { AccountId = Guid.NewGuid() }));
+        var foreign = await Record.ExceptionAsync(() => _sut.GetSummaryAsync(
+            userId, new TransactionSummaryFilter { AccountId = foreignAccount.Id }));
+
+        // Assert — same type, same message, same error code. Compared rather than asserted
+        // separately, because the property is that they AGREE.
+        unknown.Should().BeOfType<AuthorizationException>();
+        foreign.Should().BeOfType<AuthorizationException>();
+        unknown!.Message.Should().Be(foreign!.Message);
+        ((AuthorizationException)unknown).ErrorCode
+            .Should().Be(((AuthorizationException)foreign).ErrorCode);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithSoftDeletedAccountId_Throws()
+    {
+        // Arrange — matches GetTransactionsAsync, whose ownership list is also built with
+        // `!IsDeleted`. A closed account must not become a scope the summary silently accepts and
+        // then reports zeros for.
+        var userId = Guid.NewGuid();
+        var deleted = CreateTestAccount(userId);
+        deleted.IsDeleted = true;
+        _context.Accounts.Add(deleted);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var act = () => _sut.GetSummaryAsync(
+            userId, new TransactionSummaryFilter { AccountId = deleted.Id });
+
+        // Assert
+        await act.Should().ThrowAsync<AuthorizationException>();
+    }
+
     #endregion
 }

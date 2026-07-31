@@ -257,13 +257,41 @@ public class TransactionService : ITransactionService
                 "FromDate must be earlier than or equal to ToDate.", ErrorCodes.InvalidDateRange);
         }
 
+        // A caller-supplied account has to be proved OWNED before it can narrow anything, and the
+        // check is deliberately shaped differently from GetTransactionsAsync's.
+        //
+        // That one materializes every account id the user has and tests membership in memory,
+        // because it needs the list anyway to bound the query. Here the aggregate already scopes
+        // itself through the Account navigation, so the same approach would add a second query and
+        // an unbounded IN list to EVERY call — including the all-accounts default, which is the
+        // common one. A single bounded existence check costs one extra round trip only when the
+        // caller actually asks for a scope, and the default path stays exactly one query.
+        //
+        // The predicate mirrors the list's membership test term for term — same user, same
+        // `!IsDeleted` — so a soft-deleted account is a 403 in both places rather than an empty
+        // summary in one and a refusal in the other.
+        if (filter.AccountId.HasValue)
+        {
+            var owned = await _context.Accounts
+                .AsNoTracking()
+                .AnyAsync(a => a.Id == filter.AccountId.Value
+                    && a.UserId == userId
+                    && !a.IsDeleted);
+
+            if (!owned)
+            {
+                // The SAME refusal whether the account belongs to someone else or does not exist
+                // at all. Distinguishing them would turn this endpoint into an oracle for guessing
+                // account ids, and the message is the list's, verbatim, for the same reason.
+                throw new AuthorizationException("You do not have access to this account.");
+            }
+        }
+
         var summary = new TransactionSummaryResponse { FromDate = from, ToDate = to };
 
-        // ONE round trip: ownership scoping rides the aggregate itself via the Account
-        // navigation (JOIN on the FK) — unlike GetTransactionsAsync there is no
-        // caller-supplied AccountId to pre-validate, so materializing the account ids
-        // first would only add a second query and an unbounded IN list. A user with no
-        // accounts simply aggregates zero rows (null totals → zero-valued summary).
+        // ONE round trip for the aggregate: ownership scoping rides it via the Account navigation
+        // (JOIN on the FK). A user with no accounts simply aggregates zero rows (null totals →
+        // zero-valued summary), and so does an owned account with nothing in the window.
         // Only Completed transactions count toward money totals: Pending/Failed/Reversed
         // must not inflate income or expenses; the conditional aggregates translate to
         // SUM(CASE WHEN …).
@@ -271,6 +299,7 @@ public class TransactionService : ITransactionService
             .AsNoTracking()
             .Where(t => t.Account.UserId == userId
                 && !t.Account.IsDeleted
+                && (filter.AccountId == null || t.AccountId == filter.AccountId)
                 && t.CreatedAt >= from
                 && t.CreatedAt <= to)
             .GroupBy(_ => 1)
