@@ -15,6 +15,8 @@
     "generate:zod": "typed-openapi ../docs/api/openapiv1.json --runtime zod --schemas-only -o src/api/generated/apiSchemas.ts && prettier --write src/api/generated/apiSchemas.ts",
     "generate:icons": "node scripts/generate-icons.js",
     "test": "vitest run",
+    "test:contract:mock": "vitest run --config vitest.contract.config.ts",
+    "test:contract:real": "vitest run --config vitest.contract.real.config.ts",
     "test:tripwire": "vitest run src/api/bffSchemas.test.ts src/features/auth/stepUpController.test.ts src/forms/moneySchemas.test.ts src/mocks/idempotency.test.ts src/mocks/stepup.test.ts src/mocks/transferHandler.test.ts src/mocks/withdrawHandler.test.ts src/utils/amountSchema.test.ts",
     "test:watch": "vitest"
   },

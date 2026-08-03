@@ -69,3 +69,44 @@ export function problem(init: ProblemInit) {
     headers: { 'Content-Type': 'application/problem+json', ...init.headers },
   });
 }
+
+/**
+ * The OTHER validation envelope, and the reason it has to exist.
+ *
+ * The API rejects a bad request in one of two completely different ways, and which one you get
+ * depends on whether the endpoint has a FluentValidation validator:
+ *
+ *   * WITH a validator — `ValidationException` reaches `ValidationExceptionHandler`, which writes
+ *     the body above by hand: title "Validation Failed", a `detail`, `type` httpstatuses.com/400,
+ *     and a BARE 32-hex `traceId` (it writes `Activity.Current?.TraceId.ToString()` itself).
+ *   * WITHOUT one — `[ApiController]` short-circuits on model state and the FRAMEWORK renders it:
+ *     title "One or more validation errors occurred.", **no `detail` member at all**, an rfc9110
+ *     `type`, and a full W3C traceparent as the `traceId`.
+ *
+ * `TransactionController` injects validators only for deposit and withdraw, so its list and summary
+ * actions take the second path. The mock used the first for everything, which is why `HistoryPage`
+ * — which renders `problem.detail` for exactly that endpoint — showed a sentence under MSW and its
+ * generic fallback in production. Verified on the running stack, both shapes, on 2026-07-31.
+ *
+ * Keys are the CLR property names (`PageSize`, `FromDate`), because ASP.NET keys ModelState by the
+ * bound property and `AddApiControllers` never sets a `DictionaryKeyPolicy`.
+ */
+export function modelStateProblem(errors: Record<string, string[]>) {
+  return HttpResponse.json(
+    {
+      type: 'https://tools.ietf.org/html/rfc9110#section-15.5.1',
+      title: 'One or more validation errors occurred.',
+      status: 400,
+      errors,
+      traceId: fakeTraceParent(),
+    },
+    { status: 400, headers: { 'Content-Type': 'application/problem+json' } },
+  );
+}
+
+/** W3C traceparent (`00-<32hex>-<16hex>-01`), which is what the framework path emits. */
+function fakeTraceParent(): string {
+  const hex = (n: number) =>
+    Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return `00-${hex(32)}-${hex(16)}-01`;
+}

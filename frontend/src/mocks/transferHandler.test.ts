@@ -147,15 +147,28 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     expect(res.headers.get('X-Auth-Level-Required')).toBe('2');
   });
 
-  it('422 SAME_ACCOUNT_TRANSFER when source == destination', async () => {
+  it('400 with a toAccountId field error when source == destination', async () => {
+    /*
+      This asserted `422 SAME_ACCOUNT_TRANSFER`, a response the API cannot produce.
+
+      `InternalTransferRequestValidator` carries `ToAccountId.NotEqual(x => x.FromAccountId)` and
+      `ValidateAndThrowAsync` runs BEFORE the service, so the service's own
+      `BusinessRuleException(SAME_ACCOUNT_TRANSFER)` never reaches the wire — `ErrorCodes.cs`
+      documents it as defence-in-depth for non-HTTP callers. Measured live on 2026-07-31:
+        400 {"title":"Validation Failed","detail":"One or more validation errors occurred.",
+             "errors":{"toAccountId":["Cannot transfer to the same account."]}}
+      with NO errorCode. The test was pinning an invented code as if it were the contract.
+    */
     elevate();
     const res = await internal(crypto.randomUUID(), {
       fromAccountId: acct(),
       toAccountId: acct(),
       amount: 10,
     });
-    expect(res.status).toBe(422);
-    expect((await res.json()).errorCode).toBe('SAME_ACCOUNT_TRANSFER');
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errorCode).toBeUndefined();
+    expect(body.errors.toAccountId).toEqual(['Cannot transfer to the same account.']);
   });
 
   it('404 ACCOUNT_NOT_FOUND for an unknown destination OR source account', async () => {

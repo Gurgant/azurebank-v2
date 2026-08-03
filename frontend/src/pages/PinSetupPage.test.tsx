@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
+import { seedMockSession } from '../mocks/state';
 
 /**
  * PR-10 — the PIN onboarding wizard (enter → confirm → done). Pins: the confirm-must-match
@@ -47,6 +48,19 @@ async function pasteDigits(pin: string) {
   await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
   await userEvent.paste(pin);
 }
+
+/*
+  A session, seeded, because the step-up routes now demand one.
+
+  The mock used to answer /bff/auth/verify-pin for a caller with NO session at all, so these
+  tests never had to establish one and quietly exercised a state the product cannot reach: the
+  real BFF reads the session first and answers 401. Aligning the mock (contract gate) made that
+  visible. Seeding is the faithful fix — a user reaching a PIN prompt is, by construction,
+  already signed in.
+*/
+beforeEach(() => {
+  seedMockSession();
+});
 
 describe('PIN setup wizard (PR-10)', () => {
   it('enter → confirm → success, then hands back to returnTo', async () => {

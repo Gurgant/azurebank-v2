@@ -8,6 +8,7 @@ import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
+import { seedMockSession } from '../mocks/state';
 
 /**
  * PR-11b — internal transfer between the caller's OWN accounts, riding the same step-up
@@ -38,6 +39,19 @@ async function enterPin(pin: string) {
   await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
   await userEvent.paste(pin);
 }
+
+/*
+  A session, seeded, because the step-up routes now demand one.
+
+  The mock used to answer /bff/auth/verify-pin for a caller with NO session at all, so these
+  tests never had to establish one and quietly exercised a state the product cannot reach: the
+  real BFF reads the session first and answers 401. Aligning the mock (contract gate) made that
+  visible. Seeding is the faithful fix — a user reaching a PIN prompt is, by construction,
+  already signed in.
+*/
+beforeEach(() => {
+  seedMockSession();
+});
 
 describe('internal transfer (PR-11b)', () => {
   it('moves money between own accounts through the step-up modal and shows the receipt', async () => {

@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mockState } from '../mocks/state';
+import { mockState, seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth/StepUpModal';
 import { AccountsPage } from './AccountsPage';
@@ -32,6 +32,19 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+/*
+  A session, seeded, because the step-up routes now demand one.
+
+  The mock used to answer /bff/auth/verify-pin for a caller with NO session at all, so these
+  tests never had to establish one and quietly exercised a state the product cannot reach: the
+  real BFF reads the session first and answers 401. Aligning the mock (contract gate) made that
+  visible. Seeding is the faithful fix — a user reaching a PIN prompt is, by construction,
+  already signed in.
+*/
+beforeEach(() => {
+  seedMockSession();
 });
 
 describe('account number reveal (ADR-0020)', () => {
