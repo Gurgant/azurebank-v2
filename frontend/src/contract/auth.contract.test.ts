@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { call, firstAccountId, login } from './client';
+import { call, firstAccountId, login, type Wire } from './client';
 
 /**
  * Auth-shaped contract points.
@@ -10,18 +10,24 @@ import { call, firstAccountId, login } from './client';
  * contract from a guess that happened to pass.
  */
 
+/*
+  One login for the whole file, and its response is KEPT rather than re-fetched.
+
+  Not tidiness: the real BFF rate-limits auth to 10 requests per 60s per IP, so an extra login just
+  to inspect the envelope spends a scarce budget for a response this already has in hand.
+*/
+let loginResponse: Wire;
+
 beforeAll(async () => {
-  // Once per file, not per test — the real BFF rate-limits auth to 10 requests per 60s per IP, and
-  // a `beforeEach` login tripped it. See the note on `login()`.
-  const { status } = await login();
-  expect(status).toBe(200);
+  loginResponse = await login();
+  expect(loginResponse.status).toBe(200);
 });
 
 describe('contract: authentication', () => {
   it('answers a successful login with a user envelope', async () => {
     // Observed: 200 {"data":{"user":{"id","email","firstName","lastName","azureTag","hasPin"},
     //                        "expiresAt":"..."},"message":"Login successful"}
-    const { status, body } = await login();
+    const { status, body } = loginResponse;
 
     expect(status).toBe(200);
     const data = (body as { data?: Record<string, unknown>; message?: unknown }).data ?? {};
@@ -50,5 +56,8 @@ describe('contract: authentication', () => {
 
     expect(status).toBe(403);
     expect(headers.get('x-auth-level-required')).toBe('2');
+    // Asserted too, because the comment above documents it: a missing or wrong CURRENT level would
+    // otherwise sail through a test that claims to pin the step-up handshake.
+    expect(headers.get('x-auth-level-current')).toBe('1');
   });
 });

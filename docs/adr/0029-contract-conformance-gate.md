@@ -16,7 +16,8 @@ the C# and believing the reading. When those two agree with each other and neith
 server, the suite is green and wrong — the worst possible state, because it is indistinguishable
 from correct.
 
-That is not hypothetical here. Three drifts were found by hand, each only by running the real stack:
+That is not hypothetical here. Three investigations turned up six confirmed drifts, and every one of
+them needed the real stack to see:
 
 - **PR #64** — the mock answered 422 on an inverted date pair; the API answers **400**.
 - **PR #66** — a test asserted `{status: 502, errorCode: 'SERVER_ERROR'}`, a shape nothing in this
@@ -67,8 +68,9 @@ distinguish "the mock was fixed" from "the assertion was written to match whatev
 
 ## Consequences
 
-**The gate found six real drifts on its first run, and the mock was aligned to the backend in every
-case.** The backend was right every time; nothing here is a backend fix.
+**The gate has found TEN drifts so far, and the mock was aligned to the backend in every case.** The
+backend was right every time; nothing here is a backend fix. Six came from the first run; the rest
+turned up while answering review on the gate itself, which is the behaviour you want from one.
 
 | Drift | Mock said | Backend says |
 |---|---|---|
@@ -78,6 +80,10 @@ case.** The backend was right every time; nothing here is a backend fix.
 | Pagination error keys | `pageSize` | `PageSize` |
 | Malformed PIN, no session | `401` (session read first) | `400` — model validation runs BEFORE the action |
 | Malformed PIN error key/envelope | `pin`, validator envelope | `Pin`, framework envelope |
+| Query key binding | case-SENSITIVE (`pageSize` ignored) | case-insensitive |
+| Several bad properties at once | first failure only, rest hidden | ALL reported in one pass |
+| Bad-value message | `The value 'x' is not valid.` | `... is not valid for <Name>.` |
+| PIN absent vs null vs malformed | one message for all three | `$` / `Pin` required / `Pin` 6-digits |
 
 **The API has TWO validation envelopes, and that is the finding with the longest reach.** Endpoints
 with a FluentValidation validator get `ValidationExceptionHandler`'s hand-written body (title
@@ -108,10 +114,9 @@ also more faithful — a user at a PIN prompt is by construction already signed 
   across four files and trips it; login is once per file, and a 429 raises an explicit message
   rather than reading as contract drift.
 - ASP.NET binds the model **before** the action runs, so a malformed body is a `400` even with no
-  session. The first draft of the mock's session guard sat above the body check and had the two the
-  wrong way round.
+  session. The first draft of the mock's session guard sat above the body check, reversing the two.
 
-**A seventh drift, found by accident and then fixed.** ASP.NET's query binding is case-insensitive;
+**One of them was found by accident, which is the point.** ASP.NET's query binding is case-insensitive;
 `URLSearchParams.get` is not, so the mock read `PageSize` and missed `pageSize` entirely — falling
 back to the default page size and answering 200 where the real stack validated the value and
 answered 400. It surfaced because the first draft of a test used camelCase. Unreachable through the
@@ -119,13 +124,13 @@ app, since `apiSlice` sends PascalCase per the spec, but reachable by anyone han
 not a difference a mock has any business having. The mock now looks parameters up case-insensitively,
 and the tests assert the app's own casing so they stay about envelopes rather than about the binder.
 
-**What is NOT covered — and this gate should not be called complete.** Twelve assertions is a floor,
+**What is NOT covered — and this gate should not be called complete.** Fourteen assertions is a floor,
 not a ceiling, and one hole is big enough that the ADR's status says so out loud.
 
-The largest hole is **authentication on the protected resource routes**. `/api/accounts/*` and
-`/api/transactions/*` are gated in the mock by nothing at all: no session read, no expiry check. The
-money handlers consult `authLevel` but never ask whether the session behind it is still alive, so an
-expired session still spends. The real stack rejects all of that. It is left open here deliberately
+The largest hole is **live-session authentication on the protected resource routes**.
+`/api/accounts/*` and `/api/transactions/*` never read or validate a session in the mock. The money
+handlers do still apply the `authLevel` check — so this is not "ungated" — but nothing verifies that
+a live, unexpired session is what granted that level, so an expired session still spends. The real stack rejects all of that. It is left open here deliberately
 rather than quietly — closing it changes the default state every page-level test runs in, which is a
 change of a different size and belongs in its own PR, with the same measure-then-assert discipline.
 Until then, no test in this repo proves those routes are protected.

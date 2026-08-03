@@ -151,16 +151,29 @@ function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
  * two 400 envelopes was not worth it for a difference no client branches on; the key and the
  * message, which one might, are exact.
  */
-function rejectUnparseableDates(
-  raw: Record<string, string | null>,
-): ReturnType<typeof problem> | null {
+function unparseableDateErrors(raw: Record<string, string | null>): Record<string, string[]> {
   const errors: Record<string, string[]> = {};
   for (const [name, value] of Object.entries(raw)) {
     if (value !== null && Number.isNaN(Date.parse(value))) {
-      errors[name] = [`The value '${value}' is not valid.`];
+      // `... is not valid for <Name>.` — the suffix is part of the framework's message and the mock
+      // used to drop it. Observed: "The value 'notadate' is not valid for FromDate."
+      errors[name] = [`The value '${value}' is not valid for ${name}.`];
     }
   }
-  return Object.keys(errors).length > 0 ? problem({ status: 400, errors }) : null;
+  return errors;
+}
+
+/**
+ * A binding-level value error, in the framework's exact wording.
+ *
+ * Returns the DICTIONARY rather than a response so callers can merge: ASP.NET validates every bound
+ * property in ONE pass and reports them together, where the mock used to return the first failure
+ * it met and hide the rest. Observed with three bad values at once:
+ *   {"Page":["Page must be at least 1."],"PageSize":["PageSize must be between 1 and 100."],
+ *    "AccountId":["The value 'notaguid' is not valid for AccountId."]}
+ */
+function invalidValueError(name: string, value: string): Record<string, string[]> {
+  return { [name]: [`The value '${value}' is not valid for ${name}.`] };
 }
 
 /**
@@ -372,9 +385,9 @@ const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, reque
   // account lookup. Swallowing it as "current" — which is what `Number.isNaN(atMs)` used to do
   // below — answered 200 with today's balance for a question nobody could have asked.
   const at = new URL(request.url).searchParams.get('at');
-  const badAt = rejectUnparseableDates({ at });
-  if (badAt) {
-    return response.untyped(badAt);
+  const badAt = unparseableDateErrors({ at });
+  if (Object.keys(badAt).length > 0) {
+    return response.untyped(modelStateProblem(badAt));
   }
 
   const account = mockState.accounts.find((a) => a.id === params.id);
@@ -538,9 +551,8 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
     pageErrors.PageSize = ['PageSize must be between 1 and 100.'];
   }
-  if (Object.keys(pageErrors).length > 0) {
-    return response.untyped(modelStateProblem(pageErrors));
-  }
+  // NOTE: not returned yet — see the merge below. Every property-level failure is reported
+  // together, so returning here would hide an AccountId or date error sitting alongside it.
 
   /*
     Every one of these is model-bound before the action body runs: `TransactionFilter` declares
@@ -553,17 +565,24 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     handler it added got it wrong in the same way.
   */
   const canonicalAccountId = accountId ? parseGuid(accountId) : null;
-  if (accountId && !canonicalAccountId) {
-    return response.untyped(
-      modelStateProblem({ AccountId: [`The value '${accountId}' is not valid.`] }),
-    );
-  }
-  const badDates = rejectUnparseableDates({
-    FromDate: queryParam(params, 'FromDate'),
-    ToDate: queryParam(params, 'ToDate'),
-  });
-  if (badDates) {
-    return response.untyped(badDates);
+  /*
+    ONE pass, all property-level errors together — measured, because the mock used to answer with
+    whichever check happened to run first:
+      ?Page=0&PageSize=1000&AccountId=notaguid
+        -> {"Page":[...],"PageSize":[...],"AccountId":["The value 'notaguid' is not valid for AccountId."]}
+      ?Page=0&FromDate=notadate
+        -> {"Page":[...],"FromDate":["The value 'notadate' is not valid for FromDate."]}
+  */
+  const bindingErrors: Record<string, string[]> = {
+    ...pageErrors,
+    ...(accountId && !canonicalAccountId ? invalidValueError('AccountId', accountId) : {}),
+    ...unparseableDateErrors({
+      FromDate: queryParam(params, 'FromDate'),
+      ToDate: queryParam(params, 'ToDate'),
+    }),
+  };
+  if (Object.keys(bindingErrors).length > 0) {
+    return response.untyped(modelStateProblem(bindingErrors));
   }
 
   // Ownership is the SERVICE's check, so it comes after everything the framework does. `AccountId`
@@ -668,18 +687,23 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   // the caller owns. Caught by the format test the moment it was written.
   const rawSummaryAccountId = queryParam(params, 'AccountId');
   const summaryAccountId = rawSummaryAccountId ? parseGuid(rawSummaryAccountId) : null;
-  if (rawSummaryAccountId && !summaryAccountId) {
-    return response.untyped(
-      modelStateProblem({ AccountId: [`The value '${rawSummaryAccountId}' is not valid.`] }),
-    );
-  }
-
-  const badSummaryDates = rejectUnparseableDates({
-    FromDate: queryParam(params, 'FromDate'),
-    ToDate: queryParam(params, 'ToDate'),
-  });
-  if (badSummaryDates) {
-    return response.untyped(badSummaryDates);
+  /*
+    Merged like the list, and with one ordering detail that only the real stack could show:
+    `IValidatableObject.Validate` (the inverted-pair rule below) runs ONLY when property-level
+    validation is clean. Measured — a bad AccountId together with an inverted window returns the
+    AccountId error ALONE, never both.
+  */
+  const summaryBindingErrors: Record<string, string[]> = {
+    ...(rawSummaryAccountId && !summaryAccountId
+      ? invalidValueError('AccountId', rawSummaryAccountId)
+      : {}),
+    ...unparseableDateErrors({
+      FromDate: queryParam(params, 'FromDate'),
+      ToDate: queryParam(params, 'ToDate'),
+    }),
+  };
+  if (Object.keys(summaryBindingErrors).length > 0) {
+    return response.untyped(modelStateProblem(summaryBindingErrors));
   }
 
   const now = new Date();
@@ -1499,8 +1523,34 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
  * with verified:false, never a 4xx. Shares the SAME attempt/lock state as withdraw
  * (mockState.pinAttempts/pinLockedUntil) so the 3rd consecutive miss is a 429 PIN_LOCKED.
  */
-/** The API's own reply to a badly-shaped PIN: framework envelope, PascalCase key. */
-const response_modelState = () => modelStateProblem({ Pin: ['PIN must be exactly 6 digits.'] });
+/**
+ * The API's replies to a badly-shaped PIN payload — THREE different ones, measured anonymously.
+ *
+ *   {}              -> {"$":["JSON deserialization for type '<DTO>' was missing required
+ *                            properties including: 'pin'."],
+ *                       "request":["The request field is required."]}
+ *   {"pin":null}    -> {"Pin":["The Pin field is required."]}
+ *   {"pin":"abc"}   -> {"Pin":["PIN must be exactly 6 digits."]}
+ *
+ * The distinction is behavioural, not cosmetic: `$` maps to no form field, so a consumer walking
+ * `problem.errors` falls back to its generic bar, where `Pin` lands on the PIN input. The mock
+ * collapsed all three into the six-digits message, so one of those two UI paths was unreachable.
+ * The DTO name differs per route, which is why it is a parameter.
+ */
+function pinPayloadProblem(dto: 'VerifyPinRequest' | 'SetPinRequest', pin: unknown) {
+  if (pin === undefined) {
+    return modelStateProblem({
+      $: [
+        `JSON deserialization for type 'AzureBank.Shared.DTOs.Auth.${dto}' was missing required properties including: 'pin'.`,
+      ],
+      request: ['The request field is required.'],
+    });
+  }
+  if (pin === null) {
+    return modelStateProblem({ Pin: ['The Pin field is required.'] });
+  }
+  return modelStateProblem({ Pin: ['PIN must be exactly 6 digits.'] });
+}
 
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   const authBody = await readJsonBody(request);
@@ -1508,11 +1558,10 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
     return badRequestBody(await request.clone().text());
   }
   const pin = authBody.body.pin as string | undefined;
-  // `VerifyPinRequest.Pin` carries the same DataAnnotation as the set-pin DTO, and model validation
-  // runs before the action — so a malformed PIN is a 400 even for an anonymous caller. Framework
-  // envelope, PascalCase key, both observed live.
-  if (!pin || !/^\d{6}$/.test(pin)) {
-    return response_modelState();
+  // Model validation runs before the action, so a malformed PIN is a 400 even for an anonymous
+  // caller — and WHICH 400 depends on how it is malformed. See `pinPayloadProblem`.
+  if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
+    return pinPayloadProblem('VerifyPinRequest', pin);
   }
   /*
     The session gate, AFTER the body and AFTER model validation.
@@ -1584,8 +1633,8 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     return badRequestBody(await request.clone().text());
   }
   const pin = authBody.body.pin as string | undefined;
-  if (!pin || !/^\d{6}$/.test(pin)) {
-    return response_modelState();
+  if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
+    return pinPayloadProblem('SetPinRequest', pin);
   }
   /*
     The session gate, AFTER the body and AFTER model validation.

@@ -72,6 +72,30 @@ describe('contract: validation envelopes', () => {
     expect(keys).not.toContain('pageSize');
   });
 
+  it('reports EVERY bad property in one pass, not the first one it meets', async () => {
+    /*
+      ASP.NET validates all bound properties together and returns them in a single
+      ValidationProblemDetails. The mock checked Page/PageSize, then AccountId, then the dates, each
+      returning immediately — so a request wrong in three ways reported one of them and hid the
+      rest, and a UI marking every offending field could only ever mark one. Measured:
+
+        ?Page=0&PageSize=1000&AccountId=notaguid
+          -> {"Page":["Page must be at least 1."],
+              "PageSize":["PageSize must be between 1 and 100."],
+              "AccountId":["The value 'notaguid' is not valid for AccountId."]}
+
+      Note the message suffix — `... is not valid for AccountId.` — which the mock also dropped.
+    */
+    const { status, body } = await call(
+      '/api/transactions?Page=0&PageSize=1000&AccountId=notaguid',
+    );
+    const errors = asProblem(body).errors ?? {};
+
+    expect(status).toBe(400);
+    expect(Object.keys(errors).sort()).toEqual(['AccountId', 'Page', 'PageSize']);
+    expect(errors.AccountId).toEqual(["The value 'notaguid' is not valid for AccountId."]);
+  });
+
   it('rejects an inverted date window and keys BOTH bounds', async () => {
     /*
       The cross-field rule reports against both members, so the UI can mark either input.

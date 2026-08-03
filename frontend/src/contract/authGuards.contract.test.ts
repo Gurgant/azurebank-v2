@@ -60,6 +60,39 @@ describe('contract: endpoints that require a session', () => {
     expect(Object.keys(problem.errors ?? {})).toContain('Pin');
   });
 
+  it('distinguishes an ABSENT pin from a malformed one', async () => {
+    /*
+      Three different 400s, not one, and the difference is behavioural rather than cosmetic: `$`
+      maps to no form field, so a consumer walking `problem.errors` falls back to its generic bar,
+      where `Pin` lands on the PIN input. The mock collapsed all three into the six-digit message,
+      which made one of those two UI paths unreachable. Measured anonymously:
+
+        {}            -> errors {"$":["JSON deserialization for type '...VerifyPinRequest' was
+                                       missing required properties including: 'pin'."],
+                                 "request":["The request field is required."]}
+        {"pin":null}  -> errors {"Pin":["The Pin field is required."]}
+        {"pin":"abc"} -> errors {"Pin":["PIN must be exactly 6 digits."]}
+
+      The KEYS are asserted, not the messages: the `$` text embeds a fully-qualified .NET type name,
+      and pinning that would turn an innocuous DTO rename into a red contract test.
+    */
+    const absent = await call('/bff/auth/verify-pin', {
+      method: 'POST',
+      anonymous: true,
+      body: JSON.stringify({}),
+    });
+    expect(absent.status).toBe(400);
+    expect(Object.keys(asProblem(absent.body).errors ?? {})).toContain('$');
+
+    const nulled = await call('/bff/auth/verify-pin', {
+      method: 'POST',
+      anonymous: true,
+      body: JSON.stringify({ pin: null }),
+    });
+    expect(nulled.status).toBe(400);
+    expect(Object.keys(asProblem(nulled.body).errors ?? {})).toContain('Pin');
+  });
+
   it('refuses to set a PIN for a caller with no session', async () => {
     // Same gate, same observed body: both actions read the session before doing anything else.
     const { status, body } = await call('/bff/auth/set-pin', {

@@ -73,39 +73,46 @@ export async function call(
 }
 
 /**
- * Sign in with the target's seeded credentials.
+ * Turn a puzzling red into an actionable one rather than letting it read as contract drift.
  *
- * Called ONCE PER FILE, never per test, and the real backend is why: the BFF applies an `auth`
- * rate-limiter policy of 10 requests per 60s per IP to the login and PIN routes. The first draft
- * signed in in `beforeEach`, which is eleven logins across four files — the run tripped the limiter
- * and two tests failed with a 429 that had nothing to do with any contract. The mock has no limiter
- * at all, so this is a constraint only the real target could have taught.
+ * The BFF applies an `auth` rate-limiter policy of 10 requests per 60s per IP to the login and PIN
+ * routes. The first draft of this suite signed in in `beforeEach` — eleven logins across four files
+ * — and the run tripped it, failing two tests with a 429 that had nothing to do with any contract.
+ * The mock has no limiter at all, so this is a constraint only the real target could have taught,
+ * and it is why `login()` is called once per FILE.
+ *
+ * Shared by BOTH auth calls on purpose: `verify-pin` sits under the same policy, so a rate-limited
+ * step-up would otherwise surface as a bare 429 while login got the explanation.
  */
-export async function login(): Promise<Wire> {
-  const result = await call('/bff/auth/login', {
-    method: 'POST',
-    anonymous: true,
-    body: JSON.stringify({ email: FIXTURES.email, password: FIXTURES.password }),
-  });
-
+function rejectIfRateLimited(result: Wire): Wire {
   if (result.status === 429) {
-    // Turn a puzzling red into an actionable one rather than letting it read as contract drift.
     throw new Error(
-      'Login was rate-limited (429). The BFF allows 10 auth requests per 60s per IP ' +
+      'Auth request was rate-limited (429). The BFF allows 10 auth requests per 60s per IP ' +
         '(RateLimiting:AuthPermitLimit), and login + verify-pin both count. ' +
         'Wait about a minute and re-run.',
     );
   }
-
   return result;
+}
+
+export async function login(): Promise<Wire> {
+  return rejectIfRateLimited(
+    await call('/bff/auth/login', {
+      method: 'POST',
+      anonymous: true,
+      body: JSON.stringify({ email: FIXTURES.email, password: FIXTURES.password }),
+    }),
+  );
 }
 
 /** Raise the session to AuthLevel 2, which the money and reveal endpoints demand. */
 export async function elevate(): Promise<Wire> {
-  return call('/bff/auth/verify-pin', {
-    method: 'POST',
-    body: JSON.stringify({ pin: FIXTURES.pin }),
-  });
+  return rejectIfRateLimited(
+    await call('/bff/auth/verify-pin', {
+      method: 'POST',
+      body: JSON.stringify({ pin: FIXTURES.pin }),
+    }),
+  );
 }
 
 /** The caller's first account id. Both targets seed at least one. */
