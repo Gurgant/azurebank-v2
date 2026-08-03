@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MAIN_ACCOUNT_ID, mockState, resetMockState } from '../../mocks/state';
-import { seedMockSession } from '../../mocks/state';
+import { MAIN_ACCOUNT_ID, mockState, resetMockState, seedMockSession } from '../../mocks/state';
 
 /**
  * The mock used to accept every account body it was given: an empty name became "New Account", an

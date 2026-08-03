@@ -106,10 +106,10 @@ describe('contract: endpoints that require a session', () => {
   });
 
   it.each([
-    ['/api/accounts'],
-    ['/api/transactions?Page=1&PageSize=2'],
-    ['/api/transactions/summary'],
-  ])('rejects an unauthenticated caller on %s', async (path) => {
+    ['/api/accounts', '/api/accounts'],
+    ['/api/transactions?Page=1&PageSize=2', '/api/transactions'],
+    ['/api/transactions/summary', '/api/transactions/summary'],
+  ])('rejects an unauthenticated caller on %s', async (path, instance) => {
     /*
       The hole ADR-0029 was opened admitting, now closed. These routes used to be reachable in the
       mock with no session at all, so page tests ran in a state the product cannot produce and
@@ -132,5 +132,11 @@ describe('contract: endpoints that require a session', () => {
     expect(status).toBe(401);
     expect(problem.errorCode).toBe('AUTH_TOKEN_MISSING');
     expect(problem.detail).toBe('Authentication is required to access this resource.');
+    /*
+      `instance` too, and the table carries the expected PATH rather than reusing the request string
+      — the query is not part of it. Without this the three cases assert one identical body and a
+      handler echoing the wrong path, or a constant, would satisfy all of them.
+    */
+    expect(problem.instance).toBe(instance);
   });
 });

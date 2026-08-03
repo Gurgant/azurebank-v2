@@ -3,10 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
-import { resetMockState } from '../../mocks/state';
+import { resetMockState, seedMockSession } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import { AccountsPage } from '../../pages/AccountsPage';
-import { seedMockSession } from '../../mocks/state';
 
 /**
  * What a dialog does to the keyboard, which no screenshot shows.
