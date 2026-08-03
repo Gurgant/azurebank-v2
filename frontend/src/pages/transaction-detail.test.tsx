@@ -48,10 +48,16 @@ describe('transaction detail (T2)', () => {
       current month on every run, so `TXN-20260720-000101` and 'July 20, 2026' named a row that no
       longer exists — and the assertion's real content is "the page shows THIS entry's number and
       THIS entry's date", which is what it now says.
+
+      Resolved by ID, the same one `renderDetail` was given. A first draft looked it up by
+      `description === 'Salary'`, which is a SECOND way of naming the row and only coincidentally
+      the same one: add another Salary entry and these two assertions would quietly describe a
+      record the page is not showing.
     */
-    const salary = mockState.transactions.find((t) => t.description === 'Salary')!;
-    expect(screen.getByText(salary.transactionNumber)).toBeInTheDocument();
-    const day = new Date(salary.createdAt).toLocaleDateString('en-US', {
+    const deposit = mockState.transactions.find((t) => t.id === T1_DEPOSIT);
+    if (!deposit) throw new Error(`No seeded transaction ${T1_DEPOSIT}`);
+    expect(screen.getByText(deposit.transactionNumber)).toBeInTheDocument();
+    const day = new Date(deposit.createdAt).toLocaleDateString('en-US', {
       month: 'long',
       day: 'numeric',
       year: 'numeric',
