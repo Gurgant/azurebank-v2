@@ -177,6 +177,23 @@ function invalidValueError(name: string, value: string): Record<string, string[]
 }
 
 /**
+ * The API's 401 for a request that reached it without a usable access token.
+ *
+ * Distinct from the BFF's own 401 and worth keeping distinct: this one carries
+ * `errorCode: AUTH_TOKEN_MISSING`, an `instance`, and an rfc-ish `type`, where the BFF's carries no
+ * errorCode at all. Observed verbatim on `/api/accounts`, `/api/transactions` and `/api/transfers`.
+ */
+function authTokenMissing(pathname: string) {
+  return problem({
+    status: 401,
+    errorCode: 'AUTH_TOKEN_MISSING',
+    title: 'Unauthorized',
+    detail: 'Authentication is required to access this resource.',
+    extensions: { instance: pathname },
+  });
+}
+
+/**
  * The account-name and handle rules, which the mock enforced nowhere.
  *
  * Four dialogs — create-account, rename-account, rename-handle and deposit — each contain a branch
@@ -1877,15 +1894,34 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
  * mock while the real BFF counted every one of those as activity — and a countdown read against
  * that clock would expire someone the server considered perfectly alive.
  *
- * The 401 is narrow on purpose: it fires only when a session EXISTED and has just died, never when
- * there was none to begin with. These handlers have never gated on authentication — most tests call
- * them with no session at all — and turning them into a gate is a separate change with a twenty-file
- * blast radius. What matters here is that a session cannot outlive its own deadline.
+ * It is also the AUTHENTICATION gate, which this deliberately was not until now — the previous
+ * version said so, and called closing it "a separate change with a twenty-file blast radius". This
+ * is that change. Until it landed, `/api/accounts/*` and `/api/transactions/*` were reachable in the
+ * mock with no session at all, so page tests ran in a state the product cannot produce and nothing
+ * anywhere proved those routes were protected.
+ *
+ * ONE 401, not two, and that is measured rather than reasoned. The proxy does not answer for itself:
+ * it forwards whatever token the session yields, and the API rejects a request that arrives without
+ * one. Three ways of having no usable session all produce the SAME body:
+ *
+ *   anonymous            -> 401 errorCode AUTH_TOKEN_MISSING
+ *   unresolvable cookie  -> 401 errorCode AUTH_TOKEN_MISSING
+ *   revoked after logout -> 401 errorCode AUTH_TOKEN_MISSING
+ *
+ * The previous version answered the BFF's OWN 401 here ("Session expired or invalid", no errorCode)
+ * for the expiry case. That shape is real, but it belongs to `/bff/auth/*`, where the controller
+ * reads the session itself — on a proxied `/api/*` route it never appears. So the expiry branch was
+ * drift of exactly the kind this gate exists to catch.
+ *
+ * Not directly produced: a session that dies by CLOCK rather than by revocation, which needs the
+ * inactivity window to elapse. It is the same condition — a cookie that no longer resolves to a live
+ * session — and all three measured forms of that agree, so it is modelled the same way and the gap
+ * is named here rather than hidden.
  */
-const sessionActivity = http.all('*/api/*', () => {
-  const hadSession = mockState.session !== null;
-  if (expireMockSessionIfDue() && hadSession) {
-    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+const sessionActivity = http.all('*/api/*', ({ request }) => {
+  expireMockSessionIfDue();
+  if (!mockState.session) {
+    return authTokenMissing(new URL(request.url).pathname);
   }
   markMockActivity();
   // Returning nothing falls through to the endpoint handler below.

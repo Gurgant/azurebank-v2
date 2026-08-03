@@ -6,6 +6,7 @@ import { server } from '../../mocks/server';
 import { resetMockState } from '../../mocks/state';
 import { renderWithProviders } from '../../test/renderWithProviders';
 import { AccountsPage } from '../../pages/AccountsPage';
+import { seedMockSession } from '../../mocks/state';
 
 /**
  * What a dialog does to the keyboard, which no screenshot shows.
@@ -24,6 +25,9 @@ import { AccountsPage } from '../../pages/AccountsPage';
 describe('money dialogs and the keyboard', () => {
   beforeEach(() => {
     resetMockState();
+    // Re-seed: the shared setup signs in before every test, and a local reset undoes it. `/api/*`
+    // is session-gated now, so without this every request here is a 401.
+    seedMockSession();
   });
 
   async function openDeposit() {

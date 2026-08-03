@@ -104,4 +104,33 @@ describe('contract: endpoints that require a session', () => {
     expect(status).toBe(401);
     expect(asProblem(body).errorCode).toBeUndefined();
   });
+
+  it.each([
+    ['/api/accounts'],
+    ['/api/transactions?Page=1&PageSize=2'],
+    ['/api/transactions/summary'],
+  ])('rejects an unauthenticated caller on %s', async (path) => {
+    /*
+      The hole ADR-0029 was opened admitting, now closed. These routes used to be reachable in the
+      mock with no session at all, so page tests ran in a state the product cannot produce and
+      nothing anywhere proved they were protected.
+
+      The BFF does not answer for itself here — it forwards whatever token the session yields, and
+      the API rejects a request that arrives without one. Measured three ways, all identical:
+      anonymous, an unresolvable cookie, and a cookie revoked by logout:
+
+        401 {"type":"https://httpstatuses.com/401","title":"Unauthorized",
+             "detail":"Authentication is required to access this resource.",
+             "instance":"<path>","errorCode":"AUTH_TOKEN_MISSING","traceId":"<32-hex>"}
+
+      Note the errorCode: this is NOT the BFF's own 401 ("Session expired or invalid", no errorCode)
+      asserted above for the PIN routes. Two different 401s, and the mock used to conflate them.
+    */
+    const { status, body } = await call(path, { anonymous: true });
+    const problem = asProblem(body);
+
+    expect(status).toBe(401);
+    expect(problem.errorCode).toBe('AUTH_TOKEN_MISSING');
+    expect(problem.detail).toBe('Authentication is required to access this resource.');
+  });
 });

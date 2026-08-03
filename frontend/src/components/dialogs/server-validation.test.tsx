@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MAIN_ACCOUNT_ID, mockState, resetMockState } from '../../mocks/state';
+import { seedMockSession } from '../../mocks/state';
 
 /**
  * The mock used to accept every account body it was given: an empty name became "New Account", an
@@ -23,6 +24,9 @@ import { MAIN_ACCOUNT_ID, mockState, resetMockState } from '../../mocks/state';
 describe('the account rules the mock did not enforce', () => {
   beforeEach(() => {
     resetMockState();
+    // Re-seed: the shared setup signs in before every test, and a local reset undoes it. `/api/*`
+    // is session-gated now, so without this every request here is a 401.
+    seedMockSession();
   });
 
   const create = (body: unknown) =>
@@ -97,6 +101,7 @@ describe('the account rules the mock did not enforce', () => {
 describe('a body that cannot be read at all', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
     // Transfers sit behind the step-up gate, which is BFF MIDDLEWARE: unelevated they are a 403
     // whatever the body says, because it runs before the request reaches model binding at all.
     // Elevating once here keeps the table about bodies. (That cost this suite a first draft.)
