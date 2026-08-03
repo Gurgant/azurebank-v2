@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MAIN_ACCOUNT_ID, SAVINGS_ACCOUNT_ID, mockState, resetMockState } from './state';
+import {
+  MAIN_ACCOUNT_ID,
+  SAVINGS_ACCOUNT_ID,
+  mockState,
+  resetMockState,
+  seedMockSession,
+} from './state';
 
 /**
  * The seeded ledger has to hold together on its own, because everything downstream reads it as if
@@ -27,6 +33,9 @@ function signed(entry: { type: string; amount: number }): number {
 describe('the seeded ledger', () => {
   beforeEach(() => {
     resetMockState();
+    // Re-seed: the shared setup signs in before every test, and a local reset undoes it. `/api/*`
+    // is session-gated now, so without this every request here is a 401.
+    seedMockSession();
   });
 
   it('is ordered newest-first, the way OrderByDescending(CreatedAt) orders it', () => {
@@ -86,6 +95,7 @@ describe('the seeded ledger', () => {
 describe('writing to the ledger', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it('files a deposit against the account it names, and the balance still reconciles', async () => {
@@ -139,6 +149,7 @@ describe('writing to the ledger', () => {
 describe('GET /api/transactions honours AccountId', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it('returns only that account, and the totals count only that account', async () => {
@@ -219,6 +230,7 @@ describe('GET /api/transactions honours AccountId', () => {
 describe('money endpoints validate the amount before touching a balance', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   const deposit = (amount: unknown) =>

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MAIN_ACCOUNT_ID, mockState, resetMockState } from './state';
+import { MAIN_ACCOUNT_ID, mockState, resetMockState, seedMockSession } from './state';
 
 /**
  * The mock stands in for the API everywhere the frontend is tested, so a gap in it is a gap in the
@@ -9,6 +9,9 @@ import { MAIN_ACCOUNT_ID, mockState, resetMockState } from './state';
 describe('the mock reports its own gaps', () => {
   beforeEach(() => {
     resetMockState();
+    // Re-seed: the shared setup signs in before every test, and a local reset undoes it. `/api/*`
+    // is session-gated now, so without this every request here is a 401.
+    seedMockSession();
   });
 
   it('answers 501 for an /api route it does not handle, naming the route', async () => {
@@ -35,6 +38,7 @@ describe('the mock reports its own gaps', () => {
 describe('GET /api/accounts/{id}', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it('returns the account enveloped, like ApiResponse<T>.Success', async () => {
@@ -60,6 +64,7 @@ describe('GET /api/accounts/{id}', () => {
 describe('GET /api/accounts/{id}/balance', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   const balance = (query = '') =>
@@ -112,6 +117,7 @@ describe('GET /api/accounts/{id}/balance', () => {
 describe('failure ordering matches the service, not the handler that was easiest to write', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it('withdraw resolves the account BEFORE the PIN, and spends no attempt on a bad id', async () => {
@@ -157,6 +163,7 @@ describe('failure ordering matches the service, not the handler that was easiest
 describe('the query parameters the mock used to ignore', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it('GET /api/transactions honours FromDate and ToDate, inclusively', async () => {
@@ -226,6 +233,7 @@ describe('the query parameters the mock used to ignore', () => {
 describe('the two shapes every error inherits', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it('a model-state 400 uses the FRAMEWORK envelope, with no detail at all', async () => {
@@ -273,6 +281,7 @@ describe('the two shapes every error inherits', () => {
 describe('a date that will not parse', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it.each(['/api/transactions/summary', '/api/transactions'])(
@@ -310,6 +319,7 @@ describe('a date that will not parse', () => {
 describe('model binding runs before the action, and the action before the service', () => {
   beforeEach(() => {
     resetMockState();
+    seedMockSession();
   });
 
   it('a malformed `at` on the balance route is a 400, not today’s balance', async () => {

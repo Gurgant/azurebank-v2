@@ -1,6 +1,7 @@
 # ADR-0029: One suite, two backends — making mock drift fail the build
 
-**Status**: Accepted — the gate is deliberately INCOMPLETE; see “What is NOT covered”
+**Status**: Accepted. The hole this ADR was written admitting — live-session authentication on
+`/api/*` — is CLOSED. The gate remains a floor rather than full coverage; see “What is NOT covered”.
 
 **Date**: 2026-07-31
 
@@ -68,7 +69,7 @@ distinguish "the mock was fixed" from "the assertion was written to match whatev
 
 ## Consequences
 
-**The gate has found TEN drifts so far, and the mock was aligned to the backend in every case.** The
+**The gate has found ELEVEN drifts so far, and the mock was aligned to the backend in every case.** The
 backend was right every time; nothing here is a backend fix. Six came from the first run; the rest
 turned up while answering review on the gate itself, which is the behaviour you want from one.
 
@@ -84,6 +85,7 @@ turned up while answering review on the gate itself, which is the behaviour you 
 | Several bad properties at once | first failure only, rest hidden | ALL reported in one pass |
 | Bad-value message | `The value 'x' is not valid.` | `... is not valid for <Name>.` |
 | PIN absent vs null vs malformed | one message for all three | `$` / `Pin` required / `Pin` 6-digits |
+| No session on `/api/*` | reachable, or the BFF's own 401 | `401` `AUTH_TOKEN_MISSING` (the API's) |
 
 **The API has TWO validation envelopes, and that is the finding with the longest reach.** Endpoints
 with a FluentValidation validator get `ValidationExceptionHandler`'s hand-written body (title
@@ -128,17 +130,34 @@ app, since `apiSlice` sends PascalCase per the spec, but reachable by anyone han
 not a difference a mock has any business having. The mock now looks parameters up case-insensitively,
 and the tests assert the app's own casing so they stay about envelopes rather than about the binder.
 
-**What is NOT covered — and this gate should not be called complete.** Fourteen assertions is a floor,
-not a ceiling, and one hole is big enough that the ADR's status says so out loud.
+**The hole this ADR was written admitting is now CLOSED, and closing it cost what was predicted.**
+`/api/accounts/*` and `/api/transactions/*` are gated on a live session, matching the real stack.
+The earlier version of this section said the change "belongs in its own PR" because it moves the
+default state every page-level test runs in — it did: 159 tests across 16 files, almost exactly the
+"twenty-file blast radius" the mock's own docblock had estimated.
 
-The largest hole is **live-session authentication on the protected resource routes**.
-`/api/accounts/*` and `/api/transactions/*` never read or validate a session in the mock. The money
-handlers do still apply the `authLevel` check — so this is not "ungated" — but nothing verifies that
-a live, unexpired session is what granted that level, so an expired session still spends. The real stack rejects all of that. It is left open here deliberately
-rather than quietly — closing it changes the default state every page-level test runs in, which is a
-change of a different size and belongs in its own PR, with the same measure-then-assert discipline.
-Until then, no test in this repo proves those routes are protected.
+The fix was not sixteen patches but a change of DEFAULT. Signed-in is now the baseline test state,
+because for routes behind `ProtectedRoute` it is the only reachable one; seeding per file would have
+been sixteen chances to forget. The five tests whose subject genuinely IS the signed-out path now say
+so explicitly, which is the more interesting claim of the two and used to be implicit in a default.
 
-Also untested: the remaining 44 candidates from the static audit, the malformed-body envelope
-(`errors` keyed `$` and `request`), and the case-insensitive query binding recorded above. The gate
-exists so each can be added one measured assertion at a time.
+Measuring it produced an eleventh drift and one ordering fact. The proxy does not answer for itself —
+it forwards whatever token the session yields, and the API rejects a request arriving without one, so
+anonymous, an unresolvable cookie and a cookie revoked by logout all return the same
+`401 AUTH_TOKEN_MISSING`. The mock had been answering the BFF's own 401 ("Session expired or invalid",
+no `errorCode`) for the expired case; that shape is real but belongs to `/bff/auth/*`. And an
+anonymous money-route call is that same 401, NOT the step-up 403 — authentication precedes the level
+check.
+
+**What is still NOT covered.** Seventeen assertions is a floor, not a ceiling:
+
+- the remaining **44 candidates** from the static audit, never adversarially attacked and never
+  checked live — leads, not facts;
+- the **malformed-body envelope** (`errors` keyed `$` and `request`), measured but unasserted;
+- **case-insensitive query binding**: the mock now matches, but the tests assert the app's own
+  PascalCase, so the insensitivity itself is unpinned;
+- a session that dies by **clock** rather than by revocation. It could not be produced without
+  waiting out the inactivity window, so it is modelled identically to the three forms that were
+  measured. Named here rather than hidden.
+
+The gate exists so each of these can be added one measured assertion at a time.

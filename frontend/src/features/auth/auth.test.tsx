@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { http } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
-import { MOCK_PASSWORD, MOCK_USER, seedMockSession } from '../../mocks/state';
+import { MOCK_PASSWORD, MOCK_USER, mockState, seedMockSession } from '../../mocks/state';
 import { makeTestStore, renderWithProviders, type TestStore } from '../../test/renderWithProviders';
 import { apiSlice } from '../api/apiSlice';
 import { ProtectedRoute } from '../../components/layout/ProtectedRoute';
@@ -23,6 +23,10 @@ async function boot(store: TestStore) {
 
 describe('auth bootstrap (D6)', () => {
   it('resolves to anonymous when the probe 401s — no error surfaced', async () => {
+    // ANONYMOUS on purpose. The shared setup signs in before every test, because `/api/*` is
+    // session-gated and every page behind ProtectedRoute needs one — so a test whose subject is
+    // the signed-OUT path has to say so, which is the more interesting claim anyway.
+    mockState.session = null;
     const store = makeTestStore();
     expect(store.getState().auth.status).toBe('unknown');
 
@@ -69,6 +73,7 @@ describe('global 401 handling (D3)', () => {
   });
 
   it('a 401 while NOT authenticated never expires the session — the calling surface owns it', async () => {
+    mockState.session = null;
     const store = makeTestStore();
     await boot(store);
     expect(store.getState().auth.status).toBe('anonymous');
@@ -89,6 +94,7 @@ describe('global 401 handling (D3)', () => {
   });
 
   it('a 401 INVALID_CREDENTIALS stays on the login form — no session expiry', async () => {
+    mockState.session = null;
     const store = makeTestStore();
     await boot(store);
     expect(store.getState().auth.status).toBe('anonymous');
@@ -130,6 +136,7 @@ describe('ProtectedRoute guard', () => {
   });
 
   it('redirects anonymous users to /login and authenticated users straight through', async () => {
+    mockState.session = null;
     const store = makeTestStore();
     await boot(store); // anonymous
     renderWithProviders(<Harness />, { store, routerEntries: ['/secret'] });
@@ -172,6 +179,7 @@ describe('login flow (returnTo + error branching)', () => {
   });
 
   it('shows the credential error inline on a wrong password', async () => {
+    mockState.session = null;
     const user = userEvent.setup();
     const store = makeTestStore();
     await boot(store);

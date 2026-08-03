@@ -136,6 +136,8 @@ export function asProblem(body: unknown): {
   detail?: string;
   status?: number;
   errorCode?: string;
+  /** The requested path, echoed back. Emitted by the API's own problem responses, not the BFF's. */
+  instance?: string;
   errors?: Record<string, string[]>;
 } {
   return (body ?? {}) as Record<string, never>;

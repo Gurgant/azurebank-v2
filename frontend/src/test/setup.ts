@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { resetServerActivity } from '../features/auth/sessionActivity';
 import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
-import { resetMockState } from '../mocks/state';
+import { resetMockState, seedMockSession } from '../mocks/state';
 import {
   TEST_VIEWPORT_HEIGHT,
   TEST_VIEWPORT_WIDTH,
@@ -31,6 +31,21 @@ window.matchMedia ??= matchMediaStub;
 // MSW lifecycle: every unhandled request is an ERROR — tests must declare the traffic they
 // cause, so a missing handler is a broken contract, never a silent pass.
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+
+/*
+  SIGNED IN is the default state, because for these routes it is the only reachable one.
+
+  `/api/*` is now gated on a live session in the mock, matching the real stack, where an anonymous
+  proxied request comes back 401 AUTH_TOKEN_MISSING. Every page behind `ProtectedRoute` therefore
+  needs a session to render anything at all — and the previous default (`session: null`, "tests seed
+  or log in explicitly") made 159 tests across 16 files exercise a state the product cannot produce.
+
+  Seeding here rather than in each file keeps the default honest: a test that wants the anonymous
+  case sets `mockState.session = null` itself and says why, which is the rarer and more interesting
+  claim of the two. `resetMockState` in the afterEach below nulls it again, so this runs fresh for
+  every test.
+*/
+beforeEach(() => seedMockSession());
 afterEach(() => {
   server.resetHandlers();
   resetMockState();
