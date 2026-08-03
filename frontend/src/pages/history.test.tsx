@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
+import { mockState } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { HistoryPage } from './HistoryPage';
 
@@ -16,7 +17,7 @@ describe('history feed (T1)', () => {
   it('renders rows with type-driven signs, counterparties, and status text', async () => {
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
 
-    expect(await screen.findByText('Salary — July')).toBeInTheDocument();
+    expect(await screen.findByText('Salary')).toBeInTheDocument();
     expect(screen.getByText('+€1,250.50')).toBeInTheDocument();
 
     // Null description falls back to the type; the amount sign comes from the TYPE.
@@ -28,13 +29,26 @@ describe('history feed (T1)', () => {
     expect(screen.getByText('From @anna_k')).toBeInTheDocument();
     expect(screen.getByText('+€75.00')).toBeInTheDocument();
 
-    // Date group headings from createdAt.
-    expect(screen.getByText('July 20, 2026')).toBeInTheDocument();
+    /*
+      The heading is FORMATTED FROM the seed's own newest entry, not named.
+
+      It used to read 'July 20, 2026', which stopped existing the moment the ledger was re-dated
+      into the current month — and would have gone stale every month even if it had not been. What
+      the test actually means is "the group heading is the day of the row above it", so it says that.
+    */
+    const newest = new Date(mockState.transactions[0].createdAt);
+    const heading = newest.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+    expect(screen.getByText(heading)).toBeInTheDocument();
   });
 
   it('computes the summary from TYPES over loaded pages, excluding Reversed', async () => {
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
-    await screen.findByText('Salary — July');
+    await screen.findByText('Salary');
 
     // Page 1 = 5 heroes + 15 fillers (€10 deposits). Income = 1250.50 + 75 + 150;
     // expenses = 50 + 200 — the €30 Reversed withdrawal must NOT count.
@@ -45,7 +59,7 @@ describe('history feed (T1)', () => {
 
   it('Load more appends page 2 and then disappears; the summary re-totals', async () => {
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
-    await screen.findByText('Salary — July');
+    await screen.findByText('Salary');
 
     expect(screen.queryByText('Top-up #16')).not.toBeInTheDocument();
 
@@ -62,16 +76,16 @@ describe('history feed (T1)', () => {
 
   it('filter tabs slice the LOADED pages client-side', async () => {
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
-    await screen.findByText('Salary — July');
+    await screen.findByText('Salary');
 
     await userEvent.click(screen.getByRole('button', { name: 'Deposits' }));
-    expect(screen.getByText('Salary — July')).toBeInTheDocument();
+    expect(screen.getByText('Salary')).toBeInTheDocument();
     expect(screen.queryByText('To @john_d')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Transfers' }));
     expect(screen.getByText('To @john_d')).toBeInTheDocument();
     expect(screen.getByText('From @anna_k')).toBeInTheDocument();
-    expect(screen.queryByText('Salary — July')).not.toBeInTheDocument();
+    expect(screen.queryByText('Salary')).not.toBeInTheDocument();
   });
 
   it('announces which filter is selected, not just colours it', async () => {
@@ -80,7 +94,7 @@ describe('history feed (T1)', () => {
     // four identical controls. That is the defect the extraction exists to fix, and this is the
     // assertion that keeps it fixed.
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
-    await screen.findByText('Salary — July');
+    await screen.findByText('Salary');
 
     const group = screen.getByRole('group', { name: /Filter transactions/i });
     expect(within(group).getByRole('button', { name: 'All' })).toHaveAttribute(
@@ -108,7 +122,7 @@ describe('history feed (T1)', () => {
     // rather than on request counts — the point is what the reader sees, and the absence of a
     // refetch is what makes it instant.
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
-    await screen.findByText('Salary — July');
+    await screen.findByText('Salary');
 
     const rowsNow = () => document.querySelectorAll('tbody tr').length;
     const firstPage = rowsNow();
@@ -129,7 +143,7 @@ describe('history feed (T1)', () => {
     // error state, so nothing looks wrong until Retry recovers: then one page is on screen and
     // "Show less" is offered anyway, pointing at a page that was never fetched.
     renderWithProviders(<HistoryPage />, { routerEntries: ['/history'] });
-    await screen.findByText('Salary — July');
+    await screen.findByText('Salary');
 
     const rowsNow = () => document.querySelectorAll('tbody tr').length;
     const firstPage = rowsNow();
@@ -146,7 +160,7 @@ describe('history feed (T1)', () => {
     // The backend recovers and Retry restores exactly the one page that was ever loaded.
     server.resetHandlers();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByText('Salary — July');
+    await screen.findByText('Salary');
 
     expect(rowsNow()).toBe(firstPage);
     expect(screen.queryByRole('button', { name: 'Show less' })).not.toBeInTheDocument();
@@ -164,7 +178,7 @@ describe('history feed (T1)', () => {
 
     server.resetHandlers();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('Salary — July')).toBeInTheDocument();
+    expect(await screen.findByText('Salary')).toBeInTheDocument();
   });
 
   it('an empty feed is a first-class state (D22)', async () => {

@@ -43,9 +43,22 @@ describe('transaction detail (T2)', () => {
     expect(await screen.findByText('+€1,250.50')).toBeInTheDocument();
     expect(screen.getAllByText('Deposit')).toHaveLength(2); // hero label + Type row
     expect(screen.getByText('Completed')).toBeInTheDocument();
-    expect(screen.getByText('TXN-20260720-000101')).toBeInTheDocument();
-    expect(screen.getByText(/July 20, 2026/)).toBeInTheDocument();
-    expect(screen.getByText('Salary — July')).toBeInTheDocument();
+    /*
+      Both taken FROM the seeded entry rather than transcribed. The ledger is re-dated into the
+      current month on every run, so `TXN-20260720-000101` and 'July 20, 2026' named a row that no
+      longer exists — and the assertion's real content is "the page shows THIS entry's number and
+      THIS entry's date", which is what it now says.
+    */
+    const salary = mockState.transactions.find((t) => t.description === 'Salary')!;
+    expect(screen.getByText(salary.transactionNumber)).toBeInTheDocument();
+    const day = new Date(salary.createdAt).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+    expect(screen.getByText(new RegExp(day))).toBeInTheDocument();
+    expect(screen.getByText('Salary')).toBeInTheDocument();
     // Balance after. Read from the seed rather than typed, because the seed DERIVES it — the
     // running balance is computed backwards from the account's real balance, so a hand-copied
     // literal here would be a second source of truth that goes stale on the next seed edit.
