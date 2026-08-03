@@ -112,13 +112,23 @@ describe('the scope decides what the page is about', () => {
       return row.textContent!.replace('Money in', '').trim();
     };
 
+    /*
+      ABSOLUTE figures, not "the scoped one differs from the other".
+
+      The relative form was the original, and it is a bad oracle twice over. It passes on any wrong
+      number that merely differs from the total, and it FAILS when the two are legitimately equal —
+      which is exactly how it read when the month rolled over and every figure went to zero:
+      `expected '+€0.00' not to be '+€0.00'`, a message that names no expectation and points at
+      nothing. These come from the seed's own amounts: money in across both accounts is the 1250.50
+      salary plus 175 of top-ups and a transfer in; Rainy Day's share of that is 175.
+    */
     expect(await screen.findByText(/Across all 2 accounts/)).toBeInTheDocument();
-    const acrossAll = await moneyIn();
+    await waitFor(async () => expect(await moneyIn()).toBe('+€1,525.50'));
 
     await userEvent.click(screen.getByRole('button', { name: /Rainy Day/ }));
 
     expect(await screen.findByText('Rainy Day only')).toBeInTheDocument();
-    await waitFor(async () => expect(await moneyIn()).not.toBe(acrossAll));
+    await waitFor(async () => expect(await moneyIn()).toBe('+€175.00'));
   });
 });
 
@@ -159,7 +169,7 @@ describe('the ledger', () => {
     expect(within(reversed).getByText('Reversed')).toBeInTheDocument();
     expect(within(reversed).getByText(/-€30\.00/)).toHaveStyle({ textDecoration: 'line-through' });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Salary — July' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Salary' }));
     expect(await screen.findByText('TX DETAIL')).toBeInTheDocument();
   });
 
@@ -234,7 +244,7 @@ describe('a partial failure', () => {
     // D22: accounts gate the page, everything else fails alone.
     expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('€2,080.50');
     expect(await screen.findByText(/Could not load this month/)).toBeInTheDocument();
-    expect(screen.getByText('Salary — July')).toBeInTheDocument();
+    expect(screen.getByText('Salary')).toBeInTheDocument();
   });
 
   it('gates the whole page when the accounts themselves fail', async () => {

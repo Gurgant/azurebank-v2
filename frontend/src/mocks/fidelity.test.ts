@@ -87,7 +87,9 @@ describe('GET /api/accounts/{id}/balance', () => {
   it('reports the balance the ledger actually left at that moment', async () => {
     // Derived from the seed rather than hard-coded: the answer must be the `balanceAfter` of the
     // newest entry at or before `at`, which is the same property the seed guarantees.
-    const at = '2026-07-19T00:00:00Z';
+    // Derived from the seed, not hardcoded: the ledger is re-dated into the CURRENT month, so a
+    // fixed July instant would select nothing and this would assert against `undefined`.
+    const at = mockState.transactions[2].createdAt;
     const expected = mockState.transactions
       .filter((t) => t.accountId === MAIN_ACCOUNT_ID && Date.parse(t.createdAt) <= Date.parse(at))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
@@ -159,7 +161,8 @@ describe('the query parameters the mock used to ignore', () => {
 
   it('GET /api/transactions honours FromDate and ToDate, inclusively', async () => {
     const all = await fetch('/api/transactions?Page=1&PageSize=100').then((r) => r.json());
-    const day = '2026-07-19';
+    // Same reason: take a day the seed actually occupies rather than naming one.
+    const day = mockState.transactions[2].createdAt.slice(0, 10);
     const scoped = await fetch(
       `/api/transactions?Page=1&PageSize=100&FromDate=${day}T00:00:00Z&ToDate=${day}T23:59:59Z`,
     ).then((r) => r.json());
@@ -410,5 +413,40 @@ describe('model binding runs before the action, and the action before the servic
     );
     expect(resolved.status).toBe(422);
     expect((await resolved.json()).errorCode).toBe('INVALID_DATE_RANGE');
+  });
+});
+
+/**
+ * The guard that would have caught this a month earlier.
+ *
+ * The seed used to be hardcoded to July 2026 while the dashboard summarises the CURRENT calendar
+ * month. On 1 August every figure on that card became €0.00 — in the demo as much as in the tests —
+ * and `DashboardPage.test.tsx` went red and stayed red. Nothing was watching the property that
+ * broke, so the first sign of it was a CI failure three days later with a message
+ * ("expected '+€0.00' not to be '+€0.00'") that named neither the cause nor an expectation.
+ *
+ * These two assert the property directly, so the next re-dating that gets it wrong fails HERE, with
+ * a reason, instead of surfacing as an unrelated page test.
+ */
+describe('the seeded ledger stays inside the window the app asks about', () => {
+  it('places every entry inside the CURRENT calendar month', () => {
+    const now = new Date();
+    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+
+    expect(mockState.transactions.length).toBeGreaterThan(0);
+    for (const t of mockState.transactions) {
+      const at = Date.parse(t.createdAt);
+      expect(at, `${t.transactionNumber} is before this month`).toBeGreaterThanOrEqual(monthStart);
+      expect(at, `${t.transactionNumber} is in the future`).toBeLessThanOrEqual(Date.now());
+    }
+  });
+
+  it('numbers each entry with its own date', () => {
+    // TXN-yyyyMMdd-NNNNNN. The number carries a date of its own, so a re-dating that moves
+    // `createdAt` and forgets the number leaves the two contradicting each other on screen.
+    for (const t of mockState.transactions) {
+      const stamped = t.createdAt.slice(0, 10).replace(/-/g, '');
+      expect(t.transactionNumber).toContain(stamped);
+    }
   });
 });

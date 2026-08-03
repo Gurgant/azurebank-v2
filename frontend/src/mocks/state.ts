@@ -213,6 +213,48 @@ function defaultAccounts(): MockAccount[] {
  */
 type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter'>;
 
+/**
+ * Re-dates the seed into the CURRENT calendar month, preserving the authored order exactly.
+ *
+ * The dates written in `seedEntries` are a RELATIVE ORDER SPECIFICATION, not absolute instants —
+ * this converts them. Why it has to exist: the dashboard summarises the current UTC calendar month,
+ * and the seed used to be hardcoded to July 2026. From 1 August every figure on that card read
+ * €0.00, in the demo as well as in the tests, and `DashboardPage.test.tsx` went red and stayed red.
+ * That is a time bomb with a monthly fuse, and it went off in CI three days after being written.
+ *
+ * WHY NOT "n days ago", which is the obvious answer: on the 1st of a month "3 days ago" lands in the
+ * PREVIOUS month and the bug comes straight back, worse for being intermittent. Everything is
+ * therefore anchored INSIDE the elapsed part of the current month — between the 1st and now — so
+ * there is no day of the month on which the window can miss it.
+ *
+ * The one degenerate case is honest and bounded: in the first milliseconds of a month the elapsed
+ * span is smaller than the number of entries, so several clamp onto the same instant and their
+ * relative order stops being strict. They stay inside the window, which is the property that
+ * matters; a demo opened in the first second of a month is not worth more machinery than that.
+ */
+function redateIntoCurrentMonth(entries: SeedEntry[]): SeedEntry[] {
+  // Newest first, by the authored dates — this is the order being preserved.
+  const ordered = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const now = Date.now();
+  const today = new Date(now);
+  const monthStart = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1);
+  const span = Math.max(now - monthStart, ordered.length);
+  const step = Math.max(1, Math.floor(span / (ordered.length + 1)));
+
+  return ordered.map((entry, rank) => {
+    const at = new Date(Math.max(monthStart, now - (rank + 1) * step));
+    const iso = at.toISOString();
+    return {
+      ...entry,
+      createdAt: iso,
+      // The number carries its own date (TXN-yyyyMMdd-NNNNNN), so it has to move with it or the two
+      // contradict each other on screen — the sequence part is kept from the authored value.
+      transactionNumber: `TXN-${iso.slice(0, 10).replace(/-/g, '')}-${entry.transactionNumber.split('-')[2]}`,
+    };
+  });
+}
+
 function seedEntries(): SeedEntry[] {
   const heroes: SeedEntry[] = [
     {
@@ -221,7 +263,7 @@ function seedEntries(): SeedEntry[] {
       transactionNumber: 'TXN-20260720-000101',
       type: 'Deposit',
       amount: 1250.5,
-      description: 'Salary — July',
+      description: 'Salary',
       recipientAzureTag: null,
       senderAzureTag: null,
       status: 'Completed',
@@ -292,7 +334,7 @@ function seedEntries(): SeedEntry[] {
     // Descending days, so a larger `i` is always further in the past.
     createdAt: `2026-07-${String(10 - Math.floor(i / 3)).padStart(2, '0')}T12:${String(59 - i).padStart(2, '0')}:00.0000000Z`,
   }));
-  return [...heroes, ...fillers];
+  return redateIntoCurrentMonth([...heroes, ...fillers]);
 }
 
 /**
