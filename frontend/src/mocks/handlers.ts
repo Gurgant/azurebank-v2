@@ -2,7 +2,12 @@ import { http, HttpResponse } from 'msw';
 import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
-import { missingMemberProblem, modelStateProblem, problem } from './problem';
+import {
+  invalidJsonValueProblem,
+  missingMemberProblem,
+  modelStateProblem,
+  problem,
+} from './problem';
 import {
   MOCK_PASSWORD,
   MOCK_USER,
@@ -454,6 +459,25 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   if (nameError) {
     return response.untyped(modelStateProblem({ Name: nameError }));
   }
+  /*
+    A JSON NUMBER never reaches the validator. `StrictJsonStringEnumConverter` rejects the token in
+    the deserialiser, so the answer is the framework's conversion envelope keyed by the path to the
+    member — `$.type`, not the bare `$` an absent member produces, and not the camelCase `type` a
+    bad enum STRING produces. Three inputs to the same field, three different answers.
+
+    Measured: {"name":"Valid Name","type":12345}
+      -> {"$.type":["Integer values are not allowed for enum 'AccountType'. Use string values: …"],
+          "request":["The request field is required."]}
+  */
+  if (typeof body.type === 'number') {
+    return response.untyped(
+      invalidJsonValueProblem(
+        '$.type',
+        "Integer values are not allowed for enum 'AccountType'. Use string values: Checking, Savings, Investment",
+      ),
+    );
+  }
+
   const accountType = parseAccountType(body.type);
   if (accountType === null) {
     // Measured: {"name":"Valid Name","type":"99"}

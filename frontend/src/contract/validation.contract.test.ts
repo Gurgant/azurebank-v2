@@ -145,6 +145,32 @@ describe('contract: validation envelopes', () => {
     expect(keys).not.toContain('$.type');
   });
 
+  it('answers a NUMERIC enum from the deserialiser, keyed by the path to the member', async () => {
+    /*
+      Three inputs to the same field, three different answers — the distinction CodeRabbit caught
+      me collapsing on this PR:
+
+        {"type":12345}   -> deserialiser, keyed `$.type`   (the converter refuses the token)
+        {"type":"99"}    -> FluentValidation, keyed `type`  (TryParse accepts the numeric STRING,
+                                                             then IsInEnum rejects the value)
+        (absent)         -> deserialiser, keyed `$`         (fails at the document root)
+
+      Measured 2026-08-04:
+        {"errors":{"request":[…],
+                   "$.type":["Integer values are not allowed for enum 'AccountType'. …"]}}
+    */
+    const { status, body } = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Valid Name', type: 12345 }),
+    });
+    const keys = Object.keys(asProblem(body).errors ?? {});
+
+    expect(status).toBe(400);
+    expect(keys).toContain('$.type');
+    // The path form, NOT the root — the deserialiser knew which member failed.
+    expect(keys).not.toContain('$');
+  });
+
   it('reports EVERY bad property in one pass, not the first one it meets', async () => {
     /*
       ASP.NET validates all bound properties together and returns them in a single
