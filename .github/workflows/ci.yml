@@ -25,6 +25,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # `actions/checkout` writes the GITHUB_TOKEN into .git/config by default, and every job
+          # here then runs third-party code that could read it — NuGet restore, `dotnet run` on the
+          # app itself, `npm ci` with its postinstall scripts. No job performs an authenticated git
+          # operation (the only git use is a local `git diff --exit-code` drift check), so the
+          # credential is pure blast radius. zizmor flags this as `artipacked`.
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -94,6 +101,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -131,6 +140,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -219,6 +230,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4

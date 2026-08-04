@@ -63,19 +63,37 @@ green BFF readiness means the hop under test actually works. A fixed sleep is ei
 
 ## Consequences
 
-**The mechanism was measured before it was committed.** The command-line override is the one thing
-in this job that could not be inferred from the existing workflows, so it was proven locally first:
-a second BFF started on port 5099 with exactly the arguments the workflow uses, pointed at the
-already-running API. Its `/health/ready` returned 200 with the log showing the readiness probe
-calling `https://localhost:7215/health/live` (so `BackendApi:BaseUrl` was picked up), and an
-anonymous `/api/accounts` returned the API's own
-`401 AUTH_TOKEN_MISSING` (so the hyphenated cluster destination was picked up too).
+**The command-line override is proven by the CI run itself, and the local probe that preceded it
+was worthless as evidence.** This is worth recording because the mistake is an easy one to repeat.
+
+A second BFF was first started locally on port 5099 with the workflow's arguments, pointed at the
+already-running API, and it behaved correctly: `/health/ready` returned 200 and an anonymous
+`/api/accounts` came back `401 AUTH_TOKEN_MISSING`. But the address passed to it was
+`https://localhost:7215` — which is exactly what `appsettings.json` already sets `BackendApi:BaseUrl`
+to, and exactly what the YARP cluster already points at. **A control set to the value it is testing
+for confirms nothing**: the identical behaviour would have followed from the overrides being ignored
+entirely.
+
+The discriminating evidence is the CI job. There, the API listens ONLY on `http://localhost:5068`,
+and nothing is bound to 7215. If either override failed, the BFF would fall back to the
+`appsettings.json` default, every call would hit a closed port, login would fail and all three
+suites would go red. The first run passed with **17 contract assertions, 16 integration tests and
+7 E2E tests**, API ready in 11s and BFF in 1s — which is only possible if both the named client and
+the hyphenated cluster destination took the command-line values.
 
 **The API runs over HTTP in CI, on 5068.** There is no ASP.NET dev certificate on a runner, and
 `contract-tests.yml` already established that port. Nothing in the three suites cares: every one of
 them talks to the BFF on 5000, and the only `7215` references left in `frontend/src/contract`,
 `frontend/src/integration` and `frontend/e2e` are inside comments and failure messages telling a
 developer which local launch configs to start.
+
+**The checkout token is not persisted, in any job.** `actions/checkout` writes the `GITHUB_TOKEN`
+into `.git/config` by default, and every job in this workflow then runs third-party code that could
+read it — NuGet restore, `dotnet run` on the app itself, `npm ci` with its postinstall scripts. No
+job performs an authenticated git operation; the only git usage anywhere is the frontend's local
+`git diff --exit-code` drift check. The setting was added to all four jobs rather than only the new
+one: an inconsistent security posture inside a single file is a trap for whoever reads it next, and
+`zizmor` flags every job that lacks it.
 
 **Failure is made debuggable on purpose.** The Playwright report and traces upload on failure, and
 the last 200 lines of both backend logs are printed — because the most likely first failure of this
