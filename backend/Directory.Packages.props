@@ -50,7 +50,7 @@
     <!-- Direct pin of a vulnerable transitive dependency (via EF SqlServer ->
          Microsoft.Data.SqlClient). >= 10.0.6 fixes GHSA-37gx-xxp4-5rgx and
          GHSA-w3x6-4m5h-cxqf (NU1903). Referenced by AzureBank.Infrastructure. -->
-    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.9" />
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.10" />
   </ItemGroup>
   <ItemGroup Label="Compliance">
     <!-- .NET compliance stack (DataClassification + Redactor + IRedactorProvider) used to

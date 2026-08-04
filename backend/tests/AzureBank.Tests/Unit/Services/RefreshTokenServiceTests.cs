@@ -11,6 +11,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -26,11 +27,26 @@ public class RefreshTokenServiceTests : IDisposable
 {
     private readonly AzureBankDbContext _context;
     private readonly RefreshTokenService _sut;
+    // Both held so a second context can join the SAME InMemory database (the fault-injection test).
+    private readonly string _databaseName = Guid.NewGuid().ToString();
+
+    /*
+      The name alone is NOT enough to guarantee shared storage. EF caches an internal service
+      provider keyed on the options extensions, and the second context differs (it adds an
+      interceptor) — so it can land on a different provider, hence a different store, hence an
+      EMPTY database. The fault-injection test would then take the unknown-token branch, throw the
+      very AuthenticationException it asserts, and pass without the family revoke ever running:
+      green for the wrong reason, and blind to the regression it exists to catch.
+
+      An explicit root makes the sharing a property of the fixture instead of a property of EF's
+      provider caching, which is internal and free to change.
+    */
+    private readonly InMemoryDatabaseRoot _databaseRoot = new();
 
     public RefreshTokenServiceTests()
     {
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(_databaseName, _databaseRoot)
             // The RowVersion concurrency token is SQL-Server-generated; the InMemory provider
             // can't produce it, so downgrade byte[] concurrency tokens exactly as the
             // integration fixture does (concurrency itself is proved on the SQL-gated path).
@@ -153,6 +169,67 @@ public class RefreshTokenServiceTests : IDisposable
         _context.ChangeTracker.Clear();
         (await _context.RefreshTokens.ToListAsync())
             .Should().OnlyContain(t => t.RevokedAt != null, "reuse revokes every active token for the user");
+    }
+
+    [Fact]
+    public async Task RotateAsync_ReuseSurvivesAFailingFamilyRevoke_StillRejectsWith401()
+    {
+        /*
+          The 401 is the CONTRACT; the family revoke is a MITIGATION.
+
+          The reuse branch used to await that revoke unguarded, so a transient failure on its one
+          write replaced the rejection with a 500 — the wrong answer, and an invitation to RETRY a
+          token that had just been detected as stolen. It also broke the uniformity this endpoint
+          keeps everywhere else: the concurrency-loss branch returns 401 precisely so a race cannot
+          be told apart from a rejection.
+
+          Be honest about the provenance: this was found by READING the path, not by catching it in
+          the act. The suspected trigger is contention — the set-based revoke writes the same index
+          that concurrent rotations are writing, so a deadlock victim or a command timeout lands
+          exactly there — but that timing did NOT reproduce locally (12 rounds x 17 concurrent
+          requests, with READ_COMMITTED_SNAPSHOT off to match a fresh CI database), and no CI run
+          has been seen failing this way either.
+
+          So the invariant is pinned by FAULT INJECTION rather than by racing. That is the better
+          test regardless of whether the race is reproducible: it names the failure mode ("the
+          revoke threw") instead of hoping to hit one instance of it, and it stays meaningful for
+          every other way that write can fail.
+        */
+        var user = SeedUser();
+        var first = await _sut.IssueAsync(user);
+        await _sut.RotateAsync(first);      // `first` is now revoked, with an active successor
+        await AgeRevocationsBeyondGraceAsync();  // ...and old enough to read as genuine theft
+
+        // The SAME InMemory database, so the reuse lookup finds the revoked token — but on a
+        // context whose every SaveChanges throws, which is the revoke's only write on this path.
+        var faultyOptions = new DbContextOptionsBuilder<AzureBankDbContext>()
+            .UseInMemoryDatabase(_databaseName, _databaseRoot)
+            .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
+            .AddInterceptors(new ThrowingSaveChangesInterceptor())
+            .Options;
+        await using var faultyContext = new AzureBankDbContext(faultyOptions);
+
+        // The precondition the whole test rests on, asserted rather than assumed: the faulty
+        // context can SEE the revoked token. Without this the unknown-token branch would throw the
+        // same AuthenticationException with the same ErrorCode and the assertion below would pass
+        // having never reached the family revoke — the exact wrong-reason pass that an empty
+        // database produces.
+        (await faultyContext.RefreshTokens.CountAsync(t => t.UserId == user.Id))
+            .Should().Be(2, "the faulty context must share the seeded database, not open an empty one");
+
+        var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
+        accessor.HttpContext!.Request.Headers.UserAgent = "xunit/1.0";
+        var faultySut = new RefreshTokenService(
+            faultyContext,
+            accessor,
+            Options.Create(new JwtOptions { RefreshTokenExpirationDays = 7 }),
+            new Mock<ILogger<RefreshTokenService>>().Object);
+
+        // The injected failure must not reach the caller: still the uniform rejection the exception
+        // handler renders as 401, never the 500 the raw exception would have produced.
+        (await ((Func<Task>)(() => faultySut.RotateAsync(first))).Should()
+            .ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.RefreshTokenInvalid);
     }
 
     [Fact]
