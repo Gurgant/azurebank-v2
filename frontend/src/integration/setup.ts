@@ -38,6 +38,18 @@ export function currentCookieHeader(): string {
   return [...jar].map(([name, value]) => `${name}=${value}`).join('; ');
 }
 
+/**
+ * Put a cookie in the jar without authenticating.
+ *
+ * Only the ORIGIN-SCOPING test uses this, and only so that it does not have to spend one of the
+ * ten auth requests the BFF allows per minute just to obtain a cookie it never sends anywhere real.
+ * What that test asserts — "a foreign origin is handed nothing" — is exactly as true of a seeded
+ * value as of a real session id.
+ */
+export function seedCookieJar(name: string, value: string): void {
+  jar.set(name, value);
+}
+
 const realFetch = globalThis.fetch;
 
 async function jarFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -50,8 +62,21 @@ async function jarFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
   */
   const request = new Request(input as RequestInfo, init);
   const headers = new Headers(request.headers);
+
+  /*
+    Scope the jar to the BFF, the way a browser scopes a cookie to its origin.
+
+    Today every request this suite makes goes to the BFF — `problemBaseQuery` pins its baseUrl to
+    `window.location.origin` and the vitest config sets that to http://localhost:5000 — so this is
+    a latent hazard rather than a live leak. It is worth closing anyway because the patch is
+    installed on `globalThis.fetch` PROCESS-WIDE: any future test, or any dependency that fetches a
+    schema, a font or a telemetry endpoint, would otherwise be handed the session cookie, and a
+    Set-Cookie from that foreign origin would be sent to the BFF on the next call.
+  */
+  const isBff = new URL(request.url).origin === BFF_ORIGIN;
+
   const cookie = currentCookieHeader();
-  if (cookie && !headers.has('cookie')) headers.set('cookie', cookie);
+  if (isBff && cookie && !headers.has('cookie')) headers.set('cookie', cookie);
 
   // A GET/HEAD Request has no body to read back; anything else is buffered so the clone can send it.
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
@@ -62,6 +87,8 @@ async function jarFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
     redirect: request.redirect,
     signal: request.signal,
   });
+
+  if (!isBff) return response;
 
   for (const raw of response.headers.getSetCookie?.() ?? []) {
     const [pair] = raw.split(';');

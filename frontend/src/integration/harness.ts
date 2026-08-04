@@ -1,5 +1,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { apiSlice } from '../features/api/apiSlice';
+import { authReducer } from '../features/auth/authSlice';
+import { sessionMiddleware } from '../features/auth/sessionMiddleware';
 import {
   __resetStepUpController,
   settleStepUp,
@@ -25,14 +27,36 @@ export const FIXTURES = {
   pin: '123456',
 } as const;
 
+/**
+ * Mirrors `src/app/store.ts`, and the parity is load-bearing rather than tidiness.
+ *
+ * An earlier version wired `apiSlice` alone. That store cannot observe the global 401 rule (D3),
+ * which lives entirely in `sessionMiddleware`: a 401 while AUTHENTICATED dispatches
+ * `sessionExpired()` and resets the whole RTK Query cache, so financial data never outlives the
+ * session it was fetched under. Omitting it meant the suite could pass while that rule was broken —
+ * precisely the "green and wrong" state this whole layer exists to prevent. `sessionMiddleware`
+ * also READS `getState().auth.status`, so the two are not independent: adding the middleware
+ * without the reducer would throw on the first 401.
+ *
+ * `devTools` is the one deliberate omission — there is no extension to talk to in node, and the
+ * production setting exists to keep a withdraw's PIN out of it.
+ */
 export function makeStore() {
   return configureStore({
-    reducer: { [apiSlice.reducerPath]: apiSlice.reducer },
-    middleware: (getDefault) => getDefault().concat(apiSlice.middleware),
+    reducer: {
+      auth: authReducer,
+      [apiSlice.reducerPath]: apiSlice.reducer,
+    },
+    middleware: (getDefault) => getDefault().concat(apiSlice.middleware, sessionMiddleware),
   });
 }
 
 export type IntegrationStore = ReturnType<typeof makeStore>;
+
+/** The production auth status, for tests that assert on session lifecycle. */
+export function authStatus(store: IntegrationStore): string {
+  return (store.getState() as { auth: { status: string } }).auth.status;
+}
 
 /** Run an endpoint and return RTK Query's settled result, errors included. */
 export async function run<T>(promise: {
@@ -77,19 +101,38 @@ export async function signIn(store: IntegrationStore): Promise<void> {
  */
 export function autoElevate(store: IntegrationStore) {
   let requests = 0;
+  let verifyFailure: string | null = null;
+
   const unsubscribe = subscribeStepUp(() => {
     if (!getStepUpSnapshot()) return; // the unmount notification
     requests += 1;
     void store
       .dispatch(apiSlice.endpoints.verifyPin.initiate({ pin: FIXTURES.pin }))
       .then((result) => {
-        settleStepUp('error' in result && result.error ? 'cancelled' : 'elevated');
+        if ('error' in result && result.error) {
+          /*
+            The controller has to be settled with SOMETHING or the interceptor's promise never
+            resolves and the test hangs, and 'cancelled' is the only other outcome the type allows.
+            But a failed verify-pin is NOT a user declining: a 429 from the shared auth budget, a
+            transport error or a backend fault would all have surfaced as a deliberate
+            STEP_UP_CANCELLED and sent the reader looking for a bug in the cancel path. Recording
+            it here lets the test fail with the actual cause instead.
+          */
+          verifyFailure = JSON.stringify(result.error);
+          settleStepUp('cancelled');
+        } else {
+          settleStepUp('elevated');
+        }
       });
   });
 
   return {
     get requests() {
       return requests;
+    },
+    /** Non-null when verify-pin itself failed. Assert it is null BEFORE reading the outcome. */
+    get verifyFailure() {
+      return verifyFailure;
     },
     dispose() {
       unsubscribe();
@@ -98,12 +141,25 @@ export function autoElevate(store: IntegrationStore) {
   };
 }
 
-/** Decline every step-up, to exercise the STEP_UP_CANCELLED branch against the real 403. */
+/**
+ * Decline every step-up, to exercise the STEP_UP_CANCELLED branch against the real 403.
+ *
+ * Counts prompts for the same reason `autoElevate` does. `requestStepUp`'s `inflight` mutex means
+ * concurrent 403s share one prompt, and `baseQueryWithStepUp` deliberately does not re-intercept
+ * its own replay — so "exactly one" is the current contract, and a counter is what would notice if
+ * either of those two guarantees were lost.
+ */
 export function autoCancel() {
+  let requests = 0;
   const unsubscribe = subscribeStepUp(() => {
-    if (getStepUpSnapshot()) settleStepUp('cancelled');
+    if (!getStepUpSnapshot()) return;
+    requests += 1;
+    settleStepUp('cancelled');
   });
   return {
+    get requests() {
+      return requests;
+    },
     dispose() {
       unsubscribe();
       __resetStepUpController();

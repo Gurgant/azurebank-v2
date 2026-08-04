@@ -126,6 +126,10 @@ describe('integration: the step-up interceptor against a real 403', () => {
       const problem = result.error as ApiProblem;
       expect(problem.errorCode).toBe('STEP_UP_CANCELLED');
       expect(problem.requiredAuthLevel).toBe(2);
+      // The title says "exactly once", so measure it rather than implying it. One gated call must
+      // raise one prompt: `requestStepUp`'s inflight mutex collapses concurrent 403s into one, and
+      // `baseQueryWithStepUp` does not re-intercept its own replay.
+      expect(stepUp.requests).toBe(1);
     } finally {
       stepUp.dispose();
     }
@@ -137,6 +141,14 @@ describe('integration: the step-up interceptor against a real 403', () => {
       const result = await run(
         store.dispatch(apiSlice.endpoints.revealAccountNumber.initiate(accountId)),
       );
+
+      /*
+        Checked BEFORE the outcome, and this ordering is the point. The harness has to settle the
+        controller with 'cancelled' when verify-pin fails, because that is the only other outcome
+        the type allows — so a 429 from the shared auth budget would otherwise surface here as
+        STEP_UP_CANCELLED and read as a bug in the cancel path rather than as a rate limit.
+      */
+      expect(stepUp.verifyFailure, `verify-pin failed: ${stepUp.verifyFailure}`).toBeNull();
 
       expect(result.ok, result.ok ? '' : JSON.stringify(result.error)).toBe(true);
       if (!result.ok) return;

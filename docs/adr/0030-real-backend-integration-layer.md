@@ -17,9 +17,15 @@ server actually sent, unmediated by the app.
 That leaves a second gap, and it is not the same gap. Between the wire and the screen sit
 `problemBaseQuery` (which synthesises error codes the wire never carries), `unwrap` + the
 spec-generated Zod schemas (which can reject a perfectly valid 200), the idempotency protocol, and
-the step-up interceptor. A backend can be entirely correct and the app still broken, and every test
-covering those layers today runs against MSW — the oracle ADR-0029 exists because we could not
-trust.
+the step-up interceptor. A backend can be entirely correct and the app still broken, and until this
+ADR every test covering those layers ran against MSW — the very oracle ADR-0029 was written because
+we could not trust it.
+
+There is a third divergence, narrower but sharper: the store itself. Production wires
+`auth: authReducer` plus `sessionMiddleware` (`src/app/store.ts`), and `sessionMiddleware` owns the
+global 401 rule (D3) — a 401 while authenticated dispatches `sessionExpired()` and resets the whole
+RTK Query cache, so financial data cannot outlive the session it was fetched under. A store built
+from `apiSlice` alone cannot observe any of that.
 
 Concretely, three things are unfalsifiable from either side alone:
 
@@ -73,17 +79,19 @@ likes and its assertions stay about the protocol.
 
 ## Consequences
 
-**Fourteen assertions across four files, all green against the real stack, run twice.** What they buy:
+**Sixteen assertions across five files, all green against the real stack, run twice.** What they buy:
 
 | Property | Why nothing else could prove it |
 |---|---|
 | Real payloads satisfy the STRICT money schemas | The contract suite never runs `unwrap` or Zod |
 | The BARE paginated shape is still bare | An added envelope would look like empty history |
-| `VALIDATION_ERROR` / `HTTP_404` synthesis | Codes the wire never carries — invented above it |
+| `VALIDATION_ERROR` synthesis | A code the wire never carries — invented above it |
 | A real `errorCode` is carried through untouched | Distinguishes carrying from synthesising |
 | Replay returns the same receipt AND moves money once | Needs the app to reuse a key and the API to honour it |
 | Step-up elevates and replays the original request | Needs a real 403 + real PIN + real session |
 | Elevation sticks | Proves the previous test elevated rather than got a pass |
+| **The D3 global-401 rule** | Needs the production STORE, a real session, and a real 401 |
+| The harness's own cookie jar is origin-scoped | A leak in the shim would be invisible from the product |
 
 **The suite was falsified before being trusted.** A schema mutation (`__mutant` added to
 `AccountResponse`) turned it red with a ZodError whose stack runs
@@ -99,7 +107,28 @@ would also pass while signed in.
 
 **Order is load-bearing in the money file, and that is stated rather than implied.** Elevation is
 server-side session state: once the elevate test runs, later reveals answer 200 with no 403 at all.
-Cancel therefore runs first and "elevation stuck" runs last.
+Cancel therefore runs first and "elevation stuck" runs last. The same applies to the D3 test, which
+is last in its file because it destroys the session that file signed in with.
+
+**The first 401 after a session dies does not surface as an error to the caller, and that took
+measuring to believe.** Two drafts of the D3 test asserted the triggering query rejects; both went
+green against a backend that had plainly answered 401 — `auth` had already flipped to `expired`.
+What happens is that `sessionMiddleware` dispatches `resetApiState()` while that very request is
+settling, wiping the cache entry the promise is about to read, so `unwrap()` resolves with
+`undefined` rather than rejecting. (A forced refetch behaves differently again: RTK Query keeps the
+stale `data`, so it resolves with the OLD value.) This is the rule working as intended — the global
+handler takes the session over and the unlucky component has nothing useful to render — but it means
+"did the 401 surface?" is the wrong question to ask of that first request. The test therefore pins
+the resolve-with-`undefined`, then fires a SECOND request as the control that proves the server is
+really answering `401 AUTH_TOKEN_MISSING`.
+
+**The cookie jar is scoped to the BFF, and that was worth doing before it was reachable.** Every
+request the suite makes today goes to the BFF, so nothing leaked — but that is a property of the
+current test list, not of the shim, which patches `globalThis.fetch` process-wide. Measured with the
+check removed: a foreign origin received the real `.AzureBank.Session` value AND its own
+`Set-Cookie` entered the jar, from where it would have been replayed at the BFF. Both directions are
+now asserted by `cookieScope.integration.test.ts`, which seeds a fake cookie rather than signing in
+so the guard costs nothing against the auth budget.
 
 **A hard operational limit, measured rather than guessed.** The BFF rate-limits auth to 10 requests
 per 60s per IP, and the suite spends about 5 per run (three logins, two PIN verifications). Two
