@@ -72,6 +72,47 @@ describe('contract: validation envelopes', () => {
     expect(keys).not.toContain('pageSize');
   });
 
+  it('emits BOTH casings from ONE endpoint, and never both at once', async () => {
+    /*
+      The case that makes `toFieldName` necessary rather than decorative, on the endpoint the app
+      actually posts to. `CreateAccountRequest.Name` carries DataAnnotations and `Type` carries
+      none, so the same route answers from two different layers:
+
+        {"name":"x","type":"Checking"}     -> model state, BEFORE the action runs
+             title "One or more validation errors occurred.", errors {"Name":[…]}   PascalCase
+        {"name":"Valid Name","type":"99"}  -> FluentValidation, INSIDE the action
+             title "Validation Failed", errors {"type":[…]}                         camelCase
+
+      ("99" binds: the strict converter rejects JSON *numbers*, but hands any non-empty string to
+      `Enum.TryParse`, which accepts the numeric form and yields an undefined member for
+      `IsInEnum()` to catch.)
+
+      And they are MUTUALLY EXCLUSIVE — with both fields invalid, model state short-circuits and
+      the `type` error is never reported. A consumer that assumed one casing per endpoint, or that
+      expected to see every problem in one response, would be wrong on this route.
+
+      Both requests are rejected, so neither creates an account and this test leaves no state.
+    */
+    const post = (body: unknown) =>
+      call('/api/accounts', { method: 'POST', body: JSON.stringify(body) });
+
+    const annotation = await post({ name: 'x', type: 'Checking' });
+    expect(annotation.status).toBe(400);
+    const annotationProblem = asProblem(annotation.body);
+    expect(Object.keys(annotationProblem.errors ?? {})).toContain('Name');
+    expect(annotationProblem.title).toBe('One or more validation errors occurred.');
+
+    const validator = await post({ name: 'Valid Name', type: '99' });
+    expect(validator.status).toBe(400);
+    const validatorProblem = asProblem(validator.body);
+    expect(Object.keys(validatorProblem.errors ?? {})).toContain('type');
+    expect(validatorProblem.title).toBe('Validation Failed');
+
+    // Both invalid -> the annotation layer wins alone; `type` never appears.
+    const both = asProblem((await post({ name: 'x', type: '99' })).body);
+    expect(Object.keys(both.errors ?? {})).toEqual(['Name']);
+  });
+
   it('reports EVERY bad property in one pass, not the first one it meets', async () => {
     /*
       ASP.NET validates all bound properties together and returns them in a single

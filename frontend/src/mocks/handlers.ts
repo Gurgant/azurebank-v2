@@ -108,8 +108,14 @@ function stepUp403(currentLevel: number) {
 }
 
 /**
- * The amount guard every money endpoint runs FIRST, like FluentValidation does before the
- * controller ever sees the request.
+ * The amount guard every money endpoint runs FIRST, like the framework's model-state pass does
+ * before the controller ever sees the request.
+ *
+ * Named precisely, because it used to say "like FluentValidation does": FluentValidation does NOT
+ * run before the controller here. `FluentValidation.AspNetCore` auto-validation is deliberately
+ * absent, and each controller calls `ValidateAndThrowAsync` itself INSIDE the action. What runs
+ * first is `[ApiController]` model state over the DTO's DataAnnotations — and for an amount that
+ * is `[MoneyRange]`, which is also what rejects a bad amount first on the real API.
  *
  * A non-positive amount has to be rejected before any balance math, because the arithmetic is
  * symmetric and the intent is not: a negative deposit debits the account, and a negative
@@ -141,23 +147,41 @@ function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
  * as `fromDate` — the precise failure the window fix had just been written to prevent.
  *
  * The API never reaches its own code here: `[FromQuery] DateTime?` fails to bind and ASP.NET's
- * default `InvalidModelStateResponseFactory` answers first, keyed by the BOUND PARAMETER NAME
- * (PascalCase, unlike the camelCase keys FluentValidation produces) with the framework's own
- * sentence.
+ * default `InvalidModelStateResponseFactory` answers first, with the framework's own sentence.
+ *
+ * IT KEYS BY THE BINDING NAME, AND THE TWO BINDING KINDS DIFFER IN BOTH KEY AND MESSAGE. That is
+ * not a nicety — the mock got it wrong for a year and a fidelity test pinned the wrong answer.
+ * Measured on the running stack (2026-08-04), twice each:
+ *
+ *   a filter PROPERTY  GET /api/transactions/summary?fromDate=garbage
+ *     -> {"FromDate":["The value 'garbage' is not valid for FromDate."]}   PascalCase, suffixed
+ *   an action PARAMETER  GET /api/accounts/{id}/balance?at=garbage
+ *     -> {"at":["The value 'garbage' is not valid."]}                      camelCase, NO suffix
+ *
+ * So "model state means PascalCase" is a heuristic that breaks on every parameter-bound endpoint,
+ * and the suffix is present only when the framework has a property name to name. `binding` is an
+ * explicit argument rather than something inferred from the key's own casing, because inferring it
+ * would silently do the right thing for the wrong reason the first time someone renames a param.
  *
  * The envelope is the one this mock already builds. The real model-binding failure carries the
- * framework's `ValidationProblemDetails` — title "One or more validation errors occurred.", an
- * rfc7231 `type`, no detail — which differs from the app's `ValidationExceptionHandler`. Modelling
- * two 400 envelopes was not worth it for a difference no client branches on; the key and the
- * message, which one might, are exact.
+ * framework's `ValidationProblemDetails` — title "One or more validation errors occurred.", type
+ * `https://tools.ietf.org/html/rfc9110#section-15.5.1` (RFC 9110, which superseded 7231; this
+ * comment said rfc7231 and was wrong), no detail — which differs from the app's
+ * `ValidationExceptionHandler` ("Validation Failed", with a detail and an instance, keys always
+ * camelCased). Modelling two 400 envelopes was not worth it for a difference no client branches
+ * on; the key and the message, which one might, are exact.
  */
-function unparseableDateErrors(raw: Record<string, string | null>): Record<string, string[]> {
+function unparseableDateErrors(
+  raw: Record<string, string | null>,
+  binding: 'property' | 'parameter',
+): Record<string, string[]> {
   const errors: Record<string, string[]> = {};
   for (const [name, value] of Object.entries(raw)) {
     if (value !== null && Number.isNaN(Date.parse(value))) {
-      // `... is not valid for <Name>.` — the suffix is part of the framework's message and the mock
-      // used to drop it. Observed: "The value 'notadate' is not valid for FromDate."
-      errors[name] = [`The value '${value}' is not valid for ${name}.`];
+      errors[name] =
+        binding === 'property'
+          ? [`The value '${value}' is not valid for ${name}.`]
+          : [`The value '${value}' is not valid.`];
     }
   }
   return errors;
@@ -279,14 +303,40 @@ function isAccountType(value: unknown): value is AccountType {
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
-function rejectBadAccountName(name: unknown): string[] | null {
-  if (typeof name !== 'string' || name.trim().length === 0) {
-    return ['Account name is required.'];
+/**
+ * A bad account name, in the framework's exact answer — which is NOT one message, and NOT keyed
+ * the way this mock used to key it.
+ *
+ * The name is rejected by DataAnnotations, so `[ApiController]` model state answers before the
+ * action and the key is the CLR property name: **`Name`**, not `name`. The mock said `name` and a
+ * test pinned it, which mattered more than it looks — `toFieldName` exists precisely to absorb the
+ * PascalCase form, and while the mock only ever emitted camelCase that branch was never exercised
+ * under MSW.
+ *
+ * `[Required]` and `[StringLength]` are evaluated INDEPENDENTLY and reported together, so an empty
+ * string returns TWO messages. `[Required]` trims, so whitespace-only fails it while still
+ * satisfying a 2-character minimum. The required message differs per DTO: `CreateAccountRequest`
+ * carries a bare `[Required]` (framework wording), `UpdateAccountRequest` overrides it.
+ *
+ * Measured 2026-08-04 (create / rename):
+ *   {"name":""}    -> {"Name":["The Name field is required.","Account name must be between 2 and 100 characters."]}
+ *                  -> {"Name":["Account name is required.","Account name must be between 2 and 100 characters."]}
+ *   {"name":"  "}  -> {"Name":["The Name field is required."]}
+ *   {"name":"x"}   -> {"Name":["Account name must be between 2 and 100 characters."]}
+ */
+const CREATE_NAME_REQUIRED = 'The Name field is required.';
+const RENAME_NAME_REQUIRED = 'Account name is required.';
+
+function rejectBadAccountName(name: unknown, requiredMessage: string): string[] | null {
+  const messages: string[] = [];
+  const text = typeof name === 'string' ? name : null;
+  if (text === null || text.trim().length === 0) {
+    messages.push(requiredMessage);
   }
-  if (name.length < 2 || name.length > 100) {
-    return ['Account name must be between 2 and 100 characters.'];
+  if (text !== null && (text.length < 2 || text.length > 100)) {
+    messages.push('Account name must be between 2 and 100 characters.');
   }
-  return null;
+  return messages.length > 0 ? messages : null;
 }
 
 /**
@@ -343,16 +393,36 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   }
   const { body } = parsed;
 
-  const errors: Record<string, string[]> = {};
-  const nameError = rejectBadAccountName(body.name);
+  /*
+    ONE ENDPOINT, TWO ENVELOPES, AND THEY ARE MUTUALLY EXCLUSIVE.
+
+    `Name` carries DataAnnotations, so `[ApiController]` model state rejects it BEFORE the action
+    runs — PascalCase key, framework envelope, and the validator never executes. `Type` carries no
+    annotation at all, so a bad type only surfaces later, from FluentValidation's `IsInEnum()` —
+    camelCase key, "Validation Failed" envelope.
+
+    They therefore never appear together. Measured 2026-08-04 with BOTH fields invalid:
+      {"name":"x","type":"99"}
+        -> title "One or more validation errors occurred.", errors {"Name":[…]}   ← `type` absent
+
+    The mock used to merge both into one camelCase dictionary under the FluentValidation envelope,
+    which is wrong in the key, the envelope and the co-occurrence. This is the endpoint that makes
+    `toFieldName` necessary, so getting it right here is the whole point.
+  */
+  const nameError = rejectBadAccountName(body.name, CREATE_NAME_REQUIRED);
   if (nameError) {
-    errors.name = nameError;
+    return response.untyped(modelStateProblem({ Name: nameError }));
   }
   if (body.type !== undefined && !isAccountType(body.type)) {
-    errors.type = ['Invalid account type. Must be Checking, Savings, or Investment.'];
-  }
-  if (Object.keys(errors).length > 0) {
-    return response.untyped(problem({ status: 400, errors }));
+    // Measured: {"name":"Valid Name","type":"99"}
+    //   -> {"title":"Validation Failed","detail":"One or more validation errors occurred.",
+    //       "instance":"/api/accounts","errors":{"type":["Invalid account type. Must be …"]}}
+    return response.untyped(
+      problem({
+        status: 400,
+        errors: { type: ['Invalid account type. Must be Checking, Savings, or Investment.'] },
+      }),
+    );
   }
 
   const index = mockState.accounts.length;
@@ -402,7 +472,9 @@ const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, reque
   // account lookup. Swallowing it as "current" — which is what `Number.isNaN(atMs)` used to do
   // below — answered 200 with today's balance for a question nobody could have asked.
   const at = new URL(request.url).searchParams.get('at');
-  const badAt = unparseableDateErrors({ at });
+  // `at` is an action PARAMETER (`[FromQuery] DateTime? at`), not a filter property — so the key
+  // stays lowercase and the message carries no " for <Name>." suffix. Measured, see the helper.
+  const badAt = unparseableDateErrors({ at }, 'parameter');
   if (Object.keys(badAt).length > 0) {
     return response.untyped(modelStateProblem(badAt));
   }
@@ -454,9 +526,12 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
   if (!parsed) {
     return response.untyped(badRequestBody(await request.clone().text()));
   }
-  const renameError = rejectBadAccountName(parsed.body.name);
+  // `UpdateAccountRequest` overrides the required wording; the KEY is still the CLR property.
+  // Measured: PATCH /api/accounts/{id} {"name":""}
+  //   -> {"Name":["Account name is required.","Account name must be between 2 and 100 characters."]}
+  const renameError = rejectBadAccountName(parsed.body.name, RENAME_NAME_REQUIRED);
   if (renameError) {
-    return response.untyped(problem({ status: 400, errors: { name: renameError } }));
+    return response.untyped(problem({ status: 400, errors: { Name: renameError } }));
   }
   account.name = parsed.body.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });
@@ -593,10 +668,14 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   const bindingErrors: Record<string, string[]> = {
     ...pageErrors,
     ...(accountId && !canonicalAccountId ? invalidValueError('AccountId', accountId) : {}),
-    ...unparseableDateErrors({
-      FromDate: queryParam(params, 'FromDate'),
-      ToDate: queryParam(params, 'ToDate'),
-    }),
+    ...unparseableDateErrors(
+      {
+        FromDate: queryParam(params, 'FromDate'),
+        ToDate: queryParam(params, 'ToDate'),
+      },
+      // `TransactionFilter` properties — PascalCase key, and the message names the property.
+      'property',
+    ),
   };
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
@@ -714,10 +793,14 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     ...(rawSummaryAccountId && !summaryAccountId
       ? invalidValueError('AccountId', rawSummaryAccountId)
       : {}),
-    ...unparseableDateErrors({
-      FromDate: queryParam(params, 'FromDate'),
-      ToDate: queryParam(params, 'ToDate'),
-    }),
+    ...unparseableDateErrors(
+      {
+        FromDate: queryParam(params, 'FromDate'),
+        ToDate: queryParam(params, 'ToDate'),
+      },
+      // `TransactionFilter` properties — PascalCase key, and the message names the property.
+      'property',
+    ),
   };
   if (Object.keys(summaryBindingErrors).length > 0) {
     return response.untyped(modelStateProblem(summaryBindingErrors));

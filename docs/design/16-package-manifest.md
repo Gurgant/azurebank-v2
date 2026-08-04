@@ -240,8 +240,8 @@ This document contains the complete list of all npm packages (frontend) and NuGe
 
 | Package | Version | Purpose | Required |
 |---------|---------|---------|----------|
-| `FluentValidation` | 11.11.0 | Request validation | Yes |
-| `FluentValidation.AspNetCore` | 11.3.0 | ASP.NET Core integration | Yes |
+| `FluentValidation` | 12.1.1 | Request validation | Yes |
+| `FluentValidation.DependencyInjectionExtensions` | 12.1.1 | Validator registration in DI | Yes |
 
 ### Logging
 
@@ -318,8 +318,8 @@ See [17-cross-cutting-concerns.md](17-cross-cutting-concerns.md) Section 5 for d
     <PackageReference Include="Scalar.AspNetCore" Version="2.11.5" />
 
     <!-- Validation -->
-    <PackageReference Include="FluentValidation" Version="11.11.0" />
-    <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
+    <PackageReference Include="FluentValidation" Version="12.1.1" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
 
     <!-- Logging -->
     <PackageReference Include="Serilog" Version="4.2.0" />
@@ -383,10 +383,18 @@ See [17-cross-cutting-concerns.md](17-cross-cutting-concerns.md) Section 5 for d
 - **Experience**: Team member familiar with Scalar
 
 #### Why FluentValidation?
-- **Separation**: Validation logic separate from DTOs
 - **Testable**: Easy to unit test
 - **Readable**: Fluent API is readable
-- **Integration**: Seamless ASP.NET Core integration
+- **Expressive**: cross-field and custom rules that DataAnnotations cannot state (same-account
+  transfers, money **scale**)
+
+As shipped, two bullets that used to sit here are not true of this codebase and were removed:
+*"validation logic separate from DTOs"* — the DTOs also carry DataAnnotations, and those are what
+usually answers; and *"seamless ASP.NET Core integration"* — auto-validation
+(`FluentValidation.AspNetCore`) is deprecated and deliberately unused, so controllers call
+`ValidateAndThrowAsync` themselves. Consequence: `[ApiController]` model state runs first and
+short-circuits, so a FluentValidation rule only ever fires when every annotation on that property
+passes. See ADR-0007 for the two envelopes this produces.
 
 #### Why Serilog?
 - **Structured**: Logs as structured data, not just text
@@ -497,8 +505,8 @@ dotnet add package Microsoft.IdentityModel.JsonWebTokens --version 8.15.0
 dotnet add package Scalar.AspNetCore --version 2.11.5
 
 # Validation
-dotnet add package FluentValidation --version 11.11.0
-dotnet add package FluentValidation.AspNetCore --version 11.3.0
+dotnet add package FluentValidation --version 12.1.1
+dotnet add package FluentValidation.DependencyInjectionExtensions --version 12.1.1
 
 # Logging
 dotnet add package Serilog --version 4.2.0
