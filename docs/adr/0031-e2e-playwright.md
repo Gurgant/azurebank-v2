@@ -86,6 +86,17 @@ pinned.
 types, so a bad locator signature would have surfaced at runtime or not at all. They are in
 `tsconfig.node.json` now, and a deliberate type error was confirmed to fail `npm run build`.
 
+**Elevation is sticky and cannot be undone, which makes suite ORDER a correctness property.**
+`SetPinVerified` (`SessionService.cs:103`) is the only mutator; the level drops only when it expires
+on its own after `PinValidityMinutes` — 10 in dev, 5 in the base config. There is no de-elevation
+endpoint. Three consequences, all now written down next to the specs: cancel runs before verify
+within the step-up file; nothing that elevates may sort ahead of that file across the suite (only
+`/api/transfers`, `/api/transfers/internal` and `/full-number` are gated, and no other spec touches
+them — but a future transfer spec would); and each RUN is safe regardless, because the setup project
+signs in fresh and a new session starts at level 1, so elevation never leaks between runs. The first
+step-up assertion carries that explanation in its failure message, because otherwise the symptom is
+"modal not found", which reads like a broken selector.
+
 **React 19 renders correctly under headless Chromium.** Worth recording because a known trap in this
 project is a HIDDEN tab never firing `requestAnimationFrame`, which freezes React 19 mid-update.
 Playwright's browser does not have that problem; the earlier finding is specific to a backgrounded

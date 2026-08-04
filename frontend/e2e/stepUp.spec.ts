@@ -10,9 +10,23 @@ import { USER } from './fixtures';
  * 403, collecting six digits, enabling Verify, closing on success — was untested anywhere against
  * a real session. It is tested here, in a real browser, against a real 403 from the real BFF.
  *
- * ORDER IS LOAD-BEARING. Elevation is server-side session state that outlives a page load
- * (`PinValidityMinutes` is 10), so once the verify test runs, later reveals answer immediately and
- * no modal appears at all. Cancel therefore runs first.
+ * ORDER IS LOAD-BEARING, WITHIN THIS FILE AND ACROSS THE SUITE.
+ *
+ * Elevation is server-side session state and there is NO way to undo it: `SetPinVerified`
+ * (SessionService.cs:103) is the only mutator, and the level drops only when it expires on its own
+ * after `PinValidityMinutes` — 10 in dev, 5 in the base config. So:
+ *
+ *   - inside this file, cancel runs before verify, because after verify no modal ever appears;
+ *   - across the SUITE, nothing that elevates may run before this file. Today that holds because
+ *     the only level-2 surfaces are `/api/transfers`, `/api/transfers/internal` and `/full-number`,
+ *     and no other spec touches them — but a future transfer spec sorting ahead of `stepUp` would
+ *     silently elevate the session and make the first test below fail with "modal not found",
+ *     which reads like a broken selector rather than an ordering problem;
+ *   - each RUN is safe regardless, because the setup project signs in fresh and a new session
+ *     starts at level 1. Elevation never leaks between runs.
+ *
+ * The first assertion below carries that explanation in its failure message so the next person does
+ * not have to rediscover it.
  */
 
 const REVEAL = /Reveal full account number/i;
@@ -35,7 +49,13 @@ test.describe('step-up (PIN) for the account-number reveal', () => {
       `baseQueryWithStepUp` really drove the controller. Nothing here is stubbed.
     */
     const modal = page.getByRole('alertdialog', { name: /verify it's you/i });
-    await expect(modal).toBeVisible();
+    await expect(
+      modal,
+      'No step-up modal appeared. Either the interceptor is broken, or the session was ALREADY ' +
+        'elevated before this file ran — elevation is sticky for PinValidityMinutes (10 in dev) ' +
+        'and cannot be undone, so any spec that touches /api/transfers or /full-number must sort ' +
+        'after this one.',
+    ).toBeVisible();
 
     // Verify stays disabled until all six digits are present — the component's own gate.
     await expect(modal.getByRole('button', { name: 'Verify' })).toBeDisabled();
