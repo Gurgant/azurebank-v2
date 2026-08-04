@@ -125,15 +125,27 @@ function stepUp403(currentLevel: number) {
  *
  * The bounds are the contract's own — `ValidationRules.TransactionMinAmount/MaxAmount`, which the
  * generated Zod schema mirrors as `.min(0.01).max(100000)`. The message reads in dollars because
- * the API's own message does (see `schema.d.ts`: "Amount must be between $0.01 and $100,000.00.");
- * this is the mock quoting the contract, not the app's EUR display.
+ * the API's own does; this is the mock quoting the contract, not the app's EUR display.
+ *
+ * THE ENVELOPE, THE KEY AND THE WORDING WERE ALL WRONG, and are now measured. `[MoneyRange]` is a
+ * DataAnnotation, so an out-of-range amount is a MODEL-STATE failure: framework envelope, key
+ * `Amount` (the CLR property), and ONE message for both bounds — not the two the mock invented.
+ * Observed 2026-08-04 on `POST /api/transactions/deposit`, for amounts 0, 0.005, 100000.01 and
+ * 250000 — all four identical:
+ *
+ *   title "One or more validation errors occurred."
+ *   {"Amount":["Amount must be between $0.01 and $100,000.00"]}
+ *
+ * Note there is NO trailing period on the wire, although `schema.d.ts`'s description carries one.
+ * The OpenAPI description and the runtime message are different strings; the wire wins.
+ *
+ * A bad SCALE is the other envelope entirely — `[MoneyRange]` does not check decimals, so
+ * `.ValidMoneyScale()` catches it inside the action and answers "Validation Failed" keyed
+ * lowercase `amount`. Same field, two casings, decided by which layer rejected it.
  */
-function rejectBadAmount(amount: unknown): ReturnType<typeof problem> | null {
-  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0.01) {
-    return problem({ status: 400, errors: { amount: ['Amount must be at least $0.01.'] } });
-  }
-  if (amount > 100_000) {
-    return problem({ status: 400, errors: { amount: ['Amount cannot exceed $100,000.00.'] } });
+function rejectBadAmount(amount: unknown): ReturnType<typeof modelStateProblem> | null {
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0.01 || amount > 100_000) {
+    return modelStateProblem({ Amount: ['Amount must be between $0.01 and $100,000.00'] });
   }
   return null;
 }
@@ -531,7 +543,7 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
   //   -> {"Name":["Account name is required.","Account name must be between 2 and 100 characters."]}
   const renameError = rejectBadAccountName(parsed.body.name, RENAME_NAME_REQUIRED);
   if (renameError) {
-    return response.untyped(problem({ status: 400, errors: { Name: renameError } }));
+    return response.untyped(modelStateProblem({ Name: renameError }));
   }
   account.name = parsed.body.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });

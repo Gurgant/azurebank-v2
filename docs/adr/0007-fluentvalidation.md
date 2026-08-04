@@ -103,8 +103,12 @@ RuleFor(x => x.StartDate)
 
 - Complex validation logic is readable and maintainable
 - Validators are easily unit tested
-- DTOs remain clean (POCO style)
+- Cross-field and custom rules DataAnnotations cannot express (same-account transfer, money scale)
 - Rich error messages improve UX
+- ~~DTOs remain clean (POCO style)~~ — **did not happen** (corrected 2026-08-04). The DTOs carry
+  DataAnnotations *as well as* having validators; `CreateAccountRequest`, `RegisterRequest`,
+  `DepositRequest` and the rest are decorated. This ADR anticipated one validation layer and the
+  codebase has two.
 - ~~Automatic ASP.NET Core integration~~ — **not taken** (corrected 2026-08-04). Auto-validation
   lives in `FluentValidation.AspNetCore`, which is deprecated and is deliberately NOT referenced.
   Controllers invoke `ValidateAndThrowAsync` by hand, which is why model state answers first.
@@ -113,7 +117,10 @@ RuleFor(x => x.StartDate)
 
 - Additional NuGet dependency
 - Learning curve for fluent syntax
-- Validation logic separate from models (can be a pro or con)
+- **Two validation layers, not one, and the annotations usually win.** Because DTOs kept their
+  DataAnnotations, most FluentValidation rules restate a rule the framework has already enforced,
+  and a rule that is *only* in the validator fires only when every annotation passes. This is the
+  real cost of the decision as implemented, and it is what produces the two envelopes above.
 
 ### Neutral
 
