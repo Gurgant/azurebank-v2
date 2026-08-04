@@ -217,6 +217,38 @@ function invalidValueError(name: string, value: string): Record<string, string[]
   return { [name]: [`The value '${value}' is not valid for ${name}.`] };
 }
 
+/** ASP.NET's `int` model binder accepts these and JS's `Number` does not agree with it. */
+const INT32_MIN = -2_147_483_648;
+const INT32_MAX = 2_147_483_647;
+
+/**
+ * Does this raw query value BIND to an `int`, the way ASP.NET's binder decides it?
+ *
+ * `Number()` is not that test and the difference is not academic — `Number('1e2')` is 100 and
+ * `Number.isInteger(100)` is true, so a naive check accepts a value the API rejects outright. The
+ * boundaries were measured on the running stack (2026-08-04), because guessing which exotic forms
+ * .NET tolerates is exactly how this class of drift gets written:
+ *
+ *   ACCEPTED   ?Page=007  -> page 7      leading zeros
+ *              ?Page=+5   -> page 5      leading sign
+ *              ?Page=0x10 -> page 16     HEX, which surprised me and is why it was measured
+ *   REJECTED   ?Page=1e2         -> "The value '1e2' is not valid for Page."
+ *              ?Page=1.0         -> ditto — a decimal point is not an int
+ *              ?Page=3000000000  -> ditto — Int32 overflow, not a range-annotation failure
+ *
+ * Returns null when it does not bind, which is the caller's cue to emit the BINDER message rather
+ * than the `[Range]` one. Signed hex is deliberately not accepted: `Number('-0x10')` is NaN in JS
+ * and the .NET side was never measured, so the mock does not invent an answer for it.
+ */
+function bindsAsInt32(raw: string): number | null {
+  const text = raw.trim();
+  const looksBindable = /^[+-]?\d+$/.test(text) || /^0[xX][0-9a-fA-F]+$/.test(text);
+  if (!looksBindable) return null;
+  const value = Number(text);
+  if (!Number.isInteger(value) || value < INT32_MIN || value > INT32_MAX) return null;
+  return value;
+}
+
 /**
  * The API's 401 for a request that reached it without a usable access token.
  *
@@ -605,10 +637,17 @@ const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, reque
 
 /** PATCH /api/accounts/{id} — rename (A5): name only, per the contract. */
 const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, response }) => {
-  const account = mockState.accounts.find((a) => a.id === params.id);
-  if (!account) {
-    return response.untyped(notFound('Account', params.id));
-  }
+  /*
+    THE BODY IS VALIDATED BEFORE THE ACCOUNT IS LOOKED UP, which is the opposite of the order the
+    mock used. `[ApiController]` runs model state over `UpdateAccountRequest` before the action
+    body executes, so a bad name is a 400 even when the id names nothing — the 404 is only
+    reachable once the body is clean. The mock 404'd first, so a client fixing a rename against the
+    mock could satisfy it and still be rejected in production, or vice versa.
+
+    Measured 2026-08-04, unknown id in both cases:
+      {"name":"x"}                    -> 400 {"Name":["Account name must be between 2 and 100 characters."]}
+      {"name":"Perfectly Fine Name"}  -> 404 ACCOUNT_NOT_FOUND
+  */
   const parsed = await readJsonBody(request);
   if (!parsed) {
     return response.untyped(badRequestBody(await request.clone().text()));
@@ -619,6 +658,11 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
   const renameError = rejectBadAccountName(parsed.body.name, RENAME_NAME_REQUIRED);
   if (renameError) {
     return response.untyped(modelStateProblem({ Name: renameError }));
+  }
+
+  const account = mockState.accounts.find((a) => a.id === params.id);
+  if (!account) {
+    return response.untyped(notFound('Account', params.id));
   }
   account.name = parsed.body.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });
@@ -725,11 +769,30 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   // name. The mock invented a `pagination` key and a sentence no validator produces, and enforced
   // no upper bound at all — so a client could page 1000 rows at a time against the mock and be
   // rejected in production.
+  /*
+    TWO DIFFERENT FAILURES, TWO DIFFERENT SENTENCES, and the mock gave the `[Range]` one to both.
+
+    `?Page=abc` never binds, so `[Range]` is never evaluated — the binder answers with its own
+    template, which for a filter PROPERTY names the member. `?Page=0` binds fine and then fails the
+    annotation. Measured 2026-08-04:
+
+      ?Page=abc  ->  {"Page":["The value 'abc' is not valid for Page."]}
+      ?Page=0    ->  {"Page":["Page must be at least 1."]}
+
+    A consumer written against the mock would have looked for the range sentence on a typo'd query
+    string and found something else entirely.
+  */
   const pageErrors: Record<string, string[]> = {};
-  if (!Number.isInteger(page) || page < 1) {
+  const rawPage = queryParam(params, 'Page');
+  const rawPageSize = queryParam(params, 'PageSize');
+  if (rawPage !== null && bindsAsInt32(rawPage) === null) {
+    Object.assign(pageErrors, invalidValueError('Page', rawPage));
+  } else if (page < 1) {
     pageErrors.Page = ['Page must be at least 1.'];
   }
-  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+  if (rawPageSize !== null && bindsAsInt32(rawPageSize) === null) {
+    Object.assign(pageErrors, invalidValueError('PageSize', rawPageSize));
+  } else if (pageSize < 1 || pageSize > 100) {
     pageErrors.PageSize = ['PageSize must be between 1 and 100.'];
   }
   // NOTE: not returned yet — see the merge below. Every property-level failure is reported
@@ -1349,14 +1412,23 @@ const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, res
   const rawTag = body?.azureTag;
   const tag = typeof rawTag === 'string' ? rawTag : '';
   if (!AZURE_TAG_RE.test(tag)) {
+    /*
+      The FRAMEWORK envelope, keyed `AzureTag` — this route can produce no other. There is no
+      `UpdateAzureTagRequest` validator anywhere under Validators/ and `UserController` injects
+      none, so the only thing that rejects the handle is `[AzureTagQuery]`, a DataAnnotation, and
+      `[ApiController]` answers before the action runs. The mock used the FluentValidation envelope
+      with a camelCase key, i.e. the one shape this endpoint CANNOT emit.
+
+      Measured 2026-08-04, PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}:
+        {"title":"One or more validation errors occurred.","status":400,
+         "errors":{"AzureTag":["AzureTag must start with a letter and contain only lowercase
+                                letters, numbers, and underscores."]}}
+    */
     return response.untyped(
-      problem({
-        status: 400,
-        errors: {
-          azureTag: [
-            'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.',
-          ],
-        },
+      modelStateProblem({
+        AzureTag: [
+          'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.',
+        ],
       }),
     );
   }

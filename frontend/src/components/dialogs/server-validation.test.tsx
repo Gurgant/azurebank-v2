@@ -165,7 +165,20 @@ describe('the account rules the mock did not enforce', () => {
     });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).errors.azureTag[0]).toContain('must start with a letter');
+    /*
+      `AzureTag`, PascalCase, in the FRAMEWORK envelope — this route can emit no other. There is no
+      `UpdateAzureTagRequest` validator and `UserController` injects none, so `[AzureTagQuery]` (a
+      DataAnnotation) is the only gate and model state answers before the action. This assertion
+      previously demanded the camelCase key from the FluentValidation envelope, which is the one
+      shape the endpoint cannot produce.
+
+      Measured 2026-08-04: PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
+        -> {"title":"One or more validation errors occurred.",
+            "errors":{"AzureTag":["AzureTag must start with a letter…"]}}
+    */
+    const body = await res.json();
+    expect(body.title).toBe('One or more validation errors occurred.');
+    expect(body.errors.AzureTag[0]).toContain('must start with a letter');
   });
 });
 
