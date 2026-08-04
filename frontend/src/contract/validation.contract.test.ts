@@ -195,6 +195,107 @@ describe('contract: validation envelopes', () => {
     expect(problem.detail).toBe("The 'Idempotency-Key' header is required on this endpoint.");
   });
 
+  it('distinguishes a value that would not BIND from one that fails [Range]', async () => {
+    /*
+      Two failures, two sentences, and the mock used to give the `[Range]` one to both. `?Page=abc`
+      never binds, so the annotation is never evaluated and the BINDER answers with its own
+      template — which for a filter property names the member. Measured 2026-08-04:
+
+        ?Page=abc -> {"Page":["The value 'abc' is not valid for Page."]}
+        ?Page=0   -> {"Page":["Page must be at least 1."]}
+    */
+    const unbindable = await call('/api/transactions?Page=abc');
+    expect(unbindable.status).toBe(400);
+    expect(asProblem(unbindable.body).errors?.Page).toEqual([
+      "The value 'abc' is not valid for Page.",
+    ]);
+
+    const outOfRange = await call('/api/transactions?Page=0');
+    expect(outOfRange.status).toBe(400);
+    expect(asProblem(outOfRange.body).errors?.Page).toEqual(['Page must be at least 1.']);
+  });
+
+  it.each([
+    ['exponent notation', '1e2'],
+    ['a decimal point', '1.0'],
+    ['an Int32 overflow', '3000000000'],
+  ])('does not bind %s, even though JS Number() would', async (_case, value) => {
+    /*
+      `Number('1e2')` is 100 and `Number.isInteger(100)` is true, so the obvious guard accepts
+      three values the API refuses. Measured 2026-08-04 — each answers with the BINDER message,
+      not the range one:
+        ?Page=1e2 / 1.0 / 3000000000 -> "The value '<x>' is not valid for Page."
+    */
+    const { status, body } = await call(`/api/transactions?Page=${value}`);
+
+    expect(status).toBe(400);
+    expect(asProblem(body).errors?.Page).toEqual([`The value '${value}' is not valid for Page.`]);
+  });
+
+  it.each([
+    ['leading zeros', '007', 7],
+    ['a leading sign', '%2B5', 5],
+    ['HEX', '0x10', 16],
+  ])('DOES bind %s — the binder is more permissive than it looks', async (_case, value, page) => {
+    /*
+      The other half, and the reason the fix is a measured allow-list rather than a strict decimal
+      parse: rejecting these would make the mock stricter than the server all over again. Hex was
+      the surprise — measured `?Page=0x10` -> page 16, not a 400.
+    */
+    const { status, body } = await call(`/api/transactions?Page=${value}&PageSize=5`);
+
+    expect(status).toBe(200);
+    expect((body as { pagination?: { page?: number } }).pagination?.page).toBe(page);
+  });
+
+  it('keys the azuretag rename PascalCase, in the framework envelope', async () => {
+    /*
+      This route can emit no other shape: there is no `UpdateAzureTagRequest` validator and
+      `UserController` injects none, so `[AzureTagQuery]` (a DataAnnotation) is the only gate and
+      model state answers before the action. The mock used the FluentValidation envelope with a
+      camelCase key — the one shape this endpoint cannot produce.
+
+      Measured 2026-08-04: PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
+        -> {"title":"One or more validation errors occurred.",
+            "errors":{"AzureTag":["AzureTag must start with a letter…"]}}
+    */
+    const { status, body } = await call('/api/users/me/azuretag', {
+      method: 'PATCH',
+      body: JSON.stringify({ azureTag: 'Bad Tag!' }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(Object.keys(problem.errors ?? {})).toContain('AzureTag');
+  });
+
+  it('validates the rename BODY before it looks the account up', async () => {
+    /*
+      `[ApiController]` runs model state before the action, so a bad name is a 400 even when the id
+      names nothing — the 404 is only reachable once the body is clean. The mock 404'd first.
+
+      Measured 2026-08-04 against an id that does not exist:
+        {"name":"x"}                   -> 400 {"Name":["Account name must be between 2 and 100 characters."]}
+        {"name":"Perfectly Fine Name"} -> 404 ACCOUNT_NOT_FOUND
+    */
+    const missing = '019f7b3f-0000-7000-8000-0000000000ff';
+
+    const badBody = await call(`/api/accounts/${missing}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: 'x' }),
+    });
+    expect(badBody.status).toBe(400);
+    expect(Object.keys(asProblem(badBody.body).errors ?? {})).toContain('Name');
+
+    const goodBody = await call(`/api/accounts/${missing}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: 'Perfectly Fine Name' }),
+    });
+    expect(goodBody.status).toBe(404);
+    expect(asProblem(goodBody.body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+  });
+
   it('reports EVERY bad property in one pass, not the first one it meets', async () => {
     /*
       ASP.NET validates all bound properties together and returns them in a single
