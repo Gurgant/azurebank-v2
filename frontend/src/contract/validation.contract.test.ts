@@ -171,6 +171,30 @@ describe('contract: validation envelopes', () => {
     expect(keys).not.toContain('$');
   });
 
+  it('quotes the idempotency header requirement in the server’s exact words', async () => {
+    /*
+      A `detail` string, which is the one member of this envelope the app renders verbatim
+      (`moneyProblem` falls through to `problem.detail`). The mock had a paraphrase — dropping the
+      quotes around the header name and the "on this endpoint" clause — so the sentence a user read
+      under MSW was not the sentence production shows them.
+
+      Measured 2026-08-04, deposit with no Idempotency-Key:
+        {"title":"Bad Request","status":400,"errorCode":"IDEMPOTENCY_KEY_MISSING",
+         "detail":"The 'Idempotency-Key' header is required on this endpoint."}
+
+      Rejected before any money moves, so this leaves no state on either target.
+    */
+    const { status, body } = await call('/api/transactions/deposit', {
+      method: 'POST',
+      body: JSON.stringify({ accountId: '00000000-0000-0000-0000-000000000000', amount: 5 }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.errorCode).toBe('IDEMPOTENCY_KEY_MISSING');
+    expect(problem.detail).toBe("The 'Idempotency-Key' header is required on this endpoint.");
+  });
+
   it('reports EVERY bad property in one pass, not the first one it meets', async () => {
     /*
       ASP.NET validates all bound properties together and returns them in a single

@@ -335,6 +335,25 @@ function parseAccountType(value: unknown): AccountType | null {
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
 /**
+ * Money as the API's own messages render it: C#'s `:C` on the server's ambient culture, which on
+ * this stack is en-US — `$50,042.00`, grouped, two decimals, a leading `$`.
+ *
+ * Three separate `detail` strings embed a formatted amount and the mock omitted all three, so the
+ * user saw a sentence with the numbers under MSW and a different sentence without them in
+ * production. Measured 2026-08-04:
+ *
+ *   "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
+ *   "Cannot delete account with non-zero balance. Current balance: $50,042.00"
+ *   "Amount must be between $0.01 and $100,000.00"        (already handled in rejectBadAmount)
+ *
+ * NOT the app's EUR display — this is the mock quoting the server's wording, and the server
+ * formats in dollars regardless of what the UI later chooses to render.
+ */
+function serverCurrency(amount: number): string {
+  return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
  * A bad account name, in the framework's exact answer — which is NOT one message, and NOT keyed
  * the way this mock used to key it.
  *
@@ -506,7 +525,7 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
     createdAt: '2026-07-21T12:00:00.0000000Z',
   };
   mockState.accounts.push(account);
-  return response(201).json({ data: account, message: 'Account created successfully.' });
+  return response(201).json({ data: account, message: 'Account created successfully' });
 });
 
 /**
@@ -632,7 +651,9 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) =>
       problem({
         status: 422,
         errorCode: 'NON_ZERO_BALANCE',
-        detail: 'Cannot delete account with non-zero balance.',
+        // The API always appends the amount, so the user is told WHAT to empty, not just that
+        // they must. Measured: "Cannot delete account with non-zero balance. Current balance: $50,042.00"
+        detail: `Cannot delete account with non-zero balance. Current balance: ${serverCurrency(account.balance)}`,
       }),
     );
   }
@@ -985,7 +1006,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
       problem({
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
-        detail: 'The Idempotency-Key header is required.',
+        detail: "The 'Idempotency-Key' header is required on this endpoint.",
       }),
     );
   }
@@ -1079,7 +1100,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
 
   const payload = {
     data: { transaction: toWire(transaction), newBalance },
-    message: 'Deposit completed successfully.',
+    message: 'Deposit successful',
   };
   const text = JSON.stringify(payload);
   mockState.idempotency.set(`deposit|${parsedKey}`, {
@@ -1108,7 +1129,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
       problem({
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
-        detail: 'The Idempotency-Key header is required.',
+        detail: "The 'Idempotency-Key' header is required on this endpoint.",
       }),
     );
   }
@@ -1241,7 +1262,9 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
       problem({
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
-        detail: 'Insufficient funds for this withdrawal.',
+        // The API embeds BOTH amounts so the user knows the shortfall without doing the
+        // arithmetic. Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
+        detail: `Insufficient funds. Available: ${serverCurrency(available)}, Requested: ${serverCurrency(amount)}`,
         extensions: { available, requested: amount },
       }),
     );
@@ -1372,7 +1395,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
       problem({
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
-        detail: 'The Idempotency-Key header is required.',
+        detail: "The 'Idempotency-Key' header is required on this endpoint.",
       }),
     );
   }
@@ -1464,7 +1487,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
       problem({
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
-        detail: 'Insufficient funds for this transfer.',
+        // The API embeds BOTH amounts so the user knows the shortfall without doing the
+        // arithmetic. Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
+        detail: `Insufficient funds. Available: ${serverCurrency(available)}, Requested: ${serverCurrency(amount)}`,
         extensions: { available, requested: amount },
       }),
     );
@@ -1496,7 +1521,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
       recipientName: recipient.displayName,
       processedAt: '2026-07-22T12:00:00.0000000Z',
     },
-    message: 'Transfer completed successfully.',
+    message: 'Transfer successful',
   };
   const text = JSON.stringify(payload);
   mockState.idempotency.set(`transfer|${parsedKey}`, {
@@ -1525,7 +1550,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       problem({
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
-        detail: 'The Idempotency-Key header is required.',
+        detail: "The 'Idempotency-Key' header is required on this endpoint.",
       }),
     );
   }
@@ -1624,7 +1649,9 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       problem({
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
-        detail: 'Insufficient funds for this transfer.',
+        // The API embeds BOTH amounts so the user knows the shortfall without doing the
+        // arithmetic. Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
+        detail: `Insufficient funds. Available: ${serverCurrency(from.balance)}, Requested: ${serverCurrency(amount)}`,
         extensions: { available: from.balance, requested: amount },
       }),
     );
@@ -1674,7 +1701,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       toAccountNewBalance: to.balance,
       processedAt: '2026-07-22T13:00:00.0000000Z',
     },
-    message: 'Internal transfer completed successfully.',
+    message: 'Internal transfer successful',
   };
   const text = JSON.stringify(payload);
   mockState.idempotency.set(`internal|${parsedKey}`, {
@@ -1782,9 +1809,19 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
       headers: { 'Retry-After': String(retryAfterSeconds) },
     });
   }
+  /*
+    A REFUSED PIN IS A 200, and the body is not the caller's current state — `authLevel` is
+    HARD-CODED 1 by the BFF, not echoed back. The mock returned `mockState.authLevel`, so an
+    already-elevated user who fumbled a re-entry saw `2` where production says `1`.
+
+    Measured 2026-08-04 (this cost one of three attempts, hence the exact quote):
+      POST /bff/auth/verify-pin {"pin":"000000"}
+        -> 200 {"data":{"verified":false,"authLevel":1,"pinExpiresAt":null},
+                "message":"Invalid PIN"}
+  */
   return HttpResponse.json({
-    data: { verified: false, authLevel: mockState.authLevel, pinExpiresAt: null },
-    message: 'PIN verification failed.',
+    data: { verified: false, authLevel: 1, pinExpiresAt: null },
+    message: 'Invalid PIN',
   });
 });
 
