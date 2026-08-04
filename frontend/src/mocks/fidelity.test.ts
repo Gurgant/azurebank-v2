@@ -329,7 +329,18 @@ describe('model binding runs before the action, and the action before the servic
     const res = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/balance?at=garbage`);
 
     expect(res.status).toBe(400);
-    expect((await res.json()).errors.at).toEqual(["The value 'garbage' is not valid for at."]);
+    /*
+      NO " for at." SUFFIX. This assertion used to demand one and was green against a mock that
+      invented it. Measured on the real stack (2026-08-04, twice):
+
+        GET /api/accounts/{id}/balance?at=garbage
+          -> {"at":["The value 'garbage' is not valid."]}
+
+      The framework only names the member when it HAS one — a filter property gets
+      "…is not valid for FromDate.", an action parameter like `at` gets the bare sentence. A
+      fidelity file asserting the invented form is the worst kind of green.
+    */
+    expect((await res.json()).errors.at).toEqual(["The value 'garbage' is not valid."]);
   });
 
   it('binding beats the 404: a bad `at` on an unknown account is still a 400', async () => {

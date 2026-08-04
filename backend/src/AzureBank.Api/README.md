@@ -244,7 +244,22 @@ Handles money transfers between accounts.
 
 ## Validation
 
-All request DTOs are validated using **FluentValidation**. Validators are automatically registered via DI.
+Requests pass through **two** validation layers, and it matters which one answers.
+
+1. **DataAnnotations on the DTO**, run by `[ApiController]` model-state validation **before the
+   action body**. If any annotation fails, the framework replies immediately — title
+   `"One or more validation errors occurred."`, keyed by the binding name — and the FluentValidation
+   call below never executes.
+2. **FluentValidation**, invoked by hand inside the action (`ValidateAndThrowAsync`);
+   `ValidationExceptionHandler` turns the throw into title `"Validation Failed"` with camelCased
+   keys. Validators are registered via DI (`AddValidatorsFromAssemblyContaining<Program>`), but
+   auto-validation is deliberately **not** wired — `FluentValidation.AspNetCore` is deprecated.
+
+So layer 2 is reached only where a validator is stricter than every annotation on that property
+(today: the unannotated `CreateAccountRequest.Type`, money **scale** which `[MoneyRange]` does not
+check, and the cross-field same-account transfer rule). Note also that **3 of the 13 request DTOs
+have no validator at all** — `SetPrimaryAccountRequest`, `RefreshRequest`, `UpdateAzureTagRequest` —
+so those can only ever produce the layer-1 envelope.
 
 ### Example Validator
 

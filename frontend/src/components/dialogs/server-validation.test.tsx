@@ -35,23 +35,34 @@ describe('the account rules the mock did not enforce', () => {
       body: JSON.stringify(body),
     });
 
+  /*
+    KEYED `Name`, NOT `name`, AND AN EMPTY NAME RETURNS TWO MESSAGES.
+
+    The name is rejected by DataAnnotations, so `[ApiController]` model state answers before the
+    action ever runs and the key is the CLR property name. `[Required]` and `[StringLength]` are
+    evaluated independently and reported together, which is why `''` produces both sentences while
+    `'X'` produces only the length one. Each row below is quoted from the real stack (2026-08-04):
+
+      {"name":""}            -> {"Name":["The Name field is required.",
+                                          "Account name must be between 2 and 100 characters."]}
+      {"name":"X"}           -> {"Name":["Account name must be between 2 and 100 characters."]}
+      {"name":"N"x101}       -> {"Name":["Account name must be between 2 and 100 characters."]}
+
+    This block previously asserted `errors.name` with a single "Account name is required." — the
+    mock's invention, not the server's. It mattered beyond tidiness: `toFieldName` exists to absorb
+    the PascalCase form, and while the mock only ever emitted camelCase, that branch was never
+    exercised anywhere in the unit suite.
+  */
+  const LENGTH = 'Account name must be between 2 and 100 characters.';
   it.each([
-    ['an empty name', { name: '', type: 'Checking' }, 'Account name is required.'],
-    [
-      'a one-character name',
-      { name: 'X', type: 'Checking' },
-      'Account name must be between 2 and 100 characters.',
-    ],
-    [
-      'a 101-character name',
-      { name: 'N'.repeat(101), type: 'Checking' },
-      'Account name must be between 2 and 100 characters.',
-    ],
-  ])('rejects %s with the validator’s own sentence', async (_case, body, message) => {
+    ['an empty name', { name: '', type: 'Checking' }, ['The Name field is required.', LENGTH]],
+    ['a one-character name', { name: 'X', type: 'Checking' }, [LENGTH]],
+    ['a 101-character name', { name: 'N'.repeat(101), type: 'Checking' }, [LENGTH]],
+  ])('rejects %s with the framework’s own sentences', async (_case, body, messages) => {
     const res = await create(body);
 
     expect(res.status).toBe(400);
-    expect((await res.json()).errors.name).toEqual([message]);
+    expect((await res.json()).errors.Name).toEqual(messages);
   });
 
   it('rejects a type that is not one of the three', async () => {
@@ -78,9 +89,29 @@ describe('the account rules the mock did not enforce', () => {
     });
 
     expect(res.status).toBe(400);
-    expect((await res.json()).errors.name).toEqual([
-      'Account name must be between 2 and 100 characters.',
-    ]);
+    // Same `Name` key — measured: PATCH /api/accounts/{id} {"name":"x"}
+    //   -> {"Name":["Account name must be between 2 and 100 characters."]}
+    expect((await res.json()).errors.Name).toEqual([LENGTH]);
+  });
+
+  it('uses the rename DTO’s own required wording, which differs from create’s', async () => {
+    /*
+      Not a copy-paste of the create case. `CreateAccountRequest.Name` carries a bare `[Required]`
+      and gets the framework's sentence; `UpdateAccountRequest.Name` overrides it. Measured:
+
+        POST  /api/accounts      {"name":""} -> "The Name field is required."
+        PATCH /api/accounts/{id} {"name":""} -> "Account name is required."
+
+      The mock used the rename wording on BOTH paths, so this asymmetry was invisible.
+    */
+    const res = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors.Name).toEqual(['Account name is required.', LENGTH]);
   });
 
   it('rejects a handle the pattern refuses, before the taken-handle conflict', async () => {

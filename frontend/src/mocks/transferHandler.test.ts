@@ -215,7 +215,17 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       amount: 0,
     });
     expect(zero.status).toBe(400);
-    expect((await zero.json()).errors.amount).toBeDefined();
+    /*
+      `Amount`, PascalCase. `[MoneyRange]` is a DataAnnotation, so an out-of-range amount is a
+      model-state failure keyed by the CLR property — measured on the real stack (2026-08-04) for
+      amounts 0, 0.005, 100000.01 and 250000, all four answering identically:
+        {"title":"One or more validation errors occurred.",
+         "errors":{"Amount":["Amount must be between $0.01 and $100,000.00"]}}
+      (A bad decimal SCALE is the other envelope, keyed lowercase `amount` — see `rejectBadAmount`.)
+    */
+    expect((await zero.json()).errors.Amount).toEqual([
+      'Amount must be between $0.01 and $100,000.00',
+    ]);
 
     // A negative amount must NOT invert the transfer (credit source / debit destination).
     const neg = await internal(crypto.randomUUID(), {

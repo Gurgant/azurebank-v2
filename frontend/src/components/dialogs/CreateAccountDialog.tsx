@@ -18,6 +18,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import type { AccountType } from '../../api/enums';
+import { toFieldName } from '../../api/validationErrors';
 import { useCreateAccountMutation } from '../../features/api/apiSlice';
 
 // Mirrors the backend contract: name 2-100 chars; type is the shared PascalCase enum.
@@ -44,8 +45,9 @@ export interface CreateAccountDialogProps {
  * the dialog; the new account appears through the D7 tag invalidation ({Account,'LIST'}),
  * never through a hand-patched cache.
  */
-/** PascalCase server keys (FluentValidation) and camelCase both land on the same field. */
-const toFieldName = (key: string) => key.charAt(0).toLowerCase() + key.slice(1);
+// The server keys validation errors PascalCase (model-state) or camelCase (FluentValidation)
+// depending on which layer rejected the request; `toFieldName` reconciles both. See its docblock
+// for the measured responses.
 const isOurField = (key: string) => {
   const field = toFieldName(key);
   return field === 'name' || field === 'type';

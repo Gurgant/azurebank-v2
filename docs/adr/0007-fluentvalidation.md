@@ -103,15 +103,24 @@ RuleFor(x => x.StartDate)
 
 - Complex validation logic is readable and maintainable
 - Validators are easily unit tested
-- DTOs remain clean (POCO style)
+- Cross-field and custom rules DataAnnotations cannot express (same-account transfer, money scale)
 - Rich error messages improve UX
-- Automatic ASP.NET Core integration
+- ~~DTOs remain clean (POCO style)~~ — **did not happen** (corrected 2026-08-04). The DTOs carry
+  DataAnnotations *as well as* having validators; `CreateAccountRequest`, `RegisterRequest`,
+  `DepositRequest` and the rest are decorated. This ADR anticipated one validation layer and the
+  codebase has two.
+- ~~Automatic ASP.NET Core integration~~ — **not taken** (corrected 2026-08-04). Auto-validation
+  lives in `FluentValidation.AspNetCore`, which is deprecated and is deliberately NOT referenced.
+  Controllers invoke `ValidateAndThrowAsync` by hand, which is why model state answers first.
 
 ### Negative
 
 - Additional NuGet dependency
 - Learning curve for fluent syntax
-- Validation logic separate from models (can be a pro or con)
+- **Two validation layers, not one, and the annotations usually win.** Because DTOs kept their
+  DataAnnotations, most FluentValidation rules restate a rule the framework has already enforced,
+  and a rule that is *only* in the validator fires only when every annotation passes. This is the
+  real cost of the decision as implemented, and it is what produces the two envelopes above.
 
 ### Neutral
 
@@ -199,17 +208,52 @@ public class DepositRequestValidator : AbstractValidator<DepositRequest>
 
 ### Error Response Format
 
+Replaced 2026-08-04 with a response measured on the running stack. The previous example was a
+chimera that never existed on the wire: it paired this handler's title (`"Validation Failed"`) with
+the *framework's* rfc9110 `type` and *PascalCase* keys, and omitted `detail` and `instance`
+entirely. `ValidationExceptionHandler` camel-cases every key (`ToCamelCase(PropertyName)`), so a
+consumer written from the old example would have looked for `Email` and found `email`.
+
+Produced by `POST /api/accounts {"name":"Valid Name","type":"99"}` — see the note below on why
+reaching this handler at all takes some doing.
+
 ```json
 {
-  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+  "type": "https://httpstatuses.com/400",
   "title": "Validation Failed",
   "status": 400,
+  "detail": "One or more validation errors occurred.",
+  "instance": "/api/accounts",
+  "traceId": "0eb7cbc84a0d3d777ecc02ca111c521a",
   "errors": {
-    "Email": ["Email is required", "Invalid email format"],
-    "Password": ["Password must contain uppercase letter"]
+    "type": ["Invalid account type. Must be Checking, Savings, or Investment."]
   }
 }
 ```
+
+### The other envelope — and why this one is rarely seen (added 2026-08-04)
+
+This ADR describes FluentValidation as though it were the API's validation layer. It is the
+*second* one. `[ApiController]` runs model-state validation over the DTO's **DataAnnotations before
+the action body**, so whenever an annotation fails the framework answers first and
+`ValidateAndThrowAsync` never runs. That envelope is different in every field that a client might
+branch on:
+
+| | model state (layer 1) | FluentValidation (layer 2) |
+|---|---|---|
+| `title` | `One or more validation errors occurred.` | `Validation Failed` |
+| `type` | `…rfc9110#section-15.5.1` | `https://httpstatuses.com/400` |
+| `detail` / `instance` | absent | both present |
+| key | the **binding name** — PascalCase for a DTO property (`Name`, `FromDate`), camelCase for an action parameter (`at`), a JSON path (`$.type`) when deserialisation failed | always camelCase |
+
+Most validators here merely restate their annotations, so layer 2 is unreachable for them. It is
+reached today in exactly three places: `CreateAccountRequest.Type` carries no annotation at all;
+`[MoneyRange]` checks magnitude but not **scale**, so `.ValidMoneyScale()` still bites; and
+"transfer to the same account" is cross-field, which these DTOs' annotations cannot express.
+
+All of the above was measured on the running stack, not read off the source — an earlier attempt at
+this note reasoned from `ValidationExceptionHandler.cs` alone and got the attribution backwards.
+The frontend's `frontend/src/api/validationErrors.ts` carries the same table with the raw responses.
 
 ### Unit Testing Validators
 

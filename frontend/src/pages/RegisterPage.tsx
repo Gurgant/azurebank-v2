@@ -16,6 +16,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
+import { toFieldName } from '../api/validationErrors';
 import { AuthCrossLink, AuthDivider, AuthLayout } from '../components/layout/AuthLayout';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
 import { useRegisterMutation } from '../features/api/apiSlice';
@@ -184,7 +185,8 @@ export function RegisterPage() {
           if (messages.length === 0) {
             continue;
           }
-          const field = key.charAt(0).toLowerCase() + key.slice(1);
+          // PascalCase (model-state) or camelCase (FluentValidation) — see `toFieldName`.
+          const field = toFieldName(key);
           if ((REGISTER_FIELDS as readonly string[]).includes(field)) {
             setError(field as (typeof REGISTER_FIELDS)[number], {
               type: 'server',
