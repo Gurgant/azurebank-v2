@@ -90,6 +90,10 @@ describe('integration: the idempotency protocol against the real API', () => {
     // actually emitted, because the mock decides both sides of that question.
     expect(second.data.replayed).toBe(true);
     expect(second.data.transaction.id).toBe(first.data.transaction.id);
+    // The id alone is not the receipt. A replay that returned the right transaction with a
+    // recomputed (doubled) newBalance would satisfy the line above and still put a wrong number
+    // on the confirmation screen.
+    expect(second.data.newBalance).toBe(first.data.newBalance);
 
     // The ledger assertion. Absolute, not relative: `expect(after).not.toBe(before + 2*amount)`
     // would pass for any wrong number that happens to differ from the double.

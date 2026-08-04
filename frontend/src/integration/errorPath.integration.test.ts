@@ -26,13 +26,22 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     /*
       The API sends a 400 with `errors` and NO `errorCode` member; D5 synthesises one so consumers
       always have something to branch on. Inverted date pair — the drift PR #64 found, where the
-      mock answered 422 and the real API answers 400.
+      mock answered 422 and the real API answers 400. Measured:
+
+        400 {"title":"One or more validation errors occurred.","status":400,
+             "errors":{"ToDate":["FromDate must be earlier than or equal to ToDate."], …}}
+
+      BOTH dates are in the past deliberately. An earlier draft inverted a future date against a
+      past one, which would still pass if the 400 came from a future-date rule rather than from the
+      inversion. Measured, no such rule exists today — an ORDERED pair ending 2026-12-31 answers
+      200 — so that draft was not actually wrong. Two past dates keep it that way if one is ever
+      added, which is the cheaper thing to depend on.
     */
     const result = await run(
       store.dispatch(
         apiSlice.endpoints.getTransactionSummary.initiate({
-          fromDate: '2026-12-31T00:00:00.000Z',
-          toDate: '2026-01-01T00:00:00.000Z',
+          fromDate: '2026-07-31T00:00:00.000Z',
+          toDate: '2026-07-01T00:00:00.000Z',
         }),
       ),
     );
@@ -45,9 +54,22 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     expect(apiProblem.errors).toBeDefined();
   });
 
-  it('synthesises HTTP_404 when the backend sends no errorCode', async () => {
-    // A well-formed but absent id. The fallback branch of the same rule: no errors dict, no
-    // errorCode on the wire, so the code is derived from the status.
+  it('carries the API’s own 404 errorCode through without synthesising one', async () => {
+    /*
+      This test used to claim it proved the HTTP_404 SYNTHESIS branch, and it did not — the API
+      labels this one itself. Measured:
+
+        404 {"title":"Not Found","status":404,"instance":"/api/accounts/000…000",
+             "detail":"Account with identifier '000…000' was not found.",
+             "errorCode":"ACCOUNT_NOT_FOUND","traceId":"<32-hex>"}
+
+      The old assertion accepted any of three codes, which is what let a wrongly-named test pass:
+      a regression that stopped carrying `errorCode` and fell back to HTTP_404 would have been
+      indistinguishable from correct behaviour. Pinned to the one value the backend actually sends.
+
+      The synthesis branch is genuinely covered — by the BFF's own bare 401 in
+      anonymous.integration.test.ts, which carries no errorCode and comes back HTTP_401.
+    */
     const result = await run(
       store.dispatch(
         apiSlice.endpoints.getAccount.initiate('00000000-0000-0000-0000-000000000000'),
@@ -58,9 +80,7 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     if (result.ok) return;
     const apiProblem = problem(result.error);
     expect(apiProblem.status).toBe(404);
-    // Asserted as a set rather than one value: the API may or may not label this one itself, and
-    // pinning the wrong branch would make a correct backend look broken.
-    expect(['HTTP_404', 'ACCOUNT_NOT_FOUND', 'NOT_FOUND']).toContain(apiProblem.errorCode);
+    expect(apiProblem.errorCode).toBe('ACCOUNT_NOT_FOUND');
   });
 
   /*
