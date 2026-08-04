@@ -59,7 +59,21 @@ setup('authenticate', async ({ page, request }) => {
     401 INVALID_CREDENTIALS there and 200 here. If someone ever points this suite at `dev:mock`,
     it dies right here instead of quietly testing the mock for the rest of the run.
   */
-  await expect(page).toHaveURL(/\/(dashboard)?$|\/dashboard/, { timeout: 15_000 });
+  /*
+    `/dashboard` REQUIRED, not optional. The first draft was `/\/(dashboard)?$|\/dashboard/`, whose
+    left branch matches a bare `/` — and `/` is itself a dashboard route (App.tsx:69), so the
+    assertion would have passed on a redirect it never meant to accept. Measured: with no `returnTo`
+    in history, LoginPage navigates to `navState.from?.pathname ?? '/dashboard'` (LoginPage.tsx:131),
+    so landing anywhere else here is a real change worth failing on.
+  */
+  await expect(page).toHaveURL(/\/dashboard(?:[?#]|$)/, { timeout: 15_000 });
+
+  /*
+    And a URL is not a session. This is the assertion that actually proves the cookie was set and
+    the guard let us through: `ProtectedShell` only renders its chrome for an authenticated user,
+    and the nav landmark appears before any data resolves, so it is the earliest honest signal.
+  */
+  await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 
   await page.context().storageState({ path: STORAGE_STATE });
 });

@@ -1,0 +1,36 @@
+{
+  /*
+    The Playwright suite gets its own project because it is the only code in the repo that is BOTH
+    node and browser: the spec bodies run in node, but `page.addInitScript` / `page.evaluate`
+    callbacks are serialised and executed inside the page, so they legitimately reference `window`,
+    `document` and `MutationObserver`.
+
+    Adding "DOM" to tsconfig.node.json instead would have been one line, and wrong: `vite.config.ts`
+    lives in that project and has no business typechecking against browser globals it cannot use at
+    runtime. Splitting keeps each project's `lib` honest about where its code executes.
+  */
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["playwright.config.ts", "e2e"]
+}

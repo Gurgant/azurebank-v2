@@ -23,11 +23,9 @@
     "noUncheckedSideEffectImports": true
   },
   /*
-    The Playwright config and the E2E specs belong here, not in tsconfig.app.json: they run in
-    node, not in the browser bundle. Without this they were typechecked by NOTHING — `tsc -b`
-    covered only `src` and `vite.config.ts`, and Playwright transpiles specs without checking
-    types, so a bad locator signature or a wrong import would have surfaced as a runtime failure
-    at best and silently at worst. `npm run build` is this repo's type gate; it has to see them.
+    The Playwright config and the E2E specs are typechecked by `tsconfig.e2e.json`, not here: they
+    need the DOM lib for the `addInitScript` / `evaluate` callbacks that run inside the page, and
+    `vite.config.ts` must NOT get browser globals it cannot use at runtime.
   */
-  "include": ["vite.config.ts", "playwright.config.ts", "e2e"]
+  "include": ["vite.config.ts"]
 }

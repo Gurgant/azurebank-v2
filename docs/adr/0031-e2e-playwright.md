@@ -10,17 +10,17 @@
 
 ## Context
 
-Three layers exist. The unit suite (519 tests) runs React against MSW. The contract suite
-(ADR-0029) reads the raw wire from both the mock and the real backend. The integration suite
-(ADR-0030) drives the app's own data layer — real store, real `apiSlice`, real Zod — against the
+Before this ADR there were three layers. The unit suite (519 tests) ran React against MSW. The
+contract suite (ADR-0029) read the raw wire from both the mock and the real backend. The integration
+suite (ADR-0030) drove the app's own data layer — real store, real `apiSlice`, real Zod — against the
 real backend.
 
-None of them renders a page. ADR-0030 said so in as many words under "What is NOT covered": *no
-React*. Two consequences follow, and both are the kind of defect a user notices first:
+None of them rendered a page. ADR-0030 said so in as many words under "What is NOT covered": *no
+React*. Two consequences followed, and both are the kind of defect a user notices first:
 
-- **A correct response can still be rendered wrongly**, or not at all. Nothing below this layer
-  would see it.
-- **The step-up modal was never tested at all.** ADR-0030's harness deliberately STANDS IN for
+- **A correct response could still be rendered wrongly**, or not at all. Nothing below this layer
+  would have seen it.
+- **The step-up modal was not tested at all.** ADR-0030's harness deliberately STANDS IN for
   `<StepUpModal/>`, because the modal is the one genuinely visual piece of the flow. So the protocol
   was proven and the component was not.
 
@@ -81,10 +81,33 @@ API sends asterisks — the component substitutes. And the deposit submit button
 "Deposit €1.00" once the amount is valid, which is a real anti-fat-finger property and is now
 pinned.
 
+**"No protected content leaked" needed a detector, not an assertion after the fact.** The first
+version checked `getByText(/available balance/i)` had count 0 AFTER the redirect settled, under a
+comment claiming the content "must never have rendered, not merely be gone by now" — a stronger
+property than the code could possibly check. Measured by mutating `ProtectedRoute` to render its
+children while the boot probe is in flight, which is a genuine flash: **the old assertion passed**.
+It now installs a `MutationObserver` via `addInitScript`, before any page script runs, and latches a
+boolean the instant the text appears; against the same mutant it fails. The signed-in test doubles as
+the POSITIVE CONTROL — the same detector on a page that really does render the balance must come
+back true, otherwise "nothing was seen" would be a statement about a broken observer rather than
+about the guard.
+
+**A URL is not a session, either.** The setup project asserted
+`/\/(dashboard)?$|\/dashboard/`, whose left branch matches a bare `/`. It now requires `/dashboard`
+and, more to the point, waits for the `Main navigation` landmark — `ProtectedShell` renders that only
+for an authenticated user, and it appears before any data resolves.
+
 **A gap closed on the way past: `e2e/` and `playwright.config.ts` were typechecked by nothing.**
 `tsc -b` covered only `src` and `vite.config.ts`, and Playwright transpiles specs without checking
-types, so a bad locator signature would have surfaced at runtime or not at all. They are in
-`tsconfig.node.json` now, and a deliberate type error was confirmed to fail `npm run build`.
+types, so a bad locator signature would have surfaced at runtime or not at all. They now have their
+OWN project, `tsconfig.e2e.json`, and a deliberate type error was confirmed to fail `npm run build`.
+
+The separate project rather than a line added to `tsconfig.node.json` is itself a measured decision:
+the E2E suite is the only code here that is both node and browser, because `addInitScript` and
+`evaluate` callbacks are serialised and run inside the page, so they legitimately reference `window`
+and `MutationObserver`. Adding `"DOM"` to the node project would have been one line and would have
+handed `vite.config.ts` browser globals it cannot use at runtime. The gate caught this the moment the
+observer was written — which is the gate doing exactly what it was added for.
 
 **Elevation is sticky and cannot be undone, which makes suite ORDER a correctness property.**
 `SetPinVerified` (`SessionService.cs:103`) is the only mutator; the level drops only when it expires
