@@ -104,6 +104,62 @@ export function modelStateProblem(errors: Record<string, string[]>) {
   );
 }
 
+/**
+ * The framework's answer when the JSON could not be DESERIALISED — a required member was absent.
+ *
+ * This is a third thing, distinct from both validation envelopes, and the mock had no model of it
+ * at all: it answered 201 and persisted a row the API refuses outright.
+ *
+ * A `required` C# member is enforced by System.Text.Json, not by `[Required]`, so the failure
+ * happens before model state has a property to name. The key is therefore the JSON path of the
+ * document ROOT — a bare `$`, not `$.<member>` — and the framework adds a second entry named after
+ * the action's body parameter, which is literally `request` in every controller here.
+ *
+ * Measured 2026-08-04, `POST /api/accounts {"name":"No Type Probe"}`:
+ *
+ *   {"title":"One or more validation errors occurred.","status":400,
+ *    "errors":{"$":["JSON deserialization for type 'AzureBank.Shared.DTOs.Account.CreateAccountRequest'
+ *                    was missing required properties including: 'type'."],
+ *              "request":["The request field is required."]}}
+ *
+ * `toFieldName('$')` is `'$'`, so it matches no form field and the message correctly reaches the
+ * form-level error rather than being aimed at a control that does not exist.
+ */
+export function missingMemberProblem(clrType: string, ...members: string[]) {
+  const list = members.map((m) => `'${m}'`).join(', ');
+  return modelStateProblem({
+    $: [
+      `JSON deserialization for type '${clrType}' was missing required properties including: ${list}.`,
+    ],
+    request: ['The request field is required.'],
+  });
+}
+
+/**
+ * The sibling case: the member is PRESENT but its JSON could not be converted.
+ *
+ * Same envelope, different key — the path names the member (`$.type`) because the deserialiser got
+ * far enough to know which one failed, where an ABSENT required member fails at the root (`$`).
+ * Conflating the two is easy and wrong, so they are separate functions rather than one with a flag.
+ *
+ * Measured 2026-08-04, `POST /api/accounts {"name":"Valid Name","type":12345}`:
+ *
+ *   {"errors":{"request":["The request field is required."],
+ *              "$.type":["Integer values are not allowed for enum 'AccountType'.
+ *                         Use string values: Checking, Savings, Investment"]}}
+ *
+ * Note this is NOT the same as a bad enum *string*: `"99"` deserialises fine (the converter defers
+ * to `Enum.TryParse`, which accepts the numeric form) and is then caught by FluentValidation's
+ * `IsInEnum` — the "Validation Failed" envelope keyed camelCase `type`. A JSON **number** never
+ * reaches the validator at all.
+ */
+export function invalidJsonValueProblem(path: string, message: string) {
+  return modelStateProblem({
+    [path]: [message],
+    request: ['The request field is required.'],
+  });
+}
+
 /** W3C traceparent (`00-<32hex>-<16hex>-01`), which is what the framework path emits. */
 function fakeTraceParent(): string {
   const hex = (n: number) =>

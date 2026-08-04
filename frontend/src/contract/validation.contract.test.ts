@@ -113,6 +113,64 @@ describe('contract: validation envelopes', () => {
     expect(Object.keys(both.errors ?? {})).toEqual(['Name']);
   });
 
+  it('answers a MISSING required member from the deserialiser, keyed by the document root', async () => {
+    /*
+      A third shape, distinct from both validation envelopes, and the one where the mock used to
+      accept a WRITE the API refuses: it defaulted a missing `type` to Checking and answered 201.
+
+      `CreateAccountRequest.Type` is `required`, so System.Text.Json fails before model state has a
+      property to name. The key is therefore the JSON path of the ROOT — a bare `$`, NOT `$.type` —
+      plus a second entry named after the action's body parameter, which is literally `request`.
+
+      Measured 2026-08-04:
+        POST /api/accounts {"name":"No Type Probe"}
+          -> {"$":["JSON deserialization for type '…CreateAccountRequest' was missing required
+                    properties including: 'type'."],
+              "request":["The request field is required."]}
+
+      Asserted on keys and status, not on the exact C# type name, so the contract does not break if
+      the DTO is ever renamed — the SHAPE is what a consumer branches on. Rejected, so no account
+      is created and this test leaves no state on either target.
+    */
+    const { status, body } = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'No Type Probe' }),
+    });
+    const keys = Object.keys(asProblem(body).errors ?? {});
+
+    expect(status).toBe(400);
+    expect(keys).toContain('$');
+    expect(keys).toContain('request');
+    // NOT the member-scoped path: that is what a *bad value* produces, not a missing one.
+    expect(keys).not.toContain('$.type');
+  });
+
+  it('answers a NUMERIC enum from the deserialiser, keyed by the path to the member', async () => {
+    /*
+      Three inputs to the same field, three different answers — the distinction CodeRabbit caught
+      me collapsing on this PR:
+
+        {"type":12345}   -> deserialiser, keyed `$.type`   (the converter refuses the token)
+        {"type":"99"}    -> FluentValidation, keyed `type`  (TryParse accepts the numeric STRING,
+                                                             then IsInEnum rejects the value)
+        (absent)         -> deserialiser, keyed `$`         (fails at the document root)
+
+      Measured 2026-08-04:
+        {"errors":{"request":[…],
+                   "$.type":["Integer values are not allowed for enum 'AccountType'. …"]}}
+    */
+    const { status, body } = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Valid Name', type: 12345 }),
+    });
+    const keys = Object.keys(asProblem(body).errors ?? {});
+
+    expect(status).toBe(400);
+    expect(keys).toContain('$.type');
+    // The path form, NOT the root — the deserialiser knew which member failed.
+    expect(keys).not.toContain('$');
+  });
+
   it('reports EVERY bad property in one pass, not the first one it meets', async () => {
     /*
       ASP.NET validates all bound properties together and returns them in a single

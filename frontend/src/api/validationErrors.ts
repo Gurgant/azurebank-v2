@@ -24,10 +24,21 @@
  *       -> {"errors":{"at":["The value 'garbage' is not valid."]}}
  *       (Note the message loses the " for <Name>." suffix that the property form carries.)
  *
- *   (c) JSON deserialisation failed -> a JSON path, plus the body parameter's own name.
+ *   (c) JSON deserialisation failed -> a JSON path, plus the body parameter's own name. WHICH path
+ *       depends on how it failed, and the two cases are easy to conflate:
+ *
+ *       a bad VALUE -> the path to the member.
  *       POST /api/accounts {"name":"Valid Name","type":12345}
  *       -> {"errors":{"request":["The request field is required."],
  *                     "$.type":["Integer values are not allowed for enum 'AccountType'. …"]}}
+ *
+ *       an ABSENT `required` member -> the document ROOT, a bare `$`, because the deserialiser
+ *       fails before there is a member to name. (`required` is enforced by System.Text.Json, not
+ *       by `[Required]` — so this fires even on a DTO whose annotations would also have caught it.)
+ *       POST /api/accounts {"name":"No Type Probe"}
+ *       -> {"errors":{"$":["JSON deserialization for type '…CreateAccountRequest' was missing
+ *                           required properties including: 'type'."],
+ *                     "request":["The request field is required."]}}
  *
  * PRODUCER 2 — FluentValidation, via the API's `ValidationExceptionHandler`.
  *   title "Validation Failed" · `detail` · `instance` · httpstatuses `type` · ALWAYS camelCase

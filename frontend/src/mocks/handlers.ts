@@ -2,7 +2,12 @@ import { http, HttpResponse } from 'msw';
 import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
-import { modelStateProblem, problem } from './problem';
+import {
+  invalidJsonValueProblem,
+  missingMemberProblem,
+  modelStateProblem,
+  problem,
+} from './problem';
 import {
   MOCK_PASSWORD,
   MOCK_USER,
@@ -302,16 +307,30 @@ function badRequestBody(raw: string) {
 const ACCOUNT_TYPES = ['Checking', 'Savings', 'Investment'] satisfies AccountType[];
 
 /**
- * A type guard, not an `includes` — and the distinction is the whole point.
+ * Parse an account type the way the API does: CASE-INSENSITIVELY, returning the canonical member.
  *
- * `['Checking']` stringifies to `"Checking"`, so a membership test that coerces (`includes(String(
- * body.type))`) ACCEPTS the array and then stores the array on the account, where the response
- * contract promises a string. Identical in shape to the `RegExp.test(['abc'])` trap documented on
- * the azureTag handler below — which is where this rule was already written down, and which did
- * not stop me writing the coercing version here first.
+ * The mock used to demand an exact match and was therefore STRICTER than the server — a fixture
+ * rejecting input the product accepts, which is the more insidious direction of drift because it
+ * hides a working path instead of inventing a broken one. `StrictJsonStringEnumConverter` refuses
+ * JSON *numbers*, but hands any non-empty string to `Enum.TryParse(..., ignoreCase: true)`.
+ * Measured 2026-08-04: `POST /api/accounts {"name":"Case Probe","type":"checking"}` -> **201**.
+ *
+ * It returns the CANONICAL member rather than the caller's string, because the API persists
+ * `Checking` for an input of `"checking"` — echoing the input back would drift the read model too.
+ *
+ * `typeof value !== 'string'` FIRST, and that guard is the point rather than ceremony: `['Checking']`
+ * stringifies to `"Checking"`, so any comparison that coerces would accept the ARRAY and then store
+ * it on the account, where the response contract promises a string. Same shape as the
+ * `RegExp.test(['abc'])` trap documented on the azureTag handler below — a rule that was already
+ * written down here and still did not stop the coercing version being written first.
+ *
+ * null means "no member matches", which is the `IsInEnum` case. Note `"99"` DOES parse on the real
+ * side (TryParse accepts the numeric form) and is then rejected by the validator, so a null here
+ * and a null there are the same 400 arrived at slightly differently.
  */
-function isAccountType(value: unknown): value is AccountType {
-  return typeof value === 'string' && (ACCOUNT_TYPES as readonly string[]).includes(value);
+function parseAccountType(value: unknown): AccountType | null {
+  if (typeof value !== 'string') return null;
+  return ACCOUNT_TYPES.find((t) => t.toLowerCase() === value.toLowerCase()) ?? null;
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
@@ -421,11 +440,46 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
     which is wrong in the key, the envelope and the co-occurrence. This is the endpoint that makes
     `toFieldName` necessary, so getting it right here is the whole point.
   */
+  /*
+    ABSENT is not the same as EMPTY, and this endpoint is where the mock used to accept a WRITE the
+    API refuses. `CreateAccountRequest` declares BOTH members `required`, so System.Text.Json fails
+    to deserialise before `[Required]` ever runs — the mock previously defaulted a missing `type` to
+    Checking and answered 201, persisting a row the real API would never have created.
+
+    Measured: {"name":"No Type Probe"} -> 400 keyed `$` + `request`. See `missingMemberProblem`.
+  */
+  const missing = (['name', 'type'] as const).filter((m) => body[m] === undefined);
+  if (missing.length > 0) {
+    return response.untyped(
+      missingMemberProblem('AzureBank.Shared.DTOs.Account.CreateAccountRequest', ...missing),
+    );
+  }
+
   const nameError = rejectBadAccountName(body.name, CREATE_NAME_REQUIRED);
   if (nameError) {
     return response.untyped(modelStateProblem({ Name: nameError }));
   }
-  if (body.type !== undefined && !isAccountType(body.type)) {
+  /*
+    A JSON NUMBER never reaches the validator. `StrictJsonStringEnumConverter` rejects the token in
+    the deserialiser, so the answer is the framework's conversion envelope keyed by the path to the
+    member — `$.type`, not the bare `$` an absent member produces, and not the camelCase `type` a
+    bad enum STRING produces. Three inputs to the same field, three different answers.
+
+    Measured: {"name":"Valid Name","type":12345}
+      -> {"$.type":["Integer values are not allowed for enum 'AccountType'. Use string values: …"],
+          "request":["The request field is required."]}
+  */
+  if (typeof body.type === 'number') {
+    return response.untyped(
+      invalidJsonValueProblem(
+        '$.type',
+        "Integer values are not allowed for enum 'AccountType'. Use string values: Checking, Savings, Investment",
+      ),
+    );
+  }
+
+  const accountType = parseAccountType(body.type);
+  if (accountType === null) {
     // Measured: {"name":"Valid Name","type":"99"}
     //   -> {"title":"Validation Failed","detail":"One or more validation errors occurred.",
     //       "instance":"/api/accounts","errors":{"type":["Invalid account type. Must be …"]}}
@@ -441,10 +495,12 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
   const account = {
     id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
     accountNumber: `AB-****-****-${70 + index}`,
-    // No casts: `rejectBadAccountName` has proven `name` is a string and the guard above has
-    // proven `type` is an `AccountType`, so both narrow honestly instead of being asserted.
+    // No casts: `rejectBadAccountName` has proven `name` is a string and `parseAccountType` has
+    // returned a canonical member, so both narrow honestly instead of being asserted. Storing the
+    // CANONICAL value matters — the API persists `Checking` for an input of `"checking"`, so
+    // echoing the caller's casing back would drift the read model too.
     name: String(body.name),
-    type: isAccountType(body.type) ? body.type : 'Checking',
+    type: accountType,
     balance: 0,
     isPrimary: false,
     createdAt: '2026-07-21T12:00:00.0000000Z',

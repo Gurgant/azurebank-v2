@@ -55,6 +55,14 @@ describe('toFieldName', () => {
     */
     expect(toFieldName('$.type')).toBe('$.type');
     expect(toFieldName('request')).toBe('request');
+    /*
+      And the ROOT form, for an ABSENT `required` member — the deserialiser fails before there is a
+      member to name, so the key is a bare `$` rather than a path. Measured 2026-08-04:
+        POST /api/accounts {"name":"No Type Probe"}
+          -> {"$":["JSON deserialization … missing required properties including: 'type'."],
+              "request":["The request field is required."]}
+    */
+    expect(toFieldName('$')).toBe('$');
   });
 
   it('is total — an empty key does not throw', () => {
