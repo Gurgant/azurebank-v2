@@ -491,3 +491,94 @@ describe('the seeded ledger stays inside the window the app asks about', () => {
     }
   });
 });
+
+/**
+ * Message text the app renders VERBATIM.
+ *
+ * `moneyProblem` falls through to `problem.detail` and the money dialogs render `message` on
+ * success, so every string below is something a user reads. Each was quoted from the running stack
+ * on 2026-08-04 (the two transfer success strings are the exception, noted inline) — the mock had
+ * been paraphrasing, which meant the sentence under MSW was not the sentence in production.
+ */
+describe('the mock quotes the server, it does not paraphrase it', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const key = () => crypto.randomUUID();
+
+  it('uses the API’s success wording, with no invented trailing period', async () => {
+    // Measured: POST /api/accounts -> "Account created successfully"  (no period)
+    const created = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Wording Probe', type: 'Savings' }),
+    });
+    expect((await created.json()).message).toBe('Account created successfully');
+
+    // Measured: POST /api/transactions/deposit -> "Deposit successful"
+    const deposited = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 5 }),
+    });
+    expect((await deposited.json()).message).toBe('Deposit successful');
+  });
+
+  it('embeds the amounts in INSUFFICIENT_FUNDS, as the API does', async () => {
+    /*
+      Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00" — the server
+      formats with C#'s `:C` on en-US, so grouped, two decimals, a leading `$`. NOT the app's EUR
+      display: this is the mock quoting the server's own sentence.
+    */
+    const account = mockState.accounts.find((a) => a.id === MAIN_ACCOUNT_ID);
+    const available = account?.balance ?? 0;
+
+    const res = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 1 }),
+    });
+    expect(res.status).toBe(201);
+
+    const withdrawn = await fetch('/api/transactions/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: available + 1000, pin: '123456' }),
+    });
+    expect(withdrawn.status).toBe(422);
+    const { detail } = await withdrawn.json();
+    expect(detail).toMatch(
+      /^Insufficient funds\. Available: \$[\d,]+\.\d{2}, Requested: \$[\d,]+\.\d{2}$/,
+    );
+  });
+
+  it('reports a refused PIN as authLevel 1, not the caller’s current level', async () => {
+    /*
+      A refused PIN is a 200, and the BFF HARD-CODES authLevel 1 rather than echoing what the caller
+      had. The mock returned `mockState.authLevel`, so an already-elevated user who fumbled a
+      re-entry saw 2 where production says 1.
+
+      Measured (cost one of three attempts): {"verified":false,"authLevel":1,"pinExpiresAt":null},
+      message "Invalid PIN".
+    */
+    await fetch('/bff/auth/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '123456' }),
+    });
+    expect(mockState.authLevel).toBe(2);
+
+    const res = await fetch('/bff/auth/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '000000' }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toMatchObject({ verified: false, authLevel: 1, pinExpiresAt: null });
+    expect(body.message).toBe('Invalid PIN');
+  });
+});
