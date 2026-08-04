@@ -193,3 +193,55 @@ as a deliberate defense-in-depth showcase, per RFC 9700 §4.14 which makes it op
   **outlives** it; logout propagates to the API with a Bearer and revokes locally even when the
   API call fails; a raw proxied `/api/auth/refresh` is **404** and never reaches the backend;
   verify-pin re-mints and calls the API with the fresh Bearer.
+
+---
+
+## Amendment — 2026-08-04: the family revoke must not be able to change the status code
+
+"Failure signalling: **uniform 401**" was stated above as a decision, but the reuse branch did not
+actually hold it. It awaited `RevokeAllForUserAsync` unguarded, so any failure of that write
+escaped to `GlobalExceptionHandler` and the caller received **500** instead of the 401 the ADR
+promises — precisely on the path where the token has just been detected as stolen.
+
+That is the worst place to lose the invariant. It re-opens the oracle this ADR closed (a 500
+distinguishes *reuse* from every other rejection, which is what "no unknown-vs-expired-vs-reuse
+oracle" exists to prevent), it contradicts the concurrency-loss branch a few lines below — which
+returns 401 *specifically* so a race is indistinguishable from a rejection — and a 5xx is
+conventionally retryable, so it invites the client to present the stolen token again.
+
+**The 401 is the contract; the family revoke is a mitigation.** A mitigation that fails must not
+be allowed to decide the answer. The revoke is now wrapped: on failure the rejection still
+propagates and the failure is logged at `Error` under `SecurityEvent RefreshTokenReuseRevokeFailed`.
+`OperationCanceledException` is deliberately excluded — a disconnected caller is not a failed
+mitigation.
+
+Swallowing is defensible because **surfacing it never helped**: the 500 did not revoke anything
+either. The exposure of a failed revoke is *identical* before and after this change — only the
+status code differs. This amendment does not trade security for a nicer error.
+
+**Residual (honest), unchanged by this amendment.** A failed revoke is not reliably self-healing.
+The convergence property this ADR established covers a revoke that *runs* (it re-runs until a pass
+revokes nothing, and the rowversion guard stops any successor committing after the final pass) — it
+says nothing about a revoke that never completed. The bad case is attacker-first: the attacker
+rotates the stolen token, the legitimate client later replays the old one after the grace window,
+reuse is detected, and the revoke fails. The 401 goes to the *legitimate* client, so there may be no
+further replay to re-run the mitigation, and the attacker's successor stays active until logout or
+the 7-day expiry. Bounded, but real.
+
+Options deliberately **not** taken here, because a status-code fix is the wrong place to decide
+them: retrying known-transient failures inline, or a durable work item (outbox / background sweep)
+that retries the revoke until it converges. Either is a design change deserving its own decision.
+Until then the failure is at least observable: `SecurityEvent RefreshTokenReuseRevokeFailed`, at
+`Error`.
+
+**Provenance, stated plainly:** this was found by reading the path, not by observing a failure.
+The suspected trigger is contention — the set-based revoke writes the same index concurrent
+rotations are writing, so a deadlock victim or command timeout lands exactly there — but it did
+**not** reproduce locally (12 rounds x 17 concurrent requests, with `READ_COMMITTED_SNAPSHOT` off
+to match a fresh CI database), and no CI run has been seen failing this way. The invariant is
+therefore pinned by **fault injection**
+(`RotateAsync_ReuseSurvivesAFailingFamilyRevoke_StillRejectsWith401`, using
+`ThrowingSaveChangesInterceptor`) rather than by racing. That is the stronger test regardless:
+it names the failure mode — *the revoke threw* — instead of hoping to hit one instance of it, and
+it covers every other way that write can fail. Verified by mutation: reverting the guard turns the
+test red with the injected exception.

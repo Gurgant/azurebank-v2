@@ -110,7 +110,47 @@ public class RefreshTokenService : IRefreshTokenService
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: reuse of revoked refresh token {TokenId} (user {UserId}); revoking all active tokens",
                     "RefreshTokenReuse", existing.Id, existing.UserId);
-                await RevokeAllForUserAsync(existing.UserId, cancellationToken);
+
+                try
+                {
+                    await RevokeAllForUserAsync(existing.UserId, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // The 401 is the CONTRACT; the family revoke is a MITIGATION. Letting the
+                    // mitigation's failure decide the status code broke both halves at once: the
+                    // caller got a 500 instead of the uniform rejection this endpoint promises
+                    // everywhere else (see the concurrency-loss branch below, which returns 401
+                    // precisely so a race cannot be told apart from a rejection), and a 5xx invites
+                    // the caller to RETRY the very token that was just detected as stolen.
+                    //
+                    // The set-based revoke is the one unguarded database write on this path, and it
+                    // runs while concurrent rotations are touching the same index, so a deadlock
+                    // victim or a command timeout lands exactly here. Found by reading the path,
+                    // not by catching it in the act: it has never been observed failing in CI, and
+                    // it did not reproduce locally under deliberate contention. The guard is
+                    // therefore about the reachable failure mode, not about a logged incident.
+                    //
+                    // Swallowed rather than surfaced because surfacing it never helped: the 500 did
+                    // not revoke anything either, so the exposure of a failed revoke is IDENTICAL
+                    // before and after this guard. Only the status code changes.
+                    //
+                    // Do not read the swallow as "harmless". A failed revoke leaves the stolen
+                    // family active, and it is NOT always self-healing: if the attacker rotated
+                    // first, the legitimate client is the one that gets the 401, so there may be no
+                    // further replay to re-run the revoke, and the attacker's successor survives
+                    // until logout or the 7-day expiry. Bounded, but real — tracked as a residual
+                    // in ADR-0021. That is why this logs at Error with a SecurityEvent marker: a
+                    // failed revoke must be loud in the sink even though it is quiet on the wire.
+                    //
+                    // Cancellation still propagates — a disconnected caller is not a failed
+                    // mitigation.
+                    _logger.LogError(
+                        ex,
+                        "SecurityEvent {SecurityEvent}: family revoke FAILED after reuse detection for user {UserId}; "
+                            + "the 401 stands and the next replay re-runs the revoke",
+                        "RefreshTokenReuseRevokeFailed", existing.UserId);
+                }
             }
             throw InvalidRefreshToken();
         }
