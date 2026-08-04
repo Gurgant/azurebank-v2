@@ -11,7 +11,7 @@ import { store } from './app/store';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { AppToaster } from './components/feedback';
 import { AuthBootstrap, SessionExpiryWarning, StepUpModal } from './features/auth';
-import { ProtectedRoute, ProtectedShell, ShellOrBare } from './components/layout';
+import { AppErrorBoundary, ProtectedRoute, ProtectedShell, ShellOrBare } from './components/layout';
 import {
   LoginPage,
   RegisterPage,
@@ -164,16 +164,26 @@ const router = createBrowserRouter(
 
 function App() {
   return (
-    <Provider store={store}>
-      <ThemeProvider>
-        <AppToaster />
-        <AuthBootstrap />
-        <SessionExpiryWarning />
-        {/* The single root step-up (PIN elevation) modal — driven by the base-query interceptor. */}
-        <StepUpModal />
-        <RouterProvider router={router} />
-      </ThemeProvider>
-    </Provider>
+    /*
+      OUTERMOST on purpose, above `Provider` and `ThemeProvider` rather than beside the chrome.
+      `RouteError` is a ROUTE boundary and sees only the route tree; everything here — the toaster,
+      the auth bootstrap, the session warning, the step-up modal, and the two providers themselves —
+      is outside it, and a throw in any of them used to unmount the whole app to a blank page. Put
+      lower down, this would leave the providers uncovered, which is where a theme or store failure
+      would come from.
+    */
+    <AppErrorBoundary>
+      <Provider store={store}>
+        <ThemeProvider>
+          <AppToaster />
+          <AuthBootstrap />
+          <SessionExpiryWarning />
+          {/* The single root step-up (PIN elevation) modal — driven by the base-query interceptor. */}
+          <StepUpModal />
+          <RouterProvider router={router} />
+        </ThemeProvider>
+      </Provider>
+    </AppErrorBoundary>
   );
 }
 
