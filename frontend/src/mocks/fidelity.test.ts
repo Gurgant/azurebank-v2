@@ -582,3 +582,82 @@ describe('the mock quotes the server, it does not paraphrase it', () => {
     expect(body.message).toBe('Invalid PIN');
   });
 });
+
+/**
+ * The mock's OWN bookkeeping, which is not an envelope question at all.
+ *
+ * Identity was derived from `mockState.accounts.length` while delete removes the row outright, so
+ * the counter goes DOWN and the next create reuses an identifier that is still in use. Every
+ * `find(a => a.id === …)` in the handler file then resolves to whichever row happens to sit first,
+ * and a test that deletes before creating is quietly operating on the wrong account.
+ */
+describe('account identity survives a delete', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const create = (name: string) =>
+    fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, type: 'Savings' }),
+    }).then((r) => r.json());
+
+  it('never reuses an id after a delete', async () => {
+    const first = (await create('First Account')).data;
+    const second = (await create('Second Account')).data;
+
+    const deleted = await fetch(`/api/accounts/${first.id}`, { method: 'DELETE' });
+    expect(deleted.status).toBe(200);
+
+    const third = (await create('Third Account')).data;
+
+    // The whole bug: with identity derived from the array length, `third` came back wearing
+    // `second`'s id, and both rows were live at once.
+    expect(third.id).not.toBe(second.id);
+    // And the DELETED id must not come back either — the assertion above alone would pass for a
+    // generator that recycled `first`'s, which is the very thing "survives a delete" claims.
+    expect(third.id).not.toBe(first.id);
+    const ids = mockState.accounts.map((a) => a.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // A well-formed UUID node however far the counter runs, not just a unique string.
+    expect(third.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('does NOT claim masked account numbers are unique — they legitimately are not', async () => {
+    /*
+      Deliberately asserting the weaker property, because the stronger one is false in production
+      and a fixture must not be stricter than the system it stands in for.
+
+      `MaskAccountNumber` is `$"{n[..3]}****-****-{n[^2..]}"` — it keeps the last TWO characters
+      only, and the generator draws that group from `GetInt32(10, 100)`. So there are 90 possible
+      masked numbers in the entire system and two accounts colliding is ordinary, not a bug.
+
+      What must hold is that the masked value is well-FORMED and not a positional artefact. The id
+      is the identity; the masked number is decoration.
+    */
+    const first = (await create('First Account')).data;
+    await fetch(`/api/accounts/${first.id}`, { method: 'DELETE' });
+    const next = (await create('Next Account')).data;
+
+    expect(next.accountNumber).toMatch(/^AB-\*{4}-\*{4}-\d{2}$/);
+  });
+
+  it('masks the number in a shape the real generator can actually produce', async () => {
+    /*
+      `IdGenerator.GenerateAccountNumber` is
+        AB-{RandomNumberGenerator.GetInt32(1000,10000)}-{…}-{GetInt32(10,100)}
+      so the final group is ALWAYS two digits. The mock built it as `70 + index`, which is three
+      digits from index 30 onward — a masked number the API could never emit, and one that any
+      consumer parsing the last group would trip over.
+    */
+    const created = await Promise.all(
+      Array.from({ length: 32 }, (_, i) => create(`Bulk Account ${i}`)),
+    );
+
+    for (const { data } of created) {
+      expect(data.accountNumber).toMatch(/^AB-\*{4}-\*{4}-\d{2}$/);
+    }
+  });
+});
