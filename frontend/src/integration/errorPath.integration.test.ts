@@ -117,13 +117,20 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     */
     expect(authStatus(store)).toBe('authenticated');
 
-    // Warm the cache with real balances first, so "the financial data was purged" is an actual
-    // observation rather than a vacuous claim about a cache that was already empty.
-    await run(store.dispatch(apiSlice.endpoints.getAccounts.initiate()));
+    /*
+      Warm the cache with real balances first, so "the financial data was purged" is an actual
+      observation rather than a vacuous claim about a cache that was already empty. The SUCCESS and
+      the presence of DATA are both asserted: a failed warm-up still creates a cache entry, and a
+      key with no data would satisfy the purge assertions below while proving nothing at all.
+    */
+    const warmed = await run(store.dispatch(apiSlice.endpoints.getAccounts.initiate()));
+    expect(warmed.ok, warmed.ok ? '' : JSON.stringify(warmed.error)).toBe(true);
+
     const accountsKey = Object.keys(store.getState().api.queries).find((key) =>
       key.startsWith('getAccounts'),
     );
     expect(accountsKey).toBeDefined();
+    expect(store.getState().api.queries[accountsKey as string]?.data).toBeDefined();
 
     resetCookieJar();
     // Negative control: without this, a reset that silently did nothing would leave the test

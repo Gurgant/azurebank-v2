@@ -31,7 +31,15 @@ describe('integration harness: the cookie jar is scoped to the BFF', () => {
       response.setHeader('Set-Cookie', 'evil=1; path=/');
       response.end('{}');
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    /*
+      `listen` reports failure by EMITTING 'error', not by throwing, so a promise that only wires
+      `resolve` has no rejection path: an EADDRINUSE would hang this test until the suite timeout
+      and surface as an unhandled error rather than as "the port was taken".
+    */
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
     const { port } = server.address() as { port: number };
 
     try {

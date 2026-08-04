@@ -109,20 +109,42 @@ export function autoElevate(store: IntegrationStore) {
     void store
       .dispatch(apiSlice.endpoints.verifyPin.initiate({ pin: FIXTURES.pin }))
       .then((result) => {
+        /*
+          A REJECTED PIN IS A 200, NOT AN ERROR — the single most dangerous thing to get wrong in
+          this file. `BffAuthController.VerifyPin` answers:
+
+              Ok(new ApiResponse<BffPinVerificationResponse> {
+                  Data = new BffPinVerificationResponse {
+                      Verified = false, AuthLevel = 1, PinExpiresAt = null },
+                  Message = "Invalid PIN" });
+
+          so an error check alone takes the success branch and settles 'elevated' for a PIN the
+          server just refused. The interceptor then replays against a session still at level 1, gets
+          another 403, and — since `baseQueryWithStepUp` deliberately does not re-intercept its own
+          replay — the test fails as STEP_UP_REQUIRED, which reads as "elevation didn't stick"
+          rather than "the PIN was wrong".
+
+          The real cost is not the confusing message. `ValidationRules.MaxPinAttempts` is 3 and
+          `PinLockoutMinutes` is 15, and this harness calls verify-pin from two places, so a fixture
+          PIN that ever drifts from the seeded value burns two attempts per run and LOCKS the shared
+          dev account on the second — poisoning every later run for a quarter of an hour. A
+          successful verification resets the counter (`PinService.ResetLockoutAsync`), which is why
+          the healthy path never accumulates.
+        */
         if ('error' in result && result.error) {
-          /*
-            The controller has to be settled with SOMETHING or the interceptor's promise never
-            resolves and the test hangs, and 'cancelled' is the only other outcome the type allows.
-            But a failed verify-pin is NOT a user declining: a 429 from the shared auth budget, a
-            transport error or a backend fault would all have surfaced as a deliberate
-            STEP_UP_CANCELLED and sent the reader looking for a bug in the cancel path. Recording
-            it here lets the test fail with the actual cause instead.
-          */
-          verifyFailure = JSON.stringify(result.error);
-          settleStepUp('cancelled');
-        } else {
-          settleStepUp('elevated');
+          verifyFailure = `verify-pin failed: ${JSON.stringify(result.error)}`;
+        } else if (!result.data?.verified) {
+          verifyFailure =
+            'verify-pin answered 200 but verified=false — the fixture PIN is wrong. ' +
+            'Each attempt counts against MaxPinAttempts (3); the account locks for 15 minutes.';
         }
+
+        /*
+          Settled either way, because the interceptor's promise must resolve or the run hangs, and
+          'cancelled' is the only other outcome `StepUpOutcome` allows. The recorded cause is what
+          keeps that from impersonating a deliberate user cancellation.
+        */
+        settleStepUp(verifyFailure ? 'cancelled' : 'elevated');
       });
   });
 

@@ -79,7 +79,8 @@ likes and its assertions stay about the protocol.
 
 ## Consequences
 
-**Sixteen assertions across five files, all green against the real stack, run twice.** What they buy:
+**Sixteen test cases across five files, all green against the real stack, run twice** — fifteen
+against the product, plus one guarding the harness's own cookie jar. What they buy:
 
 | Property | Why nothing else could prove it |
 |---|---|
@@ -134,7 +135,21 @@ so the guard costs nothing against the auth budget.
 per 60s per IP, and the suite spends about 5 per run (three logins, two PIN verifications). Two
 consecutive runs fit; **the third inside the same minute fails**, confirmed by running it. `signIn`
 turns that 429 into an explicit message rather than letting it read as contract drift. This is the
-main reason `fileParallelism` is off and login is once per file.
+main reason `fileParallelism` is off and login is once per file, and why the cookie-scoping test
+seeds a fake cookie instead of authenticating.
+
+**A REJECTED PIN IS A 200, and getting that wrong can lock the shared dev account.**
+`BffAuthController.VerifyPin` answers `Ok(... Verified = false, AuthLevel = 1 ...)` with the message
+"Invalid PIN" — it is not an error response. The first version of the step-up double checked only
+for an RTK error, so it settled `elevated` for a PIN the server had just refused; the interceptor
+then replayed against a level-1 session, took a second 403, and failed as `STEP_UP_REQUIRED`, which
+reads as "elevation didn't stick" rather than "the PIN is wrong". The expensive part is not the
+misleading message: `MaxPinAttempts` is 3 and `PinLockoutMinutes` is 15, and the harness verifies
+from two places, so a fixture PIN that ever drifted from the seed would burn two attempts per run
+and **lock the account on the second**, breaking every later run for a quarter of an hour. The
+double now inspects `data.verified` and fails with that explanation. Verified by running the suite
+with a deliberately wrong PIN (one attempt; a success calls `PinService.ResetLockoutAsync`, and the
+counter was confirmed back at 0 afterwards).
 
 **What is NOT covered.** Honest floor, not a ceiling:
 
@@ -147,5 +162,13 @@ main reason `fileParallelism` is off and login is once per file.
   paginated shape is asserted but transaction CONTENT is not.
 - **The 5xx branches of `problemBaseQuery`** (`NETWORK`, `PARSE`, the retry policy, `HTTP_502`)
   cannot be produced against a healthy stack and remain unit-tested only.
-- **Money accumulates.** The idempotency test deposits €1.00 per run into the dev database. Harmless
-  and deliberate — a deposit is additive and needs no counterparty — but it is not a clean-room.
+- **Money accumulates.** The idempotency test deposits €1.00 per run into the dev database, and the
+  test account's balance and history therefore differ between runs. Deliberate: a deposit is
+  additive and needs no counterparty, and every assertion is relative to a balance read immediately
+  beforehand, so no test depends on a fixed starting figure. It is still not a clean-room. The
+  honest fixes — a dedicated account or database per run, or a reset step — belong with Phase 4,
+  where the suite gets a database it owns rather than the shared dev one.
+- **The auth budget is per IP, not per process.** `fileParallelism: false` serialises files within
+  one run; it does nothing about two runs sharing an egress address. Locally that is the measured
+  "third run inside a minute fails". In CI it would mean concurrent jobs stealing each other's
+  quota, so Phase 4 needs a concurrency group or its own stack rather than just this config flag.
