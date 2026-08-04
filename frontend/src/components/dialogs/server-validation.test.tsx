@@ -65,6 +65,47 @@ describe('the account rules the mock did not enforce', () => {
     expect((await res.json()).errors.Name).toEqual(messages);
   });
 
+  it.each([
+    ['type', { name: 'Holiday Fund' }],
+    ['name', { type: 'Checking' }],
+  ])('refuses to create when the required member %s is ABSENT', async (_member, body) => {
+    /*
+      ABSENT is not EMPTY. Both members are `required` in C#, so System.Text.Json fails before
+      `[Required]` runs and the key is the document ROOT — a bare `$` — plus the body parameter's
+      own name. Measured 2026-08-04:
+
+        POST /api/accounts {"name":"No Type Probe"}
+          -> {"$":["JSON deserialization … was missing required properties including: 'type'."],
+              "request":["The request field is required."]}
+
+      The mock used to DEFAULT a missing type to Checking and answer 201, persisting a row the real
+      API refuses — the only remaining case where the fixture accepted a write the product rejects.
+    */
+    const before = mockState.accounts.length;
+    const res = await create(body);
+
+    expect(res.status).toBe(400);
+    const { errors } = await res.json();
+    expect(Object.keys(errors)).toEqual(expect.arrayContaining(['$', 'request']));
+    // The whole point: nothing was created.
+    expect(mockState.accounts).toHaveLength(before);
+  });
+
+  it('accepts a lower-case type and stores the canonical member', async () => {
+    /*
+      The API is case-insensitive here (`Enum.TryParse(..., ignoreCase: true)`) and the mock used to
+      be STRICTER than the server — a fixture rejecting input the product accepts, which hides a
+      working path. Measured: POST /api/accounts {"type":"checking"} -> 201.
+
+      Asserting the STORED value, not just the status: the API persists the canonical `Checking`,
+      so echoing the caller's casing back would drift the read model even with a correct 201.
+    */
+    const res = await create({ name: 'Case Probe', type: 'checking' });
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).data.type).toBe('Checking');
+  });
+
   it('rejects a type that is not one of the three', async () => {
     // `IsInEnum` — the mock used to cast whatever string arrived straight onto the account, so a
     // "Crypto" account was creatable here and impossible in production.

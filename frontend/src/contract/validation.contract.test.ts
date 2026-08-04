@@ -113,6 +113,38 @@ describe('contract: validation envelopes', () => {
     expect(Object.keys(both.errors ?? {})).toEqual(['Name']);
   });
 
+  it('answers a MISSING required member from the deserialiser, keyed by the document root', async () => {
+    /*
+      A third shape, distinct from both validation envelopes, and the one where the mock used to
+      accept a WRITE the API refuses: it defaulted a missing `type` to Checking and answered 201.
+
+      `CreateAccountRequest.Type` is `required`, so System.Text.Json fails before model state has a
+      property to name. The key is therefore the JSON path of the ROOT — a bare `$`, NOT `$.type` —
+      plus a second entry named after the action's body parameter, which is literally `request`.
+
+      Measured 2026-08-04:
+        POST /api/accounts {"name":"No Type Probe"}
+          -> {"$":["JSON deserialization for type '…CreateAccountRequest' was missing required
+                    properties including: 'type'."],
+              "request":["The request field is required."]}
+
+      Asserted on keys and status, not on the exact C# type name, so the contract does not break if
+      the DTO is ever renamed — the SHAPE is what a consumer branches on. Rejected, so no account
+      is created and this test leaves no state on either target.
+    */
+    const { status, body } = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'No Type Probe' }),
+    });
+    const keys = Object.keys(asProblem(body).errors ?? {});
+
+    expect(status).toBe(400);
+    expect(keys).toContain('$');
+    expect(keys).toContain('request');
+    // NOT the member-scoped path: that is what a *bad value* produces, not a missing one.
+    expect(keys).not.toContain('$.type');
+  });
+
   it('reports EVERY bad property in one pass, not the first one it meets', async () => {
     /*
       ASP.NET validates all bound properties together and returns them in a single
