@@ -9,6 +9,7 @@ import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../../theme/ThemeProvider';
 import { RouteError } from './RouteError';
+import { AppErrorBoundary } from './AppErrorBoundary';
 
 /**
  * The safety net, and — just as importantly — where it STOPS.
@@ -19,9 +20,13 @@ import { RouteError } from './RouteError';
  *
  * The second test is the one worth having. A data router catches errors in the ROUTE TREE only, and
  * this app renders four things — toaster, auth bootstrap, session warning, step-up modal — as
- * SIBLINGS above `RouterProvider` (App.tsx). Nothing catches a throw from those: the app has no
- * React error boundary anywhere. Pinning that keeps the limit visible instead of leaving a reader
- * to assume `errorElement` covers the whole app.
+ * SIBLINGS above `RouterProvider` (App.tsx). `errorElement` does not see them, and pinning that
+ * keeps the limit visible instead of leaving a reader to assume it covers the whole app.
+ *
+ * What has CHANGED: that used to mean a throw up there blanked the app, and this file asserted the
+ * blanking. `AppErrorBoundary` now sits above everything (App.tsx), so the same throw is caught —
+ * by the ROOT boundary, not this one. The test below therefore pins both halves at once: the route
+ * boundary still does not reach the chrome, AND the chrome is no longer uncovered.
  */
 
 /*
@@ -79,12 +84,19 @@ describe('RouteError', () => {
     expect(screen.queryByText(/Unexpected Application Error/i)).toBeNull();
   });
 
-  it('does NOT cover components rendered above RouterProvider', () => {
-    // The negative control, and the reason it matters: `errorElement` is a ROUTE boundary. The
-    // toaster, auth bootstrap, session warning and step-up modal are siblings of `RouterProvider`,
-    // so a throw in any of them escapes to the root and blanks the app — there is no React error
-    // boundary in this codebase to stop it. If that ever changes, this test should fail and be
-    // replaced by one asserting the new boundary.
+  it('does NOT cover components above RouterProvider — the ROOT boundary does', () => {
+    /*
+      The scope control. `errorElement` is a ROUTE boundary: the toaster, auth bootstrap, session
+      warning and step-up modal are siblings of `RouterProvider`, so a throw in any of them never
+      reaches it.
+
+      This test previously asserted that such a throw propagated out of `render` and blanked the
+      app, with a note saying it should be replaced the day a boundary existed. That day is now:
+      `AppErrorBoundary` wraps everything in App.tsx. So the assertion inverts — the throw is
+      caught — and the interesting part is WHICH fallback appears. The two are deliberately
+      distinguishable by copy ("The application could not be displayed" vs "This page…"), which is
+      what lets this pin the boundary that actually handled it rather than merely "something did".
+    */
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const router = createMemoryRouter(
@@ -96,14 +108,19 @@ describe('RouteError', () => {
       { initialEntries: ['/'] },
     );
 
-    expect(() =>
-      render(
+    render(
+      <AppErrorBoundary>
         <ThemeProvider>
           <Boom />
           <RouterProvider router={router} />
-        </ThemeProvider>,
-      ),
-    ).toThrow('boom');
+        </ThemeProvider>
+      </AppErrorBoundary>,
+    );
+
+    expect(screen.getByText(/The application could not be displayed/i)).toBeInTheDocument();
+    // Not the route fallback: RouteError never saw this, and a test that accepted either would not
+    // be testing the scope boundary at all.
+    expect(screen.queryByText(/This page could not be displayed/i)).toBeNull();
   });
 
   it('is actually wired into App, not just into this file', () => {

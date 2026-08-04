@@ -6,7 +6,7 @@ import { http } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { mockState } from '../mocks/state';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatDateHeading } from '../utils/format';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { TransactionDetailPage } from './TransactionDetailPage';
 
@@ -57,13 +57,19 @@ describe('transaction detail (T2)', () => {
     const deposit = mockState.transactions.find((t) => t.id === T1_DEPOSIT);
     if (!deposit) throw new Error(`No seeded transaction ${T1_DEPOSIT}`);
     expect(screen.getByText(deposit.transactionNumber)).toBeInTheDocument();
-    const day = new Date(deposit.createdAt).toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-      timeZone: 'UTC',
-    });
-    expect(screen.getByText(new RegExp(day))).toBeInTheDocument();
+    /*
+      Formatted with the PAGE'S OWN formatter, not a hand-rolled one. The previous version built the
+      expected string with `toLocaleDateString(..., { timeZone: 'UTC' })` while the page renders
+      date-fns `format()`, which is LOCAL — a second source of truth for the same value, and the
+      exact mistake the comment above warns about for the balance.
+
+      It was invisible while the seed was pinned to fixed mid-morning July timestamps, and became a
+      red build the moment the ledger went time-relative (PR #68): entries are now spread across
+      [monthStart, now], so any that land in the last two hours of a UTC day read as the NEXT day
+      at UTC+2. Measured here: T1 redated to 2026-08-03T23:06Z — "August 3" forced to UTC, "August 4"
+      as rendered. Intermittent by the hour, which is the worst kind of red.
+    */
+    expect(screen.getByText(new RegExp(formatDateHeading(deposit.createdAt)))).toBeInTheDocument();
     expect(screen.getByText('Salary')).toBeInTheDocument();
     // Balance after. Read from the seed rather than typed, because the seed DERIVES it — the
     // running balance is computed backwards from the account's real balance, so a hand-copied

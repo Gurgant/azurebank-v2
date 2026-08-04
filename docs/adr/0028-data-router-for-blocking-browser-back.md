@@ -102,6 +102,14 @@ That is a real gap, but a PRE-EXISTING one that this migration narrows rather th
 closing it is deliberately left out of a routing change. Both halves are pinned by test: a throwing
 route renders `RouteError`, and a sibling above `RouterProvider` is proven NOT to be covered.
 
+> **CLOSED, 2026-08-04 (ADR-0033).** The scope claim above still holds exactly — `errorElement` is
+> still a ROUTE boundary and still does not see the chrome. What no longer holds is the consequence:
+> `AppErrorBoundary` now wraps the whole tree in `App.tsx`, above `Provider` and `ThemeProvider`, so
+> a throw in the chrome renders a recovery screen instead of blanking the page. The paragraph above
+> is left standing because it was true when written and explains why the gap existed; the test that
+> pinned the blanking has been inverted to pin the catch, and to assert WHICH of the two boundaries
+> handled it.
+
 **7. Keep RTK Query. Do not adopt TanStack Query.** What the app uses is not the part TanStack does
 better: a custom `baseQuery` doing RFC7807 unwrapping, Zod validation at the money boundary, a
 step-up/PIN interceptor that re-runs the original request, tag invalidation across six endpoint
