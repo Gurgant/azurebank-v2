@@ -31,3 +31,10 @@ __pycache__/
 *.log
 cookies*.txt
 graphify-out/
+
+# Playwright (ADR-0031). The auth state holds a LIVE session cookie and must never be committed;
+# reports and traces are per-run debugging artefacts.
+frontend/e2e/.auth/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/

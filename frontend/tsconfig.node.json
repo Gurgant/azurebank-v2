@@ -22,5 +22,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
+  /*
+    The Playwright config and the E2E specs are typechecked by `tsconfig.e2e.json`, not here: they
+    need the DOM lib for the `addInitScript` / `evaluate` callbacks that run inside the page, and
+    `vite.config.ts` must NOT get browser globals it cannot use at runtime.
+  */
   "include": ["vite.config.ts"]
 }
