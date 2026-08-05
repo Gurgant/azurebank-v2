@@ -228,21 +228,71 @@ describe('a body that cannot be read at all', () => {
     '%s %s %s: malformed JSON is a 400, not a 500',
     async (_n, method, url, extra) => {
       const res = await send(method, url, 'not json', extra);
+      const body = await res.json();
 
       expect(res.status).toBe(400);
-      expect((await res.json()).errors.$).toEqual(['The request body could not be read as JSON.']);
+      expect(body.errors.$).toEqual(['The request body could not be read as JSON.']);
+      /*
+        The ENVELOPE, not just the key. An unreadable body never reaches a FluentValidation
+        validator — it fails in the input formatter, so `[ApiController]` model state renders it
+        and the answer is the framework's shape: the rfc9110 type, "One or more validation errors
+        occurred." as the title, and NO `detail` member at all. The mock used the handler-written
+        envelope ("Validation Failed", httpstatuses type, a detail sentence), which is the one
+        thing this test could not see while it asserted only `errors.$`.
+      */
+      expect(body.type).toBe('https://tools.ietf.org/html/rfc9110#section-15.5.1');
+      expect(body.title).toBe('One or more validation errors occurred.');
+      expect(body.detail).toBeUndefined();
+      expect(body.instance).toBeUndefined();
     },
   );
 
   it.each(HANDLERS)('%s %s %s: an empty body is a 400 too', async (_n, method, url, extra) => {
-    // ASP.NET distinguishes the two, and the sentence differs: a missing body is "A non-empty
-    // request body is required." The malformed-JSON text embeds a parse position, so that one is
-    // an honest approximation — the KEY, `$`, is faithful either way.
+    /*
+      ASP.NET distinguishes the two, and it is not only the sentence that differs — the KEY does.
+      This test asserted `$` for both, which is what the mock used to emit; measured on the
+      running stack, an ABSENT body is keyed by the EMPTY STRING and only a malformed one by `$`:
+
+        POST /api/accounts ""             -> {"":["A non-empty request body is required."], "request":[…]}
+        POST /api/accounts "not json"     -> {"$":["'not json' is an invalid JSON literal. …"], "request":[…]}
+
+      Same on the BFF (`POST /bff/auth/login`), so one shape covers all eleven rows. The empty
+      string is a SIXTH distinct key shape in this API, after `Name`, `at`, `$`, `$.type` and
+      FluentValidation's camelCase.
+    */
     const res = await send(method, url, '', extra);
+    const body = await res.json();
 
     expect(res.status).toBe(400);
-    expect((await res.json()).errors.$).toEqual(['A non-empty request body is required.']);
+    expect(body.errors['']).toEqual(['A non-empty request body is required.']);
+    expect(body.errors.$).toBeUndefined();
+    // The framework names the action's body parameter too, and it is `request` in every controller
+    // on both hosts. Asserted because its ABSENCE was part of the old wrong shape.
+    expect(body.errors.request).toEqual(['The request field is required.']);
   });
+
+  it.each(HANDLERS)(
+    '%s %s %s: a WHITESPACE body is unparseable, not absent',
+    async (_n, method, url, extra) => {
+      /*
+        The boundary between the two branches above, and the mock had it in the wrong place: a
+        `trim()` classified "   " as an empty body and answered with the `""` key. Measured on the
+        running stack — whitespace is sent, so it reaches System.Text.Json and fails there:
+
+          POST /api/accounts "   "
+          -> {"$":["The input does not contain any JSON tokens. …BytePositionInLine: 3."], …}
+
+        Absent vs unparseable is the whole distinction these two keys encode, so a body that is
+        present-but-blank has to land on the parse side of it.
+      */
+      const res = await send(method, url, '   ', extra);
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.errors.$).toEqual(['The request body could not be read as JSON.']);
+      expect(body.errors['']).toBeUndefined();
+    },
+  );
 
   it('a JSON array is not a body either', async () => {
     // Asserting only the 400 made this VACUOUS: with the `Array.isArray` guard deleted the array

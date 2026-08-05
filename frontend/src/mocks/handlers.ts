@@ -7,6 +7,7 @@ import {
   missingMemberProblem,
   modelStateProblem,
   problem,
+  unreadableBodyProblem,
 } from './problem';
 import {
   MOCK_PASSWORD,
@@ -291,9 +292,27 @@ function authTokenMissing(pathname: string) {
     errorCode: 'AUTH_TOKEN_MISSING',
     title: 'Unauthorized',
     detail: 'Authentication is required to access this resource.',
-    extensions: { instance: pathname },
+    // Was passed through `extensions`, which appended it AFTER traceId. `Instance` is a declared
+    // ProblemDetails member, so it serialises before every extension — this site had the right
+    // member in the wrong place, which is why the audit's "every body omits instance" missed it.
+    instance: pathname,
   });
 }
+
+/**
+ * `Instance = httpContext.Request.Path` — the API's three handlers all set exactly this, so every
+ * mock response that emulates one derives it the same way rather than hardcoding a route.
+ *
+ * Pathname only, and measured rather than assumed — `Request.Path` and `Request.QueryString` are
+ * separate members, so the question is which one lands here:
+ *
+ *   GET /api/accounts/{unknown}/full-number?foo=1&bar=2
+ *   -> "instance": "/api/accounts/00000000-0000-0000-0000-000000000009/full-number"
+ *
+ * The query string is absent, so `pathname` is right and `url.pathname + url.search` would be
+ * wrong. Note the path is the SUBSTITUTED one, ids and all, not the route template.
+ */
+const pathOf = (request: Request) => new URL(request.url).pathname;
 
 /**
  * The account-name and handle rules, which the mock enforced nowhere.
@@ -346,21 +365,6 @@ async function readJsonBody(
     return null;
   }
   return { raw, body: parsed as Record<string, unknown> };
-}
-
-/**
- * The 400 an unreadable body earns.
- *
- * Model binding rejects it before any action runs, so this is a validation shape and not a domain
- * error. The empty-body sentence is ASP.NET's own and is stable; the malformed-JSON one is an
- * approximation on purpose — the framework's text embeds the parse position
- * ("'n' is an invalid start of a value. Path: $ | LineNumber: 0 …"), which depends on the payload
- * and would be fake precision to imitate. The KEY is faithful: `$`, the JSON path.
- */
-function badRequestBody(raw: string) {
-  return raw.trim().length === 0
-    ? problem({ status: 400, errors: { $: ['A non-empty request body is required.'] } })
-    : problem({ status: 400, errors: { $: ['The request body could not be read as JSON.'] } });
 }
 
 // `satisfies` rather than a bare array: `AccountType` is generated from the spec, so if the enum
@@ -466,11 +470,16 @@ function rejectBadAccountName(name: unknown, requiredMessage: string): string[] 
  * Mirroring the quirk is the point. A mock that "corrects" the server teaches a client to expect a
  * code it will never receive, and the bug then belongs to production rather than to this file.
  */
-function notFound(resource: 'Account' | 'Transaction' | 'Recipient', identifier: unknown) {
+function notFound(
+  resource: 'Account' | 'Transaction' | 'Recipient',
+  identifier: unknown,
+  request: Request,
+) {
   return problem({
     status: 404,
     errorCode: 'ACCOUNT_NOT_FOUND',
     detail: `${resource} with identifier '${String(identifier)}' was not found.`,
+    instance: pathOf(request),
   });
 }
 
@@ -500,7 +509,7 @@ const listAccounts = api.get('/api/accounts', ({ response }) => {
 const createAccount = api.post('/api/accounts', async ({ request, response }) => {
   const parsed = await readJsonBody(request);
   if (!parsed) {
-    return response.untyped(badRequestBody(await request.clone().text()));
+    return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const { body } = parsed;
 
@@ -565,6 +574,7 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
     //       "instance":"/api/accounts","errors":{"type":["Invalid account type. Must be …"]}}
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errors: { type: ['Invalid account type. Must be Checking, Savings, or Investment.'] },
       }),
@@ -614,10 +624,10 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
  * Had no handler at all while `getAccount`/`useGetAccountQuery` sat exported from the barrel. The
  * sentinel at the bottom of this file is what makes that impossible to repeat quietly.
  */
-const getAccount = api.get('/api/accounts/{id}', ({ params, response }) => {
+const getAccount = api.get('/api/accounts/{id}', ({ params, request, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(notFound('Account', params.id));
+    return response.untyped(notFound('Account', params.id, request));
   }
   return response(200).json({ data: account, message: null });
 });
@@ -648,7 +658,7 @@ const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, reque
 
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(notFound('Account', params.id));
+    return response.untyped(notFound('Account', params.id, request));
   }
 
   const atMs = at ? Date.parse(at) : Number.NaN;
@@ -698,7 +708,7 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
   */
   const parsed = await readJsonBody(request);
   if (!parsed) {
-    return response.untyped(badRequestBody(await request.clone().text()));
+    return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   // `UpdateAccountRequest` overrides the required wording; the KEY is still the CLR property.
   // Measured: PATCH /api/accounts/{id} {"name":""}
@@ -710,37 +720,41 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
 
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(notFound('Account', params.id));
+    return response.untyped(notFound('Account', params.id, request));
   }
   account.name = parsed.body.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });
 });
 
 /** PATCH /api/accounts/{id}/set-primary — exactly one primary at a time (A6). */
-const setPrimaryAccount = api.patch('/api/accounts/{id}/set-primary', ({ params, response }) => {
-  const account = mockState.accounts.find((a) => a.id === params.id);
-  if (!account) {
-    return response.untyped(notFound('Account', params.id));
-  }
-  for (const a of mockState.accounts) {
-    a.isPrimary = false;
-  }
-  account.isPrimary = true;
-  return response(200).json({ message: 'Account set as primary' });
-});
+const setPrimaryAccount = api.patch(
+  '/api/accounts/{id}/set-primary',
+  ({ params, request, response }) => {
+    const account = mockState.accounts.find((a) => a.id === params.id);
+    if (!account) {
+      return response.untyped(notFound('Account', params.id, request));
+    }
+    for (const a of mockState.accounts) {
+      a.isPrimary = false;
+    }
+    account.isPrimary = true;
+    return response(200).json({ message: 'Account set as primary' });
+  },
+);
 
 /**
  * DELETE /api/accounts/{id} — the REAL business rules (AccountService): a 422
  * BusinessRuleException for non-zero balance or primary, else soft delete.
  */
-const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) => {
+const deleteAccount = api.delete('/api/accounts/{id}', ({ params, request, response }) => {
   const account = mockState.accounts.find((a) => a.id === params.id);
   if (!account) {
-    return response.untyped(notFound('Account', params.id));
+    return response.untyped(notFound('Account', params.id, request));
   }
   if (account.balance !== 0) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'NON_ZERO_BALANCE',
         // The API always appends the amount, so the user is told WHAT to empty, not just that
@@ -752,6 +766,7 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) =>
   if (account.isPrimary) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'PRIMARY_ACCOUNT_DELETE',
         detail: 'Cannot delete primary account. Set another account as primary first.',
@@ -767,19 +782,39 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, response }) =>
  * the level-2 gate first (403 step-up when not elevated), THEN ownership (404), then the full
  * unmasked number the API emits only here.
  */
-const revealAccountNumber = api.get('/api/accounts/{id}/full-number', ({ params, response }) => {
-  if (mockState.authLevel < 2) {
-    return response.untyped(stepUp403(mockState.authLevel));
-  }
-  const account = mockState.accounts.find((a) => a.id === params.id);
-  if (!account) {
-    return response.untyped(notFound('Account', params.id));
-  }
-  return response(200).json({
-    data: { accountId: account.id, accountNumber: unmaskForMock(account.accountNumber) },
-    message: null,
-  });
-});
+const revealAccountNumber = api.get(
+  '/api/accounts/{id}/full-number',
+  ({ params, request, response }) => {
+    if (mockState.authLevel < 2) {
+      return response.untyped(stepUp403(mockState.authLevel));
+    }
+    const account = mockState.accounts.find((a) => a.id === params.id);
+    if (!account) {
+      return response.untyped(notFound('Account', params.id, request));
+    }
+    return response(200).json(
+      {
+        data: { accountId: account.id, accountNumber: unmaskForMock(account.accountNumber) },
+        message: null,
+      },
+      {
+        /*
+          The one response in the system that carries an unmasked account number, and the only one
+          the controller gives cache directives to (ASVS 14.3.2). Measured on the running stack,
+          and measured on a NEIGHBOUR to be sure it is specific rather than global:
+
+            GET /api/accounts/{id}/full-number -> Cache-Control: no-store, Pragma: no-cache
+            GET /api/accounts                  -> neither header present
+
+          It matters here and not only in production: this is exactly the kind of header a
+          front-end change could silently drop — a `fetch` with the wrong `cache` mode, a service
+          worker added later — and a mock that never sets it can never fail the test that notices.
+        */
+        headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+      },
+    );
+  },
+);
 
 /**
  * Query lookup that ignores case, because ASP.NET's model binder does.
@@ -887,6 +922,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   if (canonicalAccountId && !mockState.accounts.some((a) => a.id === canonicalAccountId)) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 403,
         errorCode: 'ACCESS_DENIED',
         detail: 'You do not have access to this account.',
@@ -1054,6 +1090,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   if (fromMs > toMs) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'INVALID_DATE_RANGE',
         detail: 'FromDate must be earlier than or equal to ToDate.',
@@ -1068,6 +1105,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   if (summaryAccountId && !mockState.accounts.some((a) => a.id === summaryAccountId)) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 403,
         errorCode: 'ACCESS_DENIED',
         detail: 'You do not have access to this account.',
@@ -1116,10 +1154,10 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
 });
 
 /** GET /api/transactions/{id} — T2 detail, enveloped; unknown ids are a real 404. */
-const getTransaction = api.get('/api/transactions/{id}', ({ params, response }) => {
+const getTransaction = api.get('/api/transactions/{id}', ({ params, request, response }) => {
   const transaction = mockState.transactions.find((t) => t.id === params.id);
   if (!transaction) {
-    return response.untyped(notFound('Transaction', params.id));
+    return response.untyped(notFound('Transaction', params.id, request));
   }
   return response(200).json({ data: toWire(transaction), message: null });
 });
@@ -1130,6 +1168,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   if (!key) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
         detail: "The 'Idempotency-Key' header is required on this endpoint.",
@@ -1145,16 +1184,17 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_INVALID',
-        detail: 'The Idempotency-Key header must be a single non-empty UUID.',
+        detail: "The 'Idempotency-Key' header must be a valid UUID.",
       }),
     );
   }
 
   const parsedBody = await readJsonBody(request);
   if (!parsedBody) {
-    return response.untyped(badRequestBody(await request.clone().text()));
+    return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
@@ -1163,6 +1203,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
         problem({
+          instance: pathOf(request),
           status: 422,
           errorCode: 'IDEMPOTENCY_KEY_REUSE',
           detail: 'This idempotency key was already used with a different payload.',
@@ -1199,7 +1240,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     use a seeded account, which costs them nothing.
   */
   if (!account) {
-    return response.untyped(notFound('Account', body.accountId));
+    return response.untyped(notFound('Account', body.accountId, request));
   }
   const newBalance = account.balance + amount;
   account.balance = newBalance;
@@ -1253,6 +1294,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   if (!key) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
         detail: "The 'Idempotency-Key' header is required on this endpoint.",
@@ -1268,16 +1310,17 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_INVALID',
-        detail: 'The Idempotency-Key header must be a single non-empty UUID.',
+        detail: "The 'Idempotency-Key' header must be a valid UUID.",
       }),
     );
   }
 
   const parsedBody = await readJsonBody(request);
   if (!parsedBody) {
-    return response.untyped(badRequestBody(await request.clone().text()));
+    return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
@@ -1286,6 +1329,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
         problem({
+          instance: pathOf(request),
           status: 422,
           errorCode: 'IDEMPOTENCY_KEY_REUSE',
           detail: 'This idempotency key was already used with a different payload.',
@@ -1325,7 +1369,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   */
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
-    return response.untyped(notFound('Account', body.accountId));
+    return response.untyped(notFound('Account', body.accountId, request));
   }
 
   // PIN_REQUIRED — the user never set a PIN. Gated only when a session exists; tests that
@@ -1333,6 +1377,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   if (mockState.session && !mockState.session.hasPin) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'PIN_REQUIRED',
         detail: 'PIN must be set before making withdrawals.',
@@ -1347,6 +1392,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     const retryAfterSeconds = Math.ceil((Date.parse(mockState.pinLockedUntil) - now) / 1000);
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 429,
         errorCode: 'PIN_LOCKED',
         detail: 'Too many incorrect PIN attempts. Please try again later.',
@@ -1366,6 +1412,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
       mockState.pinLockedUntil = new Date(now + retryAfterSeconds * 1000).toISOString();
       return response.untyped(
         problem({
+          instance: pathOf(request),
           status: 429,
           errorCode: 'PIN_LOCKED',
           detail: 'Too many incorrect PIN attempts. Please try again later.',
@@ -1375,7 +1422,12 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
       );
     }
     return response.untyped(
-      problem({ status: 401, errorCode: 'INVALID_PIN', detail: 'Invalid PIN.' }),
+      problem({
+        instance: pathOf(request),
+        status: 401,
+        errorCode: 'INVALID_PIN',
+        detail: 'Invalid PIN.',
+      }),
     );
   }
   // Correct PIN clears the attempt counter.
@@ -1386,6 +1438,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   if (amount > available) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
         // The API embeds BOTH amounts so the user knows the shortfall without doing the
@@ -1457,7 +1510,7 @@ const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) 
 const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, response }) => {
   const parsed = await readJsonBody(request);
   if (!parsed) {
-    return response.untyped(badRequestBody(await request.clone().text()));
+    return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const body = parsed.body;
 
@@ -1499,6 +1552,7 @@ const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, res
   if (mockState.recipients.some((r) => r.azureTag === tag)) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 409,
         errorCode: 'AZURE_TAG_TAKEN',
         detail: 'That handle is already taken.',
@@ -1528,6 +1582,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (!key) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
         detail: "The 'Idempotency-Key' header is required on this endpoint.",
@@ -1543,16 +1598,17 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_INVALID',
-        detail: 'The Idempotency-Key header must be a single non-empty UUID.',
+        detail: "The 'Idempotency-Key' header must be a valid UUID.",
       }),
     );
   }
 
   const parsedBody = await readJsonBody(request);
   if (!parsedBody) {
-    return response.untyped(badRequestBody(await request.clone().text()));
+    return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
@@ -1561,6 +1617,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
         problem({
+          instance: pathOf(request),
           status: 422,
           errorCode: 'IDEMPOTENCY_KEY_REUSE',
           detail: 'This idempotency key was already used with a different payload.',
@@ -1597,12 +1654,13 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   */
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
-    return response.untyped(notFound('Account', body.fromAccountId));
+    return response.untyped(notFound('Account', body.fromAccountId, request));
   }
 
   if (mockState.session?.azureTag === tag) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'SELF_TRANSFER_NOT_ALLOWED',
         detail: 'You cannot transfer money to yourself.',
@@ -1613,13 +1671,14 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (!recipient) {
     // `TransferService` throws NotFoundException("Recipient", tag) here — hence the resource name
     // and the ACCOUNT_NOT_FOUND code, which that constructor uses for every resource.
-    return response.untyped(notFound('Recipient', tag));
+    return response.untyped(notFound('Recipient', tag, request));
   }
 
   const available = account.balance;
   if (amount > available) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
         // The API embeds BOTH amounts so the user knows the shortfall without doing the
@@ -1683,6 +1742,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (!key) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_MISSING',
         detail: "The 'Idempotency-Key' header is required on this endpoint.",
@@ -1698,16 +1758,17 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (parsedKey === null || parsedKey === NIL_UUID) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errorCode: 'IDEMPOTENCY_KEY_INVALID',
-        detail: 'The Idempotency-Key header must be a single non-empty UUID.',
+        detail: "The 'Idempotency-Key' header must be a valid UUID.",
       }),
     );
   }
 
   const parsedBody = await readJsonBody(request);
   if (!parsedBody) {
-    return response.untyped(badRequestBody(await request.clone().text()));
+    return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
   const fp = fingerprint(raw);
@@ -1716,6 +1777,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     if (stored.bodyFingerprint !== fp) {
       return response.untyped(
         problem({
+          instance: pathOf(request),
           status: 422,
           errorCode: 'IDEMPOTENCY_KEY_REUSE',
           detail: 'This idempotency key was already used with a different payload.',
@@ -1763,6 +1825,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     */
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 400,
         errors: { toAccountId: ['Cannot transfer to the same account.'] },
       }),
@@ -1773,15 +1836,16 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   // not find rather than shrugging at "one of the accounts".
   const from = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!from) {
-    return response.untyped(notFound('Account', body.fromAccountId));
+    return response.untyped(notFound('Account', body.fromAccountId, request));
   }
   const to = mockState.accounts.find((a) => a.id === body.toAccountId);
   if (!to) {
-    return response.untyped(notFound('Account', body.toAccountId));
+    return response.untyped(notFound('Account', body.toAccountId, request));
   }
   if (amount > from.balance) {
     return response.untyped(
       problem({
+        instance: pathOf(request),
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
         // The API embeds BOTH amounts so the user knows the shortfall without doing the
@@ -1797,8 +1861,23 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   const index = mockState.transactions.length;
   const transactionNumber = `TXN-20260722-${String(600 + index).padStart(6, '0')}`;
   const at = `2026-07-22T13:${String(index).padStart(2, '0')}:00.0000000Z`;
+  /*
+    `TransferId = outgoingTransaction.Id` (TransferService.cs:330) — the response NAMES the
+    outgoing ledger row, it does not mint a new identifier. Measured end to end on the running
+    stack, which is the only way to see that the id is dereferenceable:
+
+      POST /api/transfers/internal -> transferId 019fd135-37c7-78d4-9d7b-8afcde4c6e3f
+      GET  /api/transactions/019fd135-37c7-78d4-9d7b-8afcde4c6e3f -> 200, type "TransferOut"
+
+    The mock returned a synthetic `0xd00 + index` belonging to no row, so the same GET was a 404.
+    (The audit also claimed this collided with the deposit block, which uses the same 0xd00 base.
+    It does not: every block indexes off `transactions.length`, which strictly increases, so no two
+    writes can ever draw the same index. Sharing the base is still a trap worth removing, and
+    naming the row removes it.)
+  */
+  const outgoingId = `019f7b3f-0000-7000-8000-${(0xc00 + index).toString(16).padStart(12, '0')}`;
   mockState.transactions.push({
-    id: `019f7b3f-0000-7000-8000-${(0xc00 + index).toString(16).padStart(12, '0')}`,
+    id: outgoingId,
     accountId: from.id,
     transactionNumber,
     type: 'TransferOut',
@@ -1826,7 +1905,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
 
   const payload = {
     data: {
-      transferId: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
+      transferId: outgoingId,
       transactionNumber,
       fromAccountId: from.id,
       toAccountId: to.id,
@@ -1885,7 +1964,7 @@ function pinPayloadProblem(dto: 'VerifyPinRequest' | 'SetPinRequest', pin: unkno
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   const authBody = await readJsonBody(request);
   if (!authBody) {
-    return badRequestBody(await request.clone().text());
+    return unreadableBodyProblem(await request.clone().text());
   }
   const pin = authBody.body.pin as string | undefined;
   // Model validation runs before the action, so a malformed PIN is a 400 even for an anonymous
@@ -1970,7 +2049,7 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   const authBody = await readJsonBody(request);
   if (!authBody) {
-    return badRequestBody(await request.clone().text());
+    return unreadableBodyProblem(await request.clone().text());
   }
   const pin = authBody.body.pin as string | undefined;
   if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
@@ -2014,7 +2093,7 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
 const login = http.post('*/bff/auth/login', async ({ request }) => {
   const authBody = await readJsonBody(request);
   if (!authBody) {
-    return badRequestBody(await request.clone().text());
+    return unreadableBodyProblem(await request.clone().text());
   }
   const email = authBody.body.email as string | undefined;
   const password = authBody.body.password as string | undefined;
@@ -2042,7 +2121,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
 const register = http.post('*/bff/auth/register', async ({ request }) => {
   const registerBody = await readJsonBody(request);
   if (!registerBody) {
-    return badRequestBody(await request.clone().text());
+    return unreadableBodyProblem(await request.clone().text());
   }
   const body = registerBody.body as {
     azureTag?: string;
@@ -2106,7 +2185,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
 const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }) => {
   const parsed = await readJsonBody(request);
   if (!parsed) {
-    return badRequestBody(await request.clone().text());
+    return unreadableBodyProblem(await request.clone().text());
   }
   // Checked first, and WITHOUT marking activity: a dead session has nothing to re-authenticate into.
   if (expireMockSessionIfDue() || !mockState.session) {
