@@ -13,6 +13,13 @@ export interface ProblemInit {
   errorCode?: string;
   title?: string;
   detail?: string;
+  /**
+   * `Instance = httpContext.Request.Path` — the request path, and ONLY on the API's three
+   * hand-written handlers (plus the JWT events and two BFF middlewares). See the table in
+   * `problemBody` for where it is present and where it is measurably absent; omitting it here
+   * is a real state, not an oversight.
+   */
+  instance?: string;
   /** field -> messages, as the ValidationExceptionHandler emits (400 only, no errorCode). */
   errors?: Record<string, string[]>;
   /** Extra top-level members (available, retryAfterSeconds, lockedUntil, ...). */
@@ -37,8 +44,29 @@ export function fakeTraceId(): string {
   return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
 }
 
+/*
+  Which responses actually carry `instance`, measured on the running stack 2026-08-05. The audit
+  entry that prompted this said "EVERY mock error body omits instance"; both halves of that are
+  wrong, and applying it as written would have added the member to paths that provably lack it.
+
+    PRESENT — the API's own handlers, which all assign `Instance = httpContext.Request.Path`:
+      FluentValidation 400   POST /api/accounts {"type":"99"}  -> instance "/api/accounts"
+      domain 404/422/400     AppExceptionHandler               -> instance "/api/accounts/{id}"
+      JWT 401                OnChallenge                       -> instance "/api/accounts"
+
+    ABSENT — nothing in the framework's model-state path sets it, and the BFF hand-builds its
+    own bodies without it:
+      model-state 400        ?Page=abc, and DataAnnotation failures  (-> modelStateProblem)
+      deserialisation 400    missing/uncoercible member              (-> missingMemberProblem)
+      terminal 404           no route match
+      BFF 401                GET /bff/auth/me with no cookie: {"title","status","detail"} only
+      BFF step-up 403        a bare non-ProblemDetails shape entirely (see stepUp403)
+
+  So `instance` is a property of WHICH HANDLER answered, exactly like the title and the traceId
+  format — one more axis of the same distinction #75 and #78 drew.
+*/
 export function problemBody(init: ProblemInit) {
-  const { status, errorCode, title, detail, errors, extensions } = init;
+  const { status, errorCode, title, detail, instance, errors, extensions } = init;
   /*
     A validation 400 is NOT a generic 400. `ValidationExceptionHandler` writes its own
     ProblemDetails with `Title = "Validation Failed"` and
@@ -51,13 +79,25 @@ export function problemBody(init: ProblemInit) {
     distinguishes the two handlers.
   */
   const isValidation = status === 400 && errors !== undefined;
+  /*
+    Member ORDER is the C# insertion order, not a preference. `ProblemDetails` serialises its
+    declared members first (type, title, status, detail, instance) and then `Extensions` in the
+    order each handler adds them:
+
+      AppExceptionHandler        errorCode, traceId, then the exception's own Details
+      ValidationExceptionHandler traceId, then errors
+
+    One template reproduces both, because no response ever carries an errorCode AND an errors
+    dictionary. The mock previously emitted traceId BEFORE errorCode, which matches neither.
+  */
   return {
     type: `https://httpstatuses.com/${status}`,
     title: title ?? (isValidation ? 'Validation Failed' : (DEFAULT_TITLES[status] ?? 'Error')),
     status,
     detail: detail ?? (isValidation ? 'One or more validation errors occurred.' : ''),
-    traceId: fakeTraceId(),
+    ...(instance ? { instance } : {}),
     ...(errorCode ? { errorCode } : {}),
+    traceId: fakeTraceId(),
     ...(errors ? { errors } : {}),
     ...extensions,
   };
@@ -158,6 +198,55 @@ export function invalidJsonValueProblem(path: string, message: string) {
     [path]: [message],
     request: ['The request field is required.'],
   });
+}
+
+/**
+ * The third deserialisation shape: the body could not be READ at all.
+ *
+ * Sibling of the two above and, until measured, assumed to be the FluentValidation envelope with
+ * a `$` key for both cases. Neither half held. `POST /api/accounts` on the running stack,
+ * 2026-08-05:
+ *
+ *   body ""               -> {"":["A non-empty request body is required."],
+ *                             "request":["The request field is required."]}
+ *   body "not json at all" -> {"$":["'not json at all' is an invalid JSON literal. Expected the
+ *                                    literal 'null'. Path: $ | LineNumber: 0 | BytePositionInLine: 1."],
+ *                             "request":["The request field is required."]}
+ *
+ * Two things to keep straight. The envelope is the FRAMEWORK one (rfc9110 type, no `detail`), not
+ * the handler-written one — this reaches `[ApiController]` model state, never a validator. And an
+ * EMPTY body is keyed by the empty string, not by `$`: a **sixth** distinct key shape, after
+ * `Name`, `at`, `$`, `$.type` and FluentValidation's camelCase. `toFieldName('')` is `''`, which
+ * matches no control, so the sentence lands as a form-level error — the right place for it.
+ *
+ * The malformed-JSON sentence stays an approximation on purpose: the framework's text embeds the
+ * offending token and the parse position, so imitating it exactly would be fake precision that
+ * changes with every payload. The KEY and the ENVELOPE are what a client branches on, and those
+ * are now faithful.
+ */
+export function unreadableBodyProblem(raw: string) {
+  /*
+    `raw.length`, NOT `raw.trim().length` — the distinction is ABSENT vs UNPARSEABLE, and a body of
+    "   " is present. It was a `trim()` here before (carried over unchanged when this moved out of
+    handlers.ts), which put whitespace in the empty-body branch and answered with the wrong key.
+    CodeRabbit raised it; measured before accepting, since the question is what the API does:
+
+      POST /api/accounts  body "   "
+      -> {"$":["The input does not contain any JSON tokens. Expected the input to start with a
+                valid JSON token, when isFinalBlock is true. Path: $ | LineNumber: 0 |
+                BytePositionInLine: 3."], "request":[…]}
+
+    So whitespace reaches System.Text.Json and fails there like any other garbage — the `$` branch.
+  */
+  return raw.length === 0
+    ? modelStateProblem({
+        '': ['A non-empty request body is required.'],
+        request: ['The request field is required.'],
+      })
+    : modelStateProblem({
+        $: ['The request body could not be read as JSON.'],
+        request: ['The request field is required.'],
+      });
 }
 
 /** W3C traceparent (`00-<32hex>-<16hex>-01`), which is what the framework path emits. */

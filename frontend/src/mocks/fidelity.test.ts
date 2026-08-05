@@ -768,3 +768,58 @@ describe('a deleted account takes its transactions with it', () => {
     expect(afterSummary.data.totalExpenses).toBe(beforeSummary.data.totalExpenses - 25);
   });
 });
+
+describe('the internal transfer names a real ledger row', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+    // `/api/transfers/internal` is one of the three level-2 routes; stand-in for a successful
+    // /bff/auth/verify-pin, as `transferHandler.test.ts` does.
+    mockState.authLevel = 2;
+  });
+
+  it('returns a transferId that dereferences to the OUTGOING row', async () => {
+    /*
+      `TransferService.cs:330` sets `TransferId = outgoingTransaction.Id`, so the id in the
+      response is the id of the debit row the transfer just wrote — not a new identifier. Measured
+      end to end, because the whole point is that the id is dereferenceable and only a real request
+      can show that:
+
+        POST /api/transfers/internal -> transferId 019fd135-37c7-78d4-9d7b-8afcde4c6e3f
+        GET  /api/transactions/019fd135-37c7-78d4-9d7b-8afcde4c6e3f
+          -> 200 {"id":"019fd135-37c7-78d4-9d7b-8afcde4c6e3f","type":"TransferOut",
+                  "transactionNumber":"TXN-20260805-248545",...}
+
+      The mock minted a synthetic `0xd00 + index` instead, which matched no row at all — so the
+      same follow-up GET was a 404 under MSW and a 200 in production. Latent today because no
+      screen navigates from a transfer receipt to the transaction, and precisely the sort of thing
+      that stops being latent the moment someone builds that link.
+    */
+    const second = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Transfer Target', type: 'Savings' }),
+    }).then((r) => r.json());
+
+    const transfer = await fetch('/api/transfers/internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({
+        fromAccountId: MAIN_ACCOUNT_ID,
+        toAccountId: second.data.id,
+        amount: 10,
+        description: 'dereference me',
+      }),
+    }).then((r) => r.json());
+
+    const followed = await fetch(`/api/transactions/${transfer.data.transferId}`);
+    expect(followed.status).toBe(200);
+
+    const row = (await followed.json()).data;
+    expect(row.id).toBe(transfer.data.transferId);
+    // The DEBIT side specifically. Naming the credit row would resolve just as happily and mean
+    // the opposite thing to anyone reconciling the sender's statement.
+    expect(row.type).toBe('TransferOut');
+    expect(row.transactionNumber).toBe(transfer.data.transactionNumber);
+  });
+});
