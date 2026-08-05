@@ -970,3 +970,48 @@ describe('the PIN lockout, and the header only one path keeps', () => {
     expect(body.instance).toBe('/api/transactions/withdraw');
   });
 });
+
+describe('a fresh session does not inherit an elevation', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  it('drops back to level 1 when the user signs in again', async () => {
+    /*
+      `SessionService.CreateSession` hardcodes `AuthLevel = 1` and mints a NEW session id, so
+      whatever the previous session had earned is orphaned with it. The mock replaced `session` and
+      left `authLevel` alone, so signing in while elevated stayed at 2 — a step-up bypass, since
+      the level is the only thing the money handlers consult.
+
+      Measured on the running stack rather than read off that line, because "found by reading" is
+      not "observed":
+
+        verify-pin 123456                       -> 200 authLevel 2
+        GET /api/accounts/{id}/full-number      -> 200
+        POST /bff/auth/login  (same cookie jar) -> 200
+        GET /api/accounts/{id}/full-number      -> 403 X-Auth-Level-Current: 1, currentLevel 1
+
+      Every other route to a dead session already reset it (logout, clock expiry, resetMockState);
+      login and register were the gap.
+    */
+    await fetch('/bff/auth/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '123456' }),
+    });
+    expect(mockState.authLevel).toBe(2);
+    expect((await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`)).status).toBe(200);
+
+    await fetch('/bff/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'demo@azurebank.dev', password: 'Password1!' }),
+    });
+
+    const afterRelogin = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`);
+    expect(afterRelogin.status).toBe(403);
+    expect(afterRelogin.headers.get('X-Auth-Level-Current')).toBe('1');
+    expect((await afterRelogin.json()).currentLevel).toBe(1);
+  });
+});

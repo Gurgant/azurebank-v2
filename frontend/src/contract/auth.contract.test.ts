@@ -96,9 +96,28 @@ describe('contract: the BFF answers in its own envelope', () => {
     const problem = body as Record<string, unknown>;
 
     expect(status).toBe(401);
+    /*
+      The COMPLETE key set, not a sample. The claim under test is "forwarding keeps the API's whole
+      envelope", and asserting only errorCode/detail/instance would still pass against a forwarder
+      that dropped `type` or `traceId` — which is precisely the difference from the hand-built
+      shape three tests up, where those members are absent by design.
+    */
+    expect(Object.keys(problem).sort()).toEqual([
+      'detail',
+      'errorCode',
+      'instance',
+      'status',
+      'title',
+      'traceId',
+      'type',
+    ]);
     expect(problem.errorCode).toBe('INVALID_CREDENTIALS');
     expect(problem.detail).toBe('Invalid email or password.');
     expect(problem.instance).toBe('/api/auth/login');
+    expect(problem.type).toBe('https://httpstatuses.com/401');
+    // The API's handlers write a BARE 32-hex trace id, not a W3C traceparent — the framework path
+    // writes the other one, and which you get identifies which handler answered.
+    expect(problem.traceId).toMatch(/^[0-9a-f]{32}$/);
   });
 });
 
@@ -131,8 +150,54 @@ describe('contract: the inactivity clock', () => {
       Asserted as "moved", not by how much: the amount is wall-clock and would make this a timing
       test. That it moved at all is the contract.
     */
+    /*
+      A single request followed by `not.toBe(before)` would be RACY, and only against the mock:
+      there `sessionLastActivity` is `Date.now()` at millisecond resolution, so a request that
+      lands in the same millisecond as the previous one produces a byte-identical snapshot and the
+      assertion fails for a reason that has nothing to do with the contract. (The real BFF stores
+      `DateTime.UtcNow` at 100ns and every step is an HTTP round trip, so it cannot collide.)
+
+      Fake timers are not an option here — this same file runs against a real server, whose clock
+      vitest cannot move. So: repeat the marking request until the clock is observed to move, and
+      fail loudly if it never does. Bounded, deterministic in outcome, and identical on both
+      targets. Ten attempts is far past the millisecond a collision could hide in.
+    */
     const before = await clock();
-    expect((await call('/bff/auth/me')).status).toBe(200);
-    expect(await clock()).not.toBe(before);
+    let moved = false;
+    for (let attempt = 0; attempt < 10 && !moved; attempt++) {
+      expect((await call('/bff/auth/me')).status).toBe(200);
+      moved = (await clock()) !== before;
+    }
+
+    expect(
+      moved,
+      'inactivityExpiresAt never moved across ten authenticated requests — the clock is not sliding',
+    ).toBe(true);
+  });
+
+  it('slides even for a request that is REJECTED before any action runs', async () => {
+    /*
+      `SessionActivityMiddleware` is middleware, so it runs before routing, before model binding and
+      before the action — which means a cookie-bearing request slides the clock even when the reply
+      is a 400 the controller never produced. The mock marked activity AFTER parsing the body, so an
+      active session that fumbled its payload kept sliding in production and quietly aged out under
+      MSW.
+
+      A malformed PIN is the cheapest rejection that is definitely pre-action: `[Pin]` is a
+      DataAnnotation, so model state short-circuits and no PIN is ever compared — which is also why
+      this does NOT cost an attempt against the three-strike lockout.
+    */
+    const before = await clock();
+    let moved = false;
+    for (let attempt = 0; attempt < 10 && !moved; attempt++) {
+      const rejected = await call('/bff/auth/verify-pin', {
+        method: 'POST',
+        body: JSON.stringify({ pin: 'not-six-digits' }),
+      });
+      expect(rejected.status).toBe(400);
+      moved = (await clock()) !== before;
+    }
+
+    expect(moved, 'a rejected-but-authenticated request did not slide the clock').toBe(true);
   });
 });

@@ -427,6 +427,9 @@ export function seedMockSession(user: MockSessionUser = MOCK_USER): void {
   mockState.session = { ...user };
   // A fresh session means a fresh cookie: whatever was stale is not any more.
   mockState.staleSessionCookie = false;
+  // And a fresh session is level 1: `SessionService.CreateSession` hardcodes it. A helper that
+  // left an inherited 2 in place would hand a test elevation it never verified a PIN for.
+  mockState.authLevel = 1;
   // A seeded session starts its clock now, exactly as a real login would. Leaving it at 0 would
   // hand every test a session that expired in 1970 and make the warning fire on the first tick.
   mockState.sessionCreatedAt = Date.now();
