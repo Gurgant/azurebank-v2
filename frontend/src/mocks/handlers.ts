@@ -217,6 +217,35 @@ function invalidValueError(name: string, value: string): Record<string, string[]
   return { [name]: [`The value '${value}' is not valid for ${name}.`] };
 }
 
+/**
+ * The ledger rows a caller can still SEE — those whose owning account has not been deleted.
+ *
+ * The API soft-deletes and filters on the flag in BOTH aggregate queries: `!a.IsDeleted` when it
+ * resolves the caller's accounts for the list (`TransactionService.cs:174`) and
+ * `!t.Account.IsDeleted` inside the summary (`:301`). The mock hard-removes the account row and
+ * left its transactions behind, so the feed kept listing them and — the half that fails silently —
+ * the totals kept counting them. A wrong number still renders; nothing errors.
+ *
+ * Scoped deliberately to those two queries. The single-transaction route is NOT filtered here:
+ * whether the API 404s a row whose account was deleted is something I did not measure, and
+ * guessing it would be inventing a contract rather than matching one.
+ */
+function visibleTransactions(): typeof mockState.transactions {
+  const live = new Set(mockState.accounts.map((a) => a.id));
+  return mockState.transactions.filter((t) => live.has(t.accountId));
+}
+
+/**
+ * An instant in the API's own wire format: `yyyy-MM-ddTHH:mm:ss.fffffffZ`.
+ *
+ * `Rfc3339DateTimeConverter` writes SEVEN fractional digits where JS's `toISOString()` writes
+ * three, so the mock pads rather than inventing its own shape. The `z.iso.datetime()` schema would
+ * accept either — the padding is for fidelity, not to satisfy the parser.
+ */
+function apiInstant(ms: number): string {
+  return new Date(ms).toISOString().replace(/\.(\d{3})Z$/, '.$10000Z');
+}
+
 /** ASP.NET's `int` model binder accepts these and JS's `Number` does not agree with it. */
 const INT32_MIN = -2_147_483_648;
 const INT32_MAX = 2_147_483_647;
@@ -885,7 +914,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     ? Date.parse(queryParam(params, 'ToDate') as string)
     : null;
 
-  const ordered = [...mockState.transactions]
+  const ordered = [...visibleTransactions()]
     .filter((t) => !canonicalAccountId || t.accountId === canonicalAccountId)
     .filter((t) => {
       const at = Date.parse(t.createdAt);
@@ -981,10 +1010,25 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   const monthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
   ).toISOString();
-  const fromDate = queryParam(params, 'FromDate') ?? monthStart;
-  const toDate = queryParam(params, 'ToDate') ?? now.toISOString();
-  const fromMs = Date.parse(fromDate);
-  const toMs = Date.parse(toDate);
+  const rawFrom = queryParam(params, 'FromDate') ?? monthStart;
+  const rawTo = queryParam(params, 'ToDate') ?? now.toISOString();
+  const fromMs = Date.parse(rawFrom);
+  const toMs = Date.parse(rawTo);
+  /*
+    NORMALISED, never echoed. The API binds the filter to `DateTime?` and writes it back through
+    `Rfc3339DateTimeConverter`, so what leaves the server is always a full instant — the caller's
+    string never survives the round trip.
+
+    This is not cosmetic. `getTransactionSummary` is one of the strict-schema endpoints, so
+    `unwrap(response, transactionSummarySchema)` calls `schema.parse`, which THROWS. Echoing
+    `?FromDate=2026-07-01` back as `"2026-07-01"` fails `z.iso.datetime()` and takes the dashboard
+    down — under MSW only, which is the worst place for it to live.
+
+    Measured: GET /api/transactions/summary?FromDate=2026-07-01
+      -> {"fromDate":"2026-07-01T00:00:00.0000000Z","toDate":"2026-08-04T13:36:48.2114544Z"}
+  */
+  const fromDate = apiInstant(fromMs);
+  const toDate = apiInstant(toMs);
 
   /*
     An inverted window has TWO answers, and the mock had one. Found by running the real stack:
@@ -1034,7 +1078,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   let totalIncome = 0;
   let totalExpenses = 0;
   let pendingCount = 0;
-  for (const t of mockState.transactions) {
+  for (const t of visibleTransactions()) {
     if (summaryAccountId && t.accountId !== summaryAccountId) {
       continue;
     }
