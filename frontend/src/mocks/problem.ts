@@ -111,6 +111,34 @@ export function problem(init: ProblemInit) {
 }
 
 /**
+ * The BFF's OWN error body — a third envelope, and the smallest of the three.
+ *
+ * `BffAuthController` builds these by hand: `Unauthorized(new ProblemDetails{Title, Detail,
+ * Status})`, with no extensions and no `Type`. ASP.NET omits null members, so what reaches the
+ * wire is exactly three keys. Five sites in that controller (`:238, :325, :466, :488, :577`) are
+ * byte-identical, and all four of the mock's reachable ones were using the shared `problem()`
+ * helper — which decorates every body with a `type` and a synthesised `traceId` the BFF never
+ * writes.
+ *
+ * Measured 2026-08-05, on `/bff/auth/me`, `/bff/auth/set-pin` and `/bff/auth/reauthenticate` with
+ * a cookie that no longer resolves — the same answer on all three:
+ *
+ *   401 {"title":"Unauthorized","status":401,"detail":"Session expired or invalid"}
+ *   Content-Type: application/problem+json; charset=utf-8
+ *
+ * The distinction that matters: a `/bff/auth/*` response is only this shape when the CONTROLLER
+ * answers. When it forwards an upstream failure (`ForwardUpstreamError`), the body is the API's
+ * and keeps the full envelope — so a bad-credentials login is NOT this shape. Deciding by route
+ * would therefore be wrong; it is decided by who produced the body.
+ */
+export function bffProblem(init: { status: number; title: string; detail: string }) {
+  return HttpResponse.json(
+    { title: init.title, status: init.status, detail: init.detail },
+    { status: init.status, headers: { 'Content-Type': 'application/problem+json' } },
+  );
+}
+
+/**
  * The OTHER validation envelope, and the reason it has to exist.
  *
  * The API rejects a bad request in one of two completely different ways, and which one you get
