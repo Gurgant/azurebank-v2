@@ -542,10 +542,29 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
     );
   }
 
-  const index = mockState.accounts.length;
+  /*
+    A MONOTONIC sequence, not `accounts.length` — identity must survive a delete.
+
+    Delete removes the row outright, so the length goes back DOWN and the next create reissues an
+    identifier that is still in use: create, create, delete the first, create, and the third
+    account came back wearing the second's id with both rows live. Every `find(a => a.id === …)`
+    in this file then resolves to whichever sits first in the array, so a test that deletes before
+    creating was silently operating on the wrong account.
+
+    The masked number is drawn into 10..99 because that is the only shape the API can produce:
+    `IdGenerator` builds `AB-{1000-9999}-{1000-9999}-{GetInt32(10,100)}` and `MaskAccountNumber`
+    keeps the last TWO characters. The old `70 + index` reached three digits at index 30 — a
+    masked number no server could ever emit. Masked values DO repeat after 90 accounts, and that
+    is faithful rather than a defect: there are only 90 of them in the real system too.
+  */
+  const seq = mockState.nextAccountSeq++;
   const account = {
-    id: `019f7b3f-0000-7000-8000-00000000c${String(index).padStart(3, '0')}`,
-    accountNumber: `AB-****-****-${70 + index}`,
+    // 12 HEX digits, so the final group stays a well-formed UUID node however far the counter
+    // runs. The old `c${seq}` padded to three DECIMAL digits silently produced a 13-character
+    // group — an invalid UUID — from the thousandth account on. Kept `c`-prefixed so a created
+    // account is still distinguishable at a glance from the seeded `…a1` / `…b0n` rows.
+    id: `019f7b3f-0000-7000-8000-c${seq.toString(16).padStart(11, '0')}`,
+    accountNumber: `AB-****-****-${String(10 + (seq % 90)).padStart(2, '0')}`,
     // No casts: `rejectBadAccountName` has proven `name` is a string and `parseAccountType` has
     // returned a canonical member, so both narrow honestly instead of being asserted. Storing the
     // CANONICAL value matters — the API persists `Checking` for an input of `"checking"`, so

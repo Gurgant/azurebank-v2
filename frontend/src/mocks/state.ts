@@ -144,6 +144,15 @@ interface MockState {
   pin: string;
   /** Consecutive wrong-PIN count; MaxPinAttempts (3) trips the lockout, a success resets it. */
   pinAttempts: number;
+  /**
+   * Monotonic sequence for newly created accounts. NEVER derived from `accounts.length`.
+   *
+   * Delete removes the row outright, so the length goes DOWN and a length-derived identifier is
+   * handed out twice — two live accounts wearing the same id, at which point every
+   * `find(a => a.id === …)` in the handlers resolves to whichever happens to sit first. This
+   * counter only ever increases, so an id retired by a delete is never reissued.
+   */
+  nextAccountSeq: number;
   /** ISO instant the PIN lock lifts, or null. A withdraw while locked is a 429 PIN_LOCKED. */
   pinLockedUntil: string | null;
   /**
@@ -387,6 +396,7 @@ export const mockState: MockState = {
   sessionLastActivity: 0,
   pin: MOCK_PIN,
   pinAttempts: 0,
+  nextAccountSeq: 0,
   pinLockedUntil: null,
   accounts: defaultAccounts(),
   transactions: defaultTransactions(),
@@ -460,6 +470,7 @@ export function resetMockState(): void {
   mockState.sessionLastActivity = 0;
   mockState.pin = MOCK_PIN;
   mockState.pinAttempts = 0;
+  mockState.nextAccountSeq = 0;
   mockState.pinLockedUntil = null;
   mockState.accounts = defaultAccounts();
   mockState.transactions = defaultTransactions();

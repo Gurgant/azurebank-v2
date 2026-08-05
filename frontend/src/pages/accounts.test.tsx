@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
+import { mockState } from '../mocks/state';
 import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
 import { AccountsPage } from './AccountsPage';
 
@@ -104,9 +105,19 @@ describe('create account (A4)', () => {
     // {Account,'LIST'} invalidation refetch — the page never hand-patches the cache.
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(await screen.findByText('Holiday Fund')).toBeInTheDocument();
-    // The server-assigned (already-masked) number renders as bullets like every other.
-    expect(screen.getByText('AB-••••-••••-72')).toBeInTheDocument();
-    expect(screen.queryByText('AB-****-****-72')).not.toBeInTheDocument();
+    /*
+      The server-assigned (already-masked) number renders as bullets like every other. DERIVED
+      from what the mock actually assigned rather than hard-coded: the literal used to be
+      `AB-••••-••••-72`, which was `70 + accounts.length` — a positional artefact of the very
+      identity scheme that made two live accounts share an id. Pinning the artefact would have
+      coupled this test to the bug.
+    */
+    const created = mockState.accounts.find((a) => a.name === 'Holiday Fund');
+    expect(created).toBeDefined();
+    const asBullets = created!.accountNumber.replace(/\*/g, '•');
+    expect(screen.getByText(asBullets)).toBeInTheDocument();
+    // Asterisks are the wire form; the UI must never render them raw.
+    expect(screen.queryByText(created!.accountNumber)).not.toBeInTheDocument();
   });
 
   it('maps a server VALIDATION_ERROR onto the offending field', async () => {
