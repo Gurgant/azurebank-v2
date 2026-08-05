@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MAIN_ACCOUNT_ID, mockState, resetMockState, seedMockSession } from './state';
+import { transactionSummarySchema } from '../api/responseSchemas';
 
 /**
  * The mock stands in for the API everywhere the frontend is tested, so a gap in it is a gap in the
@@ -659,5 +660,111 @@ describe('account identity survives a delete', () => {
     for (const { data } of created) {
       expect(data.accountNumber).toMatch(/^AB-\*{4}-\*{4}-\d{2}$/);
     }
+  });
+});
+
+/**
+ * The summary echoes its window back, and the app PARSES that echo strictly.
+ *
+ * `getTransactionSummary` is one of the strict-schema endpoints — `unwrap(response,
+ * transactionSummarySchema)` calls `schema.parse`, which THROWS on drift rather than degrading. So
+ * an echo the schema rejects is not cosmetic: it takes the dashboard down.
+ */
+describe('the summary window is normalised, not echoed', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  it('answers a date-only FromDate with a full timestamp the strict schema accepts', async () => {
+    /*
+      Measured on the running stack (2026-08-04):
+        GET /api/transactions/summary?FromDate=2026-07-01
+          -> {"fromDate":"2026-07-01T00:00:00.0000000Z",
+              "toDate":"2026-08-04T13:36:48.2114544Z"}
+
+      The API round-trips its filter through `DateTime` and writes it back with
+      `Rfc3339DateTimeConverter`, so what comes out is always a full instant. The mock echoed the
+      caller's raw string, so `?FromDate=2026-07-01` came back as `"2026-07-01"` — which
+      `z.iso.datetime()` refuses, and `schema.parse` turns into a thrown error inside RTK Query.
+    */
+    const res = await fetch('/api/transactions/summary?FromDate=2026-07-01');
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    // The property under test, stated directly: it must parse, and it must be a full instant.
+    expect(() => transactionSummarySchema.parse(body.data)).not.toThrow();
+    expect(body.data.fromDate).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+});
+
+/**
+ * A deleted account's money must leave the ledger AND the totals.
+ *
+ * The API soft-deletes and filters on it in both queries — `!a.IsDeleted` when it resolves the
+ * caller's accounts for the list (TransactionService.cs:174) and `!t.Account.IsDeleted` inside the
+ * summary aggregate (:301). The mock hard-removed the account row and left its transactions
+ * behind, so the feed kept showing them and the totals kept counting them: silently different
+ * money figures, with no error to notice.
+ */
+describe('a deleted account takes its transactions with it', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const key = () => crypto.randomUUID();
+
+  it('drops the rows from both the feed and the summary totals', async () => {
+    const created = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Doomed Account', type: 'Savings' }),
+    }).then((r) => r.json());
+    const id = created.data.id;
+
+    /*
+      Give it a history, then empty it — a non-zero balance cannot be deleted, in the mock or the
+      API, so the account has to be drained before it can go.
+
+      Tracked by transaction ID rather than by `accountId`, because `toWire` deliberately strips
+      `accountId` from the response: the wire DTO has no such field, and asserting on one that does
+      not exist is how a test passes while proving nothing. (My first draft did exactly that and
+      failed on its own setup line, which is the only reason it was caught.)
+    */
+    const deposited = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
+      body: JSON.stringify({ accountId: id, amount: 25 }),
+    }).then((r) => r.json());
+    const withdrawn = await fetch('/api/transactions/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
+      body: JSON.stringify({ accountId: id, amount: 25, pin: '123456' }),
+    }).then((r) => r.json());
+    const doomedIds = [deposited.data.transaction.id, withdrawn.data.transaction.id];
+
+    const before = await fetch('/api/transactions?Page=1&PageSize=100').then((r) => r.json());
+    // An EXPLICIT wide window, not the default. The summary defaults to the current month, and
+    // whether a freshly-created row lands inside it depends on the clock — a dependency that has
+    // nothing to do with what this test is about.
+    const wide = '/api/transactions/summary?FromDate=2000-01-01T00:00:00Z';
+    const beforeSummary = await fetch(wide).then((r) => r.json());
+    const listedIds = (rows: { id: string }[]) => rows.map((t) => t.id);
+    expect(listedIds(before.data)).toEqual(expect.arrayContaining(doomedIds));
+
+    expect((await fetch(`/api/accounts/${id}`, { method: 'DELETE' })).status).toBe(200);
+
+    const after = await fetch('/api/transactions?Page=1&PageSize=100').then((r) => r.json());
+    const afterSummary = await fetch(wide).then((r) => r.json());
+
+    // The feed must not mention rows the caller can no longer reach.
+    for (const gone of doomedIds) {
+      expect(listedIds(after.data)).not.toContain(gone);
+    }
+    // And the totals must move — this is the half that fails SILENTLY, because a wrong number
+    // still renders and nothing errors. The 25 in and the 25 out both leave with the account.
+    expect(afterSummary.data.totalIncome).toBe(beforeSummary.data.totalIncome - 25);
+    expect(afterSummary.data.totalExpenses).toBe(beforeSummary.data.totalExpenses - 25);
   });
 });
