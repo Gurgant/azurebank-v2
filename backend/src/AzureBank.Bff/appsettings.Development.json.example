@@ -13,9 +13,7 @@
   },
 
   "Security": {
-    "PinValidityMinutes": 10,
-    "MaxPinAttempts": 10,
-    "LockoutMinutes": 1
+    "PinValidityMinutes": 10
   },
 
   "ReverseProxy": {

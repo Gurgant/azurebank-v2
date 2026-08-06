@@ -581,9 +581,7 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
     "AbsoluteTimeoutMinutes": 60
   },
   "Security": {
-    "PinValidityMinutes": 5,
-    "MaxPinAttempts": 3,
-    "LockoutMinutes": 15
+    "PinValidityMinutes": 5
   },
   "BackendApi": {
     "BaseUrl": "https://localhost:7215"
