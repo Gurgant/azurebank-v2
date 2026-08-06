@@ -175,6 +175,19 @@ describe('contract: the inactivity clock', () => {
     ).toBe(true);
   });
 
+  it('does NOT slide for a caller with no cookie', async () => {
+    /*
+      THE point of keying on the cookie rather than on session state. The middleware acts only when
+      `Cookies.TryGetValue` succeeds, so a request that presents no cookie leaves the clock of any
+      OTHER live session alone. Nothing in the mock could express this before: it decided "is there
+      a session?" from its own state, so an anonymous caller extended whatever session happened to
+      exist.
+    */
+    const before = await clock();
+    await call('/bff/auth/me', { anonymous: true });
+    expect(await clock()).toBe(before);
+  });
+
   it('slides even for a request that is REJECTED before any action runs', async () => {
     /*
       `SessionActivityMiddleware` is middleware, so it runs before routing, before model binding and

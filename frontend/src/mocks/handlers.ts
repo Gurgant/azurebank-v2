@@ -12,6 +12,7 @@ import {
 } from './problem';
 import {
   MOCK_PASSWORD,
+  MOCK_SESSION_COOKIE,
   MOCK_USER,
   expireMockSessionIfDue,
   markMockActivity,
@@ -333,36 +334,32 @@ const pathOf = (request: Request) => new URL(request.url).pathname;
  * no-ops. Every `/bff/auth/*` handler calls this FIRST except `session-status`, the one route the
  * middleware excludes.
  *
- * KNOWN LIMITATION. The real middleware keys on `context.Request.Cookies.TryGetValue(...)`; this
- * keys on `mockState.session` existing. So an anonymous request slides the clock in the mock where
- * the real BFF would no-op. Raised independently by CodeRabbit and by an adversarial review of U7,
- * so it is not a fringe reading.
+ * COOKIE-SCOPED, because the real middleware is. It acts only when
+ * `context.Request.Cookies.TryGetValue(...)` succeeds, so a caller presenting no cookie leaves
+ * another live session's clock alone. Keying on `mockState.session` instead — which is what this
+ * did — meant an anonymous request extended whatever session happened to exist.
  *
- * What is PROVEN is narrower than "unfixable", and the distinction matters. The obvious remedy —
- * take a `request`, issue a session cookie, test for it — does not work, because MSW keeps its OWN
- * cookie store and replays it. After a handler issues one Set-Cookie, a request the caller
- * deliberately sent with no cookie header still arrives carrying it:
+ * The mock deliberately issues NO `Set-Cookie`, and that is the crux rather than an omission. MSW
+ * keeps its own cookie store and REPLAYS it: after one Set-Cookie, a request the caller sent with
+ * no cookie header still arrives carrying it, so anonymity becomes inexpressible and a check here
+ * would be decoration. Measured, and MSW 2.12's `cookieStore` is a singleton over a `#private`
+ * field with no clear or opt-out, so the replay cannot be disabled.
  *
- *   client jar     -> cookie ".AzureBank.Session=probe-value; …"
- *   anonymous:true -> cookie ".AzureBank.Session=probe-value; …"   (client sent NOTHING)
+ * The cookie therefore comes from the two places that do NOT feed that store:
  *
- * The header is therefore truthy for anonymous and authenticated alike, the check would be
- * decoration, and a test asserting "anonymous does not slide" would fail AFTER that fix. MSW 2.12's
- * `cookieStore` is a module singleton over a `#private` field exposing only `getCookies`/`setCookie`
- * — no clear, no reset, no opt-out — so the replay cannot simply be turned off.
+ *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` / login / register and
+ *                      cleared by logout and `resetMockState`. Verified with the MSW store empty:
+ *                      a SAME-ORIGIN request carries it, a cross-origin one does not — which is
+ *                      why the unit suite's relative URLs matter.
+ *   node (contract)    the client's own jar, seeded for the mock target in `client.ts`. There is
+ *                      no `document` there, so `anonymous: true` genuinely sends nothing.
  *
- * What is NOT ruled out: a design where the mock issues no Set-Cookie at all (leaving MSW nothing to
- * replay) and the cookie comes from `document.cookie` in the browser and from the contract client's
- * jar in node. That would make anonymity expressible again. It is UNVERIFIED — whether jsdom's fetch
- * attaches `document.cookie` without MSW's store was never tested — and it costs the two contract
- * targets a shared cookie mechanism, which is the property `target.ts` exists to protect. So it is
- * a candidate, not a plan, and nobody should read this comment as "impossible".
- *
- * Exposure meanwhile is nil: the SPA is same-origin and always sends credentials, so no product
- * path reaches the divergence. Tests needing a session-less caller live in
- * `authGuards.contract.test.ts`, which holds no session at FILE level for exactly this reason.
- */
-function runSessionActivityMiddleware(): void {
+ * Expiry runs before the slide, mirroring `UpdateActivity` -> `GetSession`: a session past its
+ * deadline is evicted and returns null, so there is nothing to slide. Every `/bff/auth/*` handler
+ * calls this FIRST except `session-status`, the one route the middleware excludes. */
+function runSessionActivityMiddleware(request?: Request): void {
+  // SPIKE: mirror `Cookies.TryGetValue` — no cookie, no slide.
+  if (request && !(request.headers.get('cookie') ?? '').includes(MOCK_SESSION_COOKIE)) return;
   expireMockSessionIfDue();
   markMockActivity();
 }
@@ -2050,7 +2047,7 @@ function pinPayloadProblem(dto: 'VerifyPinRequest' | 'SetPinRequest', pin: unkno
 }
 
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
-  runSessionActivityMiddleware();
+  runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2122,7 +2119,7 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
  * prior lock so the freshly-set PIN works immediately.
  */
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
-  runSessionActivityMiddleware();
+  runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2170,7 +2167,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   // Middleware, so it runs on these too. Unobservable on SUCCESS (a new session replaces the old
   // one), but a login that FAILS leaves the previous session alive — and the real BFF has already
   // slid its clock by then.
-  runSessionActivityMiddleware();
+  runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2227,7 +2224,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   // Middleware, so it runs on these too. Unobservable on SUCCESS (a new session replaces the old
   // one), but a login that FAILS leaves the previous session alive — and the real BFF has already
   // slid its clock by then.
-  runSessionActivityMiddleware();
+  runSessionActivityMiddleware(request);
   const registerBody = await readJsonBody(request);
   if (!registerBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2294,7 +2291,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
  * 401 and never revokes anything, so a typo cannot end the session it was meant to save.
  */
 const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }) => {
-  runSessionActivityMiddleware();
+  runSessionActivityMiddleware(request);
   const parsed = await readJsonBody(request);
   if (!parsed) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2328,7 +2325,7 @@ const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }
   });
 });
 
-const me = http.get('*/bff/auth/me', () => {
+const me = http.get('*/bff/auth/me', ({ request }) => {
   /*
     /me IS activity: the BFF slides LastActivity on every cookie-bearing request and excludes only
     the session-status probe (ADR-0018). Modelled so `inactivityExpiresAt` on this endpoint always
@@ -2339,7 +2336,7 @@ const me = http.get('*/bff/auth/me', () => {
     died an hour ago simply because something touched it — the bug the real BFF avoids by putting
     the deadline in the session store rather than in the middleware.
   */
-  runSessionActivityMiddleware();
+  runSessionActivityMiddleware(request);
   if (!mockState.session) {
     // The BFF's own 401: ProblemDetails WITHOUT errorCode.
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });

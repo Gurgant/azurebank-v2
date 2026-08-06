@@ -1,4 +1,4 @@
-import { BASE_URL, FIXTURES } from './target';
+import { BASE_URL, CONTRACT_TARGET, FIXTURES } from './target';
 
 /**
  * A deliberately dumb HTTP client for the contract suite.
@@ -96,13 +96,23 @@ function rejectIfRateLimited(result: Wire): Wire {
 }
 
 export async function login(): Promise<Wire> {
-  return rejectIfRateLimited(
+  const result = rejectIfRateLimited(
     await call('/bff/auth/login', {
       method: 'POST',
       anonymous: true,
       body: JSON.stringify({ email: FIXTURES.email, password: FIXTURES.password }),
     }),
   );
+  /*
+    SPIKE: the mock cannot issue a Set-Cookie, so the jar has to be seeded by hand for that target.
+    Why it cannot: MSW keeps its own cookie store and REPLAYS it, so one Set-Cookie makes every
+    later request carry a cookie — including ones sent with `anonymous: true`, which destroys the
+    only way this suite can express an anonymous caller.
+  */
+  if (CONTRACT_TARGET === 'mock' && result.status === 200) {
+    jar = '.AzureBank.Session=mock-session';
+  }
+  return result;
 }
 
 /** Raise the session to AuthLevel 2, which the money and reveal endpoints demand. */

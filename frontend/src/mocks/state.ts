@@ -427,6 +427,7 @@ export function seedMockSession(user: MockSessionUser = MOCK_USER): void {
   mockState.session = { ...user };
   // A fresh session means a fresh cookie: whatever was stale is not any more.
   mockState.staleSessionCookie = false;
+  setMockSessionCookie(true);
   // And a fresh session is level 1: `SessionService.CreateSession` hardcodes it. A helper that
   // left an inherited 2 in place would hand a test elevation it never verified a PIN for.
   mockState.authLevel = 1;
@@ -437,6 +438,16 @@ export function seedMockSession(user: MockSessionUser = MOCK_USER): void {
 }
 
 /** The BFF slides LastActivity on every cookie-bearing request EXCEPT the session-status probe. */
+export const MOCK_SESSION_COOKIE = '.AzureBank.Session';
+
+/** SPIKE: stamp/clear the cookie in environments that have a document (jsdom + dev:mock). */
+export function setMockSessionCookie(present: boolean): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = present
+    ? `${MOCK_SESSION_COOKIE}=mock-session; Path=/`
+    : `${MOCK_SESSION_COOKIE}=; Path=/; Max-Age=0`;
+}
+
 export function markMockActivity(): void {
   if (mockState.session) mockState.sessionLastActivity = Date.now();
 }
@@ -491,6 +502,7 @@ export function resetMockState(): void {
   mockState.authLevel = 1;
   mockState.session = null;
   mockState.staleSessionCookie = false;
+  setMockSessionCookie(false);
   mockState.sessionInactivityWindowMs = MOCK_INACTIVITY_WINDOW_MS;
   mockState.sessionAbsoluteWindowMs = MOCK_ABSOLUTE_WINDOW_MS;
   mockState.sessionCreatedAt = 0;
