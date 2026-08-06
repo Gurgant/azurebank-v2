@@ -183,3 +183,60 @@ describe('contract: cache directives on the reveal', () => {
     expect(headers.get('pragma')).toBeNull();
   });
 });
+
+describe('contract: an oversized idempotent body', () => {
+  it('is refused at 32 KB, BEFORE the key is even looked at', async () => {
+    /*
+      The one failure mode in this batch that is safe to assert against the REAL stack: it creates
+      nothing, locks nothing and costs no auth call. Its siblings are not — tripping the rate
+      limiter would 429 every later test for a minute, and a login lockout would hold a real account
+      for fifteen. Those two are pinned in `mocks/fidelity.test.ts` with the measurement quoted.
+
+      Observed 2026-08-06, a 40 KB deposit body carrying a perfectly VALID Idempotency-Key:
+
+        413 {"type":"https://httpstatuses.com/413","title":"Payload Too Large","status":413,
+             "detail":"The request body exceeds the 32 KB limit for this endpoint.",
+             "instance":"/api/transactions/deposit",
+             "errorCode":"IDEMPOTENCY_PAYLOAD_TOO_LARGE"}
+
+      The valid key is the point. `IdempotencyMiddleware` rejects on size before reading the key, so
+      an oversized retry cannot consume the caller's key — send it again under the limit and the key
+      is still theirs. A size check placed after the claim would silently burn it.
+    */
+    const key = crypto.randomUUID();
+    const accountId = await firstAccountId();
+
+    const { status, body } = await call('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify({ accountId, amount: 1.0, description: 'x'.repeat(40_000) }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(413);
+    expect(problem.errorCode).toBe('IDEMPOTENCY_PAYLOAD_TOO_LARGE');
+    expect(problem.detail).toBe('The request body exceeds the 32 KB limit for this endpoint.');
+    expect(problem.instance).toBe('/api/transactions/deposit');
+
+    /*
+      And now the half the paragraph above only CLAIMED. Asserting the 413 alone would pass just as
+      happily against a server that rejected the size AFTER claiming the key — at which case the
+      caller's retry would meet its own ghost. So reuse the SAME key under the limit: a claimed key
+      would answer with a replay or 422 IDEMPOTENCY_KEY_REUSE (the body differs), and a free one
+      executes normally.
+
+      This does move a real 1.00 on the real target, which is why it is the last assertion rather
+      than the first — everything above is non-mutating, and the money endpoints are exercised by
+      the integration suite the same way.
+    */
+    const retry = await call('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify({ accountId, amount: 1.0, description: 'under the limit' }),
+    });
+
+    expect(retry.status).toBe(201);
+    expect(asProblem(retry.body).errorCode).toBeUndefined();
+    expect(retry.headers.get('Idempotency-Replayed')).toBeNull();
+  });
+});

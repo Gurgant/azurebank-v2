@@ -4,6 +4,7 @@ import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
 import {
   bffProblem,
+  fakeTraceId,
   invalidJsonValueProblem,
   missingMemberProblem,
   modelStateProblem,
@@ -362,6 +363,112 @@ function runSessionActivityMiddleware(request?: Request): void {
   if (request && !(request.headers.get('cookie') ?? '').includes(MOCK_SESSION_COOKIE)) return;
   expireMockSessionIfDue();
   markMockActivity();
+}
+
+/** `IdempotencyConstants` — 32 KB, enforced by MIDDLEWARE before any key parsing or hashing. */
+const IDEMPOTENCY_MAX_BODY_BYTES = 32 * 1024;
+
+/**
+ * 413 on an oversized body, and it comes FIRST — before the key is read, let alone hashed or
+ * claimed. Measured 2026-08-06 with a 40 KB deposit body carrying a perfectly valid key:
+ *
+ *   413 {"title":"Payload Too Large","status":413,
+ *        "detail":"The request body exceeds the 32 KB limit for this endpoint.",
+ *        "instance":"/api/transactions/deposit","errorCode":"IDEMPOTENCY_PAYLOAD_TOO_LARGE"}
+ *
+ * Ordering is the contract, not a detail: a client that sends something huge with a REUSED key
+ * must be refused without the key being consumed, or a retry would meet a claim it never made.
+ */
+function payloadTooLarge(raw: string, request: Request) {
+  if (new TextEncoder().encode(raw).length <= IDEMPOTENCY_MAX_BODY_BYTES) return null;
+  return problem({
+    status: 413,
+    errorCode: 'IDEMPOTENCY_PAYLOAD_TOO_LARGE',
+    detail: 'The request body exceeds the 32 KB limit for this endpoint.',
+    instance: pathOf(request),
+  });
+}
+
+/** `ValidationRules.MaxLoginAttempts` / `LoginLockoutMinutes` — 5 and 15. */
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_SECONDS = 15 * 60;
+
+/** The BFF's `auth` policy: 10 permits per 60s, partitioned by IP. */
+const AUTH_PERMIT_LIMIT = 10;
+const AUTH_WINDOW_MS = 60_000;
+
+/**
+ * The BFF's per-IP rate limiter, which is MIDDLEWARE and therefore answers before the controller.
+ *
+ * Two 429s exist on the login route and they are NOT interchangeable — this one is the BFF's own,
+ * the other (ACCOUNT_LOCKED) is the API's, forwarded. `instance` is the discriminator, and it is
+ * measured, 2026-08-06:
+ *
+ *   rate limit    instance "/bff/auth/login"   Content-Type application/json
+ *                 Retry-After: 60, Cache-Control: no-store, NO retryAfterSeconds in the body
+ *   account lock  instance "/api/auth/login"   retryAfterSeconds 900 + lockedUntil, NO Retry-After
+ *
+ * So: the limiter sets a header and no body field; the lockout sets body fields and no header. The
+ * mock could produce neither.
+ */
+function authRateLimited(request: Request): Response | null {
+  const now = Date.now();
+  mockState.authCallTimes = mockState.authCallTimes.filter((t) => now - t < AUTH_WINDOW_MS);
+  if (mockState.authCallTimes.length >= AUTH_PERMIT_LIMIT) {
+    return HttpResponse.json(
+      {
+        type: 'https://httpstatuses.com/429',
+        title: 'Too Many Requests',
+        status: 429,
+        detail: 'Too many requests. Please retry later.',
+        instance: pathOf(request),
+        errorCode: 'RATE_LIMIT_EXCEEDED',
+        traceId: fakeTraceId(),
+      },
+      {
+        status: 429,
+        headers: {
+          // `application/json`, NOT problem+json — the limiter writes the body itself and does not
+          // go through the ProblemDetails pipeline. Measured.
+          'Content-Type': 'application/json',
+          'Retry-After': String(AUTH_WINDOW_MS / 1000),
+          'Cache-Control': 'no-store',
+        },
+      },
+    );
+  }
+  mockState.authCallTimes.push(now);
+  return null;
+}
+
+/**
+ * The password lockout, which announces itself ONLY when the password is right.
+ *
+ * Measured 2026-08-06 on a throwaway user: five wrong passwords each answer 401
+ * INVALID_CREDENTIALS with no hint that a counter is running — that is ADR-0013's
+ * enumeration-neutral shape, not an oversight. The SIXTH request, with the CORRECT password,
+ * is the one that reveals the lock:
+ *
+ *   429 {"detail":"Too many failed login attempts. Your account is temporarily locked; try again
+ *        later.","instance":"/api/auth/login","errorCode":"ACCOUNT_LOCKED",
+ *        "retryAfterSeconds":900,"lockedUntil":"2026-08-06T18:54:57.3924877+00:00"}
+ *
+ * No `Retry-After` HEADER: login is a BFF ACTION, so the body is forwarded by
+ * `ForwardUpstreamError`, which copies no headers — the same asymmetry as the PIN lockout.
+ */
+function loginLockedProblem(email: string, now: number) {
+  const until = mockState.loginLockedUntil[email];
+  if (!until || Date.parse(until) <= now) return null;
+  return problem({
+    status: 429,
+    errorCode: 'ACCOUNT_LOCKED',
+    detail: 'Too many failed login attempts. Your account is temporarily locked; try again later.',
+    instance: '/api/auth/login',
+    extensions: {
+      retryAfterSeconds: Math.ceil((Date.parse(until) - now) / 1000),
+      lockedUntil: until,
+    },
+  });
 }
 
 /** `ValidationRules.PinLockoutMinutes` is 15. */
@@ -1269,6 +1376,9 @@ const getTransaction = api.get('/api/transactions/{id}', ({ params, request, res
 
 /** POST /api/transactions/deposit — the stateful idempotency protocol (ADR-0009). */
 const deposit = api.post('/api/transactions/deposit', async ({ request, response }) => {
+  // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
+  const oversized = payloadTooLarge(await request.clone().text(), request);
+  if (oversized) return response.untyped(oversized);
   const key = request.headers.get('Idempotency-Key');
   if (!key) {
     return response.untyped(
@@ -1395,6 +1505,9 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
  * transaction, stored idempotency record) run ONLY on the success path.
  */
 const withdraw = api.post('/api/transactions/withdraw', async ({ request, response }) => {
+  // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
+  const oversized = payloadTooLarge(await request.clone().text(), request);
+  if (oversized) return response.untyped(oversized);
   const key = request.headers.get('Idempotency-Key');
   if (!key) {
     return response.untyped(
@@ -1659,6 +1772,9 @@ const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, res
  * contract (fromAccountId:'a') keeps passing.
  */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
+  // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
+  const oversized = payloadTooLarge(await request.clone().text(), request);
+  if (oversized) return response.untyped(oversized);
   if (mockState.authLevel < 2) {
     return response.untyped(stepUp403(mockState.authLevel));
   }
@@ -1819,6 +1935,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
  * (either account missing → ACCOUNT_NOT_FOUND) → INSUFFICIENT_FUNDS → success.
  */
 const transferInternal = api.post('/api/transfers/internal', async ({ request, response }) => {
+  // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
+  const oversized = payloadTooLarge(await request.clone().text(), request);
+  if (oversized) return response.untyped(oversized);
   if (mockState.authLevel < 2) {
     return response.untyped(stepUp403(mockState.authLevel));
   }
@@ -2047,6 +2166,8 @@ function pinPayloadProblem(dto: 'VerifyPinRequest' | 'SetPinRequest', pin: unkno
 }
 
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
+  const limited = authRateLimited(request);
+  if (limited) return limited;
   runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
@@ -2164,6 +2285,8 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
  * errorCode (the BFF's own shape — normalizes to HTTP_401 client-side).
  */
 const login = http.post('*/bff/auth/login', async ({ request }) => {
+  const limited = authRateLimited(request);
+  if (limited) return limited;
   // Middleware, so it runs on these too. Unobservable on SUCCESS (a new session replaces the old
   // one), but a login that FAILS leaves the previous session alive — and the real BFF has already
   // slid its clock by then.
@@ -2174,7 +2297,22 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   }
   const email = authBody.body.email as string | undefined;
   const password = authBody.body.password as string | undefined;
+  const nowMs = Date.now();
+  /*
+    The lock is read BEFORE the password is checked, which is why a correct password still fails
+    while locked — the whole point of U3. `AuthService` refuses without ever reaching the hash.
+  */
+  const locked = email ? loginLockedProblem(email, nowMs) : null;
+  if (locked) return locked;
   if (email !== MOCK_USER.email || password !== MOCK_PASSWORD) {
+    if (email) {
+      const failures = (mockState.loginFailures[email] ?? 0) + 1;
+      mockState.loginFailures[email] = failures;
+      if (failures >= MAX_LOGIN_ATTEMPTS) {
+        mockState.loginFailures[email] = 0;
+        mockState.loginLockedUntil[email] = apiOffsetInstant(nowMs + LOGIN_LOCKOUT_SECONDS * 1000);
+      }
+    }
     return problem({
       status: 401,
       errorCode: 'INVALID_CREDENTIALS',
@@ -2195,6 +2333,8 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
       instance: '/api/auth/login',
     });
   }
+  // A correct password clears the counter — an expired lock then starts a fresh window at 1.
+  if (email) delete mockState.loginFailures[email];
   mockState.session = { ...MOCK_USER };
   mockState.staleSessionCookie = false; // a fresh cookie replaces the stale one
   /*
@@ -2221,6 +2361,8 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
 });
 
 const register = http.post('*/bff/auth/register', async ({ request }) => {
+  const limited = authRateLimited(request);
+  if (limited) return limited;
   // Middleware, so it runs on these too. Unobservable on SUCCESS (a new session replaces the old
   // one), but a login that FAILS leaves the previous session alive — and the real BFF has already
   // slid its clock by then.
@@ -2291,6 +2433,8 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
  * 401 and never revokes anything, so a typo cannot end the session it was meant to save.
  */
 const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }) => {
+  const limited = authRateLimited(request);
+  if (limited) return limited;
   runSessionActivityMiddleware(request);
   const parsed = await readJsonBody(request);
   if (!parsed) {

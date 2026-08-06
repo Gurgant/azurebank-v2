@@ -1015,3 +1015,90 @@ describe('a fresh session does not inherit an elevation', () => {
     expect((await afterRelogin.json()).currentLevel).toBe(1);
   });
 });
+
+describe('failure modes the mock could not previously produce', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const login = (email: string, password: string) =>
+    fetch('/bff/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+  it('U3: locks after five failures and refuses the CORRECT password', async () => {
+    /*
+      Mock-only, and it has to be: a contract test against the real stack would lock a real account
+      for fifteen minutes and take the rest of the suite with it. Measured instead on a THROWAWAY
+      registered user, 2026-08-06 — `PinAccessFailedCount` and the login counter are both per-user,
+      so admin (which e2e drives) stayed clean and logged in fine afterwards:
+
+        wrong x5 -> 401 INVALID_CREDENTIALS each, no hint a counter is running (ADR-0013,
+                    enumeration-neutral: telling you about the lock tells you the account exists)
+        CORRECT  -> 429 {"detail":"Too many failed login attempts. Your account is temporarily
+                    locked; try again later.","instance":"/api/auth/login",
+                    "errorCode":"ACCOUNT_LOCKED","retryAfterSeconds":900,
+                    "lockedUntil":"2026-08-06T18:54:57.3924877+00:00"}
+    */
+    for (let i = 0; i < 5; i++) {
+      const wrong = await login('demo@azurebank.dev', 'WrongPassword1!');
+      expect(wrong.status).toBe(401);
+      expect((await wrong.json()).errorCode).toBe('INVALID_CREDENTIALS');
+    }
+
+    const correct = await login('demo@azurebank.dev', 'Password1!');
+    expect(correct.status).toBe(429);
+    /*
+      No Retry-After HEADER. Login is a BFF ACTION, so the body is forwarded by
+      ForwardUpstreamError, which copies status and body and no headers — the same asymmetry as
+      the PIN lockout. The rate-limit 429 below DOES carry the header, which is what makes the two
+      distinguishable at all.
+    */
+    expect(correct.headers.get('Retry-After')).toBeNull();
+
+    const body = await correct.json();
+    expect(body.errorCode).toBe('ACCOUNT_LOCKED');
+    expect(body.detail).toBe(
+      'Too many failed login attempts. Your account is temporarily locked; try again later.',
+    );
+    // The API's path, not the BFF's — the body was generated upstream. This is the discriminator
+    // against the rate-limit 429, which names /bff/auth/login.
+    expect(body.instance).toBe('/api/auth/login');
+    expect(body.retryAfterSeconds).toBe(900);
+    expect(body.lockedUntil).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}\+00:00$/);
+  });
+
+  it('U4: the eleventh auth call in a minute is the BFF’s own 429', async () => {
+    /*
+      Also mock-only, and for a sharper reason: a contract test that trips the real limiter would
+      lock every subsequent auth call in the suite out for sixty seconds. Measured by deliberately
+      exhausting the bucket against a NONEXISTENT email, so the account-lockout 429 could not fire
+      and be mistaken for this one:
+
+        429 {"detail":"Too many requests. Please retry later.","instance":"/bff/auth/login",
+             "errorCode":"RATE_LIMIT_EXCEEDED"}
+        Content-Type: application/json   Retry-After: 60   Cache-Control: no-store
+    */
+    for (let i = 0; i < 10; i++) {
+      await login('nobody@azurebank.dev', 'WhateverX1!');
+    }
+
+    const limited = await login('nobody@azurebank.dev', 'WhateverX1!');
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('Retry-After')).toBe('60');
+    expect(limited.headers.get('Cache-Control')).toBe('no-store');
+    // NOT problem+json: the limiter writes its own body and never reaches the ProblemDetails pipe.
+    expect(limited.headers.get('Content-Type')).toContain('application/json');
+
+    const body = await limited.json();
+    expect(body.errorCode).toBe('RATE_LIMIT_EXCEEDED');
+    expect(body.detail).toBe('Too many requests. Please retry later.');
+    // The BFF's OWN path — the limiter is BFF middleware, so nothing upstream produced this.
+    expect(body.instance).toBe('/bff/auth/login');
+    // And NO retryAfterSeconds: the seconds live in the header here, in the body for ACCOUNT_LOCKED.
+    expect(body.retryAfterSeconds).toBeUndefined();
+  });
+});
