@@ -111,19 +111,28 @@ intent already declared (but unused) in the BFF `SecurityOptions`
 
 The Context above cites the values as "the intent already declared (but unused) in the BFF
 `SecurityOptions` (`MaxPinAttempts = 3`, `LockoutMinutes = 15`)". Those two members, and their
-entries in the BFF's `appsettings.json` / `appsettings.Development.json`, have now been **deleted**
-— nothing ever read them, and this ADR's own Considered Options rejected the design they implied
-("BFF-session-level limiting only — rejected: the API stays open to a direct (non-BFF) JWT caller").
+entries in the two configuration files the repository actually tracks — `appsettings.json` and
+`appsettings.Development.json.example` — have now been **deleted**. Nothing ever read them, and
+this ADR's own Considered Options rejected the design they implied ("BFF-session-level limiting
+only — rejected: the API stays open to a direct (non-BFF) JWT caller").
 
 The Context sentence is left as written because it is accurate history: those declarations are
 where the 3 and the 15 came from. What changed is only that following the reference now leads
 nowhere, which is why this note exists.
 
-What was actively misleading, and the reason this was not left alone: the BFF's
-`appsettings.Development.json` set them to **10 attempts / 1 minute**, so a reader of that file
-would conclude dev allowed ten tries before a one-minute lock. The real behaviour in every
-environment is `ValidationRules.MaxPinAttempts` (3) and `PinLockoutMinutes` (15), enforced
-API-side by `PinService`. No API constant changed.
+What was actively misleading, and the reason this was not left alone: the development config set
+them to **10 attempts / 1 minute**, so a reader would conclude dev allowed ten tries before a
+one-minute lock. The real behaviour in every environment is `ValidationRules.MaxPinAttempts` (3)
+and `PinLockoutMinutes` (15), enforced API-side by `PinService`. No API constant changed.
+
+A note for anyone with an existing checkout, since it is the one thing this change CANNOT do for
+you: `appsettings.Development.json` is gitignored (`.gitignore:11`, with only the `.example`
+re-included), so merging this does not touch the copy on your machine — it will still carry both
+keys until you re-copy the example or delete them by hand. That is harmless, and measured rather
+than assumed: with the stale keys left in place the BFF starts normally, login answers 200, and
+`pinExpiresAt` still comes back at now + 10 minutes. `Configure<SecurityOptions>` binds by
+property name with no validator and no `ErrorOnUnknownConfiguration`, so a JSON key with nothing
+to bind to is simply ignored.
 
 `PinValidityMinutes` stays on `SecurityOptions` — it is read in three places
 (`BffAuthController` twice, `SessionService.IsPinVerificationValid`), so the options class itself
