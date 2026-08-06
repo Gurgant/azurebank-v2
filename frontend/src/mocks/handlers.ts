@@ -333,25 +333,34 @@ const pathOf = (request: Request) => new URL(request.url).pathname;
  * no-ops. Every `/bff/auth/*` handler calls this FIRST except `session-status`, the one route the
  * middleware excludes.
  *
- * KNOWN LIMITATION, and why it is not fixed here rather than merely unfixed. The real middleware
- * keys on `context.Request.Cookies.TryGetValue(...)`; this keys on `mockState.session` existing.
- * So an anonymous request slides the clock in the mock where the real BFF would no-op. Raised
- * independently by CodeRabbit and by an adversarial review of U7, so it is not a fringe reading.
+ * KNOWN LIMITATION. The real middleware keys on `context.Request.Cookies.TryGetValue(...)`; this
+ * keys on `mockState.session` existing. So an anonymous request slides the clock in the mock where
+ * the real BFF would no-op. Raised independently by CodeRabbit and by an adversarial review of U7,
+ * so it is not a fringe reading.
  *
- * Taking a `request` and testing for the cookie does NOT fix it, which was measured rather than
- * argued. MSW keeps its OWN cookie store and replays it: after a handler issues one Set-Cookie, a
- * request the caller deliberately sent with no cookie header still arrives carrying it —
+ * What is PROVEN is narrower than "unfixable", and the distinction matters. The obvious remedy —
+ * take a `request`, issue a session cookie, test for it — does not work, because MSW keeps its OWN
+ * cookie store and replays it. After a handler issues one Set-Cookie, a request the caller
+ * deliberately sent with no cookie header still arrives carrying it:
  *
- *   client jar   -> cookie ".AzureBank.Session=probe-value; …"
+ *   client jar     -> cookie ".AzureBank.Session=probe-value; …"
  *   anonymous:true -> cookie ".AzureBank.Session=probe-value; …"   (client sent NOTHING)
  *
- * — so the header is truthy for both cases and the check would be decoration. Gating on a cookie
- * the mock never sets is worse still: `dev:mock` runs in a real browser with nothing to send, so
- * the clock would stop sliding there — a live regression bought for a test-only gain.
+ * The header is therefore truthy for anonymous and authenticated alike, the check would be
+ * decoration, and a test asserting "anonymous does not slide" would fail AFTER that fix. MSW 2.12's
+ * `cookieStore` is a module singleton over a `#private` field exposing only `getCookies`/`setCookie`
+ * — no clear, no reset, no opt-out — so the replay cannot simply be turned off.
  *
- * Exposure is nil: the SPA is same-origin and always sends credentials, so no product path reaches
- * the divergence. The tests that need a session-less caller live in `authGuards.contract.test.ts`,
- * which holds no session at FILE level for exactly this reason.
+ * What is NOT ruled out: a design where the mock issues no Set-Cookie at all (leaving MSW nothing to
+ * replay) and the cookie comes from `document.cookie` in the browser and from the contract client's
+ * jar in node. That would make anonymity expressible again. It is UNVERIFIED — whether jsdom's fetch
+ * attaches `document.cookie` without MSW's store was never tested — and it costs the two contract
+ * targets a shared cookie mechanism, which is the property `target.ts` exists to protect. So it is
+ * a candidate, not a plan, and nobody should read this comment as "impossible".
+ *
+ * Exposure meanwhile is nil: the SPA is same-origin and always sends credentials, so no product
+ * path reaches the divergence. Tests needing a session-less caller live in
+ * `authGuards.contract.test.ts`, which holds no session at FILE level for exactly this reason.
  */
 function runSessionActivityMiddleware(): void {
   expireMockSessionIfDue();
