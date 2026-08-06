@@ -360,9 +360,7 @@ builder.Services.AddRateLimiter(options =>
     "AbsoluteTimeoutMinutes": 60
   },
   "Security": {
-    "PinValidityMinutes": 5,
-    "MaxPinAttempts": 3,
-    "LockoutMinutes": 15
+    "PinValidityMinutes": 5
   },
   "BackendApi": {
     "BaseUrl": "https://localhost:7215"
@@ -402,8 +400,6 @@ public class BffSessionOptions
 public class SecurityOptions
 {
     public int PinValidityMinutes { get; set; } = 5;
-    public int MaxPinAttempts { get; set; } = 3;
-    public int LockoutMinutes { get; set; } = 15;
 }
 ```
 
