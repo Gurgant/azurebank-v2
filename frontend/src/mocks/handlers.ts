@@ -3,6 +3,7 @@ import { createOpenApiHttp } from 'openapi-msw';
 import type { paths } from '../api/schema';
 import type { AccountType } from '../api/enums';
 import {
+  bffProblem,
   invalidJsonValueProblem,
   missingMemberProblem,
   modelStateProblem,
@@ -11,6 +12,7 @@ import {
 } from './problem';
 import {
   MOCK_PASSWORD,
+  MOCK_SESSION_COOKIE,
   MOCK_USER,
   expireMockSessionIfDue,
   markMockActivity,
@@ -313,6 +315,109 @@ function authTokenMissing(pathname: string) {
  * wrong. Note the path is the SUBSTITUTED one, ids and all, not the route template.
  */
 const pathOf = (request: Request) => new URL(request.url).pathname;
+
+/**
+ * `SessionActivityMiddleware`, which is MIDDLEWARE and therefore runs before everything a
+ * controller does — routing, model binding, validation and the action body alike.
+ *
+ * That ordering is not a detail. It means a cookie-bearing request slides the clock even when it
+ * is about to be rejected: a malformed body, a PIN that fails its regex, a 400 the action never
+ * sees. The mock had these calls AFTER the body parse, so an active session that fumbled its
+ * payload kept sliding in production and quietly aged out under MSW.
+ *
+ * Confirmed by the strongest available evidence — a request that reaches no controller at all:
+ * `GET /bff/auth/no-such-route` answered 404 and STILL slid `inactivityExpiresAt` (measured
+ * 2026-08-05, along with `/health`, which also 404s). If routing cannot stop it, binding cannot.
+ *
+ * Expiry first, then the slide, mirroring `UpdateActivity` -> `GetSession`: a session already past
+ * its deadline is evicted and returns null, so there is nothing to slide and `markMockActivity`
+ * no-ops. Every `/bff/auth/*` handler calls this FIRST except `session-status`, the one route the
+ * middleware excludes.
+ *
+ * COOKIE-SCOPED, because the real middleware is. It acts only when
+ * `context.Request.Cookies.TryGetValue(...)` succeeds, so a caller presenting no cookie leaves
+ * another live session's clock alone. Keying on `mockState.session` instead — which is what this
+ * did — meant an anonymous request extended whatever session happened to exist.
+ *
+ * The mock deliberately issues NO `Set-Cookie`, and that is the crux rather than an omission. MSW
+ * keeps its own cookie store and REPLAYS it: after one Set-Cookie, a request the caller sent with
+ * no cookie header still arrives carrying it, so anonymity becomes inexpressible and a check here
+ * would be decoration. Measured, and MSW 2.12's `cookieStore` is a singleton over a `#private`
+ * field with no clear or opt-out, so the replay cannot be disabled.
+ *
+ * The cookie therefore comes from the two places that do NOT feed that store:
+ *
+ *   jsdom + dev:mock   `document.cookie`, stamped by `seedMockSession` / login / register and
+ *                      cleared by logout and `resetMockState`. Verified with the MSW store empty:
+ *                      a SAME-ORIGIN request carries it, a cross-origin one does not — which is
+ *                      why the unit suite's relative URLs matter.
+ *   node (contract)    the client's own jar, seeded for the mock target in `client.ts`. There is
+ *                      no `document` there, so `anonymous: true` genuinely sends nothing.
+ *
+ * Expiry runs before the slide, mirroring `UpdateActivity` -> `GetSession`: a session past its
+ * deadline is evicted and returns null, so there is nothing to slide. Every `/bff/auth/*` handler
+ * calls this FIRST except `session-status`, the one route the middleware excludes. */
+function runSessionActivityMiddleware(request?: Request): void {
+  // SPIKE: mirror `Cookies.TryGetValue` — no cookie, no slide.
+  if (request && !(request.headers.get('cookie') ?? '').includes(MOCK_SESSION_COOKIE)) return;
+  expireMockSessionIfDue();
+  markMockActivity();
+}
+
+/** `ValidationRules.PinLockoutMinutes` is 15. */
+const PIN_LOCKOUT_SECONDS = 15 * 60;
+
+/**
+ * `DateTimeOffset.ToString("o")` — seven fractional digits and a numeric **`+00:00`** offset.
+ *
+ * Not `toISOString()`, which gives three digits and a `Z`. Distinct from `apiInstant()` above:
+ * that one models `Rfc3339DateTimeConverter`, which writes `Z`. Two serialisers, two formats, and
+ * `lockedUntil` goes through the DateTimeOffset one because `PinLockedException` puts a raw
+ * `DateTimeOffset` in the exception's details rather than a converted DTO property.
+ *
+ * Measured 2026-08-05: "lockedUntil":"2026-08-05T12:10:14.3341758+00:00"
+ */
+function apiOffsetInstant(ms: number): string {
+  return new Date(ms).toISOString().replace(/\.(\d{3})Z$/, '.$10000+00:00');
+}
+
+/**
+ * The 429 both PIN paths produce — and the one thing they do NOT share.
+ *
+ * The body is the API's in both cases; what differs is how it reaches the browser:
+ *
+ *   POST /api/transactions/withdraw   YARP-PROXIED. Response headers are forwarded verbatim, so
+ *                                     the `Retry-After` that `AppExceptionHandler` sets survives.
+ *   POST /bff/auth/verify-pin         A BFF ACTION. `ForwardUpstreamError` is
+ *                                     `StatusCode(status, body)` (BffAuthController.cs:670-703) —
+ *                                     it copies no headers, so `Retry-After` is DROPPED.
+ *
+ * Measured 2026-08-05 on a throwaway user, because reaching a lockout costs three wrong PINs and
+ * fifteen minutes, and the seeded admin account is what the e2e suite drives:
+ *
+ *   verify-pin -> 429, Retry-After ABSENT,  instance "/api/auth/pin/verify"
+ *   withdraw   -> 429, Retry-After: 853,    instance "/api/transactions/withdraw"
+ *   both       -> detail "Too many incorrect PIN attempts. Your PIN is temporarily locked; try
+ *                 again later.", retryAfterSeconds 853, lockedUntil "…+00:00"
+ *
+ * `retryAfterSeconds` is recomputed per response (900 on the first, 853 later), so it is a
+ * countdown and not a constant — a client rendering it is showing remaining time, not the window.
+ *
+ * `instance` names the path the API saw. For the proxied route that is the caller's path; for
+ * verify-pin it is the API's own `/api/auth/pin/verify`, which the browser never requested.
+ */
+function pinLockedProblem(lockedUntil: string, now: number, source: 'verify-pin' | string) {
+  const retryAfterSeconds = Math.ceil((Date.parse(lockedUntil) - now) / 1000);
+  const viaBffAction = source === 'verify-pin';
+  return problem({
+    status: 429,
+    errorCode: 'PIN_LOCKED',
+    detail: 'Too many incorrect PIN attempts. Your PIN is temporarily locked; try again later.',
+    instance: viaBffAction ? '/api/auth/pin/verify' : source,
+    extensions: { retryAfterSeconds, lockedUntil },
+    ...(viaBffAction ? {} : { headers: { 'Retry-After': String(retryAfterSeconds) } }),
+  });
+}
 
 /**
  * The account-name and handle rules, which the mock enforced nowhere.
@@ -1389,17 +1494,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   // the backend refuses before Argon2id runs).
   const now = Date.now();
   if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
-    const retryAfterSeconds = Math.ceil((Date.parse(mockState.pinLockedUntil) - now) / 1000);
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 429,
-        errorCode: 'PIN_LOCKED',
-        detail: 'Too many incorrect PIN attempts. Please try again later.',
-        extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
-        headers: { 'Retry-After': String(retryAfterSeconds) },
-      }),
-    );
+    return response.untyped(pinLockedProblem(mockState.pinLockedUntil, now, pathOf(request)));
   }
 
   // INVALID_PIN — wrong PIN. The 3rd consecutive miss trips the 15-minute lock and returns
@@ -1408,18 +1503,8 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     mockState.pinAttempts += 1;
     if (mockState.pinAttempts >= 3) {
       mockState.pinAttempts = 0;
-      const retryAfterSeconds = 15 * 60;
-      mockState.pinLockedUntil = new Date(now + retryAfterSeconds * 1000).toISOString();
-      return response.untyped(
-        problem({
-          instance: pathOf(request),
-          status: 429,
-          errorCode: 'PIN_LOCKED',
-          detail: 'Too many incorrect PIN attempts. Please try again later.',
-          extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
-          headers: { 'Retry-After': String(retryAfterSeconds) },
-        }),
-      );
+      mockState.pinLockedUntil = apiOffsetInstant(now + PIN_LOCKOUT_SECONDS * 1000);
+      return response.untyped(pinLockedProblem(mockState.pinLockedUntil, now, pathOf(request)));
     }
     return response.untyped(
       problem({
@@ -1962,6 +2047,7 @@ function pinPayloadProblem(dto: 'VerifyPinRequest' | 'SetPinRequest', pin: unkno
 }
 
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
+  runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -1988,19 +2074,12 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
     `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
     to push a full transfer through, since the level is the only thing the money handlers consult.
   */
-  if (expireMockSessionIfDue() || !mockState.session) {
-    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  if (!mockState.session) {
+    return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
   const now = Date.now();
   if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
-    const retryAfterSeconds = Math.ceil((Date.parse(mockState.pinLockedUntil) - now) / 1000);
-    return problem({
-      status: 429,
-      errorCode: 'PIN_LOCKED',
-      detail: 'Too many incorrect PIN attempts. Please try again later.',
-      extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
-      headers: { 'Retry-After': String(retryAfterSeconds) },
-    });
+    return pinLockedProblem(mockState.pinLockedUntil, now, 'verify-pin');
   }
   if (pin === mockState.pin) {
     mockState.pinAttempts = 0;
@@ -2013,15 +2092,8 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   mockState.pinAttempts += 1;
   if (mockState.pinAttempts >= 3) {
     mockState.pinAttempts = 0;
-    const retryAfterSeconds = 15 * 60;
-    mockState.pinLockedUntil = new Date(now + retryAfterSeconds * 1000).toISOString();
-    return problem({
-      status: 429,
-      errorCode: 'PIN_LOCKED',
-      detail: 'Too many incorrect PIN attempts. Please try again later.',
-      extensions: { retryAfterSeconds, lockedUntil: mockState.pinLockedUntil },
-      headers: { 'Retry-After': String(retryAfterSeconds) },
-    });
+    mockState.pinLockedUntil = apiOffsetInstant(now + PIN_LOCKOUT_SECONDS * 1000);
+    return pinLockedProblem(mockState.pinLockedUntil, now, 'verify-pin');
   }
   /*
     A REFUSED PIN IS A 200, and the body is not the caller's current state — `authLevel` is
@@ -2047,6 +2119,7 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
  * prior lock so the freshly-set PIN works immediately.
  */
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
+  runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2071,8 +2144,8 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
     to push a full transfer through, since the level is the only thing the money handlers consult.
   */
-  if (expireMockSessionIfDue() || !mockState.session) {
-    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  if (!mockState.session) {
+    return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
   mockState.pin = pin;
   mockState.pinAttempts = 0;
@@ -2091,6 +2164,10 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
  * errorCode (the BFF's own shape — normalizes to HTTP_401 client-side).
  */
 const login = http.post('*/bff/auth/login', async ({ request }) => {
+  // Middleware, so it runs on these too. Unobservable on SUCCESS (a new session replaces the old
+  // one), but a login that FAILS leaves the previous session alive — and the real BFF has already
+  // slid its clock by then.
+  runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2102,10 +2179,35 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
       status: 401,
       errorCode: 'INVALID_CREDENTIALS',
       title: 'Unauthorized',
-      detail: 'Invalid email or password',
+      /*
+        FORWARDED, not hand-built — so this one keeps the full API envelope while the sibling
+        "Session expired or invalid" 401 three lines up does not. Measured 2026-08-05:
+
+          POST /bff/auth/login {"email":"…","password":"wrong"}
+          -> {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+              "detail":"Invalid email or password.","instance":"/api/auth/login",
+              "errorCode":"INVALID_CREDENTIALS","traceId":"…"}
+
+        Note the trailing period the mock was missing, and that `instance` names the API's route
+        rather than the BFF's: the body was generated upstream and copied through verbatim.
+      */
+      detail: 'Invalid email or password.',
+      instance: '/api/auth/login',
     });
   }
   mockState.session = { ...MOCK_USER };
+  mockState.staleSessionCookie = false; // a fresh cookie replaces the stale one
+  /*
+    A FRESH SESSION IS ALWAYS LEVEL 1. `SessionService.CreateSession` hardcodes
+    `AuthLevel = 1, // Level 1 = authenticated via email/password` (SessionService.cs:45) and mints
+    a NEW session id, so any elevation the previous session earned is orphaned with it.
+
+    The mock overwrote `session` and left `authLevel` alone, so signing in while already elevated
+    kept level 2 — a step-up bypass, since the level is the only thing the money handlers consult.
+    Every other route to a dead session (logout, clock expiry, resetMockState) already reset it;
+    these two were the gap.
+  */
+  mockState.authLevel = 1;
   // A login starts the session clock. Without this the fixtures sit at epoch 0 and every
   // subsequent request looks like a session that expired in 1970.
   mockState.sessionCreatedAt = Date.now();
@@ -2119,6 +2221,10 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
 });
 
 const register = http.post('*/bff/auth/register', async ({ request }) => {
+  // Middleware, so it runs on these too. Unobservable on SUCCESS (a new session replaces the old
+  // one), but a login that FAILS leaves the previous session alive — and the real BFF has already
+  // slid its clock by then.
+  runSessionActivityMiddleware(request);
   const registerBody = await readJsonBody(request);
   if (!registerBody) {
     return unreadableBodyProblem(await request.clone().text());
@@ -2146,6 +2252,8 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
     hasPin: false,
   };
   mockState.session = user;
+  mockState.staleSessionCookie = false; // registration issues a cookie too
+  mockState.authLevel = 1; // fresh session, level 1 — see the login handler above
   // Registration IS a login: the BFF sets the cookie on the 201, so the clock starts here too.
   mockState.sessionCreatedAt = Date.now();
   mockState.sessionLastActivity = Date.now();
@@ -2183,20 +2291,29 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
  * 401 and never revokes anything, so a typo cannot end the session it was meant to save.
  */
 const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }) => {
+  runSessionActivityMiddleware(request);
   const parsed = await readJsonBody(request);
   if (!parsed) {
     return unreadableBodyProblem(await request.clone().text());
   }
-  // Checked first, and WITHOUT marking activity: a dead session has nothing to re-authenticate into.
-  if (expireMockSessionIfDue() || !mockState.session) {
-    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+  // A dead session has nothing to re-authenticate into. The slide above already no-opped for it:
+  // `UpdateActivity` reads the session first and does nothing when it is gone.
+  if (!mockState.session) {
+    return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
   if ((parsed.body.password as string | undefined) !== MOCK_PASSWORD) {
+    // Re-authentication calls the API's LOGIN endpoint and forwards its answer, so this is the
+    // same body the login route produces — `instance` names `/api/auth/login`, not the BFF's own
+    // path. Measured rather than assumed to match its sibling, on a throwaway user:
+    //   POST /bff/auth/reauthenticate {"password":"wrong"} (live session)
+    //   -> {…,"detail":"Invalid email or password.","instance":"/api/auth/login",
+    //       "errorCode":"INVALID_CREDENTIALS"}
     return problem({
       status: 401,
       errorCode: 'INVALID_CREDENTIALS',
       title: 'Unauthorized',
-      detail: 'Invalid email or password',
+      detail: 'Invalid email or password.',
+      instance: '/api/auth/login',
     });
   }
   mockState.sessionCreatedAt = Date.now();
@@ -2208,20 +2325,22 @@ const reauthenticate = http.post('*/bff/auth/reauthenticate', async ({ request }
   });
 });
 
-const me = http.get('*/bff/auth/me', () => {
-  // Expiry is checked BEFORE activity is marked. The other order revives a session that died an
-  // hour ago simply because something touched it — which is exactly the bug the real BFF avoids by
-  // evaluating the deadline in the session store, not in the middleware.
-  if (expireMockSessionIfDue() || !mockState.session) {
+const me = http.get('*/bff/auth/me', ({ request }) => {
+  /*
+    /me IS activity: the BFF slides LastActivity on every cookie-bearing request and excludes only
+    the session-status probe (ADR-0018). Modelled so `inactivityExpiresAt` on this endpoint always
+    reads "now plus the full window" — as it does against a real BFF, which is why a client that
+    polled it for a countdown would see a frozen number in tests too, not just in a browser.
+
+    Expiry is evaluated BEFORE the slide, inside the helper. The other order revives a session that
+    died an hour ago simply because something touched it — the bug the real BFF avoids by putting
+    the deadline in the session store rather than in the middleware.
+  */
+  runSessionActivityMiddleware(request);
+  if (!mockState.session) {
     // The BFF's own 401: ProblemDetails WITHOUT errorCode.
-    return problem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
+    return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
-  // /me IS activity: the BFF slides LastActivity on every cookie-bearing request and excludes only
-  // the session-status probe (ADR-0018). Modelled here so `inactivityExpiresAt` on this endpoint
-  // always reads "now plus the full window" — exactly as it does against a real BFF, which is why a
-  // client that polled it for a countdown would see a frozen number in tests too, not just in a
-  // browser.
-  markMockActivity();
   return HttpResponse.json({
     data: {
       user: { ...mockState.session },
@@ -2247,6 +2366,9 @@ const me = http.get('*/bff/auth/me', () => {
 
 const logout = http.post('*/bff/auth/logout', () => {
   mockState.session = null;
+  // Logout DELETES the cookie, so the next request carries none — which is a different state from
+  // a session that died on its own, and answers 401 rather than 403 on the level-2 routes.
+  mockState.staleSessionCookie = false;
   mockState.authLevel = 1;
   return HttpResponse.json({ message: 'Logged out successfully' });
 });
@@ -2320,10 +2442,61 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
  * session — and all three measured forms of that agree, so it is modelled the same way and the gap
  * is named here rather than hidden.
  */
+/**
+ * The three routes `AuthLevelMiddleware` gates, mirrored from its own table
+ * (`AuthLevelMiddleware.cs:18-34, 115-146`) rather than from a guess:
+ *
+ *   POST /api/transfers            POST /api/transfers/internal
+ *   any method on a path that starts `/api/accounts/` AND ends `/full-number`
+ *
+ * The trailing slash is trimmed first, and that is not decoration: endpoint routing serves
+ * `/api/transfers/` too, so matching the raw path would let a slash bypass step-up entirely. That
+ * bypass was a real fix in the BFF (PR R3); modelling the gate without it would put the hole back
+ * in the mock, where a test could then "prove" the bypass is safe.
+ */
+function requiresPinVerification(method: string, pathname: string): boolean {
+  const path = pathname.replace(/\/+$/, '').toLowerCase();
+  if (
+    method.toUpperCase() === 'POST' &&
+    (path === '/api/transfers' || path === '/api/transfers/internal')
+  ) {
+    return true;
+  }
+  return path.startsWith('/api/accounts/') && path.endsWith('/full-number');
+}
+
 const sessionActivity = http.all('*/api/*', ({ request }) => {
   expireMockSessionIfDue();
   if (!mockState.session) {
-    return authTokenMissing(new URL(request.url).pathname);
+    const { pathname } = new URL(request.url);
+    /*
+      A DEAD SESSION AND NO SESSION ARE DIFFERENT ANSWERS, and only on these three routes.
+
+      `AuthLevelMiddleware` acts only when a cookie is PRESENT (`Cookies.TryGetValue`); with none
+      it logs "let the API handle 401" and falls through to the proxy, which forwards no bearer.
+      So the cookie — not the session — decides which of the two answers you get. Measured
+      2026-08-05, with the no-cookie row as the control that makes the distinction real:
+
+        level-2 route, cookie that no longer resolves
+          -> 403  X-Auth-Level-Required: 2, X-Auth-Level-Current: 0
+             {"type":"STEP_UP_REQUIRED",…,"currentLevel":0,"status":403}
+        level-2 route, NO cookie          -> 401 AUTH_TOKEN_MISSING
+        ordinary /api route, either       -> 401 AUTH_TOKEN_MISSING
+
+      An expired session and an unknown one are the same code path, not merely similar:
+      `InMemoryTokenStore.GetSessionAsync` (:40-56) REMOVES an expired session and returns null,
+      exactly as it does for an id it never knew, and `GetAuthLevel` maps null to 0.
+
+      Why it matters to the client: 401 triggers the global sign-out, 403 STEP_UP_REQUIRED opens
+      the PIN modal. The mock answered 401 here, so a session that timed out mid-transfer looked
+      like a hard logout under MSW and like a step-up prompt in production — the two most
+      different recoveries the app has.
+    */
+    if (mockState.staleSessionCookie && requiresPinVerification(request.method, pathname)) {
+      // 0, not `mockState.authLevel`: the level belongs to the session, and there is no session.
+      return stepUp403(0);
+    }
+    return authTokenMissing(pathname);
   }
   markMockActivity();
   // Returning nothing falls through to the endpoint handler below.

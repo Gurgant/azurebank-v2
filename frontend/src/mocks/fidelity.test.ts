@@ -823,3 +823,195 @@ describe('the internal transfer names a real ledger row', () => {
     expect(row.transactionNumber).toBe(transfer.data.transactionNumber);
   });
 });
+
+describe('a session that DIED is not a session that never was', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  /**
+   * Mock-only, and deliberately so. The contract suite runs the same file against the real stack,
+   * and there is no safe way to produce this state there: the session must actually expire, which
+   * means waiting out the ten-minute inactivity window inside the test run. So the real behaviour
+   * is quoted from a live measurement and the mock is pinned against the quote.
+   *
+   * Measured 2026-08-05 with a cookie that no longer resolves (an unknown id — the same code path
+   * as an expired one, since `InMemoryTokenStore.GetSessionAsync` REMOVES an expired session and
+   * returns null for both):
+   *
+   *   GET /api/accounts/{id}/full-number   -> 403, X-Auth-Level-Required: 2, X-Auth-Level-Current: 0
+   *   POST /api/transfers                  -> 403, same headers
+   *   POST /api/transfers/internal         -> 403, same headers
+   *   GET /api/accounts                    -> 401 AUTH_TOKEN_MISSING
+   *   the same three routes with NO cookie  -> 401 AUTH_TOKEN_MISSING
+   */
+  const expireTheSession = () => {
+    // Push last activity past the inactivity window; the next request triggers the sweep.
+    mockState.sessionLastActivity = Date.now() - mockState.sessionInactivityWindowMs - 1;
+  };
+
+  it('answers the level-2 routes with 403 STEP_UP_REQUIRED and level 0', async () => {
+    expireTheSession();
+
+    const reveal = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`);
+    expect(reveal.status).toBe(403);
+    expect(reveal.headers.get('X-Auth-Level-Required')).toBe('2');
+    // ZERO, not 1. The level belongs to the session and there is no session — a client showing
+    // "you are at level 1" would be describing a session that no longer exists.
+    expect(reveal.headers.get('X-Auth-Level-Current')).toBe('0');
+    expect((await reveal.json()).currentLevel).toBe(0);
+  });
+
+  it('still answers ORDINARY api routes with 401, which is the control', async () => {
+    // Without this the first test passes just as happily against a mock that 403s everything,
+    // which would be a different and equally wrong system.
+    expireTheSession();
+
+    const list = await fetch('/api/accounts');
+    expect(list.status).toBe(401);
+    expect((await list.json()).errorCode).toBe('AUTH_TOKEN_MISSING');
+  });
+
+  it('answers 401 on the level-2 routes when there was never a cookie at all', async () => {
+    /*
+      The distinction the mock could not previously express. `AuthLevelMiddleware` only gates when
+      `Cookies.TryGetValue` SUCCEEDS; with no cookie it logs "let the API handle 401" and falls
+      through to the proxy, which forwards no bearer. So the discriminator is the cookie, not the
+      session — and logging out deletes the cookie, where expiring does not.
+    */
+    resetMockState(); // no session, and no stale cookie either
+
+    const reveal = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`);
+    expect(reveal.status).toBe(401);
+    expect((await reveal.json()).errorCode).toBe('AUTH_TOKEN_MISSING');
+  });
+
+  it('treats a LOGOUT as no cookie, not as a dead one', async () => {
+    // Logout deletes the cookie server-side AND in the browser, so the next request carries none.
+    // Conflating it with expiry would make a signed-out user meet a PIN prompt.
+    expireTheSession();
+    await fetch('/bff/auth/logout', { method: 'POST' });
+
+    const reveal = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`);
+    expect(reveal.status).toBe(401);
+  });
+});
+
+describe('the PIN lockout, and the header only one path keeps', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  /**
+   * Mock-only for a different reason: reaching a lockout costs three wrong PINs and fifteen
+   * minutes, and the contract suite's real target is the seeded admin account that the e2e suite
+   * drives. The real values below were measured on a THROWAWAY registered user
+   * (`PinAccessFailedCount` is per-user), which is what made U38 affordable at all.
+   *
+   *   verify-pin -> 429, Retry-After ABSENT,  instance "/api/auth/pin/verify"
+   *   withdraw   -> 429, Retry-After: 853,    instance "/api/transactions/withdraw"
+   *   both       -> "Too many incorrect PIN attempts. Your PIN is temporarily locked; try again
+   *                  later.", retryAfterSeconds 853, lockedUntil "2026-08-05T12:10:14.3341758+00:00"
+   */
+  const wrongPin = () =>
+    fetch('/bff/auth/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '000000' }),
+    });
+
+  it('locks on the THIRD attempt, and drops Retry-After on the BFF action', async () => {
+    expect((await wrongPin()).status).toBe(200);
+    expect((await wrongPin()).status).toBe(200);
+
+    const locked = await wrongPin();
+    expect(locked.status).toBe(429);
+    /*
+      `ForwardUpstreamError` is `StatusCode(status, body)` — it copies no headers, so the
+      `Retry-After` the API set is lost between the API and the browser. Asserting its ABSENCE is
+      the whole point: a client that read the header here would work in tests and silently fall
+      back to a default in production.
+    */
+    expect(locked.headers.get('Retry-After')).toBeNull();
+
+    const body = await locked.json();
+    expect(body.errorCode).toBe('PIN_LOCKED');
+    expect(body.detail).toBe(
+      'Too many incorrect PIN attempts. Your PIN is temporarily locked; try again later.',
+    );
+    // The API's own path, which the browser never called — the body was generated upstream.
+    expect(body.instance).toBe('/api/auth/pin/verify');
+    // `DateTimeOffset.ToString("o")`: seven fractional digits and a numeric offset, NOT `Z`.
+    expect(body.lockedUntil).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}\+00:00$/);
+    expect(body.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  it('KEEPS Retry-After on the proxied withdraw, which is the same failure', async () => {
+    await wrongPin();
+    await wrongPin();
+    await wrongPin();
+
+    const withdrawal = await fetch('/api/transactions/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 1, pin: '123456' }),
+    });
+
+    expect(withdrawal.status).toBe(429);
+    // YARP forwards response headers verbatim, so this path keeps what the BFF action loses.
+    // Same errorCode, same sentence, same lock — only the transport differs.
+    const seconds = withdrawal.headers.get('Retry-After');
+    expect(seconds).not.toBeNull();
+    const body = await withdrawal.json();
+    expect(body.errorCode).toBe('PIN_LOCKED');
+    expect(Number(seconds)).toBe(body.retryAfterSeconds);
+    expect(body.instance).toBe('/api/transactions/withdraw');
+  });
+});
+
+describe('a fresh session does not inherit an elevation', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  it('drops back to level 1 when the user signs in again', async () => {
+    /*
+      `SessionService.CreateSession` hardcodes `AuthLevel = 1` and mints a NEW session id, so
+      whatever the previous session had earned is orphaned with it. The mock replaced `session` and
+      left `authLevel` alone, so signing in while elevated stayed at 2 — a step-up bypass, since
+      the level is the only thing the money handlers consult.
+
+      Measured on the running stack rather than read off that line, because "found by reading" is
+      not "observed":
+
+        verify-pin 123456                       -> 200 authLevel 2
+        GET /api/accounts/{id}/full-number      -> 200
+        POST /bff/auth/login  (same cookie jar) -> 200
+        GET /api/accounts/{id}/full-number      -> 403 X-Auth-Level-Current: 1, currentLevel 1
+
+      Every other route to a dead session already reset it (logout, clock expiry, resetMockState);
+      login and register were the gap.
+    */
+    await fetch('/bff/auth/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '123456' }),
+    });
+    expect(mockState.authLevel).toBe(2);
+    expect((await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`)).status).toBe(200);
+
+    await fetch('/bff/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'demo@azurebank.dev', password: 'Password1!' }),
+    });
+
+    const afterRelogin = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`);
+    expect(afterRelogin.status).toBe(403);
+    expect(afterRelogin.headers.get('X-Auth-Level-Current')).toBe('1');
+    expect((await afterRelogin.json()).currentLevel).toBe(1);
+  });
+});

@@ -139,4 +139,21 @@ describe('contract: endpoints that require a session', () => {
     */
     expect(problem.instance).toBe(instance);
   });
+  it('hand-builds a 401 with THREE members and nothing else', async () => {
+    /*
+      `BffAuthController` writes `new ProblemDetails{Title, Detail, Status}` at five sites and
+      ASP.NET omits the null members, so `type`, `instance` and any extension are simply absent.
+      The mock built this through the shared `problem()` helper, which decorates every body with a
+      `type` and a synthesised `traceId` the BFF never writes.
+
+      Observed 2026-08-05, anonymous:
+        GET /bff/auth/me -> 401 {"title":"Unauthorized","status":401,"detail":"Session expired or invalid"}
+                            Content-Type: application/problem+json; charset=utf-8
+    */
+    const { status, body } = await call('/bff/auth/me', { anonymous: true });
+
+    expect(status).toBe(401);
+    expect(Object.keys(body as object).sort()).toEqual(['detail', 'status', 'title']);
+    expect((body as { detail: string }).detail).toBe('Session expired or invalid');
+  });
 });

@@ -119,6 +119,24 @@ interface MockState {
   authLevel: 1 | 2;
   /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
   session: MockSessionUser | null;
+  /**
+   * The browser still sends a cookie, but it no longer resolves to a session.
+   *
+   * `session: null` conflated two states the real stack answers DIFFERENTLY, because expiry is
+   * server-side and deleting a cookie is not:
+   *
+   *   no cookie at all       -> `AuthLevelMiddleware` never gates (it only acts when
+   *                             `Cookies.TryGetValue` succeeds), the request is proxied without a
+   *                             bearer, and the API answers 401 AUTH_TOKEN_MISSING.
+   *   cookie, dead session   -> the middleware DOES gate, `GetAuthLevel` returns 0, and the three
+   *                             level-2 routes answer 403 STEP_UP_REQUIRED with
+   *                             `X-Auth-Level-Current: 0`.
+   *
+   * Set when a session expires by clock, cleared on login/register (a fresh cookie) and on logout
+   * (the cookie is deleted). Everything else — ordinary `/api` routes included — is 401 either
+   * way, so this flag only changes the answer on the level-2 three.
+   */
+  staleSessionCookie: boolean;
 
   /**
    * The server-side session clock, modelled the way the BFF actually keeps it.
@@ -390,6 +408,7 @@ export const mockState: MockState = {
   idempotency: new Map(),
   authLevel: 1,
   session: null,
+  staleSessionCookie: false,
   sessionInactivityWindowMs: MOCK_INACTIVITY_WINDOW_MS,
   sessionAbsoluteWindowMs: MOCK_ABSOLUTE_WINDOW_MS,
   sessionCreatedAt: 0,
@@ -406,6 +425,12 @@ export const mockState: MockState = {
 /** Test helper: start authenticated without walking the login flow. */
 export function seedMockSession(user: MockSessionUser = MOCK_USER): void {
   mockState.session = { ...user };
+  // A fresh session means a fresh cookie: whatever was stale is not any more.
+  mockState.staleSessionCookie = false;
+  setMockSessionCookie(true);
+  // And a fresh session is level 1: `SessionService.CreateSession` hardcodes it. A helper that
+  // left an inherited 2 in place would hand a test elevation it never verified a PIN for.
+  mockState.authLevel = 1;
   // A seeded session starts its clock now, exactly as a real login would. Leaving it at 0 would
   // hand every test a session that expired in 1970 and make the warning fire on the first tick.
   mockState.sessionCreatedAt = Date.now();
@@ -413,6 +438,16 @@ export function seedMockSession(user: MockSessionUser = MOCK_USER): void {
 }
 
 /** The BFF slides LastActivity on every cookie-bearing request EXCEPT the session-status probe. */
+export const MOCK_SESSION_COOKIE = '.AzureBank.Session';
+
+/** SPIKE: stamp/clear the cookie in environments that have a document (jsdom + dev:mock). */
+export function setMockSessionCookie(present: boolean): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = present
+    ? `${MOCK_SESSION_COOKIE}=mock-session; Path=/`
+    : `${MOCK_SESSION_COOKIE}=; Path=/; Max-Age=0`;
+}
+
 export function markMockActivity(): void {
   if (mockState.session) mockState.sessionLastActivity = Date.now();
 }
@@ -440,6 +475,8 @@ export function expireMockSessionIfDue(now: number = Date.now()): boolean {
     // PIN-verified, so a test could walk past step-up without ever verifying a PIN — the gate
     // silently absent rather than visibly broken.
     mockState.authLevel = 1;
+    // Expiry is SERVER-side; the browser still holds the cookie. See `staleSessionCookie`.
+    mockState.staleSessionCookie = true;
     return true;
   }
   return false;
@@ -464,6 +501,8 @@ export function resetMockState(): void {
   mockState.idempotency.clear();
   mockState.authLevel = 1;
   mockState.session = null;
+  mockState.staleSessionCookie = false;
+  setMockSessionCookie(false);
   mockState.sessionInactivityWindowMs = MOCK_INACTIVITY_WINDOW_MS;
   mockState.sessionAbsoluteWindowMs = MOCK_ABSOLUTE_WINDOW_MS;
   mockState.sessionCreatedAt = 0;
