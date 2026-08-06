@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import { configure } from '@testing-library/react';
 import { resetServerActivity } from '../features/auth/sessionActivity';
 import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
@@ -27,6 +28,20 @@ globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObse
 window.innerWidth = TEST_VIEWPORT_WIDTH;
 window.innerHeight = TEST_VIEWPORT_HEIGHT;
 window.matchMedia ??= matchMediaStub;
+
+/*
+  The OTHER half of the timing budget (the vitest half lives in vitest.config.ts).
+
+  `findBy*` / `waitFor` default to a 1000ms `asyncUtilTimeout`, and that is what produced nine of
+  the twenty failures when the suite was run under CPU contention: "Unable to find role=..." on
+  dialogs that simply had not mounted yet. Fluent's Dialog is not instant even unloaded — it
+  mounts, portals, and settles focus — so a one-second budget was always thin, and contention made
+  it insufficient.
+
+  Five seconds, not more: it must stay comfortably UNDER the 20s test timeout so that a query which
+  will never match fails as a clear "could not find X", not as an opaque "test timed out".
+*/
+configure({ asyncUtilTimeout: 5_000 });
 
 // MSW lifecycle: every unhandled request is an ERROR — tests must declare the traffic they
 // cause, so a missing handler is a broken contract, never a silent pass.
