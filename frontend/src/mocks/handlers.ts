@@ -332,6 +332,26 @@ const pathOf = (request: Request) => new URL(request.url).pathname;
  * its deadline is evicted and returns null, so there is nothing to slide and `markMockActivity`
  * no-ops. Every `/bff/auth/*` handler calls this FIRST except `session-status`, the one route the
  * middleware excludes.
+ *
+ * KNOWN LIMITATION, and why it is not fixed here rather than merely unfixed. The real middleware
+ * keys on `context.Request.Cookies.TryGetValue(...)`; this keys on `mockState.session` existing.
+ * So an anonymous request slides the clock in the mock where the real BFF would no-op. Raised
+ * independently by CodeRabbit and by an adversarial review of U7, so it is not a fringe reading.
+ *
+ * Taking a `request` and testing for the cookie does NOT fix it, which was measured rather than
+ * argued. MSW keeps its OWN cookie store and replays it: after a handler issues one Set-Cookie, a
+ * request the caller deliberately sent with no cookie header still arrives carrying it —
+ *
+ *   client jar   -> cookie ".AzureBank.Session=probe-value; …"
+ *   anonymous:true -> cookie ".AzureBank.Session=probe-value; …"   (client sent NOTHING)
+ *
+ * — so the header is truthy for both cases and the check would be decoration. Gating on a cookie
+ * the mock never sets is worse still: `dev:mock` runs in a real browser with nothing to send, so
+ * the clock would stop sliding there — a live regression bought for a test-only gain.
+ *
+ * Exposure is nil: the SPA is same-origin and always sends credentials, so no product path reaches
+ * the divergence. The tests that need a session-less caller live in `authGuards.contract.test.ts`,
+ * which holds no session at FILE level for exactly this reason.
  */
 function runSessionActivityMiddleware(): void {
   expireMockSessionIfDue();
