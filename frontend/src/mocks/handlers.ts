@@ -2298,17 +2298,31 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   const email = authBody.body.email as string | undefined;
   const password = authBody.body.password as string | undefined;
   const nowMs = Date.now();
-  /*
-    The lock is read BEFORE the password is checked, which is why a correct password still fails
-    while locked — the whole point of U3. `AuthService` refuses without ever reaching the hash.
-  */
+  const credentialsOk = email === MOCK_USER.email && password === MOCK_PASSWORD;
   const locked = email ? loginLockedProblem(email, nowMs) : null;
-  if (locked) return locked;
-  if (email !== MOCK_USER.email || password !== MOCK_PASSWORD) {
-    if (email) {
+  /*
+    ORDER IS THE SECURITY PROPERTY, and I had it backwards on the first pass.
+
+    A wrong password NEVER reveals the lock — it is the same 401 an unknown address gets, so the
+    lock cannot become an enumeration oracle for someone spraying passwords (ADR-0012 states this
+    as contract, and `AccountLockedException`'s own docblock repeats it). Only the CORRECT password
+    on a locked account gets the 429.
+
+    Measured 2026-08-06, which is how the inverted version was caught before it shipped:
+
+      wrong x5 -> 401 INVALID_CREDENTIALS
+      6th WRONG -> 401 INVALID_CREDENTIALS   <- still hidden
+      CORRECT   -> 429 ACCOUNT_LOCKED        <- only here
+
+    And while locked the counter is NOT touched: `IncrementAndMaybeLockLoginAsync` is skipped
+    entirely (`AuthService.cs:130-134`), so a guesser cannot extend the window by keeping at it.
+  */
+  if (!credentialsOk) {
+    if (email && !locked) {
       const failures = (mockState.loginFailures[email] ?? 0) + 1;
       mockState.loginFailures[email] = failures;
       if (failures >= MAX_LOGIN_ATTEMPTS) {
+        // Reset to 0 as the lock latches: from here the WINDOW is authoritative, not the count.
         mockState.loginFailures[email] = 0;
         mockState.loginLockedUntil[email] = apiOffsetInstant(nowMs + LOGIN_LOCKOUT_SECONDS * 1000);
       }
@@ -2333,6 +2347,8 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
       instance: '/api/auth/login',
     });
   }
+  // The one path that reveals the lock: right password, locked account.
+  if (locked) return locked;
   // A correct password clears the counter — an expired lock then starts a fresh window at 1.
   if (email) delete mockState.loginFailures[email];
   mockState.session = { ...MOCK_USER };

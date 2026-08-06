@@ -1071,6 +1071,35 @@ describe('failure modes the mock could not previously produce', () => {
     expect(body.lockedUntil).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}\+00:00$/);
   });
 
+  it('U3: a WRONG password never reveals the lock — the anti-enumeration property', async () => {
+    /*
+      The half that matters for security, and the half I got backwards on the first pass: I checked
+      the lock BEFORE the password, so a wrong guess answered 429 and told an attacker "this address
+      exists and is locked". ADR-0012 names that as the thing to avoid, and the wire agrees.
+
+      Measured 2026-08-06 on a throwaway user:
+        wrong x5  -> 401 INVALID_CREDENTIALS
+        6th WRONG -> 401 INVALID_CREDENTIALS   (identical to an unknown address)
+        CORRECT   -> 429 ACCOUNT_LOCKED
+
+      Asserting the 401 here is what stops the ordering being flipped back: the other U3 test would
+      pass just as happily with the check in the wrong place.
+    */
+    for (let i = 0; i < 5; i++) {
+      expect((await login('demo@azurebank.dev', 'WrongPassword1!')).status).toBe(401);
+    }
+
+    const stillWrong = await login('demo@azurebank.dev', 'AnotherWrong1!');
+    expect(stillWrong.status).toBe(401);
+    expect((await stillWrong.json()).errorCode).toBe('INVALID_CREDENTIALS');
+
+    // And the window was not extended by that sixth attempt — the correct password still reports
+    // the ORIGINAL deadline rather than a fresh fifteen minutes.
+    const revealed = await login('demo@azurebank.dev', 'Password1!');
+    expect(revealed.status).toBe(429);
+    expect((await revealed.json()).retryAfterSeconds).toBeLessThanOrEqual(900);
+  });
+
   it('U4: the eleventh auth call in a minute is the BFF’s own 429', async () => {
     /*
       Also mock-only, and for a sharper reason: a contract test that trips the real limiter would
