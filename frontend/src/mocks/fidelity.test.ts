@@ -1201,3 +1201,308 @@ describe('failure modes the mock could not previously produce', () => {
     expect(body.retryAfterSeconds).toBeUndefined();
   });
 });
+
+/**
+ * The DataAnnotations gate — the 400 that fires before a handler body runs.
+ *
+ * Mock-only, for the same reason U3 and U4 above are: every case here is a POST to an auth route,
+ * and the BFF's limiter allows ten a minute. Two representative cases live in
+ * `contract/validation.contract.test.ts` and run against the real stack as well; the exhaustive
+ * matrix is here, where it costs nothing.
+ *
+ * Everything below was measured on the BFF (:5000) on 2026-08-07 and NOT on the API — the mock
+ * intercepts the BFF's auth routes, and that endpoint binds the shared `LoginRequest` itself, so
+ * the 400 is written by the BFF's own pipeline rather than forwarded from :7215.
+ */
+describe('the model-state gate on the auth routes', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const post = (path: string, body: unknown) =>
+    fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const errorsOf = async (response: Response) => (await response.json()).errors;
+
+  const PASSWORD_MESSAGE =
+    'Password must be 8-128 characters and Password must contain at least one uppercase, ' +
+    'one lowercase, one digit, and one special character.';
+
+  it('refuses a malformed password with 400, not the 401 a wrong one gets', async () => {
+    /*
+      The headline drift: the mock compared credentials and answered 401 for a password that never
+      reached the credential check at all.
+
+        {"email":"a@b.dev","password":"Ab1!"}          -> 400, Password only
+        {"email":"nobody@…","password":"ValidPass1!"}  -> 401 INVALID_CREDENTIALS
+
+      The second line is the control. Without it this passes against a mock that 400s everything,
+      which would be a different and equally wrong system.
+    */
+    const malformed = await post('/bff/auth/login', { email: 'a@b.dev', password: 'Ab1!' });
+    expect(malformed.status).toBe(400);
+    expect(await errorsOf(malformed)).toEqual({ Password: [PASSWORD_MESSAGE] });
+
+    const wellFormed = await post('/bff/auth/login', {
+      email: 'nobody@azurebank.dev',
+      password: 'ValidPass1!',
+    });
+    expect(wellFormed.status).toBe(401);
+    expect((await wellFormed.json()).errorCode).toBe('INVALID_CREDENTIALS');
+  });
+
+  it('leaves the lockout counter alone, because the gate runs before it', async () => {
+    /*
+      The property that placement buys, and the one no status code can show. Eight malformed
+      attempts are three past the lockout threshold, so a gate placed after the counter would have
+      latched a lock by now — while answering 400 the whole way, exactly as it does here.
+
+      This is the state assertion the previous PR taught me to write.
+    */
+    for (let i = 0; i < 8; i++) {
+      const attempt = await post('/bff/auth/login', {
+        email: 'demo@azurebank.dev',
+        password: 'short',
+      });
+      expect(attempt.status).toBe(400);
+    }
+
+    expect(Object.keys(mockState.loginFailures)).toEqual([]);
+    expect(Object.keys(mockState.loginLockedUntil)).toEqual([]);
+
+    // And the account still signs in, which it could not do from behind a lock.
+    const ok = await post('/bff/auth/login', {
+      email: 'demo@azurebank.dev',
+      password: 'Password1!',
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it('distinguishes an ABSENT member from a null one', async () => {
+    /*
+      Two failures, two envelopes, and it is the DESERIALISER rather than the validator that
+      produces the first — the DTO members are C# `required`, so a missing one never reaches model
+      validation at all:
+
+        {}                             -> the `$` / `request` pair, naming the CLR type
+        {"email":null,"password":null} -> the [Required] messages, and NOT the format ones
+    */
+    const absent = await post('/bff/auth/login', {});
+    expect(absent.status).toBe(400);
+    expect(await errorsOf(absent)).toEqual({
+      $: [
+        "JSON deserialization for type 'AzureBank.Shared.DTOs.Auth.LoginRequest' was missing " +
+          "required properties including: 'email', 'password'.",
+      ],
+      request: ['The request field is required.'],
+    });
+
+    const nulls = await post('/bff/auth/login', { email: null, password: null });
+    expect(await errorsOf(nulls)).toEqual({
+      Email: ['The Email field is required.'],
+      Password: ['The Password field is required.'],
+    });
+  });
+
+  it('runs format rules on an empty string but not on null, and counts whitespace as empty', async () => {
+    /*
+      DataAnnotations' actual rule, and the reason the two cases above differ: every validator
+      except [Required] skips null and runs on "". [Required] itself trims before testing, so "   "
+      is missing AND malformed at once. Measured both ways — the two bodies answer identically.
+    */
+    const expected = {
+      Email: ['The Email field is required.', 'The Email field is not a valid e-mail address.'],
+      Password: ['The Password field is required.', PASSWORD_MESSAGE],
+    };
+
+    expect(await errorsOf(await post('/bff/auth/login', { email: '', password: '' }))).toEqual(
+      expected,
+    );
+    expect(
+      await errorsOf(await post('/bff/auth/login', { email: '   ', password: '   ' })),
+    ).toEqual(expected);
+  });
+
+  it('reports two failing rules on one field in attribute order', async () => {
+    // 300 characters and no `@`: [EmailAddress] then [MaxLength], in that order and nothing else.
+    const both = await post('/bff/auth/login', { email: 'a'.repeat(300), password: 'ValidPass1!' });
+
+    expect(await errorsOf(both)).toEqual({
+      Email: [
+        'The Email field is not a valid e-mail address.',
+        "The field Email must be a string or array type with a maximum length of '255'.",
+      ],
+    });
+  });
+
+  it('words the email length rule differently on register than on login', async () => {
+    /*
+      Not a typo on either side. Login declares [MaxLength(255)] and register [StringLength(255)],
+      and the two attributes phrase their default message differently — note the quotes:
+
+        login    -> "…a string or array type with a maximum length of '255'."
+        register -> "…a string with a maximum length of 255."
+
+      Only measurement would have caught this; both readings look equally plausible in the C#.
+    */
+    const registered = await post('/bff/auth/register', {
+      azureTag: 'probe',
+      email: `${'a'.repeat(250)}@b.dev`,
+      password: 'ValidPass1!',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+    });
+
+    expect(await errorsOf(registered)).toEqual({
+      Email: ['The field Email must be a string with a maximum length of 255.'],
+    });
+  });
+
+  it('validates all five register fields, and sees names AFTER they are trimmed', async () => {
+    /*
+      `FirstName`/`LastName` trim in their setters so validation sees the normalised value — the
+      DTO says so in its own comment, and the wire agrees: "  a  " is a one-character name and
+      fails the length rule and the pattern together.
+    */
+    const nameErrors = (which: string) => [
+      `${which} name must be between 2 and 50 characters.`,
+      'Name can only contain letters, spaces, hyphens, and apostrophes.',
+    ];
+
+    const trimmed = await post('/bff/auth/register', {
+      azureTag: 'probe',
+      email: 'p@q.dev',
+      password: 'ValidPass1!',
+      firstName: '  a  ',
+      lastName: '  b  ',
+    });
+    expect(await errorsOf(trimmed)).toEqual({
+      FirstName: nameErrors('First'),
+      LastName: nameErrors('Last'),
+    });
+
+    const empty = await post('/bff/auth/register', {
+      azureTag: '',
+      email: '',
+      password: '',
+      firstName: '',
+      lastName: '',
+    });
+    expect(Object.keys(await errorsOf(empty)).sort()).toEqual([
+      'AzureTag',
+      'Email',
+      'FirstName',
+      'LastName',
+      'Password',
+    ]);
+  });
+
+  it('lets a well-formed register body through to the genericised duplicate 409', async () => {
+    // The control for the whole block: the gate must not swallow the ADR-0013 conflict behind it.
+    const duplicate = await post('/bff/auth/register', {
+      azureTag: 'probe',
+      email: 'taken@azurebank.dev',
+      password: 'ValidPass1!',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+    });
+
+    expect(duplicate.status).toBe(409);
+    expect((await duplicate.json()).errorCode).toBe('REGISTRATION_FAILED');
+  });
+});
+
+describe('the model-state gate: values that never bind at all', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const post = (path: string, body: unknown) =>
+    fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const errorsOf = async (response: Response) => (await response.json()).errors;
+  const CONVERSION = 'The JSON value could not be converted to System.String. Path: $.';
+
+  it('keys a WRONG-TYPE member by its path, not by the property name', async () => {
+    /*
+      A number cannot go into a `string`, so this fails in the reader rather than the validator —
+      and the key is `$.email`, not `Email`. Both reviewers' instinct and mine was that a mock
+      checking `typeof === 'string'` would simply skip a number; it did, and let it through to the
+      credential check.
+
+      Measured 2026-08-07, one probe per JSON type — number, boolean, object, array — all four
+      identical apart from the byte offset:
+
+        {"email":123,"password":"ValidPass1!"}
+        -> 400 {"request":["The request field is required."],
+                "$.email":["The JSON value could not be converted to System.String.
+                            Path: $.email | LineNumber: 0 | BytePositionInLine: 13."]}
+    */
+    for (const value of [123, true, {}, []]) {
+      const mistyped = await post('/bff/auth/login', { email: value, password: 'ValidPass1!' });
+      expect(mistyped.status, `email as ${JSON.stringify(value)}`).toBe(400);
+
+      const errors = await errorsOf(mistyped);
+      expect(Object.keys(errors).sort()).toEqual(['$.email', 'request']);
+      expect(errors['$.email'][0]).toContain(`${CONVERSION}email`);
+      expect(errors.request).toEqual(['The request field is required.']);
+    }
+  });
+
+  it('reports the conversion BEFORE the omission when a body is both', async () => {
+    /*
+      The ordering I got backwards on the first pass. The reader meets a bad value while scanning
+      and only learns what is MISSING at the closing brace, so the conversion always wins:
+
+        {"password":456}   email absent, password mistyped
+        -> "$.password": […]  and no `$` key at all
+
+      A gate that checked for absent members first would answer with the missing-'email' sentence.
+    */
+    const both = await post('/bff/auth/login', { password: 456 });
+    const errors = await errorsOf(both);
+
+    expect(Object.keys(errors).sort()).toEqual(['$.password', 'request']);
+    expect(errors.$).toBeUndefined();
+  });
+
+  it('reports only the FIRST bad member, in the order the client sent them', async () => {
+    // {"email":123,"password":456} -> `$.email` alone. Deserialisation stops at the first failure.
+    const errors = await errorsOf(await post('/bff/auth/login', { email: 123, password: 456 }));
+
+    expect(Object.keys(errors).sort()).toEqual(['$.email', 'request']);
+  });
+
+  it('refuses an address carrying a line feed, which the naive @ test would accept', async () => {
+    /*
+      `EmailAddressAttribute` rejects CR and LF before it looks for the `@` at all, so "a@\nb.dev"
+      is not an address even though it has exactly one `@` with text on both sides. Raised in
+      review; measured before accepting, because the claim is about .NET's attribute rather than
+      about this code:
+
+        {"email":"a@\nb.dev","password":"ValidPass1!"}
+        -> 400 {"Email":["The Email field is not a valid e-mail address."]}
+
+      Without the guard the mock called it well-formed and answered 401 from the credential check.
+    */
+    const injected = await post('/bff/auth/login', {
+      email: 'a@\nb.dev',
+      password: 'ValidPass1!',
+    });
+
+    expect(injected.status).toBe(400);
+    expect(await errorsOf(injected)).toEqual({
+      Email: ['The Email field is not a valid e-mail address.'],
+    });
+  });
+});
