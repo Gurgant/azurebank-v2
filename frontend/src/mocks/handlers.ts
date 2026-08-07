@@ -456,6 +456,38 @@ function authRateLimited(request: Request): Response | null {
  * No `Retry-After` HEADER: login is a BFF ACTION, so the body is forwarded by
  * `ForwardUpstreamError`, which copies no headers — the same asymmetry as the PIN lockout.
  */
+/**
+ * WHICH ACCOUNT, IF ANY, AN ADDRESS NAMES — and the two properties that follow from it.
+ *
+ * `AuthService.LoginAsync` starts at `FindByEmailAsync`, which matches Identity's
+ * **NormalizedEmail**. Two consequences the mock has to model, both measured against the API
+ * directly on :7215 (which, unlike the BFF, does not rate-limit login) on 2026-08-07:
+ *
+ *   1. NO ROW, NO COUNTER. An address nobody registered never reaches
+ *      `IncrementAndMaybeLockLoginAsync`, so it can never be locked — there is nothing to lock.
+ *
+ *        ghost1593@azurebank.dev, eight wrong passwords
+ *        -> 401 INVALID_CREDENTIALS every single time, no 429 at any point
+ *
+ *   2. THE LOOKUP IS CASE-INSENSITIVE, so every spelling shares ONE counter.
+ *
+ *        register casb2159@azurebank.dev
+ *        CASB2159@AZUREBANK.DEV x5 wrong  -> 401 INVALID_CREDENTIALS
+ *        casb2159@azurebank.dev, CORRECT  -> 429 ACCOUNT_LOCKED, retryAfterSeconds 900
+ *
+ *      The uppercase failures locked the lowercase account. A case-SENSITIVE mock would have
+ *      answered 200 there, which is why this returns the canonical spelling to key state by
+ *      rather than the raw input.
+ *
+ * Returning the account (not a boolean) is what keeps those two honest together: callers key
+ * `loginFailures` / `loginLockedUntil` by the value this hands back, so a spelling can neither
+ * open its own counter nor escape an existing lock.
+ */
+function accountForLogin(email: string | undefined): string | null {
+  if (!email) return null;
+  return email.toLowerCase() === MOCK_USER.email.toLowerCase() ? MOCK_USER.email : null;
+}
+
 function loginLockedProblem(email: string, now: number) {
   const until = mockState.loginLockedUntil[email];
   if (!until || Date.parse(until) <= now) return null;
@@ -2298,8 +2330,9 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   const email = authBody.body.email as string | undefined;
   const password = authBody.body.password as string | undefined;
   const nowMs = Date.now();
-  const credentialsOk = email === MOCK_USER.email && password === MOCK_PASSWORD;
-  const locked = email ? loginLockedProblem(email, nowMs) : null;
+  // null for any address that names no account — see `accountForLogin` for the two measurements.
+  const account = accountForLogin(email);
+  const locked = account ? loginLockedProblem(account, nowMs) : null;
   /*
     ORDER IS THE SECURITY PROPERTY, and I had it backwards on the first pass.
 
@@ -2317,14 +2350,16 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
     And while locked the counter is NOT touched: `IncrementAndMaybeLockLoginAsync` is skipped
     entirely (`AuthService.cs:130-134`), so a guesser cannot extend the window by keeping at it.
   */
-  if (!credentialsOk) {
-    if (email && !locked) {
-      const failures = (mockState.loginFailures[email] ?? 0) + 1;
-      mockState.loginFailures[email] = failures;
+  if (!account || password !== MOCK_PASSWORD) {
+    if (account && !locked) {
+      const failures = (mockState.loginFailures[account] ?? 0) + 1;
+      mockState.loginFailures[account] = failures;
       if (failures >= MAX_LOGIN_ATTEMPTS) {
         // Reset to 0 as the lock latches: from here the WINDOW is authoritative, not the count.
-        mockState.loginFailures[email] = 0;
-        mockState.loginLockedUntil[email] = apiOffsetInstant(nowMs + LOGIN_LOCKOUT_SECONDS * 1000);
+        mockState.loginFailures[account] = 0;
+        mockState.loginLockedUntil[account] = apiOffsetInstant(
+          nowMs + LOGIN_LOCKOUT_SECONDS * 1000,
+        );
       }
     }
     return problem({
@@ -2350,7 +2385,7 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   // The one path that reveals the lock: right password, locked account.
   if (locked) return locked;
   // A correct password clears the counter — an expired lock then starts a fresh window at 1.
-  if (email) delete mockState.loginFailures[email];
+  delete mockState.loginFailures[account];
   mockState.session = { ...MOCK_USER };
   mockState.staleSessionCookie = false; // a fresh cookie replaces the stale one
   /*

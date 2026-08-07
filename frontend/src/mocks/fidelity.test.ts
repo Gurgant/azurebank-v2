@@ -1100,6 +1100,50 @@ describe('failure modes the mock could not previously produce', () => {
     expect((await revealed.json()).retryAfterSeconds).toBeLessThanOrEqual(900);
   });
 
+  it('an address that names NO account is never locked, however often it fails', async () => {
+    /*
+      The property the U4 test below silently depends on, now pinned where it can be seen. The
+      lockout counter lives on the user row, so an address nobody registered never reaches it —
+      there is nothing to lock. Eight attempts, not five, because the interesting ones are the
+      attempts AFTER the threshold a real account would have tripped.
+
+      Measured 2026-08-07 against the API directly on :7215 (the BFF rate-limits auth to ten calls
+      a minute; the API does not, so eight probes fit):
+
+        ghost1593@azurebank.dev, eight wrong passwords -> 401 INVALID_CREDENTIALS every time
+
+      This is also the assertion that keeps the mock from inventing lockout state for addresses the
+      backend has no row for: track failures for every string that arrives and the sixth attempt
+      starts answering 429, which is what a reviewer caught on the first version of this handler.
+    */
+    for (let i = 1; i <= 8; i++) {
+      const attempt = await login('nobody@azurebank.dev', 'WhateverX1!');
+      expect(attempt.status, `attempt ${i} must stay 401`).toBe(401);
+      expect((await attempt.json()).errorCode).toBe('INVALID_CREDENTIALS');
+    }
+  });
+
+  it('shares ONE lockout across every spelling of the same address', async () => {
+    /*
+      `FindByEmailAsync` matches Identity's NormalizedEmail, so casing cannot open a second counter
+      or dodge an existing lock. A case-SENSITIVE mock answers 200 on the last line here, which is
+      exactly the drift this pins.
+
+      Measured 2026-08-07 on a throwaway registered user:
+
+        register casb2159@azurebank.dev
+        CASB2159@AZUREBANK.DEV x5 wrong -> 401 INVALID_CREDENTIALS
+        casb2159@azurebank.dev, CORRECT -> 429 ACCOUNT_LOCKED, retryAfterSeconds 900
+    */
+    for (let i = 0; i < 5; i++) {
+      expect((await login('DEMO@AZUREBANK.DEV', 'WrongPassword1!')).status).toBe(401);
+    }
+
+    const correctInLowercase = await login('demo@azurebank.dev', 'Password1!');
+    expect(correctInLowercase.status).toBe(429);
+    expect((await correctInLowercase.json()).errorCode).toBe('ACCOUNT_LOCKED');
+  });
+
   it('U4: the eleventh auth call in a minute is the BFF’s own 429', async () => {
     /*
       Also mock-only, and for a sharper reason: a contract test that trips the real limiter would
@@ -1111,8 +1155,15 @@ describe('failure modes the mock could not previously produce', () => {
              "errorCode":"RATE_LIMIT_EXCEEDED"}
         Content-Type: application/json   Retry-After: 60   Cache-Control: no-store
     */
-    for (let i = 0; i < 10; i++) {
-      await login('nobody@azurebank.dev', 'WhateverX1!');
+    /*
+      Assert the first ten, do not merely spend them. Without this the test passes just as happily
+      when requests six through ten answer 429 ACCOUNT_LOCKED for the wrong reason — the eleventh
+      is a 429 either way, so the interesting failure hides behind an identical status code. That
+      is not hypothetical: it is what the first version of the login handler did.
+    */
+    for (let i = 1; i <= 10; i++) {
+      const spent = await login('nobody@azurebank.dev', 'WhateverX1!');
+      expect(spent.status, `call ${i} is a plain rejection, not a lockout`).toBe(401);
     }
 
     const limited = await login('nobody@azurebank.dev', 'WhateverX1!');
