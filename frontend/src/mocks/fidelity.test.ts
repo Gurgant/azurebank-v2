@@ -1052,9 +1052,15 @@ describe('failure modes the mock could not previously produce', () => {
     const correct = await login('demo@azurebank.dev', 'Password1!');
     expect(correct.status).toBe(429);
     /*
-      No Retry-After HEADER. Login is a BFF ACTION, so the body is forwarded by
-      ForwardUpstreamError, which copies status and body and no headers — the same asymmetry as
-      the PIN lockout. The rate-limit 429 below DOES carry the header, which is what makes the two
+      No Retry-After HEADER — and this one was READ from ForwardUpstreamError (status and body,
+      no headers) long before it was observed. Measured on both hops 2026-08-07, same locked
+      throwaway user, so the asymmetry is now a fact rather than an inference:
+
+        :7215 direct   429  Retry-After: 900   Cache-Control: no-cache,no-store
+        :5000 via BFF  429  (neither header — only Content-Type survives the copy)
+
+      The rate-limit 429 below DOES carry Retry-After, because the limiter is BFF middleware and
+      writes its own response instead of forwarding one. That is what makes the two 429s
       distinguishable at all.
     */
     expect(correct.headers.get('Retry-After')).toBeNull();
@@ -1121,6 +1127,19 @@ describe('failure modes the mock could not previously produce', () => {
       expect(attempt.status, `attempt ${i} must stay 401`).toBe(401);
       expect((await attempt.json()).errorCode).toBe('INVALID_CREDENTIALS');
     }
+
+    /*
+      And the half the wire cannot show. With the password compared first, a mock that DID arm a
+      lock for a strangers's address still answers 401 above — the 429 is simply unreachable — so
+      the loop passes either way and the divergence sits there waiting for the next edit to the
+      ordering to expose it. These two lines are the ones that actually fail if the tracking is
+      widened back, which is why they are worth more than the eight assertions above.
+
+      The backend's guarantee is structural rather than incidental: no row means no
+      AccessFailedCount and no LockoutEnd, so there is nothing to arm in the first place.
+    */
+    expect(Object.keys(mockState.loginFailures)).toEqual([]);
+    expect(Object.keys(mockState.loginLockedUntil)).toEqual([]);
   });
 
   it('shares ONE lockout across every spelling of the same address', async () => {
