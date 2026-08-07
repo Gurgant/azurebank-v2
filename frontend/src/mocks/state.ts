@@ -171,6 +171,25 @@ interface MockState {
    * counter only ever increases, so an id retired by a delete is never reissued.
    */
   nextAccountSeq: number;
+  /**
+   * Failed-LOGIN bookkeeping, per email — separate from the PIN counters on purpose.
+   *
+   * ADR-0012 gave passwords their own lockout precisely so a wrong PIN cannot lock password login
+   * and vice versa. Keyed by email rather than by user because the real counter lives on the user
+   * row and a wrong password is, by construction, an attempt on an account you may not own.
+   */
+  loginFailures: Record<string, number>;
+  /** ISO instant a login lock lifts, per email. */
+  loginLockedUntil: Record<string, string>;
+  /**
+   * Timestamps of calls against the BFF's `auth` rate-limiter policy, newest last.
+   *
+   * The limiter is per-IP and there is exactly one "IP" in a test process, so a plain array is the
+   * whole model. Trimmed to the window on each check rather than swept, because nothing here runs
+   * long enough for the array to matter and a sweep would need a timer the mock has no business
+   * owning.
+   */
+  authCallTimes: number[];
   /** ISO instant the PIN lock lifts, or null. A withdraw while locked is a 429 PIN_LOCKED. */
   pinLockedUntil: string | null;
   /**
@@ -417,6 +436,9 @@ export const mockState: MockState = {
   pinAttempts: 0,
   nextAccountSeq: 0,
   pinLockedUntil: null,
+  loginFailures: {},
+  loginLockedUntil: {},
+  authCallTimes: [],
   accounts: defaultAccounts(),
   transactions: defaultTransactions(),
   recipients: defaultRecipients(),
@@ -511,6 +533,15 @@ export function resetMockState(): void {
   mockState.pinAttempts = 0;
   mockState.nextAccountSeq = 0;
   mockState.pinLockedUntil = null;
+  /*
+    The lockout and rate-limit counters MUST reset here, and forgetting them is not a small bug:
+    they accumulate across every test in a file, so the eleventh login anywhere in that file starts
+    answering 429 and the failure lands on whichever test happens to be eleventh. Caught exactly
+    that way — the first assertion of the U3 test got a rate-limit 429 instead of a 401.
+  */
+  mockState.loginFailures = {};
+  mockState.loginLockedUntil = {};
+  mockState.authCallTimes = [];
   mockState.accounts = defaultAccounts();
   mockState.transactions = defaultTransactions();
   mockState.recipients = defaultRecipients();
