@@ -558,70 +558,8 @@ public class TransactionServiceTests : IDisposable
         result.Data.First().Id.Should().Be(tx1.Id);
     }
 
-    [Fact(Skip = "Requires SQL Server - DbContext value generator overrides CreatedAt in InMemory provider. Move to integration tests.")]
-    public async Task GetTransactionsAsync_FiltersByDateRange()
-    {
-        // Arrange
-        var userId = Guid.NewGuid();
-        var account = CreateTestAccount(userId);
-        _context.Accounts.Add(account);
-        await _context.SaveChangesAsync();
 
-        // Create transactions with specific dates (set before adding to context)
-        var oldDate = DateTime.UtcNow.AddDays(-10);
-        var recentDate = DateTime.UtcNow.AddDays(-2);
-
-        var oldTx = new Transaction
-        {
-            Id = Guid.NewGuid(),
-            TransactionNumber = $"TXN-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(100000, 999999)}",
-            AccountId = account.Id,
-            Type = TransactionType.Deposit,
-            Amount = 100m,
-            BalanceBefore = 0,
-            BalanceAfter = 100m,
-            Status = TransactionStatus.Completed,
-            CreatedAt = oldDate, // 10 days ago
-            Account = account
-        };
-
-        var recentTx = new Transaction
-        {
-            Id = Guid.NewGuid(),
-            TransactionNumber = $"TXN-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(100000, 999999)}",
-            AccountId = account.Id,
-            Type = TransactionType.Deposit,
-            Amount = 200m,
-            BalanceBefore = 100m,
-            BalanceAfter = 300m,
-            Status = TransactionStatus.Completed,
-            CreatedAt = recentDate, // 2 days ago
-            Account = account
-        };
-
-        _context.Transactions.AddRange(oldTx, recentTx);
-        await _context.SaveChangesAsync();
-
-        // Detach and verify dates were preserved
-        _context.ChangeTracker.Clear();
-
-        var filter = new TransactionFilter
-        {
-            Page = 1,
-            PageSize = 10,
-            FromDate = DateTime.UtcNow.AddDays(-5),
-            ToDate = DateTime.UtcNow
-        };
-
-        // Act
-        var result = await _sut.GetTransactionsAsync(userId, filter);
-
-        // Assert - Only the recent transaction should be returned
-        result.Data.Should().HaveCount(1);
-        result.Data.First().Id.Should().Be(recentTx.Id);
-    }
-
-    [Fact]
+[Fact]
     public async Task GetTransactionsAsync_PaginatesCorrectly()
     {
         // Arrange
@@ -1089,4 +1027,7 @@ public class TransactionServiceTests : IDisposable
     }
 
     #endregion
+
+    // Date-range filtering now lives in Integration/HistoricalBalanceSqlServerTests.cs (same
+    // reason: UpdateTimestamps() stamps every new row with the run's own clock).
 }

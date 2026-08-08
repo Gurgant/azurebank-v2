@@ -6,6 +6,10 @@ using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Tests.Fixtures;
+using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Enums;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using FluentAssertions;
 
 namespace AzureBank.Tests.Integration;
@@ -47,6 +51,51 @@ public class AuthEndpointTests : IntegrationTestBase
         result.Data.Token.AccessToken.Should().NotBeNullOrEmpty();
         result.Data.Account.Should().NotBeNull();
         result.Data.Account.IsPrimary.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Register_CreatesExactlyOnePrimaryAccount()
+    {
+        /*
+          `AuthServiceTests.RegisterAsync_CreatesDefaultPrimaryAccount` carried this name and an
+          empty body under [Fact(Skip = "Requires SQL Server - Account.RowVersion …")]. It could
+          never have tested anything, and it could not live in that fixture anyway: the unit test
+          mocks UserManager, so no user is ever persisted and there is no account to count.
+
+          What the sibling above asserts is one boolean on the returned DTO. That would still pass
+          if registration created three accounts, or created it under the wrong owner, or opened it
+          with a non-zero balance. The invariant customers depend on is EXACTLY ONE, so the count
+          is asserted against the database rather than the response.
+        */
+        var request = new RegisterRequest
+        {
+            AzureTag = $"primary_{Guid.NewGuid().ToString("N")[..8]}",
+            Email = $"primary{Guid.NewGuid():N}@example.com",
+            Password = "SecurePass123!",
+            FirstName = "Prim",
+            LastName = "Ary",
+        };
+
+        var response = await Client.PostAsJsonAsync("/api/auth/register", request, JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = (await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions))!.Data!;
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var accounts = await db.Accounts.Where(a => a.UserId == created.User.Id).ToListAsync();
+
+        accounts.Should().HaveCount(1, "registration opens ONE account, not zero and not several");
+        var account = accounts[0];
+        account.IsPrimary.Should().BeTrue();
+        account.Name.Should().Be("Primary Account");
+        account.Type.Should().Be(AccountType.Checking);
+        account.Balance.Should().Be(0m, "a new account is not credited with anything");
+        account.Id.Should().Be(created.Account.Id, "the response names the account that was created");
+
+        // The number is stored raw and only masked on the way out — asserted here because the two
+        // are easy to conflate, and storing the masked form would be unrecoverable.
+        account.AccountNumber.Should().MatchRegex(@"^AB-\d{4}-\d{4}-\d{2}$");
+        created.Account.AccountNumber.Should().MatchRegex(@"^AB-\*{4}-\*{4}-\d{2}$");
     }
 
     [Fact]

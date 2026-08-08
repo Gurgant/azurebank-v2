@@ -12,7 +12,9 @@ using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Services.Interfaces;
 using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
+using AzureBank.Tests.Fixtures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Compliance.Classification;
 using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
@@ -42,6 +44,7 @@ public class AuthServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
             .Options;
 
         _context = new AzureBankDbContext(options);
@@ -409,15 +412,7 @@ public class AuthServiceTests : IDisposable
 
     #region RegisterAsync Tests
 
-    [Fact(Skip = "Requires SQL Server - Account.RowVersion requires database value generation")]
-    public async Task RegisterAsync_ValidRequest_ReturnsRegisterResponse()
-    {
-        // This test requires SQL Server because Account.RowVersion is a database-generated value
-        // InMemory provider doesn't support automatic value generation for byte[] properties
-        await Task.CompletedTask;
-    }
-
-    [Fact]
+[Fact]
     public async Task RegisterAsync_DuplicateEmail_ThrowsConflictException()
     {
         // Arrange
@@ -600,15 +595,7 @@ public class AuthServiceTests : IDisposable
             .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
     }
 
-    [Fact(Skip = "Requires SQL Server - Account.RowVersion requires database value generation")]
-    public async Task RegisterAsync_CreatesDefaultPrimaryAccount()
-    {
-        // This test requires SQL Server because Account.RowVersion is a database-generated value
-        // InMemory provider doesn't support automatic value generation for byte[] properties
-        await Task.CompletedTask;
-    }
-
-    #endregion
+#endregion
 
     #region PII redaction in logs
 

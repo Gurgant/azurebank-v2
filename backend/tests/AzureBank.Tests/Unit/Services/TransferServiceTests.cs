@@ -317,26 +317,7 @@ public class TransferServiceTests : IDisposable
 
     #region TransferAsync - Successful Transfer Tests
 
-    [Fact(Skip = "Requires SQL Server - InMemory provider transaction behavior may vary")]
-    public async Task TransferAsync_ValidTransfer_UpdatesBothBalances()
-    {
-        // This test should be run as an integration test with SQL Server
-        // The InMemory provider may not fully support transaction behavior
-    }
-
-    [Fact(Skip = "Requires SQL Server - InMemory provider transaction behavior may vary")]
-    public async Task TransferAsync_ValidTransfer_CreatesTwoLinkedTransactions()
-    {
-        // This test should be run as an integration test with SQL Server
-    }
-
-    [Fact(Skip = "Requires SQL Server - InMemory provider transaction behavior may vary")]
-    public async Task TransferAsync_ValidTransfer_ReturnsCorrectResponse()
-    {
-        // This test should be run as an integration test with SQL Server
-    }
-
-    #endregion
+#endregion
 
     #region InternalTransferAsync - Same Account Tests
 
@@ -466,23 +447,5 @@ public class TransferServiceTests : IDisposable
 
     #region InternalTransferAsync - Successful Transfer Tests
 
-    [Fact(Skip = "Requires SQL Server - InMemory provider transaction behavior may vary")]
-    public async Task InternalTransferAsync_ValidTransfer_UpdatesBothBalances()
-    {
-        // This test should be run as an integration test with SQL Server
-    }
-
-    [Fact(Skip = "Requires SQL Server - InMemory provider transaction behavior may vary")]
-    public async Task InternalTransferAsync_ValidTransfer_CreatesTwoLinkedTransactions()
-    {
-        // This test should be run as an integration test with SQL Server
-    }
-
-    [Fact(Skip = "Requires SQL Server - InMemory provider transaction behavior may vary")]
-    public async Task InternalTransferAsync_ValidTransfer_ReturnsCorrectResponse()
-    {
-        // This test should be run as an integration test with SQL Server
-    }
-
-    #endregion
+#endregion
 }
