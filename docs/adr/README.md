@@ -40,14 +40,20 @@ detail hanging off them.
 
 **Money** — [0009](0009-idempotency-monetary-operations.md) idempotent monetary operations (server) ·
 [0022](0022-client-money-mutation-protocol.md) client money-mutation protocol ·
-[0024](0024-no-client-facing-optimistic-concurrency.md) no client-facing optimistic concurrency
+[0024](0024-no-client-facing-optimistic-concurrency.md) no client-facing optimistic concurrency ·
+[0028](0028-data-router-for-blocking-browser-back.md) a data router, bought for one hook
+
+**Interface** — [0027](0027-dark-mode-through-css-custom-properties.md) dark mode through CSS custom properties ·
+[0033](0033-root-error-boundary.md) a root error boundary, so a render error is not a blank page
 
 **Authentication and account safety** — [0003](0003-argon2id-password-hashing.md) Argon2id password hashing ·
 [0008](0008-step-up-authentication.md) step-up authentication ·
 [0010](0010-pin-attempt-limiting.md) PIN attempt-limiting ·
 [0011](0011-pin-hash-pepper.md) PIN-hash pepper ·
 [0012](0012-login-attempt-limiting.md) login attempt-limiting ·
-[0021](0021-refresh-token-rotation-bff-remint.md) refresh-token rotation with reuse detection
+[0021](0021-refresh-token-rotation-bff-remint.md) refresh-token rotation with reuse detection ·
+[0026](0026-absolute-session-cap-reauthentication.md) the absolute session cap is re-authenticated, never extended ·
+[0034](0034-failed-family-revoke-recovery.md) recovery for a family revoke that fails
 
 **Not leaking who exists** — [0013](0013-registration-user-enumeration.md) registration enumeration ·
 [0014](0014-recipient-lookup-enumeration.md) recipient lookup, exact-match and harvest-resistant ·
@@ -56,7 +62,11 @@ detail hanging off them.
 
 **Contract and correctness** — [0007](0007-fluentvalidation.md) FluentValidation ·
 [0023](0023-runtime-response-validation.md) runtime response validation ·
-[0005](0005-scalar-api-documentation.md) Scalar API documentation
+[0005](0005-scalar-api-documentation.md) Scalar API documentation ·
+[0029](0029-contract-conformance-gate.md) one suite, two backends ·
+[0030](0030-real-backend-integration-layer.md) the app's data layer against the real backend ·
+[0031](0031-e2e-playwright.md) the app in a real browser ·
+[0032](0032-real-stack-layers-in-ci.md) the real-stack layers in CI
 
 **Operations** — [0016](0016-observability-three-pillars.md) observability, three pillars ·
 [0017](0017-pii-redaction-codeql-barrier.md) PII-safe telemetry and the log-forging barrier
@@ -65,10 +75,11 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All twenty-five are **Accepted and shipped** — nothing here is aspirational, which is why there is
+All thirty-four are **Accepted and shipped** — nothing here is aspirational, which is why there is
 no Proposed tier. Where a later record changes an earlier one, the earlier keeps an inline
 supersession note at the affected clause rather than being rewritten: ADR-0019's Decision 6 points
-at ADR-0023, and ADR-0009 points at ADR-0022 for its client half. The next free number is **0026**.
+at ADR-0023, ADR-0009 points at ADR-0022 for its client half, and ADR-0021's amendment points at
+ADR-0034 for the residual it left open. The next free number is **0035**.
 
 <details>
 <summary>Full list in numeric order</summary>

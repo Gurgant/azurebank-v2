@@ -219,17 +219,35 @@ public class RefreshTokenServiceTests : IDisposable
 
         var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
         accessor.HttpContext!.Request.Headers.UserAgent = "xunit/1.0";
+        var logger = new Mock<ILogger<RefreshTokenService>>();
         var faultySut = new RefreshTokenService(
             faultyContext,
             accessor,
             Options.Create(new JwtOptions { RefreshTokenExpirationDays = 7 }),
-            new Mock<ILogger<RefreshTokenService>>().Object);
+            logger.Object);
 
         // The injected failure must not reach the caller: still the uniform rejection the exception
         // handler renders as 401, never the 500 the raw exception would have produced.
         (await ((Func<Task>)(() => faultySut.RotateAsync(first))).Should()
             .ThrowAsync<AuthenticationException>())
             .Which.ErrorCode.Should().Be(ErrorCodes.RefreshTokenInvalid);
+
+        /*
+          And the half this test was missing until a reviewer asked whether the fault reaches the
+          revoke at all. It does — but nothing here PROVED it, because the reuse branch throws this
+          exact exception whether the revoke fails or succeeds. Disabling the interceptor entirely
+          left this test green, which is the definition of passing for the wrong reason.
+
+          The error log only happens inside the catch, so it is the one observable that separates
+          "the revoke failed and was contained" from "the revoke quietly worked".
+        */
+        logger.Verify(l => l.Log(
+            LogLevel.Error,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) =>
+                state.ToString()!.Contains("RefreshTokenReuseRevokeFailed")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
     }
 
     [Fact]
