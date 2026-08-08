@@ -222,7 +222,9 @@ public class TransactionServiceTests : IDisposable
 
         // Assert
         result.Transaction.TransactionNumber.Should().NotBeNullOrEmpty();
-        result.Transaction.TransactionNumber.Should().MatchRegex(@"^TXN-\d{8}-\d{6}$");
+        // Seven Crockford base32 characters, not six digits — the suffix was widened because
+        // 900,000 values per UTC day collided against the unique index at ~1,117 transactions/day.
+        result.Transaction.TransactionNumber.Should().MatchRegex(@"^TXN-\d{8}-[0-9A-HJKMNP-TV-Z]{7}$");
     }
 
     [Fact]
