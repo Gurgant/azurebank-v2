@@ -25,6 +25,62 @@ internal static class ConcurrencyRetry
         && ex.Entries.All(e => e.Entity is Account);
 
     /// <summary>
+    /// SQL Server unique-violation numbers: 2627 = PRIMARY KEY / UNIQUE
+    /// constraint, 2601 = duplicate row in a unique index. Same pair
+    /// <see cref="Implementations.IdempotencyService"/> and
+    /// <see cref="Implementations.UserService"/> already key on.
+    /// </summary>
+    private const int SqlPrimaryKeyViolation = 2627;
+    private const int SqlUniqueIndexViolation = 2601;
+
+    /// <summary>The index the generated transaction number lands in.</summary>
+    private const string TransactionNumberIndex = "IX_Transactions_TransactionNumber";
+
+    /// <summary>
+    /// True when a write failed because the generated <c>TransactionNumber</c>
+    /// was already taken — the one unique violation on a money path that a
+    /// retry can legitimately clear, because the next attempt mints a new
+    /// number.
+    ///
+    /// <para>
+    /// <b>Narrowed by INDEX NAME, not just by error number.</b> 2601/2627 also
+    /// carry the idempotency claim race, which is a distributed lock: retrying
+    /// that would double-execute, which is exactly what
+    /// <see cref="ShouldRetry"/> refuses to do for the RowVersion case. Matching
+    /// the number alone would quietly convert the safest guard in the system
+    /// into a retry loop. SQL Server puts the constraint name in the message —
+    /// asserted by <c>TransactionNumberUniquenessSqlServerTests</c>, so a
+    /// message-format change fails a test rather than silently widening this.
+    /// </para>
+    /// <para>
+    /// EF does NOT retry these itself: probing the shipped
+    /// <c>SqlServerTransientExceptionDetector</c> (10.0.1) shows 2601 and 2627
+    /// are both non-transient, so <c>EnableRetryOnFailure</c> will not re-run
+    /// the operation and this catch is the only recovery.
+    /// </para>
+    /// </summary>
+    public static bool IsTransactionNumberCollision(Exception ex, int attempt)
+    {
+        if (attempt >= MaxAttempts)
+        {
+            return false;
+        }
+
+        for (var current = ex as Exception; current is not null; current = current.InnerException)
+        {
+            if (current is Microsoft.Data.SqlClient.SqlException sql
+                && sql.Errors.Cast<Microsoft.Data.SqlClient.SqlError>().Any(
+                    e => (e.Number == SqlUniqueIndexViolation || e.Number == SqlPrimaryKeyViolation)
+                        && e.Message.Contains(TransactionNumberIndex, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Discards the failed (never-persisted) transaction rows, reloads the
     /// accounts from the database (fresh balance + RowVersion) and applies a
     /// short random jitter so parallel losers do not stampede into the same

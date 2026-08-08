@@ -211,6 +211,31 @@ public class TransferService : ITransferService
                     fromAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
             }
+            catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
+            {
+                /*
+                  The generated TransactionNumber was already taken. Astronomically unlikely since
+                  the suffix was widened (32^7 per UTC day), but "unlikely" is not "impossible", and
+                  before this catch it surfaced as a raw 500 on a money endpoint.
+
+                  Safe to retry here for the same reason as the deposit path, plus one specific to
+                  transfers: both numbers are minted INSIDE the execution-strategy delegate, and
+                  PrepareTransferAttemptAsync already makes each attempt idempotent — it discards
+                  the failed attempt's tracked rows and refuses to re-execute a transfer that
+                  already committed. This adds a trigger to machinery that was built for the
+                  transient-fault case, not new machinery.
+
+                  Note the catch is on the OUTER loop, not inside the delegate: the explicit
+                  transaction has already rolled back by the time we get here, so the next attempt
+                  opens a fresh one.
+                */
+                _logger.LogWarning(
+                    ex,
+                    "SecurityEvent {SecurityEvent}: transaction-number collision on transfer "
+                        + "(attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
+            }
         }
     }
 
@@ -355,6 +380,31 @@ public class TransferService : ITransferService
                 _logger.LogInformation(
                     "Concurrency conflict on internal transfer from account {AccountId} (attempt {Attempt}); retrying",
                     fromAccount.Id, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
+            }
+            catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
+            {
+                /*
+                  The generated TransactionNumber was already taken. Astronomically unlikely since
+                  the suffix was widened (32^7 per UTC day), but "unlikely" is not "impossible", and
+                  before this catch it surfaced as a raw 500 on a money endpoint.
+
+                  Safe to retry here for the same reason as the deposit path, plus one specific to
+                  transfers: both numbers are minted INSIDE the execution-strategy delegate, and
+                  PrepareTransferAttemptAsync already makes each attempt idempotent — it discards
+                  the failed attempt's tracked rows and refuses to re-execute a transfer that
+                  already committed. This adds a trigger to machinery that was built for the
+                  transient-fault case, not new machinery.
+
+                  Note the catch is on the OUTER loop, not inside the delegate: the explicit
+                  transaction has already rolled back by the time we get here, so the next attempt
+                  opens a fresh one.
+                */
+                _logger.LogWarning(
+                    ex,
+                    "SecurityEvent {SecurityEvent}: transaction-number collision on internal transfer "
+                        + "(attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
             }
         }

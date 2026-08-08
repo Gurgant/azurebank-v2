@@ -97,4 +97,15 @@
     </ItemGroup>
   </Target>
 
+
+  <ItemGroup>
+    <!--
+      ConcurrencyRetry is internal, and its transaction-number predicate is narrowed by INDEX NAME
+      so it cannot retry the idempotency claim race (a distributed lock, where a retry would
+      double-execute). Deleting that narrowing left all 24 SQL proofs green, so the safety-critical
+      half was untested; this exposes the predicate to the test project rather than widening its
+      accessibility for production callers.
+    -->
+    <InternalsVisibleTo Include="AzureBank.Tests" />
+  </ItemGroup>
 </Project>
