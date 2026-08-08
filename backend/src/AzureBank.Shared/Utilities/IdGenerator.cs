@@ -22,46 +22,153 @@ public static class IdGenerator
     }
 
     /// <summary>
-    /// Generates a transaction number in format TXN-YYYYMMDD-XXXXXXX (20 characters).
+    /// Generates a transaction number in format TXN-YYYYMMDD-XXXXXXXXXXC (24 characters), where the
+    /// final character is a check symbol over everything before it.
     ///
     /// <para>
-    /// <b>The suffix is 7 Crockford base32 characters, not 6 digits, and that is a correctness
-    /// fix rather than a cosmetic one.</b> <c>TransactionNumber</c> carries a UNIQUE index, and the
-    /// date prefix means the random part only has to be unique within one UTC day. Six digits give
-    /// 900,000 values per day, so by the birthday bound the odds of a collision reach 50% at
-    /// roughly 1.18 × √900000 ≈ <b>1,117 transactions in a day</b> — a volume a real bank passes
-    /// before breakfast. A collision is not a cosmetic clash: the INSERT violates the index, and
-    /// nothing on the deposit / withdraw / transfer paths catches <c>DbUpdateException</c>, so it
-    /// escapes as a 500 on a money endpoint with the idempotency record left mid-flight.
+    /// <b>The check symbol guards a different failure from the collision work that preceded it.</b>
+    /// This value is printed on a receipt and read down a phone, so the realistic thing that goes
+    /// wrong is a TRANSCRIPTION TYPO, not a one-in-a-quadrillion clash. Without a check symbol a
+    /// mistyped number is indistinguishable from a valid one and can resolve to a DIFFERENT real
+    /// transaction — silently, which is the worst way for a bank to be wrong. The retail analogue
+    /// does the same thing for the same reason: ISO 11649's RF Creditor Reference carries mod-97
+    /// check digits.
     /// </para>
     /// <para>
-    /// 32⁷ = 34,359,738,368 values per day moves that 50% point to about <b>218,000 transactions a
-    /// day</b>, and at a realistic 1,000/day the odds are roughly 1 in 69,000 per day. The alphabet
-    /// is Crockford's: no I, L, O or U, so nothing in a "human-readable transaction ID" can be
-    /// misread as a 1 or a 0 when someone types it into a support form.
+    /// The guarantee is TOTAL rather than statistical, which is why mod 37 over a base-32 payload
+    /// was chosen. 37 is prime and larger than the alphabet, so a single substituted character
+    /// shifts the residue by <c>weight × (a − b) mod 37</c>, which can never be zero; swapping two
+    /// adjacent characters shifts it by <c>31 × (a − b) mod 37</c>, and 31 and 37 are coprime.
+    /// <b>Every</b> substitution of one symbol for a DIFFERENT symbol, and <b>every</b> adjacent
+    /// transposition, is therefore rejected — asserted exhaustively in <c>IdGeneratorTests</c>
+    /// rather than argued here.
     /// </para>
     /// <para>
-    /// Seven characters is exactly the room already available:
-    /// <c>ValidationRules.TransactionNumberLength</c> is 20 and the old format used 19, so the
-    /// column is unchanged and <b>no migration is required</b>. Existing rows stay valid — nothing
-    /// parses this string, it is only displayed and compared.
+    /// Read "different symbol" strictly: Crockford's aliases are decoded before the check runs, so
+    /// writing O where the value holds 0, or I or L where it holds 1, is <b>not</b> a substitution
+    /// at all — it is the same value spelled the way a person spells it, and accepting it is the
+    /// entire reason those letters are absent from the alphabet. <c>IsValidTransactionNumber</c>
+    /// therefore says true for those, by design and with a test of its own.
     /// </para>
     /// <para>
-    /// No duplicate-key retry was added on top. After the widening a collision is a once-in-decades
-    /// event at this application's scale, and a retry would have to sit inside the transfer's
-    /// explicit transaction and execution strategy, where it could mask a genuine unique violation
-    /// (the idempotency claim uses one as its distributed lock). Widening removes the cause;
-    /// retrying would only soften a symptom that no longer occurs.
+    /// The suffix also goes from 7 to 10 characters. That is not the motivation; it is that a
+    /// migration was unavoidable anyway, because the old format filled the column exactly (20 of
+    /// 20) and the check symbol had nowhere to go. 32¹⁰ = 1,125,899,906,842,624 values per UTC day
+    /// puts the 50% collision point past a million transactions a day, which retires the question
+    /// instead of deferring it a third time.
+    /// </para>
+    /// <para>
+    /// <b>Existing rows keep the old 20-character format and stay valid.</b> Nothing reads this
+    /// value back for validation, and <c>EnforceTransactionImmutability</c> forbids renumbering a
+    /// saved transaction, so the two formats coexist by design.
+    /// <see cref="IsValidTransactionNumber"/> answers false for a pre-migration number — call it
+    /// only on numbers minted after this change.
     /// </para>
     /// </summary>
-    /// <returns>Transaction number string (e.g., "TXN-20260114-K3M9PZ2").</returns>
-    public static string GenerateTransactionNumber() =>
-        $"TXN-{DateTime.UtcNow:yyyyMMdd}-{RandomSuffix(TransactionSuffixLength)}";
+    /// <returns>Transaction number string (e.g., "TXN-20260114-K3M9PZ2QW4X").</returns>
+    public static string GenerateTransactionNumber()
+    {
+        var stamp = $"{DateTime.UtcNow:yyyyMMdd}";
+        var suffix = RandomSuffix(TransactionSuffixLength);
+        return $"TXN-{stamp}-{suffix}{CheckSymbol(stamp + suffix)}";
+    }
+
+    /// <summary>
+    /// True when the argument is a well-formed transaction number whose check symbol matches its
+    /// content.
+    ///
+    /// <para>
+    /// Input is normalised the way Crockford specifies before checking, which is what makes the
+    /// symbol useful on a value a human retyped: case is folded, I and L read as 1, and O reads as
+    /// 0. Those letters are absent from the encoding alphabet precisely so they can be
+    /// reinterpreted here instead of rejected.
+    /// </para>
+    /// <para>
+    /// Nothing calls this on the request path today — no endpoint accepts a transaction number as
+    /// input. It exists for a support tool and for the lookup-by-reference endpoint that would
+    /// otherwise resolve a typo to somebody else's transaction. Stated plainly so the next reader
+    /// does not assume a validation step that is not wired up.
+    /// </para>
+    /// </summary>
+    public static bool IsValidTransactionNumber(string? transactionNumber)
+    {
+        if (transactionNumber is null || transactionNumber.Length != TransactionNumberFormatLength)
+        {
+            return false;
+        }
+
+        var normalised = Normalise(transactionNumber);
+        if (!normalised.StartsWith("TXN-", StringComparison.Ordinal) || normalised[12] != '-')
+        {
+            return false;
+        }
+
+        var stamp = normalised.Substring(4, 8);
+        var suffix = normalised.Substring(13, TransactionSuffixLength);
+
+        // The stamp must be eight digits and the suffix must be encoding symbols. Without these an
+        // internally-coherent string of letters would checksum correctly and pass as a number.
+        if (!stamp.All(char.IsAsciiDigit) || !suffix.All(c => Base32Alphabet.Contains(c)))
+        {
+            return false;
+        }
+
+        return normalised[^1] == CheckSymbol(stamp + suffix);
+    }
 
     /// <summary>Crockford base32 — the digits plus 22 letters, with I, L, O and U removed.</summary>
     private const string Base32Alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-    private const int TransactionSuffixLength = 7;
+    /// <summary>
+    /// Crockford's check alphabet: the 32 encoding symbols plus five that can never appear in the
+    /// payload, so a check symbol is always distinguishable from the value it protects.
+    /// </summary>
+    private const string CheckAlphabet = Base32Alphabet + "*~$=U";
+
+    private const int TransactionSuffixLength = 10;
+
+    /// <summary>"TXN-" + 8 date digits + "-" + suffix + check symbol.</summary>
+    private const int TransactionNumberFormatLength = 4 + 8 + 1 + TransactionSuffixLength + 1;
+
+    /// <summary>
+    /// The mod-37 residue of the payload read as a base-32 number, mapped to Crockford's check
+    /// alphabet.
+    ///
+    /// <para>
+    /// Accumulated one character at a time rather than by decoding the whole string to an integer
+    /// first: eighteen base-32 characters is 32¹⁸, which overflows every fixed-width integer type,
+    /// and taking the modulus as it goes keeps the arithmetic exact without reaching for BigInteger.
+    /// The DATE is inside the payload, so a typo in the date is caught too — a check symbol over
+    /// the random part alone would wave through TXN-20260114 mistyped as TXN-20260115.
+    /// </para>
+    /// </summary>
+    private static char CheckSymbol(string payload)
+    {
+        var residue = 0;
+        foreach (var c in payload)
+        {
+            residue = ((residue * 32) + Base32Alphabet.IndexOf(c, StringComparison.Ordinal)) % 37;
+        }
+
+        return CheckAlphabet[residue];
+    }
+
+    /// <summary>Crockford decoding: fold case, and read I and L as 1 and O as 0.</summary>
+    private static string Normalise(string value)
+    {
+        var chars = value.ToUpperInvariant().ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            chars[i] = chars[i] switch
+            {
+                'I' or 'L' => '1',
+                'O' => '0',
+                var other => other,
+            };
+        }
+
+        return new string(chars);
+    }
 
     private static string RandomSuffix(int length)
     {

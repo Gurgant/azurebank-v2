@@ -9,7 +9,7 @@ namespace AzureBank.Tests.Fixtures;
 ///
 /// <para>
 /// A collision cannot be provoked any other way. The number comes from a static
-/// <c>IdGenerator</c> with 32⁷ values per day, so waiting for a natural one is not a test strategy,
+/// <c>IdGenerator</c> with 32¹⁰ values per day, so waiting for a natural one is not a test strategy,
 /// and the recovery path would otherwise be unreachable code that only a comment claims works.
 /// </para>
 /// <para>

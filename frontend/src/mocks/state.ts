@@ -294,19 +294,31 @@ function redateIntoCurrentMonth(entries: SeedEntry[]): SeedEntry[] {
     return {
       ...entry,
       createdAt: iso,
-      // The number carries its own date (TXN-yyyyMMdd-NNNNNN), so it has to move with it or the two
-      // contradict each other on screen — the sequence part is kept from the authored value.
+      // The number carries its own date, so it has to move with it or the two contradict each
+      // other on screen — the part after the date is kept from the authored value.
       transactionNumber: `TXN-${iso.slice(0, 10).replace(/-/g, '')}-${entry.transactionNumber.split('-')[2]}`,
     };
   });
 }
 
+/*
+  Transaction numbers here are 24 characters, the width the API actually mints
+  (`TXN-yyyyMMdd-` + a 10-character Crockford suffix + a check symbol), so every screen renders
+  them at production length — the detail row and the transfer receipt are the two places a longer
+  string could wrap or clip, and a short fixture would hide that until production.
+
+  What they deliberately are NOT is check-symbol-correct: the sequence stays a readable
+  `…00000000101` rather than random base32. Reimplementing the mod-37 symbol in TypeScript would
+  put a second copy of a backend algorithm here with nothing able to keep the two in step, and it
+  would buy nothing — no frontend code parses or validates this value; the contract types it as a
+  plain string. Length and shape are what the UI consumes, so length and shape are what is matched.
+*/
 function seedEntries(): SeedEntry[] {
   const heroes: SeedEntry[] = [
     {
       id: '019f7b3f-0000-7000-8000-000000000b01',
       accountId: MAIN_ACCOUNT_ID,
-      transactionNumber: 'TXN-20260720-000101',
+      transactionNumber: 'TXN-20260720-00000000101',
       type: 'Deposit',
       amount: 1250.5,
       description: 'Salary',
@@ -318,7 +330,7 @@ function seedEntries(): SeedEntry[] {
     {
       id: '019f7b3f-0000-7000-8000-000000000b02',
       accountId: MAIN_ACCOUNT_ID,
-      transactionNumber: 'TXN-20260720-000102',
+      transactionNumber: 'TXN-20260720-00000000102',
       type: 'Withdrawal',
       amount: 50,
       description: null,
@@ -330,7 +342,7 @@ function seedEntries(): SeedEntry[] {
     {
       id: '019f7b3f-0000-7000-8000-000000000b03',
       accountId: MAIN_ACCOUNT_ID,
-      transactionNumber: 'TXN-20260719-000103',
+      transactionNumber: 'TXN-20260719-00000000103',
       type: 'TransferOut',
       amount: 200,
       description: 'Dinner split',
@@ -344,7 +356,7 @@ function seedEntries(): SeedEntry[] {
       // length - scoping the dashboard to Rainy Day has to show something Main does not.
       id: '019f7b3f-0000-7000-8000-000000000b04',
       accountId: SAVINGS_ACCOUNT_ID,
-      transactionNumber: 'TXN-20260719-000104',
+      transactionNumber: 'TXN-20260719-00000000104',
       type: 'TransferIn',
       amount: 75,
       description: null,
@@ -356,7 +368,7 @@ function seedEntries(): SeedEntry[] {
     {
       id: '019f7b3f-0000-7000-8000-000000000b05',
       accountId: MAIN_ACCOUNT_ID,
-      transactionNumber: 'TXN-20260718-000105',
+      transactionNumber: 'TXN-20260718-00000000105',
       type: 'Withdrawal',
       amount: 30,
       description: 'ATM — disputed',
@@ -370,7 +382,7 @@ function seedEntries(): SeedEntry[] {
   const fillers: SeedEntry[] = Array.from({ length: 20 }, (_, i) => ({
     id: `019f7b3f-0000-7000-8000-000000000f${String(i).padStart(2, '0')}`,
     accountId: i % 2 === 0 ? MAIN_ACCOUNT_ID : SAVINGS_ACCOUNT_ID,
-    transactionNumber: `TXN-20260710-${String(200 + i).padStart(6, '0')}`,
+    transactionNumber: `TXN-20260710-${String(200 + i).padStart(11, '0')}`,
     type: 'Deposit' as const,
     amount: 10,
     description: `Top-up #${i + 1}`,

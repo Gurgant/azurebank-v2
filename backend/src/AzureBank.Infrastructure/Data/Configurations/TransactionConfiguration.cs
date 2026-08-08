@@ -19,7 +19,9 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
             .HasValueGenerator<GuidVersion7ValueGenerator>();
 
 
-        // TRANSACTION NUMBER - unique, format: TXN-YYYYMMDD-XXXXXX
+        // TRANSACTION NUMBER - unique, format: TXN-YYYYMMDD-XXXXXXXXXXC (24), the last
+        // character a check symbol. Widened from 20 by WidenTransactionNumberForCheckSymbol;
+        // pre-migration rows keep their shorter numbers and are not backfilled.
         builder.Property(t => t.TransactionNumber)
             .IsRequired()
             .HasMaxLength(ValidationRules.TransactionNumberLength);

@@ -41,7 +41,8 @@ detail hanging off them.
 **Money** — [0009](0009-idempotency-monetary-operations.md) idempotent monetary operations (server) ·
 [0022](0022-client-money-mutation-protocol.md) client money-mutation protocol ·
 [0024](0024-no-client-facing-optimistic-concurrency.md) no client-facing optimistic concurrency ·
-[0028](0028-data-router-for-blocking-browser-back.md) a data router, bought for one hook
+[0028](0028-data-router-for-blocking-browser-back.md) a data router, bought for one hook ·
+[0035](0035-transaction-number-check-symbol.md) a check symbol on the transaction number
 
 **Interface** — [0027](0027-dark-mode-through-css-custom-properties.md) dark mode through CSS custom properties ·
 [0033](0033-root-error-boundary.md) a root error boundary, so a render error is not a blank page
@@ -75,11 +76,11 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All thirty-four are **Accepted and shipped** — nothing here is aspirational, which is why there is
+All thirty-five are **Accepted and shipped** — nothing here is aspirational, which is why there is
 no Proposed tier. Where a later record changes an earlier one, the earlier keeps an inline
 supersession note at the affected clause rather than being rewritten: ADR-0019's Decision 6 points
 at ADR-0023, ADR-0009 points at ADR-0022 for its client half, and ADR-0021's amendment points at
-ADR-0034 for the residual it left open. The next free number is **0035**.
+ADR-0034 for the residual it left open. The next free number is **0036**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -121,6 +122,7 @@ ADR-0034 for the residual it left open. The next free number is **0035**.
 | [ADR-0032](0032-real-stack-layers-in-ci.md) | Running the real-backend layers in CI, on a stack the job owns | Accepted | 2026-08-04 |
 | [ADR-0033](0033-root-error-boundary.md) | A root error boundary, so a render error is not a blank page | Accepted | 2026-08-04 |
 | [ADR-0034](0034-failed-family-revoke-recovery.md) | Recovery for a family revoke that fails | Accepted | 2026-08-08 |
+| [ADR-0035](0035-transaction-number-check-symbol.md) | A check symbol on the transaction number | Accepted | 2026-08-09 |
 
 </details>
 ## Creating a New ADR

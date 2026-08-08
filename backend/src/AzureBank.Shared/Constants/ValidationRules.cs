@@ -91,7 +91,7 @@ public static class ValidationRules
     public const int MoneyPrecision = 19;   // Total digits (max ~922 trillion)
     public const int MoneyScale = 4;        // Decimal places (sub-cent precision)
 
-    public const int TransactionNumberLength = 20;    // TXN-YYYYMMDD-XXXXXX format
+    public const int TransactionNumberLength = 24;    // TXN-YYYYMMDD-XXXXXXXXXXC (suffix + check symbol)
     public const int TransactionDescriptionMaxLength = 500;
     public const string DescriptionMaxLengthMessage = "Description cannot exceed 500 characters.";
     public const int TransactionTypeMaxLength = 20;   // Enum stored as string (e.g., "TransferOut")

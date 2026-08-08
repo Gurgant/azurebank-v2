@@ -27,7 +27,7 @@ namespace AzureBank.Tests.Integration;
 /// is not a recovery strategy.
 /// </para>
 /// <para>
-/// The collision is INJECTED, because 32⁷ values per day means waiting for a natural one is not a
+/// The collision is INJECTED, because 32¹⁰ values per day means waiting for a natural one is not a
 /// test strategy — and an unreachable recovery path is indistinguishable from a broken one. What is
 /// injected is only the duplicate VALUE: SQL Server raises the genuine 2601 against the genuine
 /// index, so the production predicate (error number AND index name) is exercised for real.

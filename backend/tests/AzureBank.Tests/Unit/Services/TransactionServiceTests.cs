@@ -6,6 +6,7 @@ using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Utilities;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -222,9 +223,14 @@ public class TransactionServiceTests : IDisposable
 
         // Assert
         result.Transaction.TransactionNumber.Should().NotBeNullOrEmpty();
-        // Seven Crockford base32 characters, not six digits — the suffix was widened because
-        // 900,000 values per UTC day collided against the unique index at ~1,117 transactions/day.
-        result.Transaction.TransactionNumber.Should().MatchRegex(@"^TXN-\d{8}-[0-9A-HJKMNP-TV-Z]{7}$");
+        // Ten Crockford base32 characters plus a trailing check symbol. Asserted HERE, on what the
+        // service actually returns, and not only in IdGeneratorTests: the number reaching the caller
+        // is the one printed on a receipt, and a service that stamped its own format would leave
+        // that unit test green while the wire shape drifted.
+        result.Transaction.TransactionNumber.Should()
+            .MatchRegex(@"^TXN-[0-9]{8}-[0-9A-HJKMNP-TV-Z]{10}[0-9A-HJKMNP-TV-Z*~$=U]$");
+        IdGenerator.IsValidTransactionNumber(result.Transaction.TransactionNumber).Should().BeTrue(
+            "the check symbol must be correct on the value the service hands back, not merely present");
     }
 
     [Fact]

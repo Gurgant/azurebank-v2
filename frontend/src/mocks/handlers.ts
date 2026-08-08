@@ -241,6 +241,23 @@ function visibleTransactions(): typeof mockState.transactions {
 }
 
 /**
+ * A transaction number for a row the mock is about to write, keyed only on the ledger's global
+ * length so two rows can never share one.
+ *
+ * Each money handler used to add its own offset to that same length — 300 for deposits, 400 for
+ * withdrawals, 500 and 600 for the two transfers — which reads as separate ranges but is not:
+ * a withdrawal at length 0 and a deposit at length 100 both produce `400`. The backend puts a
+ * UNIQUE index on this column, so the mock was the only place those two rows could coexist.
+ *
+ * 24 characters, matching the width the API mints, so every screen renders at production length.
+ * The value is deliberately NOT check-symbol-correct — see the note in `state.ts` for why the
+ * mod-37 symbol is not reimplemented here.
+ */
+function mockTransactionNumber(index: number): string {
+  return `TXN-20260722-${String(1000 + index).padStart(11, '0')}`;
+}
+
+/**
  * An instant in the API's own wire format: `yyyy-MM-ddTHH:mm:ss.fffffffZ`.
  *
  * `Rfc3339DateTimeConverter` writes SEVEN fractional digits where JS's `toISOString()` writes
@@ -1497,7 +1514,7 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     // 0xd00 block (12 hex chars = a VALID uuid) — same scheme as withdraw/transfer below.
     id: `019f7b3f-0000-7000-8000-${(0xd00 + index).toString(16).padStart(12, '0')}`,
     accountId: account.id,
-    transactionNumber: `TXN-20260722-${String(300 + index).padStart(6, '0')}`,
+    transactionNumber: mockTransactionNumber(index),
     type: 'Deposit' as const,
     amount,
     balanceAfter: newBalance,
@@ -1687,7 +1704,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   const transaction = {
     id: `019f7b3f-0000-7000-8000-${(0x400 + index).toString(16).padStart(12, '0')}`,
     accountId: account.id,
-    transactionNumber: `TXN-20260722-${String(400 + index).padStart(6, '0')}`,
+    transactionNumber: mockTransactionNumber(index),
     type: 'Withdrawal' as const,
     amount,
     balanceAfter: newBalance,
@@ -1929,7 +1946,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0x800 + index).toString(16).padStart(12, '0')}`,
     accountId: account.id,
-    transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
+    transactionNumber: mockTransactionNumber(index),
     type: 'TransferOut',
     amount,
     balanceAfter: newBalance,
@@ -1942,7 +1959,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
 
   const payload = {
     data: {
-      transactionNumber: `TXN-20260722-${String(500 + index).padStart(6, '0')}`,
+      transactionNumber: mockTransactionNumber(index),
       amount,
       newBalance,
       recipientAzureTag: tag,
@@ -2096,7 +2113,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   from.balance -= amount;
   to.balance += amount;
   const index = mockState.transactions.length;
-  const transactionNumber = `TXN-20260722-${String(600 + index).padStart(6, '0')}`;
+  const transactionNumber = mockTransactionNumber(index);
   const at = `2026-07-22T13:${String(index).padStart(2, '0')}:00.0000000Z`;
   /*
     `TransferId = outgoingTransaction.Id` (TransferService.cs:330) — the response NAMES the
@@ -2129,7 +2146,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   mockState.transactions.push({
     id: `019f7b3f-0000-7000-8000-${(0xc00 + index + 1).toString(16).padStart(12, '0')}`,
     accountId: to.id,
-    transactionNumber: `TXN-20260722-${String(600 + index + 1).padStart(6, '0')}`,
+    transactionNumber: mockTransactionNumber(index + 1),
     type: 'TransferIn',
     amount,
     balanceAfter: to.balance,

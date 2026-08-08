@@ -11,7 +11,14 @@ public class Transaction
     public Guid Id { get; set; }
 
     /// <summary>
-    /// Human-readable transaction ID: TXN-YYYYMMDD-XXXXXX
+    /// Human-readable transaction ID: TXN-YYYYMMDD-XXXXXXXXXXC, where the final character is a
+    /// check symbol over the rest (see <c>IdGenerator.GenerateTransactionNumber</c>).
+    ///
+    /// <para>
+    /// Rows written before <c>WidenTransactionNumberForCheckSymbol</c> carry the older
+    /// 20-character form and are left as they are — nothing validates a stored number, and
+    /// renumbering a saved transaction is refused by <c>EnforceTransactionImmutability</c>.
+    /// </para>
     /// </summary>
     public required string TransactionNumber { get; set; }
 
