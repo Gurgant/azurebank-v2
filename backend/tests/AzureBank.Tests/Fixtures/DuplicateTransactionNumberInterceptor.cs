@@ -69,8 +69,17 @@ public sealed class DuplicateTransactionNumberInterceptor : DbCommandInterceptor
                 && value.StartsWith("TXN-", StringComparison.Ordinal)
                 && value != _duplicateOf)
             {
+                // CompareExchange, not read-then-write: the early return above and a separate write
+                // are two operations, so two concurrent commands could both pass the check and both
+                // inject. Today's tests are sequential, so it would not fire — but "exactly ONE" is
+                // the property this fixture sells, and a second injection would make the retry
+                // assertions quietly meaningless rather than fail.
+                if (Interlocked.CompareExchange(ref _fired, 1, 0) != 0)
+                {
+                    return;
+                }
+
                 parameter.Value = _duplicateOf;
-                Volatile.Write(ref _fired, 1);
                 return;
             }
         }

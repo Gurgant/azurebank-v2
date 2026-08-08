@@ -213,27 +213,17 @@ public class TransferService : ITransferService
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
-                /*
-                  The generated TransactionNumber was already taken. Astronomically unlikely since
-                  the suffix was widened (32^7 per UTC day), but "unlikely" is not "impossible", and
-                  before this catch it surfaced as a raw 500 on a money endpoint.
-
-                  Safe to retry here for the same reason as the deposit path, plus one specific to
-                  transfers: both numbers are minted INSIDE the execution-strategy delegate, and
-                  PrepareTransferAttemptAsync already makes each attempt idempotent — it discards
-                  the failed attempt's tracked rows and refuses to re-execute a transfer that
-                  already committed. This adds a trigger to machinery that was built for the
-                  transient-fault case, not new machinery.
-
-                  Note the catch is on the OUTER loop, not inside the delegate: the explicit
-                  transaction has already rolled back by the time we get here, so the next attempt
-                  opens a fresh one.
-                */
+                // A regenerable clash on the transaction number: the next attempt mints a fresh
+                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
+                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
+                // authoritative copy instead of four that drift. Warning, not Information: it
+                // should never happen, so an occurrence means the entropy assumption deserves
+                // re-checking, which needs to know WHICH account.
                 _logger.LogWarning(
                     ex,
-                    "SecurityEvent {SecurityEvent}: transaction-number collision on transfer "
-                        + "(attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", attempt);
+                    "SecurityEvent {SecurityEvent}: transaction-number collision on transfer from "
+                        + "account {AccountId} to {RecipientAccountId} (attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", fromAccount.Id, recipientAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
             }
         }
@@ -384,27 +374,17 @@ public class TransferService : ITransferService
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
-                /*
-                  The generated TransactionNumber was already taken. Astronomically unlikely since
-                  the suffix was widened (32^7 per UTC day), but "unlikely" is not "impossible", and
-                  before this catch it surfaced as a raw 500 on a money endpoint.
-
-                  Safe to retry here for the same reason as the deposit path, plus one specific to
-                  transfers: both numbers are minted INSIDE the execution-strategy delegate, and
-                  PrepareTransferAttemptAsync already makes each attempt idempotent — it discards
-                  the failed attempt's tracked rows and refuses to re-execute a transfer that
-                  already committed. This adds a trigger to machinery that was built for the
-                  transient-fault case, not new machinery.
-
-                  Note the catch is on the OUTER loop, not inside the delegate: the explicit
-                  transaction has already rolled back by the time we get here, so the next attempt
-                  opens a fresh one.
-                */
+                // A regenerable clash on the transaction number: the next attempt mints a fresh
+                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
+                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
+                // authoritative copy instead of four that drift. Warning, not Information: it
+                // should never happen, so an occurrence means the entropy assumption deserves
+                // re-checking, which needs to know WHICH account.
                 _logger.LogWarning(
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on internal transfer "
-                        + "(attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", attempt);
+                        + "from account {AccountId} to {ToAccountId} (attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", fromAccount.Id, toAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
             }
         }

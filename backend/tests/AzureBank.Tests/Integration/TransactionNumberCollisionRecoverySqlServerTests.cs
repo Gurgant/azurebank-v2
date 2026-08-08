@@ -10,6 +10,7 @@ using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Api.Services;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -101,7 +102,11 @@ public sealed class TransactionNumberCollisionRecoverySqlServerTests : IDisposab
 
         using var scope = _factory!.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
-        var account = await db.Accounts.SingleAsync(a => a.Id == accountId);
+        // Include(User): Account.User is a REQUIRED navigation, so it cannot simply be left out —
+        // the compiler rejects that — and assigning a null one would make SaveChanges fail before
+        // SQL Server ever reaches the duplicate AccountNumber. Loading it keeps the duplicate the
+        // only reason this write can fail.
+        var account = await db.Accounts.Include(a => a.User).SingleAsync(a => a.Id == accountId);
 
         var clash = new AzureBank.Shared.Entities.Account
         {
@@ -117,6 +122,18 @@ public sealed class TransactionNumberCollisionRecoverySqlServerTests : IDisposab
 
         var thrown = await ((Func<Task>)(() => db.SaveChangesAsync())).Should()
             .ThrowAsync<DbUpdateException>();
+
+        /*
+          Assert the provoked failure IS the intended one before drawing a conclusion from it.
+          Without this, any unrelated write error — a null required navigation, a length violation —
+          also throws DbUpdateException and also makes the predicate return false, so the test would
+          pass while proving nothing about the narrowing it exists to pin. That is the same
+          wrong-reason pass this suite has now been bitten by three times.
+        */
+        var sql = thrown.Which.InnerException.Should().BeOfType<SqlException>().Subject;
+        sql.Number.Should().BeOneOf(2601, 2627);
+        sql.Message.Should().Contain("IX_Accounts_AccountNumber",
+            "the point is a real unique violation on a DIFFERENT index");
 
         ConcurrencyRetry.IsTransactionNumberCollision(thrown.Which, attempt: 1).Should().BeFalse(
             "a unique violation on any OTHER index must propagate — retrying the idempotency "

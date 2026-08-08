@@ -1,5 +1,6 @@
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace AzureBank.Api.Services;
@@ -66,10 +67,10 @@ internal static class ConcurrencyRetry
             return false;
         }
 
-        for (var current = ex as Exception; current is not null; current = current.InnerException)
+        for (Exception? current = ex; current is not null; current = current.InnerException)
         {
-            if (current is Microsoft.Data.SqlClient.SqlException sql
-                && sql.Errors.Cast<Microsoft.Data.SqlClient.SqlError>().Any(
+            if (current is SqlException sql
+                && sql.Errors.Cast<SqlError>().Any(
                     e => (e.Number == SqlUniqueIndexViolation || e.Number == SqlPrimaryKeyViolation)
                         && e.Message.Contains(TransactionNumberIndex, StringComparison.Ordinal)))
             {

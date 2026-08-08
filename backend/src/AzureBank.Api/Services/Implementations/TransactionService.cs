@@ -84,24 +84,17 @@ public class TransactionService : ITransactionService
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
-                /*
-                  The generated TransactionNumber was already taken. Astronomically unlikely since
-                  the suffix was widened (32^7 per UTC day), but "unlikely" is not "impossible", and
-                  before this catch it surfaced as a raw 500 on a money endpoint with the
-                  idempotency record stranded mid-flight.
-
-                  A retry is legitimate here precisely because the number is minted INSIDE this
-                  loop: the next attempt draws a fresh one. The same cleanup as the RowVersion case
-                  applies — the failed attempt's Added rows are detached and the accounts reloaded.
-
-                  Logged at Warning rather than Information: it should never happen, so if it ever
-                  appears the entropy assumption deserves re-checking.
-                */
+                // A regenerable clash on the transaction number: the next attempt mints a fresh
+                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
+                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
+                // authoritative copy instead of four that drift. Warning, not Information: it
+                // should never happen, so an occurrence means the entropy assumption deserves
+                // re-checking, which needs to know WHICH account.
                 _logger.LogWarning(
                     ex,
-                    "SecurityEvent {SecurityEvent}: transaction-number collision on {Operation} "
-                        + "(attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", "deposit", attempt);
+                    "SecurityEvent {SecurityEvent}: transaction-number collision on deposit to "
+                        + "account {AccountId} (attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
                 continue;
             }
@@ -181,24 +174,17 @@ public class TransactionService : ITransactionService
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
-                /*
-                  The generated TransactionNumber was already taken. Astronomically unlikely since
-                  the suffix was widened (32^7 per UTC day), but "unlikely" is not "impossible", and
-                  before this catch it surfaced as a raw 500 on a money endpoint with the
-                  idempotency record stranded mid-flight.
-
-                  A retry is legitimate here precisely because the number is minted INSIDE this
-                  loop: the next attempt draws a fresh one. The same cleanup as the RowVersion case
-                  applies — the failed attempt's Added rows are detached and the accounts reloaded.
-
-                  Logged at Warning rather than Information: it should never happen, so if it ever
-                  appears the entropy assumption deserves re-checking.
-                */
+                // A regenerable clash on the transaction number: the next attempt mints a fresh
+                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
+                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
+                // authoritative copy instead of four that drift. Warning, not Information: it
+                // should never happen, so an occurrence means the entropy assumption deserves
+                // re-checking, which needs to know WHICH account.
                 _logger.LogWarning(
                     ex,
-                    "SecurityEvent {SecurityEvent}: transaction-number collision on {Operation} "
-                        + "(attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", "withdrawal", attempt);
+                    "SecurityEvent {SecurityEvent}: transaction-number collision on withdrawal "
+                        + "from account {AccountId} (attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
                 continue;
             }

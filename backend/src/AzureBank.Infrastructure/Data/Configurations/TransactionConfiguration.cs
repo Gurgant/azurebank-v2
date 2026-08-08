@@ -24,8 +24,16 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
             .IsRequired()
             .HasMaxLength(ValidationRules.TransactionNumberLength);
 
+        // The name is DECLARED, not inherited from EF's convention, because
+        // ConcurrencyRetry.IsTransactionNumberCollision matches on it to tell a
+        // regenerable transaction-number clash from the idempotency claim race
+        // (a distributed lock, where a retry would double-execute). Same string
+        // as the convention produces, so this is not a schema change — it stops
+        // a convention change from silently turning that recovery back into a
+        // 500 on a money path.
         builder.HasIndex(t => t.TransactionNumber)
-            .IsUnique();
+            .IsUnique()
+            .HasDatabaseName("IX_Transactions_TransactionNumber");
 
 
         builder.Property(t => t.Type)
