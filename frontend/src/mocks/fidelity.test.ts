@@ -484,8 +484,17 @@ describe('the seeded ledger stays inside the window the app asks about', () => {
   });
 
   it('numbers each entry with its own date', () => {
-    // TXN-yyyyMMdd-NNNNNN. The number carries a date of its own, so a re-dating that moves
-    // `createdAt` and forgets the number leaves the two contradicting each other on screen.
+    /*
+      The number carries a date of its own, so a re-dating that moves `createdAt` and forgets the
+      number leaves the two contradicting each other on screen. That is what this asserts, and it
+      is the only part of the string with meaning.
+
+      The SUFFIX is deliberately not mirrored. The backend now emits seven Crockford base32
+      characters (widened from six digits, which collided at ~1,117 transactions/day against a
+      unique index); these fixtures keep fixed decimal digits because a mock's value is stability,
+      not realism, and nothing anywhere parses the suffix — it is displayed and compared, never
+      decoded. Asserting its shape here would pin a format no consumer depends on.
+    */
     for (const t of mockState.transactions) {
       const stamped = t.createdAt.slice(0, 10).replace(/-/g, '');
       expect(t.transactionNumber).toContain(stamped);
