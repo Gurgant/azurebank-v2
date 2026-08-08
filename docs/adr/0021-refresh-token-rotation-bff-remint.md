@@ -234,6 +234,13 @@ that retries the revoke until it converges. Either is a design change deserving 
 Until then the failure is at least observable: `SecurityEvent RefreshTokenReuseRevokeFailed`, at
 `Error`.
 
+> **Decided in [ADR-0034](0034-failed-family-revoke-recovery.md) (2026-08-08): neither.** Measuring
+> the shipped EF detector changed the question — a deadlock on this write is already retried three
+> times by `EnableRetryOnFailure`, while a command timeout is not retried at all, and retrying *that*
+> inline would hold a connection for another `CommandTimeout` on a path an attacker triggers at will.
+> A durable work item was rejected because its own write shares this write's failure mode. The
+> residual below stands, and the detection it relies on is now pinned by tests rather than asserted.
+
 **Provenance, stated plainly:** this was found by reading the path, not by observing a failure.
 The suspected trigger is contention — the set-based revoke writes the same index concurrent
 rotations are writing, so a deadlock victim or command timeout lands exactly there — but it did
