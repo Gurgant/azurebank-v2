@@ -101,6 +101,15 @@ at ADR-0023, and ADR-0009 points at ADR-0022 for its client half. The next free 
 | [ADR-0023](0023-runtime-response-validation.md) | Runtime response validation | Accepted | 2026-07-25 |
 | [ADR-0024](0024-no-client-facing-optimistic-concurrency.md) | No client-facing optimistic concurrency | Accepted | 2026-07-25 |
 | [ADR-0025](0025-originals-reference-mine.md) | The originals are a reference mine, not a code source | Accepted | 2026-07-25 |
+| [ADR-0026](0026-absolute-session-cap-reauthentication.md) | The absolute session cap is re-authenticated, never extended | Accepted | 2026-07-30 |
+| [ADR-0027](0027-dark-mode-through-css-custom-properties.md) | Dark mode through CSS custom properties, decided before the first paint | Accepted | 2026-07-30 |
+| [ADR-0028](0028-data-router-for-blocking-browser-back.md) | A data router, bought for one hook — blocking browser Back on a live idempotency key | Accepted | 2026-07-31 |
+| [ADR-0029](0029-contract-conformance-gate.md) | One suite, two backends — making mock drift fail the build | Accepted | 2026-07-31 |
+| [ADR-0030](0030-real-backend-integration-layer.md) | Running the app's own data layer against the real backend | Accepted | 2026-08-04 |
+| [ADR-0031](0031-e2e-playwright.md) | The app in a real browser, against the real stack | Accepted | 2026-08-04 |
+| [ADR-0032](0032-real-stack-layers-in-ci.md) | Running the real-backend layers in CI, on a stack the job owns | Accepted | 2026-08-04 |
+| [ADR-0033](0033-root-error-boundary.md) | A root error boundary, so a render error is not a blank page | Accepted | 2026-08-04 |
+| [ADR-0034](0034-failed-family-revoke-recovery.md) | Recovery for a family revoke that fails | Accepted | 2026-08-08 |
 
 </details>
 ## Creating a New ADR

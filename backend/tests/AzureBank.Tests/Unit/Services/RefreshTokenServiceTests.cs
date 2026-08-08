@@ -248,6 +248,131 @@ public class RefreshTokenServiceTests : IDisposable
         (await _sut.RotateAsync(successor)).RefreshToken.Should().NotBeNullOrEmpty();
     }
 
+
+    /// <summary>
+    /// Builds a service over the SAME seeded database but on a context whose every SaveChanges
+    /// throws, which is the family revoke's only write on the reuse path.
+    /// </summary>
+    private (RefreshTokenService Sut, Mock<ILogger<RefreshTokenService>> Logger) FaultyRevokeSut(
+        Func<Exception>? fault = null)
+    {
+        var options = new DbContextOptionsBuilder<AzureBankDbContext>()
+            .UseInMemoryDatabase(_databaseName, _databaseRoot)
+            .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
+            .AddInterceptors(
+                fault is null
+                    ? new ThrowingSaveChangesInterceptor()
+                    : new ThrowingSaveChangesInterceptor(fault))
+            .Options;
+
+        var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
+        accessor.HttpContext!.Request.Headers.UserAgent = "xunit/1.0";
+        var logger = new Mock<ILogger<RefreshTokenService>>();
+
+        return (
+            new RefreshTokenService(
+                new AzureBankDbContext(options),
+                accessor,
+                Options.Create(new JwtOptions { RefreshTokenExpirationDays = 7 }),
+                logger.Object),
+            logger);
+    }
+
+    [Fact]
+    public async Task RotateAsync_WhenTheFamilyRevokeFails_LogsTheSecurityEventAtError()
+    {
+        /*
+          ADR-0034 accepts the failed-revoke residual on the strength of DETECTION: the family stays
+          active, so the only thing standing between that and an invisible compromise is a log line
+          loud enough to notice.
+
+          It was previously asserted by a comment and by nothing else. The sibling fault-injection
+          test passes a Mock<ILogger> and never verifies it, so deleting the LogError call would not
+          have failed a single test — the decision would have rested on a claim no gate held.
+
+          This is the gate. If the marker, the level or the user id goes, this fails.
+        */
+        var user = SeedUser();
+        var first = await _sut.IssueAsync(user);
+        await _sut.RotateAsync(first);
+        await AgeRevocationsBeyondGraceAsync();
+
+        var (faultySut, logger) = FaultyRevokeSut();
+
+        (await ((Func<Task>)(() => faultySut.RotateAsync(first))).Should()
+            .ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.RefreshTokenInvalid);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Error,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) =>
+                state.ToString()!.Contains("RefreshTokenReuseRevokeFailed") &&
+                state.ToString()!.Contains(user.Id.ToString())),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RotateAsync_WhenTheCallerDisconnects_PropagatesAndIsNotASecurityEvent()
+    {
+        /*
+          The deliberate carve-out: `catch (Exception ex) when (ex is not OperationCanceledException)`.
+          A caller who hung up is not a failed mitigation, and counting it as one would poison the
+          very signal ADR-0034 relies on — a dashboard full of cancellations is a dashboard nobody
+          reads when the real event arrives.
+
+          Two halves, and the second is the one that would rot quietly: cancellation must escape
+          AS cancellation (not be laundered into the uniform 401), and it must NOT be logged under
+          the security marker. Widening the filter to `catch (Exception)` breaks both.
+        */
+        var user = SeedUser();
+        var first = await _sut.IssueAsync(user);
+        await _sut.RotateAsync(first);
+        await AgeRevocationsBeyondGraceAsync();
+
+        var (faultySut, logger) = FaultyRevokeSut(() => new OperationCanceledException());
+
+        await ((Func<Task>)(() => faultySut.RotateAsync(first))).Should()
+            .ThrowAsync<OperationCanceledException>();
+
+        logger.Verify(l => l.Log(
+            LogLevel.Error,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) =>
+                state.ToString()!.Contains("RefreshTokenReuseRevokeFailed")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RotateAsync_WhenTheFamilyRevokeFails_LeavesTheStolenFamilyActive()
+    {
+        /*
+          The residual itself, asserted instead of described. ADR-0021's amendment states it in
+          prose — "the attacker's successor stays active until logout or the 7-day expiry" — and
+          prose does not fail when it stops being true.
+
+          The direction matters. This is NOT a test that wants the family to stay active; it is a
+          test that pins what today's code actually does, so that the day someone makes the revoke
+          converge anyway, this goes red and points at the ADR that has to be revisited. A residual
+          nobody notices getting fixed is how a document starts lying.
+        */
+        var user = SeedUser();
+        var first = await _sut.IssueAsync(user);
+        var successor = (await _sut.RotateAsync(first)).RefreshToken;
+        await AgeRevocationsBeyondGraceAsync();
+
+        var (faultySut, _) = FaultyRevokeSut();
+        await ((Func<Task>)(() => faultySut.RotateAsync(first))).Should()
+            .ThrowAsync<AuthenticationException>();
+
+        // The successor — the token an attacker would be holding — still rotates. That is the
+        // exposure the ADR accepts, bounded by logout or expiry and by nothing else.
+        _context.ChangeTracker.Clear();
+        (await _sut.RotateAsync(successor)).RefreshToken.Should().NotBeNullOrEmpty();
+    }
+
     /// <summary>Ages every revoked token past the grace window so a replay reads as theft.</summary>
     private async Task AgeRevocationsBeyondGraceAsync()
     {
