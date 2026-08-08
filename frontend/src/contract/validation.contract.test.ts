@@ -412,15 +412,23 @@ describe('contract: the auth model-state gate', () => {
       Observed 2026-08-07: firstName "  a  ", lastName "  b  " -> both the length message and the
       pattern message, per field, in attribute order. Nothing is created; this never reaches the
       service.
+
+      THE MEMBERS ARE SPELLED PascalCase ON PURPOSE, and it costs nothing to assert it here rather
+      than spending another auth permit on a fourth test. `AddApiControllers` sets a camelCase
+      naming policy but leaves `PropertyNameCaseInsensitive` on, so the DTO binds whatever arrives
+      — measured 2026-08-08, `{"Email":…,"Password":…}` reaches the credential check instead of
+      400ing. The mock matched member names exactly and reported these as ABSENT, a completely
+      different envelope. That the error keys below still come back as `FirstName`/`LastName`
+      is the other half: a validation error names the CLR property, never the wire spelling.
     */
     const { status, body } = await call('/bff/auth/register', {
       method: 'POST',
       body: JSON.stringify({
-        azureTag: 'probe',
-        email: 'p@q.dev',
-        password: 'ValidPass1!',
-        firstName: '  a  ',
-        lastName: '  b  ',
+        AzureTag: 'probe',
+        Email: 'p@q.dev',
+        Password: 'ValidPass1!',
+        FirstName: '  a  ',
+        LastName: '  b  ',
       }),
     });
     const errors = asProblem(body).errors as Record<string, string[]>;

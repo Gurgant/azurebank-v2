@@ -50,6 +50,43 @@ import { modelStateProblem } from './problem';
  * established in PR #75, where casing follows how a value was BOUND rather than who produced it.
  */
 
+/**
+ * MEMBER MATCHING IS CASE-INSENSITIVE, and the mock was matching exactly.
+ *
+ * `AddApiControllers` sets a camelCase naming policy but never turns off
+ * `PropertyNameCaseInsensitive`, which the web defaults switch on. So the DTO binds whatever
+ * spelling arrives, and a mock keyed on the exact camelCase name reports a PascalCase member as
+ * ABSENT — answering the missing-required-properties envelope where the server answers 401 or a
+ * field error. Raised as a nitpick in review; measured on :5000 on 2026-08-08, where it turned out
+ * to be a whole envelope apart:
+ *
+ *   {"Email":"…","Password":"…"}           -> binds, reaches credentials (401)
+ *   {"EMAIL":"a@b.dev","PASSWORD":"Ab1!"}  -> 400 keyed `Password` — the CLR name, NOT what
+ *                                             was sent
+ *   {"eMaIl":123,…}                        -> 400 keyed `$.eMaIl` — this one DOES echo the
+ *                                             member as sent
+ *
+ * So the two key styles disagree on purpose: a validation error names the property, a conversion
+ * error names the path the reader walked.
+ *
+ * DUPLICATES that differ only in case are legal JSON and both measured:
+ *
+ *   {"email":"a@b.dev","Email":"not-an-email"}  -> Email format error   (the LAST one binds)
+ *   {"email":"not-an-email","Email":"a@b.dev"}  -> 401                  (ditto)
+ *   {"email":123,"Email":"a@b.dev"}             -> `$.email` conversion error
+ *
+ * The third is the one that stops "last wins" from being the whole rule: a failed CONVERSION
+ * throws where the reader meets it, so it is the FIRST bad member that answers, and a later valid
+ * duplicate does not rescue it. Successful values overwrite; failures short-circuit.
+ */
+function memberFor(body: Record<string, unknown>, json: string): string | undefined {
+  const wanted = json.toLowerCase();
+  let bound: string | undefined;
+  // Last match wins, so keep going rather than returning on the first hit.
+  for (const key of Object.keys(body)) if (key.toLowerCase() === wanted) bound = key;
+  return bound;
+}
+
 /** A rule other than `[Required]`. Runs on "" and on whitespace, never on null. */
 type FormatRule = {
   fails: (value: string) => boolean;
@@ -207,6 +244,27 @@ export const REGISTER_REQUEST: RequestSpec = {
 };
 
 /**
+ * The bound DTO: every member under its CANONICAL camelCase name, whatever spelling arrived.
+ *
+ * Call this after `modelStateFor` returns null. Validating case-insensitively and then reading
+ * `body.email` by exact key is half a fix — it was the half I shipped first, and a PascalCase body
+ * sailed through the gate only to fail the credential check with the email undefined. Downstream
+ * code should never see the wire spelling; on the real thing it never does, because binding
+ * happens before the action runs.
+ */
+export function bindMembers(
+  body: Record<string, unknown>,
+  spec: RequestSpec,
+): Record<string, unknown> {
+  const bound: Record<string, unknown> = {};
+  for (const field of spec.fields) {
+    const member = memberFor(body, field.json);
+    if (member !== undefined) bound[field.json] = body[member];
+  }
+  return bound;
+}
+
+/**
  * Returns the 400 the framework would have written, or `null` to let the handler proceed.
  *
  * Deliberately takes the ALREADY-PARSED body: unparseable JSON is a different failure with a
@@ -242,10 +300,12 @@ export function modelStateFor(body: Record<string, unknown>, spec: RequestSpec):
     the reader's cursor to produce a number no consumer reads. The sentence stops at the path, and
     the tests assert that prefix on BOTH targets rather than pinning an invented offset.
   */
-  // Document order, not spec order — `Object.keys` preserves what the client actually sent.
+  // Document order, not spec order — `Object.keys` preserves what the client actually sent — and
+  // matched case-insensitively, so `{"eMaIl":123}` is caught and keyed by the spelling it arrived
+  // in rather than slipping through as an unknown member.
   const mistyped = Object.keys(body).find(
     (member) =>
-      spec.fields.some((field) => field.json === member) &&
+      spec.fields.some((field) => field.json.toLowerCase() === member.toLowerCase()) &&
       body[member] !== null &&
       typeof body[member] !== 'string',
   );
@@ -258,7 +318,9 @@ export function modelStateFor(body: Record<string, unknown>, spec: RequestSpec):
     });
   }
 
-  const absent = spec.fields.filter((field) => !(field.json in body));
+  // Absent means "no member of ANY spelling", and the sentence still names the canonical camelCase
+  // one — nothing was sent, so there is no other spelling to echo.
+  const absent = spec.fields.filter((field) => memberFor(body, field.json) === undefined);
   if (absent.length > 0) {
     return modelStateProblem({
       $: [
@@ -271,7 +333,9 @@ export function modelStateFor(body: Record<string, unknown>, spec: RequestSpec):
 
   const errors: Record<string, string[]> = {};
   for (const field of spec.fields) {
-    const raw = body[field.json];
+    // The bound member, whatever it was spelled as. The error key below stays the CLR property
+    // name regardless — measured: `{"EMAIL":…,"PASSWORD":"Ab1!"}` answers on `Password`.
+    const raw = body[memberFor(body, field.json) as string];
     const messages: string[] = [];
 
     // Whitespace counts as missing — `RequiredAttribute` trims before testing unless

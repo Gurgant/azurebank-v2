@@ -11,7 +11,7 @@ import {
   problem,
   unreadableBodyProblem,
 } from './problem';
-import { LOGIN_REQUEST, REGISTER_REQUEST, modelStateFor } from './dataAnnotations';
+import { LOGIN_REQUEST, REGISTER_REQUEST, bindMembers, modelStateFor } from './dataAnnotations';
 import {
   MOCK_PASSWORD,
   MOCK_SESSION_COOKIE,
@@ -2343,8 +2343,11 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   */
   const loginInvalid = modelStateFor(authBody.body, LOGIN_REQUEST);
   if (loginInvalid) return loginInvalid;
-  const email = authBody.body.email as string | undefined;
-  const password = authBody.body.password as string | undefined;
+  // Bound, not raw: the member names are matched case-insensitively, so everything below reads the
+  // canonical spelling exactly as an action would after model binding.
+  const bound = bindMembers(authBody.body, LOGIN_REQUEST);
+  const email = bound.email as string | undefined;
+  const password = bound.password as string | undefined;
   const nowMs = Date.now();
   // null for any address that names no account — see `accountForLogin` for the two measurements.
   const account = accountForLogin(email);
@@ -2442,7 +2445,7 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   // the duplicate-email check below, so a malformed body never reaches ADR-0013's genericised 409.
   const registerInvalid = modelStateFor(registerBody.body, REGISTER_REQUEST);
   if (registerInvalid) return registerInvalid;
-  const body = registerBody.body as {
+  const body = bindMembers(registerBody.body, REGISTER_REQUEST) as {
     azureTag?: string;
     email?: string;
     firstName?: string;

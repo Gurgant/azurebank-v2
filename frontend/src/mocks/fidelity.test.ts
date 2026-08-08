@@ -1506,3 +1506,113 @@ describe('the model-state gate: values that never bind at all', () => {
     });
   });
 });
+
+describe('the model-state gate: member names are matched case-insensitively', () => {
+  beforeEach(() => {
+    resetMockState();
+    seedMockSession();
+  });
+
+  const post = (path: string, body: unknown) =>
+    fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const errorsOf = async (response: Response) => (await response.json()).errors;
+
+  it('binds a PascalCase body and reaches the credential check', async () => {
+    /*
+      The gate matched member names EXACTLY, so a PascalCase body read as two absent members and
+      answered the missing-required-properties envelope — a completely different response from the
+      one the server gives. `AddApiControllers` sets a camelCase naming policy but leaves
+      `PropertyNameCaseInsensitive` on, so the DTO takes whatever spelling arrives.
+
+      Measured on :5000, 2026-08-08:
+        {"Email":"…","Password":"…"} -> binds and reaches credentials, no 400
+    */
+    const pascal = await post('/bff/auth/login', {
+      Email: 'demo@azurebank.dev',
+      Password: 'Password1!',
+    });
+
+    expect(pascal.status).toBe(200);
+  });
+
+  it('keys a validation failure by the CLR property, whatever case arrived', async () => {
+    /*
+      The two key styles disagree deliberately, and both were measured:
+
+        {"EMAIL":"a@b.dev","PASSWORD":"Ab1!"} -> `Password`  — the property name
+        {"eMaIl":123,…}                       -> `$.eMaIl`   — the path, echoing what was sent
+
+      A validation error names the property the value bound to; a conversion error names the path
+      the reader walked. Asserting only one of them would have let the other regress.
+    */
+    const shouted = await post('/bff/auth/login', { EMAIL: 'a@b.dev', PASSWORD: 'Ab1!' });
+    expect(shouted.status).toBe(400);
+    expect(Object.keys(await errorsOf(shouted))).toEqual(['Password']);
+
+    const mixed = await post('/bff/auth/login', { eMaIl: 123, password: 'ValidPass1!' });
+    expect(Object.keys(await errorsOf(mixed)).sort()).toEqual(['$.eMaIl', 'request']);
+  });
+
+  it('lets the LAST spelling win when a body carries the same member twice', async () => {
+    /*
+      Duplicates differing only in case are legal JSON, and the reader overwrites as it goes.
+      Measured both directions so the rule is pinned rather than assumed:
+
+        {"email":"a@b.dev","Email":"not-an-email"} -> Email format error
+        {"email":"not-an-email","Email":"a@b.dev"} -> 401, the address bound fine
+    */
+    const lastIsBad = await post('/bff/auth/login', {
+      email: 'a@b.dev',
+      Email: 'not-an-email',
+      password: 'ValidPass1!',
+    });
+    expect(lastIsBad.status).toBe(400);
+    expect(await errorsOf(lastIsBad)).toEqual({
+      Email: ['The Email field is not a valid e-mail address.'],
+    });
+
+    const lastIsGood = await post('/bff/auth/login', {
+      email: 'not-an-email',
+      Email: 'nobody@azurebank.dev',
+      password: 'ValidPass1!',
+    });
+    expect(lastIsGood.status).toBe(401);
+  });
+
+  it('short-circuits on a failed conversion rather than letting a later duplicate rescue it', async () => {
+    /*
+      The case that stops "last wins" from being the whole rule. A conversion throws where the
+      reader meets it, so the FIRST bad member answers even though a valid duplicate follows:
+
+        {"email":123,"Email":"a@b.dev"} -> `$.email` conversion error, not a successful bind
+
+      Successful values overwrite; failures short-circuit. Two different rules on one body.
+    */
+    const rescued = await post('/bff/auth/login', {
+      email: 123,
+      Email: 'a@b.dev',
+      password: 'ValidPass1!',
+    });
+
+    expect(rescued.status).toBe(400);
+    expect(Object.keys(await errorsOf(rescued)).sort()).toEqual(['$.email', 'request']);
+  });
+
+  it('applies the same matching to register', async () => {
+    const pascal = await post('/bff/auth/register', {
+      AzureTag: 'probe',
+      Email: 'p@q.dev',
+      Password: 'weak',
+      FirstName: 'Ada',
+      LastName: 'Lovelace',
+    });
+
+    expect(pascal.status).toBe(400);
+    expect(Object.keys(await errorsOf(pascal))).toEqual(['Password']);
+  });
+});
