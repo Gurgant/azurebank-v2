@@ -11,6 +11,7 @@ import {
   problem,
   unreadableBodyProblem,
 } from './problem';
+import { LOGIN_REQUEST, REGISTER_REQUEST, bindMembers, modelStateFor } from './dataAnnotations';
 import {
   MOCK_PASSWORD,
   MOCK_SESSION_COOKIE,
@@ -2327,8 +2328,26 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   if (!authBody) {
     return unreadableBodyProblem(await request.clone().text());
   }
-  const email = authBody.body.email as string | undefined;
-  const password = authBody.body.password as string | undefined;
+  /*
+    The framework's model-state short-circuit, and it belongs HERE — after the body parses and
+    before anything looks at credentials. `/bff/auth/login` binds the shared `LoginRequest`, so
+    `[ApiController]` rejects a malformed one inside the BFF and never calls the API at all.
+
+    Measured on :5000, 2026-08-07 — the mock answered 401 for the first of these:
+
+      {"email":"a@b.dev","password":"Ab1!"}         -> 400, Password format only
+      {"email":"nobody@…","password":"ValidPass1!"} -> 401 INVALID_CREDENTIALS
+
+    Placement is also what keeps a malformed password away from the lockout counter, exactly as on
+    the real thing: the counter lives past this line.
+  */
+  const loginInvalid = modelStateFor(authBody.body, LOGIN_REQUEST);
+  if (loginInvalid) return loginInvalid;
+  // Bound, not raw: the member names are matched case-insensitively, so everything below reads the
+  // canonical spelling exactly as an action would after model binding.
+  const bound = bindMembers(authBody.body, LOGIN_REQUEST);
+  const email = bound.email as string | undefined;
+  const password = bound.password as string | undefined;
   const nowMs = Date.now();
   // null for any address that names no account — see `accountForLogin` for the two measurements.
   const account = accountForLogin(email);
@@ -2422,7 +2441,11 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
   if (!registerBody) {
     return unreadableBodyProblem(await request.clone().text());
   }
-  const body = registerBody.body as {
+  // Same gate, five fields — see the login handler above and `dataAnnotations.ts`. It runs before
+  // the duplicate-email check below, so a malformed body never reaches ADR-0013's genericised 409.
+  const registerInvalid = modelStateFor(registerBody.body, REGISTER_REQUEST);
+  if (registerInvalid) return registerInvalid;
+  const body = bindMembers(registerBody.body, REGISTER_REQUEST) as {
     azureTag?: string;
     email?: string;
     firstName?: string;

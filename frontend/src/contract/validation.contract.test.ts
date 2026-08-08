@@ -340,3 +340,140 @@ describe('contract: validation envelopes', () => {
     expect(keys.sort()).toEqual(['FromDate', 'ToDate']);
   });
 });
+
+/**
+ * The auth routes' own model-state gate.
+ *
+ * Three cases, and each is a POST to `/bff/auth/*` that spends an auth permit — the limiter runs
+ * before the body is read, so a request the gate rejects costs exactly what a successful sign-in
+ * costs. This block takes the suite from six permits to nine.
+ *
+ * That ceiling is a LOCAL constraint, not a CI one: `ci.yml` starts the BFF with
+ * `--RateLimiting:AuthPermitLimit=1000` precisely so the three real-stack suites cannot rate-limit
+ * each other, and says so in its own comment. What it does mean is that running
+ * `test:contract:real` twice inside a minute on a dev machine will 429 — which it already did at
+ * six, since two runs are twelve, and at nine a single run leaves only one permit spare. Wait out
+ * the window rather than debugging the failure.
+ *
+ * The exhaustive matrix — absent vs null, whitespace, attribute ordering, wrong JSON types, the
+ * register/login wording difference — lives in `mocks/fidelity.test.ts`, where it costs nothing.
+ *
+ * What these two buy that the mock-only ones cannot: they run against the REAL stack too, so they
+ * fail if the mock and the BFF ever disagree about this envelope again. They were added because
+ * the mock answered 401 here, having never modelled the gate at all.
+ *
+ * The `beforeAll` login above is this block's control: a well-formed body still reaches the
+ * credential check and answers 200, so a mock that simply 400s every auth POST cannot pass.
+ */
+describe('contract: the auth model-state gate', () => {
+  it('rejects a malformed password before it ever looks at credentials', async () => {
+    /*
+      `/bff/auth/login` binds the shared `LoginRequest`, so `[ApiController]` short-circuits inside
+      the BFF and the API is never called. That makes this the FRAMEWORK envelope — no `detail`, no
+      `instance`, no `errorCode` — even though the DTO belongs to the API.
+
+      Observed 2026-08-07 on :5000:
+        {"email":"a@b.dev","password":"Ab1!"}
+        -> 400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+                "title":"One or more validation errors occurred.","status":400,
+                "errors":{"Password":["Password must be 8-128 characters and Password must contain
+                          at least one uppercase, one lowercase, one digit, and one special
+                          character."]},"traceId":"00-…"}
+
+      A wrong-but-well-formed password answers 401 INVALID_CREDENTIALS instead; that half is pinned
+      mock-side, because tripping it here would spend another auth permit for no extra coverage.
+    */
+    const { status, body } = await call('/bff/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'a@b.dev', password: 'Ab1!' }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(problem.type).toBe('https://tools.ietf.org/html/rfc9110#section-15.5.1');
+    // The discriminators against the API's hand-written envelope — see envelopes.contract.test.ts.
+    expect(problem.instance).toBeUndefined();
+    expect(problem.errorCode).toBeUndefined();
+    expect(problem.detail).toBeUndefined();
+    expect((problem.errors as Record<string, string[]>).Password).toEqual([
+      'Password must be 8-128 characters and Password must contain at least one uppercase, ' +
+        'one lowercase, one digit, and one special character.',
+    ]);
+  });
+
+  it('validates a registration against the TRIMMED name, not the submitted one', async () => {
+    /*
+      `RegisterRequest.FirstName`/`LastName` trim inside their setters specifically so validation
+      sees the normalised value — its own comment says a raw "  a  " would otherwise satisfy the
+      {2,50} rule and land a one-character name. Asserted on the wire because a setter is exactly
+      the kind of detail a mock reimplements by eye and gets wrong.
+
+      Observed 2026-08-07: firstName "  a  ", lastName "  b  " -> both the length message and the
+      pattern message, per field, in attribute order. Nothing is created; this never reaches the
+      service.
+
+      THE MEMBERS ARE SPELLED PascalCase ON PURPOSE, and it costs nothing to assert it here rather
+      than spending another auth permit on a fourth test. `AddApiControllers` sets a camelCase
+      naming policy but leaves `PropertyNameCaseInsensitive` on, so the DTO binds whatever arrives
+      — measured 2026-08-08, `{"Email":…,"Password":…}` reaches the credential check instead of
+      400ing. The mock matched member names exactly and reported these as ABSENT, a completely
+      different envelope. That the error keys below still come back as `FirstName`/`LastName`
+      is the other half: a validation error names the CLR property, never the wire spelling.
+    */
+    const { status, body } = await call('/bff/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        AzureTag: 'probe',
+        Email: 'p@q.dev',
+        Password: 'ValidPass1!',
+        FirstName: '  a  ',
+        LastName: '  b  ',
+      }),
+    });
+    const errors = asProblem(body).errors as Record<string, string[]>;
+
+    expect(status).toBe(400);
+    expect(errors.FirstName).toEqual([
+      'First name must be between 2 and 50 characters.',
+      'Name can only contain letters, spaces, hyphens, and apostrophes.',
+    ]);
+    expect(errors.LastName).toEqual([
+      'Last name must be between 2 and 50 characters.',
+      'Name can only contain letters, spaces, hyphens, and apostrophes.',
+    ]);
+    // Everything else was well-formed, so nothing else may appear.
+    expect(Object.keys(errors).sort()).toEqual(['FirstName', 'LastName']);
+  });
+
+  it('keys a member of the wrong JSON type by its path, and says so the same way', async () => {
+    /*
+      The one case where the mock deliberately emits LESS than the server does, so it is the one
+      that most needs asserting against both. A number cannot bind to a `string`, so this fails in
+      the reader — key `$.email`, not `Email` — and the real message ends with a byte offset:
+
+        {"email":123,"password":"ValidPass1!"}
+        -> 400 {"request":["The request field is required."],
+                "$.email":["The JSON value could not be converted to System.String.
+                            Path: $.email | LineNumber: 0 | BytePositionInLine: 13."]}
+
+      That offset is not reproducible from a parsed body — measured at 13, 14, 11 and 11 for a
+      number, a boolean, an object and an array in otherwise identical bodies — so the mock stops
+      the sentence at the path and this asserts the prefix. `toContain` is what lets one assertion
+      hold for both targets; `toEqual` here would pass on the mock and fail on the server, which is
+      precisely the false green this suite exists to prevent.
+    */
+    const { status, body } = await call('/bff/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: 123, password: 'ValidPass1!' }),
+    });
+    const errors = asProblem(body).errors as Record<string, string[]>;
+
+    expect(status).toBe(400);
+    expect(Object.keys(errors).sort()).toEqual(['$.email', 'request']);
+    expect(errors['$.email'][0]).toContain(
+      'The JSON value could not be converted to System.String. Path: $.email',
+    );
+    expect(errors.request).toEqual(['The request field is required.']);
+  });
+});
