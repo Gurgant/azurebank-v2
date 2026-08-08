@@ -211,6 +211,21 @@ public class TransferService : ITransferService
                     fromAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
             }
+            catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
+            {
+                // A regenerable clash on the transaction number: the next attempt mints a fresh
+                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
+                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
+                // authoritative copy instead of four that drift. Warning, not Information: it
+                // should never happen, so an occurrence means the entropy assumption deserves
+                // re-checking, which needs to know WHICH account.
+                _logger.LogWarning(
+                    ex,
+                    "SecurityEvent {SecurityEvent}: transaction-number collision on transfer from "
+                        + "account {AccountId} to {RecipientAccountId} (attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", fromAccount.Id, recipientAccount.Id, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
+            }
         }
     }
 
@@ -355,6 +370,21 @@ public class TransferService : ITransferService
                 _logger.LogInformation(
                     "Concurrency conflict on internal transfer from account {AccountId} (attempt {Attempt}); retrying",
                     fromAccount.Id, attempt);
+                await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
+            }
+            catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
+            {
+                // A regenerable clash on the transaction number: the next attempt mints a fresh
+                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
+                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
+                // authoritative copy instead of four that drift. Warning, not Information: it
+                // should never happen, so an occurrence means the entropy assumption deserves
+                // re-checking, which needs to know WHICH account.
+                _logger.LogWarning(
+                    ex,
+                    "SecurityEvent {SecurityEvent}: transaction-number collision on internal transfer "
+                        + "from account {AccountId} to {ToAccountId} (attempt {Attempt}); regenerating",
+                    "TransactionNumberCollision", fromAccount.Id, toAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
             }
         }
