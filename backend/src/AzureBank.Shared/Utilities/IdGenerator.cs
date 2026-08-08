@@ -22,11 +22,6 @@ public static class IdGenerator
     }
 
     /// <summary>
-    /// Generates a unique transaction number in format TXN-YYYYMMDD-XXXXXX.
-    /// Thread-safe and cryptographically secure.
-    /// </summary>
-    /// <returns>Transaction number string (e.g., "TXN-20260114-123456")</returns>
-    /// <summary>
     /// Generates a transaction number in format TXN-YYYYMMDD-XXXXXXX (20 characters).
     ///
     /// <para>
@@ -59,6 +54,7 @@ public static class IdGenerator
     /// retrying would only soften a symptom that no longer occurs.
     /// </para>
     /// </summary>
+    /// <returns>Transaction number string (e.g., "TXN-20260114-K3M9PZ2").</returns>
     public static string GenerateTransactionNumber() =>
         $"TXN-{DateTime.UtcNow:yyyyMMdd}-{RandomSuffix(TransactionSuffixLength)}";
 
@@ -81,11 +77,6 @@ public static class IdGenerator
     }
 
     /// <summary>
-    /// Generates a unique transfer reference in format TRF-YYYYMMDD-XXXXXX.
-    /// Thread-safe and cryptographically secure.
-    /// </summary>
-    /// <returns>Transfer reference string (e.g., "TRF-20260114-123456")</returns>
-    /// <summary>
     /// Generates a transfer reference in format TRF-YYYYMMDD-XXXXXX.
     ///
     /// <para>
@@ -95,6 +86,7 @@ public static class IdGenerator
     /// ever added, this needs the same treatment first.
     /// </para>
     /// </summary>
+    /// <returns>Transfer reference string (e.g., "TRF-20260114-123456").</returns>
     public static string GenerateTransferReference()
     {
         var random = RandomNumberGenerator.GetInt32(100000, 1000000);

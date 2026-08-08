@@ -59,15 +59,19 @@ public class IdGeneratorTests
           unreachable, and the column is exactly full at 15 characters so widening it would need a
           migration. Recorded rather than fixed here.
 
-          The assertion is still tightened to zero duplicates: in 1,000 draws from 7.29e9 the
-          expected count is 7e-5, so tolerating ten was tolerating a generator four orders of
-          magnitude worse than this one.
+          The tolerance drops from ten duplicates to one. Not to zero: 1,000 draws from 7.29e9
+          expect 6.9e-5 duplicates, so a zero-duplicate assertion would fail against a CORRECT
+          generator about once in 14,500 runs. I had computed that number, written it in a comment,
+          and shipped the assertion anyway — documenting a known flake is not the same as not
+          having one, and a reviewer was right to say so.
+
+          One duplicate makes a false red a 1-in-425-million event (P(>=2) ~ 2.3e-9) while still
+          failing instantly against anything meaningfully worse: the old ten-duplicate tolerance
+          accepted a generator four orders of magnitude weaker than this one.
         */
-        // Zero is safe HERE: 1,000 draws from 7.29e9 expect 7e-5 duplicates, so a correct
-        // generator fails about once in 14,000 runs — three orders of magnitude rarer than the
-        // transaction-number sample above, which is why that one allows a duplicate and this
-        // does not.
-        numbers.Should().HaveCount(count, "AccountNumber is unique-indexed too");
+        numbers.Should().HaveCountGreaterThan(
+            count - 2,
+            "AccountNumber is unique-indexed too, so more than one duplicate in 1,000 is a defect");
     }
 
     [Fact]

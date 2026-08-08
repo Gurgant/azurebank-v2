@@ -28,8 +28,10 @@ namespace AzureBank.Tests.Integration;
 /// </para>
 /// <para>
 /// The generator itself is measured in <c>IdGeneratorTests</c>, which draws 20,000 numbers and
-/// demands zero duplicates — a sample size chosen so it fails against the previous six-digit
-/// version. This class asserts the other half: what the database does when one slips through.
+/// permits AT MOST ONE duplicate — not zero, because zero would be flaky against a correct
+/// generator (0.0058 expected duplicates, so ~0.58% of runs). The sample size is chosen so it
+/// still fails against the previous six-digit version, which expects ~222. This class asserts the
+/// other half: what the database does when one slips through.
 /// </para>
 /// </summary>
 [Trait("Category", "SqlServer")]
