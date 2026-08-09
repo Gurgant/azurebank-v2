@@ -1,0 +1,18 @@
+// markdownlint configuration for `docs/adr/` only. markdownlint-cli2 reads the config nearest each
+// linted file, so this applies to the ADRs and to nothing else in the repository.
+{
+  // MD040 (fenced-code-language) is OFF here, deliberately, because these records fence MEASURED
+  // OUTPUT far more often than source: 43 of the 70 fences under docs/adr/ are bare, against 21
+  // `csharp` and a handful of `xml`/`json`/`mermaid`.
+  //
+  // It is off rather than satisfied with `text` because the house rule runs the other way, and a
+  // review has now asked for each direction in turn: on PR #94 the guidance was "use a bare fence
+  // for the measured output — this block contains plain output, not source code, remove the `text`
+  // info string"; on PR #96 the same linter asked to add it back. Both cannot be right, and the
+  // bare form is what the corpus already does.
+  //
+  // Encoding it here is the point. The convention existed only as tribal knowledge, so every ADR
+  // that pasted a terminal transcript cost a review round to re-settle. A rule a tool cannot read
+  // is a rule that gets re-litigated.
+  "MD040": false
+}

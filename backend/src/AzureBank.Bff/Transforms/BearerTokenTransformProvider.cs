@@ -33,6 +33,29 @@ public class BearerTokenTransformProvider : ITransformProvider
             var cookieName = httpContext.RequestServices
                 .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
 
+            /*
+              DROP whatever the caller sent, ALWAYS, before deciding what to inject.
+
+              YARP copies request headers to the outbound request by default, so an inbound
+              `Authorization` is already sitting on ProxyRequest when this runs. Setting the header
+              inside the branch below overwrites it — but only when a session resolves. With NO
+              session there was nothing to overwrite, and the client's own token rode through to an
+              API that validated it happily.
+
+              That was a live bypass, measured end to end rather than reasoned about: the proxied
+              POST /api/auth/login returns the raw JWT, and re-presenting it as
+              `Authorization: Bearer …` with no cookie returned 200 and the unmasked account number
+              from GET /api/accounts/{id}/full-number, with no PIN ever entered — while the same
+              request WITHOUT the header returned 401. POST /api/transfers reached the endpoint the
+              same way.
+
+              Clearing unconditionally is what makes the session the ONLY route to an authenticated
+              call, on every proxied path rather than only the PIN-gated ones. The step-up gate in
+              AuthLevelMiddleware also fails closed now, but it covers two paths; this covers all of
+              them, and neither is load-bearing alone.
+            */
+            transformContext.ProxyRequest.Headers.Authorization = null;
+
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))
             {
