@@ -1,7 +1,9 @@
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
+using AzureBank.Shared.Utilities;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace AzureBank.Api.Services;
 
@@ -60,7 +62,93 @@ internal static class ConcurrencyRetry
     /// the operation and this catch is the only recovery.
     /// </para>
     /// </summary>
-    public static bool IsTransactionNumberCollision(Exception ex, int attempt)
+    public static bool IsTransactionNumberCollision(Exception ex, int attempt) =>
+        IsUniqueViolationOn(ex, TransactionNumberIndex, attempt);
+
+    /// <summary>The index the generated account number lands in.</summary>
+    private const string AccountNumberIndex = "IX_Accounts_AccountNumber";
+
+    /// <summary>
+    /// True when a write failed because the generated <c>AccountNumber</c> was already taken — the
+    /// account-side twin of <see cref="IsTransactionNumberCollision"/>, and regenerable for the
+    /// same reason: the next attempt mints a new number.
+    ///
+    /// <para>
+    /// <b>The narrowing matters more here than it did for transactions.</b> The registration path
+    /// can violate the AzureTag and NormalizedEmail unique indexes too, and those are the
+    /// enumeration-neutral 409 in <c>AuthService</c> (ADR-0013) — retrying one of those would spin
+    /// on a genuine duplicate and, worse, turn a deliberate security response into a loop. Matching
+    /// the error number alone would do exactly that, so this matches the INDEX NAME as well.
+    /// </para>
+    /// <para>
+    /// <b>Why it is worth catching at all, measured rather than argued.</b> Before this, an injected
+    /// collision on registration produced: <c>500</c> to the client, the ApplicationUser COMMITTED
+    /// with its role assigned, ZERO accounts owned, and a <c>409</c> on every retry with the same
+    /// details — because the pre-checks then find the user's own row. An unrecoverable, account-less
+    /// user, which is strictly worse than the transaction case: that one left the caller free to try
+    /// the deposit again. <c>AccountNumberCollisionSqlServerTests</c> pins both paths.
+    /// </para>
+    /// </summary>
+    public static bool IsAccountNumberCollision(Exception ex, int attempt) =>
+        IsUniqueViolationOn(ex, AccountNumberIndex, attempt);
+
+    /// <summary>
+    /// Saves a newly-added <see cref="Account"/>, minting a fresh number and retrying if the
+    /// generated one was already taken.
+    ///
+    /// <para>
+    /// Shared by both creation paths — registration and <c>CreateAccountAsync</c> — rather than
+    /// copied into each, because the two differ only in what they log. A failed
+    /// <c>SaveChangesAsync</c> leaves the entity in the <c>Added</c> state, so assigning a new
+    /// number and saving again re-runs the same INSERT; there is nothing to detach or reload, which
+    /// is why this does not go through <see cref="PrepareNextAttemptAsync"/> (that exists to undo
+    /// balance mutations, and there are none here).
+    /// </para>
+    /// <para>
+    /// Gives up after <see cref="MaxAttempts"/> and lets the exception escape. At 7.29e9 values a
+    /// second consecutive clash is already absurd; eight in a row means something is wrong that a
+    /// ninth attempt will not fix, and a silent infinite loop on a registration would be worse than
+    /// the 500.
+    /// </para>
+    /// </summary>
+    public static async Task SaveNewAccountAsync(
+        AzureBankDbContext context, Account account, ILogger logger, Guid userId)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await context.SaveChangesAsync();
+                return;
+            }
+            catch (DbUpdateException ex) when (IsAccountNumberCollision(ex, attempt))
+            {
+                // Logged at Warning as a SecurityEvent for the same reason the transaction-number
+                // collision is: it should be effectively unobservable, so if it ever appears in a
+                // real log the entropy assumption behind the format needs re-examining, not the
+                // retry. The account id is not logged — it is not assigned until the INSERT lands.
+                logger.LogWarning(ex,
+                    "SecurityEvent {SecurityEvent}: generated account number was already taken for "
+                        + "user {UserId}, regenerating (attempt {Attempt})",
+                    "AccountNumberCollision", userId, attempt);
+
+                account.AccountNumber = IdGenerator.GenerateAccountNumber();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Walks the exception chain for a SQL Server unique violation raised by ONE named index.
+    ///
+    /// <para>
+    /// Shared by both predicates so the narrowing is written once. The index name is the whole
+    /// point: 2601/2627 are raised by every unique index in the schema, including the idempotency
+    /// claim (a distributed lock, where a retry double-executes) and the registration duplicates
+    /// above. SQL Server puts the constraint name in the message, which the SQL-gated proofs assert,
+    /// so a message-format change fails a test rather than silently widening this.
+    /// </para>
+    /// </summary>
+    private static bool IsUniqueViolationOn(Exception ex, string indexName, int attempt)
     {
         if (attempt >= MaxAttempts)
         {
@@ -72,7 +160,7 @@ internal static class ConcurrencyRetry
             if (current is SqlException sql
                 && sql.Errors.Cast<SqlError>().Any(
                     e => (e.Number == SqlUniqueIndexViolation || e.Number == SqlPrimaryKeyViolation)
-                        && e.Message.Contains(TransactionNumberIndex, StringComparison.Ordinal)))
+                        && e.Message.Contains(indexName, StringComparison.Ordinal)))
             {
                 return true;
             }

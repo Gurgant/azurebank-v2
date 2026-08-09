@@ -320,7 +320,21 @@ public class AuthService : IAuthService
         };
 
         _context.Accounts.Add(account);
-        await _context.SaveChangesAsync();
+
+        /*
+          Retried on an account-number collision, and this is the path where it MATTERS. The
+          ApplicationUser is already durably committed at this point (UserManager.CreateAsync runs
+          its own unit of work, as the refresh-token note below also relies on), so an uncaught
+          duplicate here used to leave a user holding the email and the AzureTag with no account at
+          all — and unable to register again, because the pre-checks then find their own row and
+          return the neutral 409. Measured before the fix: 500 to the client, user committed, role
+          assigned, zero accounts, 409 on every retry.
+
+          Narrowed by index name inside the predicate, which is load-bearing here: this same request
+          can legitimately lose the AzureTag or NormalizedEmail race, and THAT must stay the
+          enumeration-neutral 409 (ADR-0013) rather than become a retry loop.
+        */
+        await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, user.Id);
 
         var tokenResult = _jwtService.GenerateToken(user);
 

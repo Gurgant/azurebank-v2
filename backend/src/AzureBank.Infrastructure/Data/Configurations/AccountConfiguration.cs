@@ -24,9 +24,17 @@ public class AccountConfiguration : IEntityTypeConfiguration<Account>
             .IsRequired()
             .HasMaxLength(ValidationRules.AccountNumberLength);
 
+        // The name is DECLARED, not inherited from EF's convention, because
+        // ConcurrencyRetry.IsAccountNumberCollision matches on it to tell a regenerable
+        // account-number clash from the AzureTag / NormalizedEmail races, which must stay the
+        // enumeration-neutral 409 (ADR-0013) rather than enter a retry loop. Same string the
+        // convention already produces, so this is not a schema change — it stops a convention
+        // change from silently turning that recovery back into a 500 and an account-less user.
+        // TransactionConfiguration carries the identical note for the identical reason.
         builder.HasIndex(a => a.AccountNumber)
             .IsUnique()
-            .HasFilter("[IsDeleted] = 0");
+            .HasFilter("[IsDeleted] = 0")
+            .HasDatabaseName("IX_Accounts_AccountNumber");
 
         // ═══════════════════════════════════════════════════════════════
         // ACCOUNT NAME

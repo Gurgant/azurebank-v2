@@ -67,7 +67,7 @@ public class AccountService : IAccountService
         };
 
         _context.Accounts.Add(account);
-        await _context.SaveChangesAsync();
+        await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, userId);
 
         _logger.LogInformation("Created account {AccountId} for user {UserId}", account.Id, userId);
 
