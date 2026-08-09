@@ -55,7 +55,8 @@ detail hanging off them.
 [0012](0012-login-attempt-limiting.md) login attempt-limiting ·
 [0021](0021-refresh-token-rotation-bff-remint.md) refresh-token rotation with reuse detection ·
 [0026](0026-absolute-session-cap-reauthentication.md) the absolute session cap is re-authenticated, never extended ·
-[0034](0034-failed-family-revoke-recovery.md) recovery for a family revoke that fails
+[0034](0034-failed-family-revoke-recovery.md) recovery for a family revoke that fails ·
+[0037](0037-atomic-registration.md) registration is all-or-nothing
 
 **Not leaking who exists** — [0013](0013-registration-user-enumeration.md) registration enumeration ·
 [0014](0014-recipient-lookup-enumeration.md) recipient lookup, exact-match and harvest-resistant ·
@@ -77,11 +78,12 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All thirty-six are **Accepted and shipped** — nothing here is aspirational, which is why there is
+All thirty-seven are **Accepted and shipped** — nothing here is aspirational, which is why there is
 no Proposed tier. Where a later record changes an earlier one, the earlier keeps an inline
 supersession note at the affected clause rather than being rewritten: ADR-0019's Decision 6 points
 at ADR-0023, ADR-0009 points at ADR-0022 for its client half, and ADR-0021's amendment points at
-ADR-0034 for the residual it left open. The next free number is **0037**.
+ADR-0034 for the residual it left open, and ADR-0036 points at ADR-0037 for the one it left
+open. The next free number is **0038**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -125,6 +127,7 @@ ADR-0034 for the residual it left open. The next free number is **0037**.
 | [ADR-0034](0034-failed-family-revoke-recovery.md) | Recovery for a family revoke that fails | Accepted | 2026-08-08 |
 | [ADR-0035](0035-transaction-number-check-symbol.md) | A check symbol on the transaction number | Accepted | 2026-08-09 |
 | [ADR-0036](0036-account-number-collision-recovery.md) | Recovering from an account-number collision | Accepted | 2026-08-09 |
+| [ADR-0037](0037-atomic-registration.md) | Registration is all-or-nothing | Accepted | 2026-08-09 |
 
 </details>
 ## Creating a New ADR

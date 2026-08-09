@@ -14,6 +14,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
 using AzureBank.Tests.Fixtures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Compliance.Classification;
 using Microsoft.Extensions.Compliance.Redaction;
@@ -45,6 +46,22 @@ public class AuthServiceTests : IDisposable
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
+            /*
+              RegisterAsync now wraps its writes in a transaction, and InMemory escalates
+              TransactionIgnoredWarning to an exception, so without this every registration test
+              fails on "Transactions are not supported by the in-memory store" rather than on
+              anything it is testing.
+
+              Suppressed HERE rather than guarded with IsRelational() in AuthService — which this
+              same file already does twice for ExecuteUpdate — deliberately: a provider branch would
+              mean these tests exercise a DIFFERENT path from the one that ships. Suppressed, they
+              run the real path and BeginTransactionAsync is simply a no-op.
+
+              Which is exactly what they can and cannot prove. These tests pin the neutral-409 logic;
+              they say NOTHING about rollback, because there is no transaction to roll back.
+              Atomicity is proved on real SQL Server by RegistrationAtomicitySqlServerTests.
+            */
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _context = new AzureBankDbContext(options);
@@ -78,6 +95,13 @@ public class AuthServiceTests : IDisposable
         redactorProviderMock
             .Setup(x => x.GetRedactor(new DataClassificationSet(DataClassifications.Pii)))
             .Returns(new EmailMaskingRedactor());
+
+        // AddToRoleAsync is now RESULT-CHECKED in RegisterAsync (ADR-0037), and this is a loose
+        // mock: without a setup it returns null and every happy-path registration test NREs on
+        // roleResult.Succeeded rather than on anything it is testing.
+        _userManagerMock
+            .Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+            .ReturnsAsync(IdentityResult.Success);
 
         _sut = new AuthService(
             _userManagerMock.Object,
@@ -569,10 +593,26 @@ public class AuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RegisterAsync_CreateAsyncRaceThrowsDbUpdateException_ThrowsNeutralConflict()
+    public async Task RegisterAsync_NonDuplicateDbUpdateException_Propagates()
     {
-        // The genuine write-time race: Identity's validators pass but the unique index
-        // rejects at SaveChanges. It must be neutralised to the same neutral 409 (ADR-0013).
+        /*
+          INVERTED, and deliberately so. This test used to assert that ANY DbUpdateException from
+          CreateAsync became the neutral 409, which is what the catch used to do — and that was the
+          defect: DbUpdateException is EF's generic wrapper for anything failing in the update
+          pipeline, so a deadlock, a lock or command timeout, a dropped connection or an unrelated
+          constraint were all reported to the caller as "these details are taken". Since ADR-0037 the
+          catch also sits inside the execution-strategy delegate, so swallowing a transient there
+          suppresses the retry the strategy would otherwise perform.
+
+          The exception below carries NO inner SqlException, so it is exactly the shape a
+          non-duplicate failure has, and the narrowed predicate must let it through. No attempt is
+          made to fabricate a transient SqlException: it has no public constructor, and this repo
+          avoids reflection tricks for it (see TransferTransientFault).
+
+          The DUPLICATE half of the contract — a real write-time race returning the neutral 409 — is
+          proved where a real unique violation can actually be raised:
+          RegistrationDuplicateSqlServerTests pins both index names against real SQL Server errors.
+        */
         var request = new RegisterRequest
         {
             Email = "race2@example.com",
@@ -587,12 +627,13 @@ public class AuthServiceTests : IDisposable
             .ReturnsAsync((ApplicationUser?)null);
         _userManagerMock
             .Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), request.Password))
-            .ThrowsAsync(new DbUpdateException("unique index violation"));
+            .ThrowsAsync(new DbUpdateException("a deadlock or timeout, not a unique violation"));
 
         var act = () => _sut.RegisterAsync(request);
 
-        await act.Should().ThrowAsync<ConflictException>()
-            .Where(e => e.ErrorCode == ErrorCodes.RegistrationFailed);
+        await act.Should().ThrowAsync<DbUpdateException>(
+            "a non-duplicate write failure must propagate so the strategy can retry it, rather than "
+                + "being reported to the caller as a duplicate");
     }
 
 #endregion

@@ -20,7 +20,7 @@ bare `Add` followed by `SaveChangesAsync`.
 A collision was injected on the registration path with a `DbCommandInterceptor`, against real SQL
 Server. The result was not simply a 500:
 
-```text
+```
 first attempt   -> 500
 user committed? -> YES
 accounts owned  -> 0
@@ -96,6 +96,10 @@ group — no exception, no failing test. A format change would have to fix the m
   (`SqlException` −2), so a timeout at that line still leaves an account-less user. Recorded rather
   than fixed here: making registration atomic across two units of work is a larger design change
   than this PR, and is filed separately.
+  > **Closed by [ADR-0037](0037-atomic-registration.md).** Registration now commits the user, the
+  > role and the account in one transaction, so *every* cause of that INSERT failing rolls the whole
+  > registration back rather than only the duplicate-number one. The retry described above is kept:
+  > it turns a recoverable clash into a success instead of a rollback the caller has to redo.
 - **Entropy is now genuinely a non-issue rather than an unexamined one.** A collision is recovered
   in-process; the 1%-at-12,106 figure matters only for how often the `AccountNumberCollision`
   warning appears, not for whether anything breaks.
