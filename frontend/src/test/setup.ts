@@ -98,7 +98,7 @@ beforeEach(() => {
   It matters because this hook THROWS, and a throwing hook skips the ones still to run. Registered
   the wrong way round, a test that failed this check would skip the whole teardown below — MSW
   handlers, mock state, the module-level session and step-up mirrors, the viewport — and hand all of
-  it to the next test. `console-error-gate.test.tsx` pins the ordering against exactly that.
+  it to the next test. `hook-order.test.ts` pins the ordering against exactly that.
 
   Restores before it throws, so a failure here cannot leave the next test with a recording console.
 */
@@ -118,9 +118,11 @@ afterEach(() => {
 First message:
 ` +
       first +
-      (extra > 0 ? `
+      (extra > 0
+        ? `
 
-(+${extra} more)` : ''),
+(+${extra} more)`
+        : ''),
   );
 });
 
@@ -146,19 +148,13 @@ afterEach(() => {
   /*
     UNMOUNT FIRST — explicitly, rather than leaning on Testing Library's auto-cleanup.
 
-    Two things depend on the ordering, and both were wrong before.
-
     Auto-cleanup registers its own `afterEach` when a test file imports `@testing-library/react`,
-    which is AFTER this one, and vitest runs them in registration order. So every reset below used
-    to run against a still-mounted tree: `resetMediaEnvironment` notified live MediaQueryLists and
-    `useMediaQuery` re-rendered components outside `act(...)`. Seven warnings came from exactly that.
-
-    Worse, the console.error check below THROWS, and a throwing hook skips the hooks after it — so
-    auto-cleanup never ran for a failing test and its DOM leaked into the next one. Measured: the
-    step-up file went from 2 failures to 4, the new ones reporting "Found multiple elements with
-    the role button and name Send" — two harnesses in one document. One genuine failure was
-    manufacturing fake ones after it. Unmounting here makes the check safe to throw from, and the
-    later auto-cleanup a no-op.
+    which is after this file. Under `stack` that makes it run BEFORE this hook, which is the order
+    we want — but it is a property of a default nothing here controls, and every reset below depends
+    on nothing being mounted: `resetMediaEnvironment` notifies live MediaQueryLists, `useMediaQuery`
+    subscribes through `useSyncExternalStore`, and a re-render from here lands outside `act(...)`.
+    Unmounting explicitly makes that independent of the setting. `cleanup()` is idempotent, so the
+    later auto-cleanup becomes a no-op either way.
   */
   cleanup();
   server.resetHandlers();
@@ -171,10 +167,8 @@ afterEach(() => {
   // animations back on must not hand it the flake the stub exists to prevent.
   //
   // No `act()` around it, and that is a consequence of the `cleanup()` above rather than an
-  // oversight: this NOTIFIES — it fires `change` at every live MediaQueryList and `useMediaQuery`
-  // subscribes through `useSyncExternalStore` — so it needs an act scope whenever anything is
-  // mounted, exactly as `viewport.ts` says at its own call site. Nothing is mounted here any more.
-  // That is what removed the seven act(...) warnings this hook used to produce.
+  // oversight: this NOTIFIES, so it would need an act scope if anything were still mounted —
+  // exactly as `viewport.ts` says at its own call site. Nothing is, by the time this runs.
   resetMediaEnvironment();
 });
 afterAll(() => server.close());

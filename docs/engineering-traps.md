@@ -138,11 +138,12 @@ Two ordering rules make that gate safe, and both were learned by getting them wr
   step-up mirrors, the viewport — and hand all of it to the next test.
   `src/test/hook-order.test.ts` pins the ordering so setting `sequence.hooks: 'list'` cannot flip
   it silently.
-- **Unmount explicitly, first.** Testing Library's auto-cleanup registers its own `afterEach` when a
-  test file imports `@testing-library/react`, which is _after_ `setup.ts` — so every reset in
-  `setup.ts` ran against a still-mounted tree. `resetMediaEnvironment()` notifies live
-  `MediaQueryList`s, `useMediaQuery` subscribes through `useSyncExternalStore`, and the re-render
-  landed outside `act(...)`. Seven warnings came from the teardown itself.
+- **Unmount explicitly, first.** Every reset in `setup.ts` depends on nothing being mounted:
+  `resetMediaEnvironment()` notifies live `MediaQueryList`s, `useMediaQuery` subscribes through
+  `useSyncExternalStore`, and a re-render from teardown lands outside `act(...)`. Testing Library's
+  auto-cleanup happens to run first under `stack`, but that is a property of a default the file does
+  not control, so `setup.ts` calls `cleanup()` itself. It is idempotent; the later auto-cleanup
+  becomes a no-op.
 
 **`vi.advanceTimersByTimeAsync` is not act-aware.** A component ticking on `setInterval` gets one
 un-acted `setState` per tick advanced — a 61-second advance against a 1-second tick is 61 of them,
