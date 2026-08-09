@@ -20,7 +20,7 @@ bare `Add` followed by `SaveChangesAsync`.
 A collision was injected on the registration path with a `DbCommandInterceptor`, against real SQL
 Server. The result was not simply a 500:
 
-```text
+```
 first attempt   -> 500
 user committed? -> YES
 accounts owned  -> 0

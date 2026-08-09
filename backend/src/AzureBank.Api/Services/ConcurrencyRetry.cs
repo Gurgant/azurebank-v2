@@ -63,7 +63,7 @@ internal static class ConcurrencyRetry
     /// </para>
     /// </summary>
     public static bool IsTransactionNumberCollision(Exception ex, int attempt) =>
-        IsUniqueViolationOn(ex, TransactionNumberIndex, attempt);
+        attempt < MaxAttempts && IsUniqueViolationOn(ex, TransactionNumberIndex);
 
     /// <summary>The index the generated account number lands in.</summary>
     private const string AccountNumberIndex = "IX_Accounts_AccountNumber";
@@ -90,7 +90,40 @@ internal static class ConcurrencyRetry
     /// </para>
     /// </summary>
     public static bool IsAccountNumberCollision(Exception ex, int attempt) =>
-        IsUniqueViolationOn(ex, AccountNumberIndex, attempt);
+        attempt < MaxAttempts && IsUniqueViolationOn(ex, AccountNumberIndex);
+
+    /// <summary>The unique indexes a registration can legitimately lose at write time.</summary>
+    private const string AzureTagIndex = "IX_AspNetUsers_AzureTag";
+
+    /// <summary>Identity's own index name; made unique and NULL-filtered by AddUniqueEmailIndex.</summary>
+    private const string NormalizedEmailIndex = "EmailIndex";
+
+    /// <summary>
+    /// True when a registration INSERT lost the AzureTag or NormalizedEmail unique-index race — the
+    /// ONLY write failures that may become the enumeration-neutral 409 of ADR-0013.
+    ///
+    /// <para>
+    /// <b>Every other <c>DbUpdateException</c> must propagate</b>, and since ADR-0037 that stopped
+    /// being merely a labelling question. The catch it guards now sits INSIDE the execution-strategy
+    /// delegate, so the inner <c>SaveChanges</c> no longer runs its own retry loop and the outer
+    /// delegate is the only retry point left. The strategy decides by walking the exception's
+    /// <c>InnerException</c> chain, and <c>ConflictException</c> carries none — so an unnarrowed
+    /// catch does not just mislabel a deadlock (1205, transient in the shipped detector) as a
+    /// duplicate, it SUPPRESSES the retry the delegate was restructured to make safe.
+    /// </para>
+    /// <para>
+    /// <c>UserNameIndex</c> and <c>PK_AspNetUsers</c> are deliberately absent: UserName mirrors a
+    /// freshly minted UUIDv7, so a violation on either is a Guid collision — a defect that must
+    /// surface as a 500, not be reported to the caller as "these details are taken".
+    /// </para>
+    /// <para>
+    /// Both names are read from the migrations rather than guessed, and pinned by
+    /// <c>RegistrationDuplicateSqlServerTests</c> against real violations: a typo here would turn a
+    /// genuine race loser into a 500, and no other test would notice.
+    /// </para>
+    /// </summary>
+    public static bool IsRegistrationDuplicate(Exception ex) =>
+        IsUniqueViolationOn(ex, AzureTagIndex) || IsUniqueViolationOn(ex, NormalizedEmailIndex);
 
     /// <summary>
     /// Saves a newly-added <see cref="Account"/>, minting a fresh number and retrying if the
@@ -141,20 +174,17 @@ internal static class ConcurrencyRetry
     /// Walks the exception chain for a SQL Server unique violation raised by ONE named index.
     ///
     /// <para>
-    /// Shared by both predicates so the narrowing is written once. The index name is the whole
+    /// Shared by all three predicates so the narrowing is written once. The MaxAttempts cap lives in
+    /// the two RETRY predicates rather than here: a classifier answering "is this a duplicate?" must
+    /// not change its answer with an attempt counter. The index name is the whole
     /// point: 2601/2627 are raised by every unique index in the schema, including the idempotency
     /// claim (a distributed lock, where a retry double-executes) and the registration duplicates
     /// above. SQL Server puts the constraint name in the message, which the SQL-gated proofs assert,
     /// so a message-format change fails a test rather than silently widening this.
     /// </para>
     /// </summary>
-    private static bool IsUniqueViolationOn(Exception ex, string indexName, int attempt)
+    private static bool IsUniqueViolationOn(Exception ex, string indexName)
     {
-        if (attempt >= MaxAttempts)
-        {
-            return false;
-        }
-
         for (Exception? current = ex; current is not null; current = current.InnerException)
         {
             if (current is SqlException sql

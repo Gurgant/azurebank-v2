@@ -82,7 +82,7 @@ All thirty-seven are **Accepted and shipped** — nothing here is aspirational, 
 no Proposed tier. Where a later record changes an earlier one, the earlier keeps an inline
 supersession note at the affected clause rather than being rewritten: ADR-0019's Decision 6 points
 at ADR-0023, ADR-0009 points at ADR-0022 for its client half, and ADR-0021's amendment points at
-ADR-0034 for the residual it left open, and ADR-0036 points at ADR-0037 for the one IT left
+ADR-0034 for the residual it left open, and ADR-0036 points at ADR-0037 for the one it left
 open. The next free number is **0038**.
 
 <details>

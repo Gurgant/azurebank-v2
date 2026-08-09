@@ -280,10 +280,9 @@ public class AuthService : IAuthService
         Account account = null!;
 
         var strategy = _context.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () =>
+        await strategy.ExecuteInTransactionAsync(async () =>
         {
             _context.ChangeTracker.Clear();
-            await using var registration = await _context.Database.BeginTransactionAsync();
 
             // Decouple the login identity from the public handle (ADR-0015): Identity's UserName
             // is the immutable user id (a UUIDv7 — time-sortable, index-friendly), never shown and
@@ -306,13 +305,25 @@ public class AuthService : IAuthService
             {
                 result = await _userManager.CreateAsync(user, request.Password);
             }
-            catch (DbUpdateException ex)
+            catch (DbUpdateException ex) when (ConcurrencyRetry.IsRegistrationDuplicate(ex))
             {
                 // The genuine TOCTOU race: a concurrent registration passed the advisory
                 // pre-checks and Identity's validators too, then a unique index (AzureTag, or now
                 // the NormalizedEmail unique index) rejected this one at write time. Neutralise it
                 // to the SAME response as a pre-check duplicate so the race can't be used to
                 // enumerate accounts (ADR-0013).
+                //
+                // NARROWED BY INDEX NAME, and load-bearing now that this catch sits inside the
+                // execution-strategy delegate. DbUpdateException is EF's generic wrapper for
+                // anything that fails in the update pipeline — deadlock 1205, lock timeout 1222,
+                // connectivity 10053/40613, command timeout -2, a truncation or FK defect. Every one
+                // of those used to be reported to the caller as "these details are taken", and since
+                // ADR-0037 it would ALSO rob the strategy of the retry it performs on a transient:
+                // it decides by walking the inner exception chain, and ConflictException has none.
+                //
+                // The same file already narrows the identical catch sixty lines below
+                // (IsAccountNumberCollision), so until now a deadlock on the ACCOUNT insert was
+                // retried while the very same deadlock on the USER insert became a 409.
                 _logger.LogWarning(ex,
                     "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
                     "DuplicateRegistration");
@@ -339,8 +350,39 @@ public class AuthService : IAuthService
                 throw new BusinessRuleException("Registration could not be completed.");
             }
 
-            // Assign default role
-            await _userManager.AddToRoleAsync(user, Roles.Default);
+            /*
+              The role result is CHECKED, not discarded. This transaction's whole claim is that the
+              user, the role and the account commit together (ADR-0037), and a dropped role is the
+              one partial commit that could still return 201.
+
+              NOT a BusinessRuleException: that maps to 422, which would report an operator/seeding
+              fault as a defect in the caller's payload. A rollback to 500 matches what the
+              missing-role case already does — UserStore throws InvalidOperationException
+              "Role USER does not exist." — which is why RoleSeeder must run before the first
+              registration.
+
+              Duplicate* routes to the neutral 409 for the same reason as the CreateAsync branch
+              above: AddToRoleAsync re-runs the user validators, and a duplicate surfacing here must
+              not become a status that only ever appears when the email exists (ADR-0013).
+            */
+            var roleResult = await _userManager.AddToRoleAsync(user, Roles.Default);
+            if (!roleResult.Succeeded)
+            {
+                var roleCodes = string.Join(",", roleResult.Errors.Select(e => e.Code));
+                if (roleResult.Errors.Any(e => e.Code is "DuplicateUserName" or "DuplicateEmail"))
+                {
+                    _logger.LogWarning(
+                        "SecurityEvent {SecurityEvent}: registration lost the race during role assignment",
+                        "DuplicateRegistration");
+                    throw new ConflictException(
+                        "Registration could not be completed.", ErrorCodes.RegistrationFailed);
+                }
+
+                _logger.LogError(
+                    "Default role assignment failed for user {UserId} ({Codes}); rolling registration back",
+                    user.Id, roleCodes);
+                throw new InvalidOperationException($"Failed to assign default role ({roleCodes}).");
+            }
 
             // Create default primary account
             account = new Account
@@ -370,9 +412,30 @@ public class AuthService : IAuthService
               enumeration-neutral 409 (ADR-0013) rather than become a retry loop.
             */
             await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, user.Id);
+        },
+        /*
+          THE AMBIGUOUS COMMIT. EF owns the transaction now, and this asks whether it landed rather
+          than assuming it did not.
 
-            await registration.CommitAsync();
-        });
+          Without it, a transient raised BY the commit — a dropped connection, a failover, a bare
+          TimeoutException, all of which EnableRetryOnFailure retries — re-runs the delegate against
+          a database that ALREADY holds this registration. The pre-checks live outside the delegate
+          so they do not re-run; Identity finds the committed row, answers DuplicateEmail, and a
+          caller whose registration SUCCEEDED gets the neutral 409 with no token and no account.
+          The same shape PR #93 fixed in the seeder.
+
+          Invoked ONLY for a commit-phase exception: EF sets its CommitFailed flag in the statement
+          immediately before CommitAsync and short-circuits on it, so anything thrown from inside
+          the delegate — including every non-duplicate DbUpdateException that now propagates past the
+          narrowed catch above — skips this and goes straight to the retry decision. By the time it
+          runs, `user` is always assigned.
+
+          KEYED ON THE UUIDv7 MINTED FOR THIS ATTEMPT, never on the email or the AzureTag. Either of
+          those could be satisfied by a row a CONCURRENT registration won, which would hand this
+          caller a 201 and a JWT for somebody else's user. The user row alone suffices because the
+          entire point of the transaction is that the account cannot exist without it.
+        */
+        async () => user is not null && await _context.Users.AnyAsync(u => u.Id == user.Id));
 
 
         var tokenResult = _jwtService.GenerateToken(user);

@@ -9,7 +9,7 @@ Registration writes three things: the Identity user, its default role, and the s
 `UserManager.CreateAsync` commits the user in **its own unit of work**, so by the time the account
 INSERT ran, the user was already durable. ADR-0036 measured what that cost when the INSERT failed:
 
-```text
+```
 first attempt   -> 500
 user committed? -> YES
 accounts owned  -> 0
@@ -53,6 +53,29 @@ PR #93 hit in the seeder.
 Exceptions are allowed to escape the delegate. `ConflictException` from the duplicate paths is not
 transient, so the strategy does not retry it; the transaction disposes uncommitted and the caller
 still gets the neutral 409.
+
+**Only a confirmed duplicate becomes that 409.** `DbUpdateException` is EF's generic wrapper for
+anything failing in the update pipeline, so an unnarrowed catch reported deadlocks, lock and command
+timeouts, dropped connections and unrelated constraint failures to the caller as "these details are
+taken". Wrapping the writes made that worse rather than better: `CreateAsync`'s `SaveChanges` is no
+longer the outermost strategy execution and so no longer retries internally, leaving the delegate as
+the only retry point — and the strategy decides by walking the inner exception chain, which
+`ConflictException` does not have. So swallowing a transient there did not merely mislabel it, it
+suppressed the retry. `ConcurrencyRetry.IsRegistrationDuplicate` narrows to
+`IX_AspNetUsers_AzureTag` and `EmailIndex`; both names are pinned against real SQL Server violations
+by `RegistrationDuplicateSqlServerTests`, because a typo would silently turn a race loser into a 500
+and nothing else would notice.
+
+**The commit is verified rather than assumed.** `ExecuteInTransactionAsync` carries a
+`verifySucceeded` keyed on the UUIDv7 minted for that attempt — never on the email or the AzureTag,
+either of which a *concurrent* registration could satisfy, which would hand this caller a 201 and a
+JWT for somebody else's user. Without it, a transient raised by the commit itself re-runs the
+delegate against a database that already holds the registration, and a caller who succeeded gets the
+neutral 409 with no token and no account.
+
+**The role result is checked.** A discarded `IdentityResult` from `AddToRoleAsync` was the one
+remaining way to commit two of the three writes and still answer 201, which would have made this
+record's central claim false.
 
 **The account-number retry from ADR-0036 is kept.** Atomicity alone would turn a recoverable clash
 into a rollback the caller has to redo; the retry turns it into a success. They compose: the retry

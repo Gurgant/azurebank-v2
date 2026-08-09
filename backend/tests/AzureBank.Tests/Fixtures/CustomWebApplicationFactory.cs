@@ -77,8 +77,20 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>
-    /// Registers an EF interceptor on the test DbContext (e.g. to inject a
-    /// one-shot transient fault). Must be called before CreateClient().
+    /// Registers an EF interceptor on the test DbContext (e.g. to inject a one-shot fault).
+    ///
+    /// <para>
+    /// Order does NOT matter relative to <c>CreateClient()</c>, and this comment used to claim it
+    /// did. The list is read inside the options callback below, which EF runs each time it builds a
+    /// scoped <c>AzureBankDbContext</c> — i.e. per request — so an interceptor added after the host
+    /// is up still applies to every subsequent request.
+    /// <c>AccountNumberCollisionSqlServerTests</c> relies on exactly that: it registers its
+    /// interceptor AFTER driving a full registration through the client, and the fault still fires.
+    /// </para>
+    /// <para>
+    /// The stale wording is worth correcting rather than deleting, because it read as a constraint
+    /// and a reviewer acted on it — reporting that a passing test could not have fired.
+    /// </para>
     /// </summary>
     public void AddInterceptor(IInterceptor interceptor)
     {
