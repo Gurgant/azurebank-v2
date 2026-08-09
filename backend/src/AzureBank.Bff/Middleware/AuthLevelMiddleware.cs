@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.Utilities;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Bff.Middleware;
@@ -75,37 +77,90 @@ public class AuthLevelMiddleware
         {
             var cookieName = sessionOptions.Value.CookieName;
 
-            if (context.Request.Cookies.TryGetValue(cookieName, out var sessionId))
-            {
-                var authLevel = sessionService.GetAuthLevel(sessionId);
+            /*
+              NO SESSION IS A REFUSAL, not a hand-off.
 
-                if (authLevel < 2)
+              This branch used to fall through with "No session cookie - let the API handle 401",
+              and that delegation was the bypass: it is only true while the API cannot authenticate
+              the caller, and a caller carrying their own `Authorization` header authenticates fine.
+              Measured before the fix — GET /api/accounts/{id}/full-number with a bearer and no
+              cookie returned 200 and the unmasked number, and POST /api/transfers reached the
+              endpoint, with no PIN in either case.
+
+              The header is stripped in BearerTokenTransformProvider now, so the 401 this once hoped
+              for would in fact arrive. Refusing here anyway is the point: this gate is the only PIN
+              check in the system, and a gate whose correctness depends on a different file getting
+              something right is not a gate. Deciding it locally also means the request never leaves
+              the BFF.
+
+              401 rather than the 403 below, because these two states are not the same thing and the
+              SPA treats them differently: level 1 means "you are signed in, prove it is you", which
+              opens the PIN modal; no session means "you are not signed in", which must route to
+              login. Answering 403 here would show a PIN prompt to someone with no session at all.
+            */
+            context.Request.Cookies.TryGetValue(cookieName, out var sessionId);
+
+            // GetAuthLevel returns 0 for a missing, unknown or expired session, so one call
+            // separates all three of the states below without asking the store twice.
+            var authLevel = string.IsNullOrEmpty(sessionId) ? 0 : sessionService.GetAuthLevel(sessionId);
+
+            if (authLevel == 0)
+            {
+                _logger.LogWarning(
+                    "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {Path}",
+                    "StepUpWithoutSession", safeMethod, safePath);
+
+                /*
+                  Byte-for-byte the 401 the API emits for a missing token — measured against the
+                  running stack rather than copied from a doc:
+
+                    {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+                     "detail":"Authentication is required to access this resource.",
+                     "instance":"/api/accounts","errorCode":"AUTH_TOKEN_MISSING","traceId":"…"}
+
+                  Identical on purpose, twice over. The SPA already knows this shape, so nothing
+                  downstream needs to learn a new one. And an attacker cannot tell whether the BFF
+                  short-circuited or the API answered — so probing does not reveal which paths carry
+                  the step-up gate. The same reasoning as the 404 on a raw proxied refresh above:
+                  refuse without explaining what you are.
+                */
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                var unauthorized = new ProblemDetails
                 {
-                    _logger.LogWarning(
-                        "Access denied: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
-                        authLevel, safeMethod, safePath);
-
-                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    context.Response.Headers.Append("X-Auth-Level-Required", "2");
-                    context.Response.Headers.Append("X-Auth-Level-Current", authLevel.ToString());
-
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        type = "STEP_UP_REQUIRED",
-                        title = "PIN Verification Required",
-                        detail = "This operation requires PIN verification",
-                        requiredLevel = 2,
-                        currentLevel = authLevel,
-                        status = 403
-                    });
-
-                    return;
-                }
+                    Status = StatusCodes.Status401Unauthorized,
+                    Title = "Unauthorized",
+                    Detail = "Authentication is required to access this resource.",
+                    Type = "https://httpstatuses.com/401",
+                    Instance = context.Request.Path,
+                };
+                unauthorized.Extensions["errorCode"] = "AUTH_TOKEN_MISSING";
+                unauthorized.Extensions["traceId"] =
+                    Activity.Current?.TraceId.ToString() ?? context.TraceIdentifier;
+                await context.Response.WriteAsJsonAsync(unauthorized);
+                return;
             }
-            else
+
+            if (authLevel < 2)
             {
-                // No session cookie - let the API handle 401
-                _logger.LogDebug("No session cookie found for PIN-protected route {Path}", safePath);
+                _logger.LogWarning(
+                    "SecurityEvent {SecurityEvent}: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
+                    "StepUpRequired", authLevel, safeMethod, safePath);
+
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.Headers.Append("X-Auth-Level-Required", "2");
+                context.Response.Headers.Append("X-Auth-Level-Current", authLevel.ToString());
+
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    type = "STEP_UP_REQUIRED",
+                    title = "PIN Verification Required",
+                    detail = "This operation requires PIN verification",
+                    requiredLevel = 2,
+                    currentLevel = authLevel,
+                    status = 403
+                });
+
+                return;
             }
         }
 

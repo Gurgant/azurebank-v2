@@ -45,6 +45,14 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
     {
         public List<string> ForwardedPaths { get; } = [];
 
+        /// <summary>
+        /// The Authorization header AS THE BACKEND WOULD SEE IT, per forwarded request (null when
+        /// none was sent). Recording the path alone cannot express the invariant that matters most
+        /// here — that a token the CLIENT supplied never reaches the API — because the request is
+        /// forwarded either way and only the header distinguishes the two cases.
+        /// </summary>
+        public List<string?> ForwardedAuthorization { get; } = [];
+
         public HttpMessageInvoker CreateClient(ForwarderHttpClientContext context) =>
             new(new Handler(this));
 
@@ -54,6 +62,7 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
                 HttpRequestMessage request, CancellationToken cancellationToken)
             {
                 owner.ForwardedPaths.Add(request.RequestUri!.AbsolutePath);
+                owner.ForwardedAuthorization.Add(request.Headers.Authorization?.ToString());
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
@@ -62,6 +71,21 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
             }
         }
     }
+
+    /// <summary>A request carrying a client-supplied bearer and NO session cookie.</summary>
+    private static HttpRequestMessage BearerOnly(HttpMethod method, string path)
+    {
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("Authorization", $"Bearer {StolenToken}");
+        return request;
+    }
+
+    /// <summary>
+    /// Stands in for a JWT the caller obtained for themselves. It does not need to be a valid
+    /// token: the point is that the BFF must not hand it to the backend, which is decided before
+    /// anything validates it.
+    /// </summary>
+    private const string StolenToken = "client-supplied.jwt.value";
 
     private (WebApplicationFactory<Program> Factory, RecordingForwarder Backend) WithRecorder(
         Action<IWebHostBuilder>? configure = null)
@@ -105,6 +129,34 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
         var request = new HttpRequestMessage(method, path);
         request.Headers.Add("Cookie", $"{cookieName}={sessionId}");
         return request;
+    }
+
+    /// <summary>
+    /// The BFF's refusal must be INDISTINGUISHABLE from the API's own missing-token 401.
+    ///
+    /// <para>
+    /// Two reasons, and the second is why it is asserted rather than left to taste. The SPA already
+    /// understands this envelope, so nothing downstream learns a new shape. And a caller probing for
+    /// which paths carry the step-up gate learns nothing from the response: a gated path with no
+    /// session and an ungated one with no session answer identically.
+    /// </para>
+    /// <para>
+    /// The literals come from the running API, observed on /api/accounts with no Authorization
+    /// header, not from a doc:
+    /// <c>{"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+    /// "detail":"Authentication is required to access this resource.","instance":"/api/accounts",
+    /// "errorCode":"AUTH_TOKEN_MISSING","traceId":"…"}</c>
+    /// </para>
+    /// </summary>
+    private static async Task AssertLooksLikeTheApisOwn401(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("status").GetInt32().Should().Be(401);
+        body.GetProperty("title").GetString().Should().Be("Unauthorized");
+        body.GetProperty("detail").GetString()
+            .Should().Be("Authentication is required to access this resource.");
+        body.GetProperty("errorCode").GetString().Should().Be("AUTH_TOKEN_MISSING");
+        body.TryGetProperty("traceId", out _).Should().BeTrue();
     }
 
     private static async Task AssertStepUp403(HttpResponseMessage response)
@@ -197,5 +249,102 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
 
         await AssertStepUp403(response);
         backend.ForwardedPaths.Should().BeEmpty();
+    }
+
+    /*
+      THE BYPASS, and why these four exist.
+
+      Measured on the running stack (API :7215, BFF :5000, seeded dev database) before any of this
+      was written — not reasoned about:
+
+        POST /api/auth/login  (a PROXIED route)                      -> 200, raw JWT in the body
+        GET  /api/accounts/{id}/full-number + Bearer, NO cookie      -> 200 "AB-0000-0000-01"
+        GET  same with NO Authorization header                       -> 401   (the header IS honoured)
+        POST /api/transfers + Bearer, NO cookie, bogus recipient     -> 404 from /api/transfers,
+                                                                        i.e. the gate was passed
+
+      Two defects compounded. The gate only ran INSIDE `if (Cookies.TryGetValue(...))`, and its else
+      branch fell through on the belief that the API would answer 401 — which is false the moment the
+      caller brings their own token. And the transform only ever SET the Authorization header inside
+      that same cookie branch, never clearing an inbound one, while YARP's default header copy had
+      already placed the client's on the outbound request.
+
+      The class docstring above is the reason this is severe rather than untidy: this middleware is
+      the only PIN gate in the system, so bypassing it leaves NO second factor on a transfer or a
+      reveal for anyone holding the password.
+    */
+
+    [Fact]
+    public async Task FullNumber_WithAClientBearerAndNoSession_IsNotProxied()
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var response = await client.SendAsync(
+            BearerOnly(HttpMethod.Get, $"/api/accounts/{Guid.NewGuid()}/full-number"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "no session means no caller — and the BFF must decide that itself rather than delegate "
+            + "it to an API that would happily authenticate the token the client brought");
+        backend.ForwardedPaths.Should().BeEmpty(
+            "this is the request that returned the unmasked account number on the live stack");
+        await AssertLooksLikeTheApisOwn401(response);
+    }
+
+    [Fact]
+    public async Task TransfersPost_WithAClientBearerAndNoSession_IsNotProxied()
+    {
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = BearerOnly(HttpMethod.Post, "/api/transfers");
+        request.Content = JsonContent.Create(new { });
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        backend.ForwardedPaths.Should().BeEmpty(
+            "on the live stack this reached the endpoint — a real recipient would have been paid "
+            + "with no PIN ever entered");
+        await AssertLooksLikeTheApisOwn401(response);
+    }
+
+    [Fact]
+    public async Task AClientSuppliedAuthorizationHeaderIsReplacedByTheSessionsToken()
+    {
+        // The gate is satisfied honestly here, so nothing short-circuits and the request really is
+        // forwarded. What must not survive the hop is the CLIENT's token: the BFF injects the one it
+        // holds server-side, and an inbound header must never win or linger.
+        var (factory, backend) = WithRecorder();
+        var (sessionId, cookieName, sessions) = CreateSession(factory);
+        sessions.SetPinVerified(sessionId);
+        var client = factory.CreateClient();
+
+        var path = $"/api/accounts/{Guid.NewGuid()}/full-number";
+        var request = Request(HttpMethod.Get, path, cookieName, sessionId);
+        request.Headers.Add("Authorization", $"Bearer {StolenToken}");
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        backend.ForwardedPaths.Should().ContainSingle(p => p == path);
+        backend.ForwardedAuthorization.Should().ContainSingle()
+            .Which.Should().Be("Bearer fake-jwt",
+                "the session's stored token, never the one the caller sent");
+    }
+
+    [Fact]
+    public async Task AClientBearerIsStrippedOnUngatedRoutesToo()
+    {
+        // /api/accounts is not PIN-gated, so the middleware never looks at it — which is exactly why
+        // the transform has to be the one that strips. Without this, every un-gated endpoint stays
+        // reachable with a self-obtained token and the server-side session model is decorative.
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        await client.SendAsync(BearerOnly(HttpMethod.Get, "/api/accounts"));
+
+        backend.ForwardedPaths.Should().ContainSingle(p => p == "/api/accounts");
+        backend.ForwardedAuthorization.Should().ContainSingle()
+            .Which.Should().BeNull("with no session there is no token to inject, and the client's "
+                + "must not stand in for one — the API then answers 401 for real");
     }
 }

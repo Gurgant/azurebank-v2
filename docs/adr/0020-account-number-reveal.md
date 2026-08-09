@@ -81,7 +81,12 @@ a portfolio demonstration of the mechanism):
   dev mode), the endpoint is protected by JWT + ownership only — the auth level lives in
   the BFF session and the JWT carries no level claim. This matches the existing posture
   for transfers (ADR-0018/0019); closing it would require a level claim in the token and
-  is deliberately out of scope.
+  is deliberately out of scope. **That remains accepted, and is now the whole of it.**
+  What this caveat did NOT cover — and what the sentence above it assumed was already
+  true — is the same bypass reached THROUGH the BFF: a caller could present a
+  self-obtained token as `Authorization: Bearer …` on the proxied path with no session
+  cookie, and the step-up gate fell through rather than refusing. Measured, then closed
+  by [ADR-0038](0038-bff-session-is-the-only-credential.md).
 - The reveal is rate-limited only by the BFF global limiter (300/min/IP) — acceptable for
   an owner-only, non-enumerable resource (Guid ids, ownership-checked).
 - The OpenAPI spec grows to 19 paths; `schema.d.ts` regenerated. The FE gained
