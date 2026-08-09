@@ -53,11 +53,29 @@ public class IdGeneratorTests
             .ToHashSet();
 
         /*
-          AccountNumber has 9000 × 9000 × 90 = 7.29e9 values and, unlike the transaction number, no
-          date prefix — so the space is shared by every account ever opened rather than reset daily.
-          Even odds of a collision arrive around 100,000 accounts, which is far away but NOT
-          unreachable, and the column is exactly full at 15 characters so widening it would need a
-          migration. Recorded rather than fixed here.
+          AccountNumber has 9000 × 9000 × 90 = 7.29e9 values — confirmed empirically, not read off
+          the bounds: 400,000 draws of GetInt32(1000, 10000) produced exactly 9000 distinct values
+          spanning 1000..9999, so the upper bound really is exclusive.
+
+          TWO corrections to how this used to be described, both of which cut against the old note.
+          (1) The population is NOT "every account ever opened": deletion is soft and
+          IX_Accounts_AccountNumber is FILTERED on [IsDeleted] = 0, so a closed account's number
+          leaves the index and can be re-issued. (2) But a plain birthday bound over the live count
+          understates it, because that recycling means numbers are drawn repeatedly against a
+          steady-state population: expected collisions ≈ inserts × live / N, not live² / 2N. At a
+          million inserts against a steady ten thousand live accounts that is 1.37 expected
+          collisions, roughly 200× the birthday figure — a long-lived system can accumulate
+          collisions without its live count ever approaching 100,000.
+
+          Under monotonic growth P(collision) passes 1% at 12,106 accounts and 50% at 100,530, so
+          the old "even odds around 100,000" was right; the 1% point is the more useful number and
+          was written down nowhere. Per INSERT — the figure that governs any single registration —
+          it is live/N: 1.37e-7 at a thousand accounts, 1.37e-5 at a hundred thousand.
+
+          NO LONGER just recorded: ADR-0036. The column is still exactly full at 15 characters, so
+          widening remains a migration and was NOT done. Instead both creation paths retry with a
+          fresh number, because the failure a collision caused was out of all proportion to its
+          probability — see AccountNumberCollisionSqlServerTests.
 
           The tolerance drops from ten duplicates to one. Not to zero: 1,000 draws from 7.29e9
           expect 6.9e-5 duplicates, so a zero-duplicate assertion would fail against a CORRECT
