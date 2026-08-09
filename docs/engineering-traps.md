@@ -129,10 +129,15 @@ is what `AppErrorBoundary.test.tsx` and `RouteError.test.tsx` already did.
 
 Two ordering rules make that gate safe, and both were learned by getting them wrong:
 
-- **The assertion hook must be registered LAST.** Vitest runs `afterEach` in registration order and
-  a throwing hook skips the ones after it. Registered early, it skipped teardown — so a single
-  genuine failure left its DOM mounted and the next test failed with "Found multiple elements with
-  the role button and name Send". One real failure manufactured four fake ones.
+- **A throwing `afterEach` must be registered FIRST, because vitest's default `sequence.hooks` is
+  `stack` — `afterEach` runs in REVERSE registration order.** Registering last runs it _first_,
+  which is the opposite of how it reads. Measured, after getting it backwards: instrumenting both
+  of `setup.ts`'s hooks printed `file-hook → setup:assertion → setup:teardown` while the assertion
+  was registered last. It matters because a throwing hook skips the ones still to run, so the wrong
+  order lets a failing test skip the whole teardown — MSW handlers, mock state, the session and
+  step-up mirrors, the viewport — and hand all of it to the next test.
+  `src/test/hook-order.test.ts` pins the ordering so setting `sequence.hooks: 'list'` cannot flip
+  it silently.
 - **Unmount explicitly, first.** Testing Library's auto-cleanup registers its own `afterEach` when a
   test file imports `@testing-library/react`, which is _after_ `setup.ts` — so every reset in
   `setup.ts` ran against a still-mounted tree. `resetMediaEnvironment()` notifies live

@@ -68,9 +68,12 @@ configure({ asyncUtilTimeout: 5_000 });
   `RouteError.test.tsx` already do exactly that, and already explain why. No test file changes to
   keep them passing; the escape hatch is the one they were using anyway.
 
-  Scope is console.error alone, deliberately. `console.warn` carries third-party deprecation notices
-  this repo does not control, so failing on it would buy noise instead of signal. Measured on the
-  same run: zero console.warn output today, so the narrower gate loses nothing that exists.
+  Scope is console.error alone, and the reason is sharper than "warn is noisier". Redux Toolkit's
+  `ImmutableStateInvariantMiddleware` warns when a state check exceeds 32ms — a threshold on WALL
+  CLOCK, so it fires or does not depending on how loaded the machine is. It was absent from four
+  consecutive runs here and present on a fifth taken under contention. Gating `console.warn` would
+  therefore have bought a flaky suite, which is the one thing worse than a quiet one. React reports
+  correctness problems on `error`, and `error` is deterministic.
 */
 const consoleErrors: string[] = [];
 const forwardConsoleError = console.error.bind(console);
@@ -83,10 +86,43 @@ beforeEach(() => {
   };
 });
 
-// The assertion half is registered at the very BOTTOM of this file, deliberately: vitest runs
-// `afterEach` hooks in registration order, it throws, and a throwing hook skips the ones after it.
-// Registered here it would skip the teardown below — unmount, MSW reset, module-level resets — and
-// one failing test would corrupt every test after it.
+/*
+  The assertion half, and its placement is load-bearing in the opposite direction to the obvious one.
+
+  Vitest's default is `sequence.hooks: 'stack'` — `afterEach` hooks run in REVERSE registration
+  order. So this must be registered FIRST to run LAST. Measured, because the intuition is backwards
+  and a comment asserting the wrong one is worse than none: instrumenting both hooks and printing
+  the order gives `file-hook -> setup:assertion -> setup:teardown`, i.e. registering the assertion
+  after the teardown ran it BEFORE the teardown.
+
+  It matters because this hook THROWS, and a throwing hook skips the ones still to run. Registered
+  the wrong way round, a test that failed this check would skip the whole teardown below — MSW
+  handlers, mock state, the module-level session and step-up mirrors, the viewport — and hand all of
+  it to the next test. `console-error-gate.test.tsx` pins the ordering against exactly that.
+
+  Restores before it throws, so a failure here cannot leave the next test with a recording console.
+*/
+afterEach(() => {
+  console.error = forwardConsoleError;
+  if (consoleErrors.length === 0) return;
+
+  const [first] = consoleErrors;
+  const extra = consoleErrors.length - 1;
+  throw new Error(
+    `This test wrote ${consoleErrors.length} console.error message(s). ` +
+      `React reports act(...) violations, invalid props and boundary-caught errors on this channel, ` +
+      `so a passing test that writes to it is passing for a reason it has not stated. ` +
+      `Fix the cause, or — if the error is the point — stub it with ` +
+      `vi.spyOn(console, 'error').mockImplementation(() => {}) and say why.
+
+First message:
+` +
+      first +
+      (extra > 0 ? `
+
+(+${extra} more)` : ''),
+  );
+});
 
 // MSW lifecycle: every unhandled request is an ERROR — tests must declare the traffic they
 // cause, so a missing handler is a broken contract, never a silent pass.
@@ -142,25 +178,3 @@ afterEach(() => {
   resetMediaEnvironment();
 });
 afterAll(() => server.close());
-
-/*
-  The console.error assertion, registered LAST so every teardown above has already run (see the note
-  beside the recorder). Restores before it throws, so a failure here cannot leave the next test with
-  a recording console.
-*/
-afterEach(() => {
-  console.error = forwardConsoleError;
-  if (consoleErrors.length === 0) return;
-
-  const [first] = consoleErrors;
-  const extra = consoleErrors.length - 1;
-  throw new Error(
-    `This test wrote ${consoleErrors.length} console.error message(s). ` +
-      `React reports act(...) violations, invalid props and boundary-caught errors on this channel, ` +
-      `so a passing test that writes to it is passing for a reason it has not stated. ` +
-      `Fix the cause, or — if the error is the point — stub it with ` +
-      `vi.spyOn(console, 'error').mockImplementation(() => {}) and say why.\n\nFirst message:\n` +
-      first +
-      (extra > 0 ? `\n\n(+${extra} more)` : ''),
-  );
-});
