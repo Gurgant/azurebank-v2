@@ -120,10 +120,26 @@ public class IdGeneratorTests
         // Act
         var txnNumber = IdGenerator.GenerateTransactionNumber();
 
-        // Assert - Format: TXN-YYYYMMDD-NNNNNN
-        // Crockford base32: digits and letters, with I, L, O and U excluded so nothing in a
-        // number a human retypes can be confused with 1 or 0.
-        txnNumber.Should().MatchRegex(@"^TXN-\d{8}-[0-9A-HJKMNP-TV-Z]{7}$");
+        /*
+          Format: TXN-YYYYMMDD-{10 Crockford base32}{check symbol}.
+
+          Crockford base32 excludes I, L, O and U, so nothing in a number a human retypes can be
+          confused with 1 or 0. The final character comes from the CHECK alphabet, which is those 32
+          symbols plus `*~$=U`.
+
+          Those five extras exist to reach a prime modulus of 37, NOT to make the symbol
+          recognisable — a distinction this file used to get wrong. Only residues 32..36 land on
+          one of them; the other 32 return an ordinary encoding character. Measured over 20,000
+          numbers: 17,247 (86.2%) ended in an encoding symbol, against the predicted 32/37 = 86.5%.
+          Which is why the regex admits both classes in the final position, and why
+          EveryAdjacentTranspositionIsRejected below has to branch on `Base32.Contains(number[^1])`.
+          What separates the symbol from the payload is its POSITION, always the 24th character.
+
+          This assertion, not the sampling one below, is what pins the entropy: 32^10 is a property
+          of the SUFFIX LENGTH, and a character count can be verified exactly where a collision
+          count can only be estimated.
+        */
+        txnNumber.Should().MatchRegex(@"^TXN-[0-9]{8}-[0-9A-HJKMNP-TV-Z]{10}[0-9A-HJKMNP-TV-Z*~$=U]$");
     }
 
     [Fact]
@@ -132,25 +148,34 @@ public class IdGeneratorTests
         // Act
         var txnNumber = IdGenerator.GenerateTransactionNumber();
 
-        // Assert - "TXN-20260114-123456" = 19 characters
-        // 20 = ValidationRules.TransactionNumberLength, exactly filling the existing column: the
-        // widening from 6 to 7 suffix characters needed no migration.
-        txnNumber.Should().HaveLength(20);
+        /*
+          "TXN-" + 8 date digits + "-" + 10 suffix + 1 check symbol = 24, which is
+          ValidationRules.TransactionNumberLength and the width of the column after
+          WidenTransactionNumberForCheckSymbol. The previous format filled the old 20-character
+          column exactly, so the check symbol had nowhere to go without the migration — this is the
+          arithmetic that made it unavoidable, asserted rather than left in a comment.
+        */
+        txnNumber.Should().HaveLength(24);
     }
 
     [Fact]
     public void GenerateTransactionNumber_GeneratesUniqueNumbers()
     {
         /*
-          20,000 and not 100, because the sample size is what decides whether this test can SEE the
-          entropy at all. At the old six digits (900,000/day) a hundred draws collide only ~0.55% of
-          the time, so even a zero-tolerance assertion would have passed on the broken generator
-          more than 99 times out of 100 — tightening the tolerance alone fixes nothing.
+          READ WHAT THIS TEST CAN AND CANNOT SEE, because the answer changed with the suffix and
+          leaving the old claim in place would be the more comfortable lie.
 
-          At 20,000 draws the old generator is expected to produce ~222 duplicates and effectively
-          never comes back clean, while the widened one (32^7 per day) expects 0.0058 — so this
-          number is the smallest that makes the test a real detector rather than a formality.
-          Verified by reverting the generator: this test goes red.
+          At 32^10 per UTC day, 20,000 draws expect 1.8e-7 duplicates. So this assertion no longer
+          detects a shortened suffix at all: reverting to 7 characters expects 0.0058 duplicates and
+          would sail through, and even 6 characters (0.19 expected duplicates) comes back clean in
+          ~83% of runs. Sampling stopped being a usable oracle the moment the space got this large —
+          no sample size that runs in a unit test can distinguish 32^7 from 32^10.
+
+          The ENTROPY is therefore pinned by the format assertion above, which counts suffix
+          characters exactly. What survives here is a different and still-worth-having property: that
+          the generator actually draws randomly. A constant return, a seed shared across calls, a
+          non-thread-safe accumulator — all of those collapse the output and this catches them
+          immediately. Kept as an RNG smoke test, described as one.
         */
         const int count = 20_000;
 
@@ -160,35 +185,20 @@ public class IdGeneratorTests
             .ToHashSet();
 
         /*
-          INTOLERANT on purpose. This assertion used to read
-          `HaveCountGreaterThan((int)(count * 0.95))` — "allowing small collision chance", per its
-          own comment — which made it structurally incapable of reporting the bug it was named for.
-          TransactionNumber carries a UNIQUE index, so a collision is not a small chance, it is a
-          failed INSERT and a 500 on a money endpoint.
+          ZERO duplicates now, where the previous suffix needed a tolerance of one.
 
-          At the old six digits (900,000 values per UTC day) a duplicate inside 100 draws had a
-          probability near 0.55%, so a test tolerating five was passing on a generator that reaches
-          even odds of collision at ~1,117 transactions per day. With the widened suffix the
-          expected number of duplicates in 100 draws is about 1.4e-7; a single one here is a real
-          regression, not noise.
+          That tolerance was not a style choice: at 32^7 a zero-duplicate assertion was FLAKY
+          AGAINST A CORRECT GENERATOR, failing about one run in 172, and shipping a known flake is
+          how a suite starts costing people evenings. At 32^10 the expected duplicate count is
+          1.8e-7, so a false red is a one-in-5.6-million event and the tolerance can go — a
+          duplicate here now means the RNG collapsed, not that probability happened.
+
+          Uniqueness itself is not a property of the generator and is not asserted here. It belongs
+          to the database; TransactionNumberUniquenessSqlServerTests proves the index enforces it.
         */
-        /*
-          At most ONE duplicate, not zero — and the difference matters, because a zero-duplicate
-          assertion here would be FLAKY AGAINST A CORRECT GENERATOR. 20,000 draws from 32^7 expect
-          0.0058 duplicates, so P(at least one) is about 0.58%: roughly one CI run in 172 would go
-          red with nothing wrong. Caught in review before it could start costing people evenings.
-
-          One is the right threshold: P(two or more) is about 1.7e-5, once in 59,000 runs, while the
-          old six-digit generator expects ~222 duplicates and comes back with ~19,778 distinct. The
-          gap between 19,999 and 19,778 is enormous, so this stays a real detector.
-
-          Read it as an ENTROPY regression test. Uniqueness itself is not a property of the
-          generator and is not asserted here — it belongs to the database, and
-          TransactionNumberUniquenessSqlServerTests proves the index enforces it.
-        */
-        numbers.Should().HaveCountGreaterThan(
-            count - 2,
-            "the widened suffix must not produce more than one duplicate in 20,000 draws");
+        numbers.Should().HaveCount(
+            count,
+            "at 32^10 per day a duplicate in 20,000 draws means the generator stopped drawing randomly");
     }
 
     [Fact]
@@ -214,6 +224,312 @@ public class IdGeneratorTests
         // Assert - No exceptions means thread-safe
         exceptions.Should().BeEmpty();
         results.Should().HaveCount(100);
+    }
+
+    #endregion
+
+    #region Check symbol
+
+    /*
+      The check symbol makes a claim that is TOTAL, not statistical: mod 37 over a base-32 payload
+      rejects EVERY single-character substitution and EVERY adjacent transposition. A claim of that
+      shape should not be defended by three hand-picked examples — the whole point of choosing a
+      prime modulus larger than the alphabet is that no case escapes, so the tests below enumerate
+      the cases instead of sampling them.
+
+      Every mutant is asserted to be STRUCTURALLY WELL-FORMED before it is asserted to be rejected.
+      Without that, a mutation that broke the format (a letter in the date, a check symbol out of
+      alphabet) would be turned away by the format gate and the test would pass while proving
+      nothing about the arithmetic — the wrong-reason pass this suite has been bitten by repeatedly.
+      The guard is a regex, an oracle independent of the production check rather than a copy of it.
+    */
+
+    private const string Base32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    private const string CheckSymbols = Base32 + "*~$=U";
+    private const string WellFormed = @"^TXN-[0-9]{8}-[0-9A-HJKMNP-TV-Z]{10}[0-9A-HJKMNP-TV-Z*~$=U]$";
+
+    /// <summary>Date digits (4..11) followed by suffix symbols (13..22) — what the symbol covers.</summary>
+    private static string Payload(string number) => number.Substring(4, 8) + number.Substring(13, 10);
+
+    [Fact]
+    public void EveryGeneratedNumberValidates()
+    {
+        // The floor: whatever else the symbol rejects, it must never reject a number the generator
+        // just minted. 500 draws rather than one, because a bug in the residue that only bites for
+        // particular payloads would hide behind a single example.
+        for (var i = 0; i < 500; i++)
+        {
+            var number = IdGenerator.GenerateTransactionNumber();
+            IdGenerator.IsValidTransactionNumber(number).Should().BeTrue(
+                "a freshly generated number must validate, and {0} did not", number);
+        }
+    }
+
+    [Fact]
+    public void EverySingleCharacterSubstitutionIsRejected()
+    {
+        var exercised = 0;
+
+        for (var draw = 0; draw < 25; draw++)
+        {
+            var number = IdGenerator.GenerateTransactionNumber();
+
+            for (var position = 0; position < number.Length - 1; position++)
+            {
+                // "TXN-" and both hyphens are structure, not payload: mutating them is caught by the
+                // format gate, so including them would inflate the count with wrong-reason passes.
+                if (position < 4 || position == 12)
+                {
+                    continue;
+                }
+
+                // Substitute like-for-like — a digit for a date digit, an encoding symbol for a
+                // suffix symbol — so the mutant stays well-formed and only the residue can reject it.
+                var alphabet = position <= 11 ? "0123456789" : Base32;
+
+                foreach (var replacement in alphabet)
+                {
+                    if (replacement == number[position])
+                    {
+                        continue;
+                    }
+
+                    var mutant = string.Concat(
+                        number.AsSpan(0, position), replacement.ToString(), number.AsSpan(position + 1));
+
+                    mutant.Should().MatchRegex(WellFormed,
+                        "the mutation must stay well-formed or the format gate, not the check symbol, does the rejecting");
+                    IdGenerator.IsValidTransactionNumber(mutant).Should().BeFalse(
+                        "{0} is {1} with one character changed and must not validate", mutant, number);
+                    exercised++;
+                }
+            }
+        }
+
+        // 8 date positions × 9 other digits + 10 suffix positions × 31 other symbols = 382 per draw.
+        // Asserted so a loop that silently stops iterating fails instead of passing vacuously.
+        exercised.Should().Be(25 * 382);
+    }
+
+    [Fact]
+    public void EveryAdjacentTranspositionIsRejected()
+    {
+        var exercised = 0;
+        var expected = 0;
+        var suffixCheckPairsRun = 0;
+
+        for (var draw = 0; draw < 25; draw++)
+        {
+            var number = IdGenerator.GenerateTransactionNumber();
+
+            // 7 pairs inside the date + 9 inside the suffix, plus the suffix/check pair whenever the
+            // check symbol is an encoding symbol (32 of the 37 residues). Counted from the number's
+            // shape rather than from the generator below, so a loop that stops early still fails.
+            var suffixCheckPairApplies = Base32.Contains(number[^1]);
+            expected += 16 + (suffixCheckPairApplies ? 1 : 0);
+            suffixCheckPairsRun += suffixCheckPairApplies ? 1 : 0;
+
+            foreach (var (left, right) in AdjacentPayloadPairs(number))
+            {
+                var swapped = Swap(number, left, right);
+                swapped.Should().MatchRegex(WellFormed, "a swap inside one region cannot change the shape");
+                exercised++;
+
+                if (number[left] == number[right])
+                {
+                    // Not a transposition at all — swapping two identical characters produces the
+                    // same string. Asserted rather than skipped, so every pair is accounted for and
+                    // the count below stays exact.
+                    swapped.Should().Be(number);
+                    IdGenerator.IsValidTransactionNumber(swapped).Should().BeTrue();
+                    continue;
+                }
+
+                IdGenerator.IsValidTransactionNumber(swapped).Should().BeFalse(
+                    "{0} transposes two adjacent characters of {1} and must not validate", swapped, number);
+            }
+        }
+
+        exercised.Should().Be(expected);
+
+        // `expected` and the generator share the same predicate, so a suffix/check pair that never
+        // fired would leave both sides agreeing on a vacuous count. This pins it independently:
+        // 32 of the 37 residues land in the encoding alphabet, so all 25 draws missing is a
+        // (5/37)^25 event — around 1e-22, which is to say it does not happen.
+        suffixCheckPairsRun.Should().BePositive(
+            "the suffix/check transposition is the case with its own proof and must actually run");
+    }
+
+    [Fact]
+    public void ATypoInTheCheckSymbolItselfIsRejected()
+    {
+        // The complement of the two tests above: they mutate the value and keep the symbol, this
+        // keeps the value and mutates the symbol. Both directions are how a misread receipt arrives.
+        var number = IdGenerator.GenerateTransactionNumber();
+        var exercised = 0;
+
+        foreach (var replacement in CheckSymbols)
+        {
+            if (replacement == number[^1])
+            {
+                continue;
+            }
+
+            var mutant = string.Concat(number.AsSpan(0, number.Length - 1), replacement.ToString());
+            mutant.Should().MatchRegex(WellFormed);
+            IdGenerator.IsValidTransactionNumber(mutant).Should().BeFalse();
+            exercised++;
+        }
+
+        exercised.Should().Be(36, "the check alphabet is 32 encoding symbols plus *~$=U, minus the real one");
+    }
+
+    [Fact]
+    public void ANumberRetypedWithCrockfordConfusablesStillValidates()
+    {
+        /*
+          This is the reason the alphabet drops I, L, O and U in the first place. A person reading a
+          number off a receipt writes O for 0 and I or l for 1; because those letters can never be
+          part of the value, decoding can reinterpret them instead of rejecting them — which turns
+          the commonest transcription mistake into no mistake at all rather than into a failed lookup.
+
+          Drawn until the payload holds both a 0 and a 1 so all three confusables are actually
+          exercised; a number containing neither would pass this test without testing anything.
+        */
+        var number = Enumerable.Range(0, 500)
+            .Select(_ => IdGenerator.GenerateTransactionNumber())
+            .First(n => Payload(n).Contains('0') && Payload(n).Contains('1'));
+
+        IdGenerator.IsValidTransactionNumber(number.Replace('0', 'O').Replace('1', 'I').ToLowerInvariant())
+            .Should().BeTrue("O reads as 0, I reads as 1, and case is folded");
+        IdGenerator.IsValidTransactionNumber(number.Replace('1', 'L'))
+            .Should().BeTrue("L reads as 1 as well");
+    }
+
+    [Fact]
+    public void APreMigrationNumberDoesNotValidate()
+    {
+        /*
+          Stated as a test because it is the one uncomfortable consequence of the format change, and
+          a comment claiming it would be easy to falsify by accident. Rows written before
+          WidenTransactionNumberForCheckSymbol carry the old 20-character number and have no check
+          symbol, so this returns false for them.
+
+          That is safe only because nothing validates stored numbers: no endpoint takes a transaction
+          number as input, and EnforceTransactionImmutability forbids renumbering a saved row. If a
+          lookup-by-number endpoint is ever added, it must not gate on this without a format check
+          for the legacy shape first.
+        */
+        IdGenerator.IsValidTransactionNumber("TXN-20260805-K3M9PZ2").Should().BeFalse();
+    }
+
+    [Fact]
+    public void TheExampleInTheDocCommentIsARealNumber()
+    {
+        /*
+          `GenerateTransactionNumber`'s <returns> tag carries an example, and an example of a checked
+          value is a claim the compiler cannot check. The previous one — "TXN-20260114-K3M9PZ2QW4X" —
+          was NOT valid: the payload 20260114K3M9PZ2QW4 checksums to '2', so the method that mints
+          valid numbers documented itself with one its own validator rejects. It got that way when
+          this PR appended four characters to the old 7-character example without recomputing.
+
+          Pinned here so the next person who edits the example has to keep it true.
+        */
+        IdGenerator.IsValidTransactionNumber("TXN-20260114-K3M9PZ2QW42").Should().BeTrue(
+            "the example in the XML doc must be a number the validator accepts");
+        IdGenerator.IsValidTransactionNumber("TXN-20260114-K3M9PZ2QW4X").Should().BeFalse(
+            "and the example it replaced must not be, or this test proves nothing");
+    }
+
+    [Fact]
+    public void ANonAsciiLookalikeIsRejected()
+    {
+        /*
+          Normalisation runs BEFORE the alphabet check, so any character that invariant-uppercases
+          INTO the encoding alphabet used to be folded into a legal one and accepted. Measured on the
+          real assembly before the ASCII gate went in:
+
+            real    TXN-20260809-7P6PGSHSN3~   valid
+            mutant  TXN-20260809-7P6PGſHSN3~   ALSO valid  (U+017F LATIN SMALL LETTER LONG S -> 'S')
+
+          Two different strings, both reported as the same valid number — the resolve-to-something-
+          else failure this whole class exists to prevent, in the one function meant to prevent it.
+
+          Asserted on a MUTATED REAL NUMBER rather than a literal, so the test still exercises the
+          checksum path: the mutant is well-formed and 24 characters, and only the ASCII gate can
+          turn it away. A literal would pass the moment anyone changed the format.
+        */
+        var real = Enumerable.Range(0, 5000)
+            .Select(_ => IdGenerator.GenerateTransactionNumber())
+            .First(n => n.IndexOf('S', 13) >= 0);
+
+        var at = real.IndexOf('S', 13);
+        var mutant = real.Remove(at, 1).Insert(at, "ſ");
+
+        mutant.Should().HaveLength(24).And.NotBe(real, "the mutant must differ, or nothing is tested");
+        IdGenerator.IsValidTransactionNumber(real).Should().BeTrue();
+        IdGenerator.IsValidTransactionNumber(mutant).Should().BeFalse(
+            "{0} is not {1}, and must not validate as though it were", mutant, real);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("TXN-20260805-K3M9PZ2QW4")] // 23 characters: one short
+    [InlineData("TXN-20260805-K3M9PZ2QW4XX")] // 25 characters: one long
+    [InlineData("XXX-20260805-K3M9PZ2QW4X")] // right length, wrong prefix
+    [InlineData("TXN-2026080A-K3M9PZ2QW4X")] // a letter where the date must be digits
+    [InlineData("TXN-20260805-K3M9PZ2QW4-")] // a hyphen is in neither alphabet
+    public void MalformedInputIsRejected(string? candidate) =>
+        IdGenerator.IsValidTransactionNumber(candidate).Should().BeFalse();
+
+    /// <summary>
+    /// Adjacent index pairs inside the date, inside the suffix, and — when it can be tested for the
+    /// right reason — the pair that straddles the suffix and the check symbol.
+    ///
+    /// <para>
+    /// Not the pair across the hyphen at 12: that swap moves a letter into the date, so the format
+    /// gate turns it away and the test would prove nothing about the residue.
+    /// </para>
+    /// <para>
+    /// The suffix/check pair (22, 23) is the interesting one, because the mod-37 transposition
+    /// argument does NOT cover it — that argument is about two characters inside the payload, and
+    /// the check symbol is the residue, not payload. Worked through: with payload <c>P</c> ending in
+    /// <c>a</c>, residue <c>R</c> and symbol <c>c</c>, the swap gives a payload whose residue is
+    /// <c>R + val(c) − val(a)</c>, and it validates only when <c>2(R − val(a)) ≡ 0 (mod 37)</c>.
+    /// 37 is odd, so 2 is invertible and that means <c>R = val(a)</c> — precisely the case where
+    /// <c>c</c> and <c>a</c> are the SAME character and the swap changed nothing. Every real
+    /// suffix/check transposition is therefore rejected, for a different reason than the others.
+    /// </para>
+    /// <para>
+    /// Included only when the check symbol is an encoding symbol. When it is one of <c>*~$=U</c> the
+    /// swap puts a character in the suffix that the alphabet forbids, and the rejection would come
+    /// from the format gate — true, but not the thing under test.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<(int Left, int Right)> AdjacentPayloadPairs(string number)
+    {
+        for (var i = 4; i < 11; i++)
+        {
+            yield return (i, i + 1);
+        }
+
+        for (var i = 13; i < 22; i++)
+        {
+            yield return (i, i + 1);
+        }
+
+        if (Base32.Contains(number[^1]))
+        {
+            yield return (22, 23);
+        }
+    }
+
+    private static string Swap(string value, int left, int right)
+    {
+        var chars = value.ToCharArray();
+        (chars[left], chars[right]) = (chars[right], chars[left]);
+        return new string(chars);
     }
 
     #endregion

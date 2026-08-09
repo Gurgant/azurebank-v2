@@ -11,7 +11,20 @@ public class Transaction
     public Guid Id { get; set; }
 
     /// <summary>
-    /// Human-readable transaction ID: TXN-YYYYMMDD-XXXXXX
+    /// Human-readable transaction ID: TXN-YYYYMMDD-XXXXXXXXXXC, where the final character is a
+    /// check symbol over the date and the suffix — not over the <c>TXN-</c> literal or the
+    /// hyphens, which are outside the encoding alphabet (see
+    /// <c>IdGenerator.GenerateTransactionNumber</c>).
+    ///
+    /// <para>
+    /// Rows written before <c>WidenTransactionNumberForCheckSymbol</c> carry an older, shorter
+    /// form — <b>19</b> characters before PR #89 and 20 between #89 and this change — and are left
+    /// as they are. No call site validates a stored number, and renumbering a saved transaction is
+    /// refused by <c>EnforceTransactionImmutability</c>. Were such a call site ever added,
+    /// <c>IdGenerator.IsValidTransactionNumber</c> rejects both older shapes, so it would need a
+    /// legacy branch covering <b>both</b> widths: #89 landed hours before this change, so a branch
+    /// written against 20 alone would miss nearly every real row.
+    /// </para>
     /// </summary>
     public required string TransactionNumber { get; set; }
 

@@ -27,11 +27,12 @@ namespace AzureBank.Tests.Integration;
 /// would be protecting nothing.
 /// </para>
 /// <para>
-/// The generator itself is measured in <c>IdGeneratorTests</c>, which draws 20,000 numbers and
-/// permits AT MOST ONE duplicate — not zero, because zero would be flaky against a correct
-/// generator (0.0058 expected duplicates, so ~0.58% of runs). The sample size is chosen so it
-/// still fails against the previous six-digit version, which expects ~222. This class asserts the
-/// other half: what the database does when one slips through.
+/// The generator itself is measured in <c>IdGeneratorTests</c>. Note what that can and cannot show
+/// at 32¹⁰ per day: sampling is no longer able to detect a shortened suffix (20,000 draws expect
+/// 1.8e-7 duplicates, and a reverted 7-character suffix expects 0.0058 — both come back clean), so
+/// the entropy is pinned there by counting suffix characters and the draw test survives only as an
+/// RNG smoke test. This class asserts the half neither can reach: what the database does when a
+/// duplicate does arrive.
 /// </para>
 /// </summary>
 [Trait("Category", "SqlServer")]
@@ -76,13 +77,33 @@ public sealed class TransactionNumberUniquenessSqlServerTests : IDisposable
     public async Task TheWidenedNumberStillFitsTheColumn()
     {
         /*
-          The widening spends the one spare character the column already had: the format went from
-          19 to 20 characters and `TransactionNumberLength` is 20, so no migration was needed. That
-          is a comfortable claim to make and an easy one to get wrong by one, and the failure mode
-          is a truncation or a String-or-binary-data-would-be-truncated error on a money write.
+          The previous widening spent the one spare character the column had, taking the format to
+          exactly 20 — which is why the check symbol needed a migration rather than another free
+          ride. `WidenTransactionNumberForCheckSymbol` takes the column to 24 and the format to 24,
+          so the fit is once again exact and once again one off from a truncation.
 
-          So it is asserted against the real column, on the real provider, rather than against the
-          constant it was derived from.
+          The failure mode is a String-or-binary-data-would-be-truncated error on a money write, or
+          worse a silent cut, so this is asserted against the REAL column on the REAL provider —
+          against the migrated schema rather than against the constant the migration was scaffolded
+          from. EF InMemory has no column width and would accept any length, which is exactly why
+          this proof cannot live with the unit tests.
+
+          Observed on the migrated LocalDB after this suite ran, not inferred from the constant:
+
+            SELECT c.name, t.name, c.max_length/2 FROM sys.columns c JOIN sys.types t ON ...
+              -> TransactionNumber   nvarchar   24
+
+            SELECT TOP 3 TransactionNumber, LEN(TransactionNumber) FROM Transactions
+              -> TXN-20260808-XSTHEQF737*   24
+                 TXN-20260808-FRMAX8TENFQ   24
+                 TXN-20260808-17SYTVSGMTM   24
+
+          The first row is why the alphabet needs extending at all: `*` is a legal check symbol and
+          can never appear in the payload, which is how 32 encoding characters stretch to a prime
+          modulus of 37. It is NOT evidence that check symbols are recognisable — the other two rows
+          are the common case, ending in `Q` and `M`, both ordinary encoding characters, and
+          `17SYTVSGMT` already contains an `M` of its own. Only 5 of the 37 residues produce one of
+          the extras; the symbol is separated from the payload by position, not by character class.
         */
         var accountId = await SeedAccountViaApiAsync();
 
@@ -90,7 +111,7 @@ public sealed class TransactionNumberUniquenessSqlServerTests : IDisposable
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
         var account = await db.Accounts.SingleAsync(a => a.Id == accountId);
         var number = IdGenerator.GenerateTransactionNumber();
-        number.Should().HaveLength(20);
+        number.Should().HaveLength(24);
 
         db.Transactions.Add(NewTransaction(account, number, 30m));
         await db.SaveChangesAsync();
@@ -99,7 +120,7 @@ public sealed class TransactionNumberUniquenessSqlServerTests : IDisposable
         using var freshScope = CreateScope();
         var freshDb = freshScope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
         var stored = await freshDb.Transactions.SingleAsync(t => t.TransactionNumber == number);
-        stored.TransactionNumber.Should().Be(number, "the column stores all 20 characters");
+        stored.TransactionNumber.Should().Be(number, "the column stores all 24 characters");
     }
 
     private static IEnumerable<int> Numbers(Exception ex)

@@ -138,11 +138,12 @@ public class TransferService : ITransferService
                         var incomingTransaction = new Transaction
                         {
                             Id = Guid.CreateVersion7(),
-                            // Own number in the documented TXN-YYYYMMDD-XXXXXX
-                            // format: the old "-R" suffix exceeded the column's
-                            // max length (20) — SQL Server rejected EVERY
-                            // transfer with a truncation error. The pair is
-                            // linked by RelatedTransactionId.
+                            // Own number in the documented format: the old "-R"
+                            // suffix appended to the OUTGOING number overflowed
+                            // the column, and SQL Server rejected EVERY transfer
+                            // with a truncation error. Generating a second number
+                            // is also what keeps the check symbol correct on both
+                            // rows. The pair is linked by RelatedTransactionId.
                             TransactionNumber = IdGenerator.GenerateTransactionNumber(),
                             AccountId = recipientAccount.Id,
                             Account = recipientAccount,
