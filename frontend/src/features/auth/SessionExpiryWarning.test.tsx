@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -34,6 +34,21 @@ async function boot(inactivityWindowMs = INACTIVITY_WINDOW_MS): Promise<TestStor
   return store;
 }
 
+/**
+ * Advance the fake clock INSIDE `act()`.
+ *
+ * The component ticks on `window.setInterval(tick, 1_000)`, so a bare
+ * `vi.advanceTimersByTimeAsync(61_000)` fires sixty-one `setRemainingMs` calls — each re-rendering
+ * the dialog surface and title — with React's act environment active and no act scope around them.
+ * That is the entire source of the warnings this file used to emit: 3,055 of the 3,074 in the
+ * suite, and invisible because vitest's default reporter prints console output only for FAILING
+ * tests.
+ *
+ * `waitFor` and `userEvent` need no such wrapper — Testing Library's async wrapper already suspends
+ * the act environment for their duration. Only the explicit advances were unguarded.
+ */
+const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+
 const dialog = () => screen.queryByRole('alertdialog');
 const countdownText = () => screen.getByRole('alertdialog').textContent ?? '';
 
@@ -47,7 +62,7 @@ describe('SessionExpiryWarning', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWithProviders(<SessionExpiryWarning />, { store });
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    await advance(30_000);
 
     expect(dialog()).not.toBeInTheDocument();
   });
@@ -58,11 +73,11 @@ describe('SessionExpiryWarning', () => {
     renderWithProviders(<SessionExpiryWarning />, { store });
 
     // Into the 2-minute warning lead.
-    await vi.advanceTimersByTimeAsync(61_000);
+    await advance(61_000);
     await waitFor(() => expect(dialog()).toBeInTheDocument());
     const first = countdownText();
 
-    await vi.advanceTimersByTimeAsync(10_000);
+    await advance(10_000);
 
     // The whole point. The previous implementation rendered the constant "about 2 minutes" here
     // and would still be rendering it half an hour later.
@@ -76,7 +91,7 @@ describe('SessionExpiryWarning', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWithProviders(<SessionExpiryWarning />, { store });
 
-    await vi.advanceTimersByTimeAsync(INACTIVITY_WINDOW_MS + 2_000);
+    await advance(INACTIVITY_WINDOW_MS + 2_000);
 
     // Not merely "the dialog changed" — the session state actually ends. Nothing in the old
     // frontend could reach this, because the only route to it was a 401 on a real request.
@@ -88,14 +103,14 @@ describe('SessionExpiryWarning', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWithProviders(<SessionExpiryWarning />, { store });
 
-    await vi.advanceTimersByTimeAsync(61_000);
+    await advance(61_000);
     await waitFor(() => expect(dialog()).toBeInTheDocument());
 
     // Another tab makes a request: the SERVER's clock slides, this tab's does not.
     mockState.sessionLastActivity = Date.now();
     // Past THIS tab's original zero-crossing but short of the server's new one, which is the only
     // window in which the disagreement is observable.
-    await vi.advanceTimersByTimeAsync(2 * 60_000 + 5_000);
+    await advance(2 * 60_000 + 5_000);
 
     // The zero-crossing probe finds a live session and resyncs instead of ending it. Signing
     // someone out of a session the server still honours is worse than warning them late.
@@ -137,7 +152,7 @@ describe('SessionExpiryWarning', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWithProviders(<SessionExpiryWarning />, { store });
 
-    await vi.advanceTimersByTimeAsync(61_000);
+    await advance(61_000);
     await waitFor(() => expect(dialog()).toBeInTheDocument());
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -155,12 +170,12 @@ describe('SessionExpiryWarning', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWithProviders(<SessionExpiryWarning />, { store });
 
-    await vi.advanceTimersByTimeAsync(61_000);
+    await advance(61_000);
     await waitFor(() => expect(dialog()).toBeInTheDocument());
 
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(screen.getByRole('button', { name: /stay signed in/i }));
-    await vi.advanceTimersByTimeAsync(2_000);
+    await advance(2_000);
 
     // The old version called setWarningDue(false) on click, so a failed keep-alive looked like a
     // successful one and quietly reset the exposure clock. The dialog stays now, which is true.
@@ -205,7 +220,7 @@ describe('SessionExpiryWarning', () => {
   async function reachTheWarning(store: TestStore) {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWarning(store);
-    await vi.advanceTimersByTimeAsync(35_000);
+    await advance(35_000);
     await waitFor(() => expect(dialog()).toBeInTheDocument());
   }
 
@@ -237,7 +252,7 @@ describe('SessionExpiryWarning', () => {
     const store = await boot();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderWarning(store);
-    await vi.advanceTimersByTimeAsync(61_000);
+    await advance(61_000);
     await waitFor(() => expect(dialog()).toBeInTheDocument());
 
     expect(screen.getByRole('button', { name: /stay signed in/i })).toBeInTheDocument();
@@ -338,7 +353,7 @@ describe('SessionExpiryWarning', () => {
     await user.click(screen.getByRole('button', { name: /sign in again/i }));
 
     // Past the deadline this tab still believes in.
-    await vi.advanceTimersByTimeAsync(130_000);
+    await advance(130_000);
 
     expect(store.getState().auth.status).toBe('authenticated');
   });
