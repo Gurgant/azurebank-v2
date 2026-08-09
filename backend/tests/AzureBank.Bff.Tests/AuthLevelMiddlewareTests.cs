@@ -151,6 +151,7 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
     private static async Task AssertLooksLikeTheApisOwn401(HttpResponseMessage response)
     {
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("type").GetString().Should().Be("https://httpstatuses.com/401");
         body.GetProperty("status").GetInt32().Should().Be(401);
         body.GetProperty("title").GetString().Should().Be("Unauthorized");
         body.GetProperty("detail").GetString()
