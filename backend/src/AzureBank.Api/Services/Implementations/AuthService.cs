@@ -250,101 +250,143 @@ public class AuthService : IAuthService
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
 
-        // Decouple the login identity from the public handle (ADR-0015): Identity's UserName
-        // is the immutable user id (a UUIDv7 — time-sortable, index-friendly), never shown and
-        // never a login credential (login is by email), so the AzureTag is left as a plain,
-        // renameable public column. Set the Id explicitly so UserName can mirror it here.
-        var userId = Guid.CreateVersion7();
-        var user = new ApplicationUser
-        {
-            Id = userId,
-            UserName = userId.ToString(),
-            Email = request.Email,
-            AzureTag = normalizedAzureTag,
-            FirstName = request.FirstName.Trim(),
-            LastName = request.LastName.Trim(),
-            EmailConfirmed = true // Skip email verification for MVP
-        };
+        /*
+          ALL OR NOTHING. Everything registration writes — the Identity user, its role, and the
+          starter account — commits together or not at all.
 
-        IdentityResult result;
-        try
-        {
-            result = await _userManager.CreateAsync(user, request.Password);
-        }
-        catch (DbUpdateException ex)
-        {
-            // The genuine TOCTOU race: a concurrent registration passed the advisory
-            // pre-checks and Identity's validators too, then a unique index (AzureTag, or now
-            // the NormalizedEmail unique index) rejected this one at write time. Neutralise it
-            // to the SAME response as a pre-check duplicate so the race can't be used to
-            // enumerate accounts (ADR-0013).
-            _logger.LogWarning(ex,
-                "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
-                "DuplicateRegistration");
-            throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
-        }
+          Before this, UserManager.CreateAsync committed the user in its own unit of work, so any
+          failure at the account INSERT left a user holding the email and the AzureTag with no
+          account and no way back: the pre-checks above would then find their own row and return the
+          neutral 409 forever. ADR-0036 fixed the one cause it could (a duplicate account number,
+          still retried below) and recorded the rest as open. Measured with a non-collision fault:
+          500 to the client, user committed, role assigned, zero accounts, 409 on every retry.
 
-        if (!result.Succeeded)
+          Identity is registered with AddEntityFrameworkStores<AzureBankDbContext>, so UserManager
+          writes through this same scoped context and enlists in the transaction begun here — which
+          is the whole reason this works without touching UserStore.AutoSaveChanges.
+
+          Run through the execution strategy because EnableRetryOnFailure is on and EF refuses a
+          user-initiated transaction under a retrying strategy otherwise. The change tracker is
+          cleared and the entities rebuilt INSIDE the delegate: a rolled-back attempt leaves them
+          tracked, and a retry that reused them would try to insert the previous attempt's rows
+          alongside the new ones.
+
+          Exceptions are deliberately allowed to escape the delegate. ConflictException from the
+          duplicate paths is not transient, so the strategy does not retry it; the transaction
+          disposes unconmitted and the caller still gets the enumeration-neutral 409 of ADR-0013,
+          which ARealDuplicateStillGetsTheNeutralConflict pins.
+        */
+        ApplicationUser user = null!;
+        Account account = null!;
+
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
         {
-            // Never echo Identity's error descriptions to the client. A duplicate that slips
-            // past the advisory pre-checks (a race) surfaces here as a Duplicate* code; it
-            // must return the SAME neutral 409 as the pre-check path or the differing
-            // response re-opens the enumeration oracle (ADR-0013). Branch on the stable
-            // error Code, not the localisable Description. Any other failure gets a generic
-            // message (it is not an existence oracle).
-            var codes = string.Join(",", result.Errors.Select(e => e.Code));
-            var isDuplicate = result.Errors.Any(e => e.Code is "DuplicateUserName" or "DuplicateEmail");
-            _logger.LogWarning(
-                "SecurityEvent {SecurityEvent}: registration rejected by Identity ({Codes})",
-                isDuplicate ? "DuplicateRegistration" : "RegistrationRejected", codes);
-            if (isDuplicate)
+            _context.ChangeTracker.Clear();
+            await using var registration = await _context.Database.BeginTransactionAsync();
+
+            // Decouple the login identity from the public handle (ADR-0015): Identity's UserName
+            // is the immutable user id (a UUIDv7 — time-sortable, index-friendly), never shown and
+            // never a login credential (login is by email), so the AzureTag is left as a plain,
+            // renameable public column. Set the Id explicitly so UserName can mirror it here.
+            var userId = Guid.CreateVersion7();
+            user = new ApplicationUser
             {
+                Id = userId,
+                UserName = userId.ToString(),
+                Email = request.Email,
+                AzureTag = normalizedAzureTag,
+                FirstName = request.FirstName.Trim(),
+                LastName = request.LastName.Trim(),
+                EmailConfirmed = true // Skip email verification for MVP
+            };
+
+            IdentityResult result;
+            try
+            {
+                result = await _userManager.CreateAsync(user, request.Password);
+            }
+            catch (DbUpdateException ex)
+            {
+                // The genuine TOCTOU race: a concurrent registration passed the advisory
+                // pre-checks and Identity's validators too, then a unique index (AzureTag, or now
+                // the NormalizedEmail unique index) rejected this one at write time. Neutralise it
+                // to the SAME response as a pre-check duplicate so the race can't be used to
+                // enumerate accounts (ADR-0013).
+                _logger.LogWarning(ex,
+                    "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
+                    "DuplicateRegistration");
                 throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
             }
-            throw new BusinessRuleException("Registration could not be completed.");
-        }
 
-        // Assign default role
-        await _userManager.AddToRoleAsync(user, Roles.Default);
+            if (!result.Succeeded)
+            {
+                // Never echo Identity's error descriptions to the client. A duplicate that slips
+                // past the advisory pre-checks (a race) surfaces here as a Duplicate* code; it
+                // must return the SAME neutral 409 as the pre-check path or the differing
+                // response re-opens the enumeration oracle (ADR-0013). Branch on the stable
+                // error Code, not the localisable Description. Any other failure gets a generic
+                // message (it is not an existence oracle).
+                var codes = string.Join(",", result.Errors.Select(e => e.Code));
+                var isDuplicate = result.Errors.Any(e => e.Code is "DuplicateUserName" or "DuplicateEmail");
+                _logger.LogWarning(
+                    "SecurityEvent {SecurityEvent}: registration rejected by Identity ({Codes})",
+                    isDuplicate ? "DuplicateRegistration" : "RegistrationRejected", codes);
+                if (isDuplicate)
+                {
+                    throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
+                }
+                throw new BusinessRuleException("Registration could not be completed.");
+            }
 
-        // Create default primary account
-        var account = new Account
-        {
-            UserId = user.Id,
-            AccountNumber = IdGenerator.GenerateAccountNumber(),
-            Name = "Primary Account",
-            Type = AccountType.Checking,
-            Balance = 0,
-            IsPrimary = true,
-            User = user
-        };
+            // Assign default role
+            await _userManager.AddToRoleAsync(user, Roles.Default);
 
-        _context.Accounts.Add(account);
+            // Create default primary account
+            account = new Account
+            {
+                UserId = user.Id,
+                AccountNumber = IdGenerator.GenerateAccountNumber(),
+                Name = "Primary Account",
+                Type = AccountType.Checking,
+                Balance = 0,
+                IsPrimary = true,
+                User = user
+            };
 
-        /*
-          Retried on an account-number collision, and this is the path where it MATTERS. The
-          ApplicationUser is already durably committed at this point (UserManager.CreateAsync runs
-          its own unit of work, as the refresh-token note below also relies on), so an uncaught
-          duplicate here used to leave a user holding the email and the AzureTag with no account at
-          all — and unable to register again, because the pre-checks then find their own row and
-          return the neutral 409. Measured before the fix: 500 to the client, user committed, role
-          assigned, zero accounts, 409 on every retry.
+            _context.Accounts.Add(account);
 
-          Narrowed by index name inside the predicate, which is load-bearing here: this same request
-          can legitimately lose the AzureTag or NormalizedEmail race, and THAT must stay the
-          enumeration-neutral 409 (ADR-0013) rather than become a retry loop.
-        */
-        await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, user.Id);
+            /*
+              Retried on an account-number collision. HISTORY, because the reason changed under it:
+              CreateAsync used to commit the user in its own unit of work, so an uncaught duplicate
+              here left a user holding the email and the AzureTag with no account and no way back —
+              measured as 500, user committed, role assigned, zero accounts, 409 on every retry
+              (ADR-0036). The transaction opened above now rolls all of that back, so this retry is
+              kept for a DIFFERENT reason: it turns a recoverable clash into a success rather than a
+              rollback the caller has to redo (ADR-0037).
+
+              Narrowed by index name inside the predicate, which is load-bearing here: this same request
+              can legitimately lose the AzureTag or NormalizedEmail race, and THAT must stay the
+              enumeration-neutral 409 (ADR-0013) rather than become a retry loop.
+            */
+            await ConcurrencyRetry.SaveNewAccountAsync(_context, account, _logger, user.Id);
+
+            await registration.CommitAsync();
+        });
+
 
         var tokenResult = _jwtService.GenerateToken(user);
 
-        // Registration has already durably committed the user + account. Issuing the refresh
-        // token is a best-effort convenience on top of that: if this write fails, do NOT fail
-        // the whole registration — that would 500 the client for an account that WAS created and
-        // then hand back a confusing duplicate-409 on retry. Instead the user still gets an
-        // access token now and a refresh token on their next login. (Wrapping account+token in a
-        // transaction would not help: the duplicate-409 originates from the already-committed
-        // Identity user, which UserManager.CreateAsync commits in its own unit of work.)
+        // The transaction above has COMMITTED by this point, so the user and the account are
+        // durable. Issuing the refresh token is a best-effort convenience on top of that: if this
+        // write fails, do NOT fail the whole registration — that would 500 the client for an account
+        // that WAS created and then hand back a confusing duplicate-409 on retry. The user still
+        // gets an access token now and a refresh token on their next login.
+        //
+        // Deliberately OUTSIDE the transaction, and the reason inverted with ADR-0037. It used to be
+        // that enrolling it changed nothing, because the duplicate-409 came from an already-committed
+        // Identity user. Now it would change something, and the wrong thing: a failed token write
+        // would roll back a registration that had otherwise succeeded. Best-effort is the point.
         string? refreshToken = null;
         try
         {

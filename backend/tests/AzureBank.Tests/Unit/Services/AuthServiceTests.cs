@@ -14,6 +14,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
 using AzureBank.Tests.Fixtures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Compliance.Classification;
 using Microsoft.Extensions.Compliance.Redaction;
@@ -45,6 +46,22 @@ public class AuthServiceTests : IDisposable
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
+            /*
+              RegisterAsync now wraps its writes in a transaction, and InMemory escalates
+              TransactionIgnoredWarning to an exception, so without this every registration test
+              fails on "Transactions are not supported by the in-memory store" rather than on
+              anything it is testing.
+
+              Suppressed HERE rather than guarded with IsRelational() in AuthService — which this
+              same file already does twice for ExecuteUpdate — deliberately: a provider branch would
+              mean these tests exercise a DIFFERENT path from the one that ships. Suppressed, they
+              run the real path and BeginTransactionAsync is simply a no-op.
+
+              Which is exactly what they can and cannot prove. These tests pin the neutral-409 logic;
+              they say NOTHING about rollback, because there is no transaction to roll back.
+              Atomicity is proved on real SQL Server by RegistrationAtomicitySqlServerTests.
+            */
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _context = new AzureBankDbContext(options);
