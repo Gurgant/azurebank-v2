@@ -125,8 +125,15 @@ public class IdGeneratorTests
 
           Crockford base32 excludes I, L, O and U, so nothing in a number a human retypes can be
           confused with 1 or 0. The final character comes from the CHECK alphabet, which is those 32
-          symbols plus `*~$=U` — five that can never appear in the payload, so the check symbol is
-          always distinguishable from the value it protects.
+          symbols plus `*~$=U`.
+
+          Those five extras exist to reach a prime modulus of 37, NOT to make the symbol
+          recognisable — a distinction this file used to get wrong. Only residues 32..36 land on
+          one of them; the other 32 return an ordinary encoding character. Measured over 20,000
+          numbers: 17,247 (86.2%) ended in an encoding symbol, against the predicted 32/37 = 86.5%.
+          Which is why the regex admits both classes in the final position, and why
+          EveryAdjacentTranspositionIsRejected below has to branch on `Base32.Contains(number[^1])`.
+          What separates the symbol from the payload is its POSITION, always the 24th character.
 
           This assertion, not the sampling one below, is what pins the entropy: 32^10 is a property
           of the SUFFIX LENGTH, and a character count can be verified exactly where a collision
@@ -414,6 +421,55 @@ public class IdGeneratorTests
           for the legacy shape first.
         */
         IdGenerator.IsValidTransactionNumber("TXN-20260805-K3M9PZ2").Should().BeFalse();
+    }
+
+    [Fact]
+    public void TheExampleInTheDocCommentIsARealNumber()
+    {
+        /*
+          `GenerateTransactionNumber`'s <returns> tag carries an example, and an example of a checked
+          value is a claim the compiler cannot check. The previous one — "TXN-20260114-K3M9PZ2QW4X" —
+          was NOT valid: the payload 20260114K3M9PZ2QW4 checksums to '2', so the method that mints
+          valid numbers documented itself with one its own validator rejects. It got that way when
+          this PR appended four characters to the old 7-character example without recomputing.
+
+          Pinned here so the next person who edits the example has to keep it true.
+        */
+        IdGenerator.IsValidTransactionNumber("TXN-20260114-K3M9PZ2QW42").Should().BeTrue(
+            "the example in the XML doc must be a number the validator accepts");
+        IdGenerator.IsValidTransactionNumber("TXN-20260114-K3M9PZ2QW4X").Should().BeFalse(
+            "and the example it replaced must not be, or this test proves nothing");
+    }
+
+    [Fact]
+    public void ANonAsciiLookalikeIsRejected()
+    {
+        /*
+          Normalisation runs BEFORE the alphabet check, so any character that invariant-uppercases
+          INTO the encoding alphabet used to be folded into a legal one and accepted. Measured on the
+          real assembly before the ASCII gate went in:
+
+            real    TXN-20260809-7P6PGSHSN3~   valid
+            mutant  TXN-20260809-7P6PGſHSN3~   ALSO valid  (U+017F LATIN SMALL LETTER LONG S -> 'S')
+
+          Two different strings, both reported as the same valid number — the resolve-to-something-
+          else failure this whole class exists to prevent, in the one function meant to prevent it.
+
+          Asserted on a MUTATED REAL NUMBER rather than a literal, so the test still exercises the
+          checksum path: the mutant is well-formed and 24 characters, and only the ASCII gate can
+          turn it away. A literal would pass the moment anyone changed the format.
+        */
+        var real = Enumerable.Range(0, 5000)
+            .Select(_ => IdGenerator.GenerateTransactionNumber())
+            .First(n => n.IndexOf('S', 13) >= 0);
+
+        var at = real.IndexOf('S', 13);
+        var mutant = real.Remove(at, 1).Insert(at, "ſ");
+
+        mutant.Should().HaveLength(24).And.NotBe(real, "the mutant must differ, or nothing is tested");
+        IdGenerator.IsValidTransactionNumber(real).Should().BeTrue();
+        IdGenerator.IsValidTransactionNumber(mutant).Should().BeFalse(
+            "{0} is not {1}, and must not validate as though it were", mutant, real);
     }
 
     [Theory]

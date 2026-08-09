@@ -98,8 +98,12 @@ public sealed class TransactionNumberUniquenessSqlServerTests : IDisposable
                  TXN-20260808-FRMAX8TENFQ   24
                  TXN-20260808-17SYTVSGMTM   24
 
-          The first row is why the check alphabet matters: `*` is a legal check symbol and can never
-          appear in the payload, so the symbol is always separable from the value it protects.
+          The first row is why the alphabet needs extending at all: `*` is a legal check symbol and
+          can never appear in the payload, which is how 32 encoding characters stretch to a prime
+          modulus of 37. It is NOT evidence that check symbols are recognisable — the other two rows
+          are the common case, ending in `Q` and `M`, both ordinary encoding characters, and
+          `17SYTVSGMT` already contains an `M` of its own. Only 5 of the 37 residues produce one of
+          the extras; the symbol is separated from the payload by position, not by character class.
         */
         var accountId = await SeedAccountViaApiAsync();
 

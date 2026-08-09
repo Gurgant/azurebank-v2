@@ -97,7 +97,10 @@ public class TransactionServiceTests : IDisposable
         return new Transaction
         {
             Id = Guid.NewGuid(),
-            TransactionNumber = $"TXN-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(100000, 999999)}",
+            // The real generator, not a hand-rolled shape. The old literal minted the pre-#89
+            // 19-character form, so this file seeded history rows in a format it separately
+            // asserts the system cannot produce (see DepositAsync_GeneratesTransactionNumber).
+            TransactionNumber = IdGenerator.GenerateTransactionNumber(),
             AccountId = accountId,
             Type = type,
             Amount = amount,

@@ -23,7 +23,10 @@ public static class IdGenerator
 
     /// <summary>
     /// Generates a transaction number in format TXN-YYYYMMDD-XXXXXXXXXXC (24 characters), where the
-    /// final character is a check symbol over everything before it.
+    /// final character is a check symbol over the date and the suffix — the eighteen characters
+    /// that carry information. The literal <c>TXN-</c> and the two hyphens are outside it and could
+    /// not be inside it: they are not in the encoding alphabet, so the residue has nothing to score
+    /// them with.
     ///
     /// <para>
     /// <b>The check symbol guards a different failure from the collision work that preceded it.</b>
@@ -38,9 +41,11 @@ public static class IdGenerator
     /// The guarantee is TOTAL rather than statistical, which is why mod 37 over a base-32 payload
     /// was chosen. 37 is prime and larger than the alphabet, so a single substituted character
     /// shifts the residue by <c>weight × (a − b) mod 37</c>, which can never be zero; swapping two
-    /// adjacent characters shifts it by <c>31 × (a − b) mod 37</c>, and 31 and 37 are coprime.
+    /// adjacent characters shifts it by <c>31 × weight × (a − b) mod 37</c>, and 31, 32 and 37 are
+    /// pairwise coprime, so no weight can cancel it either.
     /// <b>Every</b> substitution of one symbol for a DIFFERENT symbol, and <b>every</b> adjacent
-    /// transposition, is therefore rejected — asserted exhaustively in <c>IdGeneratorTests</c>
+    /// transposition of two DIFFERENT symbols, is therefore rejected — swapping two identical
+    /// characters yields the same string and must stay valid — asserted exhaustively in <c>IdGeneratorTests</c>
     /// rather than argued here.
     /// </para>
     /// <para>
@@ -58,14 +63,24 @@ public static class IdGenerator
     /// instead of deferring it a third time.
     /// </para>
     /// <para>
-    /// <b>Existing rows keep the old 20-character format and stay valid.</b> Nothing reads this
-    /// value back for validation, and <c>EnforceTransactionImmutability</c> forbids renumbering a
-    /// saved transaction, so the two formats coexist by design.
-    /// <see cref="IsValidTransactionNumber"/> answers false for a pre-migration number — call it
-    /// only on numbers minted after this change.
+    /// <b>Existing rows keep their older, shorter numbers and are left exactly as they are.</b>
+    /// There are TWO legacy widths, not one: 19 characters before PR #89 (<c>TXN-</c> + date + six
+    /// digits) and 20 between #89 and this change. #89 merged barely three hours before this, so
+    /// nearly every historical row is the 19-character shape — worth stating precisely, because a
+    /// future legacy branch written against "20" would silently miss almost all of them, which is
+    /// the resolve-to-nothing failure the check symbol exists to prevent.
+    /// There is no backfill: nothing reads this value back for validation, and
+    /// <c>EnforceTransactionImmutability</c> forbids renumbering a saved transaction, so the
+    /// formats coexist by design. <see cref="IsValidTransactionNumber"/> answers false for every
+    /// pre-migration number — call it only on numbers minted after this change.
     /// </para>
     /// </summary>
-    /// <returns>Transaction number string (e.g., "TXN-20260114-K3M9PZ2QW4X").</returns>
+    /// <returns>
+    /// Transaction number string (e.g., "TXN-20260114-K3M9PZ2QW42"). That example is a genuinely
+    /// valid number — its check symbol is computed, not decorative — and
+    /// <c>IdGeneratorTests.TheExampleInTheDocComment</c> asserts it, because the previous example
+    /// ended in X and would have been rejected by the very method documented here.
+    /// </returns>
     public static string GenerateTransactionNumber()
     {
         var stamp = $"{DateTime.UtcNow:yyyyMMdd}";
@@ -97,6 +112,19 @@ public static class IdGenerator
             return false;
         }
 
+        // ASCII ONLY, and this gate is load-bearing rather than tidy-minded. Normalisation runs
+        // BEFORE the alphabet check below, so any character that invariant-uppercases INTO the
+        // alphabet would be folded into a legal one and sail through. Measured, not theorised:
+        // U+017F LATIN SMALL LETTER LONG S uppercases to 'S', and before this gate
+        // IsValidTransactionNumber("TXN-20260809-7P6PGſHSN3~") answered TRUE while the real number
+        // was "TXN-20260809-7P6PGSHSN3~" — a different string reported as the same valid number,
+        // which is precisely the resolve-to-something-else failure the check symbol exists to stop.
+        // Gating the whole class here beats chasing individual code points.
+        if (!transactionNumber.All(char.IsAscii))
+        {
+            return false;
+        }
+
         var normalised = Normalise(transactionNumber);
         if (!normalised.StartsWith("TXN-", StringComparison.Ordinal) || normalised[12] != '-')
         {
@@ -120,8 +148,12 @@ public static class IdGenerator
     private const string Base32Alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
     /// <summary>
-    /// Crockford's check alphabet: the 32 encoding symbols plus five that can never appear in the
-    /// payload, so a check symbol is always distinguishable from the value it protects.
+    /// Crockford's check alphabet: the 32 encoding symbols plus five — <c>*~$=U</c> — that can never
+    /// appear in the payload. The extension exists to reach 37 symbols for a prime modulus, NOT to
+    /// make check symbols recognisable: only residues 32–36 land on one of the five extras, so
+    /// 32 of the 37 residues produce an ordinary encoding character that is indistinguishable from
+    /// a payload character by class alone. Measured over 20,000 generated numbers: 17,247 (86.2%)
+    /// ended in an encoding symbol, against the predicted 32/37 = 86.5%.
     /// </summary>
     private const string CheckAlphabet = Base32Alphabet + "*~$=U";
 
@@ -136,18 +168,37 @@ public static class IdGenerator
     ///
     /// <para>
     /// Accumulated one character at a time rather than by decoding the whole string to an integer
-    /// first: eighteen base-32 characters is 32¹⁸, which overflows every fixed-width integer type,
-    /// and taking the modulus as it goes keeps the arithmetic exact without reaching for BigInteger.
+    /// first: eighteen base-32 characters is 32¹⁸ = 2⁹⁰ ≈ 1.24e27, which overflows <c>ulong</c> —
+    /// not every fixed-width type, since <c>UInt128</c> would hold it on this TFM — and taking the
+    /// modulus as it goes keeps the arithmetic exact without reaching for either that or BigInteger.
     /// The DATE is inside the payload, so a typo in the date is caught too — a check symbol over
     /// the random part alone would wave through TXN-20260114 mistyped as TXN-20260115.
     /// </para>
     /// </summary>
     private static char CheckSymbol(string payload)
     {
+        // PRECONDITION, ENFORCED: every character of `payload` is in Base32Alphabet. Both call
+        // sites establish it — GenerateTransactionNumber builds the payload from the alphabet, and
+        // IsValidTransactionNumber reaches here only past its digit and alphabet gates — so the
+        // throw below is unreachable today and the guard is for the third caller.
+        //
+        // It is a guard rather than a comment because of what the unguarded version actually did,
+        // probed rather than reasoned about: IndexOf returns -1 for a foreign character and C# `%`
+        // keeps the sign, so CheckSymbol("-") threw IndexOutOfRangeException — fine, loud — but
+        // CheckSymbol("20260809ABCDEFGH-") returned '8'. A SILENTLY WRONG check symbol on a value
+        // whose entire job is catching wrong values is the one outcome worth spending three lines
+        // to make impossible.
         var residue = 0;
         foreach (var c in payload)
         {
-            residue = ((residue * 32) + Base32Alphabet.IndexOf(c, StringComparison.Ordinal)) % 37;
+            var value = Base32Alphabet.IndexOf(c, StringComparison.Ordinal);
+            if (value < 0)
+            {
+                throw new ArgumentException(
+                    $"'{c}' is not a Crockford base-32 encoding symbol.", nameof(payload));
+            }
+
+            residue = ((residue * 32) + value) % 37;
         }
 
         return CheckAlphabet[residue];

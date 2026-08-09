@@ -10,11 +10,16 @@ namespace AzureBank.Infrastructure.Migrations
     /// the column exactly, which is why this could not be done in place.
     ///
     /// <para>
-    /// Existing rows are untouched and keep their 20-character numbers; the column only gets wider,
-    /// so nothing is truncated and no backfill is needed. EF scaffolds this as a plain
-    /// <c>AlterColumn</c>, and the emitted SQL was inspected rather than assumed: because the column
-    /// carries <c>IX_Transactions_TransactionNumber</c>, the provider drops that unique index, runs
-    /// the ALTER, and recreates it — SQL Server refuses to alter an indexed column otherwise.
+    /// Existing rows are untouched and keep their older, shorter numbers — 19 characters before
+    /// PR #89, 20 between #89 and this change — and the column only gets wider, so nothing is
+    /// truncated and no backfill is needed. EF scaffolds this as a plain <c>AlterColumn</c>, and the
+    /// emitted SQL was inspected rather than assumed: because the column carries
+    /// <c>IX_Transactions_TransactionNumber</c>, EF Core drops that unique index, runs the ALTER,
+    /// and recreates it. That is EF Core's unconditional pattern for an <c>AlterColumn</c> on an
+    /// indexed column, NOT a SQL Server requirement — probed on the same LocalDB engine, SQL Server
+    /// widens an nvarchar index key in place when the type is unchanged and the new size is no
+    /// smaller. Recorded that way round because the earlier wording asserted the constraint as if it
+    /// had been measured, and only the emitted script had been.
     /// </para>
     /// <para>
     /// <b>Down is genuinely lossy and will fail rather than truncate.</b> Narrowing back to 20 with
