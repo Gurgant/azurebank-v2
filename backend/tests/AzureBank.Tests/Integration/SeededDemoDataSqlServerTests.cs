@@ -7,6 +7,7 @@ using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using TransactionSeeder = seeder::AzureBank.Seeder.Seeders.TransactionSeeder;
 
@@ -76,11 +77,63 @@ public sealed class SeededDemoDataSqlServerTests : IDisposable
         // BOUNDED at both ends. Greater-than alone would accept a ledger years old, so a wrong
         // offset — AddYears for AddDays, say — would slip through the very assertion meant to catch
         // a wrong offset.
-        var oldestAge = (now - rows[0].CreatedAt).TotalDays;
-        oldestAge.Should().BeInRange(2.5, 3.5,
-            "the oldest demo row is the salary deposit, three days back");
-        (rows[^1].CreatedAt - rows[0].CreatedAt).TotalDays.Should().BeInRange(2.5, 3.5,
-            "the ledger spans the three days between the salary deposit and the refund");
+        /*
+          EVERY offset, not just the ends. Bounding only the oldest row and the total span still
+          accepts a ledger whose two middle rows have collapsed next to the oldest one — the shape a
+          half-applied revert produces — because the ends would be untouched. Ordered ascending, the
+          four demo rows are the salary deposit (-3), the ATM withdrawal (-2), the online purchase
+          (-1) and the refund (today).
+        */
+        (now - rows[0].CreatedAt).TotalDays.Should().BeInRange(2.5, 3.5, "salary deposit, 3 days back");
+        (now - rows[1].CreatedAt).TotalDays.Should().BeInRange(1.5, 2.5, "ATM withdrawal, 2 days back");
+        (now - rows[2].CreatedAt).TotalDays.Should().BeInRange(0.5, 1.5, "online purchase, 1 day back");
+        (now - rows[3].CreatedAt).TotalDays.Should().BeInRange(0, 0.5, "the refund is today");
+    }
+
+    [SqlServerFact]
+    public async Task ATransientFailureMidSeedDoesNotDoubleInsert()
+    {
+        /*
+          THE RETRY PATH, injected rather than reasoned about.
+
+          The seeder runs inside EF's retrying execution strategy, and the strategy re-runs the whole
+          delegate. An earlier version built the rows inside the delegate but reused the injected
+          DbContext, and a comment claimed that made each attempt "a clean slate". It did not: a
+          failed SaveChanges leaves the first batch tracked as Added, so the retry's second batch
+          would be inserted ALONGSIDE it — eight rows, of which only four carry their dates. The fix
+          is ChangeTracker.Clear() plus re-reading the account, and this is what proves it.
+
+          A bare TimeoutException is the injectable transient fault: EF 10.0.1's detector treats it
+          as transient, while a real command timeout (SqlException -2) is deliberately not retried.
+        */
+        // Attached from the start: the marker is the Transactions INSERT, so migration DDL and the
+        // account/user inserts pass through untouched.
+        var transient = new TransientFailureInterceptor("INSERT INTO [Transactions]");
+
+        await using var db = NewContext(transient);
+        await db.Database.MigrateAsync();
+
+        var accountId = await SeedJohnsSavingsAccountAsync(db);
+        await new TransactionSeeder(db, NullLogger<TransactionSeeder>.Instance).SeedAsync();
+
+        transient.Fired.Should().BeTrue(
+            "the test proves nothing if the transient fault was never actually injected");
+
+        var rows = await db.Transactions
+            .AsNoTracking()
+            .Where(t => t.AccountId == accountId)
+            .OrderBy(t => t.CreatedAt)
+            .ToListAsync();
+
+        rows.Should().HaveCount(4,
+            "the retry must replace the failed attempt, not add a second batch beside it");
+        rows.Select(t => t.CreatedAt).Distinct().Should().HaveCount(4);
+
+        // And the surviving rows are the AGED ones: a double-insert would leave half the ledger
+        // stamped with the run's own clock, which this catches even if the count somehow matched.
+        var now = DateTime.UtcNow;
+        (now - rows[0].CreatedAt).TotalDays.Should().BeInRange(2.5, 3.5);
+        rows.Should().OnlyContain(t => t.TransactionNumber.StartsWith("TXN-"));
     }
 
     /// <summary>
@@ -117,7 +170,7 @@ public sealed class SeededDemoDataSqlServerTests : IDisposable
         return account.Id;
     }
 
-    private AzureBankDbContext NewContext()
+    private AzureBankDbContext NewContext(IInterceptor? interceptor = null)
     {
         _database = $"AzureBankSeedProof_{Guid.NewGuid():N}";
         var cs = new SqlConnectionStringBuilder(SqlServerFactAttribute.ConnectionString!)
@@ -126,8 +179,20 @@ public sealed class SeededDemoDataSqlServerTests : IDisposable
         }.ConnectionString;
         _connectionString = cs;
 
-        return new AzureBankDbContext(
-            new DbContextOptionsBuilder<AzureBankDbContext>().UseSqlServer(cs).Options);
+        // EnableRetryOnFailure MATCHES PRODUCTION, and it is load-bearing rather than decoration:
+        // the seeder runs inside CreateExecutionStrategy(), and without a retrying strategy
+        // configured here the retry path this fixture exists to exercise simply does not exist.
+        // The first run of the transient test proved it — EF answered "consider enabling transient
+        // error resiliency by adding 'EnableRetryOnFailure'". Same maxRetryCount as
+        // AddInfrastructure uses.
+        var options = new DbContextOptionsBuilder<AzureBankDbContext>()
+            .UseSqlServer(cs, sql => sql.EnableRetryOnFailure(maxRetryCount: 3));
+        if (interceptor is not null)
+        {
+            options.AddInterceptors(interceptor);
+        }
+
+        return new AzureBankDbContext(options.Options);
     }
 
     private string? _database;

@@ -27,6 +27,9 @@ public class TransactionSeeder : ISeeder
         _logger = logger;
     }
 
+    /// <summary>The account the demo ledger hangs off, looked up by its literal number.</summary>
+    private const string JohnSavingsAccountNumber = "AB-1234-5678-90";
+
     public async Task SeedAsync(CancellationToken cancellationToken = default)
     {
         // Idempotent: skip if transactions already exist
@@ -38,7 +41,7 @@ public class TransactionSeeder : ISeeder
 
         // Get John's savings account for sample transactions
         var johnSavings = await _context.Accounts
-            .FirstOrDefaultAsync(a => a.AccountNumber == "AB-1234-5678-90", cancellationToken);
+            .FirstOrDefaultAsync(a => a.AccountNumber == JohnSavingsAccountNumber, cancellationToken);
 
         if (johnSavings == null)
         {
@@ -53,30 +56,44 @@ public class TransactionSeeder : ISeeder
           silently declines to repair. That is the same two-phase shape ADR-0036 was written about —
           a first step that commits, a second that can fail, and no path back.
 
-          Wrapped in the execution strategy because AddInfrastructure enables EnableRetryOnFailure,
-          and EF refuses a user-initiated transaction under a retrying strategy otherwise. Everything
-          the attempt depends on is built INSIDE the delegate, so a retry starts from a clean slate
-          rather than re-using entities the rolled-back attempt left tracked.
+          RUN THROUGH THE EXECUTION STRATEGY, because AddInfrastructure enables EnableRetryOnFailure
+          and EF refuses a user-initiated transaction under a retrying strategy otherwise.
+
+          EACH ATTEMPT STARTS FROM DATABASE TRUTH, and this is the part an earlier draft of this
+          comment got wrong — it claimed a retry "starts from a clean slate" because the rows are
+          built inside the delegate. They are, but the CONTEXT is not: a failed SaveChanges leaves
+          the first batch tracked as Added, so a retry that builds a second batch would add it
+          alongside the first and insert EIGHT rows, of which only four carry their dates. Clearing
+          the tracker and re-reading the account is what actually makes the attempt self-contained.
+          A fresh DbContext per attempt would do the same, but nothing registers an
+          IDbContextFactory here, and one cleared context is the smaller change for a single-threaded
+          tool.
+
+          verifySucceeded covers the remaining case: if the COMMIT itself fails ambiguously, the
+          strategy asks whether the work landed anyway rather than blindly seeding a second time.
         */
         var count = 0;
         var strategy = _context.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async ct =>
-        {
-            var transactions = CreateTransactions(johnSavings);
+        await strategy.ExecuteInTransactionAsync(
+            async ct =>
+            {
+                _context.ChangeTracker.Clear();
+                var account = await _context.Accounts
+                    .FirstAsync(a => a.AccountNumber == JohnSavingsAccountNumber, ct);
 
-            // Capture the dates BEFORE saving, because SaveChanges is about to overwrite them all.
-            var occurredAt = transactions.ToDictionary(t => t.Id, t => t.CreatedAt);
+                var transactions = CreateTransactions(account);
 
-            await using var tx = await _context.Database.BeginTransactionAsync(ct);
+                // Capture the dates BEFORE saving, because SaveChanges is about to overwrite them.
+                var occurredAt = transactions.ToDictionary(t => t.Id, t => t.CreatedAt);
 
-            await _context.Transactions.AddRangeAsync(transactions, ct);
-            await _context.SaveChangesAsync(ct);
+                await _context.Transactions.AddRangeAsync(transactions, ct);
+                await _context.SaveChangesAsync(ct);
 
-            await AgeToOccurrenceDatesAsync(occurredAt, ct);
-
-            await tx.CommitAsync(ct);
-            count = transactions.Count;
-        }, cancellationToken);
+                await AgeToOccurrenceDatesAsync(occurredAt, ct);
+                count = transactions.Count;
+            },
+            async ct => await _context.Transactions.AnyAsync(ct),
+            cancellationToken);
 
         _logger.LogInformation("Seeded {Count} transactions", count);
     }
