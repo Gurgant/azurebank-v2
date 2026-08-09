@@ -115,6 +115,42 @@ two distinct failure modes, both verified on this solution:
 The trap in both cases is that the filter reads as "the AzureBank test projects" and means
 "fully-qualified names containing this substring". Name the solution instead.
 
+**Vitest's default reporter prints console output only for FAILING tests, so a passing test can
+write to `console.error` forever and no gate will ever show it.** This is the trap that hid every
+other one in this section: measured on `d6ea72e` with `--reporter=verbose`, the suite emitted
+**3,074** React `act(...)` warnings across 21 tests while `npm test` and CI both reported a clean
+584-passing run. React uses that same channel for invalid props, bad keys, and anything an error
+boundary catches — all of it equally invisible.
+
+Reading the logs harder is not the fix, because there were no logs to read. `src/test/setup.ts` now
+records `console.error` per test and **fails** the test that wrote to it. A test that provokes a
+logged error on purpose stubs it — `vi.spyOn(console, 'error').mockImplementation(() => {})` — which
+is what `AppErrorBoundary.test.tsx` and `RouteError.test.tsx` already did.
+
+Two ordering rules make that gate safe, and both were learned by getting them wrong:
+
+- **A throwing `afterEach` must be registered FIRST, because vitest's default `sequence.hooks` is
+  `stack` — `afterEach` runs in REVERSE registration order.** Registering last runs it _first_,
+  which is the opposite of how it reads. Measured, after getting it backwards: instrumenting both
+  of `setup.ts`'s hooks printed `file-hook → setup:assertion → setup:teardown` while the assertion
+  was registered last. It matters because a throwing hook skips the ones still to run, so the wrong
+  order lets a failing test skip the whole teardown — MSW handlers, mock state, the session and
+  step-up mirrors, the viewport — and hand all of it to the next test.
+  `src/test/hook-order.test.ts` pins the ordering so setting `sequence.hooks: 'list'` cannot flip
+  it silently.
+- **Unmount explicitly, first.** Every reset in `setup.ts` depends on nothing being mounted:
+  `resetMediaEnvironment()` notifies live `MediaQueryList`s, `useMediaQuery` subscribes through
+  `useSyncExternalStore`, and a re-render from teardown lands outside `act(...)`. Testing Library's
+  auto-cleanup happens to run first under `stack`, but that is a property of a default the file does
+  not control, so `setup.ts` calls `cleanup()` itself. It is idempotent; the later auto-cleanup
+  becomes a no-op.
+
+**`vi.advanceTimersByTimeAsync` is not act-aware.** A component ticking on `setInterval` gets one
+un-acted `setState` per tick advanced — a 61-second advance against a 1-second tick is 61 of them,
+times every component that re-renders. Wrap the advance, not the assertion:
+`await act(async () => { await vi.advanceTimersByTimeAsync(ms) })`. `waitFor` and `userEvent` need
+no wrapper; Testing Library's async wrapper already suspends the act environment for their duration.
+
 The remaining frontend testing traps — Fluent and jsdom behaviour — live in
 [`frontend/CONVENTIONS.md`](../frontend/CONVENTIONS.md), next to the conventions they constrain.
 
