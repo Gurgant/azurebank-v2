@@ -6,6 +6,7 @@ using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.DTOs.User;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
@@ -616,6 +617,118 @@ public class BffAuthController : ControllerBase
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Failed to set PIN with backend API");
+            return Problem(
+                title: "Service Unavailable",
+                detail: "Service temporarily unavailable",
+                statusCode: 503);
+        }
+    }
+
+    /// <summary>
+    /// Rename the caller's own public AzureTag handle (ADR-0015), and keep the cached session true.
+    ///
+    /// <para>
+    /// This lives on the BFF rather than staying a plain proxied PATCH for one reason: the handle is
+    /// CACHED on the session, and only code the BFF runs can write that cache. Measured on the
+    /// running stack before this endpoint existed — rename through the proxy returned 200 and the
+    /// database was correct, yet <c>GET /bff/auth/me</c> kept answering the old handle for the life
+    /// of the session, because it serves <c>session.UserInfo</c> verbatim.
+    /// </para>
+    /// <para>
+    /// That also defeated the mitigation ADR-0015 recorded — "the frontend should re-fetch /me after
+    /// a rename" — since the re-fetch returns the same cached value. The fix has to be server-side.
+    /// </para>
+    /// <para>
+    /// Shaped exactly like <c>set-pin</c> above, which solved the identical problem for the other
+    /// mutable cached field: call the API out-of-band, forward its errors untouched, then write the
+    /// result back with <c>UpdateUserInfo</c>. The handle written back is the one the API RETURNED,
+    /// never the one the caller sent — the server normalises, and echoing the request would cache a
+    /// value the database may not hold.
+    /// </para>
+    /// </summary>
+    [HttpPatch("azuretag")]
+    // The proxied route this replaces carried the "lookup" policy (20/60s). The tighter "auth"
+    // policy (10/60s) is used here instead: it is what every other session-affecting BFF endpoint
+    // uses, and a rename is rarer than a lookup. Losing a rate limit in the move would have been a
+    // silent regression.
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    [ProducesResponseType(typeof(ApiResponse<UpdateAzureTagResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> RenameAzureTag([FromBody] UpdateAzureTagRequest request)
+    {
+        var session = GetCurrentSession();
+        if (session == null)
+        {
+            return Unauthorized(new ProblemDetails
+            {
+                Title = "Unauthorized",
+                Detail = "Session expired or invalid",
+                Status = 401
+            });
+        }
+
+        // Same reason as set-pin: this path bypasses the YARP transform, so re-mint here too.
+        var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
+        try
+        {
+            using var apiRequest = new HttpRequestMessage(HttpMethod.Patch, "/api/users/me/azuretag");
+            apiRequest.Content = JsonContent.Create(request);
+            apiRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer", accessToken!);
+
+            var response = await _httpClient.SendAsync(apiRequest);
+            var content = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // 409 "taken" and 400 validation both ride through untouched (ADR-0015 keeps the
+                // rename's 409 specific, unlike registration's neutral one).
+                return ForwardUpstreamError(response, content);
+            }
+
+            var renamed = JsonSerializer.Deserialize<ApiResponse<UpdateAzureTagResponse>>(
+                content, JsonOptions)?.Data?.AzureTag;
+
+            if (!string.IsNullOrEmpty(renamed))
+            {
+                /*
+                  NOT serialised per session, and that is a narrow accepted race rather than an
+                  oversight. Two renames in flight on the SAME session can commit upstream in one
+                  order and have their responses land in the other, leaving the cache holding the
+                  earlier handle while the database holds the later one — the same staleness this
+                  endpoint exists to remove, reached by a different door.
+
+                  Not fixed here because every fix is disproportionate to it: a per-session lock
+                  inside a singleton session service to guard a display string, or an API-issued
+                  revision token, which is a contract change. The reachable path is a deliberate
+                  double-submit — the dialog disables on submit — and the blast radius is the value
+                  ADR-0015 already classifies as informational, with the database as truth. Recorded
+                  in ADR-0015 as the residual that replaces the one this closes, so it is written
+                  down rather than discovered again.
+                */
+                _sessionService.UpdateUserInfo(session.SessionId, userInfo => userInfo.AzureTag = renamed);
+            }
+            else
+            {
+                // A 2xx whose body we could not read leaves the cache stale rather than wrong. Say
+                // so loudly: silently serving the old handle is the bug this endpoint exists to fix.
+                _logger.LogWarning(
+                    "Rename succeeded upstream but the new handle could not be read from the response; "
+                    + "the cached handle for {UserId} stays stale until re-login", session.UserId);
+            }
+
+            return Content(content, "application/json");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Failed to rename AzureTag with backend API");
             return Problem(
                 title: "Service Unavailable",
                 detail: "Service temporarily unavailable",

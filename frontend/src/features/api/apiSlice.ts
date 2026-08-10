@@ -190,11 +190,22 @@ export const apiSlice = createApi({
 
     // ========== USER (self) ==========
 
-    // Rename the caller's own public AzureTag handle (ADR-0015) — a payment handle, not identity.
-    // Level-1 (no step-up). On success the handle changes everywhere, so invalidate Session: the
-    // getMe probe refetches and the auth slice picks up the new tag (same pattern as setPin).
+    /*
+      Rename the caller's own public AzureTag handle (ADR-0015) — a payment handle, not identity.
+      Level-1 (no step-up).
+
+      ON /bff, NOT THE PROXIED /api ROUTE, and the comment here used to be wrong about why. It said
+      the Session invalidation meant "the getMe probe refetches and the auth slice picks up the new
+      tag (same pattern as setPin)". Measured on the running stack: it did not. `/bff/auth/me` serves
+      the BFF's CACHED session, so the refetch returned the old handle for the life of the session —
+      and it was never the same pattern as setPin, because setPin is BFF-owned and writes the cache
+      back while this was a plain proxied PATCH that ran no BFF code at all.
+
+      The invalidation below is still right and still needed; it just needed an endpoint that makes
+      the refetch tell the truth.
+    */
     renameAzureTag: builder.mutation<UpdateAzureTagResponse, UpdateAzureTagRequest>({
-      query: (body) => ({ url: '/api/users/me/azuretag', method: 'PATCH', body }),
+      query: (body) => ({ url: '/bff/auth/azuretag', method: 'PATCH', body }),
       transformResponse: (response: Schemas['ApiResponseOfUpdateAzureTagResponse']) =>
         unwrap(response, devOnly(updateAzureTagResponseSchema)),
       invalidatesTags: (_result, error) => (error ? [] : ['Session']),

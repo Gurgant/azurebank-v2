@@ -49,11 +49,34 @@ already-issued tokens.
 
 ## Residuals (accepted, documented)
 
-- **Stale handle in the current token/session after a rename.** The bearer JWT carries
-  `azure_tag` as a claim and the BFF session caches the handle, so both keep the *old* handle
-  until they refresh on next login. This is not a security issue — the database is the source
-  of truth and `azure_tag` is informational — but the frontend should re-fetch `/me` after a
-  rename. Propagating a rename into the live BFF session is a follow-up.
+- **Stale handle in the current token after a rename — STILL OPEN, and harmless.** The bearer JWT
+  carries `azure_tag` as a claim, so the token keeps the *old* handle until it is re-minted. Nothing
+  reads that claim for a decision: the database is the source of truth and `azure_tag` is
+  informational.
+
+- **Stale handle in the live BFF session — CLOSED (2026-08-10), and it was not harmless.** This
+  clause used to be joined to the one above and carried the remedy *"the frontend should re-fetch
+  `/me` after a rename"*. Measured on the running stack, that remedy could not work:
+  `GET /bff/auth/me` serves the cached session verbatim, so the re-fetch returned the OLD handle for
+  the life of the session while the database held the new one. The frontend even claimed it worked
+  — `apiSlice.ts` said the refetch "picks up the new tag (same pattern as setPin)" — which was false
+  twice over, since set-pin is BFF-owned and writes the cache back whereas the rename was a plain
+  proxied PATCH that ran no BFF code at all.
+
+  The follow-up this record named is now done: the rename is a BFF-owned `PATCH /bff/auth/azuretag`
+  shaped exactly like `set-pin`, which calls the API, forwards its errors untouched, and writes the
+  handle the API RETURNED into the session. The proxied `/api/users/me/azuretag` still exists and is
+  still correct for a direct API caller; what changed is that the app no longer reaches the handle
+  through a door that cannot update the cache.
+
+- **Concurrent renames on one session can cache the earlier handle — NEW, narrow, accepted.**
+  Closing the residual above introduced it: two renames in flight on the same session may commit
+  upstream in one order and have their responses land in the other, so the cache keeps the earlier
+  handle while the database holds the later one. Not fixed, because the remedies are out of
+  proportion — a per-session lock inside a singleton session service, or an API-issued revision
+  token, which is a contract change — while reaching it needs a deliberate double-submit (the
+  dialog disables on submit) and the value at stake is the informational handle, with the database
+  still the source of truth.
 - **"Taken" is revealed on rename** (a specific `409`), unlike registration's neutral response.
   This is fine and deliberate: the exact-match lookup (ADR-0014) already confirms handle
   existence to a signed-in user, and the endpoint is rate-limited.
@@ -72,7 +95,7 @@ already-issued tokens.
 **Positive** — the login credential and the public handle are cleanly separated; the handle is
 freely renameable with a trivial column update; the user Id is now an explicit UUIDv7.
 
-**Negative** — a one-time data migration; and the documented token/session staleness window
+**Negative** — a one-time data migration; and the documented token-claim staleness window
 after a rename.
 
 ## References

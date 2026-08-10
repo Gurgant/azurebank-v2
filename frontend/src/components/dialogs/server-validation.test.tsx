@@ -158,7 +158,7 @@ describe('the account rules the mock did not enforce', () => {
   it('rejects a handle the pattern refuses, before the taken-handle conflict', async () => {
     // `[AzureTagQuery]` is model validation, so it runs ahead of the controller — a malformed
     // handle is a 400 even if it would also have collided.
-    const res = await fetch('/api/users/me/azuretag', {
+    const res = await fetch('/bff/auth/azuretag', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ azureTag: '9nope' }),
@@ -172,7 +172,8 @@ describe('the account rules the mock did not enforce', () => {
       previously demanded the camelCase key from the FluentValidation envelope, which is the one
       shape the endpoint cannot produce.
 
-      Measured 2026-08-04: PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
+      Measured 2026-08-04 on the API route, which the BFF endpoint now forwards to unchanged:
+      PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
         -> {"title":"One or more validation errors occurred.",
             "errors":{"AzureTag":["AzureTag must start with a letter…"]}}
     */
@@ -212,7 +213,7 @@ describe('a body that cannot be read at all', () => {
     ['rename account', 'PATCH', `/api/accounts/${MAIN_ACCOUNT_ID}`, {}],
     ['deposit', 'POST', '/api/transactions/deposit', KEY],
     ['withdraw', 'POST', '/api/transactions/withdraw', KEY],
-    ['rename azure tag', 'PATCH', '/api/users/me/azuretag', {}],
+    ['rename azure tag', 'PATCH', '/bff/auth/azuretag', {}],
     ['transfer', 'POST', '/api/transfers', KEY],
     ['internal transfer', 'POST', '/api/transfers/internal', KEY],
     ['verify pin', 'POST', '/bff/auth/verify-pin', {}],

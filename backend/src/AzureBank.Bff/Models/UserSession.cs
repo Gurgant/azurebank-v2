@@ -82,6 +82,12 @@ public class UserSessionInfo
     public required string Email { get; init; }
     public required string FirstName { get; init; }
     public required string LastName { get; init; }
-    public required string AzureTag { get; init; }
+    /// <summary>
+    /// Settable, like <see cref="HasPin"/> and for the same reason: it is the only other cached
+    /// field a signed-in user can change mid-session (ADR-0015 rename), so the BFF has to be able
+    /// to write it back. Everything else here — Id, Email, FirstName, LastName — is immutable for
+    /// the life of the session, and stays init-only to say so.
+    /// </summary>
+    public required string AzureTag { get; set; }
     public bool HasPin { get; set; }
 }
