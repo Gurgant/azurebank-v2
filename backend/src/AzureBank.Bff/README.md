@@ -168,10 +168,11 @@ AzureBank.Bff/
 | `/bff/auth/login` | POST | Login, create session, return cookie | No |
 | `/bff/auth/register` | POST | Register user, create session | No |
 | `/bff/auth/logout` | POST | Destroy session, clear cookie | Yes |
-| `/bff/auth/me` | GET | Get user info with session details | Yes |
+| `/bff/auth/me` | GET | User info (read through to the API, cache as fallback — ADR-0039) + session details | Yes |
 | `/bff/auth/session-status` | GET | Check if authenticated | No |
 | `/bff/auth/set-pin` | POST | Set/update PIN | Yes |
 | `/bff/auth/verify-pin` | POST | Verify PIN, upgrade to AuthLevel 2 | Yes |
+| `/bff/auth/azuretag` | PATCH | Rename the public handle, writing it back to the session | Yes |
 
 ### Proxied Routes
 

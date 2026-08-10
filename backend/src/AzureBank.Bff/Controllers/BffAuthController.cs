@@ -314,11 +314,27 @@ public class BffAuthController : ControllerBase
 
     /// <summary>
     /// Get current user - returns user info and session metadata.
+    ///
+    /// <para>
+    /// Reads THROUGH to the API for the user block rather than serving the cached session, because
+    /// the cache demonstrably outlives the truth. PR #100 closed the door the app itself walks
+    /// through; measured on the running stack immediately afterwards, a second one was still open
+    /// and needed no race at all — <c>PATCH /api/users/me/azuretag</c> with nothing but a session
+    /// cookie (the YARP transform supplies the token) returned 200, the database moved to
+    /// <c>admin_probe1</c>, and this endpoint kept answering <c>admin</c>, then answered it again on
+    /// re-fetch. One request, deterministic, and permanent for the life of the session.
+    /// </para>
+    /// <para>
+    /// So the cache is demoted to a FALLBACK: the API is asked every time, and the cached block is
+    /// served only when that read cannot be completed. Failing the request instead would be worse
+    /// than a stale name — <c>authSlice</c> treats a rejected <c>getMe</c> as signed-out, so a
+    /// backend blip would evict every logged-in user.
+    /// </para>
     /// </summary>
     [HttpGet("me")]
     [ProducesResponseType(typeof(ApiResponse<BffMeResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    public IActionResult GetCurrentUser()
+    public async Task<IActionResult> GetCurrentUser()
     {
         var session = GetCurrentSession();
         if (session == null)
@@ -337,7 +353,7 @@ public class BffAuthController : ControllerBase
         {
             Data = new BffMeResponse
             {
-                User = session.UserInfo,
+                User = await FreshUserInfoOrCachedAsync(session),
                 Session = new BffSessionInfo
                 {
                     AuthLevel = _sessionService.GetAuthLevel(session.SessionId),
@@ -352,6 +368,85 @@ public class BffAuthController : ControllerBase
                 }
             }
         });
+    }
+
+    /// <summary>
+    /// The user block for <c>/me</c>: the API's answer when it can be had, the cached one otherwise.
+    ///
+    /// <para>
+    /// Every failure lands on the cache deliberately. This endpoint is what the SPA boots against
+    /// and <c>authSlice</c> reads a rejected <c>getMe</c> as "not signed in", so surfacing a 502 or
+    /// a 401 from the READ would sign out every user for the length of a backend hiccup — strictly
+    /// worse than briefly showing a name that is one rename out of date.
+    /// </para>
+    /// <para>
+    /// <c>HasPin</c> is carried over rather than read: the API's <c>/api/auth/me</c> returns
+    /// <c>UserResponse</c>, which has no such field (measured — <c>{"userId","azureTag","email",
+    /// "firstName","lastName"}</c>), so rebuilding the block from it alone would silently flip the
+    /// flag to false and re-prompt a user who already set a PIN. It is BFF-owned state and stays so.
+    /// </para>
+    /// <para>
+    /// The fresh handle is written back so the fallback keeps improving instead of decaying to the
+    /// login-time value. That write is also what makes the concurrent-rename residual ADR-0015
+    /// records self-healing rather than permanent: whichever way two renames interleave, the next
+    /// successful read replaces the cached loser with what the database actually holds.
+    /// </para>
+    /// </summary>
+    private async Task<UserSessionInfo> FreshUserInfoOrCachedAsync(UserSession session)
+    {
+        var cached = session.UserInfo;
+
+        try
+        {
+            // Same re-mint as every other out-of-band call here: this path bypasses the YARP
+            // transform, so nothing else would attach a token.
+            var token = await _tokenRefresher.GetFreshAccessTokenAsync(
+                session.SessionId, HttpContext.RequestAborted);
+            if (string.IsNullOrEmpty(token))
+            {
+                return cached;
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+            request.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+            using var response = await _httpClient.SendAsync(request, HttpContext.RequestAborted);
+            if (!response.IsSuccessStatusCode)
+            {
+                return cached;
+            }
+
+            var content = await response.Content.ReadAsStringAsync(HttpContext.RequestAborted);
+            var fresh = JsonSerializer.Deserialize<ApiResponse<UserResponse>>(content, JsonOptions)?.Data;
+            if (fresh is null || string.IsNullOrEmpty(fresh.AzureTag))
+            {
+                return cached;
+            }
+
+            if (fresh.AzureTag != cached.AzureTag)
+            {
+                _sessionService.UpdateUserInfo(
+                    session.SessionId, userInfo => userInfo.AzureTag = fresh.AzureTag);
+            }
+
+            return new UserSessionInfo
+            {
+                Id = fresh.UserId,
+                Email = fresh.Email,
+                FirstName = fresh.FirstName,
+                LastName = fresh.LastName,
+                AzureTag = fresh.AzureTag,
+                HasPin = cached.HasPin
+            };
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            // Debug, not Warning: an unreachable API already logs loudly elsewhere, and /me runs on
+            // every app boot — logging this at Warning would turn one outage into a flooded log.
+            _logger.LogDebug(ex, "Could not read user info from the API; serving the cached block");
+            return cached;
+        }
     }
 
     /// <summary>
@@ -699,19 +794,24 @@ public class BffAuthController : ControllerBase
             if (!string.IsNullOrEmpty(renamed))
             {
                 /*
-                  NOT serialised per session, and that is a narrow accepted race rather than an
-                  oversight. Two renames in flight on the SAME session can commit upstream in one
-                  order and have their responses land in the other, leaving the cache holding the
-                  earlier handle while the database holds the later one — the same staleness this
-                  endpoint exists to remove, reached by a different door.
+                  Still not serialised per session, and two renames in flight can still commit
+                  upstream in one order and land their responses in the other, leaving this write
+                  holding the earlier handle. What changed is that it no longer MATTERS for long:
+                  /me reads through to the API and overwrites whatever lost the race, so the window
+                  is one read wide instead of the whole session.
 
-                  Not fixed here because every fix is disproportionate to it: a per-session lock
-                  inside a singleton session service to guard a display string, or an API-issued
-                  revision token, which is a contract change. The reachable path is a deliberate
-                  double-submit — the dialog disables on submit — and the blast radius is the value
-                  ADR-0015 already classifies as informational, with the database as truth. Recorded
-                  in ADR-0015 as the residual that replaces the one this closes, so it is written
-                  down rather than discovered again.
+                  This write is kept anyway, because it is what keeps /me's fallback worth having.
+                  Delete it and a rename followed by an unreachable API serves the pre-rename handle.
+
+                  An earlier version of this comment rejected "a per-session lock inside a singleton
+                  session service" as disproportionate. Both halves were wrong and are worth naming,
+                  since the reasoning outlived the reasoner: that placement fixes NOTHING — the race
+                  spans SendAsync above and this line, while UpdateUserInfo mutates the stored
+                  reference (InMemoryTokenStore hands back the live object) so a lock inside it would
+                  guard a single reference assignment that is already atomic. And "disproportionate"
+                  was contradicted sixty lines away: TokenRefresher already ships the per-session
+                  single-flight gate, which is precisely why Program.cs registers it as a singleton.
+                  The lock was rejected for bad reasons; it is now unnecessary for a real one.
                 */
                 _sessionService.UpdateUserInfo(session.SessionId, userInfo => userInfo.AzureTag = renamed);
             }

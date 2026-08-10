@@ -61,7 +61,11 @@ public class UserSession
     public DateTime? PinVerifiedAt { get; set; }
 
     /// <summary>
-    /// Cached user information to avoid API calls on /bff/auth/me.
+    /// Last known user information, served by <c>/bff/auth/me</c> only when the API cannot be
+    /// reached (ADR-0039). This used to say the cache existed "to avoid API calls on
+    /// /bff/auth/me", which stopped being true the moment that endpoint started reading through —
+    /// and while it was true it let a rename made through the proxy go unnoticed for a whole
+    /// session.
     /// </summary>
     public required UserSessionInfo UserInfo { get; init; }
 
