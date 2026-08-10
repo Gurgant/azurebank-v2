@@ -16,7 +16,7 @@ namespace AzureBank.Tests.Fixtures;
 /// Custom WebApplicationFactory that supports both in-memory and SQL Server testing.
 ///
 /// Default: Uses in-memory database for fast unit-style integration tests.
-/// With Testcontainers: Call SetConnectionString() to use real SQL Server.
+/// For a real SQL Server: call SetConnectionString() with the value of AZUREBANK_TEST_SQLSERVER.
 ///
 /// Usage (in-memory):
 ///   public class MyTests : IClassFixture&lt;CustomWebApplicationFactory&gt;
@@ -58,7 +58,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
     /// <summary>
     /// Sets the connection string for real SQL Server testing.
-    /// Must be called before CreateClient() if using Testcontainers.
+    /// Call it before CreateClient() so the host builds against the real server.
     /// </summary>
     public void SetConnectionString(string connectionString)
     {
@@ -122,7 +122,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             if (!string.IsNullOrEmpty(_connectionString))
             {
-                // Use real SQL Server from Testcontainers
+                // Use the real SQL Server named by AZUREBANK_TEST_SQLSERVER
                 services.AddDbContext<AzureBankDbContext>(options =>
                 {
                     options.UseSqlServer(_connectionString, sql =>

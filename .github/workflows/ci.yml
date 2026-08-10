@@ -127,6 +127,24 @@ jobs:
           --filter "Category=SqlServer"
           --logger "trx;LogFileName=sql-test-results.trx"
 
+      # A [SqlServerFact] SKIPS when AZUREBANK_TEST_SQLSERVER is missing or unusable, and a run of
+      # nothing but skips still EXITS 0 — so the step above goes green whether it proved anything or
+      # not. That is the whole failure mode this job exists to prevent, so assert the count rather
+      # than the colour: if the service container or the connection string ever breaks, this fails
+      # loudly instead of quietly certifying an empty run.
+      - name: Assert the proofs actually ran
+        working-directory: backend
+        run: |
+          trx=$(find . -name 'sql-test-results.trx' | head -1)
+          if [ -z "$trx" ]; then echo "::error::no trx produced by the SQL proofs"; exit 1; fi
+          executed=$(grep -o 'executed="[0-9]*"' "$trx" | head -1 | grep -o '[0-9]*')
+          passed=$(grep -o ' passed="[0-9]*"' "$trx" | head -1 | grep -o '[0-9]*')
+          echo "SQL proofs: executed=$executed passed=$passed"
+          if [ "${executed:-0}" -eq 0 ] || [ "$executed" != "$passed" ]; then
+            echo "::error::SQL proofs did not run (executed=$executed passed=$passed) — the suite skipped instead of proving anything"
+            exit 1
+          fi
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()

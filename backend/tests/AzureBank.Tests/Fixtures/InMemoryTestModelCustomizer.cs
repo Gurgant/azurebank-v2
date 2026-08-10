@@ -16,7 +16,7 @@ namespace AzureBank.Tests.Fixtures;
 ///
 /// Applied only on the fixture's in-memory path via
 /// options.ReplaceService&lt;IModelCustomizer, InMemoryTestModelCustomizer&gt;();
-/// the Testcontainers/SQL Server path keeps full fidelity.
+/// the real SQL Server path ([SqlServerFact]) keeps full fidelity.
 /// </summary>
 public sealed class InMemoryTestModelCustomizer : ModelCustomizer
 {

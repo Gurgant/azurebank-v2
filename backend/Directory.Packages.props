@@ -106,11 +106,6 @@
     <PackageVersion Include="FluentAssertions" Version="8.8.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.1" />
   </ItemGroup>
-  <ItemGroup Label="Testing - Testcontainers">
-    <!-- Real database testing with Docker containers -->
-    <PackageVersion Include="Testcontainers" Version="4.3.0" />
-    <PackageVersion Include="Testcontainers.MsSql" Version="4.3.0" />
-  </ItemGroup>
   <ItemGroup Label="Testing - Architecture">
     <!-- Architecture/dependency rule testing (Enhanced Edition - actively maintained fork) -->
     <!-- Original NetArchTest.Rules last updated 2021, eNhancedEdition updated June 2025 -->

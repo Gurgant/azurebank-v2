@@ -4,13 +4,13 @@
 
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
 [![xUnit](https://img.shields.io/badge/xUnit-2.9.3-512BD4?style=flat-square)](https://xunit.net)
-[![Testcontainers](https://img.shields.io/badge/Testcontainers-4.3.0-2496ED?style=flat-square&logo=docker)](https://dotnet.testcontainers.org/)
+[![SQL Server](https://img.shields.io/badge/SQL_Server-LocalDB-CC2927?style=flat-square&logo=microsoftsqlserver)](https://learn.microsoft.com/en-us/sql/database-engine/configure-windows/sql-server-express-localdb)
 
 ---
 
 ## Overview
 
-`AzureBank.Tests` contains all automated tests for the solution including unit tests, integration tests, and architecture tests. The project uses xUnit as the test framework with Testcontainers for real database testing.
+`AzureBank.Tests` contains all automated tests for the solution including unit tests, integration tests, and architecture tests. The project uses xUnit. Tests that need a real database are gated on the `AZUREBANK_TEST_SQLSERVER` environment variable and connect to whatever server it names — LocalDB locally, a service container in CI. There is no Testcontainers harness: the packages were referenced but no code ever used them, and the badge and fixture this file used to advertise did not exist.
 
 **Parent Solution**: [AzureBank Backend](../../README.md)
 
@@ -38,7 +38,7 @@ flowchart TB
     end
 
     Unit -->|"Fast, Isolated"| CI["CI Pipeline"]
-    Integration -->|"Testcontainers"| CI
+    Integration -->|"AZUREBANK_TEST_SQLSERVER"| CI
     Architecture -->|"NetArchTest"| CI
 ```
 
@@ -84,7 +84,7 @@ AzureBank.Tests/
 │
 ├── 📁 Fixtures/                       # Test infrastructure
 │   ├── CustomWebApplicationFactory.cs
-│   └── SqlServerContainerFixture.cs
+│   └── SqlServerFactAttribute.cs
 │
 └── 📄 GlobalUsings.cs                 # Global using statements
 ```
@@ -109,14 +109,14 @@ dotnet test --logger "trx;LogFileName=results.trx"
 ### Filtered Tests
 
 ```bash
-# Run unit tests only
-dotnet test --filter "Category=Unit"
+# The ONLY Category trait this suite defines. Everything else is ungrouped, so
+# "Category=Unit", "Category=Integration" and "Category=Architecture" — which this
+# file used to recommend — match ZERO tests and still exit 0. A run that executes
+# nothing is not a run that passed.
+dotnet test --filter "Category=SqlServer"
 
-# Run integration tests only
-dotnet test --filter "Category=Integration"
-
-# Run architecture tests only
-dotnet test --filter "Category=Architecture"
+# Everything EXCEPT the SQL-gated ones
+dotnet test --filter "Category!=SqlServer"
 
 # Run specific test class
 dotnet test --filter "FullyQualifiedName~AuthServiceTests"
@@ -249,12 +249,9 @@ Creates an isolated API instance for testing:
 ```csharp
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
-    private readonly SqlServerContainerFixture _dbFixture;
-
-    public CustomWebApplicationFactory(SqlServerContainerFixture dbFixture)
-    {
-        _dbFixture = dbFixture;
-    }
+    // In-memory by default. SetConnectionString() swaps in a real SQL Server for the
+    // [SqlServerFact] tests; there is no container fixture to inject.
+    public void SetConnectionString(string connectionString) { /* … */ }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -266,60 +263,52 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             if (descriptor != null)
                 services.Remove(descriptor);
 
-            // Add test DbContext with Testcontainers connection
+            // Point it at the server named by AZUREBANK_TEST_SQLSERVER
             services.AddDbContext<AzureBankDbContext>(options =>
             {
-                options.UseSqlServer(_dbFixture.ConnectionString);
+                options.UseSqlServer(_connectionString);
             });
         });
     }
 }
 ```
 
-#### SqlServerContainerFixture
+#### SqlServerFactAttribute
 
-Spins up a real SQL Server container for tests:
+There is no container fixture. A test that needs a real database is marked `[SqlServerFact]`, which
+SKIPS unless `AZUREBANK_TEST_SQLSERVER` names a server — LocalDB locally, a service container in CI:
 
 ```csharp
-public class SqlServerContainerFixture : IAsyncLifetime
+[Trait("Category", "SqlServer")]
+public class SomethingSqlServerTests
 {
-    private readonly MsSqlContainer _container = new MsSqlBuilder()
-        .WithImage("mcr.microsoft.com/mssql/server:2022-latest")
-        .WithPassword("YourStrong@Passw0rd")
-        .Build();
-
-    public string ConnectionString => _container.GetConnectionString();
-
-    public async Task InitializeAsync()
+    [SqlServerFact]
+    public async Task TheClaimThisPins()
     {
-        await _container.StartAsync();
-
-        // Apply migrations
-        using var context = CreateDbContext();
-        await context.Database.MigrateAsync();
-    }
-
-    public async Task DisposeAsync()
-    {
-        await _container.DisposeAsync();
+        using var factory = new CustomWebApplicationFactory();
+        factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        _ = factory.CreateClient(); // builds the host, which runs the migration
+        // …
     }
 }
 ```
+
+Run them with the variable set, and check the count: **36 pass and 0 skip**. Without it the summary
+is honest about what happened — `Skipped! - Failed: 0, Passed: 0, Skipped: 36` — but the **exit code
+is still 0**, so any gate keyed on exit status cannot tell a suite that proved something from one
+that ran nothing. Read the number, not the status.
 
 ### Endpoint Tests
 
 Test API endpoints end-to-end:
 
 ```csharp
-public class AuthEndpointTests : IClassFixture<SqlServerContainerFixture>
+public class AuthEndpointTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly HttpClient _client;
-    private readonly SqlServerContainerFixture _fixture;
 
-    public AuthEndpointTests(SqlServerContainerFixture fixture)
+    public AuthEndpointTests(CustomWebApplicationFactory factory)
     {
-        _fixture = fixture;
-        var factory = new CustomWebApplicationFactory(fixture);
         _client = factory.CreateClient();
     }
 

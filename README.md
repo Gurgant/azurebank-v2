@@ -108,17 +108,25 @@ and user-controlled values pass a central sanitizer whose contract is pinned by 
 
 ## Status
 
-**Backend** — builds with zero warnings. 618 tests passing, plus 33 held behind the SQL Server flag
-that run in CI against a real database. Both auth modes verified live. Monetary operations are
-idempotent and concurrency-safe under 24 parallel duplicates.
+**Backend** — builds with zero warnings. 674 tests passing, plus 36 held behind the SQL Server flag
+that run in CI against a real database — 710 in total once `AZUREBANK_TEST_SQLSERVER` is set, with
+nothing skipped. Both auth modes verified live. Monetary operations are idempotent and
+concurrency-safe under 24 parallel duplicates.
 
 **Frontend** — fully wired to the real API through the BFF: authentication, accounts, transaction
 history, the four money flows with idempotency keys and step-up PIN, and the dashboard on real
-aggregates. 188 tests. Verified end-to-end against the running stack, not only against mocks.
+aggregates. 586 tests across 57 files, and a test that writes to `console.error` fails. Verified
+end-to-end against the running stack, not only against mocks.
 
-**Known gaps**, tracked rather than hidden: no end-to-end browser test suite yet; the accessibility
-sweep is a dedicated phase not yet run; one dialog still lacks Tab containment; the production CSP
-is designed but unverifiable until the BFF serves the built SPA. A UI/UX overhaul is in progress.
+**Known gaps**, tracked rather than hidden: the accessibility sweep is a dedicated phase not yet
+run; `ConfirmDialog` — the confirm step on delete and on both transfer flows — restores focus and
+closes on Escape but does not contain Tab, so focus can leave it; the production CSP is designed but
+unverifiable until the BFF serves the built SPA, which it does not yet do. A UI/UX overhaul is in
+progress.
+
+The end-to-end browser suite that used to be listed here **exists**: Playwright drives a real
+Chromium against the real BFF, API and SQL Server, and CI runs it in the same job as the contract
+and integration layers.
 
 ## How this repository is built
 
