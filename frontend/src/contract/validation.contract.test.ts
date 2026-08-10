@@ -255,11 +255,22 @@ describe('contract: validation envelopes', () => {
       model state answers before the action. The mock used the FluentValidation envelope with a
       camelCase key — the one shape this endpoint cannot produce.
 
-      Measured 2026-08-04: PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
+      Measured 2026-08-04 on the API route: PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
         -> {"title":"One or more validation errors occurred.",
             "errors":{"AzureTag":["AzureTag must start with a letter…"]}}
+
+      RE-MEASURED 2026-08-10 on the BFF route this now targets, because the app stopped calling the
+      proxied one — the rename moved to /bff/auth/azuretag so the BFF can write the renamed handle
+      into the cached session. The envelope is unchanged, and it had to be checked rather than
+      assumed: same shared DTO, same [AzureTagQuery] DataAnnotation, and the BFF wires no
+      FluentValidation, so model state answers before the action on both sides.
+
+        PATCH /bff/auth/azuretag {"azureTag":"Bad Tag!"}
+        -> 400 {"title":"One or more validation errors occurred.","status":400,
+                "errors":{"AzureTag":["AzureTag must start with a letter and contain only
+                                       lowercase letters, numbers, and underscores."]}}
     */
-    const { status, body } = await call('/api/users/me/azuretag', {
+    const { status, body } = await call('/bff/auth/azuretag', {
       method: 'PATCH',
       body: JSON.stringify({ azureTag: 'Bad Tag!' }),
     });

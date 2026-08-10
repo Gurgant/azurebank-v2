@@ -1751,14 +1751,26 @@ const lookupRecipient = api.get('/api/users/{azureTag}', ({ params, response }) 
 });
 
 /**
- * PATCH /api/users/me/azuretag — rename the caller's own public handle (ADR-0015). Mirrors the
- * service: normalize to lower-case, 409 AZURE_TAG_TAKEN when another user already holds it (our
- * seeded recipients stand in for "other users"), otherwise update the session and echo the new tag.
+ * PATCH /bff/auth/azuretag — rename the caller's own public handle (ADR-0015). Mirrors the service:
+ * normalize to lower-case, 409 AZURE_TAG_TAKEN when another user already holds it (our seeded
+ * recipients stand in for "other users"), otherwise update the session and echo the new tag.
+ *
+ * MOVED off the proxied `/api/users/me/azuretag`, and the reason is a drift this mock was on the
+ * RIGHT side of. `mockState.session.azureTag = tag` below has always propagated the rename to the
+ * session — the real BFF did not, because a proxied PATCH runs no BFF code and `/bff/auth/me` serves
+ * the cached session. So every unit test here was green against a mock that behaved BETTER than the
+ * product. The contract suite did not catch it either: its rename test pins the VALIDATION envelope,
+ * not the propagation.
+ *
+ * Untyped `http.patch` rather than the openapi-msw `api.patch`, because `/bff/*` is the BFF's own
+ * surface and has no OpenAPI document behind it (ADR-0023 names that the weakest boundary here). The
+ * type safety lost on this one route is the price of the route being on the side that owns the
+ * session.
  */
-const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, response }) => {
+const renameAzureTag = http.patch('*/bff/auth/azuretag', async ({ request }) => {
   const parsed = await readJsonBody(request);
   if (!parsed) {
-    return response.untyped(unreadableBodyProblem(await request.clone().text()));
+    return unreadableBodyProblem(await request.clone().text());
   }
   const body = parsed.body;
 
@@ -1788,29 +1800,49 @@ const renameAzureTag = api.patch('/api/users/me/azuretag', async ({ request, res
          "errors":{"AzureTag":["AzureTag must start with a letter and contain only lowercase
                                 letters, numbers, and underscores."]}}
     */
-    return response.untyped(
-      modelStateProblem({
-        AzureTag: [
-          'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.',
-        ],
-      }),
+    return modelStateProblem({
+      AzureTag: [
+        'AzureTag must start with a letter and contain only lowercase letters, numbers, and underscores.',
+      ],
+    });
+  }
+
+  /*
+    SESSION BEFORE CONFLICT, and the order is the security-relevant part.
+
+    Measured on the running BFF, anonymously:
+      valid tag                     -> 401
+      a tag that IS taken ("admin") -> 401   <- NOT 409
+      invalid tag                   -> 400   <- model validation still answers first
+
+    So production is validation -> session -> conflict. An earlier draft here checked the conflict
+    FIRST, which would have answered 409 for a taken handle and 401 for a free one — telling an
+    anonymous caller which handles exist. That is precisely the oracle ADR-0013 and ADR-0014 are
+    written to deny, rebuilt inside the mock that is supposed to model them.
+
+    The body is the BFF's own, copied off the wire rather than from the API's vocabulary:
+      {"title":"Unauthorized","status":401,"detail":"Session expired or invalid"}
+    No errorCode and no instance — BffAuthController.RenameAzureTag returns a bare ProblemDetails,
+    and the AUTH_TOKEN_MISSING used here before is the API's code for a different response.
+  */
+  if (!mockState.session) {
+    return HttpResponse.json(
+      { title: 'Unauthorized', status: 401, detail: 'Session expired or invalid' },
+      { status: 401, headers: { 'Content-Type': 'application/problem+json' } },
     );
   }
 
   if (mockState.recipients.some((r) => r.azureTag === tag)) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 409,
-        errorCode: 'AZURE_TAG_TAKEN',
-        detail: 'That handle is already taken.',
-      }),
-    );
+    return problem({
+      instance: pathOf(request),
+      status: 409,
+      errorCode: 'AZURE_TAG_TAKEN',
+      detail: 'That handle is already taken.',
+    });
   }
-  if (mockState.session) {
-    mockState.session.azureTag = tag;
-  }
-  return response(200).json({ data: { azureTag: tag }, message: 'AzureTag updated' });
+
+  mockState.session.azureTag = tag;
+  return HttpResponse.json({ data: { azureTag: tag }, message: 'AzureTag updated' });
 });
 
 /**

@@ -155,10 +155,35 @@ describe('the account rules the mock did not enforce', () => {
     expect((await res.json()).errors.Name).toEqual(['Account name is required.', LENGTH]);
   });
 
+  it('answers an anonymous rename 401 even when the handle IS taken', async () => {
+    /*
+      ORDER, and it is a security property rather than tidiness. The BFF checks the session BEFORE
+      it calls the API, so an anonymous caller gets 401 whether or not the handle exists — measured
+      on the running BFF: "admin" (taken) -> 401, a free handle -> 401, a malformed one -> 400.
+
+      A draft of the mock checked the conflict first and would have answered 409 for a taken handle
+      and 401 for a free one. That is a handle-existence oracle, rebuilt inside the mock whose job
+      is to model the ADRs (0013, 0014) written to deny exactly that.
+    */
+    mockState.session = null;
+
+    const res = await fetch('/bff/auth/azuretag', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      // `friend` is a seeded recipient, so it IS taken — a 409 here would be the leak.
+      body: JSON.stringify({ azureTag: 'friend' }),
+    });
+
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.detail).toBe('Session expired or invalid');
+    expect(body.errorCode).toBeUndefined();
+  });
+
   it('rejects a handle the pattern refuses, before the taken-handle conflict', async () => {
     // `[AzureTagQuery]` is model validation, so it runs ahead of the controller — a malformed
     // handle is a 400 even if it would also have collided.
-    const res = await fetch('/api/users/me/azuretag', {
+    const res = await fetch('/bff/auth/azuretag', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ azureTag: '9nope' }),
@@ -172,7 +197,8 @@ describe('the account rules the mock did not enforce', () => {
       previously demanded the camelCase key from the FluentValidation envelope, which is the one
       shape the endpoint cannot produce.
 
-      Measured 2026-08-04: PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
+      Measured 2026-08-04 on the API route, which the BFF endpoint now forwards to unchanged:
+      PATCH /api/users/me/azuretag {"azureTag":"Bad Tag!"}
         -> {"title":"One or more validation errors occurred.",
             "errors":{"AzureTag":["AzureTag must start with a letter…"]}}
     */
@@ -212,7 +238,7 @@ describe('a body that cannot be read at all', () => {
     ['rename account', 'PATCH', `/api/accounts/${MAIN_ACCOUNT_ID}`, {}],
     ['deposit', 'POST', '/api/transactions/deposit', KEY],
     ['withdraw', 'POST', '/api/transactions/withdraw', KEY],
-    ['rename azure tag', 'PATCH', '/api/users/me/azuretag', {}],
+    ['rename azure tag', 'PATCH', '/bff/auth/azuretag', {}],
     ['transfer', 'POST', '/api/transfers', KEY],
     ['internal transfer', 'POST', '/api/transfers/internal', KEY],
     ['verify pin', 'POST', '/bff/auth/verify-pin', {}],
