@@ -115,7 +115,7 @@ concurrency-safe under 24 parallel duplicates.
 
 **Frontend** — fully wired to the real API through the BFF: authentication, accounts, transaction
 history, the four money flows with idempotency keys and step-up PIN, and the dashboard on real
-aggregates. 594 tests across 58 files, and a test that writes to `console.error` fails. Verified
+aggregates. 596 tests across 58 files, and a test that writes to `console.error` fails. Verified
 end-to-end against the running stack, not only against mocks.
 
 **Known gaps**, tracked rather than hidden: the accessibility sweep is a dedicated phase not yet

@@ -21,7 +21,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 function renderOpen(props: Partial<Parameters<typeof ConfirmDialog>[0]> = {}) {
   const onClose = vi.fn();
   const onConfirm = vi.fn();
-  renderWithProviders(
+  const ui = (overrides: Partial<Parameters<typeof ConfirmDialog>[0]>) => (
     <>
       <button>outside before</button>
       <ConfirmDialog
@@ -33,11 +33,18 @@ function renderOpen(props: Partial<Parameters<typeof ConfirmDialog>[0]> = {}) {
         confirmText="Delete"
         variant="danger"
         {...props}
+        {...overrides}
       />
       <button>outside after</button>
-    </>,
+    </>
   );
-  return { onClose, onConfirm };
+  const { rerender } = renderWithProviders(ui({}));
+  return {
+    onClose,
+    onConfirm,
+    /** Re-render with a changed prop, e.g. to end a loading state mid-test. */
+    update: (overrides: Partial<Parameters<typeof ConfirmDialog>[0]>) => rerender(ui(overrides)),
+  };
 }
 
 const dialog = () => screen.getByRole('alertdialog');
@@ -104,6 +111,44 @@ describe('ConfirmDialog', () => {
 
     expect(screen.queryByText('outside after')).not.toHaveFocus();
     expect(screen.queryByText('outside before')).not.toHaveFocus();
+  });
+
+  /*
+    THE CONTAINER PATH WITH ENABLED CONTROLS, which is the branch a first/last-only trap gets wrong
+    and which nothing else here reaches.
+
+    Opening while `isLoading` puts focus on the dialog container, because every control is disabled
+    and there is nothing else to focus. When loading ends the controls come back — and focus is
+    still on the container, which is neither the first nor the last of them. Forward, the browser
+    would happen to do the right thing; BACKWARD it steps out of the subtree entirely, which is the
+    leak.
+
+    Mutation-checked, and the result says which of the two is load-bearing: deleting `|| onContainer`
+    from both branches leaves the other eight tests AND the forward one green — only the Shift+Tab
+    case turns red. That is the honest split. Forward, the browser reaches the first control on its
+    own, so that test documents intent rather than catching regressions; backward is the one where
+    removing the guard actually loses focus to the page behind, so it is the one holding the line.
+  */
+  it('sends Tab to the first control when focus sits on the container', async () => {
+    const user = userEvent.setup();
+    const { update } = renderOpen({ isLoading: true });
+    expect(dialog()).toHaveFocus();
+
+    update({ isLoading: false });
+    await user.tab();
+
+    expect(closeButton()).toHaveFocus();
+  });
+
+  it('sends Shift+Tab to the last control when focus sits on the container', async () => {
+    const user = userEvent.setup();
+    const { update } = renderOpen({ isLoading: true });
+    expect(dialog()).toHaveFocus();
+
+    update({ isLoading: false });
+    await user.tab({ shift: true });
+
+    expect(confirmButton()).toHaveFocus();
   });
 
   it('still closes on Escape', async () => {
