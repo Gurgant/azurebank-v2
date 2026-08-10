@@ -205,6 +205,24 @@ const useStyles = makeStyles({
 // COMPONENT
 // ============================================
 
+/**
+ * Focusable descendants, in tab order.
+ *
+ * `:not([disabled])` matters more here than it looks: `isLoading` disables the close, cancel and
+ * confirm buttons at once, so this legitimately returns an EMPTY list and both callers have to cope
+ * with that rather than index into it.
+ *
+ * Shared by the open-effect and the Tab trap on purpose — two copies of this selector would drift,
+ * and the failure mode of drift is a trap that cycles through a different set than the one focus
+ * actually visits.
+ */
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusableWithin(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+}
+
 export function ConfirmDialog({
   isOpen,
   onClose,
@@ -247,24 +265,58 @@ export function ConfirmDialog({
     };
   }, [isOpen]);
 
-  /*
-    NOT a focus trap, despite where this sits: it moves focus INTO the dialog on open and nothing
-    more. Tab is never intercepted, so focus walks out into the page behind. Escape and focus
-    RESTORE (above) do work.
-
-    Left as-is rather than quietly half-fixed — this is the "one dialog still lacks Tab containment"
-    the root README lists under known gaps, and it is reached from the delete confirmation and from
-    both transfer flows. The comment used to say "Focus trap", which is the part that had to go: a
-    label claiming a guarantee the code does not provide is how the gap stayed invisible.
-  */
+  // Move focus IN on open. The dialog element itself is the fallback: while `isLoading` every
+  // control is disabled, so there is nothing focusable inside and focus would otherwise stay on
+  // whatever is behind — which is also how Tab escaped, since a keydown outside this subtree never
+  // reaches the handler below.
   useEffect(() => {
     if (isOpen && dialogRef.current) {
-      const firstFocusable = dialogRef.current.querySelector<HTMLElement>(
-        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      );
-      firstFocusable?.focus();
+      (focusableWithin(dialogRef.current)[0] ?? dialogRef.current).focus();
     }
   }, [isOpen]);
+
+  /*
+    CONTAIN Tab, which is the half that was missing.
+
+    The element declares `role="alertdialog"` and `aria-modal="true"` — a promise that the rest of
+    the page is unreachable — and the effect above only ever moved focus in ONCE. Nothing watched
+    Tab, so focus walked straight out into the page behind, which for this dialog is the delete
+    confirmation or one of the two transfer confirmations: a money surface with live controls.
+
+    Every other dialog in the app is a Fluent `Dialog` and gets this from tabster. This one is
+    hand-rolled — deliberately, for the scrim and safe-area behaviour documented in the styles — so
+    it has to do the containment itself.
+
+    Three cases, and the third is the one a naive first/last implementation gets wrong:
+      - on the last element going forward, or the first going backward, wrap round;
+      - on the dialog container itself (tabIndex -1, so reachable only programmatically), send Tab
+        to whichever end the direction calls for, rather than letting the browser step OUT of the
+        subtree backwards;
+      - with NO focusable children at all — `isLoading` disables all three buttons at once — there
+        is nothing to cycle to, so simply refuse the keystroke and leave focus on the container.
+  */
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab' || !dialogRef.current) return;
+
+    const focusable = focusableWithin(dialogRef.current);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const onContainer = active === dialogRef.current;
+
+    if (event.shiftKey && (active === first || onContainer)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || onContainer)) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget && !isLoading) {
@@ -285,6 +337,9 @@ export function ConfirmDialog({
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby="confirm-dialog-message"
+        // -1, so it is focusable programmatically but never lands in the tab order itself.
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
       >
         {/* Header */}
         <div className={styles.header}>

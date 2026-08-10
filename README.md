@@ -115,14 +115,12 @@ concurrency-safe under 24 parallel duplicates.
 
 **Frontend** — fully wired to the real API through the BFF: authentication, accounts, transaction
 history, the four money flows with idempotency keys and step-up PIN, and the dashboard on real
-aggregates. 586 tests across 57 files, and a test that writes to `console.error` fails. Verified
+aggregates. 596 tests across 58 files, and a test that writes to `console.error` fails. Verified
 end-to-end against the running stack, not only against mocks.
 
 **Known gaps**, tracked rather than hidden: the accessibility sweep is a dedicated phase not yet
-run; `ConfirmDialog` — the confirm step on delete and on both transfer flows — restores focus and
-closes on Escape but does not contain Tab, so focus can leave it; the production CSP is designed but
-unverifiable until the BFF serves the built SPA, which it does not yet do. A UI/UX overhaul is in
-progress.
+run; the production CSP is designed but unverifiable until the BFF serves the built SPA, which it
+does not yet do. A UI/UX overhaul is in progress.
 
 The end-to-end browser suite that used to be listed here **exists**: Playwright drives a real
 Chromium against the real BFF, API and SQL Server, and CI runs it in the same job as the contract
