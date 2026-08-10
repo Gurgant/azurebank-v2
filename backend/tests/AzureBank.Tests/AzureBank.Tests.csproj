@@ -32,11 +32,6 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
   </ItemGroup>
 
-  <ItemGroup Label="Testcontainers">
-    <PackageReference Include="Testcontainers" />
-    <PackageReference Include="Testcontainers.MsSql" />
-  </ItemGroup>
-
   <ItemGroup Label="Architecture Testing">
     <!-- Architecture/dependency rule testing (Enhanced Edition - actively maintained fork) -->
     <PackageReference Include="NetArchTest.eNhancedEdition" />

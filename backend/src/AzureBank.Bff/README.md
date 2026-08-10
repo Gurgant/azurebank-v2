@@ -325,26 +325,31 @@ public void Apply(TransformBuilderContext context)
 
 ## Rate Limiting
 
-Fixed window rate limiting is configured at the gateway level:
+Three limiters, all keyed by client IP and all driven by the `RateLimiting` section of
+`appsettings.json` — no limit is hard-coded. A global fixed window catches everything; the two named
+policies are SLIDING windows, attached per route in the `ReverseProxy` config.
 
 ```csharp
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddFixedWindowLimiter("fixed", config =>
-    {
-        config.Window = TimeSpan.FromMinutes(1);
-        config.PermitLimit = 100;
-        config.QueueLimit = 0;
-        config.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-    });
+    // Global: every request, fixed window.
+    options.GlobalLimiter = /* fixed window, keyed by IP */;
+
+    // Named policies, attached by RateLimiterPolicy on the routes that need them.
+    options.AddPolicy(RateLimitPolicies.Auth, /* sliding window, keyed by IP */);
+    options.AddPolicy(RateLimitPolicies.Lookup, /* sliding window, keyed by IP */);
 });
 ```
 
-| Setting | Value | Description |
-|---------|-------|-------------|
-| Window | 1 minute | Time window |
-| Permit Limit | 100 | Max requests per window |
-| Queue Limit | 0 | No queuing (immediate reject) |
+| Limiter | Applies to | Permits | Window | Shape |
+|---------|-----------|---------|--------|-------|
+| Global | every request | 300 | 60 s | fixed |
+| `auth` | `/api/auth/login`, `/api/auth/register` | 10 | 60 s | sliding, 6 segments |
+| `lookup` | `/api/users/{**catch-all}` | 20 | 60 s | sliding, 6 segments |
+
+Rejections answer **429** with `Retry-After`; the sliding policies do not advertise a retry time of
+their own, so the global window is used as a conservative floor. Nothing queues — a request over the
+limit is refused immediately.
 
 ---
 
@@ -362,11 +367,35 @@ builder.Services.AddRateLimiter(options =>
   "Security": {
     "PinValidityMinutes": 5
   },
+  "RateLimiting": {
+    "GlobalPermitLimit": 300,
+    "GlobalWindowSeconds": 60,
+    "AuthPermitLimit": 10,
+    "AuthWindowSeconds": 60,
+    "AuthSegmentsPerWindow": 6,
+    "LookupPermitLimit": 20,
+    "LookupWindowSeconds": 60
+  },
   "BackendApi": {
     "BaseUrl": "https://localhost:7215"
   },
   "ReverseProxy": {
     "Routes": {
+      "api-auth-login-route": {
+        "ClusterId": "backend-api",
+        "Match": { "Path": "/api/auth/login" },
+        "RateLimiterPolicy": "auth"
+      },
+      "api-auth-register-route": {
+        "ClusterId": "backend-api",
+        "Match": { "Path": "/api/auth/register" },
+        "RateLimiterPolicy": "auth"
+      },
+      "api-users-route": {
+        "ClusterId": "backend-api",
+        "Match": { "Path": "/api/users/{**catch-all}" },
+        "RateLimiterPolicy": "lookup"
+      },
       "api-route": {
         "ClusterId": "backend-api",
         "Match": { "Path": "/api/{**catch-all}" }

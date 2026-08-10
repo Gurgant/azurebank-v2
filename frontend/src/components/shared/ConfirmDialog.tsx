@@ -247,7 +247,16 @@ export function ConfirmDialog({
     };
   }, [isOpen]);
 
-  // Focus trap
+  /*
+    NOT a focus trap, despite where this sits: it moves focus INTO the dialog on open and nothing
+    more. Tab is never intercepted, so focus walks out into the page behind. Escape and focus
+    RESTORE (above) do work.
+
+    Left as-is rather than quietly half-fixed — this is the "one dialog still lacks Tab containment"
+    the root README lists under known gaps, and it is reached from the delete confirmation and from
+    both transfer flows. The comment used to say "Focus trap", which is the part that had to go: a
+    label claiming a guarantee the code does not provide is how the gap stayed invisible.
+  */
   useEffect(() => {
     if (isOpen && dialogRef.current) {
       const firstFocusable = dialogRef.current.querySelector<HTMLElement>(
