@@ -6,9 +6,10 @@ record used to justify leaving it.
 
 ## Context
 
-The BFF keeps a `UserSessionInfo` block in the session and `GET /bff/auth/me` returned it verbatim.
-The justification is written on the field itself — *"Cached user information to avoid API calls on
-/bff/auth/me"* — and it held as long as nothing in that block could change mid-session.
+Before this record, the BFF kept a `UserSessionInfo` block in the session and `GET /bff/auth/me`
+returned it verbatim. The justification was written on the field itself — *"Cached user information
+to avoid API calls on /bff/auth/me"*, a comment this change replaces — and it held for as long as
+nothing in that block could change mid-session.
 
 One field can. `AzureTag` is a renameable public handle (ADR-0015), and every fix so far has closed
 one route to changing it while leaving another open.
@@ -59,10 +60,13 @@ is what keeps the fallback fresh for the path users actually take.
 
 ## What this does to the concurrent-rename residual
 
-It stops mattering, without being fixed. Two renames can still land out of order and leave the cache
-holding the loser — but the only reader of that value now asks the API before serving it, so what
-reaches the client is what the database holds. The healing comes from the READ, not from any
-write-back. **Permanent staleness becomes one read wide.**
+It stops mattering, without being fixed — and the distinction is worth keeping sharp, because an
+earlier draft of this section blurred it. Two renames can still land out of order and leave the
+cache holding the loser, and **nothing corrects that cache**; the read writes nothing, so the losing
+value sits there until some later rename overwrites it. What changed is that the value is no longer
+*served*: the only reader asks the API first, so what reaches the client is what the database holds.
+The staleness is not repaired, it is bypassed — and it resurfaces only in the documented degrade,
+when the API is unreachable.
 
 ## Two things ADR-0015 said, that were wrong
 

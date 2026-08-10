@@ -844,12 +844,17 @@ public class BffAuthController : ControllerBase
                 /*
                   Still not serialised per session, and two renames in flight can still commit
                   upstream in one order and land their responses in the other, leaving this write
-                  holding the earlier handle. What changed is that it no longer MATTERS for long:
-                  /me reads through to the API and overwrites whatever lost the race, so the window
-                  is one read wide instead of the whole session.
+                  holding the earlier handle. What changed is who reads it: /me asks the API, so the
+                  handle a CLIENT sees is the database's regardless of how these two interleaved.
 
-                  This write is kept anyway, because it is what keeps /me's fallback worth having.
-                  Delete it and a rename followed by an unreachable API serves the pre-rename handle.
+                  Be precise about what that does and does not fix, because a first draft of this
+                  comment overstated it — it said /me "overwrites whatever lost the race", which
+                  stopped being true one commit later when the read-through was made write-free. The
+                  cache CAN still hold the loser. Nothing corrects it. It simply is not served while
+                  the API answers, and a later rename overwrites it here.
+
+                  This write is kept because it is what keeps /me's fallback worth having: delete it
+                  and a rename followed by an unreachable API serves the pre-rename handle.
 
                   An earlier version of this comment rejected "a per-session lock inside a singleton
                   session service" as disproportionate. Both halves were wrong and are worth naming,
