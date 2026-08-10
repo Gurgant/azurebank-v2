@@ -61,7 +61,17 @@ public class UserSession
     public DateTime? PinVerifiedAt { get; set; }
 
     /// <summary>
-    /// Cached user information to avoid API calls on /bff/auth/me.
+    /// Last known user information, served by <c>/bff/auth/me</c> whenever its read of the API
+    /// cannot produce a valid answer (ADR-0039) — not only when the API is unreachable. There are
+    /// five such paths and they are all deliberate: the token re-mint returns nothing, the request
+    /// throws, the deadline expires, the response is not 2xx, or the body does not deserialise into
+    /// a usable handle.
+    ///
+    /// <para>
+    /// This used to say the cache existed "to avoid API calls on /bff/auth/me", which stopped being
+    /// true the moment that endpoint started reading through — and while it was true it let a
+    /// rename made through the proxy go unnoticed for a whole session.
+    /// </para>
     /// </summary>
     public required UserSessionInfo UserInfo { get; init; }
 

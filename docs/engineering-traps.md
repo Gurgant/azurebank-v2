@@ -76,6 +76,23 @@ API on `http`/5068 produces a BFF that builds, starts, and fails every proxied c
 **Start the API and the BFF sequentially the first time.** Two parallel first builds race on
 `AzureBank.Shared.dll` and fail with a file lock (CS2012) that looks like a corrupted build.
 
+**A running BFF locks `AzureBank.Bff.exe`, and the build failure blames the wrong thing.** Building
+the solution while the BFF is up fails with MSB3027/MSB3021 — "could not copy … the file is locked"
+— which reads like a corrupted output directory and invites a `clean`. Stop the BFF first. This bites
+hardest mid-session, when the stack is up for a live measurement and the next step is a rebuild.
+
+**`sqlcmd` WRITES against `AspNetUsers` need `-I`; reads do not.** Without it, every write fails
+with *"SET options have incorrect settings: 'QUOTED_IDENTIFIER'"* and a long list of possible
+causes. The actual cause is the filtered index on the table, and the fix is the one flag. Reads
+succeed in the same session, which is what makes it confusing — it looks like a permissions or
+connection problem rather than a session option. Measured on a scratch table carrying one filtered
+index, so the split is observed rather than assumed:
+
+| without `-I` | result |
+| ------------ | ------ |
+| `SELECT` | succeeds |
+| `INSERT` / `UPDATE` / `DELETE` | all fail, Msg 1934 |
+
 **`DangerousAcceptAnyServerCertificate` belongs only in `appsettings.Development.json`.** It must
 never appear in the base file. Be aware that stale `bin/Release` artifacts can still carry it and be
 mistaken for evidence that it was configured in the base file — check the source, not the output.

@@ -69,14 +69,28 @@ already-issued tokens.
   still correct for a direct API caller; what changed is that the app no longer reaches the handle
   through a door that cannot update the cache.
 
-- **Concurrent renames on one session can cache the earlier handle — NEW, narrow, accepted.**
-  Closing the residual above introduced it: two renames in flight on the same session may commit
-  upstream in one order and have their responses land in the other, so the cache keeps the earlier
-  handle while the database holds the later one. Not fixed, because the remedies are out of
-  proportion — a per-session lock inside a singleton session service, or an API-issued revision
-  token, which is a contract change — while reaching it needs a deliberate double-submit (the
-  dialog disables on submit) and the value at stake is the informational handle, with the database
-  still the source of truth.
+- **Concurrent renames on one session can cache the earlier handle — no longer permanent, see
+  [ADR-0039](0039-bff-session-cache-is-a-fallback.md).** Closing the residual above introduced it:
+  two renames in flight on the same session may commit upstream in one order and have their
+  responses land in the other, so the cache keeps the earlier handle while the database holds the
+  later one. It is still not serialised, and the cache is still not repaired — `/bff/auth/me` reads
+  through to the API and writes nothing, so the losing handle sits there until some later rename
+  overwrites it. What changed is that it is no longer *served*: while the API answers, the client
+  gets the database's value. Bypassed, not fixed.
+
+  **This bullet used to reject the fix for two reasons that were both wrong**, and the correction
+  matters more than the residual did, because a wrong rejection stops anyone re-examining it. "A
+  per-session lock inside a singleton session service" would have fixed nothing — the race spans the
+  controller's outbound call and its cache write, and `UpdateUserInfo` mutates the stored reference,
+  so a lock there guards an assignment that is already atomic. And "disproportionate" was
+  contradicted sixty lines away: `TokenRefresher` already ships exactly that per-session gate.
+  ADR-0039 records what was measured and why the lock is still not taken.
+
+- **A rename made through the PROXIED route left the cache stale — CLOSED (2026-08-10) by
+  ADR-0039.** Point 3 above says the proxied `PATCH /api/users/me/azuretag` is authenticated and
+  race-safe, and it is; what it did not say is that reaching it through the BFF with a session cookie
+  renamed the user in the database while `/bff/auth/me` went on serving the old handle for the life
+  of the session. One request, no concurrency. Measured, then closed by making `/me` read through.
 - **"Taken" is revealed on rename** (a specific `409`), unlike registration's neutral response.
   This is fine and deliberate: the exact-match lookup (ADR-0014) already confirms handle
   existence to a signed-in user, and the endpoint is rate-limited.
