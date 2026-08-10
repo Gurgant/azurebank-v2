@@ -36,6 +36,13 @@ public class BffAuthController : ControllerBase
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<BffAuthController> _logger;
 
+    /// <summary>
+    /// Ceiling on the /me read-through. Matches <c>TokenRefresher.RefreshCallTimeout</c>, the only
+    /// other bounded out-of-band call here, and covers the re-mint plus the GET together — the
+    /// budget is for the whole read, not per hop.
+    /// </summary>
+    private static readonly TimeSpan ReadThroughTimeout = TimeSpan.FromSeconds(5);
+
     // Shared JSON options with enum string converter for API responses
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -398,10 +405,35 @@ public class BffAuthController : ControllerBase
 
         try
         {
+            /*
+              BOUNDED, and the deadline is the difference between a degrade and an outage.
+
+              The "BackendApi" client sets only BaseAddress and an Accept header, so without this the
+              governing limit is HttpClient's 100-second default — and /me is what the SPA boots
+              against. A hung API would hold app boot open for a minute and a half instead of
+              falling back to the cached block, which is the whole point of having a fallback.
+
+              A deadline is safe HERE precisely because this is a READ. The same trick is refused on
+              the rename below: abandoning a committed mutation would leave the database moved and
+              the cache not, manufacturing the staleness this endpoint exists to remove. Giving up
+              on a read costs nothing but freshness, and freshness is exactly what we are prepared
+              to trade.
+
+              Five seconds to match TokenRefresher.RefreshCallTimeout, the only other bounded
+              out-of-band call in this service. NOT covered by a test, and it is worth saying why
+              rather than implying coverage: FakeBackendApiHandler builds its response synchronously
+              (Task.FromResult over a Func), so a responder that blocks parks the calling thread
+              before any awaitable exists and no token can interrupt it. The harness cannot express
+              a slow API, only a failing one.
+            */
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
+                HttpContext.RequestAborted);
+            deadline.CancelAfter(ReadThroughTimeout);
+
             // Same re-mint as every other out-of-band call here: this path bypasses the YARP
             // transform, so nothing else would attach a token.
             var token = await _tokenRefresher.GetFreshAccessTokenAsync(
-                session.SessionId, HttpContext.RequestAborted);
+                session.SessionId, deadline.Token);
             if (string.IsNullOrEmpty(token))
             {
                 return cached;
@@ -411,13 +443,13 @@ public class BffAuthController : ControllerBase
             request.Headers.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await _httpClient.SendAsync(request, HttpContext.RequestAborted);
+            using var response = await _httpClient.SendAsync(request, deadline.Token);
             if (!response.IsSuccessStatusCode)
             {
                 return cached;
             }
 
-            var content = await response.Content.ReadAsStringAsync(HttpContext.RequestAborted);
+            var content = await response.Content.ReadAsStringAsync(deadline.Token);
             var fresh = JsonSerializer.Deserialize<ApiResponse<UserResponse>>(content, JsonOptions)?.Data;
             if (fresh is null || string.IsNullOrEmpty(fresh.AzureTag))
             {
@@ -440,7 +472,7 @@ public class BffAuthController : ControllerBase
                 HasPin = cached.HasPin
             };
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
         {
             // Debug, not Warning: an unreachable API already logs loudly elsewhere, and /me runs on
             // every app boot — logging this at Warning would turn one outage into a flooded log.

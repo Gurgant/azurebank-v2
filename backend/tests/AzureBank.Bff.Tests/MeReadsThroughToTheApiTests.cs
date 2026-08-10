@@ -197,6 +197,29 @@ public class MeReadsThroughToTheApiTests : IClassFixture<WebApplicationFactory<P
     }
 
     [Fact]
+    public async Task ACancelledReadServesTheCache()
+    {
+        /*
+          Pins the catch clause that the read-through's deadline depends on. The read is bounded by
+          a linked CancellationTokenSource, and when that fires the await surfaces an
+          OperationCanceledException — so a `catch` naming only TaskCanceledException would let a
+          timed-out read escape as a 500 instead of degrading, which is the opposite of the point.
+
+          What this does NOT prove is the deadline itself. FakeBackendApiHandler produces its
+          response synchronously (Task.FromResult over a Func), so a responder that sleeps parks the
+          calling thread before there is anything to cancel; the harness can express a failing API,
+          never a slow one. Asserting on the elapsed time here would be asserting on the harness.
+        */
+        var (host, upstream) = NewHost();
+        var client = await SignedIn(host);
+        upstream.MeFailure = () => throw new OperationCanceledException("deadline");
+
+        var user = await Me(client);
+
+        user.GetProperty("azureTag").GetString().Should().Be(CachedTag);
+    }
+
+    [Fact]
     public async Task AMalformedBodyServesTheCache()
     {
         var (host, upstream) = NewHost();
