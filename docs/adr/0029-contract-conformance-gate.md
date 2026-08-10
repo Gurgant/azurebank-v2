@@ -64,6 +64,14 @@ having asked the backend anything.
 **6. The contract suite is excluded from the default `npm test`.** CI and a plain unit run must never
 depend on a live stack. It runs through `test:contract:mock` and `test:contract:real`.
 
+> **Amendment (2026-08-10).** That sentence described the scripts, not the workflow, and for months
+> only one of the two was wired in: `test:contract:real` ran in the real-stack job and
+> `test:contract:mock` ran in **no job at all**. So this record's own title — *making mock drift fail
+> the build* — was half true. The real target proved the assertions still matched the backend; nothing
+> proved the MOCK still matched those same assertions, while every unit test in the suite uses that
+> mock as its oracle. The mock target is now a step in the frontend job, where it costs ~2.5s and
+> needs no stack.
+
 **7. Positive controls are included deliberately.** A gate made only of known failures cannot
 distinguish "the mock was fixed" from "the assertion was written to match whatever the mock did".
 

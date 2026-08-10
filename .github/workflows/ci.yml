@@ -201,6 +201,25 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      # The MOCK half of the two-target contract suite (ADR-0029). It ran in no job at all until
+      # now: `npm test` above excludes `src/contract/**` so a unit run never needs a stack, and the
+      # only contract step in this workflow is `test:contract:real`, down in the real-stack job.
+      #
+      # That left the ADR titled "making mock drift fail the build" delivering half of it. The real
+      # target proves the ASSERTIONS match the backend; nothing proved the MOCK still matches those
+      # same assertions — while every one of the 596 unit tests uses that mock as its oracle. An
+      # oracle nothing checks is the state ADR-0029 exists to prevent.
+      #
+      # It belongs here rather than beside `test:contract:real` because it needs nothing: node
+      # environment, MSW in-process, ~2.5s. Waiting on SQL Server and two services to find out the
+      # mock drifted would be paying the expensive job's price for the cheap half.
+      #
+      # No "did it actually run" guard, deliberately — unlike the dotnet SQL proofs, vitest exits 1
+      # when its include glob matches nothing, so an empty run already fails.
+      - name: Contract conformance (mock target)
+        working-directory: frontend
+        run: npm run test:contract:mock
+
       - name: Build (tsc + vite)
         working-directory: frontend
         run: npm run build
