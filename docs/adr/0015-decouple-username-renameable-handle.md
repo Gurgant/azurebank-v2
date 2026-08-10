@@ -73,9 +73,10 @@ already-issued tokens.
   [ADR-0039](0039-bff-session-cache-is-a-fallback.md).** Closing the residual above introduced it:
   two renames in flight on the same session may commit upstream in one order and have their
   responses land in the other, so the cache keeps the earlier handle while the database holds the
-  later one. It is still not serialised, but `/bff/auth/me` now reads through to the API, so the
-  next successful read replaces whichever handle lost — the window is one read wide instead of the
-  whole session.
+  later one. It is still not serialised, and the cache is still not repaired — `/bff/auth/me` reads
+  through to the API and writes nothing, so the losing handle sits there until some later rename
+  overwrites it. What changed is that it is no longer *served*: while the API answers, the client
+  gets the database's value. Bypassed, not fixed.
 
   **This bullet used to reject the fix for two reasons that were both wrong**, and the correction
   matters more than the residual did, because a wrong rejection stops anyone re-examining it. "A

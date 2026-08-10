@@ -81,10 +81,17 @@ the solution while the BFF is up fails with MSB3027/MSB3021 — "could not copy 
 — which reads like a corrupted output directory and invites a `clean`. Stop the BFF first. This bites
 hardest mid-session, when the stack is up for a live measurement and the next step is a rebuild.
 
-**`sqlcmd` against `AspNetUsers` needs `-I`.** Without it, `UPDATE` fails with *"SET options have
-incorrect settings: 'QUOTED_IDENTIFIER'"* and a long list of possible causes; the actual cause is the
-filtered index on that table, and the fix is the one flag. The `SELECT` in the same session succeeds,
-so it looks like a permissions or connection problem rather than a session-option one.
+**`sqlcmd` WRITES against `AspNetUsers` need `-I`; reads do not.** Without it, every write fails
+with *"SET options have incorrect settings: 'QUOTED_IDENTIFIER'"* and a long list of possible
+causes. The actual cause is the filtered index on the table, and the fix is the one flag. Reads
+succeed in the same session, which is what makes it confusing — it looks like a permissions or
+connection problem rather than a session option. Measured on a scratch table carrying one filtered
+index, so the split is observed rather than assumed:
+
+| without `-I` | result |
+| ------------ | ------ |
+| `SELECT` | succeeds |
+| `INSERT` / `UPDATE` / `DELETE` | all fail, Msg 1934 |
 
 **`DangerousAcceptAnyServerCertificate` belongs only in `appsettings.Development.json`.** It must
 never appear in the base file. Be aware that stale `bin/Release` artifacts can still carry it and be

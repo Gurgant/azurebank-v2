@@ -393,10 +393,11 @@ public class BffAuthController : ControllerBase
     /// flag to false and re-prompt a user who already set a PIN. It is BFF-owned state and stays so.
     /// </para>
     /// <para>
-    /// Nothing here writes to the session — see the note at the return. The concurrent-rename
-    /// residual ADR-0015 records is self-healing because of the READ, not because of any write:
-    /// whichever way two renames interleave, the next <c>/me</c> asks the API and reports what the
-    /// database actually holds, so a lost race is one read wide rather than a whole session.
+    /// Nothing here writes to the session — see the note at the return. That also means the
+    /// concurrent-rename residual ADR-0015 records is NOT self-healing, a word an earlier draft of
+    /// this paragraph used and had to give up: a cache that lost the race stays lost. What saves it
+    /// is that the losing value is never served while the API answers, because every <c>/me</c>
+    /// asks. The staleness is bypassed, not repaired.
     /// </para>
     /// </summary>
     private async Task<UserSessionInfo> FreshUserInfoOrCachedAsync(UserSession session)
