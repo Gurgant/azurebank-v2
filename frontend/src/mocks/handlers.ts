@@ -1807,27 +1807,37 @@ const renameAzureTag = http.patch('*/bff/auth/azuretag', async ({ request }) => 
     });
   }
 
+  /*
+    SESSION BEFORE CONFLICT, and the order is the security-relevant part.
+
+    Measured on the running BFF, anonymously:
+      valid tag                     -> 401
+      a tag that IS taken ("admin") -> 401   <- NOT 409
+      invalid tag                   -> 400   <- model validation still answers first
+
+    So production is validation -> session -> conflict. An earlier draft here checked the conflict
+    FIRST, which would have answered 409 for a taken handle and 401 for a free one — telling an
+    anonymous caller which handles exist. That is precisely the oracle ADR-0013 and ADR-0014 are
+    written to deny, rebuilt inside the mock that is supposed to model them.
+
+    The body is the BFF's own, copied off the wire rather than from the API's vocabulary:
+      {"title":"Unauthorized","status":401,"detail":"Session expired or invalid"}
+    No errorCode and no instance — BffAuthController.RenameAzureTag returns a bare ProblemDetails,
+    and the AUTH_TOKEN_MISSING used here before is the API's code for a different response.
+  */
+  if (!mockState.session) {
+    return HttpResponse.json(
+      { title: 'Unauthorized', status: 401, detail: 'Session expired or invalid' },
+      { status: 401, headers: { 'Content-Type': 'application/problem+json' } },
+    );
+  }
+
   if (mockState.recipients.some((r) => r.azureTag === tag)) {
     return problem({
       instance: pathOf(request),
       status: 409,
       errorCode: 'AZURE_TAG_TAKEN',
       detail: 'That handle is already taken.',
-    });
-  }
-  /*
-    No session is a 401 BEFORE anything else, mirroring BffAuthController.RenameAzureTag, which
-    returns 401 without calling the API at all. The previous shape skipped the update and still
-    answered 200 — which would let an unauthenticated rename flow pass in a frontend test. On a
-    route that only just moved to the BFF precisely so the session could be written, a mock that
-    renames without one is the exact drift this move was about.
-  */
-  if (!mockState.session) {
-    return problem({
-      instance: pathOf(request),
-      status: 401,
-      errorCode: 'AUTH_TOKEN_MISSING',
-      detail: 'Authentication is required to access this resource.',
     });
   }
 
