@@ -48,18 +48,21 @@ cannot be completed.** The cache stops being an answer and becomes a degrade pat
    `UserResponse`, measured as `{userId, azureTag, email, firstName, lastName}` — no `HasPin`. It is
    BFF-owned state; rebuilding the block from the API alone would silently flip it to false and
    re-prompt a user who already set a PIN.
-4. **A changed handle is written back**, so the fallback holds the most recent truth rather than
-   decaying to the login-time value.
+4. **The read writes nothing.** A first version wrote the fresh handle back to keep the fallback
+   current, and that is a read overwriting a newer write: a `/me` that begins before a rename and
+   lands after it restores the superseded handle. Not writing is correct by construction, and the
+   cost is named rather than hidden — the fallback does not learn about a rename made outside the
+   app, so if the API dies immediately after one, `/me` serves the previous handle until it returns.
 
-The rename endpoint keeps its cache write. It is no longer load-bearing for correctness, but it is
-what makes the fallback fresh in the window between a rename and the next read.
+The rename endpoint keeps its own cache write. It is no longer load-bearing for correctness, but it
+is what keeps the fallback fresh for the path users actually take.
 
 ## What this does to the concurrent-rename residual
 
 It stops mattering, without being fixed. Two renames can still land out of order and leave the cache
-holding the loser — but the only reader of that value now re-reads before serving it, so the next
-successful `/me` replaces it with whatever the database actually holds. **Permanent staleness becomes
-one read wide.**
+holding the loser — but the only reader of that value now asks the API before serving it, so what
+reaches the client is what the database holds. The healing comes from the READ, not from any
+write-back. **Permanent staleness becomes one read wide.**
 
 ## Two things ADR-0015 said, that were wrong
 
@@ -83,9 +86,14 @@ session's renames behind `HttpClient`'s 100-second default — and bounding it w
 
 ## Alternatives considered
 
-- **Compare-and-swap on the pre-call handle (rejected).** Correct in exactly the two interleavings
-  where last-write-wins is wrong, and wrong in the two where it is right — a relabelling, not a fix.
-  It also fails silently: `UpdateUserInfo` returns `void`, so a skipped write is unobservable.
+- **Compare-and-swap on the pre-call handle (rejected, twice, for different reasons).** As a way of
+  ordering two concurrent RENAMES it is a relabelling: correct in exactly the two interleavings
+  where last-write-wins is wrong, wrong in the two where it is right, and silent either way, since
+  `UpdateUserInfo` returns `void`. It was proposed again, more narrowly, to stop the read's
+  write-back from clobbering a newer rename — a real defect — but there the interface does not
+  support it: `UpdateUserInfo` hands the lambda the LIVE session object, so comparing against it
+  reads what the rename already wrote rather than a snapshot, and no test in this harness could
+  distinguish a working CAS from a broken one. Deleting the write-back removes the defect outright.
 - **An API-issued revision token (rejected).** Would order the writes properly, but it is a contract
   change — a new DTO field, a spec regen, mock and frontend types — and it still leaves the proxied
   door open, which is the defect that actually reproduces.

@@ -393,10 +393,10 @@ public class BffAuthController : ControllerBase
     /// flag to false and re-prompt a user who already set a PIN. It is BFF-owned state and stays so.
     /// </para>
     /// <para>
-    /// The fresh handle is written back so the fallback keeps improving instead of decaying to the
-    /// login-time value. That write is also what makes the concurrent-rename residual ADR-0015
-    /// records self-healing rather than permanent: whichever way two renames interleave, the next
-    /// successful read replaces the cached loser with what the database actually holds.
+    /// Nothing here writes to the session — see the note at the return. The concurrent-rename
+    /// residual ADR-0015 records is self-healing because of the READ, not because of any write:
+    /// whichever way two renames interleave, the next <c>/me</c> asks the API and reports what the
+    /// database actually holds, so a lost race is one read wide rather than a whole session.
     /// </para>
     /// </summary>
     private async Task<UserSessionInfo> FreshUserInfoOrCachedAsync(UserSession session)
@@ -456,12 +456,28 @@ public class BffAuthController : ControllerBase
                 return cached;
             }
 
-            if (fresh.AzureTag != cached.AzureTag)
-            {
-                _sessionService.UpdateUserInfo(
-                    session.SessionId, userInfo => userInfo.AzureTag = fresh.AzureTag);
-            }
+            /*
+              THIS READ DOES NOT WRITE. An earlier version of it did, to keep the fallback fresh,
+              and CodeRabbit was right that it could clobber: a /me that starts before a rename and
+              lands after it would put the pre-rename handle back into the session, so a later API
+              failure would serve a value that was already superseded. A read overwriting a newer
+              write is a defect in any ordering.
 
+              The suggested remedy was a compare-and-set against the handle as it stood before the
+              call. That does not survive contact with this code. `cached` is the LIVE session
+              object — InMemoryTokenStore hands back the stored reference — so a comparison against
+              it reads whatever the rename has already written rather than a snapshot; making it a
+              real CAS needs a snapshot plus an atomic swap the ISessionService interface cannot
+              express today. And no test here could tell the two apart: FakeBackendApiHandler is
+              synchronous, so the interleaving that distinguishes them cannot be staged.
+
+              Not writing at all is simpler and correct by construction. What it costs is small and
+              named: the fallback no longer learns about a rename made OUT of band, so if the API
+              dies right after one, /me serves the previous handle until the API returns. The app's
+              own rename still refreshes the cache from RenameAzureTag below, which is the path that
+              actually happens, and the read-through — not the write-back — is what makes a lost
+              rename race heal.
+            */
             return new UserSessionInfo
             {
                 Id = fresh.UserId,

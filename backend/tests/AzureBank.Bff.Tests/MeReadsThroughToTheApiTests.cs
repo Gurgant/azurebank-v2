@@ -250,20 +250,29 @@ public class MeReadsThroughToTheApiTests : IClassFixture<WebApplicationFactory<P
     }
 
     [Fact]
-    public async Task TheFreshHandleIsWrittenBackSoTheFallbackIsNotStale()
+    public async Task AReadNeverWritesTheCache()
     {
-        // A fallback is only worth having if it holds the most recent truth. One good read, then a
-        // dead API: the value served must be the one the API last reported, not the login-time one.
+        /*
+          The read is a read. It used to write the fresh handle back to keep the fallback current,
+          which meant a /me that started before a rename and finished after it could put the
+          pre-rename handle back — a read overwriting a newer write.
+
+          The cost of not writing is exactly what this test pins: after a successful read of an
+          out-of-band rename, the FALLBACK still holds the login-time value. That is the documented
+          degrade (ADR-0039), not an oversight, and it only surfaces if the API dies right after a
+          rename made outside the app. The app's own rename writes the cache itself.
+        */
         var (host, upstream) = NewHost();
         var client = await SignedIn(host);
 
         upstream.ApiTag = "renamed_elsewhere";
-        await Me(client);
+        (await Me(client)).GetProperty("azureTag").GetString().Should().Be("renamed_elsewhere");
 
         upstream.MeFailure = () => new HttpResponseMessage(HttpStatusCode.BadGateway);
         var user = await Me(client);
 
-        user.GetProperty("azureTag").GetString().Should().Be("renamed_elsewhere");
+        user.GetProperty("azureTag").GetString().Should().Be(CachedTag,
+            "the successful read must not have mutated the session");
     }
 
     [Fact]
