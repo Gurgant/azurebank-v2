@@ -534,6 +534,45 @@ public class AuthService : IAuthService
             throw new NotFoundException("User", userId);
         }
 
+        /*
+          CHANGING a PIN requires the old one. Enrolling does not.
+
+          This assignment used to be unconditional, which made the whole step-up story decorative:
+          a caller holding only a session could overwrite the PIN and then pass every gate that
+          PIN protects. Measured end to end through the BFF, cookie only, before this guard:
+
+            register            -> 201, authLevel 1
+            set-pin "131313"    -> 200   (enrolment)
+            set-pin "999999"    -> 200   <- no proof of "131313" asked for
+            verify-pin "999999" -> 200,  authLevel 2
+            GET .../full-number -> 200   "AB-3142-8079-89", unmasked
+
+          ADR-0010's attempt-limiting never engaged, because nothing was guessed. And ADR-0008's
+          step-up gate cannot help: it checks that A PIN was entered, not that the entered PIN was
+          the user's. The check has to live here, at the point of replacement.
+
+          Verified through IPinVerifier rather than the hasher directly so a wrong CurrentPin
+          counts against the SAME lockout as every other wrong PIN — otherwise this endpoint would
+          be an uncounted brute-force oracle, which is strictly worse than what it replaces.
+        */
+        if (!string.IsNullOrEmpty(user.PinHash))
+        {
+            if (string.IsNullOrEmpty(request.CurrentPin))
+            {
+                // 422, not 400: "required only when a PIN already exists" is a business rule the
+                // schema cannot express, which is the split BusinessRuleException documents.
+                throw new BusinessRuleException(
+                    "The current PIN is required to change it.", ErrorCodes.PinRequired);
+            }
+
+            // Throws PinLockedException (429) if locked; false on a wrong PIN under the threshold.
+            if (!await _pinVerifier.VerifyPinAsync(userId, request.CurrentPin))
+            {
+                // Same shape withdraw returns for a bad PIN (TransactionService.WithdrawAsync).
+                throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
+            }
+        }
+
         user.PinHash = _passwordHasher.HashPin(request.Pin);
         var result = await _userManager.UpdateAsync(user);
 
