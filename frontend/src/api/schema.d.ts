@@ -2301,6 +2301,8 @@ export interface components {
         SetPinRequest: {
             /** @description PIN must be exactly 6 digits. */
             pin: string;
+            /** @description PIN must be exactly 6 digits. */
+            currentPin?: null | string;
         };
         /** @description Token information returned in authentication responses. */
         TokenResponse: {

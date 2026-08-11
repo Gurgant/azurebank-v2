@@ -2932,6 +2932,16 @@
             "pattern": "^[0-9]{6}$",
             "type": "string",
             "description": "PIN must be exactly 6 digits."
+          },
+          "currentPin": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "PIN must be exactly 6 digits."
           }
         }
       },

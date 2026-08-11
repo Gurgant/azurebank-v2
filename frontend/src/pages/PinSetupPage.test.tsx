@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
-import { seedMockSession } from '../mocks/state';
+import { MOCK_USER, seedMockSession } from '../mocks/state';
 
 /**
  * PR-10 — the PIN onboarding wizard (enter → confirm → done). Pins: the confirm-must-match
@@ -59,7 +59,13 @@ async function pasteDigits(pin: string) {
   already signed in.
 */
 beforeEach(() => {
-  seedMockSession();
+  /*
+    Seeded WITHOUT a PIN, which is the only state this page is reachable in: PinSetupPage bounces a
+    user whose `hasPin` is already true. The default seed (MOCK_USER, hasPin: true) described a user
+    who could never arrive here, and the server-side mock now enforces the difference — changing a
+    PIN requires the current one, enrolling does not.
+  */
+  seedMockSession({ ...MOCK_USER, hasPin: false });
 });
 
 describe('PIN setup wizard (PR-10)', () => {

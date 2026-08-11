@@ -2315,11 +2315,25 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
 });
 
 /**
- * POST /bff/auth/set-pin — set/overwrite the user's PIN (SetPinController, AuthLevel 1: no
- * old PIN and no step-up required). A bad format is the API's VALIDATION_ERROR shape (400,
- * `errors` dict, NO errorCode — the FE synthesizes VALIDATION_ERROR). On success it flips
- * session.hasPin so the invalidated /me refetch clears the withdraw gate, and clears any
- * prior lock so the freshly-set PIN works immediately.
+ * POST /bff/auth/set-pin — ENROL a PIN, or CHANGE one by proving the current value.
+ *
+ * This comment used to say "set/overwrite … no old PIN and no step-up required", and the handler
+ * implemented exactly that. It was describing a hole, not a design: a caller holding only a session
+ * could overwrite the PIN and then clear every gate the PIN protects. The mock therefore modelled
+ * the vulnerability as intended behaviour, which is the worst way for a mock to be wrong — a test
+ * asserting it would have PINNED the bypass.
+ *
+ * Measured through the real BFF after the fix, and these are the bodies reproduced below:
+ *   enrol, no currentPin                -> 200 {"message":"PIN set successfully"}
+ *   change, no currentPin               -> 422 PIN_REQUIRED  "The current PIN is required to change it."
+ *   change, wrong currentPin            -> 401 INVALID_PIN   "Invalid PIN."
+ *   change, correct currentPin          -> 200 {"message":"PIN set successfully"}
+ * `instance` on both errors is "/api/auth/pin" — the API's own path, because the BFF forwards the
+ * upstream problem untouched (ForwardUpstreamError), not a BFF-authored body.
+ *
+ * A bad format is still the API's VALIDATION_ERROR shape (400, `errors` dict, NO errorCode — the FE
+ * synthesizes VALIDATION_ERROR). On success it flips session.hasPin so the invalidated /me refetch
+ * clears the withdraw gate, and clears any prior lock so the freshly-set PIN works immediately.
  */
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   runSessionActivityMiddleware(request);
@@ -2350,6 +2364,42 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   if (!mockState.session) {
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
+  /*
+    CHANGING requires the current PIN; ENROLLING does not. Order matters and is measured: the
+    format check above runs first (ASP.NET binds and validates before the action), then the session,
+    then this. `mockState.pin` being set is the mock's equivalent of a non-null PinHash.
+  */
+  const currentPin = authBody.body.currentPin as string | undefined;
+  /*
+    The gate is `session.hasPin` — the mock's stand-in for a non-null PinHash — NOT `mockState.pin`.
+    A first draft used the latter and broke the PIN-setup wizard: `mockState.pin` is the VALUE
+    withdraw verifies against and it defaults to MOCK_PIN unconditionally (state.ts), so every
+    enrolment looked like a change and answered 422. The test caught it, which is the test doing
+    its job — the two fields read alike and mean different things.
+  */
+  if (mockState.session.hasPin) {
+    if (typeof currentPin !== 'string' || currentPin.length === 0) {
+      return problem({
+        instance: '/api/auth/pin',
+        status: 422,
+        errorCode: 'PIN_REQUIRED',
+        detail: 'The current PIN is required to change it.',
+      });
+    }
+    if (currentPin !== mockState.pin) {
+      // Counts against the same lockout as any other wrong PIN, exactly as the API does by
+      // routing this through IPinVerifier — otherwise the mock would model an endpoint that is
+      // an uncounted brute-force oracle.
+      mockState.pinAttempts += 1;
+      return problem({
+        instance: '/api/auth/pin',
+        status: 401,
+        errorCode: 'INVALID_PIN',
+        detail: 'Invalid PIN.',
+      });
+    }
+  }
+
   mockState.pin = pin;
   mockState.pinAttempts = 0;
   mockState.pinLockedUntil = null;

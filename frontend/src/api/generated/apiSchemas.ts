@@ -326,6 +326,7 @@ export const RegisterRequest = z.object({
 export type SetPinRequest = z.infer<typeof SetPinRequest>;
 export const SetPinRequest = z.object({
   pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
+  currentPin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')).nullable().optional(),
 });
 
 export type TransferRequest = z.infer<typeof TransferRequest>;

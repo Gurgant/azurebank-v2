@@ -155,6 +155,46 @@ describe('the account rules the mock did not enforce', () => {
     expect((await res.json()).errors.Name).toEqual(['Account name is required.', LENGTH]);
   });
 
+  it('refuses to change a PIN without the current one, and 401s a wrong one', async () => {
+    /*
+      Pins the rule the mock had inverted. It used to document itself as "set/OVERWRITE the user's
+      PIN … no old PIN and no step-up required" and implement exactly that — modelling a complete
+      step-up bypass as intended behaviour. Measured through the real BFF, session cookie only:
+
+        enrol (no currentPin)      -> 200 {"message":"PIN set successfully"}
+        change, no currentPin      -> 422 PIN_REQUIRED  "The current PIN is required to change it."
+        change, wrong currentPin   -> 401 INVALID_PIN   "Invalid PIN."
+        change, correct currentPin -> 200
+
+      `instance` is "/api/auth/pin" on both errors — the API's own path, forwarded untouched by the
+      BFF rather than authored by it.
+
+      Without this test the mock rule is unpinned: deleting the guard leaves the whole suite green,
+      which is how the original hole survived in the first place.
+    */
+    // hasPin true == the mock's stand-in for a stored PinHash, i.e. this is a CHANGE.
+    mockState.session!.hasPin = true;
+
+    const noProof = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999' }),
+    });
+    expect(noProof.status).toBe(422);
+    expect((await noProof.json()).errorCode).toBe('PIN_REQUIRED');
+
+    const wrongProof = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: '000000' }),
+    });
+    expect(wrongProof.status).toBe(401);
+    expect((await wrongProof.json()).errorCode).toBe('INVALID_PIN');
+
+    // And the refusals must not have moved the stored PIN.
+    expect(mockState.pin).not.toBe('999999');
+  });
+
   it('answers an anonymous rename 401 even when the handle IS taken', async () => {
     /*
       ORDER, and it is a security property rather than tidiness. The BFF checks the session BEFORE
