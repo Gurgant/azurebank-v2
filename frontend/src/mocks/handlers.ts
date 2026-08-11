@@ -563,14 +563,26 @@ function apiOffsetInstant(ms: number): string {
  * `instance` names the path the API saw. For the proxied route that is the caller's path; for
  * verify-pin it is the API's own `/api/auth/pin/verify`, which the browser never requested.
  */
+/**
+ * BFF ACTIONS forward the upstream problem through `ForwardUpstreamError`, which is
+ * `StatusCode(status, body)` — status and JSON body only, **never a header**. Read at the source,
+ * so it holds for every action alike: no `Retry-After` survives that hop, and `instance` stays the
+ * API's own path. Proxied routes keep the header because YARP copies it.
+ */
+const BFF_ACTION_INSTANCES: Record<string, string> = {
+  'verify-pin': '/api/auth/pin/verify',
+  'set-pin': '/api/auth/pin',
+};
+
 function pinLockedProblem(lockedUntil: string, now: number, source: 'verify-pin' | string) {
   const retryAfterSeconds = Math.ceil((Date.parse(lockedUntil) - now) / 1000);
-  const viaBffAction = source === 'verify-pin';
+  const actionInstance = BFF_ACTION_INSTANCES[source];
+  const viaBffAction = actionInstance !== undefined;
   return problem({
     status: 429,
     errorCode: 'PIN_LOCKED',
     detail: 'Too many incorrect PIN attempts. Your PIN is temporarily locked; try again later.',
-    instance: viaBffAction ? '/api/auth/pin/verify' : source,
+    instance: viaBffAction ? actionInstance : source,
     extensions: { retryAfterSeconds, lockedUntil },
     ...(viaBffAction ? {} : { headers: { 'Retry-After': String(retryAfterSeconds) } }),
   });
@@ -2376,6 +2388,16 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     withdraw verifies against and it defaults to MOCK_PIN unconditionally (state.ts), so every
     enrolment looked like a change and answered 422. The test caught it, which is the test doing
     its job — the two fields read alike and mean different things.
+
+    CurrentPin obeys the FULL verifier contract, because the API routes it through IPinVerifier and
+    inherits every one of these. A first draft here only incremented a counter, which modelled an
+    endpoint that could be brute-forced without ever locking. Measured against the real pipeline:
+      malformed currentPin ("abc")   -> 400, errors dict keyed "CurrentPin" (model validation runs
+                                        before the action, so it never reaches the verifier)
+      wrong, under the threshold     -> 401 INVALID_PIN
+      the THIRD wrong                -> 429 PIN_LOCKED
+      correct, but already locked    -> 429 PIN_LOCKED (the lock is checked BEFORE the comparison,
+                                        so knowing the PIN does not lift it)
   */
   if (mockState.session.hasPin) {
     if (typeof currentPin !== 'string' || currentPin.length === 0) {
@@ -2386,11 +2408,21 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
         detail: 'The current PIN is required to change it.',
       });
     }
+    if (!/^\d{6}$/.test(currentPin)) {
+      return modelStateProblem({ CurrentPin: ['PIN must be exactly 6 digits.'] });
+    }
+
+    const now = Date.now();
+    if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
+      return pinLockedProblem(mockState.pinLockedUntil, now, 'set-pin');
+    }
     if (currentPin !== mockState.pin) {
-      // Counts against the same lockout as any other wrong PIN, exactly as the API does by
-      // routing this through IPinVerifier — otherwise the mock would model an endpoint that is
-      // an uncounted brute-force oracle.
       mockState.pinAttempts += 1;
+      if (mockState.pinAttempts >= 3) {
+        mockState.pinAttempts = 0;
+        mockState.pinLockedUntil = apiOffsetInstant(now + PIN_LOCKOUT_SECONDS * 1000);
+        return pinLockedProblem(mockState.pinLockedUntil, now, 'set-pin');
+      }
       return problem({
         instance: '/api/auth/pin',
         status: 401,

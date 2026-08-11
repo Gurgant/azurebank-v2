@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
 using AzureBank.Shared.Constants;
@@ -125,6 +126,63 @@ public class PinReplacementTests : IntegrationTestBase
         */
         (await VerifiedFlag("123456")).Should().BeTrue("a refused replacement must not move the hash");
         (await VerifiedFlag("999999")).Should().BeFalse("the attacker's choice must never take");
+    }
+
+    [Fact]
+    public async Task AMalformedCurrentPinIsAValidationFailure_NotAWrongPin()
+    {
+        // Model validation runs before the action, so a currentPin that cannot BE a PIN never
+        // reaches the verifier and must not be reported as an incorrect one.
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await PostSetPin("123456", null);
+
+        var response = await PostSetPin("999999", currentPin: "abc");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        // The key the errors dict is under — measured, because the mock has to reproduce it and a
+        // guess would be exactly the drift this whole change is about.
+        body.GetProperty("errors").EnumerateObject().Select(p => p.Name)
+            .Should().Contain("CurrentPin");
+    }
+
+    [Fact]
+    public async Task WrongCurrentPinsTripTheSameLockoutAsAnyOtherWrongPin()
+    {
+        // The reason CurrentPin goes through IPinVerifier rather than the hasher: without it this
+        // endpoint would be an uncounted brute-force oracle, which is worse than the hole it closes.
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await PostSetPin("123456", null);
+
+        HttpResponseMessage? last = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            last = await PostSetPin("999999", currentPin: "000000");
+        }
+
+        last!.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        (await ErrorCodeOf(last)).Should().Be(ErrorCodes.PinLocked);
+    }
+
+    [Fact]
+    public async Task ALockedPinCannotBeReplacedEvenWithTheCorrectCurrentOne()
+    {
+        // Lockout is checked before the comparison, so knowing the PIN does not lift it. Otherwise
+        // replacement would be a way to clear a lock that guessing had earned.
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await PostSetPin("123456", null);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await PostSetPin("999999", currentPin: "000000");
+        }
+
+        var response = await PostSetPin("999999", currentPin: "123456");
+
+        response.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        (await ErrorCodeOf(response)).Should().Be(ErrorCodes.PinLocked);
     }
 
     [Fact]

@@ -195,6 +195,55 @@ describe('the account rules the mock did not enforce', () => {
     expect(mockState.pin).not.toBe('999999');
   });
 
+  it('applies the full verifier contract to the current PIN, lockout included', async () => {
+    /*
+      CurrentPin goes through IPinVerifier on the API, so it inherits every rule that path has.
+      A first draft of the mock only bumped a counter — modelling an endpoint that can be
+      brute-forced without ever locking, which is worse than the hole this change closed.
+
+      Measured against the real pipeline (WebApplicationFactory runs Program.cs verbatim; see
+      PinReplacementTests):
+        malformed "abc"           -> 400, errors keyed "CurrentPin"  (validation precedes the action)
+        third wrong               -> 429 PIN_LOCKED
+        correct, but locked       -> 429 PIN_LOCKED  (the lock is read BEFORE the comparison)
+    */
+    mockState.session!.hasPin = true;
+
+    const malformed = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: 'abc' }),
+    });
+    expect(malformed.status).toBe(400);
+    expect(Object.keys((await malformed.json()).errors)).toContain('CurrentPin');
+
+    // Two wrong tries stay 401; the third latches the lock.
+    for (let i = 0; i < 2; i += 1) {
+      const wrong = await fetch('/bff/auth/set-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '999999', currentPin: '000000' }),
+      });
+      expect(wrong.status).toBe(401);
+    }
+    const third = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: '000000' }),
+    });
+    expect(third.status).toBe(429);
+    expect((await third.json()).errorCode).toBe('PIN_LOCKED');
+
+    // Knowing the PIN does not lift the lock.
+    const correctButLocked = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: mockState.pin }),
+    });
+    expect(correctButLocked.status).toBe(429);
+    expect(mockState.pin).not.toBe('999999');
+  });
+
   it('answers an anonymous rename 401 even when the handle IS taken', async () => {
     /*
       ORDER, and it is a security property rather than tidiness. The BFF checks the session BEFORE
