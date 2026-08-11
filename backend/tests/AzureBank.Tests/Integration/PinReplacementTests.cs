@@ -38,7 +38,9 @@ public class PinReplacementTests : IntegrationTestBase
 {
     public PinReplacementTests(CustomWebApplicationFactory factory) : base(factory) { }
 
-    private async Task<HttpResponseMessage> SetPinAsync(string pin, string? currentPin) =>
+    /// <summary>Posts set-pin directly, so the optional CurrentPin can be omitted or wrong.
+    /// Named apart from the base helper deliberately — same name, different arity hid it (CS0108).</summary>
+    private async Task<HttpResponseMessage> PostSetPin(string pin, string? currentPin) =>
         await Client.PostAsJsonAsync("/api/auth/pin",
             new SetPinRequest { Pin = pin, CurrentPin = currentPin }, JsonOptions);
 
@@ -67,7 +69,7 @@ public class PinReplacementTests : IntegrationTestBase
         var (token, _, _) = await RegisterTestUserAsync();
         SetAuthHeader(token);
 
-        var response = await SetPinAsync("123456", currentPin: null);
+        var response = await PostSetPin("123456", currentPin: null);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
@@ -78,9 +80,9 @@ public class PinReplacementTests : IntegrationTestBase
         // THE ATTACK. Before the guard this returned 200 and the PIN became the caller's choice.
         var (token, _, _) = await RegisterTestUserAsync();
         SetAuthHeader(token);
-        (await SetPinAsync("123456", null)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await PostSetPin("123456", null)).StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var response = await SetPinAsync("999999", currentPin: null);
+        var response = await PostSetPin("999999", currentPin: null);
 
         // 422: "required only once a PIN exists" is a rule the schema cannot express, which is the
         // split BusinessRuleException documents.
@@ -93,9 +95,9 @@ public class PinReplacementTests : IntegrationTestBase
     {
         var (token, _, _) = await RegisterTestUserAsync();
         SetAuthHeader(token);
-        await SetPinAsync("123456", null);
+        await PostSetPin("123456", null);
 
-        var response = await SetPinAsync("999999", currentPin: "000000");
+        var response = await PostSetPin("999999", currentPin: "000000");
 
         // Same shape withdraw returns for a bad PIN, so the two step-up paths answer alike.
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -109,10 +111,10 @@ public class PinReplacementTests : IntegrationTestBase
         // only the status of the refusal would pass even if the write had gone through first.
         var (token, _, _) = await RegisterTestUserAsync();
         SetAuthHeader(token);
-        await SetPinAsync("123456", null);
+        await PostSetPin("123456", null);
 
-        await SetPinAsync("999999", currentPin: null);
-        await SetPinAsync("999999", currentPin: "000000");
+        await PostSetPin("999999", currentPin: null);
+        await PostSetPin("999999", currentPin: "000000");
 
         /*
           Assert on the `verified` FLAG, not the status. This endpoint answers 200 for a wrong PIN
@@ -132,9 +134,9 @@ public class PinReplacementTests : IntegrationTestBase
         // three tests above.
         var (token, _, _) = await RegisterTestUserAsync();
         SetAuthHeader(token);
-        await SetPinAsync("123456", null);
+        await PostSetPin("123456", null);
 
-        var response = await SetPinAsync("654321", currentPin: "123456");
+        var response = await PostSetPin("654321", currentPin: "123456");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         (await VerifiedFlag("654321")).Should().BeTrue();
