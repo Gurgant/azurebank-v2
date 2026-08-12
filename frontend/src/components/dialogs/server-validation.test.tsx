@@ -214,6 +214,16 @@ describe('the account rules the mock did not enforce', () => {
 
     expect(res.status).toBe(400);
     expect(Object.keys((await res.json()).errors)).toContain('CurrentPin');
+
+    // "" is SUPPLIED-but-malformed, not absent: [Pin] runs at binding and rejects it, so it is a
+    // 400 too — not the 422 a genuinely missing value earns.
+    mockState.session!.hasPin = true;
+    const empty = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: '' }),
+    });
+    expect(empty.status).toBe(400);
   });
 
   it('applies the full verifier contract to the current PIN, lockout included', async () => {

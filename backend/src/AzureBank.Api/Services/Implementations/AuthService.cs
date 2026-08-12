@@ -571,6 +571,26 @@ public class AuthService : IAuthService
                 // Same shape withdraw returns for a bad PIN (TransactionService.WithdrawAsync).
                 throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
             }
+
+            /*
+              MIRROR the reset onto the TRACKED entity, or UpdateAsync below undoes it.
+
+              A successful verification clears the failure counters — but PinService does that in
+              its OWN DbContext (ResetLockoutAsync, via ExecuteUpdate on the relational path), while
+              `user` here was loaded by _userManager and still carries the pre-verification values.
+              `UpdateAsync(user)` writes the whole tracked row, so those stale counters go straight
+              back over the reset.
+
+              Observed before this fix, black-box and with no database access: fail twice, change
+              the PIN with the correct current one, then fail once more — that attempt answered 429
+              instead of 401, i.e. it was counted as the third rather than the first. The reset had
+              been resurrected.
+
+              Same shape as the aliasing that bit this codebase in InMemoryTokenStore: two views of
+              one row, one of them stale, and the stale one wins because it is written last.
+            */
+            user.PinAccessFailedCount = 0;
+            user.PinLockoutEnd = null;
         }
 
         user.PinHash = _passwordHasher.HashPin(request.Pin);

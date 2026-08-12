@@ -2408,7 +2408,10 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     A first draft had this check inside the branch below, which made a state-INdependent rule
     state-dependent and let the mock accept a payload the API rejects.
   */
-  if (typeof currentPin === 'string' && currentPin.length > 0 && !/^\d{6}$/.test(currentPin)) {
+  if (typeof currentPin === 'string' && !/^\d{6}$/.test(currentPin)) {
+    // NOTE the absence of a length>0 guard: "" is SUPPLIED-but-malformed, not absent. [Pin] runs at
+    // binding and rejects it, so the API answers 400 — measured — where a genuinely missing value
+    // gets the 422 below. A first draft skipped empty strings and produced 422 for both.
     return modelStateProblem({ CurrentPin: ['PIN must be exactly 6 digits.'] });
   }
 

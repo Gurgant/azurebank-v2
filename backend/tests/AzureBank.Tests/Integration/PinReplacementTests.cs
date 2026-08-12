@@ -198,6 +198,51 @@ public class PinReplacementTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task ASuccessfulChangeClearsTheFailureCounter()
+    {
+        /*
+          Observable without reading the database: fail twice (counter 2), then change the PIN with
+          the CORRECT current one — which resets the counter — then fail once more. If the reset
+          held, that last one is attempt 1 and answers 401. If the counter was resurrected, it is
+          attempt 3 and answers 429.
+
+          Worth pinning because the reset happens in PinService's own DbContext while SetPinAsync
+          holds a separately tracked user, and UpdateAsync writes that tracked instance back.
+        */
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await PostSetPin("123456", null);
+
+        (await PostSetPin("999999", currentPin: "000000")).StatusCode
+            .Should().Be(HttpStatusCode.Unauthorized);
+        (await PostSetPin("999999", currentPin: "000000")).StatusCode
+            .Should().Be(HttpStatusCode.Unauthorized);
+
+        (await PostSetPin("654321", currentPin: "123456")).StatusCode
+            .Should().Be(HttpStatusCode.OK, "the correct current PIN succeeds and resets the count");
+
+        var afterReset = await PostSetPin("111111", currentPin: "000000");
+
+        afterReset.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "a cleared counter makes this attempt 1, not attempt 3");
+        (await ErrorCodeOf(afterReset)).Should().Be(ErrorCodes.InvalidPin);
+    }
+
+    [Fact]
+    public async Task AnEmptyCurrentPinIsAValidationFailure()
+    {
+        // "" is not "absent": the [Pin] annotation runs at binding and rejects it, so this is a 400
+        // before the action — NOT the 422 that a genuinely missing value produces.
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await PostSetPin("123456", null);
+
+        var response = await PostSetPin("999999", currentPin: "");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task ALockedPinCannotBeReplacedEvenWithTheCorrectCurrentOne()
     {
         // Lockout is checked before the comparison, so knowing the PIN does not lift it. Otherwise

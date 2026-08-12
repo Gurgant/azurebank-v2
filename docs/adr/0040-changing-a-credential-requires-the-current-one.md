@@ -83,10 +83,12 @@ not one.
 **Positive** — the PIN becomes a credential rather than a formality. ADR-0010's lockout now protects
 something, because replacement is no longer a way around guessing.
 
-**Negative** — a contract change (`SetPinRequest`, spec, generated frontend types), and a future
-change-PIN UI must collect the current value. Nothing existing breaks: the frontend's only caller is
-`PinSetupPage`, which bounces a user whose `hasPin` is already true, so it reaches this endpoint
-exclusively in the enrolment case this ADR leaves open.
+**Negative** — a contract change (`SetPinRequest`, spec, generated frontend types), and a
+**behaviour change for any caller that REPLACES a PIN**: those requests now fail with 422
+`PIN_REQUIRED` until they send `CurrentPin`. Stated separately from the enrolment case because the
+two differ. **Enrolment is unaffected**, and the frontend's only caller is `PinSetupPage`, which
+bounces a user whose `hasPin` is already true — so this repo's own client reaches the endpoint
+exclusively on the enrolment path. Any other consumer replacing a PIN must be updated.
 
 ## Notes on the evidence
 
