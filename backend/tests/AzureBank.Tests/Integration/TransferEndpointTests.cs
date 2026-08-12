@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
@@ -7,6 +8,8 @@ using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 using AzureBank.Shared.Constants;
 
@@ -51,6 +54,50 @@ public class TransferEndpointTests : IntegrationTestBase
         result!.Data!.Amount.Should().Be(100m);
         result.Data.NewBalance.Should().Be(900m);
         result.Data.RecipientAzureTag.Should().Be(recipientData.AzureTag);
+    }
+
+    [Fact]
+    public async Task Transfer_ProcessedAt_IsTheInstantActuallyPersistedOnBothLegs()
+    {
+        /*
+          The API used to report a timestamp the database never held. TransferService computed its
+          own `now`, handed a copy back as ProcessedAt, and assigned the rest to the entities — where
+          AzureBankDbContext.UpdateTimestamps overwrote every one of them a moment later, inside
+          SaveChanges. Only the copy in the response survived, so a receipt and its ledger row
+          disagreed by however long the code between the two points took.
+
+          Asserting the two legs against EACH OTHER as well is deliberate: it is the same property
+          the unit test pins with a fake clock, checked here against the real provider and the real
+          pipeline instead.
+        */
+        var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
+        var recipientData = await RegisterRecipientAsync();
+        await DepositAsync(senderToken, senderAccountId, 1000m);
+
+        SetAuthHeader(senderToken);
+        var response = await PostMonetaryAsync("/api/transfers", new TransferRequest
+        {
+            FromAccountId = senderAccountId,
+            RecipientAzureTag = recipientData.AzureTag,
+            Amount = 100m
+        });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var reported = (await response.Content.ReadFromJsonAsync<ApiResponse<TransferResponse>>(JsonOptions))!
+            .Data!;
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        var outgoing = await db.Transactions
+            .SingleAsync(t => t.TransactionNumber == reported.TransactionNumber);
+        var incoming = await db.Transactions
+            .SingleAsync(t => t.Id == outgoing.RelatedTransactionId);
+
+        outgoing.CreatedAt.Should().Be(reported.ProcessedAt,
+            "the receipt must name the instant the ledger row carries");
+        incoming.CreatedAt.Should().Be(reported.ProcessedAt,
+            "both legs are one event and share one instant");
     }
 
     [Fact]

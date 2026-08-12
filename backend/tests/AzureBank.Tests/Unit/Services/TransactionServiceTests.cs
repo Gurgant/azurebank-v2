@@ -9,6 +9,7 @@ using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -26,6 +27,7 @@ public class TransactionServiceTests : IDisposable
     private readonly TransactionMapper _mapper;
     private readonly Mock<ILogger<TransactionService>> _loggerMock;
     private readonly TransactionService _sut;
+    private readonly FakeTimeProvider _clock;
 
     public TransactionServiceTests()
     {
@@ -33,7 +35,12 @@ public class TransactionServiceTests : IDisposable
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        _context = new AzureBankDbContext(options);
+        // A fake clock, because UpdateTimestamps owns CreatedAt: a test cannot set it directly, and
+        // two saves a few microseconds apart are not a reliable way to order anything. It STARTS at
+        // the real now — xUnit builds a fresh fixture per test, so only the test that advances it
+        // sees a shifted clock, and the date-window tests keep the semantics they were written with.
+        _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        _context = new AzureBankDbContext(options, _clock);
         _accountAccessMock = new Mock<IAccountAccessService>();
         _pinVerifierMock = new Mock<IPinVerifier>();
         _mapper = new TransactionMapper();
@@ -613,15 +620,23 @@ public class TransactionServiceTests : IDisposable
         var account = CreateTestAccount(userId);
         _context.Accounts.Add(account);
 
+        /*
+          Two SAVES, two hours apart on the fake clock. Setting CreatedAt on the entity does nothing
+          — AzureBankDbContext.UpdateTimestamps overwrites it — so this test used to assert an order
+          it never established: it passed only because the hook read the clock once PER ROW, which
+          leaked insertion order in as a microsecond gap. Once one save meant one instant, the two
+          rows tied and the assertion started failing about half the time.
+        */
         var oldTx = CreateTestTransaction(account.Id, 100m, TransactionType.Deposit);
-        oldTx.CreatedAt = DateTime.UtcNow.AddHours(-2);
         oldTx.Account = account;
+        _context.Transactions.Add(oldTx);
+        await _context.SaveChangesAsync();
+
+        _clock.Advance(TimeSpan.FromHours(2));
 
         var recentTx = CreateTestTransaction(account.Id, 200m, TransactionType.Deposit);
-        recentTx.CreatedAt = DateTime.UtcNow;
         recentTx.Account = account;
-
-        _context.Transactions.AddRange(oldTx, recentTx);
+        _context.Transactions.Add(recentTx);
         await _context.SaveChangesAsync();
 
         var filter = new TransactionFilter { Page = 1, PageSize = 10 };
@@ -632,6 +647,57 @@ public class TransactionServiceTests : IDisposable
         // Assert
         result.Data.Should().HaveCount(2);
         result.Data.First().Id.Should().Be(recentTx.Id); // Most recent first
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_RowsSavedTogether_HaveAStableOrder_NotAnArbitraryOne()
+    {
+        /*
+          The tie the previous test deliberately avoids. Every transfer writes its two legs in ONE
+          SaveChanges, so they share one CreatedAt by construction — ordering on that column alone
+          leaves them tied, and a tied ORDER BY under OFFSET/FETCH may hand back a row on two pages
+          and drop another. The Id tiebreaker makes the order TOTAL and STABLE, which is the property
+          paging needs.
+
+          This asserts stability and nothing more, on purpose. A first draft also asserted that the
+          later-minted id sorts first — and flaked one run in three, because Guid.CreateVersion7
+          seeds its random sub-fields with random data rather than a counter, so two ids minted
+          inside one millisecond order arbitrarily. (SQL Server would disagree with .NET about that
+          order anyway: uniqueidentifier collates on a different byte order.) The direction of a tie
+          is not a property this code has, so no test should claim it.
+        */
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId);
+        _context.Accounts.Add(account);
+
+        // Ids chosen so that descending-Id order is the OPPOSITE of insertion order. Without that
+        // the assertion cannot discriminate: with no tiebreaker the provider returns tied rows in
+        // insertion order, which for real UUIDv7s coincides with the expected order about half the
+        // time — a test that fails one run in two is not a guard, it is a flake.
+        var lowId = Guid.Parse("019ff770-0000-7000-8000-000000000001");
+        var highId = Guid.Parse("019ff770-0000-7000-8000-000000000002");
+
+        var insertedFirst = CreateTestTransaction(account.Id, 100m, TransactionType.Deposit);
+        insertedFirst.Id = lowId;
+        insertedFirst.Account = account;
+        var insertedSecond = CreateTestTransaction(account.Id, 200m, TransactionType.Deposit);
+        insertedSecond.Id = highId;
+        insertedSecond.Account = account;
+
+        _context.Transactions.AddRange(insertedFirst, insertedSecond);
+        await _context.SaveChangesAsync();
+
+        insertedFirst.CreatedAt.Should().Be(insertedSecond.CreatedAt,
+            "one save is one instant — this IS the tie");
+
+        var filter = new TransactionFilter { Page = 1, PageSize = 10 };
+        var page = await _sut.GetTransactionsAsync(userId, filter);
+        var again = await _sut.GetTransactionsAsync(userId, filter);
+
+        page.Data.Select(t => t.Id).Should().Equal([highId, lowId],
+            "the tiebreaker orders the tie by Id descending, against insertion order");
+        again.Data.Select(t => t.Id).Should().Equal(page.Data.Select(t => t.Id),
+            "and it is the same every time — that is what paging depends on");
     }
 
     [Fact]

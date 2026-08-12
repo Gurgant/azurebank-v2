@@ -251,9 +251,24 @@ public class TransactionService : ITransactionService
         // Get total count
         var totalItems = await query.CountAsync();
 
-        // Order and paginate
+        /*
+          Order and paginate. The Id tiebreaker is NOT decoration: CreatedAt is stamped once per
+          SaveChanges, so every transfer's two legs — and any two rows written together — carry the
+          SAME instant. Ordering on CreatedAt alone leaves those tied, and a tied ORDER BY under
+          OFFSET/FETCH is free to return a row on two pages and skip another, because the order
+          between ties is a plan and storage-layout artefact rather than something we asked for.
+
+          What the tiebreaker buys is a TOTAL, STABLE order — that is the property paging needs, and
+          the only one claimed here. It is deliberately NOT claimed that a tie then reads
+          chronologically: Guid.CreateVersion7 seeds rand_a/rand_b with random data rather than a
+          counter, so two ids minted in the same millisecond sort arbitrarily; and SQL Server orders
+          uniqueidentifier on a byte order of its own, which is not Guid.CompareTo's. Across
+          milliseconds UUIDv7 does read chronologically — but two rows in one SaveChanges are exactly
+          the case where it may not, so nothing here depends on it.
+        */
         var transactions = await query
             .OrderByDescending(t => t.CreatedAt)
+            .ThenByDescending(t => t.Id)
             .Skip((filter.Page - 1) * filter.PageSize)
             .Take(filter.PageSize)
             .ToListAsync();

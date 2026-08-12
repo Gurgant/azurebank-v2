@@ -185,13 +185,20 @@ public sealed class PinService : IPinVerifier
         var newHash = _passwordHasher.HashPin(pin);
         if (db.Database.IsRelational())
         {
+            // The UpdatedAt bump is not decoration: this writes a CREDENTIAL, and ExecuteUpdate
+            // bypasses SaveChanges, so nothing else stamps the row. Without it the relational path
+            // silently diverged from the InMemory one below — which goes through SaveChanges and
+            // therefore gets stamped by UpdateTimestamps — leaving a credential change that is
+            // invisible in the audit columns on the provider that actually ships.
             await db.Users.Where(u => u.Id == user.Id)
-                .ExecuteUpdateAsync(s => s.SetProperty(u => u.PinHash, newHash));
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.PinHash, newHash)
+                    .SetProperty(u => u.UpdatedAt, (DateTime?)DateTime.UtcNow));
         }
         else
         {
             user.PinHash = newHash;
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync();   // UpdateTimestamps stamps UpdatedAt on this path
         }
         _logger.LogInformation("Upgraded PIN hash to the active pepper for user {UserId}", user.Id);
     }
