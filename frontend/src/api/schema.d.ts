@@ -833,7 +833,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Set or update user's PIN for step-up authentication. */
+        /**
+         * Set or update user's PIN for step-up authentication.
+         * @description Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does not, because the account password already gated getting here. A `currentPin` is verified with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count toward the lockout and a locked PIN cannot be replaced even by supplying the correct one. See ADR-0040.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -881,6 +884,24 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+                /** @description Unprocessable Entity */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2301,6 +2322,8 @@ export interface components {
         SetPinRequest: {
             /** @description PIN must be exactly 6 digits. */
             pin: string;
+            /** @description PIN must be exactly 6 digits. */
+            currentPin?: null | string;
         };
         /** @description Token information returned in authentication responses. */
         TokenResponse: {

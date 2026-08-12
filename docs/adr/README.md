@@ -58,7 +58,8 @@ detail hanging off them.
 [0026](0026-absolute-session-cap-reauthentication.md) the absolute session cap is re-authenticated, never extended ·
 [0034](0034-failed-family-revoke-recovery.md) recovery for a family revoke that fails ·
 [0037](0037-atomic-registration.md) registration is all-or-nothing ·
-[0038](0038-bff-session-is-the-only-credential.md) the session is the only credential the BFF accepts
+[0038](0038-bff-session-is-the-only-credential.md) the session is the only credential the BFF accepts ·
+[0040](0040-changing-a-credential-requires-the-current-one.md) changing a credential requires proving the current one
 
 **Not leaking who exists** — [0013](0013-registration-user-enumeration.md) registration enumeration ·
 [0014](0014-recipient-lookup-enumeration.md) recipient lookup, exact-match and harvest-resistant ·
@@ -80,15 +81,16 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All thirty-nine are **Accepted and shipped** — nothing here is aspirational, which is why there is
+All forty are **Accepted and shipped** — nothing here is aspirational, which is why there is
 no Proposed tier. Where a later record changes an earlier one, the earlier keeps an inline
 supersession note at the affected clause rather than being rewritten: ADR-0019's Decision 6 points
 at ADR-0023, ADR-0009 points at ADR-0022 for its client half, and ADR-0021's amendment points at
 ADR-0034 for the residual it left open, ADR-0036 points at ADR-0037 for the one it left open, and
 ADR-0020's dual-mode caveat points at ADR-0038 for the half of it that turned out not to be
 accepted so much as unnoticed, and ADR-0015's residual points at ADR-0039 both for its closure and
-for the two reasons it had given for leaving it open, which were wrong. The next free number is
-**0040**.
+for the two reasons it had given for leaving it open, which were wrong; and ADR-0040 closes a hole that
+left both ADR-0008's step-up gate and ADR-0010's attempt-limiting inoperative. The next free number is
+**0041**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -135,6 +137,7 @@ for the two reasons it had given for leaving it open, which were wrong. The next
 | [ADR-0037](0037-atomic-registration.md) | Registration is all-or-nothing | Accepted | 2026-08-09 |
 | [ADR-0038](0038-bff-session-is-the-only-credential.md) | The session is the only credential the BFF will accept | Accepted | 2026-08-10 |
 | [ADR-0039](0039-bff-session-cache-is-a-fallback.md) | The BFF session cache is a fallback, never the answer | Accepted | 2026-08-10 |
+| [ADR-0040](0040-changing-a-credential-requires-the-current-one.md) | Changing a credential requires proving the current one | Accepted | 2026-08-12 |
 
 </details>
 ## Creating a New ADR

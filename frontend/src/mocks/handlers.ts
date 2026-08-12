@@ -563,14 +563,26 @@ function apiOffsetInstant(ms: number): string {
  * `instance` names the path the API saw. For the proxied route that is the caller's path; for
  * verify-pin it is the API's own `/api/auth/pin/verify`, which the browser never requested.
  */
+/**
+ * BFF ACTIONS forward the upstream problem through `ForwardUpstreamError`, which is
+ * `StatusCode(status, body)` — status and JSON body only, **never a header**. Read at the source,
+ * so it holds for every action alike: no `Retry-After` survives that hop, and `instance` stays the
+ * API's own path. Proxied routes keep the header because YARP copies it.
+ */
+const BFF_ACTION_INSTANCES: Record<string, string> = {
+  'verify-pin': '/api/auth/pin/verify',
+  'set-pin': '/api/auth/pin',
+};
+
 function pinLockedProblem(lockedUntil: string, now: number, source: 'verify-pin' | string) {
   const retryAfterSeconds = Math.ceil((Date.parse(lockedUntil) - now) / 1000);
-  const viaBffAction = source === 'verify-pin';
+  const actionInstance = BFF_ACTION_INSTANCES[source];
+  const viaBffAction = actionInstance !== undefined;
   return problem({
     status: 429,
     errorCode: 'PIN_LOCKED',
     detail: 'Too many incorrect PIN attempts. Your PIN is temporarily locked; try again later.',
-    instance: viaBffAction ? '/api/auth/pin/verify' : source,
+    instance: viaBffAction ? actionInstance : source,
     extensions: { retryAfterSeconds, lockedUntil },
     ...(viaBffAction ? {} : { headers: { 'Retry-After': String(retryAfterSeconds) } }),
   });
@@ -2315,11 +2327,25 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
 });
 
 /**
- * POST /bff/auth/set-pin — set/overwrite the user's PIN (SetPinController, AuthLevel 1: no
- * old PIN and no step-up required). A bad format is the API's VALIDATION_ERROR shape (400,
- * `errors` dict, NO errorCode — the FE synthesizes VALIDATION_ERROR). On success it flips
- * session.hasPin so the invalidated /me refetch clears the withdraw gate, and clears any
- * prior lock so the freshly-set PIN works immediately.
+ * POST /bff/auth/set-pin — ENROL a PIN, or CHANGE one by proving the current value.
+ *
+ * This comment used to say "set/overwrite … no old PIN and no step-up required", and the handler
+ * implemented exactly that. It was describing a hole, not a design: a caller holding only a session
+ * could overwrite the PIN and then clear every gate the PIN protects. The mock therefore modelled
+ * the vulnerability as intended behaviour, which is the worst way for a mock to be wrong — a test
+ * asserting it would have PINNED the bypass.
+ *
+ * Measured through the real BFF after the fix, and these are the bodies reproduced below:
+ *   enrol, no currentPin                -> 200 {"message":"PIN set successfully"}
+ *   change, no currentPin               -> 422 PIN_REQUIRED  "The current PIN is required to change it."
+ *   change, wrong currentPin            -> 401 INVALID_PIN   "Invalid PIN."
+ *   change, correct currentPin          -> 200 {"message":"PIN set successfully"}
+ * `instance` on both errors is "/api/auth/pin" — the API's own path, because the BFF forwards the
+ * upstream problem untouched (ForwardUpstreamError), not a BFF-authored body.
+ *
+ * A bad format is still the API's VALIDATION_ERROR shape (400, `errors` dict, NO errorCode — the FE
+ * synthesizes VALIDATION_ERROR). On success it flips session.hasPin so the invalidated /me refetch
+ * clears the withdraw gate, and clears any prior lock so the freshly-set PIN works immediately.
  */
 const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   runSessionActivityMiddleware(request);
@@ -2350,6 +2376,74 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
   if (!mockState.session) {
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
   }
+  /*
+    CHANGING requires the current PIN; ENROLLING does not. Order matters and is measured: the
+    format check above runs first (ASP.NET binds and validates before the action), then the session,
+    then this. `mockState.pin` being set is the mock's equivalent of a non-null PinHash.
+  */
+  const currentPin = authBody.body.currentPin as string | undefined;
+  /*
+    The gate is `session.hasPin` — the mock's stand-in for a non-null PinHash — NOT `mockState.pin`.
+    A first draft used the latter and broke the PIN-setup wizard: `mockState.pin` is the VALUE
+    withdraw verifies against and it defaults to MOCK_PIN unconditionally (state.ts), so every
+    enrolment looked like a change and answered 422. The test caught it, which is the test doing
+    its job — the two fields read alike and mean different things.
+
+    CurrentPin obeys the FULL verifier contract, because the API routes it through IPinVerifier and
+    inherits every one of these. A first draft here only incremented a counter, which modelled an
+    endpoint that could be brute-forced without ever locking. Measured against the real pipeline:
+      malformed currentPin ("abc")   -> 400, errors dict keyed "CurrentPin" (model validation runs
+                                        before the action, so it never reaches the verifier)
+      wrong, under the threshold     -> 401 INVALID_PIN
+      the THIRD wrong                -> 429 PIN_LOCKED
+      correct, but already locked    -> 429 PIN_LOCKED (the lock is checked BEFORE the comparison,
+                                        so knowing the PIN does not lift it)
+  */
+  /*
+    FORMAT FIRST, and OUTSIDE the hasPin branch. Model validation runs before the action, so it
+    cannot know whether a PIN exists: a SUPPLIED currentPin must be well-formed even on the
+    enrolment path, where the value is otherwise ignored. Measured — enrolling with
+    {pin:"123456", currentPin:"abc"} is a 400, not a 200 (PinReplacementTests).
+
+    A first draft had this check inside the branch below, which made a state-INdependent rule
+    state-dependent and let the mock accept a payload the API rejects.
+  */
+  if (typeof currentPin === 'string' && !/^\d{6}$/.test(currentPin)) {
+    // NOTE the absence of a length>0 guard: "" is SUPPLIED-but-malformed, not absent. [Pin] runs at
+    // binding and rejects it, so the API answers 400 — measured — where a genuinely missing value
+    // gets the 422 below. A first draft skipped empty strings and produced 422 for both.
+    return modelStateProblem({ CurrentPin: ['PIN must be exactly 6 digits.'] });
+  }
+
+  if (mockState.session.hasPin) {
+    if (typeof currentPin !== 'string' || currentPin.length === 0) {
+      return problem({
+        instance: '/api/auth/pin',
+        status: 422,
+        errorCode: 'PIN_REQUIRED',
+        detail: 'The current PIN is required to change it.',
+      });
+    }
+    const now = Date.now();
+    if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
+      return pinLockedProblem(mockState.pinLockedUntil, now, 'set-pin');
+    }
+    if (currentPin !== mockState.pin) {
+      mockState.pinAttempts += 1;
+      if (mockState.pinAttempts >= 3) {
+        mockState.pinAttempts = 0;
+        mockState.pinLockedUntil = apiOffsetInstant(now + PIN_LOCKOUT_SECONDS * 1000);
+        return pinLockedProblem(mockState.pinLockedUntil, now, 'set-pin');
+      }
+      return problem({
+        instance: '/api/auth/pin',
+        status: 401,
+        errorCode: 'INVALID_PIN',
+        detail: 'Invalid PIN.',
+      });
+    }
+  }
+
   mockState.pin = pin;
   mockState.pinAttempts = 0;
   mockState.pinLockedUntil = null;

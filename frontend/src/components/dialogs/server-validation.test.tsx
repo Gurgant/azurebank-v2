@@ -155,6 +155,129 @@ describe('the account rules the mock did not enforce', () => {
     expect((await res.json()).errors.Name).toEqual(['Account name is required.', LENGTH]);
   });
 
+  it('refuses to change a PIN without the current one, and 401s a wrong one', async () => {
+    /*
+      Pins the rule the mock had inverted. It used to document itself as "set/OVERWRITE the user's
+      PIN … no old PIN and no step-up required" and implement exactly that — modelling a complete
+      step-up bypass as intended behaviour. Measured through the real BFF, session cookie only:
+
+        enrol (no currentPin)      -> 200 {"message":"PIN set successfully"}
+        change, no currentPin      -> 422 PIN_REQUIRED  "The current PIN is required to change it."
+        change, wrong currentPin   -> 401 INVALID_PIN   "Invalid PIN."
+        change, correct currentPin -> 200
+
+      `instance` is "/api/auth/pin" on both errors — the API's own path, forwarded untouched by the
+      BFF rather than authored by it.
+
+      Without this test the mock rule is unpinned: deleting the guard leaves the whole suite green,
+      which is how the original hole survived in the first place.
+    */
+    // hasPin true == the mock's stand-in for a stored PinHash, i.e. this is a CHANGE.
+    mockState.session!.hasPin = true;
+
+    const noProof = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999' }),
+    });
+    expect(noProof.status).toBe(422);
+    expect((await noProof.json()).errorCode).toBe('PIN_REQUIRED');
+
+    const wrongProof = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: '000000' }),
+    });
+    expect(wrongProof.status).toBe(401);
+    expect((await wrongProof.json()).errorCode).toBe('INVALID_PIN');
+
+    // And the refusals must not have moved the stored PIN.
+    expect(mockState.pin).not.toBe('999999');
+  });
+
+  it('rejects a malformed currentPin even while ENROLLING, where the value is ignored', async () => {
+    /*
+      Model validation runs before the action, so it cannot know whether a PIN exists: a SUPPLIED
+      currentPin must be well-formed on the enrolment path too, where the value is otherwise unused.
+
+      The mock had this check inside the "already has a PIN" branch, which turned a state-INdependent
+      rule into a state-dependent one and accepted a payload the API rejects. Measured on the real
+      pipeline: enrolling with {pin:"123456", currentPin:"abc"} is 400, not 200.
+    */
+    mockState.session!.hasPin = false;
+
+    const res = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '123456', currentPin: 'abc' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(Object.keys((await res.json()).errors)).toContain('CurrentPin');
+
+    // "" is SUPPLIED-but-malformed, not absent: [Pin] runs at binding and rejects it, so it is a
+    // 400 too — not the 422 a genuinely missing value earns.
+    mockState.session!.hasPin = true;
+    const empty = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: '' }),
+    });
+    expect(empty.status).toBe(400);
+  });
+
+  it('applies the full verifier contract to the current PIN, lockout included', async () => {
+    /*
+      CurrentPin goes through IPinVerifier on the API, so it inherits every rule that path has.
+      A first draft of the mock only bumped a counter — modelling an endpoint that can be
+      brute-forced without ever locking, which is worse than the hole this change closed.
+
+      Measured against the real pipeline (WebApplicationFactory runs Program.cs verbatim; see
+      PinReplacementTests):
+        malformed "abc"           -> 400, errors keyed "CurrentPin"  (validation precedes the action)
+        third wrong               -> 429 PIN_LOCKED
+        correct, but locked       -> 429 PIN_LOCKED  (the lock is read BEFORE the comparison)
+    */
+    mockState.session!.hasPin = true;
+
+    const malformed = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: 'abc' }),
+    });
+    expect(malformed.status).toBe(400);
+    expect(Object.keys((await malformed.json()).errors)).toContain('CurrentPin');
+
+    // Two wrong tries stay 401; the third latches the lock.
+    for (let i = 0; i < 2; i += 1) {
+      const wrong = await fetch('/bff/auth/set-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '999999', currentPin: '000000' }),
+      });
+      expect(wrong.status).toBe(401);
+    }
+    const third = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: '000000' }),
+    });
+    expect(third.status).toBe(429);
+    expect((await third.json()).errorCode).toBe('PIN_LOCKED');
+
+    // Knowing the PIN does not lift the lock.
+    const correctButLocked = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '999999', currentPin: mockState.pin }),
+    });
+    expect(correctButLocked.status).toBe(429);
+    // The CODE, not just the status: a plain rate-limit 429 would satisfy the status alone, and the
+    // point here is specifically that the PIN lockout answered.
+    expect((await correctButLocked.json()).errorCode).toBe('PIN_LOCKED');
+    expect(mockState.pin).not.toBe('999999');
+  });
+
   it('answers an anonymous rename 401 even when the handle IS taken', async () => {
     /*
       ORDER, and it is a security property rather than tidiness. The BFF checks the session BEFORE

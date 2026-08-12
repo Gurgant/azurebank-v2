@@ -534,6 +534,65 @@ public class AuthService : IAuthService
             throw new NotFoundException("User", userId);
         }
 
+        /*
+          CHANGING a PIN requires the old one. Enrolling does not.
+
+          This assignment used to be unconditional, which made the whole step-up story decorative:
+          a caller holding only a session could overwrite the PIN and then pass every gate that
+          PIN protects. Measured end to end through the BFF, cookie only, before this guard:
+
+            register            -> 201, authLevel 1
+            set-pin "131313"    -> 200   (enrolment)
+            set-pin "999999"    -> 200   <- no proof of "131313" asked for
+            verify-pin "999999" -> 200,  authLevel 2
+            GET .../full-number -> 200   "AB-3142-8079-89", unmasked
+
+          ADR-0010's attempt-limiting never engaged, because nothing was guessed. And ADR-0008's
+          step-up gate cannot help: it checks that A PIN was entered, not that the entered PIN was
+          the user's. The check has to live here, at the point of replacement.
+
+          Verified through IPinVerifier rather than the hasher directly so a wrong CurrentPin
+          counts against the SAME lockout as every other wrong PIN — otherwise this endpoint would
+          be an uncounted brute-force oracle, which is strictly worse than what it replaces.
+        */
+        if (!string.IsNullOrEmpty(user.PinHash))
+        {
+            if (string.IsNullOrEmpty(request.CurrentPin))
+            {
+                // 422, not 400: "required only when a PIN already exists" is a business rule the
+                // schema cannot express, which is the split BusinessRuleException documents.
+                throw new BusinessRuleException(
+                    "The current PIN is required to change it.", ErrorCodes.PinRequired);
+            }
+
+            // Throws PinLockedException (429) if locked; false on a wrong PIN under the threshold.
+            if (!await _pinVerifier.VerifyPinAsync(userId, request.CurrentPin))
+            {
+                // Same shape withdraw returns for a bad PIN (TransactionService.WithdrawAsync).
+                throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
+            }
+
+            /*
+              MIRROR the reset onto the TRACKED entity, or UpdateAsync below undoes it.
+
+              A successful verification clears the failure counters — but PinService does that in
+              its OWN DbContext (ResetLockoutAsync, via ExecuteUpdate on the relational path), while
+              `user` here was loaded by _userManager and still carries the pre-verification values.
+              `UpdateAsync(user)` writes the whole tracked row, so those stale counters go straight
+              back over the reset.
+
+              Observed before this fix, black-box and with no database access: fail twice, change
+              the PIN with the correct current one, then fail once more — that attempt answered 429
+              instead of 401, i.e. it was counted as the third rather than the first. The reset had
+              been resurrected.
+
+              Same shape as the aliasing that bit this codebase in InMemoryTokenStore: two views of
+              one row, one of them stale, and the stale one wins because it is written last.
+            */
+            user.PinAccessFailedCount = 0;
+            user.PinLockoutEnd = null;
+        }
+
         user.PinHash = _passwordHasher.HashPin(request.Pin);
         var result = await _userManager.UpdateAsync(user);
 
