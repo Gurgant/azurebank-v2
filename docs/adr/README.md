@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Twenty-five records is more than anyone reads cold. These four carry the architecture; the rest is
+Forty records is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -82,9 +82,10 @@ detail hanging off them.
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
 All forty **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
-"shipped" is a claim about the decision, not about every line of illustration around it. **ADR-0008
-carries two C# blocks that were never built** (`RequireAuthLevelAttribute`,
-`AuthLevelTimeoutMiddleware`), found and annotated 2026-08-12. It is the one place in this
+"shipped" is a claim about the decision, not about every line of illustration around it. **Four of
+ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
+built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
+annotation the entity does not carry. Found and annotated 2026-08-12. It is the one place in this
 directory where the code samples describe a design that was not adopted, and it is worth knowing
 before copying a sketch out of an ADR.
 
@@ -96,8 +97,9 @@ ADR-0020's dual-mode caveat points at ADR-0038 for the half of it that turned ou
 accepted so much as unnoticed, and ADR-0015's residual points at ADR-0039 both for its closure and
 for the two reasons it had given for leaving it open, which were wrong; and ADR-0040 closes a hole that
 left both ADR-0008's step-up gate and ADR-0010's attempt-limiting inoperative. ADR-0008's own
-corrections follow the same rule — six inline notes, nothing deleted — and one of them records an
-open hole rather than a supersession: **account deletion is listed as level 2 and is gated nowhere.**
+corrections follow the same rule — eight inline notes, nothing deleted — and one of them records an
+open hole rather than a supersession: **account deletion is listed as level 2 and is gated nowhere
+at that level** (the endpoint is still `[Authorize]`; what is missing is the step-up).
 The next free number is **0041**.
 
 <details>

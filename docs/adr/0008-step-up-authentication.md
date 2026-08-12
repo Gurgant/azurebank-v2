@@ -7,10 +7,18 @@
 **Decision Makers**: Vladislav Aleshaev
 
 > **Implementation sketches corrected, 2026-08-12.** The decision itself is accepted and shipped —
-> PIN step-up exists and works. But this ADR was written alongside the January build, and parts of
-> it describe a design that was never adopted: **two of its C# blocks have no counterpart in the
-> source**, and three of its tables and lists state things that are no longer true. Each affected
-> clause now carries a note giving the measured reality and the file that holds it.
+> PIN step-up exists and works. But this ADR was written alongside the January build, and much of
+> its illustration describes a design that was never adopted.
+>
+> **Of its five C# blocks, four diverge from the source.** *Session State* declares an
+> `enum AuthLevel` that has **zero occurrences** anywhere (the real field is a plain
+> `int AuthLevel`); *Middleware: AuthLevel Requirement* and *Controller Usage* both rest on a
+> `RequireAuthLevelAttribute` that was **never built** (see the note above each); and *PIN Hash
+> Storage* shows a `[StringLength(128)]` annotation the entity does not carry — the length is fluent,
+> `HasMaxLength(PinHashMaxLength)` → `nvarchar(200)`. Only *Session State*'s surrounding
+> `UserSession` shape is close to real.
+>
+> **Four tables and lists** also state things that are no longer true, and each carries a note.
 >
 > Corrections are **inline, and nothing below is deleted** — this repo's convention
 > ([README](README.md)): *"the earlier keeps an inline supersession note at the affected clause
@@ -64,6 +72,10 @@ stateDiagram-v2
     }
 ```
 
+*Correction (2026-08-12): the `Timeout (5 min)` edge is the **default** —
+`SecurityOptions.PinValidityMinutes` is 5 unless overridden, and development overrides it to 10 — and the transition is
+**lazy, not scheduled**: nothing fires it at the deadline. See the Timeout Handling correction below.*
+
 ### Auth Levels
 
 | Level | Access | How to Achieve |
@@ -77,8 +89,11 @@ stateDiagram-v2
 > so **the transfer request itself never carries a PIN** — `TransferRequest` has no `Pin` field. The
 > PIN *does* reach the API, on a **separate** request: the BFF forwards it to
 > `POST /api/auth/pin/verify` (`BffAuthController.cs:652`), the API is the sole verifier, and the BFF
-> keeps only the resulting boolean as a session flag. The sequence diagram further down this ADR
-> shows exactly that hop, and is correct.
+> keeps only the resulting boolean as a session flag. **That one hop is drawn correctly** in the
+> sequence diagram further down this ADR — but do not read the rest of that figure as verified: it
+> routes transfers through `POST /bff/transfers`, a path that **exists nowhere** in the codebase (the
+> real one is `/api/transfers`, proxied by the YARP catch-all; only `/bff/auth/*` is BFF-owned), and
+> it ends a successful transfer at `200 OK` where the API returns **`201 Created`**.
 >
 > **Withdraw** works the other way round: the PIN travels **in the withdraw body**
 > (`WithdrawRequest.Pin`, `[Required]`), and `TransactionService` verifies it through `IPinVerifier`
@@ -91,9 +106,12 @@ stateDiagram-v2
 > no cookie and no PIN, and asserts `201 Created` with the balance moved. That is
 > [ADR-0038](0038-bff-session-is-the-only-credential.md)'s open residual, and it is **not** confined
 > to a docs UI or to Development — `AddJwtAuthentication` is registered unconditionally and
-> `POST /api/auth/login` is `[AllowAnonymous]` in every environment, so a JWT is obtainable anywhere.
+> `POST /api/auth/login` is `[AllowAnonymous]` in every environment, so a JWT is obtainable in any of
+> them — wherever the API's own port is reachable.
 >
-> One row of this table describes a transport-layer gate; the other, an in-band credential.
+> The single **"Level 2"** row above therefore covers two unrelated mechanisms — a transport-layer
+> gate for transfers, an in-band credential for withdraw. The row is left exactly as the January
+> decision recorded it; what changed is our knowledge of how it was built.
 
 ## Rationale
 
@@ -117,18 +135,22 @@ stateDiagram-v2
 
 > **Corrections (2026-08-12) to items 3 and 4.**
 >
-> **3 — five minutes is configuration, not a constant.** `SecurityOptions.PinValidityMinutes` is
-> **5 in production and 10 in development** (`appsettings.json:33`, `appsettings.Development.json:16`).
+> **3 — five minutes is configuration, not a constant.** `SecurityOptions.PinValidityMinutes`
+> **defaults to 5** (`appsettings.json:33`, and the same in code) and **development overrides it to
+> 10** (`appsettings.Development.json:16`).
 >
 > **4 — "all step-up attempts logged" overstates what is there.** `AuthLevelMiddleware` logs only
-> **refusals** — `StepUpWithoutSession` and `StepUpRequired`. A request that *passes* the gate emits
+> **refusals**, and there are three of them: `StepUpWithoutSession`, `StepUpRequired` and
+> `RawRefreshBlocked`. A request that *passes* the gate emits
 > nothing at the gate at all. The elevation itself is logged (`SessionService.SetPinVerified`,
 > `BffAuthController`), but **with no correlation to the operation that triggered it**, so the log
 > cannot answer "which transfer did this PIN entry authorise". And **no durable record of the event
-> reaches the database** — the only step-up state persisted is `ApplicationUser.PinAccessFailedCount`
+> reaches the database** — the only *attempt* state persisted is `ApplicationUser.PinAccessFailedCount`
 > and `PinLockoutEnd`, which are *current state, not history*: the counter is **reset to 0 the moment
-> the lockout trips** (`PinService`), so not even the number of attempts survives. The trail exists
-> only as exported log lines, which by design carry no money amounts.
+> the lockout trips** (`PinService`), so not even the number of attempts survives. (`PinHash` is of
+> course persisted too — the credential, not a record of its use.) The trail exists only as exported
+> log lines, and the **transfer** ones deliberately omit the amount (`TransferService`); withdraw and
+> deposit do log theirs, so "logs carry no money" is true of transfers and not of the system.
 
 ### Why Not Full 2FA?
 
@@ -198,10 +220,11 @@ public enum AuthLevel
 > `context.HttpContext.GetUserSession()` — a BFF concept; the API is a stateless JWT bearer service
 > with no session — yet applies the result to `TransferController`, an **API** controller. The
 > Consequences section above already says *"Auth level stored in session, not JWT"*, so the ADR
-> disagrees with itself two sections apart.
+> disagrees with itself across two adjacent sections.
 >
 > **What actually enforces step-up:** `AzureBank.Bff/Middleware/AuthLevelMiddleware.cs`. It is
-> registered **globally** (`Bff/Program.cs`, plain `UseMiddleware`, no `UseWhen`), and does two
+> registered **globally** (`Bff/Program.cs` calls `UseAuthLevelEnforcement()`, whose extension is a
+> plain `UseMiddleware` with no `UseWhen`), and does two
 > unrelated jobs. First, on **every** request, it short-circuits a raw proxied
 > `/api/auth/refresh` to 404 — nothing to do with PINs; only the BFF may rotate refresh tokens
 > (ADR-0021). Second, it gates **three** paths behind level 2: `POST /api/transfers`,
@@ -241,6 +264,13 @@ public class RequireAuthLevelAttribute : Attribute, IAuthorizationFilter
 ```
 
 ### Controller Usage
+
+> ⚠️ **Never built either — this is the previous block's attribute, shown in use.** (2026-08-12)
+> `[RequireAuthLevel(AuthLevel.Level2)]` has **zero occurrences** in the codebase and in its whole
+> history. The real `TransferController` carries `[Route("api/transfers")]`, `[Authorize]`,
+> `[RequireIdempotency]` and `[RequestSizeLimit]` — note also that the `[Route("api/[controller]")]`
+> below would resolve to `/api/Transfer`, not the `/api/transfers` every caller and the BFF gate
+> actually use.
 
 ```csharp
 [ApiController]
@@ -309,11 +339,14 @@ sequenceDiagram
 > confusion — and it never touches `AuthLevel` or `PinVerifiedAt`.
 >
 > The difference is not cosmetic: **an elevated session that nothing reads stays elevated in the
-> store** until something does. So "expires after 5 minutes" means *"is not honoured more than 5
-> minutes after `PinVerifiedAt`"*, not *"is actively revoked at the 5-minute mark"*.
+> store** until something does. So the ADR's "expires after 5 minutes" means *"is not honoured more
+> than `PinValidityMinutes` after `PinVerifiedAt`"*, not *"is actively revoked at the deadline"*.
 >
-> The window is also configuration rather than the hardcoded `TimeSpan.FromMinutes(5)` below —
-> `SecurityOptions.PinValidityMinutes`, **5 in production, 10 in development**.
+> And the window is configuration, not the hardcoded `TimeSpan.FromMinutes(5)` below —
+> `SecurityOptions.PinValidityMinutes` **defaults to 5 and is overridden to 10 in development**, so
+> every *elevation* window this ADR states as five minutes is the default, not a constant. (The
+> `SessionCleanupService` interval two paragraphs up is a genuine hardcoded five minutes, which is
+> exactly why the two are easy to confuse.)
 
 ```csharp
 public class AuthLevelTimeoutMiddleware
@@ -368,7 +401,7 @@ public class ApplicationUser : IdentityUser<Guid>
 > |---|---|---|
 > | Transfer, Internal transfer | ✅ yes | `AuthLevelMiddleware` (BFF session flag) |
 > | Withdraw | ✅ yes, **by a different mechanism** | PIN in the request body, verified by the API through `IPinVerifier` |
-> | **Delete account** | ❌ **no — nothing, anywhere** | — |
+> | **Delete account** | ❌ **no step-up — nothing, anywhere** | still `[Authorize]`, just never gated at level 2 |
 > | **Reveal full account number** — *absent from the table* | ✅ yes | `AuthLevelMiddleware`, added later by [ADR-0020](0020-account-number-reveal.md) |
 >
 > **1 — Withdraw reaches the same level by a different route**, so a withdraw survives a direct call
@@ -402,17 +435,21 @@ Success criteria:
 > attempt-limiting both inoperative at once.
 >
 > **"expires after 5 minutes of **inactivity**"** — it is not inactivity. `UserSession.IsPinVerificationValid`
-> is `DateTime.UtcNow < PinVerifiedAt.Value.AddMinutes(validityMinutes)`: an **absolute** window from
-> the moment of verification. Using the app does **not** extend it, and the value is configuration
-> (5 production / 10 development), not the constant this ADR shows.
+> is `PinVerifiedAt.HasValue && DateTime.UtcNow < PinVerifiedAt.Value.AddMinutes(validityMinutes)`: an
+> **absolute** window from the moment of verification. Using the app does **not** extend it, and the
+> value is configuration (default 5, overridden to 10 in development), not the constant this ADR shows.
 >
 > **"return 403 without Level 2"** — incomplete, and the missing half is deliberate.
-> `AuthLevelMiddleware` answers **401 `AUTH_TOKEN_MISSING`** when there is *no session at all*, and
-> **403 `STEP_UP_REQUIRED`** only when a session exists at level 1. The two states are not the same
+> `AuthLevelMiddleware` answers **401 `AUTH_TOKEN_MISSING`** when `GetAuthLevel` returns 0 — which is
+> a missing cookie *and* a present-but-unknown-or-expired one, so a user whose session lapsed
+> mid-flow gets 401, not 403 — and **403 `STEP_UP_REQUIRED`** only when a live session sits at
+> level 1. The two states are not the same
 > thing and the SPA routes on the difference: 403 opens the PIN modal, 401 must send the user to
 > login. Answering 403 to someone with no session would prompt for a PIN they cannot use. The 401
 > body is byte-identical to the API's own, so a caller cannot tell whether the BFF short-circuited
-> or the API replied — probing does not reveal which paths carry the gate.
+> or the API replied. **That indistinguishability is the 401 branch only:** the 403 carries
+> `X-Auth-Level-Required`, `X-Auth-Level-Current` and a `{"type":"STEP_UP_REQUIRED", ...}` body the
+> API never emits, so a caller *holding a level-1 session* can map the gated paths exactly.
 
 ## Related
 
