@@ -128,6 +128,25 @@ describe('step-up interceptor (PR-11)', () => {
       so the bytes match because nothing rebuilt them — not because anything holds a buffer.
     */
     expect(bodies).toHaveLength(2);
+
+    /*
+      Guard against a VACUOUS pass first. `bodies[0] === bodies[1]` is satisfied by two EMPTY
+      strings, and that state is reachable: dropping `body` from the transfer query fn was measured
+      to leave this whole file 6/6 green with `bodies === ['', '']`, because spyTransfer branches
+      only on mockState.authLevel and never inspects the payload.
+
+      `toEqual`, not `toMatchObject`: the query fn destructures `{ idempotencyKey, body }`, so the
+      field most likely to leak into the payload by accident is the key itself — and a subset
+      matcher would wave that through. `description` is absent rather than undefined because
+      JSON.stringify drops undefined values.
+    */
+    expect(JSON.parse(bodies[0])).toEqual({
+      fromAccountId: 'a',
+      recipientAzureTag: 'friend',
+      amount: 25,
+    });
+    // Content checked once; `===` carries it to the replay transitively. Keep BOTH assertions —
+    // JSON.parse discards key order and whitespace, which is the byte-level property claimed above.
     expect(bodies[0]).toBe(bodies[1]);
   });
 

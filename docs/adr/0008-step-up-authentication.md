@@ -72,11 +72,28 @@ stateDiagram-v2
 | Level 2 | Transfers, withdrawals | Verify 6-digit PIN |
 
 > **Correction (2026-08-12): "Level 2" is two different mechanisms, not one.**
-> **Transfers** are gated by the BFF session flag — `AuthLevelMiddleware` refuses the request and
-> the PIN never reaches the API. **Withdraw** is not: it carries the PIN in the request body and
-> `TransactionService` verifies it through `IPinVerifier` before any money moves. The API has no
-> auth-level concept at all, so a withdraw survives a direct API call and a transfer does not.
-> One row of this table describes a transport-layer gate and the other an in-band credential.
+>
+> **Transfers** are gated in the BFF: `AuthLevelMiddleware` refuses the request before it is proxied,
+> so **the transfer request itself never carries a PIN** — `TransferRequest` has no `Pin` field. The
+> PIN *does* reach the API, on a **separate** request: the BFF forwards it to
+> `POST /api/auth/pin/verify` (`BffAuthController.cs:652`), the API is the sole verifier, and the BFF
+> keeps only the resulting boolean as a session flag. The sequence diagram further down this ADR
+> shows exactly that hop, and is correct.
+>
+> **Withdraw** works the other way round: the PIN travels **in the withdraw body**
+> (`WithdrawRequest.Pin`, `[Required]`), and `TransactionService` verifies it through `IPinVerifier`
+> before any money moves.
+>
+> **The API has no auth-level concept**, so on a call made straight to the API — bypassing the BFF
+> entirely — the two diverge: **withdraw's PIN requirement still applies**, because it is in the body
+> the API itself reads, while **a transfer has no second factor at all and succeeds**. Not a
+> hypothesis: `TransferEndpointTests.Transfer_ToExistingUser_ReturnsCreated` sends a bearer JWT with
+> no cookie and no PIN, and asserts `201 Created` with the balance moved. That is
+> [ADR-0038](0038-bff-session-is-the-only-credential.md)'s open residual, and it is **not** confined
+> to a docs UI or to Development — `AddJwtAuthentication` is registered unconditionally and
+> `POST /api/auth/login` is `[AllowAnonymous]` in every environment, so a JWT is obtainable anywhere.
+>
+> One row of this table describes a transport-layer gate; the other, an in-band credential.
 
 ## Rationale
 
@@ -107,10 +124,11 @@ stateDiagram-v2
 > **refusals** — `StepUpWithoutSession` and `StepUpRequired`. A request that *passes* the gate emits
 > nothing at the gate at all. The elevation itself is logged (`SessionService.SetPinVerified`,
 > `BffAuthController`), but **with no correlation to the operation that triggered it**, so the log
-> cannot answer "which transfer did this PIN entry authorise". Nothing about a step-up reaches the
-> database: `ApplicationUser.PinAccessFailedCount` is *reset to 0 the moment the lockout trips*
-> (`PinService`), so not even the number of attempts survives. The trail exists only as exported
-> log lines, which by design carry no money amounts.
+> cannot answer "which transfer did this PIN entry authorise". And **no durable record of the event
+> reaches the database** — the only step-up state persisted is `ApplicationUser.PinAccessFailedCount`
+> and `PinLockoutEnd`, which are *current state, not history*: the counter is **reset to 0 the moment
+> the lockout trips** (`PinService`), so not even the number of attempts survives. The trail exists
+> only as exported log lines, which by design carry no money amounts.
 
 ### Why Not Full 2FA?
 
@@ -182,12 +200,15 @@ public enum AuthLevel
 > Consequences section above already says *"Auth level stored in session, not JWT"*, so the ADR
 > disagrees with itself two sections apart.
 >
-> **What actually enforces step-up:** `AzureBank.Bff/Middleware/AuthLevelMiddleware.cs`, a middleware
-> matching three request paths (`POST /api/transfers`, `POST /api/transfers/internal`, and any
-> `*/full-number` under `/api/accounts/`). It answers **401** when there is no session at all and
-> **403 + `X-Auth-Level-Required`** when the session exists at level 1 — see the Validation
-> correction below. The API is not involved: a grep of `AzureBank.Api` for `authlevel|acr|amr`
-> returns only comments.
+> **What actually enforces step-up:** `AzureBank.Bff/Middleware/AuthLevelMiddleware.cs`. It is
+> registered **globally** (`Bff/Program.cs`, plain `UseMiddleware`, no `UseWhen`), and does two
+> unrelated jobs. First, on **every** request, it short-circuits a raw proxied
+> `/api/auth/refresh` to 404 — nothing to do with PINs; only the BFF may rotate refresh tokens
+> (ADR-0021). Second, it gates **three** paths behind level 2: `POST /api/transfers`,
+> `POST /api/transfers/internal`, and any `*/full-number` under `/api/accounts/`. It answers **401**
+> when there is no session at all and **403 + `X-Auth-Level-Required`** when the session exists at
+> level 1 — see the Validation correction below. The API is not involved: a grep of `AzureBank.Api`
+> for `authlevel|acr|amr` returns only comments.
 
 ```csharp
 public class RequireAuthLevelAttribute : Attribute, IAuthorizationFilter
@@ -277,11 +298,19 @@ sequenceDiagram
 > ⚠️ **This middleware was never built either.** (2026-08-12) `AuthLevelTimeoutMiddleware` has
 > **zero occurrences** anywhere in the source.
 >
-> The real mechanism is **lazy, not middleware**: `SessionService.GetAuthLevel` checks expiry
-> **when someone asks** and downgrades the session in place at that moment. Nothing runs per
-> request. The difference is not cosmetic — an elevated session that is never read is never
-> downgraded, so "expires after 5 minutes" means *"is not honoured more than 5 minutes after
-> `PinVerifiedAt`"*, not *"is actively revoked at the 5-minute mark"*.
+> The real mechanism is **lazy evaluation, not a timer**: `SessionService.GetAuthLevel` checks expiry
+> **when something reads it** and downgrades the session in place at that moment. The downgrade is a
+> side effect of the read, and there are only three readers — `AuthLevelMiddleware` on the three
+> PIN-protected paths (and only when a session cookie is present), plus `GET /bff/auth/me` and
+> `GET /bff/auth/session-status`.
+>
+> **No timer and no sweeper does this.** `SessionCleanupService` runs on a five-minute interval — the
+> same number as `PinValidityMinutes` in production, which is a coincidence that invites exactly this
+> confusion — and it never touches `AuthLevel` or `PinVerifiedAt`.
+>
+> The difference is not cosmetic: **an elevated session that nothing reads stays elevated in the
+> store** until something does. So "expires after 5 minutes" means *"is not honoured more than 5
+> minutes after `PinVerifiedAt`"*, not *"is actively revoked at the 5-minute mark"*.
 >
 > The window is also configuration rather than the hardcoded `TimeSpan.FromMinutes(5)` below —
 > `SecurityOptions.PinValidityMinutes`, **5 in production, 10 in development**.
