@@ -110,7 +110,15 @@ public class TransferService : ITransferService
                     try
                     {
                         var transactionNumber = IdGenerator.GenerateTransactionNumber();
-                        var now = DateTime.UtcNow;
+
+                        /*
+                          No `now` here on purpose. AzureBankDbContext.UpdateTimestamps owns
+                          CreatedAt/UpdatedAt and runs inside SaveChanges, so anything this method
+                          assigned was overwritten a moment later. The one value that used to
+                          SURVIVE was the copy handed back as ProcessedAt — so the API reported an
+                          instant the database never held. ProcessedAt is now read back from the
+                          persisted row, below.
+                        */
 
                         // Create outgoing transaction (sender).
                         // RelatedTransactionId stays null for now: the pair
@@ -130,8 +138,7 @@ public class TransferService : ITransferService
                             BalanceAfter = fromAccount.Balance - request.Amount,
                             Description = request.Description ?? $"Transfer to @{recipient.AzureTag}",
                             RecipientAzureTag = recipient.AzureTag,
-                            Status = TransactionStatus.Completed,
-                            CreatedAt = now
+                            Status = TransactionStatus.Completed
                         };
 
                         // Create incoming transaction (recipient)
@@ -154,15 +161,12 @@ public class TransferService : ITransferService
                             Description = request.Description ?? $"Transfer from @{senderUser.AzureTag}",
                             SenderAzureTag = senderUser.AzureTag,
                             RelatedTransactionId = outgoingTransaction.Id,
-                            Status = TransactionStatus.Completed,
-                            CreatedAt = now
+                            Status = TransactionStatus.Completed
                         };
 
                         // Update balances
                         fromAccount.Balance -= request.Amount;
-                        fromAccount.UpdatedAt = now;
                         recipientAccount.Balance += request.Amount;
-                        recipientAccount.UpdatedAt = now;
 
                         // Save (one-directional link only)
                         _context.Transactions.Add(outgoingTransaction);
@@ -190,7 +194,9 @@ public class TransferService : ITransferService
                             NewBalance = fromAccount.Balance,
                             RecipientAzureTag = recipient.AzureTag,
                             RecipientName = $"{recipient.FirstName} {recipient.LastName[0]}.",
-                            ProcessedAt = now
+                            // The PERSISTED instant: UpdateTimestamps stamped it during the first
+                            // SaveChanges above, onto this tracked entity.
+                            ProcessedAt = outgoingTransaction.CreatedAt
                         };
                     }
                     catch
@@ -279,7 +285,9 @@ public class TransferService : ITransferService
                     try
                     {
                         var transactionNumber = IdGenerator.GenerateTransactionNumber();
-                        var now = DateTime.UtcNow;
+
+                        // No `now` here — same reason as the external transfer above:
+                        // UpdateTimestamps owns the stamp, and ProcessedAt is read back below.
 
                         // Create outgoing transaction. RelatedTransactionId
                         // stays null: mutual references cannot be inserted in
@@ -295,8 +303,7 @@ public class TransferService : ITransferService
                             BalanceBefore = fromAccount.Balance,
                             BalanceAfter = fromAccount.Balance - request.Amount,
                             Description = request.Description ?? $"Internal transfer to {toAccount.Name}",
-                            Status = TransactionStatus.Completed,
-                            CreatedAt = now
+                            Status = TransactionStatus.Completed
                         };
 
                         // Create incoming transaction
@@ -314,15 +321,12 @@ public class TransferService : ITransferService
                             BalanceAfter = toAccount.Balance + request.Amount,
                             Description = request.Description ?? $"Internal transfer from {fromAccount.Name}",
                             RelatedTransactionId = outgoingTransaction.Id,
-                            Status = TransactionStatus.Completed,
-                            CreatedAt = now
+                            Status = TransactionStatus.Completed
                         };
 
                         // Update balances
                         fromAccount.Balance -= request.Amount;
-                        fromAccount.UpdatedAt = now;
                         toAccount.Balance += request.Amount;
-                        toAccount.UpdatedAt = now;
 
                         // Save (one-directional link only)
                         _context.Transactions.Add(outgoingTransaction);
@@ -351,7 +355,8 @@ public class TransferService : ITransferService
                             Description = request.Description,
                             FromAccountNewBalance = fromAccount.Balance,
                             ToAccountNewBalance = toAccount.Balance,
-                            ProcessedAt = now
+                            // The PERSISTED instant, not a copy the hook then overwrote.
+                            ProcessedAt = outgoingTransaction.CreatedAt
                         };
                     }
                     catch

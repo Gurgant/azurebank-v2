@@ -7,9 +7,27 @@ namespace AzureBank.Infrastructure.Data;
 
 public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>
 {
-    public AzureBankDbContext(DbContextOptions<AzureBankDbContext> options)
+    private readonly TimeProvider _clock;
+
+    /// <param name="options">Standard EF Core options.</param>
+    /// <param name="timeProvider">
+    /// Optional deliberately. It defaults to <see cref="TimeProvider.System"/>, which is the correct
+    /// production behaviour, so the fourteen existing construction sites keep compiling and no DI
+    /// registration is required for the app to be right. Tests that need an exact instant pass a
+    /// <c>FakeTimeProvider</c> here.
+    ///
+    /// <para>
+    /// No <c>AddSingleton(TimeProvider.System)</c> is registered yet, on purpose: nothing would
+    /// resolve it, and a registration nothing consumes is the same dead-setting defect as the BFF's
+    /// <c>MaxPinAttempts</c>. The registration lands when a service — not just this context —
+    /// needs it.
+    /// </para>
+    /// </param>
+    public AzureBankDbContext(
+        DbContextOptions<AzureBankDbContext> options, TimeProvider? timeProvider = null)
         : base(options)
     {
+        _clock = timeProvider ?? TimeProvider.System;
     }
 
     // Note: Users are accessed via Set<ApplicationUser>()
@@ -85,10 +103,21 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     }
 
     /// <summary>
-    /// Automatically update CreatedAt and UpdatedAt timestamps
+    /// Automatically update CreatedAt and UpdatedAt timestamps.
+    ///
+    /// <para>
+    /// ONE clock read per save, captured once below. It used to read
+    /// <c>DateTime.UtcNow</c> six times, and two of those cost real accuracy:
+    /// <c>CreatedAt == UpdatedAt</c> on an insert was true only by clock granularity, and the read
+    /// for <c>Transaction</c> sat INSIDE its loop — so the two legs of a transfer, one event, were
+    /// stamped with two independent instants. Anything that later reconstructs a transfer from its
+    /// rows would see them as two events milliseconds apart.
+    /// </para>
     /// </summary>
     private void UpdateTimestamps()
     {
+        var now = _clock.GetUtcNow().UtcDateTime;
+
         var entries = ChangeTracker.Entries<BaseEntity>();
 
         foreach (var entry in entries)
@@ -96,12 +125,12 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
             switch (entry.State)
             {
                 case EntityState.Added:
-                    entry.Entity.CreatedAt = DateTime.UtcNow;
-                    entry.Entity.UpdatedAt = DateTime.UtcNow;
+                    entry.Entity.CreatedAt = now;
+                    entry.Entity.UpdatedAt = now;
                     break;
 
                 case EntityState.Modified:
-                    entry.Entity.UpdatedAt = DateTime.UtcNow;
+                    entry.Entity.UpdatedAt = now;
                     break;
             }
         }
@@ -112,7 +141,7 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
 
         foreach (var entry in transactionEntries)
         {
-            entry.Entity.CreatedAt = DateTime.UtcNow;
+            entry.Entity.CreatedAt = now;
         }
 
         // Handle ApplicationUser entity (inherits IdentityUser, not BaseEntity)
@@ -123,12 +152,12 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
             switch (entry.State)
             {
                 case EntityState.Added:
-                    entry.Entity.CreatedAt = DateTime.UtcNow;
-                    entry.Entity.UpdatedAt = DateTime.UtcNow;
+                    entry.Entity.CreatedAt = now;
+                    entry.Entity.UpdatedAt = now;
                     break;
 
                 case EntityState.Modified:
-                    entry.Entity.UpdatedAt = DateTime.UtcNow;
+                    entry.Entity.UpdatedAt = now;
                     break;
             }
         }

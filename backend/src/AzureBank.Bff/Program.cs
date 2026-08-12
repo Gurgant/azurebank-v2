@@ -360,6 +360,10 @@ try
         app.UseForwardedHeaders();
     }
 
+    // 0. Correlation id — FIRST, so every line below (including the request log) can name the
+    //    request, and so the id is on Request.Headers before YARP proxies it to the API.
+    app.UseCorrelationId();
+
     // 1. Serilog request logging
     app.UseSerilogRequestLogging(options =>
     {
