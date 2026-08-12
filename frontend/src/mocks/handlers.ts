@@ -2399,6 +2399,19 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
       correct, but already locked    -> 429 PIN_LOCKED (the lock is checked BEFORE the comparison,
                                         so knowing the PIN does not lift it)
   */
+  /*
+    FORMAT FIRST, and OUTSIDE the hasPin branch. Model validation runs before the action, so it
+    cannot know whether a PIN exists: a SUPPLIED currentPin must be well-formed even on the
+    enrolment path, where the value is otherwise ignored. Measured — enrolling with
+    {pin:"123456", currentPin:"abc"} is a 400, not a 200 (PinReplacementTests).
+
+    A first draft had this check inside the branch below, which made a state-INdependent rule
+    state-dependent and let the mock accept a payload the API rejects.
+  */
+  if (typeof currentPin === 'string' && currentPin.length > 0 && !/^\d{6}$/.test(currentPin)) {
+    return modelStateProblem({ CurrentPin: ['PIN must be exactly 6 digits.'] });
+  }
+
   if (mockState.session.hasPin) {
     if (typeof currentPin !== 'string' || currentPin.length === 0) {
       return problem({
@@ -2408,10 +2421,6 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
         detail: 'The current PIN is required to change it.',
       });
     }
-    if (!/^\d{6}$/.test(currentPin)) {
-      return modelStateProblem({ CurrentPin: ['PIN must be exactly 6 digits.'] });
-    }
-
     const now = Date.now();
     if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
       return pinLockedProblem(mockState.pinLockedUntil, now, 'set-pin');

@@ -195,6 +195,27 @@ describe('the account rules the mock did not enforce', () => {
     expect(mockState.pin).not.toBe('999999');
   });
 
+  it('rejects a malformed currentPin even while ENROLLING, where the value is ignored', async () => {
+    /*
+      Model validation runs before the action, so it cannot know whether a PIN exists: a SUPPLIED
+      currentPin must be well-formed on the enrolment path too, where the value is otherwise unused.
+
+      The mock had this check inside the "already has a PIN" branch, which turned a state-INdependent
+      rule into a state-dependent one and accepted a payload the API rejects. Measured on the real
+      pipeline: enrolling with {pin:"123456", currentPin:"abc"} is 400, not 200.
+    */
+    mockState.session!.hasPin = false;
+
+    const res = await fetch('/bff/auth/set-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: '123456', currentPin: 'abc' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(Object.keys((await res.json()).errors)).toContain('CurrentPin');
+  });
+
   it('applies the full verifier contract to the current PIN, lockout included', async () => {
     /*
       CurrentPin goes through IPinVerifier on the API, so it inherits every rule that path has.
@@ -241,6 +262,9 @@ describe('the account rules the mock did not enforce', () => {
       body: JSON.stringify({ pin: '999999', currentPin: mockState.pin }),
     });
     expect(correctButLocked.status).toBe(429);
+    // The CODE, not just the status: a plain rate-limit 429 would satisfy the status alone, and the
+    // point here is specifically that the PIN lockout answered.
+    expect((await correctButLocked.json()).errorCode).toBe('PIN_LOCKED');
     expect(mockState.pin).not.toBe('999999');
   });
 

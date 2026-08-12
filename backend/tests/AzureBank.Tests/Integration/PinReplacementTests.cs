@@ -148,6 +148,23 @@ public class PinReplacementTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task AMalformedCurrentPinIsRejectedEvenWhenENROLLING()
+    {
+        /*
+          Validation runs BEFORE the action, so it does not know whether a PIN exists — a supplied
+          currentPin must be well-formed even on the enrolment path, where the value is otherwise
+          ignored. Easy to get wrong the other way round: putting the format check inside the
+          "already has a PIN" branch makes it state-dependent, which the real pipeline is not.
+        */
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        var response = await PostSetPin("123456", currentPin: "abc");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task WrongCurrentPinsTripTheSameLockoutAsAnyOtherWrongPin()
     {
         // The reason CurrentPin goes through IPinVerifier rather than the hasher: without it this
