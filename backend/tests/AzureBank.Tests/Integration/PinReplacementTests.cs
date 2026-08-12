@@ -173,14 +173,28 @@ public class PinReplacementTests : IntegrationTestBase
         SetAuthHeader(token);
         await PostSetPin("123456", null);
 
-        HttpResponseMessage? last = null;
-        for (var attempt = 0; attempt < 3; attempt++)
+        /*
+          Assert EVERY attempt, not just the last. Checking only the final response cannot tell
+          "locks on the third" from "locks on the first" — both end in 429, and a lockout that fired
+          immediately would look identical while being a different (and worse) behaviour.
+        */
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
-            last = await PostSetPin("999999", currentPin: "000000");
-        }
+            var response = await PostSetPin("999999", currentPin: "000000");
 
-        last!.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
-        (await ErrorCodeOf(last)).Should().Be(ErrorCodes.PinLocked);
+            if (attempt < 3)
+            {
+                response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                    "attempt {0} is under the threshold", attempt);
+                (await ErrorCodeOf(response)).Should().Be(ErrorCodes.InvalidPin);
+            }
+            else
+            {
+                response.StatusCode.Should().Be(HttpStatusCode.TooManyRequests,
+                    "the third crosses it");
+                (await ErrorCodeOf(response)).Should().Be(ErrorCodes.PinLocked);
+            }
+        }
     }
 
     [Fact]
