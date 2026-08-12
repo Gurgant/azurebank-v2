@@ -49,10 +49,16 @@ function Harness() {
   );
 }
 
-/** Records every Idempotency-Key; 403 at level 1, 201 at level 2 (keyed off mockState). */
-function spyTransfer(keys: (string | null)[]) {
-  return http.post('*/api/transfers', ({ request }) => {
+/**
+ * Records every Idempotency-Key AND the raw body text; 403 at level 1, 201 at level 2
+ * (keyed off mockState). The body is captured as TEXT, not parsed — "byte-identical" is a
+ * claim about the serialized bytes, and comparing two parsed objects would pass even if the
+ * property order changed, which is exactly what the server's HMAC fingerprint would reject.
+ */
+function spyTransfer(keys: (string | null)[], bodies: string[] = []) {
+  return http.post('*/api/transfers', async ({ request }) => {
     keys.push(request.headers.get('Idempotency-Key'));
+    bodies.push(await request.clone().text());
     if (mockState.authLevel < 2) {
       return HttpResponse.json(
         { type: 'STEP_UP_REQUIRED', requiredLevel: 2, currentLevel: 1, status: 403 },
@@ -95,9 +101,10 @@ beforeEach(() => {
 });
 
 describe('step-up interceptor (PR-11)', () => {
-  it('403 → modal → verify → replays the request with the SAME idempotency key', async () => {
+  it('403 → modal → verify → replays the request with the SAME key AND the SAME body', async () => {
     const keys: (string | null)[] = [];
-    server.use(spyTransfer(keys));
+    const bodies: string[] = [];
+    server.use(spyTransfer(keys, bodies));
     renderWithProviders(<Harness />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -110,6 +117,18 @@ describe('step-up interceptor (PR-11)', () => {
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBeNull();
     expect(keys[0]).toBe(keys[1]);
+
+    /*
+      ADR-0022's Verification §4 claims "step-up replay carries a byte-identical body and the
+      same key". Until this assertion existed, only the KEY half was pinned — and the key alone
+      cannot tell "the same request, replayed" from "the same key with an edited body", which is
+      the one case the server answers 422 IDEMPOTENCY_KEY_REUSE for. Byte-identity is a
+      CONSEQUENCE of baseQueryWithStepUp replaying the identical `args` reference: fetchBaseQuery
+      re-serializes a per-invocation copy (JSON.stringify on the same object, same key order),
+      so the bytes match because nothing rebuilt them — not because anything holds a buffer.
+    */
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toBe(bodies[1]);
   });
 
   it('cancelling the modal yields STEP_UP_CANCELLED and never replays', async () => {

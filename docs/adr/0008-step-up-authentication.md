@@ -6,6 +6,16 @@
 
 **Decision Makers**: Vladislav Aleshaev
 
+> **Implementation sketches corrected, 2026-08-12.** The decision itself is accepted and shipped —
+> PIN step-up exists and works. But this ADR was written alongside the January build, and parts of
+> it describe a design that was never adopted: **two of its C# blocks have no counterpart in the
+> source**, and three of its tables and lists state things that are no longer true. Each affected
+> clause now carries a note giving the measured reality and the file that holds it.
+>
+> Corrections are **inline, and nothing below is deleted** — this repo's convention
+> ([README](README.md)): *"the earlier keeps an inline supersession note at the affected clause
+> rather than being rewritten."* What an ADR got wrong is part of what it records.
+
 ---
 
 ## Context
@@ -61,6 +71,13 @@ stateDiagram-v2
 | Level 1 | Read operations, deposits | Login with email/password |
 | Level 2 | Transfers, withdrawals | Verify 6-digit PIN |
 
+> **Correction (2026-08-12): "Level 2" is two different mechanisms, not one.**
+> **Transfers** are gated by the BFF session flag — `AuthLevelMiddleware` refuses the request and
+> the PIN never reaches the API. **Withdraw** is not: it carries the PIN in the request body and
+> `TransactionService` verifies it through `IPinVerifier` before any money moves. The API has no
+> auth-level concept at all, so a withdraw survives a direct API call and a transfer does not.
+> One row of this table describes a transport-layer gate and the other an in-band credential.
+
 ## Rationale
 
 ### Why PIN over Other Options?
@@ -80,6 +97,20 @@ stateDiagram-v2
 3. **Session Binding**: Elevated auth expires after 5 minutes
 4. **Audit Trail**: All step-up attempts logged
 5. **No PIN Storage**: Only hash stored, never plaintext
+
+> **Corrections (2026-08-12) to items 3 and 4.**
+>
+> **3 — five minutes is configuration, not a constant.** `SecurityOptions.PinValidityMinutes` is
+> **5 in production and 10 in development** (`appsettings.json:33`, `appsettings.Development.json:16`).
+>
+> **4 — "all step-up attempts logged" overstates what is there.** `AuthLevelMiddleware` logs only
+> **refusals** — `StepUpWithoutSession` and `StepUpRequired`. A request that *passes* the gate emits
+> nothing at the gate at all. The elevation itself is logged (`SessionService.SetPinVerified`,
+> `BffAuthController`), but **with no correlation to the operation that triggered it**, so the log
+> cannot answer "which transfer did this PIN entry authorise". Nothing about a step-up reaches the
+> database: `ApplicationUser.PinAccessFailedCount` is *reset to 0 the moment the lockout trips*
+> (`PinService`), so not even the number of attempts survives. The trail exists only as exported
+> log lines, which by design carry no money amounts.
 
 ### Why Not Full 2FA?
 
@@ -132,6 +163,31 @@ public enum AuthLevel
 ```
 
 ### Middleware: AuthLevel Requirement
+
+> ⚠️ **This attribute was never built. Read the note before the code.** (2026-08-12)
+>
+> `grep -rn "RequireAuthLevel" backend/src backend/tests` returns **nothing**;
+> `backend/src/AzureBank.Api/Attributes/` contains only `RequireIdempotencyAttribute.cs`.
+>
+> A **BFF-side namesake did exist** — `backend/src/AzureBank.Bff/Attributes/RequireAuthLevelAttribute.cs`,
+> present from the initial import (`0799360`) and deleted in `01c0e31`, the commit that closed the
+> step-up bypass. But it was **not this class**: it declared `: Attribute` only — no
+> `IAuthorizationFilter`, no `OnAuthorization`, no behaviour beyond an `int MinimumLevel` property —
+> and `git grep "\[RequireAuthLevel"` at that commit finds **zero usages**. It was an inert marker,
+> dead from birth. The enforcing attribute shown below has never existed anywhere in this codebase.
+>
+> **The sketch is also self-contradictory**, which is the tell. It calls
+> `context.HttpContext.GetUserSession()` — a BFF concept; the API is a stateless JWT bearer service
+> with no session — yet applies the result to `TransferController`, an **API** controller. The
+> Consequences section above already says *"Auth level stored in session, not JWT"*, so the ADR
+> disagrees with itself two sections apart.
+>
+> **What actually enforces step-up:** `AzureBank.Bff/Middleware/AuthLevelMiddleware.cs`, a middleware
+> matching three request paths (`POST /api/transfers`, `POST /api/transfers/internal`, and any
+> `*/full-number` under `/api/accounts/`). It answers **401** when there is no session at all and
+> **403 + `X-Auth-Level-Required`** when the session exists at level 1 — see the Validation
+> correction below. The API is not involved: a grep of `AzureBank.Api` for `authlevel|acr|amr`
+> returns only comments.
 
 ```csharp
 public class RequireAuthLevelAttribute : Attribute, IAuthorizationFilter
@@ -218,6 +274,18 @@ sequenceDiagram
 
 ### Timeout Handling
 
+> ⚠️ **This middleware was never built either.** (2026-08-12) `AuthLevelTimeoutMiddleware` has
+> **zero occurrences** anywhere in the source.
+>
+> The real mechanism is **lazy, not middleware**: `SessionService.GetAuthLevel` checks expiry
+> **when someone asks** and downgrades the session in place at that moment. Nothing runs per
+> request. The difference is not cosmetic — an elevated session that is never read is never
+> downgraded, so "expires after 5 minutes" means *"is not honoured more than 5 minutes after
+> `PinVerifiedAt`"*, not *"is actively revoked at the 5-minute mark"*.
+>
+> The window is also configuration rather than the hardcoded `TimeSpan.FromMinutes(5)` below —
+> `SecurityOptions.PinValidityMinutes`, **5 in production, 10 in development**.
+
 ```csharp
 public class AuthLevelTimeoutMiddleware
 {
@@ -265,6 +333,27 @@ public class ApplicationUser : IdentityUser<Guid>
 | Update account | Level 1 | Non-financial |
 | Delete account | Level 2 | Destructive |
 
+> **Correction (2026-08-12): this table is the decision, not the state. They diverge in three places.**
+>
+> | Operation | Enforced today? | By what |
+> |---|---|---|
+> | Transfer, Internal transfer | ✅ yes | `AuthLevelMiddleware` (BFF session flag) |
+> | Withdraw | ✅ yes, **by a different mechanism** | PIN in the request body, verified by the API through `IPinVerifier` |
+> | **Delete account** | ❌ **no — nothing, anywhere** | — |
+> | **Reveal full account number** — *absent from the table* | ✅ yes | `AuthLevelMiddleware`, added later by [ADR-0020](0020-account-number-reveal.md) |
+>
+> **1 — Withdraw reaches the same level by a different route**, so a withdraw survives a direct call
+> to the API and a transfer does not. One decision, two implementations.
+>
+> **2 — Delete account is an open hole**, not a mechanism choice: the middleware gates three paths
+> and deletion is not one of them, and the API has no auth-level concept to fall back on. Worth
+> weighing when it is closed: deletion here is a *soft* delete (`Account.IsDeleted` behind a global
+> query filter), so the operation is recoverable — an argument about how heavy the gate should be,
+> not about whether there should be one.
+>
+> **3 — The table predates the reveal endpoint**, so this list of level-2 operations has been
+> incomplete since ADR-0020 shipped.
+
 ## Validation
 
 Success criteria:
@@ -275,11 +364,48 @@ Success criteria:
 - PIN hash uses Argon2id
 - Failed PIN attempts are rate-limited
 
+> **Corrections (2026-08-12) to three of these six.**
+>
+> **"PIN can be set by authenticated users"** — true for *enrolment* only. **Changing** a PIN now
+> requires proving the current one ([ADR-0040](0040-changing-a-credential-requires-the-current-one.md)).
+> Until that shipped, a session alone could replace the PIN and then satisfy every gate the PIN
+> protects — which made this ADR's gate and [ADR-0010](0010-pin-attempt-limiting.md)'s
+> attempt-limiting both inoperative at once.
+>
+> **"expires after 5 minutes of **inactivity**"** — it is not inactivity. `UserSession.IsPinVerificationValid`
+> is `DateTime.UtcNow < PinVerifiedAt.Value.AddMinutes(validityMinutes)`: an **absolute** window from
+> the moment of verification. Using the app does **not** extend it, and the value is configuration
+> (5 production / 10 development), not the constant this ADR shows.
+>
+> **"return 403 without Level 2"** — incomplete, and the missing half is deliberate.
+> `AuthLevelMiddleware` answers **401 `AUTH_TOKEN_MISSING`** when there is *no session at all*, and
+> **403 `STEP_UP_REQUIRED`** only when a session exists at level 1. The two states are not the same
+> thing and the SPA routes on the difference: 403 opens the PIN modal, 401 must send the user to
+> login. Answering 403 to someone with no session would prompt for a PIN they cannot use. The 401
+> body is byte-identical to the API's own, so a caller cannot tell whether the BFF short-circuited
+> or the API replied — probing does not reveal which paths carry the gate.
+
 ## Related
 
 - [ADR-0001: BFF Pattern](./0001-bff-pattern.md)
 - [ADR-0003: Argon2id Password Hashing](./0003-argon2id-password-hashing.md)
-- [AzureBank.Bff README](../../src/AzureBank.Bff/README.md)
+- [AzureBank.Bff README](../../backend/src/AzureBank.Bff/README.md)
+
+Added 2026-08-12, because the step-up story is spread across six records and this one is the entry
+point:
+
+- [ADR-0010: PIN attempt-limiting](./0010-pin-attempt-limiting.md) — the lockout every PIN check
+  shares, including the in-band one on withdraw.
+- [ADR-0020: Account-number reveal](./0020-account-number-reveal.md) — the third level-2 surface,
+  and the row missing from the Protected Operations table above.
+- [ADR-0022: Client money-mutation protocol](./0022-client-money-mutation-protocol.md) — states the
+  consequence of putting the auth level in the session rather than the JWT: step-up becomes a
+  transport concern, which is what makes the client-side interceptor necessary.
+- [ADR-0038: The BFF session is the only credential](./0038-bff-session-is-the-only-credential.md) —
+  closed the bypass in which a caller supplying their own `Authorization` header walked past this
+  gate entirely.
+- [ADR-0040: Changing a credential requires proving the current one](./0040-changing-a-credential-requires-the-current-one.md)
+  — closed the hole that made this gate and ADR-0010 inoperative together.
 
 ---
 
