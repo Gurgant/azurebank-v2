@@ -88,8 +88,10 @@ stateDiagram-v2
 > **Transfers** are gated in the BFF: `AuthLevelMiddleware` refuses the request before it is proxied,
 > so **the transfer request itself never carries a PIN** — `TransferRequest` has no `Pin` field. The
 > PIN *does* reach the API, on a **separate** request: the BFF forwards it to
-> `POST /api/auth/pin/verify` (`BffAuthController.cs:652`), the API is the sole verifier, and the BFF
-> keeps only the resulting boolean as a session flag. **That one hop is drawn correctly** in the
+> `POST /api/auth/pin/verify` (`BffAuthController.cs:652`), and the API is the sole verifier. What the
+> BFF keeps is not the PIN and not the boolean it got back, but the **outcome**: `AuthLevel = 2` and a
+> `PinVerifiedAt` timestamp (`SessionService.SetPinVerified`). The timestamp is the part that matters
+> — it is what makes expiry lazy rather than scheduled. **That one hop is drawn correctly** in the
 > sequence diagram further down this ADR — but do not read the rest of that figure as verified: it
 > routes transfers through `POST /bff/transfers`, a path that **exists nowhere** in the codebase (the
 > real one is `/api/transfers`, proxied by the YARP catch-all; only `/bff/auth/*` is BFF-owned), and
