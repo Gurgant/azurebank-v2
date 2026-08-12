@@ -721,6 +721,7 @@
           "Auth"
         ],
         "summary": "Set or update user's PIN for step-up authentication.",
+        "description": "Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does not, because the account password already gated getting here. A `currentPin` is verified with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count toward the lockout and a locked PIN cannot be replaced even by supplying the correct one. See ADR-0040.",
         "requestBody": {
           "description": "PIN to set",
           "content": {
@@ -768,6 +769,26 @@
           },
           "403": {
             "description": "Forbidden - You don't have permission to access this resource."
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }

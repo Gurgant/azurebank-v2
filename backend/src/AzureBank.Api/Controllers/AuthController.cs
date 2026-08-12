@@ -130,11 +130,22 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <param name="request">PIN to set</param>
     /// <returns>Success message</returns>
-    [EndpointSummary("Set PIN")]
+    [EndpointSummary("Set or change PIN")]
+    [EndpointDescription(
+        "Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does "
+        + "not, because the account password already gated getting here. A `currentPin` is verified "
+        + "with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count "
+        + "toward the lockout and a locked PIN cannot be replaced even by supplying the correct one. "
+        + "See ADR-0040.")]
     [HttpPost("pin")]
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    // Declared because a client implementing PIN CHANGE meets all three, and the spec listed none of
+    // them: 401 a wrong currentPin, 422 a missing one, 429 the lockout.
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse>> SetPin([FromBody] SetPinRequest request)
     {
         await _setPinValidator.ValidateAndThrowAsync(request);
