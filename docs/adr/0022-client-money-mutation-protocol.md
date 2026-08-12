@@ -136,7 +136,8 @@ displaying an attempts counter; optimistic patching of any money-bearing cache e
 ## Verification
 
 Pinned by `frontend/src/api/policies.test.tsx`, `frontend/src/mocks/idempotency.test.ts`,
-`frontend/src/mocks/stepup.test.ts` and `frontend/src/mocks/withdrawHandler.test.ts`. Deleting any of these tests is
+`frontend/src/mocks/stepup.test.ts`, `frontend/src/mocks/withdrawHandler.test.ts` and
+`frontend/src/features/auth/stepup-interceptor.test.tsx`. Deleting any of these tests is
 a reversal of this decision, not a test cleanup. The six behaviours they hold:
 
 1. The same key survives a 503 and a user-driven Retry; a new key appears only after a 422 plus an
@@ -144,6 +145,12 @@ a reversal of this decision, not a test cleanup. The six behaviours they hold:
 2. GET retries on 503; POST never does.
 3. A ProblemDetails `traceId` reaches the UI as a normalized `ApiProblem`.
 4. Step-up replay carries a byte-identical body and the same key.
+   *(Corrected 2026-08-12: `stepup-interceptor.test.tsx` was missing from the list above, and until
+   that date it recorded only the `Idempotency-Key` header — the body half of this sentence was
+   asserted nowhere. The key alone cannot distinguish "the same request, replayed" from "the same
+   key with an edited body", which is the one case the server answers 422 `IDEMPOTENCY_KEY_REUSE`
+   for. Both halves are now asserted, and the body is compared as raw text: two parsed objects
+   would match even if the property order changed, which the server's HMAC fingerprint would not.)*
 5. Withdraw with a wrong PIN does **not** dispatch `sessionExpired`, and drops the key.
 6. `IN_FLIGHT` keeps the key across a Retry, while `RESULT_UNKNOWN` forces the verify dialog before
    any new key can exist.
