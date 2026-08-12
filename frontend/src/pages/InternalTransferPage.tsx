@@ -21,7 +21,7 @@ import {
   type AccountResponse,
 } from '../features/api/apiSlice';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
-import { formatCurrency, maskAccountNumber } from '../utils/format';
+import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
 import {
   internalTransferFormSchema,
   parseAmountInput,
@@ -29,6 +29,7 @@ import {
   type InternalTransferFormValues,
 } from '../forms/moneySchemas';
 import { AmountField } from '../components/form/AmountField';
+import { PinInput } from '../components/PinInput';
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
 
@@ -49,6 +50,9 @@ interface SuccessData {
  * the external transfer (level-2 gated → the root StepUpModal pops on Send, invisible to
  * this page) and the same idempotency spine + keyLive money-safety guards.
  */
+const PIN_LENGTH = 6;
+const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
+
 export function InternalTransferPage() {
   const styles = useTransferWizardStyles();
 
@@ -75,6 +79,12 @@ export function InternalTransferPage() {
   // Destructured under the names the markup already used, so this change is confined to the machine.
   const { step, isSubmitting, inFlight, error, verifyRequired, keyLive, onBodyEdit, requestLeave } =
     wizard;
+
+  // ===== PIN step (ADR-0041) — same shape as TransferPage and WithdrawDialog. =====
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [pinNonce, setPinNonce] = useState(0);
+  const [pinLockedSeconds, setPinLockedSeconds] = useState<number | null>(null);
 
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
@@ -147,11 +157,21 @@ export function InternalTransferPage() {
     formState.isValid && !!fromAccount && !!toAccount && fromAccount.id !== toAccount.id;
   const fromNewBalance = availableBalance - amountNumber;
 
+  /** Review -> PIN. Validation has already passed; nothing is sent yet. */
+  const onReviewed = () => {
+    if (!fromAccount || !toAccount || fromAccount.id === toAccount.id) return;
+    setPin('');
+    setPinError(false);
+    setPinNonce((n) => n + 1);
+    wizard.toPin();
+  };
+
   const onValid = async (data: InternalTransferFormOutput) => {
     // Mirror canReview exactly (incl. from !== to) — belt-and-suspenders against a fromAccount
     // fallback converging on toAccount if the accounts list ever changed under the review step.
     // This client guard is the REAL defence: SAME_ACCOUNT_TRANSFER never reaches the wire.
     if (!fromAccount || !toAccount || fromAccount.id === toAccount.id) return;
+    if (pin.length !== PIN_LENGTH || pinLockedSeconds !== null) return;
     // Narrowed to consts BEFORE the await, and the receipt is built from those same consts, so the
     // review screen and the receipt cannot name two different accounts.
     const from = fromAccount;
@@ -161,10 +181,29 @@ export function InternalTransferPage() {
       fromAccountId: data.fromAccountId,
       toAccountId: data.toAccountId,
       amount: data.amount,
+      pin,
     });
     // undefined means it failed and the wizard has already set the banner, the in-flight note or
     // the verify view. Under `strict` this early return is not optional.
-    if (!result) return;
+    if (!result) {
+      // Keyed on the CODE, never the rendered sentence. See TransferPage for the full reasoning.
+      if (wizard.lastErrorCode === 'INVALID_PIN') {
+        setPin('');
+        setPinError(true);
+        setPinNonce((n) => n + 1);
+      } else if (wizard.lastErrorCode === 'PIN_LOCKED') {
+        setPin('');
+        setPinLockedSeconds(wizard.lastRetryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
+      } else if (wizard.lastErrorCode === 'PIN_REQUIRED') {
+        // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
+        // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
+        // a key-DROP class, so this one goes through.
+        requestLeave('/pin-setup?returnTo=/transfer/internal');
+      }
+      return;
+    }
+
+    setPin('');
 
     setSuccess({
       amount: data.amount,
@@ -259,8 +298,16 @@ export function InternalTransferPage() {
           handlers and calls them; it never decides a destination, which is why moving this bar into
           a shared component cannot quietly delete the anti-double-spend guard. */}
       <PageHeader
-        title={step === 'review' ? 'Review Transfer' : 'Move Money'}
-        onBack={() => (step === 'review' ? wizard.toForm() : requestLeave('/dashboard'))}
+        title={
+          step === 'pin' ? 'Confirm with PIN' : step === 'review' ? 'Review Transfer' : 'Move Money'
+        }
+        onBack={() =>
+          step === 'pin'
+            ? wizard.toReview()
+            : step === 'review'
+              ? wizard.toForm()
+              : requestLeave('/dashboard')
+        }
         backDisabled={keyLive}
         onClose={() => requestLeave('/dashboard')}
         closeDisabled={keyLive}
@@ -421,6 +468,62 @@ export function InternalTransferPage() {
               </button>
             </div>
           </>
+        ) : step === 'pin' ? (
+          <>
+            {/* PIN — ADR-0041. The credential travels in THIS request; the API verifies it. */}
+            <div className={styles.reviewCard}>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>Moving</Text>
+                <Text className={styles.reviewValue}>{formatCurrency(amountNumber)}</Text>
+              </div>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>To</Text>
+                <Text className={styles.reviewValue}>{toAccount?.name}</Text>
+              </div>
+            </div>
+            <Text style={{ textAlign: 'center' }}>
+              Enter your 6-digit PIN to authorise this transfer.
+            </Text>
+            <PinInput
+              key={pinNonce}
+              length={PIN_LENGTH}
+              value={pin}
+              onChange={(next) => {
+                setPin(next);
+                setPinError(false);
+              }}
+              disabled={isSubmitting || pinLockedSeconds !== null}
+              error={pinError}
+            />
+            {pinLockedSeconds !== null && (
+              <MessageBar intent="error" role="alert">
+                <MessageBarBody>
+                  Too many incorrect PIN attempts. Try again in{' '}
+                  {formatLockHorizon(pinLockedSeconds)}.
+                </MessageBarBody>
+              </MessageBar>
+            )}
+            <div className={styles.actions}>
+              <Button
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => void handleSubmit(onValid)()}
+                disabled={isSubmitting || pin.length !== PIN_LENGTH || pinLockedSeconds !== null}
+              >
+                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
+              </Button>
+              <Button
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => wizard.toReview()}
+                disabled={keyLive}
+              >
+                Back
+              </Button>
+            </div>
+          </>
         ) : (
           <>
             <div className={styles.reviewCard}>
@@ -449,10 +552,10 @@ export function InternalTransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => void handleSubmit(onValid)()}
+                onClick={onReviewed}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
+                Continue
               </Button>
               <Button
                 appearance="secondary"

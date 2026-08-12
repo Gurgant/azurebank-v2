@@ -40,6 +40,9 @@ namespace AzureBank.Tests.Integration;
 [Collection(SqlServerProofsCollection.Name)]
 public sealed class TransferTransientRetrySqlServerTests : IDisposable
 {
+    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    private const string TestPin = "123456";
+
     private static readonly JsonSerializerOptions Json =
         new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
 
@@ -69,7 +72,8 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = sender.AccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Transient-retry proof (external, Case A)"
+            Description = "Transient-retry proof (external, Case A)",
+            Pin = TestPin
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.Created,
@@ -97,7 +101,8 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = user.AccountId,
             ToAccountId = savingsId,
             Amount = 300m,
-            Description = "Transient-retry proof (internal, Case A)"
+            Description = "Transient-retry proof (internal, Case A)",
+            Pin = TestPin
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -129,7 +134,8 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = sender.AccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Transient-retry proof (external, Case B)"
+            Description = "Transient-retry proof (external, Case B)",
+            Pin = TestPin
         });
 
         // The transfer committed on attempt 1; the retry must recognise the
@@ -159,7 +165,8 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = user.AccountId,
             ToAccountId = savingsId,
             Amount = 300m,
-            Description = "Transient-retry proof (internal, Case B)"
+            Description = "Transient-retry proof (internal, Case B)",
+            Pin = TestPin
         });
 
         await AssertResultUnknownAsync(response);
@@ -201,8 +208,20 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
         }, Json);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(Json);
-        return new TestUser(
+        var user = new TestUser(
             result!.Data!.Token.AccessToken, result.Data.User.Id, result.Data.Account.Id, azureTag);
+
+        // ADR-0041: every user this file creates goes on to move money, and a transfer now carries
+        // its PIN in-band. Without enrolment each one is refused 422 PIN_REQUIRED and the transient
+        // retry these tests exist to prove would never be reached.
+        using var setPin = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin")
+        {
+            Content = JsonContent.Create(new SetPinRequest { Pin = TestPin }, options: Json)
+        };
+        setPin.Headers.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
+        (await client.SendAsync(setPin)).EnsureSuccessStatusCode();
+
+        return user;
     }
 
     private static async Task<Guid> CreateSecondAccountAsync(HttpClient client, TestUser user)

@@ -266,6 +266,7 @@ export const InternalTransferRequest = z.object({
   fromAccountId: z.uuid(),
   toAccountId: z.uuid(),
   amount: z.number().min(0.01).max(100000).multipleOf(0.01),
+  pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
   description: z.string().max(500).nullable().optional(),
 });
 
@@ -334,6 +335,7 @@ export const TransferRequest = z.object({
   fromAccountId: z.uuid(),
   recipientAzureTag: z.string().min(3).max(20).regex(new RegExp('^[a-z][a-z0-9_]{2,19}$')),
   amount: z.number().min(0.01).max(100000).multipleOf(0.01),
+  pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
   description: z.string().max(500).nullable().optional(),
 });
 

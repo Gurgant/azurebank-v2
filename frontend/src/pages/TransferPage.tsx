@@ -34,6 +34,7 @@ import {
   type TransferFormValues,
 } from '../forms/moneySchemas';
 import { AmountField } from '../components/form/AmountField';
+import { PinInput } from '../components/PinInput';
 import { CONNECTION_FAILED } from '../api/problemMessages';
 
 // ============================================
@@ -41,6 +42,9 @@ import { CONNECTION_FAILED } from '../api/problemMessages';
 // ============================================
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
+
+const PIN_LENGTH = 6;
+const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;
 
 interface Recipient {
   azureTag: string;
@@ -118,10 +122,15 @@ const useRecipientStyles = makeStyles({
  * RHF+Zod (the money-forms rewrite): step-1's fields (from-account, recipient handle, amount)
  * live in react-hook-form with the balance-capped `transferFormSchema` as resolver, while the
  * VERIFIED-recipient truth stays async component state (the exact-match lookup IS the
- * validator, ADR-0014 — a schema cannot own server truth). The PIN is NOT collected here:
- * submitting a level-2-gated transfer 403s, the root StepUpModal pops via the base-query
- * interceptor, the session elevates, and the SAME request replays (same Idempotency-Key).
- * This page only knows the transfer mutation; step-up is invisible to it.
+ * validator, ADR-0014 — a schema cannot own server truth).
+ *
+ * ADR-0041 changed where the PIN comes from. It used to be collected by the ROOT step-up modal:
+ * the BFF answered 403 on a level-1 session, the base-query interceptor popped the modal, the
+ * session elevated, and the same request replayed. That made the PIN a property of the SESSION —
+ * one entry then covered every transfer for five minutes, and any caller reaching the API directly
+ * skipped it entirely. The PIN is now collected HERE, as the last step before sending, and travels
+ * in the request body for the API to verify. The review screen's promise that you confirm with your
+ * PIN on the next step is, as of this change, true.
  */
 export function TransferPage() {
   // Merged so the markup keeps addressing one `styles` object.
@@ -150,6 +159,14 @@ export function TransferPage() {
   // machine: not one element below moves.
   const { step, isSubmitting, inFlight, error, verifyRequired, keyLive, onBodyEdit, requestLeave } =
     wizard;
+
+  // ===== PIN step (ADR-0041) =====
+  // `pinNonce` remounts PinInput so a cleared retry refocuses box 1 — the same device WithdrawDialog
+  // uses, for the same reason.
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [pinNonce, setPinNonce] = useState(0);
+  const [pinLockedSeconds, setPinLockedSeconds] = useState<number | null>(null);
 
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
@@ -252,8 +269,18 @@ export function TransferPage() {
   const canReview = formState.isValid && !!selectedAccount && !!recipient;
   const newBalance = availableBalance - amountNumber;
 
+  /** Review -> PIN. Validation has already passed; nothing is sent yet. */
+  const onReviewed = () => {
+    if (!selectedAccount || !recipient) return;
+    setPin('');
+    setPinError(false);
+    setPinNonce((n) => n + 1);
+    wizard.toPin();
+  };
+
   const onValid = async (data: TransferFormOutput) => {
     if (!selectedAccount || !recipient) return;
+    if (pin.length !== PIN_LENGTH || pinLockedSeconds !== null) return;
     // Narrowed to a const BEFORE the await, and the receipt is built from that same const. The
     // review screen and the request therefore cannot name two different people.
     const confirmed = recipient;
@@ -262,11 +289,38 @@ export function TransferPage() {
       fromAccountId: data.fromAccountId,
       recipientAzureTag: confirmed.azureTag,
       amount: data.amount,
+      pin,
     });
     // `run` resolves to undefined when it failed — and it has already set the banner, the in-flight
     // note or the verify view. Under `strict` this early return is not optional: reading
     // `result.newBalance` without it does not compile.
-    if (!result) return;
+    if (!result) {
+      /*
+        The PIN outcomes, keyed on the CODE rather than the rendered sentence (the wizard exposes
+        `lastErrorCode` precisely so this does not have to match on prose).
+
+        A wrong PIN is safe to retry in place: 401 is exempt from the global logout, and the
+        idempotency hook has already dropped the key — so the corrected-PIN retry mints a fresh one
+        rather than replaying the refused body.
+      */
+      if (wizard.lastErrorCode === 'INVALID_PIN') {
+        setPin('');
+        setPinError(true);
+        setPinNonce((n) => n + 1);
+      } else if (wizard.lastErrorCode === 'PIN_LOCKED') {
+        setPin('');
+        setPinLockedSeconds(wizard.lastRetryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
+      } else if (wizard.lastErrorCode === 'PIN_REQUIRED') {
+        // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
+        // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
+        // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
+        // a key-DROP class, so this one goes through.
+        requestLeave('/pin-setup?returnTo=/transfer');
+      }
+      return;
+    }
+
+    setPin('');
 
     setSuccess({
       amount: data.amount,
@@ -361,8 +415,16 @@ export function TransferPage() {
           which is why the shared bar cannot quietly delete the guard — and the wizard likewise
           takes a destination and refuses it, rather than choosing one. */}
       <PageHeader
-        title={step === 'review' ? 'Review Transfer' : 'Send Money'}
-        onBack={() => (step === 'review' ? wizard.toForm() : requestLeave('/dashboard'))}
+        title={
+          step === 'pin' ? 'Confirm with PIN' : step === 'review' ? 'Review Transfer' : 'Send Money'
+        }
+        onBack={() =>
+          step === 'pin'
+            ? wizard.toReview()
+            : step === 'review'
+              ? wizard.toForm()
+              : requestLeave('/dashboard')
+        }
         backDisabled={keyLive}
         onClose={() => requestLeave('/dashboard')}
         closeDisabled={keyLive}
@@ -560,6 +622,64 @@ export function TransferPage() {
               </button>
             </div>
           </>
+        ) : step === 'pin' ? (
+          <>
+            {/* PIN — ADR-0041. The credential travels in THIS request; the API verifies it. */}
+            <div className={styles.reviewCard}>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>Sending</Text>
+                <Text className={styles.reviewValue}>{formatCurrency(amountNumber)}</Text>
+              </div>
+              <div className={styles.reviewRow}>
+                <Text className={styles.reviewLabel}>To</Text>
+                <Text className={styles.reviewValue}>
+                  {recipient?.displayName} (@{recipient?.azureTag})
+                </Text>
+              </div>
+            </div>
+            <Text style={{ textAlign: 'center' }}>
+              Enter your 6-digit PIN to authorise this transfer.
+            </Text>
+            <PinInput
+              key={pinNonce}
+              length={PIN_LENGTH}
+              value={pin}
+              onChange={(next) => {
+                setPin(next);
+                setPinError(false);
+              }}
+              disabled={isSubmitting || pinLockedSeconds !== null}
+              error={pinError}
+            />
+            {pinLockedSeconds !== null && (
+              <MessageBar intent="error" role="alert">
+                <MessageBarBody>
+                  Too many incorrect PIN attempts. Try again in{' '}
+                  {formatLockHorizon(pinLockedSeconds)}.
+                </MessageBarBody>
+              </MessageBar>
+            )}
+            <div className={styles.actions}>
+              <Button
+                appearance="primary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => void handleSubmit(onValid)()}
+                disabled={isSubmitting || pin.length !== PIN_LENGTH || pinLockedSeconds !== null}
+              >
+                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
+              </Button>
+              <Button
+                appearance="secondary"
+                size="large"
+                style={{ width: '100%', height: '48px' }}
+                onClick={() => wizard.toReview()}
+                disabled={keyLive}
+              >
+                Back
+              </Button>
+            </div>
+          </>
         ) : (
           <>
             {/* Review */}
@@ -591,10 +711,10 @@ export function TransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => void handleSubmit(onValid)()}
+                onClick={onReviewed}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
+                Continue
               </Button>
               <Button
                 appearance="secondary"

@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Forty decisions is more than anyone reads cold. These four carry the architecture; the rest is
+Forty-one decisions is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -59,7 +59,8 @@ detail hanging off them.
 [0034](0034-failed-family-revoke-recovery.md) recovery for a family revoke that fails ·
 [0037](0037-atomic-registration.md) registration is all-or-nothing ·
 [0038](0038-bff-session-is-the-only-credential.md) the session is the only credential the BFF accepts ·
-[0040](0040-changing-a-credential-requires-the-current-one.md) changing a credential requires proving the current one
+[0040](0040-changing-a-credential-requires-the-current-one.md) changing a credential requires proving the current one ·
+[0041](0041-the-api-verifies-the-transfer-pin.md) the API verifies the transfer PIN, not the BFF
 
 **Not leaking who exists** — [0013](0013-registration-user-enumeration.md) registration enumeration ·
 [0014](0014-recipient-lookup-enumeration.md) recipient lookup, exact-match and harvest-resistant ·
@@ -81,7 +82,7 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All forty **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+All forty-one **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
@@ -95,8 +96,10 @@ at ADR-0023, ADR-0009 points at ADR-0022 for its client half, and ADR-0021's ame
 ADR-0034 for the residual it left open, ADR-0036 points at ADR-0037 for the one it left open, and
 ADR-0020's dual-mode caveat points at ADR-0038 for the half of it that turned out not to be
 accepted so much as unnoticed, and ADR-0015's residual points at ADR-0039 both for its closure and
-for the two reasons it had given for leaving it open, which were wrong; and ADR-0040 closes a hole that
-left both ADR-0008's step-up gate and ADR-0010's attempt-limiting inoperative. ADR-0008's own
+for the two reasons it had given for leaving it open, which were wrong; ADR-0040 closes a hole that
+left both ADR-0008's step-up gate and ADR-0010's attempt-limiting inoperative; and ADR-0041 moves
+transfers off that gate entirely, which makes ADR-0022's step-up-replay verification step true of
+no live caller — recorded there rather than quietly left to rot. ADR-0008's own
 corrections follow the same rule — eight inline notes, nothing deleted — and one of them records an
 open hole rather than a supersession: **account deletion is listed as level 2 and is gated nowhere
 at that level** (the endpoint is still `[Authorize]`; what is missing is the step-up).
@@ -148,6 +151,7 @@ The next free number is **0041**.
 | [ADR-0038](0038-bff-session-is-the-only-credential.md) | The session is the only credential the BFF will accept | Accepted | 2026-08-10 |
 | [ADR-0039](0039-bff-session-cache-is-a-fallback.md) | The BFF session cache is a fallback, never the answer | Accepted | 2026-08-10 |
 | [ADR-0040](0040-changing-a-credential-requires-the-current-one.md) | Changing a credential requires proving the current one | Accepted | 2026-08-12 |
+| [ADR-0041](0041-the-api-verifies-the-transfer-pin.md) | The API verifies the transfer PIN, not the BFF | Accepted | 2026-08-13 |
 
 </details>
 ## Creating a New ADR

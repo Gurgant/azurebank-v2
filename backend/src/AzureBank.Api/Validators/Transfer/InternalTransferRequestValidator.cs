@@ -27,6 +27,13 @@ public class InternalTransferRequestValidator : AbstractValidator<InternalTransf
             .WithMessage($"Amount cannot exceed {ValidationRules.TransactionMaxAmount:C}.")
             .ValidMoneyScale();
 
+        // Mirrors WithdrawRequestValidator exactly: same two rules, same order, same messages,
+        // so the two in-band PIN endpoints answer a malformed PIN identically.
+        RuleFor(x => x.Pin)
+            .NotEmpty().WithMessage("PIN is required for transfers.")
+            .Matches(ValidationRules.PinPattern)
+            .WithMessage(ValidationRules.PinPatternMessage);
+
         RuleFor(x => x.Description)
             .MaximumLength(ValidationRules.TransactionDescriptionMaxLength)
             .WithMessage(ValidationRules.DescriptionMaxLengthMessage)

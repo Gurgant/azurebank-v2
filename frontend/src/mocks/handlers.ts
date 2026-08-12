@@ -1858,20 +1858,70 @@ const renameAzureTag = http.patch('*/bff/auth/azuretag', async ({ request }) => 
 });
 
 /**
- * POST /api/transfers — the level-2 step-up gate (BFF AuthLevelMiddleware, runs BEFORE the
- * API) PLUS the API's idempotency protocol. Failure order mirrors the real path: 403 gate →
- * idempotency → SELF_TRANSFER_NOT_ALLOWED → recipient not found (ACCOUNT_NOT_FOUND, the real
- * code) → INSUFFICIENT_FUNDS → success (debit sender, push a TransferOut row; the recipient
- * is off-ledger). A missing fromAccount is tolerated (debit only if found) so the stepup.test
- * contract (fromAccountId:'a') keeps passing.
+ * The in-band PIN check, shared by withdraw and (since ADR-0041) both transfer endpoints.
+ *
+ * Order and values mirror the API, measured against it rather than copied from the withdraw
+ * handler that inspired it — TransferPinVerificationTests records the run:
+ *
+ *   no PIN enrolled -> 422 PIN_REQUIRED · locked -> 429 PIN_LOCKED · wrong -> 401 INVALID_PIN
+ *
+ * Lock is checked BEFORE the compare, because the backend refuses before Argon2id runs, and the
+ * third consecutive miss trips the lock and answers 429 rather than 401.
+ *
+ * Returns a Response to send, or null when the PIN passes.
+ */
+function checkPinInBand(
+  pin: string | undefined,
+  request: Request,
+  detailWhenUnset: string,
+): Response | null {
+  if (mockState.session && !mockState.session.hasPin) {
+    return problem({
+      instance: pathOf(request),
+      status: 422,
+      errorCode: 'PIN_REQUIRED',
+      detail: detailWhenUnset,
+    });
+  }
+
+  const now = Date.now();
+  if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
+    return pinLockedProblem(mockState.pinLockedUntil, now, pathOf(request));
+  }
+
+  if (pin !== mockState.pin) {
+    mockState.pinAttempts += 1;
+    if (mockState.pinAttempts >= 3) {
+      mockState.pinAttempts = 0;
+      mockState.pinLockedUntil = apiOffsetInstant(now + PIN_LOCKOUT_SECONDS * 1000);
+      return pinLockedProblem(mockState.pinLockedUntil, now, pathOf(request));
+    }
+    return problem({
+      instance: pathOf(request),
+      status: 401,
+      errorCode: 'INVALID_PIN',
+      detail: 'Invalid PIN.',
+    });
+  }
+
+  mockState.pinAttempts = 0;
+  return null;
+}
+
+/**
+ * POST /api/transfers — the API's idempotency protocol plus the in-band PIN check.
+ *
+ * The level-2 step-up gate that used to open this handler is GONE (ADR-0041): the BFF no longer
+ * answers 403 for a transfer, because the PIN now travels in the body and the API verifies it.
+ * Failure order mirrors the real path: idempotency → PIN → SELF_TRANSFER_NOT_ALLOWED → recipient
+ * not found (ACCOUNT_NOT_FOUND, the real code) → INSUFFICIENT_FUNDS → success (debit sender, push
+ * a TransferOut row; the recipient is off-ledger). A missing fromAccount is tolerated (debit only
+ * if found).
  */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
   const oversized = payloadTooLarge(await request.clone().text(), request);
   if (oversized) return response.untyped(oversized);
-  if (mockState.authLevel < 2) {
-    return response.untyped(stepUp403(mockState.authLevel));
-  }
 
   const key = request.headers.get('Idempotency-Key');
   if (!key) {
@@ -1932,6 +1982,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     recipientAzureTag?: string;
     amount?: number;
     description?: string;
+    pin?: string;
   };
   const badAmount = rejectBadAmount(body.amount);
   if (badAmount) {
@@ -1948,6 +1999,14 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     answers ACCOUNT_NOT_FOUND, and a client branching on the code took the wrong path.
   */
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
+
+  /*
+    PIN, after ownership and before every business rule — the position
+    `TransferService.TransferAsync` puts `VerifyPinOrThrowAsync` in, so a wrong PIN costs nothing
+    and reveals nothing about the recipient.
+  */
+  const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
+  if (pinRefusal) return response.untyped(pinRefusal);
   if (!account) {
     return response.untyped(notFound('Account', body.fromAccountId, request));
   }
@@ -2032,9 +2091,6 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
   const oversized = payloadTooLarge(await request.clone().text(), request);
   if (oversized) return response.untyped(oversized);
-  if (mockState.authLevel < 2) {
-    return response.untyped(stepUp403(mockState.authLevel));
-  }
 
   const key = request.headers.get('Idempotency-Key');
   if (!key) {
@@ -2095,12 +2151,16 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     toAccountId?: string;
     amount?: number;
     description?: string;
+    pin?: string;
   };
   const badAmount = rejectBadAmount(body.amount);
   if (badAmount) {
     return response.untyped(badAmount);
   }
   const amount = body.amount as number;
+
+  const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
+  if (pinRefusal) return response.untyped(pinRefusal);
 
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
     /*

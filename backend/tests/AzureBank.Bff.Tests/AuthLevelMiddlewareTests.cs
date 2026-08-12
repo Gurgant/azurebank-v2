@@ -202,10 +202,45 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
     }
 
     [Fact]
-    public async Task TransfersPost_WithTrailingSlash_IsGatedToo()
+    public async Task TransfersPost_WithTrailingSlashAndNoSession_IsStillRefusedLocally()
     {
-        // Same normalization hole for the exact-match transfer paths: "/api/transfers/"
-        // routes to the transfers endpoint but is not equal to "/api/transfers".
+        /*
+          The normalization hole PR #64 closed, re-pointed at the gate that still covers transfers.
+
+          "/api/transfers/" routes to the transfers endpoint but is not equal to "/api/transfers",
+          so an un-normalized exact match would miss it. Since ADR-0041 the PIN for a transfer is
+          verified by the API, not here — but the SESSION check stayed behind, and it has to keep
+          normalizing or it inherits the same hole the PIN gate had.
+        */
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers/")
+        {
+            Content = JsonContent.Create(new { })
+        };
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        backend.ForwardedPaths.Should().BeEmpty(
+            "no session is refused by the BFF itself, trailing slash or not");
+        await AssertLooksLikeTheApisOwn401(response);
+    }
+
+    [Fact]
+    public async Task TransfersPost_WithASessionButNoPin_IsNowForwarded()
+    {
+        /*
+          THE BEHAVIOUR CHANGE OF ADR-0041, asserted rather than described.
+
+          This exact request used to be answered 403 STEP_UP_REQUIRED here, off a session flag that
+          stayed hot for five minutes after one PIN entry. It is now forwarded, and the API rejects
+          it unless the body carries the PIN — a check this process cannot make and cannot be relied
+          on to have made.
+
+          If this ever goes back to 403, the in-band check has been double-gated and the weaker of
+          the two is deciding again.
+        */
         var (factory, backend) = WithRecorder();
         var (sessionId, cookieName, _) = CreateSession(factory);
         var client = factory.CreateClient();
@@ -214,8 +249,11 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
         request.Content = JsonContent.Create(new { });
         var response = await client.SendAsync(request);
 
-        await AssertStepUp403(response);
-        backend.ForwardedPaths.Should().BeEmpty();
+        response.StatusCode.Should().NotBe(HttpStatusCode.Forbidden,
+            "the BFF no longer answers step-up for transfers");
+        response.Headers.Should().NotContainKey("X-Auth-Level-Required");
+        backend.ForwardedPaths.Should().Contain("/api/transfers/",
+            "a level-1 session is enough to REACH the API; the PIN is checked there");
     }
 
     [Fact]

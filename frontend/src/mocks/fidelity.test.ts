@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MAIN_ACCOUNT_ID, mockState, resetMockState, seedMockSession } from './state';
+import { MAIN_ACCOUNT_ID, MOCK_PIN, mockState, resetMockState, seedMockSession } from './state';
 import { transactionSummarySchema } from '../api/responseSchemas';
 
 /**
@@ -153,6 +153,7 @@ describe('failure ordering matches the service, not the handler that was easiest
         fromAccountId: 'no-such-account',
         recipientAzureTag: mockState.session?.azureTag ?? 'demo_user',
         amount: 10,
+        pin: MOCK_PIN,
       }),
     });
 
@@ -818,6 +819,7 @@ describe('the internal transfer names a real ledger row', () => {
         toAccountId: second.data.id,
         amount: 10,
         description: 'dereference me',
+        pin: MOCK_PIN,
       }),
     }).then((r) => r.json());
 

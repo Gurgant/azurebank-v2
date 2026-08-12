@@ -16,12 +16,39 @@ public class AuthLevelMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<AuthLevelMiddleware> _logger;
 
-    // Routes that require PIN (AuthLevel 2) - POST operations
-    private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "/api/transfers",
-        "/api/transfers/internal"
-    };
+    /*
+      Two questions, deliberately separated — they used to be one, and collapsing them is what made
+      this edit dangerous.
+
+      "Is there a caller at all?" (level >= 1) and "has that caller just proved it is them?"
+      (level 2) are different questions with different answers and different remedies: the first
+      routes to login, the second opens the PIN modal.
+
+      Before ADR-0041 both lived inside the level-2 gate, so a path could only be refused locally
+      for having no session if it ALSO required a PIN. Moving transfers off the PIN gate would then
+      have silently taken their no-session refusal with it — not a live bypass, because
+      BearerTokenTransformProvider clears the caller's own Authorization on every proxied path and
+      the API would 401 — but it would have moved the decision to another process and quietly thinned
+      a layer while the PR claimed to be strengthening one.
+    */
+
+    /// <summary>
+    /// POST paths that need a live session, decided HERE rather than delegated downstream.
+    /// Transfers sit here since ADR-0041: the PIN now travels in-band and the API verifies it, so
+    /// the level-2 gate would be the weaker of the two checks and would keep the five-minute
+    /// session window alive for money movement. The session check is a different question and stays.
+    /// </summary>
+    private static readonly HashSet<string> SessionRequiredPaths =
+        new(StringComparer.OrdinalIgnoreCase) { "/api/transfers", "/api/transfers/internal" };
+
+    /*
+      Routes gated on the BFF session flag at level 2. EMPTY since ADR-0041 — see above. The set and
+      its matching logic stay because /full-number still uses the prefix/suffix rules below: a GET
+      with no body, no amount and no payee has nothing to bind an in-band credential to, and PSD2
+      does not treat it as an SCA trigger at all (Art. 97(1)'s list is exhaustive; Art. 4(32) says an
+      account number is not sensitive payment data).
+    */
+    private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
 
     // Path patterns that require PIN
     private static readonly string[] PinRequiredPrefixes =
@@ -72,8 +99,9 @@ public class AuthLevelMiddleware
             return;
         }
 
-        // Check if this route requires AuthLevel 2 (PIN)
-        if (RequiresPinVerification(path, method))
+        // Either gate brings the request in here; only the PIN one can answer 403 below.
+        var requiresPin = RequiresPinVerification(path, method);
+        if (requiresPin || RequiresSession(path, method))
         {
             var cookieName = sessionOptions.Value.CookieName;
 
@@ -140,7 +168,7 @@ public class AuthLevelMiddleware
                 return;
             }
 
-            if (authLevel < 2)
+            if (requiresPin && authLevel < 2)
             {
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
@@ -166,6 +194,16 @@ public class AuthLevelMiddleware
 
         await _next(context);
     }
+
+    /// <summary>
+    /// Paths that must have a live session before the request leaves the BFF. Same trailing-slash
+    /// normalisation as the PIN gate, and for the same reason it was needed there (PR #64): endpoint
+    /// routing tolerates "/api/transfers/", so raw exact matching would let a slash-suffixed POST
+    /// past the check.
+    /// </summary>
+    private static bool RequiresSession(string path, string method) =>
+        method.Equals("POST", StringComparison.OrdinalIgnoreCase)
+        && SessionRequiredPaths.Contains(path.TrimEnd('/'));
 
     private static bool RequiresPinVerification(string path, string method)
     {

@@ -38,7 +38,14 @@ import { useIdempotentMutation, type IdempotentTrigger } from './useIdempotentMu
  * render is not a missed optimisation here; it is the correctness condition.
  */
 
-export type MoneyWizardStep = 'form' | 'review';
+/**
+ * `pin` is ADR-0041's step. A transfer now carries its PIN in the request body and the API verifies
+ * it, so the credential is collected HERE — in the flow — rather than by the root step-up modal
+ * reacting to a 403 from the BFF. Both consumers of this hook move money and both need it, which is
+ * why the step lives in the shared machine; the PIN VALUE does not, because only the page knows
+ * which body field it belongs in.
+ */
+export type MoneyWizardStep = 'form' | 'review' | 'pin';
 
 export interface MoneyWizard<TBody, TResult> {
   step: MoneyWizardStep;
@@ -47,6 +54,19 @@ export interface MoneyWizard<TBody, TResult> {
   /** The server is still processing THIS key. Pressing Send again is safe and reuses it. */
   inFlight: boolean;
   error: string | null;
+  /**
+   * The `errorCode` of the most recent failure, or null. Exposed because the PIN step has to react
+   * to WHICH failure it was — clear the boxes on a wrong PIN, show the lock on PIN_LOCKED, send an
+   * un-enrolled user to setup — and matching on the rendered SENTENCE to decide that would break
+   * the moment someone rewords a message.
+   */
+  lastErrorCode: string | null;
+  /**
+   * `retryAfterSeconds` from the most recent failure, or null. The lock horizon is the SERVER's to
+   * state — a client-side default would show a countdown that does not match when the lock actually
+   * lifts, which is worse than showing none.
+   */
+  lastRetryAfterSeconds: number | null;
   /** The result could not be confirmed. The flow must show its verify view and offer no exits. */
   verifyRequired: boolean;
   /**
@@ -64,6 +84,8 @@ export interface MoneyWizard<TBody, TResult> {
   /** Call after ANY edit that changes the request body. No-op while a key is live. */
   onBodyEdit: () => void;
   toReview: () => void;
+  /** Review -> PIN. The last thing before the money moves. */
+  toPin: () => void;
   /** Back to the form. Guarded: a live key must not reach the fields that would rotate it. */
   toForm: () => void;
   /** The verify view's "it didn't go through" — abandons the intent so the next send is a NEW one. */
@@ -92,6 +114,8 @@ export function useMoneyWizard<TBody, TResult>(
   // Held WITH its scope, but exposed as a bare string: the scope decides lifetime, and no caller
   // needs to know about it, so not one line of page markup moves.
   const [failure, setFailure] = useState<{ text: string; scope: MessageScope } | null>(null);
+  const [lastErrorCode, setLastErrorCode] = useState<string | null>(null);
+  const [lastRetryAfterSeconds, setLastRetryAfterSeconds] = useState<number | null>(null);
 
   const keyLive = isSubmitting || keyRetained;
 
@@ -179,16 +203,22 @@ export function useMoneyWizard<TBody, TResult>(
     isSubmitting,
     inFlight,
     error: failure?.text ?? null,
+    lastErrorCode,
+    lastRetryAfterSeconds,
     verifyRequired,
     keyLive,
 
     async run(body) {
       setFailure(null);
+      setLastErrorCode(null);
+      setLastRetryAfterSeconds(null);
       setInFlight(false);
       setIsSubmitting(true);
       try {
         return await submit(body);
       } catch (caught) {
+        setLastErrorCode((caught as ApiProblem)?.errorCode ?? null);
+        setLastRetryAfterSeconds((caught as ApiProblem)?.retryAfterSeconds ?? null);
         const failure = classifyMoneyProblem(caught as ApiProblem, options);
         if (failure.kind === 'inFlight') {
           setInFlight(true);
@@ -213,10 +243,18 @@ export function useMoneyWizard<TBody, TResult>(
       resetIntent();
       setInFlight(false);
       setFailure(null);
+      setLastErrorCode(null);
+      setLastRetryAfterSeconds(null);
     },
 
     toReview() {
       goToStep('review', { keepInputErrors: true });
+    },
+
+    toPin() {
+      // keepInputErrors: false — an INSUFFICIENT_FUNDS banner from a previous attempt must not
+      // follow the user onto a screen where the only editable thing is the PIN.
+      goToStep('pin', { keepInputErrors: false });
     },
 
     toForm() {

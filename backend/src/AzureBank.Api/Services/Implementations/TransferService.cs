@@ -20,18 +20,63 @@ public class TransferService : ITransferService
     private readonly AzureBankDbContext _context;
     private readonly IAccountAccessService _accountAccess;
     private readonly UserMapper _userMapper;
+    private readonly IPinVerifier _pinVerifier;
     private readonly ILogger<TransferService> _logger;
 
     public TransferService(
         AzureBankDbContext context,
         IAccountAccessService accountAccess,
         UserMapper userMapper,
+        IPinVerifier pinVerifier,
         ILogger<TransferService> logger)
     {
         _context = context;
         _accountAccess = accountAccess;
         _userMapper = userMapper;
+        _pinVerifier = pinVerifier;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// The in-band step-up check, identical to TransactionService.WithdrawAsync's (ADR-0041).
+    ///
+    /// <para>
+    /// Placement is the load-bearing part: this runs BEFORE the funds check, before the execution
+    /// strategy, and before anything is written — so a wrong PIN costs nothing and moves nothing.
+    /// PinService keeps its own DbContext scope, so the failed-attempt bookkeeping it writes neither
+    /// rides this request's transaction nor finalizes its idempotency record (ADR-0009).
+    /// </para>
+    /// </summary>
+    private async Task VerifyPinOrThrowAsync(Guid userId, string pin)
+    {
+        var user = await _context.Users.FindAsync(userId);
+
+        /*
+          "No such user" and "user has not enrolled a PIN" are separate states with separate answers,
+          and collapsing them is a real (if quiet) defect: a token whose subject has no row would be
+          told to go and set a PIN — advice that cannot be followed, for an account that is not
+          there. WithdrawAsync collapses them into PIN_REQUIRED; that is the older code, and it is
+          the one that should converge here rather than the reverse.
+
+          Caught by TransferAsync_SenderUserNotFound_ThrowsNotFoundException, which existed before
+          this change and would have started reporting PIN_REQUIRED for a missing user.
+        */
+        if (user == null)
+        {
+            throw new NotFoundException("User", userId);
+        }
+
+        if (string.IsNullOrEmpty(user.PinHash))
+        {
+            throw new BusinessRuleException(
+                "PIN must be set before making transfers.", ErrorCodes.PinRequired);
+        }
+
+        // Throws 429 PIN_LOCKED when the PIN is locked; false is a wrong PIN.
+        if (!await _pinVerifier.VerifyPinAsync(userId, pin))
+        {
+            throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
+        }
     }
 
     /// <inheritdoc />
@@ -39,6 +84,8 @@ public class TransferService : ITransferService
     {
         // Get sender's account with ownership check
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
+
+        await VerifyPinOrThrowAsync(userId, request.Pin);
 
         // Get sender user for self-transfer check
         var senderUser = await _context.Users.FindAsync(userId);
@@ -242,6 +289,8 @@ public class TransferService : ITransferService
         // Validate accounts belong to user
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
         var toAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.ToAccountId, userId);
+
+        await VerifyPinOrThrowAsync(userId, request.Pin);
 
         // Same account check (should be caught by validator, but double-check)
         if (request.FromAccountId == request.ToAccountId)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mockState, seedMockSession } from './state';
+import { MOCK_PIN, mockState, seedMockSession } from './state';
 
 /**
  * Executable contract for the recipient-lookup + stateful transfer handlers: the exact-match
@@ -47,26 +47,52 @@ describe('recipient lookup (exact-match, ADR-0014)', () => {
   });
 });
 
-describe('transfer handler (step-up gate + failure order + idempotency)', () => {
-  it('403s at level 1 with the bare STEP_UP_REQUIRED shape + headers', async () => {
+describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
+  it('does NOT step up at level 1 — the PIN travels in the body instead (ADR-0041)', async () => {
+    /*
+      This asserted the exact opposite until ADR-0041, and the inversion IS the change: a 403 here
+      meant the BFF was deciding, off a session flag that stayed hot for five minutes and that a
+      caller reaching the API directly never met at all.
+    */
+    seedMockSession();
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 10,
+      pin: MOCK_PIN,
     });
-    expect(res.status).toBe(403);
-    expect(res.headers.get('X-Auth-Level-Required')).toBe('2');
-    expect((await res.json()).type).toBe('STEP_UP_REQUIRED');
+    expect(res.status).not.toBe(403);
+    expect(res.headers.get('X-Auth-Level-Required')).toBeNull();
   });
 
-  it('runs the step-up gate BEFORE idempotency (no key at level 1 → 403, not 400)', async () => {
+  it('401 INVALID_PIN for a wrong PIN, whatever the auth level', async () => {
+    seedMockSession();
+    const res = await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: '000000',
+    });
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('INVALID_PIN');
+  });
+
+  it('idempotency is checked BEFORE the PIN (no key → 400, even with the right PIN)', async () => {
+    seedMockSession();
     const res = await transfer(null, {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 10,
+      pin: MOCK_PIN,
     });
-    // If idempotency ran first, a missing key would be 400 IDEMPOTENCY_KEY_MISSING.
-    expect(res.status).toBe(403);
+    /*
+      The API's idempotency filter is an action filter, so it runs before the controller action and
+      therefore before the service's PIN check. MEASURED on the real pipeline, not inferred from
+      this handler: TransferPinVerificationTests.IdempotencyKeyIsCheckedBeforeThePin observes
+      400 IDEMPOTENCY_KEY_MISSING for a request carrying a correct PIN and no key.
+    */
+    expect(res.status).toBe(400);
+    expect((await res.json()).errorCode).toBe('IDEMPOTENCY_KEY_MISSING');
   });
 
   it('422 SELF_TRANSFER_NOT_ALLOWED when the recipient is the caller', async () => {
@@ -76,6 +102,7 @@ describe('transfer handler (step-up gate + failure order + idempotency)', () => 
       fromAccountId: acct(),
       recipientAzureTag: 'demo_user',
       amount: 10,
+      pin: MOCK_PIN,
     });
     expect(res.status).toBe(422);
     expect((await res.json()).errorCode).toBe('SELF_TRANSFER_NOT_ALLOWED');
@@ -87,6 +114,7 @@ describe('transfer handler (step-up gate + failure order + idempotency)', () => 
       fromAccountId: acct(),
       recipientAzureTag: 'ghost',
       amount: 10,
+      pin: MOCK_PIN,
     });
     expect(res.status).toBe(404);
     expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
@@ -100,6 +128,7 @@ describe('transfer handler (step-up gate + failure order + idempotency)', () => 
       // Over the balance but INSIDE the contract's range: >100,000 is now rejected as invalid
       // input before the funds check, exactly as FluentValidation rejects it before the service.
       amount: 50_000,
+      pin: MOCK_PIN,
     });
     expect(res.status).toBe(422);
     expect((await res.json()).errorCode).toBe('INSUFFICIENT_FUNDS');
@@ -107,7 +136,7 @@ describe('transfer handler (step-up gate + failure order + idempotency)', () => 
 
   it('debits the sender and replays same key+body; 422s on same key+different body', async () => {
     elevate();
-    const body = { fromAccountId: acct(), recipientAzureTag: 'friend', amount: 100 };
+    const body = { fromAccountId: acct(), recipientAzureTag: 'friend', amount: 100, pin: MOCK_PIN };
     const first = await transfer(FIXED, body);
     const firstText = await first.text();
     expect(first.status).toBe(201);
@@ -137,14 +166,15 @@ function acct2() {
 }
 
 describe('internal transfer handler (own accounts, double-entry)', () => {
-  it('403s at level 1 (step-up gated like the external transfer)', async () => {
+  it('does NOT step up at level 1 either — same in-band PIN as the external transfer', async () => {
     const res = await internal(crypto.randomUUID(), {
       fromAccountId: acct(),
       toAccountId: acct2(),
       amount: 10,
+      pin: MOCK_PIN,
     });
-    expect(res.status).toBe(403);
-    expect(res.headers.get('X-Auth-Level-Required')).toBe('2');
+    expect(res.status).not.toBe(403);
+    expect(res.headers.get('X-Auth-Level-Required')).toBeNull();
   });
 
   it('400 with a toAccountId field error when source == destination', async () => {
@@ -164,6 +194,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       fromAccountId: acct(),
       toAccountId: acct(),
       amount: 10,
+      pin: MOCK_PIN,
     });
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -177,6 +208,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       fromAccountId: acct(),
       toAccountId: '019f7b3f-0000-7000-8000-0000000000ff',
       amount: 10,
+      pin: MOCK_PIN,
     });
     expect(badTo.status).toBe(404);
     expect((await badTo.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
@@ -186,6 +218,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       fromAccountId: '019f7b3f-0000-7000-8000-0000000000ff',
       toAccountId: acct2(),
       amount: 10,
+      pin: MOCK_PIN,
     });
     expect(badFrom.status).toBe(404);
     expect((await badFrom.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
@@ -199,6 +232,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       // Over the balance but INSIDE the contract's range: >100,000 is now rejected as invalid
       // input before the funds check, exactly as FluentValidation rejects it before the service.
       amount: 50_000,
+      pin: MOCK_PIN,
     });
     expect(res.status).toBe(422);
     expect((await res.json()).errorCode).toBe('INSUFFICIENT_FUNDS');
@@ -213,6 +247,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       fromAccountId: acct(),
       toAccountId: acct2(),
       amount: 0,
+      pin: MOCK_PIN,
     });
     expect(zero.status).toBe(400);
     /*
@@ -232,6 +267,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       fromAccountId: acct(),
       toAccountId: acct2(),
       amount: -50,
+      pin: MOCK_PIN,
     });
     expect(neg.status).toBe(400);
     expect(mockState.accounts[0].balance).toBe(fromBefore);
@@ -242,7 +278,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     elevate();
     const fromBefore = mockState.accounts[0].balance; // 1250.5
     const toBefore = mockState.accounts[1].balance; // 830
-    const body = { fromAccountId: acct(), toAccountId: acct2(), amount: 100 };
+    const body = { fromAccountId: acct(), toAccountId: acct2(), amount: 100, pin: MOCK_PIN };
 
     const first = await internal(FIXED, body);
     const firstText = await first.text();
@@ -273,11 +309,17 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 25,
+      pin: MOCK_PIN,
     });
     expect(ext.status).toBe(201);
 
     // Same key to the INTERNAL endpoint must be a fresh execution, not a replay of the external.
-    const int = await internal(FIXED, { fromAccountId: acct(), toAccountId: acct2(), amount: 10 });
+    const int = await internal(FIXED, {
+      fromAccountId: acct(),
+      toAccountId: acct2(),
+      amount: 10,
+      pin: MOCK_PIN,
+    });
     expect(int.status).toBe(201);
     expect(int.headers.get('Idempotency-Replayed')).toBeNull();
     expect((await int.json()).data.toAccountNewBalance).toBeDefined(); // an internal-shaped body

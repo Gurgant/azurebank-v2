@@ -24,6 +24,9 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 internal static class IdempotencyConcurrencyProof
 {
+    /// <summary>The PIN this proof enrols and then sends in-band (ADR-0041).</summary>
+    private const string TestPin = "123456";
+
     private static readonly JsonSerializerOptions Json =
         new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
 
@@ -44,13 +47,15 @@ internal static class IdempotencyConcurrencyProof
         const decimal funding = 1000m;
         const decimal amount = 50m;
         await DepositAsync(client, sender, funding);
+        await SetPinAsync(client, sender);
 
         var body = JsonSerializer.Serialize(new TransferRequest
         {
             FromAccountId = sender.AccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = amount,
-            Description = "Concurrency proof"
+            Description = "Concurrency proof",
+            Pin = TestPin
         }, Json);
 
         var outcome = await FireIdenticalRequestsAsync(
@@ -169,6 +174,17 @@ internal static class IdempotencyConcurrencyProof
 
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(Json);
         return new ProofUser(result!.Data!.Token.AccessToken, result.Data.Account.Id, azureTag);
+    }
+
+    private static async Task SetPinAsync(HttpClient client, ProofUser user)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin")
+        {
+            Content = JsonContent.Create(new SetPinRequest { Pin = TestPin }, options: Json)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
     }
 
     private static async Task DepositAsync(HttpClient client, ProofUser user, decimal amount)
