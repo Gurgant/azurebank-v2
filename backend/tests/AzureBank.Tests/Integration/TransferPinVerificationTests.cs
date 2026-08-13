@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
 using AzureBank.Shared.Constants;
@@ -145,8 +146,92 @@ public class TransferPinVerificationTests : IntegrationTestBase
         request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
         var response = await Client.SendAsync(request);
 
-        // OBSERVED: 400 BadRequest
+        /*
+          OBSERVED, and the ENVELOPE is the point, not just the status:
+
+            400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+                 "title":"One or more validation errors occurred.",
+                 "errors":{"$":["JSON deserialization for type '…InternalTransferRequest' was
+                                 missing required properties including: 'pin'."],
+                           "request":["The request field is required."]}}
+
+          `required string Pin` is refused by System.Text.Json during DESERIALISATION, so the request
+          never reaches FluentValidation — which means it gets the FRAMEWORK envelope (rfc9110 type,
+          default title, `$`/`request` keys) rather than the hand-written "Validation Failed" one.
+          A status-only assertion cannot tell those apart, and the difference is what broke the
+          contract suite: a same-account probe with no pin stopped testing the same-account rule and
+          started testing the deserialiser.
+        */
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        doc.RootElement.GetProperty("title").GetString()
+            .Should().Be("One or more validation errors occurred.");
+        doc.RootElement.GetProperty("errors").EnumerateObject()
+            .Select(p => p.Name).Should().BeEquivalentTo(["$", "request"]);
+    }
+
+    [Fact]
+    public async Task MalformedPin_IsRefusedByModelBinding_AndCostsNoAttempt()
+    {
+        /*
+          THE ONE THAT MATTERS FOR THE LOCKOUT. `[Pin]` is a DataAnnotation, so it fires during model
+          binding — before the action, before the service, before IPinVerifier. A malformed value
+          therefore cannot be used to exhaust someone's attempts.
+
+          Three malformed sends and then one genuinely wrong PIN: if the malformed ones counted, the
+          fourth would be 429 PIN_LOCKED rather than 401.
+
+          OBSERVED: 400 {"errors":{"Pin":["PIN must be exactly 6 digits."]}} — PascalCase key,
+          because DataAnnotations report against the bound PROPERTY, unlike FluentValidation's
+          camelCase `toAccountId` on the very same endpoint.
+        */
+        var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
+        SetAuthHeader(token);
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var junk = await PostMonetaryAsync(
+                "/api/transfers", Transfer(account, recipient, "abcdef"));
+            junk.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+            using var doc = System.Text.Json.JsonDocument.Parse(
+                await junk.Content.ReadAsStringAsync());
+            doc.RootElement.GetProperty("errors").TryGetProperty("Pin", out var pinErrors)
+                .Should().BeTrue("the key follows the bound property, so it is PascalCase");
+            pinErrors.EnumerateArray().Select(e => e.GetString())
+                .Should().Contain("PIN must be exactly 6 digits.");
+        }
+
+        var wrong = await PostMonetaryAsync(
+            "/api/transfers", Transfer(account, recipient, WrongPin));
+        wrong.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "three MALFORMED pins must not have consumed the three real attempts");
+        (await ErrorCodeOf(wrong)).Should().Be(ErrorCodes.InvalidPin);
+    }
+
+    [Fact]
+    public async Task UnknownSourceAccount_IsRefusedBeforeThePin()
+    {
+        /*
+          Ownership precedes the PIN in TransferAsync, so a probe against a foreign account id is a
+          404 whatever pin it carries — it cannot be used to test PINs, and it costs no attempt.
+
+          OBSERVED, same unknown id, two pins:
+            correct pin -> 404 ACCOUNT_NOT_FOUND
+            WRONG   pin -> 404 ACCOUNT_NOT_FOUND
+        */
+        var (token, _, recipient) = await ScenarioAsync(enrolPin: true);
+        SetAuthHeader(token);
+        var stranger = Guid.NewGuid();
+
+        foreach (var pin in new[] { CorrectPin, WrongPin })
+        {
+            var response = await PostMonetaryAsync(
+                "/api/transfers", Transfer(stranger, recipient, pin));
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AccountNotFound);
+        }
     }
 
     [Fact]
@@ -235,15 +320,18 @@ public class TransferPinVerificationTests : IntegrationTestBase
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
         SetAuthHeader(token);
 
-        var codes = new List<string?>();
+        // Status AND code, kept together: PIN_LOCKED carried on a 401 or a 422 would satisfy a
+        // code-only assertion while breaking the contract the SPA branches on (429 + Retry-After).
+        var outcomes = new List<(HttpStatusCode Status, string? Code)>();
         for (var attempt = 1; attempt <= 4; attempt++)
         {
             var response = await PostMonetaryAsync(
                 "/api/transfers", Transfer(account, recipient, WrongPin));
-            codes.Add(await ErrorCodeOf(response));
+            outcomes.Add((response.StatusCode, await ErrorCodeOf(response)));
         }
 
-        codes.Should().Contain(ErrorCodes.PinLocked,
+        outcomes.Should().Contain(
+            o => o.Status == HttpStatusCode.TooManyRequests && o.Code == ErrorCodes.PinLocked,
             "repeated wrong PINs on the TRANSFER path must trip the same lockout withdraw uses");
     }
 }

@@ -144,6 +144,10 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
+        // ADR-0041: without an enrolled PIN this request is refused 422 PIN_REQUIRED — which is the
+        // SAME status the funds check answers, so the status-only assertion below stayed green while
+        // testing something else entirely. The errorCode assertion is what makes it honest.
+        await SetPinAsync(senderToken);
         var recipientData = await RegisterRecipientAsync();
 
         // No deposit - balance is 0
@@ -162,6 +166,11 @@ public class TransferEndpointTests : IntegrationTestBase
 
         // Assert - business-rule violations are 422 per contract (BusinessRuleException)
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var body = await response.Content.ReadAsStringAsync();
+        using var problem = System.Text.Json.JsonDocument.Parse(body);
+        problem.RootElement.GetProperty("errorCode").GetString()
+            .Should().Be(ErrorCodes.InsufficientFunds,
+                "422 alone cannot tell INSUFFICIENT_FUNDS from PIN_REQUIRED");
     }
 
     #endregion

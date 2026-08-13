@@ -103,7 +103,7 @@ no live caller — recorded there rather than quietly left to rot. ADR-0008's ow
 corrections follow the same rule — eight inline notes, nothing deleted — and one of them records an
 open hole rather than a supersession: **account deletion is listed as level 2 and is gated nowhere
 at that level** (the endpoint is still `[Authorize]`; what is missing is the step-up).
-The next free number is **0041**.
+The next free number is **0042**.
 
 <details>
 <summary>Full list in numeric order</summary>

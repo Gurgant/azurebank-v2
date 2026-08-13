@@ -45,8 +45,13 @@ public class AuthLevelMiddleware
       Routes gated on the BFF session flag at level 2. EMPTY since ADR-0041 — see above. The set and
       its matching logic stay because /full-number still uses the prefix/suffix rules below: a GET
       with no body, no amount and no payee has nothing to bind an in-band credential to, and PSD2
-      does not treat it as an SCA trigger at all (Art. 97(1)'s list is exhaustive; Art. 4(32) says an
-      account number is not sensitive payment data).
+      does not obviously treat it as an SCA trigger. That last clause is deliberately hedged: an
+      earlier version asserted "Art. 97(1)'s list is exhaustive; Art. 4(32) says an account number is
+      not sensitive payment data", and both halves were wrong — 4(32)'s exclusion is scoped to
+      payment-initiation and account-information PROVIDERS, and 97(1)(c) is a catch-all for any
+      remote action that may imply a fraud risk. The reason this path keeps the session model is that
+      a GET carries no amount and no payee to bind a code to, not that the regulation is silent.
+      See ADR-0041.
     */
     private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
 

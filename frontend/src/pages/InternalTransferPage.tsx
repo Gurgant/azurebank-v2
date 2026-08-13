@@ -86,6 +86,25 @@ export function InternalTransferPage() {
   const [pinNonce, setPinNonce] = useState(0);
   const [pinLockedSeconds, setPinLockedSeconds] = useState<number | null>(null);
 
+  /*
+    THE LOCK MUST EXPIRE. Storing a duration and never touching it again leaves the PIN box and Send
+    disabled for the life of the page, long after the server-side window has closed.
+
+    This is a REGRESSION introduced with the PIN step, not inherited: before ADR-0041 a locked-out
+    user met the root step-up modal, whose Cancel stays enabled under a lock — one click, form and
+    verified recipient intact. The step below offers Send (disabled by the lock) and Back (which
+    does not clear it), so without this effect the only escape is discarding the whole transfer.
+  */
+  useEffect(() => {
+    if (pinLockedSeconds === null) return;
+    if (pinLockedSeconds <= 0) {
+      setPinLockedSeconds(null);
+      return;
+    }
+    const tick = setTimeout(() => setPinLockedSeconds((s) => (s === null ? null : s - 1)), 1000);
+    return () => clearTimeout(tick);
+  }, [pinLockedSeconds]);
+
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
   // ===== RHF form (source / destination / amount) =====
@@ -187,14 +206,15 @@ export function InternalTransferPage() {
     // the verify view. Under `strict` this early return is not optional.
     if (!result) {
       // Keyed on the CODE, never the rendered sentence. See TransferPage for the full reasoning.
-      if (wizard.lastErrorCode === 'INVALID_PIN') {
+      const refusal = wizard.lastProblem.current;
+      if (refusal?.errorCode === 'INVALID_PIN') {
         setPin('');
         setPinError(true);
         setPinNonce((n) => n + 1);
-      } else if (wizard.lastErrorCode === 'PIN_LOCKED') {
+      } else if (refusal?.errorCode === 'PIN_LOCKED') {
         setPin('');
-        setPinLockedSeconds(wizard.lastRetryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
-      } else if (wizard.lastErrorCode === 'PIN_REQUIRED') {
+        setPinLockedSeconds(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
+      } else if (refusal?.errorCode === 'PIN_REQUIRED') {
         // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
         // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
         // a key-DROP class, so this one goes through.

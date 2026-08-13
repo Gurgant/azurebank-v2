@@ -168,6 +168,25 @@ export function TransferPage() {
   const [pinNonce, setPinNonce] = useState(0);
   const [pinLockedSeconds, setPinLockedSeconds] = useState<number | null>(null);
 
+  /*
+    THE LOCK MUST EXPIRE. Storing a duration and never touching it again leaves the PIN box and Send
+    disabled for the life of the page, long after the server-side window has closed.
+
+    This is a REGRESSION introduced with the PIN step, not inherited: before ADR-0041 a locked-out
+    user met the root step-up modal, whose Cancel stays enabled under a lock — one click, form and
+    verified recipient intact. The step below offers Send (disabled by the lock) and Back (which
+    does not clear it), so without this effect the only escape is discarding the whole transfer.
+  */
+  useEffect(() => {
+    if (pinLockedSeconds === null) return;
+    if (pinLockedSeconds <= 0) {
+      setPinLockedSeconds(null);
+      return;
+    }
+    const tick = setTimeout(() => setPinLockedSeconds((s) => (s === null ? null : s - 1)), 1000);
+    return () => clearTimeout(tick);
+  }, [pinLockedSeconds]);
+
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
@@ -297,20 +316,22 @@ export function TransferPage() {
     if (!result) {
       /*
         The PIN outcomes, keyed on the CODE rather than the rendered sentence (the wizard exposes
-        `lastErrorCode` precisely so this does not have to match on prose).
+        `lastProblem` as a REF precisely so this does not have to match on prose, and so the read is not
+        one render stale).
 
         A wrong PIN is safe to retry in place: 401 is exempt from the global logout, and the
         idempotency hook has already dropped the key — so the corrected-PIN retry mints a fresh one
         rather than replaying the refused body.
       */
-      if (wizard.lastErrorCode === 'INVALID_PIN') {
+      const refusal = wizard.lastProblem.current;
+      if (refusal?.errorCode === 'INVALID_PIN') {
         setPin('');
         setPinError(true);
         setPinNonce((n) => n + 1);
-      } else if (wizard.lastErrorCode === 'PIN_LOCKED') {
+      } else if (refusal?.errorCode === 'PIN_LOCKED') {
         setPin('');
-        setPinLockedSeconds(wizard.lastRetryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
-      } else if (wizard.lastErrorCode === 'PIN_REQUIRED') {
+        setPinLockedSeconds(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
+      } else if (refusal?.errorCode === 'PIN_REQUIRED') {
         // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
         // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
         // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is

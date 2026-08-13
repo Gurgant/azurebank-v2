@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBlocker, useNavigate } from 'react-router-dom';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { classifyMoneyProblem, type DomainMessages, type MessageScope } from '../api/moneyProblem';
@@ -60,13 +60,23 @@ export interface MoneyWizard<TBody, TResult> {
    * un-enrolled user to setup — and matching on the rendered SENTENCE to decide that would break
    * the moment someone rewords a message.
    */
-  lastErrorCode: string | null;
   /**
-   * `retryAfterSeconds` from the most recent failure, or null. The lock horizon is the SERVER's to
-   * state — a client-side default would show a countdown that does not match when the lock actually
-   * lifts, which is worse than showing none.
+   * The most recent failure, as a REF rather than state — and the distinction is the whole point.
+   *
+   * `run` is awaited, so the handler that reads this is still executing inside the render that
+   * called it. State written during the await schedules the NEXT render; it does not reach the
+   * object this handler closed over. Reading `wizard.lastErrorCode` from such a handler therefore
+   * returned the value from BEFORE the call — null on the first failure — and every PIN recovery
+   * branch was dead code. A ref is the same object across renders, so a write during `run` is
+   * visible to the awaiting caller immediately.
+   *
+   * Proven by transfer-pin-recovery.test.tsx, which fails on all three branches without this.
+   *
+   * ⚠️ VALID ONLY BETWEEN `run`'s start and the caller's resumption. `run` nulls it on entry and
+   * writes it in the catch, and nothing re-renders when it changes — so reading it DURING RENDER is
+   * always a mistake. It exists for the awaiting handler and for nothing else.
    */
-  lastRetryAfterSeconds: number | null;
+  lastProblem: { current: ApiProblem | null };
   /** The result could not be confirmed. The flow must show its verify view and offer no exits. */
   verifyRequired: boolean;
   /**
@@ -114,8 +124,7 @@ export function useMoneyWizard<TBody, TResult>(
   // Held WITH its scope, but exposed as a bare string: the scope decides lifetime, and no caller
   // needs to know about it, so not one line of page markup moves.
   const [failure, setFailure] = useState<{ text: string; scope: MessageScope } | null>(null);
-  const [lastErrorCode, setLastErrorCode] = useState<string | null>(null);
-  const [lastRetryAfterSeconds, setLastRetryAfterSeconds] = useState<number | null>(null);
+  const lastProblem = useRef<ApiProblem | null>(null);
 
   const keyLive = isSubmitting || keyRetained;
 
@@ -203,22 +212,19 @@ export function useMoneyWizard<TBody, TResult>(
     isSubmitting,
     inFlight,
     error: failure?.text ?? null,
-    lastErrorCode,
-    lastRetryAfterSeconds,
+    lastProblem,
     verifyRequired,
     keyLive,
 
     async run(body) {
       setFailure(null);
-      setLastErrorCode(null);
-      setLastRetryAfterSeconds(null);
+      lastProblem.current = null;
       setInFlight(false);
       setIsSubmitting(true);
       try {
         return await submit(body);
       } catch (caught) {
-        setLastErrorCode((caught as ApiProblem)?.errorCode ?? null);
-        setLastRetryAfterSeconds((caught as ApiProblem)?.retryAfterSeconds ?? null);
+        lastProblem.current = (caught as ApiProblem) ?? null;
         const failure = classifyMoneyProblem(caught as ApiProblem, options);
         if (failure.kind === 'inFlight') {
           setInFlight(true);
@@ -243,8 +249,7 @@ export function useMoneyWizard<TBody, TResult>(
       resetIntent();
       setInFlight(false);
       setFailure(null);
-      setLastErrorCode(null);
-      setLastRetryAfterSeconds(null);
+      lastProblem.current = null;
     },
 
     toReview() {

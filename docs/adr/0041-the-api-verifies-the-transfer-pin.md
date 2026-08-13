@@ -71,9 +71,19 @@ So the two questions are now separate sets, and transfers sit in `SessionRequire
 locally, at the BFF, with the API's own 401 shape, trailing slash normalised the same way.
 
 `/full-number` keeps the session model (decision D3a). It is a GET with no body, no amount and no
-payee — there is nothing for an in-band credential to be **bound to** — and PSD2 does not treat it as
-an SCA trigger at all: Art. 97(1)'s list is exhaustive, and Art. 4(32) says an account number is not
-sensitive payment data. Two questions, two mechanisms, on purpose.
+payee — there is nothing for an in-band credential to be **bound to**. Two questions, two mechanisms,
+on purpose.
+
+> **Correction (review of this PR).** An earlier draft of this paragraph justified that with
+> "PSD2 does not treat it as an SCA trigger at all: Art. 97(1)'s list is exhaustive, and Art. 4(32)
+> says an account number is not sensitive payment data." Both halves were overstated. Art. 4(32)
+> excludes the account owner's name and account number from *sensitive payment data* **for the
+> activities of payment-initiation and account-information service providers** — it is not a general
+> exclusion, and this app is neither. And Art. 97(1)(c) is a catch-all — "any action through a remote
+> channel which may imply a risk of payment fraud or other abuses" — so the list is not exhaustive in
+> the way the sentence claimed. Keeping the session model here is a PRODUCT decision about a request
+> with nothing to bind to; it is **not** a finding that the regulation is silent. Anything stronger
+> needs jurisdiction-specific legal review, which nobody on this repo has done.
 
 ### The frontend
 
@@ -118,7 +128,48 @@ this, and has not yet.
   retire that half of the interceptor is a separate decision, deliberately not taken here;
   `a transfer against the ALIGNED mock never triggers step-up` guards the new truth meanwhile.
 - **The lockout is now reachable from three paths** (verify-pin, withdraw, transfer) and they share
-  one counter. That is intended — it is what stops a transfer being an uncounted PIN oracle — but it
-  means a user locked out by transfers cannot reveal an account number either.
+  one counter. That is intended — it is what stops a transfer being an uncounted PIN oracle.
+
+  An earlier draft added "so a user locked out by transfers cannot reveal an account number either."
+  **That is false, and the code says so.** The counter lives in the API (`PinService`); the reveal
+  gate reads `UserSession.AuthLevel` in the BFF (`AuthLevelMiddleware` → `SessionService`), and the
+  API holds no reference to `ISessionService` or to any session at all. `SessionService` drops an
+  elevated session back to level 1 only when its own PIN-verification window lapses
+  (`IsPinVerificationValid`, `PinValidityMinutes`) — never in response to a lockout. So a session
+  that was elevated **before** the lockout keeps revealing account numbers until that window runs
+  out. Closing it needs a cross-process signal that does not exist today; recorded here rather than
+  invented.
+### What review round 1 changed
+
+Three of these were real defects in the first cut of this ADR's implementation, and all three are
+worth recording because none was caught by the gates that were run:
+
+- **The PIN recovery branches were dead code.** `run()` wrote the failure into `useState` and the
+  awaiting handler read `wizard.lastErrorCode` — a value captured in the render that called it, so
+  always the PREVIOUS attempt's code. A wrong PIN neither cleared the boxes nor showed a lock.
+  `lastProblem` is a ref now, and `transfer-pin-recovery.test.tsx` fails on all three branches
+  without it. The whole PIN failure surface had no test at all; that is why it shipped.
+- **The PIN lock never expired.** Both pages stored a duration and never touched it again, so the
+  send controls stayed dead for the life of the page. This is a REGRESSION, not inherited: the flow
+  it replaced put a locked-out user in front of the root step-up modal, whose Cancel stays enabled —
+  one click, form and verified recipient intact. The new step offered only a disabled Send and a
+  Back that did not clear the lock. (`WithdrawDialog` has the same gap and is left as-is here; a
+  shared fix is tracked separately.)
+- **The mock grew a second PIN path.** `transferPinGate` + `checkPinInBand` were wired into the two
+  transfer routes while withdraw kept its own inline copy — so the same file described two different
+  PIN behaviours, and the shape hole survived on the endpoint that has carried an in-band PIN
+  longest. Withdraw now goes through the same two functions.
+
+Two review points were **declined**, with reasons:
+
+- Documenting `PIN_REQUIRED` / `INVALID_PIN` / `PIN_LOCKED` in the OpenAPI response descriptions.
+  Those strings come from `AuthorizationResponseTransformer` and `IdempotencyOperationTransformer`,
+  which are applied to EVERY authorized / every idempotent operation. Adding PIN codes there would
+  claim deposit can answer `PIN_REQUIRED` and that every endpoint can answer `INVALID_PIN`. Per-
+  operation wording needs different machinery, and withdraw — the older in-band-PIN endpoint —
+  carries byte-identical generic strings today.
+- Re-dating this ADR. The file and the index row already agree, and the date is the day the work
+  was done.
+
 - **Not addressed here:** account deletion still has no PIN check anywhere (C.1), and first-time PIN
   enrolment still needs only a session (the live residual noted in ADR-0040).

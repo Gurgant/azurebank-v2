@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { asProblem, call, elevate, firstAccountId, idempotencyKey, login } from './client';
+import { FIXTURES } from './target';
 
 /**
  * The money endpoints, where a wrong error shape is a wrong screen on a payment.
@@ -39,6 +40,16 @@ describe('contract: money', () => {
         toAccountId: id,
         amount: 10,
         description: 'contract probe',
+        // ADR-0041 made `pin` a required member. WITHOUT it the request never reaches
+        // FluentValidation at all: System.Text.Json refuses to deserialise a missing required
+        // property, so the answer is the framework envelope keyed `$`/`request` — measured:
+        //   400 {"title":"One or more validation errors occurred.",
+        //        "errors":{"$":["JSON deserialization for type '…InternalTransferRequest' was
+        //                        missing required properties including: 'pin'."],
+        //                  "request":["The request field is required."]}}
+        // which is the OTHER envelope, and would silently turn this test into a check of the
+        // deserialiser rather than of the same-account rule it exists for.
+        pin: FIXTURES.pin,
       }),
     });
     const problem = asProblem(body);
@@ -65,6 +76,16 @@ describe('contract: money', () => {
         toAccountId: id,
         amount: 10,
         description: 'contract probe',
+        // ADR-0041 made `pin` a required member. WITHOUT it the request never reaches
+        // FluentValidation at all: System.Text.Json refuses to deserialise a missing required
+        // property, so the answer is the framework envelope keyed `$`/`request` — measured:
+        //   400 {"title":"One or more validation errors occurred.",
+        //        "errors":{"$":["JSON deserialization for type '…InternalTransferRequest' was
+        //                        missing required properties including: 'pin'."],
+        //                  "request":["The request field is required."]}}
+        // which is the OTHER envelope, and would silently turn this test into a check of the
+        // deserialiser rather than of the same-account rule it exists for.
+        pin: FIXTURES.pin,
       }),
     });
     const problem = asProblem(body);
@@ -74,5 +95,41 @@ describe('contract: money', () => {
     expect(status).toBe(400);
     expect(problem.title).toBe('Validation Failed');
     expect(problem.detail).toBe('One or more validation errors occurred.');
+  });
+
+  it('a malformed PIN is the MODEL-BINDING envelope, not the validator one', async () => {
+    /*
+      The probe the same-account tests above stopped being when they started sending a valid PIN.
+
+      Two envelopes live on this one endpoint and a client branching on them must be able to tell
+      them apart. `[Pin]` is a DataAnnotation, so it fires in the automatic model-state filter —
+      before the action, before FluentValidation — and reports against the BOUND PROPERTY, hence
+      PascalCase `Pin`. The same-account rule next door is FluentValidation and reports camelCase
+      `toAccountId`. Sending a request that is invalid in BOTH ways proves which one wins.
+
+      Observed: 400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+                     "title":"One or more validation errors occurred.",
+                     "errors":{"Pin":["PIN must be exactly 6 digits."]}}
+      — note the absence of `detail` and `instance`, which the validator envelope carries.
+    */
+    const id = await firstAccountId();
+
+    const { status, body } = await call('/api/transfers/internal', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey() },
+      body: JSON.stringify({
+        fromAccountId: id,
+        toAccountId: id,
+        amount: 10,
+        description: 'contract probe',
+        pin: '12',
+      }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(Object.keys(problem.errors ?? {})).toContain('Pin');
+    expect(Object.keys(problem.errors ?? {})).not.toContain('toAccountId');
   });
 });

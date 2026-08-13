@@ -1647,51 +1647,30 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     of the mock by fumbling an account id, which the real API never lets you do because it never
     reaches the PIN.
   */
+  /*
+    ONE PIN PATH IN THIS FILE, not two.
+
+    Withdraw carried its own inline copy of the enrolment/lock/compare ladder, written before the
+    transfers needed one. When ADR-0041 added `transferPinGate` + `checkPinInBand` for transfers,
+    wiring them into the transfer routes only would have left this endpoint with a DIFFERENT PIN
+    behaviour in the same file — and the shape hole the gate exists to close (a malformed pin
+    answering 401 and burning a lockout attempt) would have survived here. `WithdrawRequest` carries
+    the same `[Required] [Pin] required string Pin`, so it gets the same treatment.
+  */
+  const pinShape = transferPinGate(body, 'AzureBank.Shared.DTOs.Transaction.WithdrawRequest');
+  if (pinShape) return response.untyped(pinShape);
+
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
     return response.untyped(notFound('Account', body.accountId, request));
   }
 
-  // PIN_REQUIRED — the user never set a PIN. Gated only when a session exists; tests that
-  // render the dialog without seeding a session are treated as a PIN-holder (they pass one).
-  if (mockState.session && !mockState.session.hasPin) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 422,
-        errorCode: 'PIN_REQUIRED',
-        detail: 'PIN must be set before making withdrawals.',
-      }),
-    );
-  }
-
-  // PIN_LOCKED — attempt-limiting window still open (checked BEFORE the PIN compare, like
-  // the backend refuses before Argon2id runs).
-  const now = Date.now();
-  if (mockState.pinLockedUntil && Date.parse(mockState.pinLockedUntil) > now) {
-    return response.untyped(pinLockedProblem(mockState.pinLockedUntil, now, pathOf(request)));
-  }
-
-  // INVALID_PIN — wrong PIN. The 3rd consecutive miss trips the 15-minute lock and returns
-  // 429 PIN_LOCKED (not 401), exactly like ValidationRules.MaxPinAttempts.
-  if (body.pin !== mockState.pin) {
-    mockState.pinAttempts += 1;
-    if (mockState.pinAttempts >= 3) {
-      mockState.pinAttempts = 0;
-      mockState.pinLockedUntil = apiOffsetInstant(now + PIN_LOCKOUT_SECONDS * 1000);
-      return response.untyped(pinLockedProblem(mockState.pinLockedUntil, now, pathOf(request)));
-    }
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 401,
-        errorCode: 'INVALID_PIN',
-        detail: 'Invalid PIN.',
-      }),
-    );
-  }
-  // Correct PIN clears the attempt counter.
-  mockState.pinAttempts = 0;
+  const pinRefusal = checkPinInBand(
+    body.pin,
+    request,
+    'PIN must be set before making withdrawals.',
+  );
+  if (pinRefusal) return response.untyped(pinRefusal);
 
   // INSUFFICIENT_FUNDS — last, after the PIN passes, like the backend orders it.
   const available = account.balance;
@@ -1858,6 +1837,50 @@ const renameAzureTag = http.patch('*/bff/auth/azuretag', async ({ request }) => 
 });
 
 /**
+ * The `[Required]` + `[Pin]` DataAnnotations gate for the transfer DTOs.
+ *
+ * It fires during MODEL BINDING in the API — before the action, before the service, and therefore
+ * before any PIN is verified or any lockout attempt counted. `checkPinInBand` below must never see
+ * a value this rejects, or the mock answers 401 INVALID_PIN and burns a lockout attempt where the
+ * API answers 400 and burns nothing.
+ *
+ * Measured on the real API and pasted verbatim (a same-account internal transfer, varying only the
+ * pin member):
+ *
+ *   absent  -> 400 {"title":"One or more validation errors occurred.",
+ *                   "errors":{"$":["JSON deserialization for type '…InternalTransferRequest' was
+ *                                   missing required properties including: 'pin'."],
+ *                             "request":["The request field is required."]}}
+ *   "12"    -> 400 {"errors":{"Pin":["PIN must be exactly 6 digits."]}}
+ *   ""      -> 400 {"errors":{"Pin":["The Pin field is required.","PIN must be exactly 6 digits."]}}
+ *
+ * PascalCase `Pin`, unlike FluentValidation's camelCase `toAccountId` next door: the key follows how
+ * the value was BOUND (PR #75's rule), and these two envelopes coexist on the same endpoint.
+ */
+function transferPinGate(body: { pin?: unknown }, clrType: string): Response | null {
+  if (body.pin === undefined) {
+    return missingMemberProblem(clrType, 'pin');
+  }
+
+  // null fires [Required] ALONE; "" and whitespace fire Required AND the format rule. That is
+  // DataAnnotations' own rule, documented and measured for the auth DTOs in dataAnnotations.ts —
+  // the null row here follows it rather than a separate measurement of THIS DTO.
+  if (body.pin === null) {
+    return modelStateProblem({ Pin: ['The Pin field is required.'] });
+  }
+
+  const errors: string[] = [];
+  const pin = typeof body.pin === 'string' ? body.pin : String(body.pin);
+  if (pin.trim() === '') {
+    errors.push('The Pin field is required.');
+  }
+  if (!/^[0-9]{6}$/.test(pin)) {
+    errors.push('PIN must be exactly 6 digits.');
+  }
+  return errors.length > 0 ? modelStateProblem({ Pin: errors }) : null;
+}
+
+/**
  * The in-band PIN check, shared by withdraw and (since ADR-0041) both transfer endpoints.
  *
  * Order and values mirror the API, measured against it rather than copied from the withdraw
@@ -1998,7 +2021,25 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     transfer from an unknown account to yourself answered SELF_TRANSFER_NOT_ALLOWED where the API
     answers ACCOUNT_NOT_FOUND, and a client branching on the code took the wrong path.
   */
+  // Model binding runs before the action, so a malformed pin never reaches the service.
+  const pinShape = transferPinGate(body, 'AzureBank.Shared.DTOs.Transfer.TransferRequest');
+  if (pinShape) return response.untyped(pinShape);
+
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
+  if (!account) {
+    /*
+      OWNERSHIP BEFORE THE PIN, and this order is measured rather than assumed. `TransferAsync`
+      opens with `GetAccountWithOwnershipCheckAsync` and only then calls `VerifyPinOrThrowAsync`.
+      Observed against the real API — same unknown account id, two different pins:
+
+        correct pin -> 404 ACCOUNT_NOT_FOUND
+        WRONG   pin -> 404 ACCOUNT_NOT_FOUND    (not 401, and no attempt counted)
+
+      The mock had these the other way round, so probing a foreign account id with a junk pin
+      answered INVALID_PIN and burned a lockout attempt the API never charges.
+    */
+    return response.untyped(notFound('Account', body.fromAccountId, request));
+  }
 
   /*
     PIN, after ownership and before every business rule — the position
@@ -2007,9 +2048,6 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   */
   const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
   if (pinRefusal) return response.untyped(pinRefusal);
-  if (!account) {
-    return response.untyped(notFound('Account', body.fromAccountId, request));
-  }
 
   if (mockState.session?.azureTag === tag) {
     return response.untyped(
@@ -2159,8 +2197,9 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   }
   const amount = body.amount as number;
 
-  const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
-  if (pinRefusal) return response.untyped(pinRefusal);
+  // Model binding first (see transferPinGate): a malformed pin is 400, never a counted attempt.
+  const pinShape = transferPinGate(body, 'AzureBank.Shared.DTOs.Transfer.InternalTransferRequest');
+  if (pinShape) return response.untyped(pinShape);
 
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
     /*
@@ -2200,6 +2239,16 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (!to) {
     return response.untyped(notFound('Account', body.toAccountId, request));
   }
+
+  /*
+    PIN last of the gates, first of the service's own work. FluentValidation (same-account) and both
+    ownership checks precede `VerifyPinOrThrowAsync` in `InternalTransferAsync`, so none of them can
+    be answered INVALID_PIN. Measured on the real API: a same-account request with a well-formed pin
+    answers 400 {"toAccountId":["Cannot transfer to the same account."]} — the validator envelope —
+    without the PIN ever being verified.
+  */
+  const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
+  if (pinRefusal) return response.untyped(pinRefusal);
   if (amount > from.balance) {
     return response.untyped(
       problem({

@@ -24,8 +24,14 @@ What the standards actually say, verified against primary sources:
 
 - **PCI-DSS masking (first6/last4) applies to card PANs only** — the PCI SSC FAQ puts
   bank account numbers, sort codes and routing numbers out of scope.
-- **PSD2 art. 4(32)** explicitly states the account owner's name and account number *do
-  not constitute sensitive payment data*.
+- **PSD2 art. 4(32)** states the account owner's name and account number *do not constitute
+  sensitive payment data* — **but only for the activities of payment-initiation and
+  account-information service providers**, which this app is not.
+  > **Correction (2026-08-13, review of PR #105).** The qualifier above was missing from the
+  > original bullet, which read as a general exclusion. It is not one. The same overstatement was
+  > repeated in ADR-0041 and in a BFF code comment and has been corrected in both. Nothing about
+  > this ADR's DECISION changes — the reveal treatment was argued from PCI scope and neobank
+  > practice as well — but the sentence was doing more work than the article supports.
 - **Neobank practice** (Monzo, Revolut, Wise, Starling): account numbers/IBANs are shown
   **in full** on an account-details screen with copy/share affordances, no re-auth. The
   eye-button + re-auth + timed-rehide treatment is what banks reserve for **card

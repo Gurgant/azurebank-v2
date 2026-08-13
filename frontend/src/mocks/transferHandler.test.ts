@@ -61,7 +61,15 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
       amount: 10,
       pin: MOCK_PIN,
     });
-    expect(res.status).not.toBe(403);
+    // 201, not merely "not 403": `not.toBe(403)` is satisfied by 400/401/404/500, so it proves the
+    // gate is gone without proving the transfer is ALLOWED.
+    //
+    // An earlier version of this comment blamed that weakness for the ordering defects reaching CI
+    // green. MEASURED, and it is not true: with `toBe(201)` applied to the defective handler every
+    // test here still passed, because a happy-path request satisfies every gate and therefore cannot
+    // observe the order they run in. What was missing was a test that FAILS a gate — the block at
+    // the bottom of this file.
+    expect(res.status).toBe(201);
     expect(res.headers.get('X-Auth-Level-Required')).toBeNull();
   });
 
@@ -173,7 +181,7 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
       amount: 10,
       pin: MOCK_PIN,
     });
-    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(201);
     expect(res.headers.get('X-Auth-Level-Required')).toBeNull();
   });
 
@@ -323,5 +331,101 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     expect(int.status).toBe(201);
     expect(int.headers.get('Idempotency-Replayed')).toBeNull();
     expect((await int.json()).data.toAccountNewBalance).toBeDefined(); // an internal-shaped body
+  });
+});
+
+describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
+  /*
+    Every expectation below was MEASURED on the real API and pasted beside its assertion.
+
+    The mock had all three wrong and nothing here caught it — not because the assertions were weak
+    (they were, separately) but because every transfer test drove a request that PASSES every gate.
+    Order is only observable when something fails, so these are the first tests in the file that
+    deliberately fail one.
+  */
+
+  it('a MALFORMED pin is 400 from model binding, with the PascalCase Pin key', async () => {
+    seedMockSession();
+    const res = await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: '12',
+    });
+    // OBSERVED: 400 {"errors":{"Pin":["PIN must be exactly 6 digits."]}} — [Pin] is a
+    // DataAnnotation, so the key follows the bound PROPERTY and is PascalCase, unlike
+    // FluentValidation's camelCase `toAccountId` on the same endpoint.
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(Object.keys(body.errors)).toEqual(['Pin']);
+    expect(body.errors.Pin).toContain('PIN must be exactly 6 digits.');
+  });
+
+  it('an ABSENT pin is the missing-required-properties envelope, not a PIN error', async () => {
+    seedMockSession();
+    const res = await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+    });
+    // OBSERVED: System.Text.Json refuses the deserialisation, so it never reaches any validator.
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(Object.keys(body.errors).sort()).toEqual(['$', 'request']);
+  });
+
+  it('a malformed pin does NOT count towards the lockout', async () => {
+    /*
+      THE ONE THAT MATTERS. The gate runs before the service, so a malformed value cannot be used
+      to exhaust someone's attempts. Three malformed sends then one genuinely wrong PIN: if the
+      malformed ones had counted, the fourth would be 429 PIN_LOCKED instead of 401.
+    */
+    seedMockSession();
+    for (let i = 0; i < 3; i += 1) {
+      const junk = await transfer(crypto.randomUUID(), {
+        fromAccountId: acct(),
+        recipientAzureTag: 'friend',
+        amount: 10,
+        pin: 'abcdef',
+      });
+      expect(junk.status).toBe(400);
+    }
+
+    const wrong = await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: '000000',
+    });
+    expect(wrong.status).toBe(401);
+    expect((await wrong.json()).errorCode).toBe('INVALID_PIN');
+  });
+
+  it('an unknown SOURCE account is 404 even with a wrong PIN (ownership precedes the PIN)', async () => {
+    seedMockSession();
+    const res = await transfer(crypto.randomUUID(), {
+      fromAccountId: FIXED,
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: '000000',
+    });
+    // OBSERVED on the real API, same unknown id, both a correct and a wrong pin: 404
+    // ACCOUNT_NOT_FOUND. TransferAsync opens with GetAccountWithOwnershipCheckAsync.
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+  });
+
+  it('a same-account internal transfer is the VALIDATOR 400 even with a wrong PIN', async () => {
+    seedMockSession();
+    const res = await internal(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      toAccountId: acct(),
+      amount: 10,
+      pin: '000000',
+    });
+    // OBSERVED: 400 {"title":"Validation Failed","errors":{"toAccountId":[...]}} — FluentValidation
+    // runs before the service, so the PIN is never verified for this request.
+    expect(res.status).toBe(400);
+    expect(Object.keys((await res.json()).errors)).toContain('toAccountId');
   });
 });
