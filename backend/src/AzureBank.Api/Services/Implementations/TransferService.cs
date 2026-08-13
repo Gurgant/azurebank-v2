@@ -277,7 +277,7 @@ public class TransferService : ITransferService
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on transfer from "
                         + "account {AccountId} to {RecipientAccountId} (attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", fromAccount.Id, recipientAccount.Id, attempt);
+                    SecurityEvents.TransactionNumberCollision, fromAccount.Id, recipientAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, recipientAccount);
             }
         }
@@ -439,7 +439,7 @@ public class TransferService : ITransferService
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on internal transfer "
                         + "from account {AccountId} to {ToAccountId} (attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", fromAccount.Id, toAccount.Id, attempt);
+                    SecurityEvents.TransactionNumberCollision, fromAccount.Id, toAccount.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, fromAccount, toAccount);
             }
         }

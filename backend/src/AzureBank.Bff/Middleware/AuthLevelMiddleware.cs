@@ -1,3 +1,4 @@
+using AzureBank.Shared.Constants;
 using System.Diagnostics;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
@@ -99,7 +100,7 @@ public class AuthLevelMiddleware
         if (path.TrimEnd('/').Equals("/api/auth/refresh", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning(
-                "SecurityEvent {SecurityEvent}: blocked raw proxied {Path}", "RawRefreshBlocked", safePath);
+                "SecurityEvent {SecurityEvent}: blocked raw proxied {Path}", SecurityEvents.RawRefreshBlocked, safePath);
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
@@ -141,7 +142,7 @@ public class AuthLevelMiddleware
             {
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {Path}",
-                    "StepUpWithoutSession", safeMethod, safePath);
+                    SecurityEvents.StepUpWithoutSession, safeMethod, safePath);
 
                 /*
                   Byte-for-byte the 401 the API emits for a missing token — measured against the
@@ -177,7 +178,7 @@ public class AuthLevelMiddleware
             {
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
-                    "StepUpRequired", authLevel, safeMethod, safePath);
+                    SecurityEvents.StepUpRequired, authLevel, safeMethod, safePath);
 
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 context.Response.Headers.Append("X-Auth-Level-Required", "2");

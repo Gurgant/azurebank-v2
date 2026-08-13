@@ -315,7 +315,7 @@ try
             // silently would ship the control with no telemetry.
             Log.Warning(
                 "SecurityEvent {SecurityEvent}: {Method} {Path} rejected for partition {Partition}",
-                "RateLimitExceeded",
+                SecurityEvents.RateLimitExceeded,
                 context.HttpContext.Request.Method,
                 context.HttpContext.Request.Path.Value,
                 ClientIp(context.HttpContext));

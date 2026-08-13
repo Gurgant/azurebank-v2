@@ -82,7 +82,7 @@ public class RefreshTokenService : IRefreshTokenService
         {
             // Never existed, or already reaped by cleanup. Uniform 401 (no oracle).
             _logger.LogWarning(
-                "SecurityEvent {SecurityEvent}: refresh presented an unknown token", "RefreshTokenUnknown");
+                "SecurityEvent {SecurityEvent}: refresh presented an unknown token", SecurityEvents.RefreshTokenUnknown);
             throw InvalidRefreshToken();
         }
 
@@ -109,7 +109,7 @@ public class RefreshTokenService : IRefreshTokenService
             {
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: reuse of revoked refresh token {TokenId} (user {UserId}); revoking all active tokens",
-                    "RefreshTokenReuse", existing.Id, existing.UserId);
+                    SecurityEvents.RefreshTokenReuse, existing.Id, existing.UserId);
 
                 try
                 {
@@ -149,7 +149,7 @@ public class RefreshTokenService : IRefreshTokenService
                         ex,
                         "SecurityEvent {SecurityEvent}: family revoke FAILED after reuse detection for user {UserId}; "
                             + "the 401 stands and the next replay re-runs the revoke",
-                        "RefreshTokenReuseRevokeFailed", existing.UserId);
+                        SecurityEvents.RefreshTokenReuseRevokeFailed, existing.UserId);
                 }
             }
             throw InvalidRefreshToken();

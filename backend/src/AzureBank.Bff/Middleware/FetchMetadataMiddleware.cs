@@ -1,3 +1,4 @@
+using AzureBank.Shared.Constants;
 using System.Diagnostics;
 using AzureBank.Shared.Utilities;
 using Microsoft.AspNetCore.Mvc;
@@ -36,7 +37,7 @@ public class FetchMetadataMiddleware
             // though Kestrel already rejects non-token method names.
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: cross-site {Method} to {Path} blocked (Sec-Fetch-Site: {Site})",
-                "CrossSiteRequestBlocked",
+                SecurityEvents.CrossSiteRequestBlocked,
                 LogSanitizer.Sanitize(context.Request.Method),
                 LogSanitizer.Sanitize(context.Request.Path.Value ?? string.Empty),
                 LogSanitizer.Sanitize(context.Request.Headers[SecFetchSiteHeader].ToString()));

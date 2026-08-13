@@ -239,14 +239,27 @@ public class AuthService : IAuthService
             // an operator to spot a targeted enumeration probe against one address.
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: registration rejected, email already registered ({Email})",
-                "DuplicateRegistration", _piiRedactor.Redact(request.Email));
+                SecurityEvents.DuplicateRegistration, _piiRedactor.Redact(request.Email));
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
         if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag))
         {
+            /*
+              Sanitized for the LOG only — never for the query above, which must match the value
+              the user actually claimed.
+
+              The handle is already pattern-validated (ValidationRules.AzureTagPattern is anchored,
+              ^[a-z][a-z0-9_]{2,19}$, so it cannot carry CR/LF), and that is exactly the argument
+              this site was dismissed on twice. Twice is the point: the alert reopens every time the
+              line moves, and the argument depends on a validator in another file continuing to run
+              on every path that reaches here. Routing through the audited barrier costs one local
+              and settles it — the same reasoning, and the same helper, as AccountService's
+              CreateAccountAsync.
+            */
+            var safeAzureTag = LogSanitizer.Sanitize(normalizedAzureTag);
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: registration rejected, handle already taken ({AzureTag})",
-                "DuplicateRegistration", normalizedAzureTag);
+                SecurityEvents.DuplicateRegistration, safeAzureTag);
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
 
@@ -326,7 +339,7 @@ public class AuthService : IAuthService
                 // retried while the very same deadlock on the USER insert became a 409.
                 _logger.LogWarning(ex,
                     "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
-                    "DuplicateRegistration");
+                    SecurityEvents.DuplicateRegistration);
                 throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
             }
 
@@ -342,7 +355,8 @@ public class AuthService : IAuthService
                 var isDuplicate = result.Errors.Any(e => e.Code is "DuplicateUserName" or "DuplicateEmail");
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: registration rejected by Identity ({Codes})",
-                    isDuplicate ? "DuplicateRegistration" : "RegistrationRejected", codes);
+                    isDuplicate ? SecurityEvents.DuplicateRegistration : SecurityEvents.RegistrationRejected,
+                    codes);
                 if (isDuplicate)
                 {
                     throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
@@ -373,7 +387,7 @@ public class AuthService : IAuthService
                 {
                     _logger.LogWarning(
                         "SecurityEvent {SecurityEvent}: registration lost the race during role assignment",
-                        "DuplicateRegistration");
+                        SecurityEvents.DuplicateRegistration);
                     throw new ConflictException(
                         "Registration could not be completed.", ErrorCodes.RegistrationFailed);
                 }

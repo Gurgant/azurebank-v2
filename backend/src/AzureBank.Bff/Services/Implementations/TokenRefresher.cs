@@ -1,3 +1,4 @@
+using AzureBank.Shared.Constants;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
@@ -162,7 +163,7 @@ public class TokenRefresher : ITokenRefresher
                 _gates.TryRemove(sessionId, out _);
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: refresh rejected for session {SessionId}; session revoked",
-                    "RefreshRejected", Redact(sessionId));
+                    SecurityEvents.RefreshRejected, Redact(sessionId));
                 return null;
             }
 

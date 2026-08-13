@@ -94,7 +94,7 @@ public class TransactionService : ITransactionService
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on deposit to "
                         + "account {AccountId} (attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", account.Id, attempt);
+                    SecurityEvents.TransactionNumberCollision, account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
                 continue;
             }
@@ -184,7 +184,7 @@ public class TransactionService : ITransactionService
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on withdrawal "
                         + "from account {AccountId} (attempt {Attempt}); regenerating",
-                    "TransactionNumberCollision", account.Id, attempt);
+                    SecurityEvents.TransactionNumberCollision, account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
                 continue;
             }
