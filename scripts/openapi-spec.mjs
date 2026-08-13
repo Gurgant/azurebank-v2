@@ -48,8 +48,14 @@ import { dirname, join } from 'node:path';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SPEC_PATH = join(REPO_ROOT, 'docs', 'api', 'openapiv1.json');
 
-/** Plain HTTP on the port CI's real-stack job uses. Override with OPENAPI_BASE_URL. */
-const BASE_URL = process.env.OPENAPI_BASE_URL ?? 'http://localhost:5068';
+/**
+ * Plain HTTP on the port CI's real-stack job uses. Override with OPENAPI_BASE_URL.
+ *
+ * Trailing slashes are stripped: `http://host:5068/` would otherwise concatenate to
+ * `http://host:5068//openapi/v1.json`, and a doubled slash is not the route MapOpenApi registered —
+ * so the script would report a 404 and blame the Development gate for a typo in an env var.
+ */
+const BASE_URL = (process.env.OPENAPI_BASE_URL ?? 'http://localhost:5068').replace(/\/+$/, '');
 const SPEC_URL = `${BASE_URL}/openapi/v1.json`;
 
 const HOW_TO_START = `
