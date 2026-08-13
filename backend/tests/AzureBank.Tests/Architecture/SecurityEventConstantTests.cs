@@ -84,6 +84,18 @@ public class SecurityEventConstantTests
     private static readonly Regex PascalCaseLiteral = new("\"[A-Z][A-Za-z0-9]{3,}\"", RegexOptions.Compiled);
 
     /// <summary>
+    /// One whole ordinary string literal that mentions SecurityEvent, wherever the statement wraps.
+    /// </summary>
+    private static readonly Regex SecurityEventLiteral = new(
+        "\"[^\"\\n]*SecurityEvent[^\"\\n]*\"", RegexOptions.Compiled);
+
+    /// <summary>
+    /// A verbatim or raw string that mentions SecurityEvent — the shape the rule above cannot read.
+    /// </summary>
+    private static readonly Regex MultilineStringMentioningSecurityEvent = new(
+        "(@\"|\"\"\")[^\"]*SecurityEvent", RegexOptions.Compiled);
+
+    /// <summary>
     /// The text of the first argument after the message, stopping at the comma that ENDS it.
     /// </summary>
     /// <remarks>
@@ -176,23 +188,48 @@ public class SecurityEventConstantTests
 
         foreach (var file in SourceFiles(RepoBackendRoot()))
         {
-            var lines = File.ReadAllLines(file);
-            for (var i = 0; i < lines.Length; i++)
+            var text = File.ReadAllText(file);
+
+            /*
+              Matched as a LITERAL over the whole file, not line by line.
+
+              The first version read one line at a time, and a review was right that it was fragile:
+              a message wrapped across two source lines would put `"SecurityEvent` on one and
+              `{SecurityEvent}` on the next, so the rule would report an offender that is not one —
+              and a genuinely miswritten template could hide in the same seam.
+
+              A regular C# string literal cannot contain a raw newline, so `[^"\n]*` between the
+              quotes matches exactly one whole literal and nothing else, wherever the statement is
+              broken. That is precise without a parser. The review suggested Roslyn; it would work,
+              but it buys a compiler dependency for a rule whose entire subject is a single-line
+              literal, and the multi-line forms it would handle are refused outright below.
+            */
+            foreach (Match match in SecurityEventLiteral.Matches(text))
             {
-                var line = lines[i];
-                // Only message strings, i.e. a quoted segment containing the word. A comment or an
-                // identifier mentioning SecurityEvent is not a log template.
-                if (!line.Contains("\"SecurityEvent", StringComparison.Ordinal))
+                if (match.Value.Contains(Template, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                if (!line.Contains(Template, StringComparison.Ordinal))
-                {
-                    offenders.Add(
-                        $"{Path.GetFileName(file)}:{i + 1}: {line.Trim()} — open with \"{Template}: …\" "
-                        + "so the constant rule can see this site");
-                }
+                var line = text[..match.Index].Count(c => c == '\n') + 1;
+                offenders.Add(
+                    $"{Path.GetFileName(file)}:{line}: {match.Value} — open with \"{Template}: …\" "
+                    + "so the constant rule can see this site");
+            }
+
+            /*
+              The one shape the regex above cannot read, refused rather than ignored.
+
+              A verbatim (@"…") or raw ("""…""") string CAN span lines, so a template written that
+              way would slip past both rules. There are none today and no reason to introduce one, so
+              the honest handling is to fail and say so — rather than let the guard quietly narrow.
+            */
+            foreach (Match multiline in MultilineStringMentioningSecurityEvent.Matches(text))
+            {
+                var line = text[..multiline.Index].Count(c => c == '\n') + 1;
+                offenders.Add(
+                    $"{Path.GetFileName(file)}:{line}: a verbatim or raw string mentions SecurityEvent — "
+                    + "write the template as an ordinary single-line literal, which is what both rules can read");
             }
         }
 
