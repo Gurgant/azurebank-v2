@@ -68,7 +68,23 @@ describe('account number reveal (ADR-0020)', () => {
     expect(revealedNumber).not.toHaveAttribute('aria-label');
     expect(screen.queryByText(MASKED_MAIN)).not.toBeInTheDocument();
 
-    const hideBtn = screen.getByRole('button', { name: `Hide account number for ${MAIN}` });
+    /*
+      findByRole, not getByRole, and the reason is the PAGE's accessibility rather than the button's.
+
+      While the PIN modal is open, tabster aria-hides everything outside it — correctly; that is what
+      a modal is. Un-hiding on close goes through the same debounced pass that hid it
+      (`ModalizerAPI.hiddenUpdate` = `setTimeout(…, 250)`), so for up to a quarter second after the
+      modal settles, this page is still out of the accessibility tree and a role query cannot see it.
+      Measured: a bare `getByRole` here failed 6 out of 6 runs with eight busy cores, and passed
+      unloaded — the window is real, it is just usually narrower than the gap between two statements.
+
+      Waiting is the honest answer rather than a workaround: the state does settle, so the assertion
+      is "this becomes reachable", which is exactly what a user experiences. Same rule as the P1.9
+      sweep noted in `test/viewport.ts` — a query that follows an async transition is `findBy*`.
+    */
+    const hideBtn = await screen.findByRole('button', {
+      name: `Hide account number for ${MAIN}`,
+    });
     expect(hideBtn).toHaveAttribute('aria-pressed', 'true');
     await user.click(hideBtn);
 

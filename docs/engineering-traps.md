@@ -196,3 +196,30 @@ unmocked `/api` path throws a bare `fetch failed` in vitest, indistinguishable f
 in `dev:mock` it reaches Vite and dies on an HTML parse error. Two real API routes stayed unmocked
 for months behind exported hooks because of it. A sentinel handler registered LAST answers
 `501 MOCK_HANDLER_MISSING` and names the route.
+
+## jsdom
+
+**jsdom's missing layout is a wrong answer, not a missing API — and Fluent's focus trap reads it.**
+Every element reports `offsetParent === null` and a 0x0 `getBoundingClientRect()`, which is exactly
+what a real browser reports for an element that is not rendered. tabster's `isDisplayNone()` starts
+with that check, so it concludes an open Fluent dialog contains nothing focusable; Fluent's
+`useFocusFirstElement` falls through to `resetFocus(surface)`, which focuses without the programmatic
+flag, so `ModalizerAPI` never marks the dialog active. Its debounced `hiddenUpdate()`
+(`setTimeout(…, 250)`) then runs, decides this modalizer is not the active one, and puts
+`aria-hidden="true"` on the OPEN dialog's own surface. Nothing removes it.
+
+The visible symptom is a `findByRole(role, { name })` that cannot see a control while `getByText`
+and `getByLabelText` still can — those never consult the accessibility tree. It presents as a flake
+because it is a race against 250ms: a query inside the window passes, one after it can never pass,
+and CPU contention pushes nearly everything past it. Four tests in three files failed this way,
+each of them the only in-dialog role query in its file.
+
+`{ hidden: true }` or a text query silences it and asserts something false. `src/test/layout.ts`
+supplies the two answers tabster actually reads; `src/test/layout.test.tsx` fails if it is removed.
+
+**Fixing it moves a second race into view, and that one is real.** With the modalizer activating
+properly, tabster does what a modal should: it aria-hides the page behind the dialog. Un-hiding on
+close goes through the same 250ms debounce, so for up to a quarter second after a dialog closes the
+page underneath is still outside the accessibility tree. A bare `getByRole` on the page immediately
+after closing a dialog therefore fails — measured 6 of 6 runs under load. Use `findBy*`: the state
+does settle, and waiting for it is what a user experiences.

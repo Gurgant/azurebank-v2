@@ -4,6 +4,7 @@ import { resetServerActivity } from '../features/auth/sessionActivity';
 import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
 import { resetMockState, seedMockSession } from '../mocks/state';
+import { installLayoutStubs } from './layout';
 import {
   TEST_VIEWPORT_HEIGHT,
   TEST_VIEWPORT_WIDTH,
@@ -28,6 +29,14 @@ globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObse
 window.innerWidth = TEST_VIEWPORT_WIDTH;
 window.innerHeight = TEST_VIEWPORT_HEIGHT;
 window.matchMedia ??= matchMediaStub;
+
+// jsdom does no layout either, and unlike the two stubs above that is not a missing API — it is a
+// WRONG ANSWER: `offsetParent === null` and a 0x0 rect are what a real browser reports for an
+// element that is not rendered. Fluent's focus trap reads those and concludes an open dialog holds
+// nothing focusable, which ends with tabster putting `aria-hidden="true"` on the open dialog 250ms
+// later. `test/layout.ts` has the full chain, the measurements, and why a looser query would have
+// been a lie rather than a fix.
+installLayoutStubs();
 
 /*
   The OTHER half of the timing budget (the vitest half lives in vitest.config.ts).
