@@ -153,11 +153,16 @@ function stepUp403(currentLevel: number) {
  * `.ValidMoneyScale()` catches it inside the action and answers "Validation Failed" keyed
  * lowercase `amount`. Same field, two casings, decided by which layer rejected it.
  */
-function rejectBadAmount(amount: unknown): ReturnType<typeof modelStateProblem> | null {
+function amountErrors(amount: unknown): string[] {
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0.01 || amount > 100_000) {
-    return modelStateProblem({ Amount: ['Amount must be between $0.01 and $100,000.00'] });
+    return ['Amount must be between $0.01 and $100,000.00'];
   }
-  return null;
+  return [];
+}
+
+function rejectBadAmount(amount: unknown): ReturnType<typeof modelStateProblem> | null {
+  const errors = amountErrors(amount);
+  return errors.length > 0 ? modelStateProblem({ Amount: errors }) : null;
 }
 
 /**
@@ -1651,14 +1656,18 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     ONE PIN PATH IN THIS FILE, not two.
 
     Withdraw carried its own inline copy of the enrolment/lock/compare ladder, written before the
-    transfers needed one. When ADR-0041 added `transferPinGate` + `checkPinInBand` for transfers,
+    transfers needed one. When ADR-0041 added the model-binding gate + `checkPinInBand` for transfers,
     wiring them into the transfer routes only would have left this endpoint with a DIFFERENT PIN
     behaviour in the same file — and the shape hole the gate exists to close (a malformed pin
     answering 401 and burning a lockout attempt) would have survived here. `WithdrawRequest` carries
     the same `[Required] [Pin] required string Pin`, so it gets the same treatment.
   */
-  const pinShape = transferPinGate(body, 'AzureBank.Shared.DTOs.Transaction.WithdrawRequest');
-  if (pinShape) return response.untyped(pinShape);
+  const pinBind = transferPinBindFailure(body, 'AzureBank.Shared.DTOs.Transaction.WithdrawRequest');
+  if (pinBind) return response.untyped(pinBind);
+  const pinAnnotations = pinAnnotationErrors((body.pin ?? null) as string | null);
+  if (pinAnnotations.length > 0) {
+    return response.untyped(modelStateProblem({ Pin: pinAnnotations }));
+  }
 
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
@@ -1857,27 +1866,68 @@ const renameAzureTag = http.patch('*/bff/auth/azuretag', async ({ request }) => 
  * PascalCase `Pin`, unlike FluentValidation's camelCase `toAccountId` next door: the key follows how
  * the value was BOUND (PR #75's rule), and these two envelopes coexist on the same endpoint.
  */
-function transferPinGate(body: { pin?: unknown }, clrType: string): Response | null {
+function transferPinBindFailure(body: { pin?: unknown }, clrType: string): Response | null {
   if (body.pin === undefined) {
     return missingMemberProblem(clrType, 'pin');
   }
 
-  // null fires [Required] ALONE; "" and whitespace fire Required AND the format rule. That is
-  // DataAnnotations' own rule, documented and measured for the auth DTOs in dataAnnotations.ts —
-  // the null row here follows it rather than a separate measurement of THIS DTO.
-  if (body.pin === null) {
-    return modelStateProblem({ Pin: ['The Pin field is required.'] });
+  // null fires [Required] ALONE; "" and whitespace fire Required AND the format rule.
+  // Measured on this DTO (an earlier revision inferred it from the auth DTOs' documented behaviour;
+  // it is now observed): {"pin":null} -> {"Pin":["The Pin field is required."]}
+  /*
+    A NON-STRING pin never reaches DataAnnotations at all — System.Text.Json fails the conversion
+    first, and the answer is keyed by JSON PATH, not by property name:
+
+      {"pin":123456} -> {"request":["The request field is required."],
+                         "$.pin":["The JSON value could not be converted to System.String.
+                                   Path: $.pin | LineNumber: 0 | BytePositionInLine: 111."]}
+      {"pin":true}   -> same shape
+
+    This mattered more than it looks. The previous revision coerced with `String(body.pin)`, and
+    `String(123456)` is "123456" — which matches the six-digit rule, so the MOCK ACCEPTED a payload
+    the API refuses outright. The byte position is deliberately not imitated: it moves with every
+    payload, and this file's convention (see `unreadableBodyProblem`) is that the KEY and the
+    ENVELOPE are what a client branches on.
+  */
+  // NULL is not a conversion failure: JSON null maps onto a C# null string without complaint, and
+  // `[Required]` is what rejects it — measured, {"pin":null} -> {"Pin":["The Pin field is
+  // required."]}. Only a non-null non-string aborts the bind.
+  if (body.pin !== null && typeof body.pin !== 'string') {
+    return invalidJsonValueProblem(
+      '$.pin',
+      'The JSON value could not be converted to System.String. Path: $.pin',
+    );
   }
 
+  return null;
+}
+
+/**
+ * The `[Required]` / `[Pin]` DataAnnotations on a pin that DID bind — the other half.
+ *
+ * Split from the function above because the two failure kinds compose differently, and that is a
+ * property of the framework rather than a convenience here: a deserialisation failure ABORTS the
+ * bind, so no other member is validated and its answer can never carry a second field; annotation
+ * failures are collected in one pass and DO appear alongside `Amount`. Returning messages rather
+ * than a Response is what lets the caller merge them.
+ *
+ * Measured: `null` -> ["The Pin field is required."] alone (DataAnnotations skip non-Required
+ * validators on null); `""` -> both messages; `"12"` -> the format one.
+ */
+function pinAnnotationErrors(pin: string | null): string[] {
   const errors: string[] = [];
-  const pin = typeof body.pin === 'string' ? body.pin : String(body.pin);
+  // null fires [Required] ALONE — DataAnnotations skip non-Required validators on null but run
+  // them all on "". Measured on this DTO, not inferred from the auth ones.
+  if (pin === null) {
+    return ['The Pin field is required.'];
+  }
   if (pin.trim() === '') {
     errors.push('The Pin field is required.');
   }
   if (!/^[0-9]{6}$/.test(pin)) {
     errors.push('PIN must be exactly 6 digits.');
   }
-  return errors.length > 0 ? modelStateProblem({ Pin: errors }) : null;
+  return errors;
 }
 
 /**
@@ -2007,10 +2057,6 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     description?: string;
     pin?: string;
   };
-  const badAmount = rejectBadAmount(body.amount);
-  if (badAmount) {
-    return response.untyped(badAmount);
-  }
   const amount = body.amount as number;
   const tag = body.recipientAzureTag ?? '';
 
@@ -2021,9 +2067,31 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     transfer from an unknown account to yourself answered SELF_TRANSFER_NOT_ALLOWED where the API
     answers ACCOUNT_NOT_FOUND, and a client branching on the code took the wrong path.
   */
-  // Model binding runs before the action, so a malformed pin never reaches the service.
-  const pinShape = transferPinGate(body, 'AzureBank.Shared.DTOs.Transfer.TransferRequest');
-  if (pinShape) return response.untyped(pinShape);
+  // Model binding runs before the action, so a malformed pin never reaches the service. The
+  // bind-failure half first: it aborts, so nothing else is validated after it.
+  const pinBind = transferPinBindFailure(body, 'AzureBank.Shared.DTOs.Transfer.TransferRequest');
+  if (pinBind) return response.untyped(pinBind);
+
+  /*
+    ONE model-state pass, not two early exits.
+
+    `[MoneyRange]` on Amount and `[Pin]` on Pin are both DataAnnotations, evaluated together, so a
+    doubly-invalid body gets ONE errors map naming both. Measured on the real API:
+
+      amount -5, pin "12" -> 400 {"Pin":["PIN must be exactly 6 digits."],
+                                  "Amount":["Amount must be between $0.01 and $100,000.00"]}
+
+    A deserialisation failure is different in kind and is handled above: it aborts the bind, so it
+    can never appear beside Amount.
+  */
+  const bindingErrors: Record<string, string[]> = {};
+  const badAmount = amountErrors(body.amount);
+  if (badAmount.length > 0) bindingErrors.Amount = badAmount;
+  const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
+  if (badPin.length > 0) bindingErrors.Pin = badPin;
+  if (Object.keys(bindingErrors).length > 0) {
+    return response.untyped(modelStateProblem(bindingErrors));
+  }
 
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
@@ -2191,15 +2259,34 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     description?: string;
     pin?: string;
   };
-  const badAmount = rejectBadAmount(body.amount);
-  if (badAmount) {
-    return response.untyped(badAmount);
+  // Model binding first: a malformed pin is 400, never a counted attempt.
+  const pinBind = transferPinBindFailure(
+    body,
+    'AzureBank.Shared.DTOs.Transfer.InternalTransferRequest',
+  );
+  if (pinBind) return response.untyped(pinBind);
+
+  /*
+    ONE model-state pass, not two early exits.
+
+    `[MoneyRange]` on Amount and `[Pin]` on Pin are both DataAnnotations, evaluated together, so a
+    doubly-invalid body gets ONE errors map naming both. Measured on the real API:
+
+      amount -5, pin "12" -> 400 {"Pin":["PIN must be exactly 6 digits."],
+                                  "Amount":["Amount must be between $0.01 and $100,000.00"]}
+
+    A deserialisation failure is different in kind and is handled above: it aborts the bind, so it
+    can never appear beside Amount.
+  */
+  const bindingErrors: Record<string, string[]> = {};
+  const badAmount = amountErrors(body.amount);
+  if (badAmount.length > 0) bindingErrors.Amount = badAmount;
+  const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
+  if (badPin.length > 0) bindingErrors.Pin = badPin;
+  if (Object.keys(bindingErrors).length > 0) {
+    return response.untyped(modelStateProblem(bindingErrors));
   }
   const amount = body.amount as number;
-
-  // Model binding first (see transferPinGate): a malformed pin is 400, never a counted attempt.
-  const pinShape = transferPinGate(body, 'AzureBank.Shared.DTOs.Transfer.InternalTransferRequest');
-  if (pinShape) return response.untyped(pinShape);
 
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
     /*

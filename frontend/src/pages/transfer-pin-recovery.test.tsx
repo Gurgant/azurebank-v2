@@ -161,4 +161,26 @@ describe('the internal transfer recovers the same way', () => {
 
     expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
   });
+
+  it('PIN_LOCKED shows the server horizon here too', async () => {
+    // The branch that reads `retryAfterSeconds` off the response — the only one where the two pages
+    // could drift without a compile error, since it threads a value rather than a constant.
+    server.use(
+      http.post('*/api/transfers/internal', () =>
+        problem({
+          status: 429,
+          errorCode: 'PIN_LOCKED',
+          detail: 'Too many attempts.',
+          extensions: { retryAfterSeconds: 120 },
+        }),
+      ),
+    );
+    renderInternal();
+    await reachInternalPinStep();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+
+    expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+    expect(screen.getByText(/2 minutes/)).toBeInTheDocument();
+  });
 });

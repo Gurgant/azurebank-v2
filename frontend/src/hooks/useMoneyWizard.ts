@@ -55,12 +55,6 @@ export interface MoneyWizard<TBody, TResult> {
   inFlight: boolean;
   error: string | null;
   /**
-   * The `errorCode` of the most recent failure, or null. Exposed because the PIN step has to react
-   * to WHICH failure it was — clear the boxes on a wrong PIN, show the lock on PIN_LOCKED, send an
-   * un-enrolled user to setup — and matching on the rendered SENTENCE to decide that would break
-   * the moment someone rewords a message.
-   */
-  /**
    * The most recent failure, as a REF rather than state — and the distinction is the whole point.
    *
    * `run` is awaited, so the handler that reads this is still executing inside the render that

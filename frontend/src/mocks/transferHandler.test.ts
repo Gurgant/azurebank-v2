@@ -401,6 +401,68 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
     expect((await wrong.json()).errorCode).toBe('INVALID_PIN');
   });
 
+  it('a NON-STRING pin is the JSON-conversion envelope, keyed by path', async () => {
+    /*
+      The nastiest of the shape cases, because the previous revision COERCED with `String(pin)` —
+      and `String(123456)` is "123456", which matches the six-digit rule. So the mock ACCEPTED a
+      payload the API refuses outright: a client could have shipped a numeric pin and only found out
+      in production.
+
+      OBSERVED: {"pin":123456} and {"pin":true} both ->
+        400 {"request":["The request field is required."],
+             "$.pin":["The JSON value could not be converted to System.String. Path: $.pin | …"]}
+      System.Text.Json fails the conversion before DataAnnotations runs, so the key is the JSON PATH,
+      not the property name.
+    */
+    seedMockSession();
+    for (const junk of [123456, true]) {
+      const res = await transfer(crypto.randomUUID(), {
+        fromAccountId: acct(),
+        recipientAzureTag: 'friend',
+        amount: 10,
+        pin: junk as unknown as string,
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(Object.keys(body.errors).sort()).toEqual(['$.pin', 'request']);
+      expect(body.errors['$.pin'][0]).toContain('could not be converted to System.String');
+    }
+  });
+
+  it('a NULL pin fires [Required] alone, not the format rule', async () => {
+    // OBSERVED: {"pin":null} -> {"Pin":["The Pin field is required."]} — one message, not two.
+    // DataAnnotations skip non-Required validators on null but run them all on "".
+    seedMockSession();
+    const res = await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: null as unknown as string,
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors.Pin).toEqual(['The Pin field is required.']);
+  });
+
+  it('model state AGGREGATES every bad field, it does not stop at the first', async () => {
+    /*
+      OBSERVED: amount -5 AND pin "12" ->
+        400 {"Pin":["PIN must be exactly 6 digits."],
+             "Amount":["Amount must be between $0.01 and $100,000.00"]}
+      One pass, one map. The mock used to early-return from the amount check before the pin gate
+      ever ran, so a doubly-invalid body got an amount-only answer and a form could highlight one
+      field where the API highlights two.
+    */
+    seedMockSession();
+    const res = await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: -5,
+      pin: '12',
+    });
+    expect(res.status).toBe(400);
+    expect(Object.keys((await res.json()).errors).sort()).toEqual(['Amount', 'Pin']);
+  });
+
   it('an unknown SOURCE account is 404 even with a wrong PIN (ownership precedes the PIN)', async () => {
     seedMockSession();
     const res = await transfer(crypto.randomUUID(), {

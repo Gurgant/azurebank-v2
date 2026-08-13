@@ -1,16 +1,19 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, elevate, firstAccountId, idempotencyKey, login } from './client';
+import { asProblem, call, firstAccountId, idempotencyKey, login } from './client';
 import { FIXTURES } from './target';
 
 /**
  * The money endpoints, where a wrong error shape is a wrong screen on a payment.
  *
- * Reaching them needs a level-2 session, so each test signs in and elevates with the seeded PIN.
+ * Signs in and STOPS THERE — deliberately. These endpoints needed a level-2 session until ADR-0041;
+ * they now carry the PIN in the request body and the API verifies it, so a level-1 session is
+ * enough to reach them. Leaving the `elevate()` in would have made this suite unable to notice a
+ * regression that re-gated transfers at level 2, because it would have satisfied the gate before
+ * ever sending a transfer.
  */
 
 beforeAll(async () => {
   expect((await login()).status).toBe(200);
-  expect((await elevate()).status).toBe(200);
 });
 
 describe('contract: money', () => {
@@ -129,6 +132,10 @@ describe('contract: money', () => {
 
     expect(status).toBe(400);
     expect(problem.title).toBe('One or more validation errors occurred.');
+    // The two absences are half the distinction and were only asserted in prose: the framework
+    // envelope carries NEITHER, the validator one carries both. Measured on the real API.
+    expect(problem.detail).toBeUndefined();
+    expect(problem.instance).toBeUndefined();
     expect(Object.keys(problem.errors ?? {})).toContain('Pin');
     expect(Object.keys(problem.errors ?? {})).not.toContain('toAccountId');
   });

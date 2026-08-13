@@ -36,10 +36,13 @@ withdraw path had already shown the alternative: it carries the PIN **in the req
 
 `TransferRequest` and `InternalTransferRequest` gain `required string Pin`.
 `TransferService.VerifyPinOrThrowAsync` runs in both transfer methods, in the position withdraw puts
-it: **after the ownership check, before the funds check, before anything is written.** A wrong PIN
-therefore costs nothing and moves nothing, and it goes through `IPinVerifier`, so wrong guesses
-count against the same lockout ([ADR-0010](0010-pin-attempt-limiting.md)) rather than becoming an
-uncounted brute-force oracle.
+it: **after the ownership check, before the funds check, and before any balance, ledger row or
+other transfer mutation.** A wrong PIN therefore moves no funds. It is not write-free in the
+absolute sense, and the distinction matters: it goes through `IPinVerifier`, which records the
+failed attempt and can set the lockout ([ADR-0010](0010-pin-attempt-limiting.md)) — that write is
+the point, since without it a transfer would be an uncounted brute-force oracle. `PinService` keeps
+its own DbContext scope, so that bookkeeping neither rides this request's transaction nor finalises
+its idempotency record.
 
 Measured on the real pipeline (`TransferPinVerificationTests`, every case dispatched straight at the
 API with no BFF in the path):
@@ -139,6 +142,7 @@ this, and has not yet.
   that was elevated **before** the lockout keeps revealing account numbers until that window runs
   out. Closing it needs a cross-process signal that does not exist today; recorded here rather than
   invented.
+
 ### What review round 1 changed
 
 Three of these were real defects in the first cut of this ADR's implementation, and all three are
@@ -160,11 +164,36 @@ worth recording because none was caught by the gates that were run:
   PIN behaviours, and the shape hole survived on the endpoint that has carried an in-band PIN
   longest. Withdraw now goes through the same two functions.
 
+### What review round 2 changed
+
+Round 1 fixed the behaviour; round 2 found that the RECORD of it was still imprecise in four places,
+and one of those imprecisions hid a real fidelity bug.
+
+- **A non-string `pin` was accepted by the mock and refused by the API.** The gate coerced with
+  `String(pin)`, and `String(123456)` is `"123456"` — which matches the six-digit rule. So a numeric
+  pin passed here and would have failed only in production. The API fails the *conversion* before
+  any annotation runs, and keys the answer by JSON PATH: `{"$.pin":["The JSON value could not be
+  converted to System.String…"]}`. The gate is now split along that seam — a bind failure ABORTS
+  and can never carry a second field; annotation failures are collected.
+- **One model-state pass, not two early exits.** `[MoneyRange]` and `[Pin]` are evaluated together,
+  so `amount: -5, pin: "12"` names BOTH fields. The mock returned from its amount check first, so a
+  form would have highlighted one field where the API highlights two.
+- **"before anything is written" was false**, and contradicted the next sentence of this ADR:
+  `IPinVerifier` records the failed attempt and can set the lockout. That write is the point. The
+  claim is now scoped to balances, ledger rows and transfer mutations.
+- **Evidence attributed to a request that was never made.** `Transfer_WithNoPinField…` posts to
+  `/api/transfers` but pasted the *internal* DTO's deserialisation message. Re-measured against the
+  endpoint the test actually calls. Minor in effect, and exactly the class of error this PR is about.
+
+Also: the ADR-0020 correction had REWRITTEN the sentence it was correcting, against this repo's own
+rule that an ADR keeps what it got wrong and annotates it. The original is restored with the note
+beneath it.
+
 Two review points were **declined**, with reasons:
 
 - Documenting `PIN_REQUIRED` / `INVALID_PIN` / `PIN_LOCKED` in the OpenAPI response descriptions.
   Those strings come from `AuthorizationResponseTransformer` and `IdempotencyOperationTransformer`,
-  which are applied to EVERY authorized / every idempotent operation. Adding PIN codes there would
+  which are applied to EVERY authorised / every idempotent operation. Adding PIN codes there would
   claim deposit can answer `PIN_REQUIRED` and that every endpoint can answer `INVALID_PIN`. Per-
   operation wording needs different machinery, and withdraw — the older in-band-PIN endpoint —
   carries byte-identical generic strings today.

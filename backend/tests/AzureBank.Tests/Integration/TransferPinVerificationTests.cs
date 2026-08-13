@@ -147,12 +147,16 @@ public class TransferPinVerificationTests : IntegrationTestBase
         var response = await Client.SendAsync(request);
 
         /*
-          OBSERVED, and the ENVELOPE is the point, not just the status:
+          OBSERVED against THIS endpoint — an earlier revision pasted the internal DTO's message
+          here, which is the same defect in miniature as the ones this PR is about: evidence
+          attributed to a request that was never made. The ENVELOPE is the point, not just the
+          status:
 
             400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
                  "title":"One or more validation errors occurred.",
-                 "errors":{"$":["JSON deserialization for type '…InternalTransferRequest' was
-                                 missing required properties including: 'pin'."],
+                 "errors":{"$":["JSON deserialization for type
+                                 'AzureBank.Shared.DTOs.Transfer.TransferRequest' was missing
+                                 required properties including: 'pin'."],
                            "request":["The request field is required."]}}
 
           `required string Pin` is refused by System.Text.Json during DESERIALISATION, so the request
@@ -208,6 +212,105 @@ public class TransferPinVerificationTests : IntegrationTestBase
         wrong.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
             "three MALFORMED pins must not have consumed the three real attempts");
         (await ErrorCodeOf(wrong)).Should().Be(ErrorCodes.InvalidPin);
+    }
+
+    [Fact]
+    public async Task NonStringPin_FailsDeserialisation_AndIsKeyedByJsonPath()
+    {
+        /*
+          The mock coerced this with String(pin) until review round 2, and String(123456) is
+          "123456" — which matches the six-digit rule. So the mock ACCEPTED a payload the API
+          refuses outright. Pinning the real answer here is what stops that drifting back.
+
+          OBSERVED, for a JSON number and for a boolean alike:
+            400 {"request":["The request field is required."],
+                 "$.pin":["The JSON value could not be converted to System.String.
+                           Path: $.pin | LineNumber: 0 | BytePositionInLine: 111."]}
+
+          Keyed by JSON PATH, not by property name: System.Text.Json fails the conversion before
+          DataAnnotations ever run. NULL is different and is covered below — it converts fine and is
+          rejected by [Required].
+        */
+        var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
+        SetAuthHeader(token);
+
+        foreach (var literal in new[] { "123456", "true" })
+        {
+            var json =
+                $"{{\"fromAccountId\":\"{account}\",\"recipientAzureTag\":\"{recipient}\","
+                + $"\"amount\":25,\"pin\":{literal}}}";
+            var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            };
+            request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+            var response = await Client.SendAsync(request);
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            using var doc = System.Text.Json.JsonDocument.Parse(
+                await response.Content.ReadAsStringAsync());
+            var keys = doc.RootElement.GetProperty("errors").EnumerateObject()
+                .Select(p => p.Name).ToList();
+            keys.Should().Contain("$.pin", "a conversion failure is keyed by JSON path");
+            keys.Should().NotContain("Pin", "DataAnnotations never ran — the bind aborted first");
+        }
+    }
+
+    [Fact]
+    public async Task NullPin_FiresRequiredAlone_NotTheFormatRule()
+    {
+        // OBSERVED: {"pin":null} -> 400 {"Pin":["The Pin field is required."]} — ONE message.
+        // DataAnnotations skip non-Required validators on null but run them all on "".
+        var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
+        SetAuthHeader(token);
+
+        var json =
+            $"{{\"fromAccountId\":\"{account}\",\"recipientAzureTag\":\"{recipient}\","
+            + "\"amount\":25,\"pin\":null}";
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+        var response = await Client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        using var doc = System.Text.Json.JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync());
+        doc.RootElement.GetProperty("errors").GetProperty("Pin").EnumerateArray()
+            .Select(e => e.GetString())
+            .Should().BeEquivalentTo(["The Pin field is required."]);
+    }
+
+    [Fact]
+    public async Task ModelState_AggregatesEveryBadField_InOnePass()
+    {
+        /*
+          [MoneyRange] on Amount and [Pin] on Pin are both DataAnnotations, evaluated together, so a
+          doubly-invalid body names BOTH. The mock returned early from its amount check before the
+          pin gate ran, so a form could highlight one field where the API highlights two.
+
+          OBSERVED: amount -5, pin "12" ->
+            400 {"Pin":["PIN must be exactly 6 digits."],
+                 "Amount":["Amount must be between $0.01 and $100,000.00"]}
+        */
+        var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
+        SetAuthHeader(token);
+
+        var response = await PostMonetaryAsync("/api/transfers", new TransferRequest
+        {
+            FromAccountId = account,
+            RecipientAzureTag = recipient,
+            Amount = -5m,
+            Pin = "12"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        using var doc = System.Text.Json.JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync());
+        doc.RootElement.GetProperty("errors").EnumerateObject().Select(p => p.Name)
+            .Should().BeEquivalentTo(["Pin", "Amount"],
+                "one model-state pass reports every bad field, not the first");
     }
 
     [Fact]
