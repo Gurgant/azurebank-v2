@@ -178,6 +178,14 @@ describe('withdraw (PR-10 — PIN-in-body idempotent mutation)', () => {
     // 900s off the response, rendered live by the shared countdown rather than frozen prose.
     expect(screen.getByRole('timer')).toHaveTextContent('Try again in 15:00');
     expect(screen.getByRole('button', { name: /^Withdraw/ })).toBeDisabled();
+    /*
+      The countdown must not sit INSIDE the alert. `role="alert"` implies `aria-atomic="true"`, so a
+      timer nested in it would re-announce the whole banner every second — assertively. A review
+      caught this on the first version of the change; the oracle now treats any `aria-live` element
+      as a region, not just role=alert/status, because `role="timer"` carries the attribute
+      explicitly rather than implicitly.
+    */
+    expectNoNestedLiveRegions();
   });
 
   it('the lock EXPIRES — Withdraw is usable again once the window closes', async () => {

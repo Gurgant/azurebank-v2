@@ -170,13 +170,15 @@ function StepUpForm() {
             </div>
           )}
           {lockDeadline !== null && (
-            <div role="alert" id={errorId}>
-              <MessageBar intent="warning">
-                <MessageBarBody>
-                  Too many incorrect PIN attempts.{' '}
-                  <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
-                </MessageBarBody>
-              </MessageBar>
+            <div id={errorId}>
+              <div role="alert">
+                <MessageBar intent="warning">
+                  <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
+                </MessageBar>
+              </div>
+              {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
+                  re-announce the whole banner every second. It carries its own polite region. */}
+              <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
             </div>
           )}
         </div>

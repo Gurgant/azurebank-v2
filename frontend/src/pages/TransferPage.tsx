@@ -664,15 +664,17 @@ export function TransferPage() {
               error={pinError}
             />
             {pinLockDeadline !== null && (
-              <MessageBar intent="error" role="alert">
-                <MessageBarBody>
-                  Too many incorrect PIN attempts.{' '}
-                  <RetryCountdown
-                    deadline={pinLockDeadline}
-                    onElapsed={() => setPinLockDeadline(null)}
-                  />
-                </MessageBarBody>
-              </MessageBar>
+              <>
+                <MessageBar intent="error" role="alert">
+                  <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
+                </MessageBar>
+                {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
+                    re-announce the whole banner every second. It carries its own polite region. */}
+                <RetryCountdown
+                  deadline={pinLockDeadline}
+                  onElapsed={() => setPinLockDeadline(null)}
+                />
+              </>
             )}
             <div className={styles.actions}>
               <Button

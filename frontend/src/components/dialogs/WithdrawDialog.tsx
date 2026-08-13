@@ -512,12 +512,15 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               </MessageBar>
             )}
             {lockDeadline !== null && (
-              <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
-                <MessageBarBody>
-                  Too many incorrect PIN attempts.{' '}
-                  <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
-                </MessageBarBody>
-              </MessageBar>
+              <>
+                <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
+                  <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
+                </MessageBar>
+                {/* The countdown is a SIBLING of the alert, never a child: role="alert" implies
+                    aria-atomic, so a nested timer would re-announce the whole banner every second,
+                    assertively. It carries its own polite region. */}
+                <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
+              </>
             )}
           </div>
         )}
