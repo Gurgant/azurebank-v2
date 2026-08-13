@@ -84,6 +84,12 @@ public class SecurityEventConstantTests
     private static readonly Regex PascalCaseLiteral = new("\"[A-Z][A-Za-z0-9]{3,}\"", RegexOptions.Compiled);
 
     /// <summary>
+    /// The end of the message literal and the separator after it: a closing quote that is not
+    /// escaped, then any whitespace (including a line break), then the comma.
+    /// </summary>
+    private static readonly Regex MessageEnd = new("(?<!\\\\)\"\\s*,", RegexOptions.Compiled);
+
+    /// <summary>
     /// One whole ordinary string literal that mentions SecurityEvent, wherever the statement wraps.
     /// </summary>
     private static readonly Regex SecurityEventLiteral = new(
@@ -125,6 +131,71 @@ public class SecurityEventConstantTests
         return afterMessage;
     }
 
+    /// <summary>What the scan found at one log site: an inline name, or an unreadable site.</summary>
+    /// <param name="Line">1-based line of the offending literal, or of the template when unreadable.</param>
+    /// <param name="Literal">The inline literal including its quotes; null when the site could not be read.</param>
+    internal readonly record struct ScanFinding(int Line, string? Literal);
+
+    /// <summary>
+    /// Every site in <paramref name="text"/> that writes its event name inline, or that the scan
+    /// could not read. Separated from the file walk so the SCANNER ITSELF is testable — see
+    /// <see cref="TheScannerSeesWhatItClaimsTo"/>.
+    /// </summary>
+    internal static IEnumerable<ScanFinding> Scan(string text)
+    {
+        for (var i = text.IndexOf(Template, StringComparison.Ordinal); i >= 0;
+             i = text.IndexOf(Template, i + Template.Length, StringComparison.Ordinal))
+        {
+            /*
+              Look only at what FILLS the placeholder, not at the whole statement.
+
+              The event name is the first argument after the message, so the first PascalCase
+              literal following the template is either that name written inline, or — once the
+              name is a constant — a literal belonging to a LATER argument. The window is bounded
+              so a long statement cannot reach into the next one and report a neighbour's string.
+            */
+            var searchFrom = i + Template.Length;
+            var window = text[searchFrom..Math.Min(text.Length, searchFrom + 600)];
+            var templateLine = text[..searchFrom].Count(c => c == '\n') + 1;
+
+            /*
+              Find where the MESSAGE ends, tolerating whitespace before the comma.
+
+              This used to be `IndexOf("\",")`, requiring the quote and comma to be adjacent, and a
+              review was right to flag it — though the danger is worse than the one described. A
+              skipped site is the benign half: it only happens when the window holds no separator at
+              all. The likely half is a silent MIS-PARSE — put a space or a line break before the
+              comma and the adjacent-pair search sails past the real separator and locks onto a later
+              `",` belonging to some other literal in the window, after which the scan inspects a
+              region that has nothing to do with this call and reports nothing.
+
+              The lookbehind rejects an escaped quote inside the message, which would otherwise end
+              the literal early. No template contains one today; it costs nothing to be right anyway.
+            */
+            var separator = MessageEnd.Match(window);
+            if (!separator.Success)
+            {
+                // NOT skipped. A site whose argument list the scan cannot find is a site where an
+                // inline name would pass unseen, so it is reported — the same principle as the
+                // placeholder rule. A log call carrying the template with NO arguments lands here
+                // too, and deserves to: its {SecurityEvent} placeholder would render literally.
+                yield return new ScanFinding(templateLine, null);
+                continue;
+            }
+
+            var argumentStart = separator.Index + separator.Length;
+            var argument = FirstArgument(window[argumentStart..]);
+
+            var match = PascalCaseLiteral.Match(argument);
+            if (match.Success)
+            {
+                // The line of the LITERAL, not of the template: it is the line that has to be edited.
+                var line = text[..(searchFrom + argumentStart + match.Index)].Count(c => c == '\n') + 1;
+                yield return new ScanFinding(line, match.Value);
+            }
+        }
+    }
+
     [Fact]
     public void NoSecurityEventNameIsWrittenAsABareStringLiteral()
     {
@@ -132,44 +203,101 @@ public class SecurityEventConstantTests
 
         foreach (var file in SourceFiles(RepoBackendRoot()))
         {
-            var text = File.ReadAllText(file);
-            for (var i = text.IndexOf(Template, StringComparison.Ordinal); i >= 0;
-                 i = text.IndexOf(Template, i + Template.Length, StringComparison.Ordinal))
+            foreach (var finding in Scan(File.ReadAllText(file)))
             {
-                /*
-                  Look only at what FILLS the placeholder, not at the whole statement.
-
-                  The event name is the first argument after the message, so the first PascalCase
-                  literal following the template is either that name written inline, or — once the
-                  name is a constant — a literal belonging to a LATER argument. The window is bounded
-                  so a long statement cannot reach into the next one and report a neighbour's string.
-                */
-                var searchFrom = i + Template.Length;
-                var window = text[searchFrom..Math.Min(text.Length, searchFrom + 600)];
-
-                // Everything up to the first argument separator that follows the closing quote of the
-                // message: the name lives there and nowhere else.
-                var closingQuote = window.IndexOf("\",", StringComparison.Ordinal);
-                if (closingQuote < 0)
-                {
-                    continue;
-                }
-
-                var argument = FirstArgument(window[(closingQuote + 2)..]);
-
-                var match = PascalCaseLiteral.Match(argument);
-                if (match.Success)
-                {
-                    var line = text[..(searchFrom + closingQuote)].Count(c => c == '\n') + 1;
-                    offenders.Add(
-                        $"{Path.GetFileName(file)}:{line}: {match.Value} — declare it in SecurityEvents and reference it");
-                }
+                offenders.Add(finding.Literal is null
+                    ? $"{Path.GetFileName(file)}:{finding.Line}: the argument list of this site could not be read — "
+                      + "keep the event name as the first argument after the message literal"
+                    : $"{Path.GetFileName(file)}:{finding.Line}: {finding.Literal} — declare it in SecurityEvents and reference it");
             }
         }
 
         offenders.Should().BeEmpty(
             because: "an event name written inline drifts from the constant, and the alert that watched it "
                      + "stops matching without anything failing");
+    }
+
+    /*
+      THE SCANNER'S OWN BEHAVIOUR, pinned.
+
+      A source-scanning guard is only worth its comment if it actually fires, and nothing above
+      proves that: the repository rule passes today because the sources are clean, which is exactly
+      what it would do if the scan were broken. These cases feed synthetic snippets straight to
+      Scan(), so a change that quietly narrows it fails here instead of years later.
+
+      Two of them exist because of a review finding on this file. The scan used to require the
+      message's closing quote and the comma to be ADJACENT; with a space or a line break between
+      them it locked onto a later `",` and inspected the wrong region, reporting nothing. Both
+      shapes are below, and both failed against the old implementation.
+    */
+    public static TheoryData<string, string> SitesWithAnInlineName() => new()
+    {
+        { "adjacent comma", """_logger.LogWarning("SecurityEvent {SecurityEvent}: x", "Inline", y);""" },
+        { "space before the comma", """_logger.LogWarning("SecurityEvent {SecurityEvent}: x" , "Inline", y);""" },
+        {
+            "line break before the comma",
+            "_logger.LogWarning(\"SecurityEvent {SecurityEvent}: x\"\n            , \"Inline\", y);"
+        },
+        {
+            "inline name in the second branch of a ternary",
+            """_logger.LogWarning("SecurityEvent {SecurityEvent}: x", flag ? SecurityEvents.A : "Inline", y);"""
+        },
+        {
+            "inline name inside a call in the first argument",
+            """_logger.LogWarning("SecurityEvent {SecurityEvent}: x", Pick(flag, "Inline"), y);"""
+        },
+        {
+            // An escaped quote FOLLOWED BY A COMMA inside the message. The obvious version of this
+            // case — `said \"hi\"` — was measured and discarded: the old scan handled it by luck,
+            // so pinning it would have proved nothing. This shape is the one that discriminates.
+            "escaped quote and comma inside the message",
+            """_logger.LogWarning("SecurityEvent {SecurityEvent}: said \", not the end", "Inline", y);"""
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(SitesWithAnInlineName))]
+    public void TheScannerSeesWhatItClaimsTo(string shape, string snippet)
+    {
+        var findings = Scan(snippet).ToList();
+
+        findings.Should().ContainSingle(because: $"an inline name written with {shape} must be caught");
+        findings[0].Literal.Should().Be("\"Inline\"");
+    }
+
+    public static TheoryData<string, string> CleanSites() => new()
+    {
+        { "a constant", """_logger.LogWarning("SecurityEvent {SecurityEvent}: x", SecurityEvents.A, y);""" },
+        {
+            "a constant in both branches of a ternary",
+            """_logger.LogWarning("SecurityEvent {SecurityEvent}: x", flag ? SecurityEvents.A : SecurityEvents.B, y);"""
+        },
+        {
+            "a PascalCase literal in a LATER argument",
+            """_logger.LogWarning("SecurityEvent {SecurityEvent}: {Method}", SecurityEvents.A, "Options");"""
+        },
+        {
+            "an exception overload, template second",
+            """_logger.LogWarning(ex, "SecurityEvent {SecurityEvent}: x", SecurityEvents.A);"""
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(CleanSites))]
+    public void TheScannerDoesNotCryWolf(string shape, string snippet)
+    {
+        Scan(snippet).Should().BeEmpty(because: $"a site using {shape} is not an offender");
+    }
+
+    [Fact]
+    public void TheScannerReportsASiteItCannotRead()
+    {
+        // No argument list at all: the placeholder would render literally, and an inline name added
+        // later would be invisible. Silence here was the other half of the review finding.
+        var findings = Scan("""_logger.LogWarning("SecurityEvent {SecurityEvent}: no arguments at all");""").ToList();
+
+        findings.Should().ContainSingle();
+        findings[0].Literal.Should().BeNull(because: "an unreadable site is reported, not skipped");
     }
 
     [Fact]
