@@ -39,17 +39,26 @@ wrong quietly:
 
 ## What `check` reports, and why it is not a diff
 
-When the document has moved, `check` prints a **semantic** report — paths, operations and response
-statuses added or removed, and descriptions changed:
+When the document has moved, `check` prints a **semantic** report of every piece of hand-written
+prose — operation summaries, operation descriptions and response descriptions, each added, removed
+or reworded. A path or an operation appearing or disappearing shows up as all of its entries doing
+so:
 
-```
+```text
   ~ CHANGED  GET /api/accounts 200
       was: ""
       now: "List of user's accounts"
+
+  - REMOVED  GET /api/accounts [summary]  ("Get all accounts for the current user")
 ```
 
-The failure worth catching is a regeneration that silently drops a hand-written response
-description. That has happened, and a three-thousand-line textual diff hides it perfectly.
+The failure worth catching is a regeneration that silently drops something a human wrote, and a
+three-thousand-line textual diff hides that perfectly. This is not hypothetical: every one of the
+spec's 24 operations carries a summary.
+
+**It does not compare schemas, parameters, examples, tags or security.** A change confined to those
+is reported as "the difference is elsewhere" rather than passed off as nothing — the fallback
+message states the scope, so the report never claims more than it checked.
 
 ## What this does NOT do
 
