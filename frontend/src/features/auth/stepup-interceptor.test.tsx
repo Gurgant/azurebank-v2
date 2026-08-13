@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { screen } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
@@ -114,6 +114,21 @@ async function enterPin(pin: string) {
 */
 beforeEach(() => {
   seedMockSession();
+});
+
+/*
+  UNMOUNT FIRST, then restore the clock — the order is load-bearing and cost a debugging round.
+
+  Vitest runs afterEach hooks in reverse registration order, so this file's hook runs BEFORE the
+  `cleanup()` in `test/setup.ts`. Restoring real timers here first left the countdown still mounted
+  with a live FAKE interval; its unmount then called `clearInterval` with a fake id against the real
+  implementation, so the interval was never cancelled and kept firing setState into the NEXT test —
+  which the console.error gate caught as act(...) violations, and only when the whole file ran.
+  `cleanup()` is idempotent, so calling it here and again in setup.ts is free.
+*/
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
 });
 
 describe('step-up interceptor (PR-11)', () => {
@@ -232,6 +247,50 @@ describe('step-up interceptor (PR-11)', () => {
     await enterPin('000000'); // 3rd miss trips the shared lockout
 
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+  });
+
+  it('the lock EXPIRES — the PIN boxes come back once the window closes', async () => {
+    /*
+      Until this, nothing asserted that a step-up lock ever ends. The modal stored the number of
+      seconds and never touched it: the countdown froze and the PIN boxes stayed disabled for as
+      long as the modal was open. Cancel remained enabled, so the escape was to abandon whatever
+      the modal was gating — which is why this read as cosmetic rather than as a dead end.
+
+      Fake timers BEFORE the render: `RetryCountdown` creates its interval on mount, and an interval
+      scheduled against the real clock cannot be advanced. `shouldAdvanceTime` keeps userEvent's own
+      zero-delay waits resolving.
+    */
+    server.use(spyTransfer([]));
+    server.use(
+      http.post('*/bff/auth/verify-pin', () =>
+        problem({
+          status: 429,
+          errorCode: 'PIN_LOCKED',
+          detail: 'Too many attempts.',
+          extensions: { retryAfterSeconds: 5 },
+        }),
+      ),
+    );
+    renderWithProviders(<Harness />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText("Verify it's you");
+
+    // Installed here, not at the top: before this PIN no countdown exists, so nothing can tick.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await enterPin('000000');
+
+    expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(6000);
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Too many incorrect PIN attempts/)).not.toBeInTheDocument(),
+    );
+    // The boxes are the control the lock disabled, so they are what has to come back.
+    expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled();
   });
 
   it('a transfer against the ALIGNED mock never triggers step-up (ADR-0041)', async () => {

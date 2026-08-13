@@ -17,7 +17,7 @@ import { ShieldKeyhole24Regular } from '@fluentui/react-icons';
 import { colors } from '../../theme/tokens';
 import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useVerifyPinMutation } from '../api/apiSlice';
-import { formatLockHorizon } from '../../utils/format';
+import { RetryCountdown, retryDeadline } from '../../components/feedback';
 import { PinInput } from '../../components/PinInput';
 import { getStepUpSnapshot, settleStepUp, subscribeStepUp } from './stepUpController';
 
@@ -81,10 +81,23 @@ function StepUpForm() {
   const [verifyPin, { isLoading }] = useVerifyPinMutation();
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [lockedSeconds, setLockedSeconds] = useState<number | null>(null);
+
+  /*
+    An ABSOLUTE deadline (D13), not a countdown this component has to drive itself.
+
+    It used to be a number of seconds, stored once and never touched again — so the PIN box and
+    Verify stayed disabled and the message kept saying "about 15 minutes" for as long as the modal
+    was open, long after the server's window had closed. Closing and reopening escaped it, at the
+    cost of abandoning whatever the modal was gating.
+
+    `RetryCountdown` owns the ticking and calls back at zero; storing the deadline rather than a
+    duration is what makes a SECOND lock with the identical retryAfterSeconds mint a fresh one
+    instead of reviving an already-elapsed number.
+  */
+  const [lockDeadline, setLockDeadline] = useState<number | null>(null);
 
   const verify = async (candidate: string) => {
-    if (candidate.length !== 6 || isLoading || lockedSeconds !== null) return;
+    if (candidate.length !== 6 || isLoading || lockDeadline !== null) return;
     setError(null);
     try {
       const result = await verifyPin({ pin: candidate }).unwrap();
@@ -98,7 +111,7 @@ function StepUpForm() {
     } catch (caught) {
       const problem = caught as ApiProblem;
       if (problem.errorCode === 'PIN_LOCKED') {
-        setLockedSeconds(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
+        setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
         setPin('');
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         // A transport blip must NOT silently abandon the transfer — keep the modal open so
@@ -117,7 +130,7 @@ function StepUpForm() {
     }
   };
 
-  const describedBy = error || lockedSeconds !== null ? errorId : undefined;
+  const describedBy = error || lockDeadline !== null ? errorId : undefined;
 
   return (
     <DialogBody>
@@ -142,7 +155,7 @@ function StepUpForm() {
                 setError(null);
               }}
               onComplete={verify}
-              disabled={isLoading || lockedSeconds !== null}
+              disabled={isLoading || lockDeadline !== null}
               error={!!error}
               autoFocus
               ariaLabel="Enter your PIN"
@@ -156,12 +169,12 @@ function StepUpForm() {
               </MessageBar>
             </div>
           )}
-          {lockedSeconds !== null && (
+          {lockDeadline !== null && (
             <div role="alert" id={errorId}>
               <MessageBar intent="warning">
                 <MessageBarBody>
-                  Too many incorrect PIN attempts. Try again in about{' '}
-                  {formatLockHorizon(lockedSeconds)}.
+                  Too many incorrect PIN attempts.{' '}
+                  <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
                 </MessageBarBody>
               </MessageBar>
             </div>
@@ -179,7 +192,7 @@ function StepUpForm() {
         <Button
           appearance="primary"
           onClick={() => void verify(pin)}
-          disabled={pin.length !== 6 || isLoading || lockedSeconds !== null}
+          disabled={pin.length !== 6 || isLoading || lockDeadline !== null}
         >
           {isLoading ? <Spinner size="tiny" /> : 'Verify'}
         </Button>
