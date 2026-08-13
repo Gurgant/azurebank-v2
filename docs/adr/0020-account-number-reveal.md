@@ -26,6 +26,14 @@ What the standards actually say, verified against primary sources:
   bank account numbers, sort codes and routing numbers out of scope.
 - **PSD2 art. 4(32)** explicitly states the account owner's name and account number *do
   not constitute sensitive payment data*.
+  > **Correction (2026-08-13, review of PR #105).** The sentence above is left as written, per this
+  > repo's convention that an ADR records what it got wrong rather than being edited to look right.
+  > It is overstated: Art. 4(32)'s exclusion applies **to the activities of payment-initiation and
+  > account-information service providers**, which this app is not — so it is not the general
+  > exclusion the bullet reads as. The same overstatement was repeated in ADR-0041 and in a BFF code
+  > comment; both now carry the qualifier. Nothing about this ADR's DECISION changes — the reveal
+  > treatment was argued from PCI scope and neobank practice as well — but this clause was doing
+  > more work than the article supports.
 - **Neobank practice** (Monzo, Revolut, Wise, Starling): account numbers/IBANs are shown
   **in full** on an account-details screen with copy/share affordances, no re-auth. The
   eye-button + re-auth + timed-rehide treatment is what banks reserve for **card

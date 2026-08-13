@@ -19,9 +19,13 @@ namespace AzureBank.Tests.Unit.Services;
 /// </summary>
 public class TransferServiceTests : IDisposable
 {
+    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    private const string TestPin = "123456";
+
     private readonly AzureBankDbContext _context;
     private readonly Mock<IAccountAccessService> _accountAccessMock;
     private readonly UserMapper _userMapper;
+    private readonly Mock<IPinVerifier> _pinVerifierMock;
     private readonly Mock<ILogger<TransferService>> _loggerMock;
     private readonly TransferService _sut;
 
@@ -34,9 +38,15 @@ public class TransferServiceTests : IDisposable
         _context = new AzureBankDbContext(options);
         _accountAccessMock = new Mock<IAccountAccessService>();
         _userMapper = new UserMapper();
+        _pinVerifierMock = new Mock<IPinVerifier>();
+        // Default to a CORRECT pin, so the pre-existing tests keep exercising what they were written
+        // for. The PIN-specific cases below override this per test.
+        _pinVerifierMock.Setup(v => v.VerifyPinAsync(It.IsAny<Guid>(), It.IsAny<string>()))
+            .ReturnsAsync(true);
         _loggerMock = new Mock<ILogger<TransferService>>();
 
-        _sut = new TransferService(_context, _accountAccessMock.Object, _userMapper, _loggerMock.Object);
+        _sut = new TransferService(
+            _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, _loggerMock.Object);
     }
 
     public void Dispose()
@@ -63,7 +73,12 @@ public class TransferServiceTests : IDisposable
             LastName = lastName,
             SecurityStamp = Guid.NewGuid().ToString(),
             ConcurrencyStamp = Guid.NewGuid().ToString(),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            // Enrolled by default (ADR-0041): TransferAsync now refuses a user with no PinHash
+            // before it reaches any other rule, which would mask every assertion below behind a
+            // PIN_REQUIRED. The value is never verified here — IPinVerifier is mocked — so only
+            // its presence matters. The not-enrolled case is covered explicitly further down.
+            PinHash = "not-a-real-hash-presence-is-what-is-checked"
         };
     }
 
@@ -125,7 +140,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = sender.AzureTag, // Same as sender
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act
@@ -147,7 +163,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = sender.AzureTag.ToUpper(), // Different case
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act
@@ -173,7 +190,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = "nonexistent",
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act
@@ -211,7 +229,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = recipient.AzureTag,
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act
@@ -237,7 +256,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = recipient.AzureTag,
-            Amount = 100m // More than balance
+            Amount = 100m, // More than balance
+            Pin = TestPin
         };
 
         // Act
@@ -257,7 +277,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = recipient.AzureTag,
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act - Should not throw InsufficientFundsException
@@ -301,7 +322,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fakeAccountId,
             RecipientAzureTag = "someone",
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act
@@ -329,6 +351,12 @@ public class TransferServiceTests : IDisposable
         var accountId = Guid.NewGuid();
         var account = CreateTestAccount(userId);
         account.Id = accountId;
+        // The user must exist in the context: the PIN check (ADR-0041) reads it before the
+        // account rules this test is actually about.
+        var owner = CreateTestUser("owner");
+        owner.Id = userId;
+        _context.Users.Add(owner);
+        await _context.SaveChangesAsync();
 
         _accountAccessMock
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
@@ -338,7 +366,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = accountId,
             ToAccountId = accountId, // Same account
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act
@@ -362,6 +391,12 @@ public class TransferServiceTests : IDisposable
         var fromAccount = CreateTestAccount(userId, balance: 50m);
         var toAccount = CreateTestAccount(userId, balance: 100m);
         toAccount.Id = Guid.NewGuid(); // Ensure different IDs
+        // The user must exist in the context: the PIN check (ADR-0041) reads it before the
+        // account rules this test is actually about.
+        var owner = CreateTestUser("owner");
+        owner.Id = userId;
+        _context.Users.Add(owner);
+        await _context.SaveChangesAsync();
 
         _accountAccessMock
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(fromAccount.Id, userId))
@@ -374,7 +409,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fromAccount.Id,
             ToAccountId = toAccount.Id,
-            Amount = 100m // More than balance
+            Amount = 100m, // More than balance
+            Pin = TestPin
         };
 
         // Act
@@ -404,7 +440,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fromAccountId,
             ToAccountId = toAccountId,
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act
@@ -433,7 +470,8 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fromAccount.Id,
             ToAccountId = toAccountId,
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         };
 
         // Act

@@ -24,6 +24,9 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 public class IdempotencyEndpointTests : IntegrationTestBase
 {
+    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    private const string TestPin = "123456";
+
     public IdempotencyEndpointTests(CustomWebApplicationFactory factory) : base(factory) { }
 
     #region Header validation
@@ -116,6 +119,9 @@ public class IdempotencyEndpointTests : IntegrationTestBase
     public async Task Transfer_RetrySameKeySameBody_DoesNotExecuteTwice()
     {
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
+        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
+        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        await SetPinAsync(senderToken);
         var recipient = await RegisterRecipientAsync();
         await DepositAsync(senderToken, senderAccountId, 1000m);
 
@@ -126,7 +132,8 @@ public class IdempotencyEndpointTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Idempotent transfer"
+            Description = "Idempotent transfer",
+            Pin = TestPin
         };
 
         var first = await PostMonetaryAsync("/api/transfers", body, key);

@@ -11,6 +11,18 @@ import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
 
 /**
+ * Review -> PIN -> Send (ADR-0041). The flow gained a step: the review screen's primary button is
+ * now Continue, and the PIN that authorises the transfer is entered here rather than supplied by
+ * the root step-up modal off a 403.
+ */
+async function confirmWithPinAndSend(sendLabel: string) {
+  await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+  await userEvent.paste('123456');
+  await userEvent.click(screen.getByRole('button', { name: sendLabel }));
+}
+
+/**
  * U6.3a — the behaviour net the unification will be measured against.
  *
  * `TransferPage` and `InternalTransferPage` are about to become one component: an audit measured
@@ -128,7 +140,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
     it('external: offers no way out except the two that force the user to check', async () => {
       server.use(http.post('*/api/transfers', unknown));
       await externalToReview();
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
 
       expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
       expect(screen.getByText(/retrying blindly could send twice/)).toBeInTheDocument();
@@ -151,7 +163,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
       await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
       await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
 
       expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^Send/ })).not.toBeInTheDocument();
@@ -187,7 +199,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
         }),
       );
       await externalToReview();
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
       await screen.findByText("We couldn't confirm your transfer");
 
       await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
@@ -195,7 +207,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       // Back on the form with the confirmed recipient intact — only the INTENT was reset.
       expect(await screen.findByText('A. Friend')).toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
 
       expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
       expect(keys).toHaveLength(2);
@@ -208,7 +220,8 @@ describe('money flows — the behaviour the unification must preserve', () => {
       // No test in either suite has ever successfully gone Back, so half of a two-state machine was
       // unverified — and the merge has to reproduce it from two separate implementations.
       await externalToReview();
-      expect(screen.getByRole('button', { name: 'Send €50.00' })).toBeInTheDocument();
+      // The review's primary control is Continue since ADR-0041 — Send now lives on the PIN step.
+      expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
 
       // The review step's own Back is the last one in the tree; the first belongs to the header
       // and leaves the page entirely.
@@ -217,7 +230,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
 
       expect(await screen.findByLabelText('Transfer amount')).toHaveValue('50');
       expect(screen.getByText('A. Friend')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Send €50.00' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Continue' })).not.toBeInTheDocument();
     });
 
     it('internal: Back from review restores the form with both accounts still chosen', async () => {
@@ -262,6 +275,11 @@ describe('money flows — the behaviour the unification must preserve', () => {
         }),
       );
       await externalToReview();
+      // Walk to the PIN step first: Send is no longer on review, and the double-click this test
+      // guards against is a double-click on THAT button.
+      await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+      await userEvent.paste('123456');
 
       const send = screen.getByRole('button', { name: 'Send €50.00' });
       try {
@@ -325,16 +343,21 @@ describe('money flows — the behaviour the unification must preserve', () => {
         path through goToStep; this one is reachable without standing up the step-up machinery.
 
         The motivating case is worth naming anyway: "Please tap Send and try again" landing on the
-        form step, which has no Send button at all — Send is review-only. Not merely stale:
-        unactionable.
+        form step, which has no Send button at all — since ADR-0041 Send lives on the PIN step, one
+        further from the form than it used to. Not merely stale: unactionable.
       */
       failWith('IDEMPOTENCY_KEY_REUSE', 422);
       await externalToReview();
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
       expect(await screen.findByText(/Something went wrong/)).toBeInTheDocument();
 
-      const backs = screen.getAllByRole('button', { name: 'Back' });
-      await userEvent.click(backs[backs.length - 1]);
+      // TWO steps back now: a failed send leaves you on the PIN step, and the form is behind
+      // review. Each click re-queries, because the button that carries you is a different node
+      // after the first transition.
+      const backToReview = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToReview[backToReview.length - 1]);
+      const backToForm = await screen.findAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToForm[backToForm.length - 1]);
 
       expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
       await waitFor(() =>
@@ -348,11 +371,16 @@ describe('money flows — the behaviour the unification must preserve', () => {
       // the scope makes that a typed consequence rather than a commented special case.
       failWith('INSUFFICIENT_FUNDS', 422);
       await externalToReview();
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
       expect(await screen.findByText(/Insufficient funds/)).toBeInTheDocument();
 
-      const backs = screen.getAllByRole('button', { name: 'Back' });
-      await userEvent.click(backs[backs.length - 1]);
+      // TWO steps back now: a failed send leaves you on the PIN step, and the form is behind
+      // review. Each click re-queries, because the button that carries you is a different node
+      // after the first transition.
+      const backToReview = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToReview[backToReview.length - 1]);
+      const backToForm = await screen.findAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToForm[backToForm.length - 1]);
 
       expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
       expect(screen.getByText(/Insufficient funds/)).toBeInTheDocument();
@@ -361,10 +389,13 @@ describe('money flows — the behaviour the unification must preserve', () => {
     it('and editing the amount clears it, so it never outlives the value it describes', async () => {
       failWith('INSUFFICIENT_FUNDS', 422);
       await externalToReview();
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
       await screen.findByText(/Insufficient funds/);
-      const backs = screen.getAllByRole('button', { name: 'Back' });
-      await userEvent.click(backs[backs.length - 1]);
+      // PIN step -> review -> form: the amount chip this test edits lives on the form.
+      const backToReview = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToReview[backToReview.length - 1]);
+      const backToForm = await screen.findAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToForm[backToForm.length - 1]);
 
       await userEvent.click(screen.getByRole('button', { name: '€25' }));
 
@@ -381,7 +412,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
         http.post('*/api/transfers', () => transferOk({ 'Idempotency-Replayed': 'true' })),
       );
       await externalToReview();
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
 
       expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
       expect(screen.getByText(/already processed/)).toBeInTheDocument();
@@ -391,7 +422,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       // Without this the test above passes just as well against a banner that is ALWAYS shown.
       server.use(http.post('*/api/transfers', () => transferOk()));
       await externalToReview();
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+      await confirmWithPinAndSend('Send €50.00');
 
       expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
       expect(screen.queryByText(/already processed/)).not.toBeInTheDocument();

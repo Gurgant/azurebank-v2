@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBlocker, useNavigate } from 'react-router-dom';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { classifyMoneyProblem, type DomainMessages, type MessageScope } from '../api/moneyProblem';
@@ -38,7 +38,14 @@ import { useIdempotentMutation, type IdempotentTrigger } from './useIdempotentMu
  * render is not a missed optimisation here; it is the correctness condition.
  */
 
-export type MoneyWizardStep = 'form' | 'review';
+/**
+ * `pin` is ADR-0041's step. A transfer now carries its PIN in the request body and the API verifies
+ * it, so the credential is collected HERE — in the flow — rather than by the root step-up modal
+ * reacting to a 403 from the BFF. Both consumers of this hook move money and both need it, which is
+ * why the step lives in the shared machine; the PIN VALUE does not, because only the page knows
+ * which body field it belongs in.
+ */
+export type MoneyWizardStep = 'form' | 'review' | 'pin';
 
 export interface MoneyWizard<TBody, TResult> {
   step: MoneyWizardStep;
@@ -47,6 +54,23 @@ export interface MoneyWizard<TBody, TResult> {
   /** The server is still processing THIS key. Pressing Send again is safe and reuses it. */
   inFlight: boolean;
   error: string | null;
+  /**
+   * The most recent failure, as a REF rather than state — and the distinction is the whole point.
+   *
+   * `run` is awaited, so the handler that reads this is still executing inside the render that
+   * called it. State written during the await schedules the NEXT render; it does not reach the
+   * object this handler closed over. Reading `wizard.lastErrorCode` from such a handler therefore
+   * returned the value from BEFORE the call — null on the first failure — and every PIN recovery
+   * branch was dead code. A ref is the same object across renders, so a write during `run` is
+   * visible to the awaiting caller immediately.
+   *
+   * Proven by transfer-pin-recovery.test.tsx, which fails on all three branches without this.
+   *
+   * ⚠️ VALID ONLY BETWEEN `run`'s start and the caller's resumption. `run` nulls it on entry and
+   * writes it in the catch, and nothing re-renders when it changes — so reading it DURING RENDER is
+   * always a mistake. It exists for the awaiting handler and for nothing else.
+   */
+  lastProblem: { current: ApiProblem | null };
   /** The result could not be confirmed. The flow must show its verify view and offer no exits. */
   verifyRequired: boolean;
   /**
@@ -64,6 +88,8 @@ export interface MoneyWizard<TBody, TResult> {
   /** Call after ANY edit that changes the request body. No-op while a key is live. */
   onBodyEdit: () => void;
   toReview: () => void;
+  /** Review -> PIN. The last thing before the money moves. */
+  toPin: () => void;
   /** Back to the form. Guarded: a live key must not reach the fields that would rotate it. */
   toForm: () => void;
   /** The verify view's "it didn't go through" — abandons the intent so the next send is a NEW one. */
@@ -92,6 +118,7 @@ export function useMoneyWizard<TBody, TResult>(
   // Held WITH its scope, but exposed as a bare string: the scope decides lifetime, and no caller
   // needs to know about it, so not one line of page markup moves.
   const [failure, setFailure] = useState<{ text: string; scope: MessageScope } | null>(null);
+  const lastProblem = useRef<ApiProblem | null>(null);
 
   const keyLive = isSubmitting || keyRetained;
 
@@ -179,16 +206,19 @@ export function useMoneyWizard<TBody, TResult>(
     isSubmitting,
     inFlight,
     error: failure?.text ?? null,
+    lastProblem,
     verifyRequired,
     keyLive,
 
     async run(body) {
       setFailure(null);
+      lastProblem.current = null;
       setInFlight(false);
       setIsSubmitting(true);
       try {
         return await submit(body);
       } catch (caught) {
+        lastProblem.current = (caught as ApiProblem) ?? null;
         const failure = classifyMoneyProblem(caught as ApiProblem, options);
         if (failure.kind === 'inFlight') {
           setInFlight(true);
@@ -213,10 +243,17 @@ export function useMoneyWizard<TBody, TResult>(
       resetIntent();
       setInFlight(false);
       setFailure(null);
+      lastProblem.current = null;
     },
 
     toReview() {
       goToStep('review', { keepInputErrors: true });
+    },
+
+    toPin() {
+      // keepInputErrors: false — an INSUFFICIENT_FUNDS banner from a previous attempt must not
+      // follow the user onto a screen where the only editable thing is the PIN.
+      goToStep('pin', { keepInputErrors: false });
     },
 
     toForm() {

@@ -1,24 +1,22 @@
 /**
- * Executable contract: level-2 step-up around transfers (AuthLevelMiddleware +
- * BffAuthController semantics). The product's step-up interceptor is built against these.
+ * Executable contract: level-2 step-up (AuthLevelMiddleware + BffAuthController semantics). The
+ * product's step-up interceptor is built against these.
+ *
+ * The vehicle is `/api/accounts/{id}/full-number`, NOT a transfer. Until ADR-0041 it was the
+ * transfer, and re-pointing it is the honest half of that change: transfers left the level-2 gate
+ * (the PIN now travels in the body and the API verifies it), so a step-up contract asserted against
+ * them would have been pinning a 403 the BFF no longer emits. Reveal keeps the session model
+ * deliberately (decision D3a) — it is a GET with no amount and no payee, so there is nothing for an
+ * in-band credential to be bound TO — which makes it the endpoint where this contract is still real.
  */
 
 import { mockState, seedMockSession } from './state';
 
-const TRANSFER_URL = '/api/transfers';
 const VERIFY_URL = '/bff/auth/verify-pin';
-const KEY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 
-function transfer() {
-  return fetch(TRANSFER_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': KEY },
-    body: JSON.stringify({
-      fromAccountId: mockState.accounts[0].id,
-      recipientAzureTag: 'friend',
-      amount: 25,
-    }),
-  });
+/** The one endpoint still behind the level-2 gate (D3a). */
+function reveal() {
+  return fetch(`/api/accounts/${mockState.accounts[0].id}/full-number`);
 }
 
 function verifyPin(pin: string) {
@@ -44,7 +42,7 @@ beforeEach(() => {
 
 describe('step-up handler (level-2 semantics)', () => {
   it('403 at level 1 with the BARE step-up body (NOT ProblemDetails) + level headers', async () => {
-    const res = await transfer();
+    const res = await reveal();
 
     expect(res.status).toBe(403);
     expect(res.headers.get('X-Auth-Level-Required')).toBe('2');
@@ -71,20 +69,19 @@ describe('step-up handler (level-2 semantics)', () => {
     expect(body.data.authLevel).toBe(1);
   });
 
-  it('correct pin elevates to level 2 and the transfer succeeds', async () => {
+  it('correct pin elevates to level 2 and the reveal succeeds', async () => {
     const ok = await verifyPin('123456');
     expect((await ok.json()).data.authLevel).toBe(2);
 
-    const res = await transfer();
-    expect(res.status).toBe(201);
+    const res = await reveal();
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data.transactionNumber).toMatch(/^TXN-/);
-    expect(body.data.recipientAzureTag).toBe('friend');
+    expect(body.data.accountNumber).toBeTruthy();
   });
 
   it('mock state resets between tests: back to level 1', async () => {
-    // If the previous test's elevation leaked, this would be 201.
-    const res = await transfer();
+    // If the previous test's elevation leaked, this would be 200.
+    const res = await reveal();
     expect(res.status).toBe(403);
   });
 });

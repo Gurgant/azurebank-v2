@@ -17,11 +17,12 @@ import { USER } from './fixtures';
  * after `PinValidityMinutes` — 10 in dev, 5 in the base config. So:
  *
  *   - inside this file, cancel runs before verify, because after verify no modal ever appears;
- *   - across the SUITE, nothing that elevates may run before this file. Today that holds because
- *     the only level-2 surfaces are `/api/transfers`, `/api/transfers/internal` and `/full-number`,
- *     and no other spec touches them — but a future transfer spec sorting ahead of `stepUp` would
- *     silently elevate the session and make the first test below fail with "modal not found",
- *     which reads like a broken selector rather than an ordering problem;
+ *   - across the SUITE, nothing that elevates may run before this file. Since ADR-0041 the ONLY
+ *     level-2 surface left is `/full-number`: transfers carry their PIN in the request body and the
+ *     API verifies it, so they no longer elevate anything and a future transfer spec can sort
+ *     wherever it likes. That widens the safe ordering rather than narrowing it — but a spec that
+ *     reveals an account number still must not run before this file, or the first test below fails
+ *     with "modal not found", which reads like a broken selector rather than an ordering problem;
  *   - each RUN is safe regardless, because the setup project signs in fresh and a new session
  *     starts at level 1. Elevation never leaks between runs.
  *
@@ -53,8 +54,8 @@ test.describe('step-up (PIN) for the account-number reveal', () => {
       modal,
       'No step-up modal appeared. Either the interceptor is broken, or the session was ALREADY ' +
         'elevated before this file ran — elevation is sticky for PinValidityMinutes (10 in dev) ' +
-        'and cannot be undone, so any spec that touches /api/transfers or /full-number must sort ' +
-        'after this one.',
+        'and cannot be undone, so any spec that reveals an account number must sort after this ' +
+        'one. (Transfers no longer elevate anything — ADR-0041.)',
     ).toBeVisible();
 
     // Verify stays disabled until all six digits are present — the component's own gate.

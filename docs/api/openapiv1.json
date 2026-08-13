@@ -767,9 +767,6 @@
           "401": {
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
           },
-          "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
-          },
           "422": {
             "description": "Unprocessable Entity",
             "content": {
@@ -789,6 +786,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Forbidden - You don't have permission to access this resource."
           }
         }
       }
@@ -1599,42 +1599,6 @@
           "401": {
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
           },
-          "409": {
-            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "type": "string",
-                      "description": "A URI reference identifying the problem type"
-                    },
-                    "title": {
-                      "type": "string",
-                      "description": "A short, human-readable summary"
-                    },
-                    "status": {
-                      "type": "integer",
-                      "description": "The HTTP status code (409)"
-                    },
-                    "detail": {
-                      "type": "string",
-                      "description": "A human-readable explanation of the failure"
-                    },
-                    "errorCode": {
-                      "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
-                    },
-                    "traceId": {
-                      "type": "string",
-                      "description": "Request trace identifier for debugging"
-                    }
-                  }
-                }
-              }
-            }
-          },
           "422": {
             "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
             "content": {
@@ -1653,6 +1617,52 @@
                     "status": {
                       "type": "integer",
                       "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
                     },
                     "detail": {
                       "type": "string",
@@ -1794,42 +1804,6 @@
           "401": {
             "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
           },
-          "409": {
-            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "type": "string",
-                      "description": "A URI reference identifying the problem type"
-                    },
-                    "title": {
-                      "type": "string",
-                      "description": "A short, human-readable summary"
-                    },
-                    "status": {
-                      "type": "integer",
-                      "description": "The HTTP status code (409)"
-                    },
-                    "detail": {
-                      "type": "string",
-                      "description": "A human-readable explanation of the failure"
-                    },
-                    "errorCode": {
-                      "type": "string",
-                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
-                    },
-                    "traceId": {
-                      "type": "string",
-                      "description": "Request trace identifier for debugging"
-                    }
-                  }
-                }
-              }
-            }
-          },
           "422": {
             "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
             "content": {
@@ -1848,6 +1822,52 @@
                     "status": {
                       "type": "integer",
                       "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the failure"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS', 'IDEMPOTENCY_KEY_REUSE')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (409)"
                     },
                     "detail": {
                       "type": "string",
@@ -2590,7 +2610,8 @@
         "required": [
           "fromAccountId",
           "toAccountId",
-          "amount"
+          "amount",
+          "pin"
         ],
         "type": "object",
         "properties": {
@@ -2611,6 +2632,13 @@
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
             "format": "double"
+          },
+          "pin": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string",
+            "description": "PIN must be exactly 6 digits."
           },
           "description": {
             "maxLength": 500,
@@ -3127,7 +3155,8 @@
         "required": [
           "fromAccountId",
           "recipientAzureTag",
-          "amount"
+          "amount",
+          "pin"
         ],
         "type": "object",
         "properties": {
@@ -3150,6 +3179,13 @@
             "type": "number",
             "description": "Amount must be between $0.01 and $100,000.00.",
             "format": "double"
+          },
+          "pin": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string",
+            "description": "PIN must be exactly 6 digits."
           },
           "description": {
             "maxLength": 500,

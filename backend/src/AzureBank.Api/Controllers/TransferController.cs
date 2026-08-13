@@ -45,6 +45,12 @@ public class TransferController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    // Declared because the in-band PIN (ADR-0041) makes all three reachable, and a client that
+    // does not handle them shows the user a generic failure for a mistyped PIN:
+    // 401 a wrong PIN, 422 no PIN enrolled, 429 the ADR-0010 lockout. Measured, not assumed.
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<TransferResponse>>> Transfer([FromBody] TransferRequest request)
     {
         await _transferValidator.ValidateAndThrowAsync(request);
@@ -69,6 +75,12 @@ public class TransferController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    // Declared because the in-band PIN (ADR-0041) makes all three reachable, and a client that
+    // does not handle them shows the user a generic failure for a mistyped PIN:
+    // 401 a wrong PIN, 422 no PIN enrolled, 429 the ADR-0010 lockout. Measured, not assumed.
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<InternalTransferResponse>>> InternalTransfer([FromBody] InternalTransferRequest request)
     {
         await _internalTransferValidator.ValidateAndThrowAsync(request);

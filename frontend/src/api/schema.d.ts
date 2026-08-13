@@ -1662,6 +1662,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1806,6 +1815,15 @@ export interface paths {
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
                         };
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -2167,6 +2185,8 @@ export interface components {
              * @description Amount must be between $0.01 and $100,000.00.
              */
             amount: number;
+            /** @description PIN must be exactly 6 digits. */
+            pin: string;
             description?: null | string;
         };
         /**
@@ -2429,6 +2449,8 @@ export interface components {
              * @description Amount must be between $0.01 and $100,000.00.
              */
             amount: number;
+            /** @description PIN must be exactly 6 digits. */
+            pin: string;
             description?: null | string;
         };
         TransferResponse: {

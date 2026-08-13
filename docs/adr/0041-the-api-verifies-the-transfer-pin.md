@@ -1,0 +1,204 @@
+# ADR-0041: The API verifies the transfer PIN, not the BFF
+
+**Status:** Accepted · **Date:** 2026-08-13 · Moves transfers off the session gate
+[ADR-0008](0008-step-up-authentication.md) built and [ADR-0022](0022-client-money-mutation-protocol.md)
+consumes. Does **not** supersede either: `/full-number` keeps that gate.
+
+## Context
+
+A transfer's PIN was checked in one place: `AuthLevelMiddleware`, in the **BFF process**. The API's
+`TransferService` never asked for a PIN and had no way to.
+
+Two consequences, and the second is the serious one.
+
+**The check was a property of the session, not of the payment.** One PIN entry raised the session to
+level 2 and every transfer for the next five minutes passed without another. The credential
+authenticated *the user*, once, and then authorised *an unbounded number of payments*.
+
+**Anything reaching the API directly moved money with no PIN at all.** That is not hypothetical: it
+was measured on the running stack and is written up in `BearerTokenTransformProvider` — re-presenting
+a login's own JWT as `Authorization: Bearer …` with no session cookie reached `POST /api/transfers`,
+and `GET /api/accounts/{id}/full-number` returned the unmasked number, with no PIN ever entered.
+That specific hole was closed by clearing the inbound header unconditionally in the YARP transform,
+but the shape of the problem stayed: the only PIN check for a transfer lived in a different process
+from the code that moved the money, and
+
+> "a gate whose correctness depends on a different file getting something right is not a gate"
+> — `AuthLevelMiddleware`, written when the previous instance of this was fixed.
+
+"Only reachable from the BFF" is a documented anti-pattern (OWASP, NIST SP 800-207, Curity), and the
+withdraw path had already shown the alternative: it carries the PIN **in the request** and
+`TransactionService.WithdrawAsync` verifies it through `IPinVerifier`.
+
+## Decision
+
+**A transfer carries its PIN in the request body, and the API verifies it.**
+
+`TransferRequest` and `InternalTransferRequest` gain `required string Pin`.
+`TransferService.VerifyPinOrThrowAsync` runs in both transfer methods, in the position withdraw puts
+it: **after the ownership check, before the funds check, and before any balance, ledger row or
+other transfer mutation.** A wrong PIN therefore moves no funds. It is not write-free in the
+absolute sense, and the distinction matters: it goes through `IPinVerifier`, which records the
+failed attempt and can set the lockout ([ADR-0010](0010-pin-attempt-limiting.md)) — that write is
+the point, since without it a transfer would be an uncounted brute-force oracle. `PinService` keeps
+its own DbContext scope, so that bookkeeping neither rides this request's transaction nor finalises
+its idempotency record.
+
+Measured on the real pipeline (`TransferPinVerificationTests`, every case dispatched straight at the
+API with no BFF in the path):
+
+| case | status | errorCode |
+|---|---|---|
+| correct PIN | 201 | — |
+| wrong PIN | 401 | `INVALID_PIN` |
+| repeated wrong PINs | 429 | `PIN_LOCKED` |
+| no PIN enrolled | 422 | `PIN_REQUIRED` |
+| PIN field absent (an old client) | 400 | validation |
+| no `Idempotency-Key`, correct PIN | 400 | `IDEMPOTENCY_KEY_MISSING` |
+
+The last row records an **order**, not just an outcome: the idempotency filter is an action filter,
+so it runs before the controller action and therefore before the PIN check. The mock reproduces that
+order, and this is where it was measured rather than assumed.
+
+### What moved at the BFF, and what deliberately did not
+
+`PinRequiredPaths` is now empty; transfers are no longer level-2 gated. Gating them twice would leave
+the *weaker* check in the path and keep the five-minute session window alive for money movement.
+
+But "is there a caller at all?" and "has that caller just proved it is them?" are different
+questions, and they used to be answered by the same block — so moving transfers off the level-2 gate
+would have silently taken their **no-session refusal** with it. That is not a live bypass (the YARP
+transform clears the caller's own `Authorization` on every proxied path, so the API would 401), but
+it would have moved the decision to another process while this ADR claimed to be strengthening one.
+So the two questions are now separate sets, and transfers sit in `SessionRequiredPaths`: refused
+locally, at the BFF, with the API's own 401 shape, trailing slash normalised the same way.
+
+`/full-number` keeps the session model (decision D3a). It is a GET with no body, no amount and no
+payee — there is nothing for an in-band credential to be **bound to**. Two questions, two mechanisms,
+on purpose.
+
+> **Correction (review of this PR).** An earlier draft of this paragraph justified that with
+> "PSD2 does not treat it as an SCA trigger at all: Art. 97(1)'s list is exhaustive, and Art. 4(32)
+> says an account number is not sensitive payment data." Both halves were overstated. Art. 4(32)
+> excludes the account owner's name and account number from *sensitive payment data* **for the
+> activities of payment-initiation and account-information service providers** — it is not a general
+> exclusion, and this app is neither. And Art. 97(1)(c) is a catch-all — "any action through a remote
+> channel which may imply a risk of payment fraud or other abuses" — so the list is not exhaustive in
+> the way the sentence claimed. Keeping the session model here is a PRODUCT decision about a request
+> with nothing to bind to; it is **not** a finding that the regulation is silent. Anything stronger
+> needs jurisdiction-specific legal review, which nobody on this repo has done.
+
+### The frontend
+
+The PIN is collected as a third wizard step (`form → review → pin`), reusing withdraw's `PinInput`
+and its error handling: a wrong PIN clears the boxes and re-focuses, a lock shows the server's own
+`Retry-After` horizon, an un-enrolled user is sent to `/pin-setup`. The review screen already
+promised "You'll confirm with your PIN on the next step" — **as of this change that sentence is
+true**; before it, the modal appeared only if the session had gone cold.
+
+## What this is NOT
+
+**This is not dynamic linking, and A1 does not make the product PSD2-compliant.**
+
+SCA-RTS Art. 5 requires the authentication code to be **specific to the amount and the payee**,
+invalidated by any change to either, and accepted **once** (Art. 4(1)). The PIN verified here is none
+of those things: it is the user's standing PIN, it is not bound to the amount or the recipient, and
+nothing stops the same value authorising a different payment a second later. What A1 buys is that
+the check now exists **where the money moves** and cannot be skipped by reaching the API directly —
+a precondition for dynamic linking, not dynamic linking itself. That is A2.
+
+**Withdraw is not compliant either, and never was.** It has carried the PIN in-band since before this
+ADR, and this ADR makes transfers match it — including matching its limits. Nothing here should be
+read as "withdraw was already right".
+
+**`VerifyPinOrThrowAsync` improves on withdraw in one respect.** Withdraw collapses "no such user"
+and "user has not enrolled a PIN" into a single `PIN_REQUIRED`, which tells a token-holder with no
+row to go and set a PIN — advice that cannot be followed, for an account that is not there. The
+transfer path separates them (`NotFoundException` vs `PIN_REQUIRED`). Withdraw should converge on
+this, and has not yet.
+
+## Consequences
+
+- **Breaking contract change.** `Pin` is `required`, so every caller supplies it: the FE, the mock,
+  the E2E suite, and 34 test initialisers across 8 API test files. An old client sending no `pin` gets 400,
+  which is the intended answer — silently defaulting it would be the failure this ADR exists to
+  prevent.
+- **No monetary endpoint sits behind the step-up gate any more.** The interceptor's
+  replay-the-same-body-with-the-same-key path (ADR-0022 §4) therefore has no live caller: reveal is
+  a GET and carries no `Idempotency-Key`. The interceptor is still exercised — re-pointed at reveal
+  in `policies.test.tsx` and `stepup.test.ts` — and `stepup-interceptor.test.tsx` keeps driving it
+  through a **fabricated** 403 on `/api/transfers`, which its header now says out loud. Whether to
+  retire that half of the interceptor is a separate decision, deliberately not taken here;
+  `a transfer against the ALIGNED mock never triggers step-up` guards the new truth meanwhile.
+- **The lockout is now reachable from three paths** (verify-pin, withdraw, transfer) and they share
+  one counter. That is intended — it is what stops a transfer being an uncounted PIN oracle.
+
+  An earlier draft added "so a user locked out by transfers cannot reveal an account number either."
+  **That is false, and the code says so.** The counter lives in the API (`PinService`); the reveal
+  gate reads `UserSession.AuthLevel` in the BFF (`AuthLevelMiddleware` → `SessionService`), and the
+  API holds no reference to `ISessionService` or to any session at all. `SessionService` drops an
+  elevated session back to level 1 only when its own PIN-verification window lapses
+  (`IsPinVerificationValid`, `PinValidityMinutes`) — never in response to a lockout. So a session
+  that was elevated **before** the lockout keeps revealing account numbers until that window runs
+  out. Closing it needs a cross-process signal that does not exist today; recorded here rather than
+  invented.
+
+### What review round 1 changed
+
+Three of these were real defects in the first cut of this ADR's implementation, and all three are
+worth recording because none was caught by the gates that were run:
+
+- **The PIN recovery branches were dead code.** `run()` wrote the failure into `useState` and the
+  awaiting handler read `wizard.lastErrorCode` — a value captured in the render that called it, so
+  always the PREVIOUS attempt's code. A wrong PIN neither cleared the boxes nor showed a lock.
+  `lastProblem` is a ref now, and `transfer-pin-recovery.test.tsx` fails on all three branches
+  without it. The whole PIN failure surface had no test at all; that is why it shipped.
+- **The PIN lock never expired.** Both pages stored a duration and never touched it again, so the
+  send controls stayed dead for the life of the page. This is a REGRESSION, not inherited: the flow
+  it replaced put a locked-out user in front of the root step-up modal, whose Cancel stays enabled —
+  one click, form and verified recipient intact. The new step offered only a disabled Send and a
+  Back that did not clear the lock. (`WithdrawDialog` has the same gap and is left as-is here; a
+  shared fix is tracked separately.)
+- **The mock grew a second PIN path.** `transferPinGate` + `checkPinInBand` were wired into the two
+  transfer routes while withdraw kept its own inline copy — so the same file described two different
+  PIN behaviours, and the shape hole survived on the endpoint that has carried an in-band PIN
+  longest. Withdraw now goes through the same two functions.
+
+### What review round 2 changed
+
+Round 1 fixed the behaviour; round 2 found that the RECORD of it was still imprecise in four places,
+and one of those imprecisions hid a real fidelity bug.
+
+- **A non-string `pin` was accepted by the mock and refused by the API.** The gate coerced with
+  `String(pin)`, and `String(123456)` is `"123456"` — which matches the six-digit rule. So a numeric
+  pin passed here and would have failed only in production. The API fails the *conversion* before
+  any annotation runs, and keys the answer by JSON PATH: `{"$.pin":["The JSON value could not be
+  converted to System.String…"]}`. The gate is now split along that seam — a bind failure ABORTS
+  and can never carry a second field; annotation failures are collected.
+- **One model-state pass, not two early exits.** `[MoneyRange]` and `[Pin]` are evaluated together,
+  so `amount: -5, pin: "12"` names BOTH fields. The mock returned from its amount check first, so a
+  form would have highlighted one field where the API highlights two.
+- **"before anything is written" was false**, and contradicted the next sentence of this ADR:
+  `IPinVerifier` records the failed attempt and can set the lockout. That write is the point. The
+  claim is now scoped to balances, ledger rows and transfer mutations.
+- **Evidence attributed to a request that was never made.** `Transfer_WithNoPinField…` posts to
+  `/api/transfers` but pasted the *internal* DTO's deserialisation message. Re-measured against the
+  endpoint the test actually calls. Minor in effect, and exactly the class of error this PR is about.
+
+Also: the ADR-0020 correction had REWRITTEN the sentence it was correcting, against this repo's own
+rule that an ADR keeps what it got wrong and annotates it. The original is restored with the note
+beneath it.
+
+Two review points were **declined**, with reasons:
+
+- Documenting `PIN_REQUIRED` / `INVALID_PIN` / `PIN_LOCKED` in the OpenAPI response descriptions.
+  Those strings come from `AuthorizationResponseTransformer` and `IdempotencyOperationTransformer`,
+  which are applied to EVERY authorised / every idempotent operation. Adding PIN codes there would
+  claim deposit can answer `PIN_REQUIRED` and that every endpoint can answer `INVALID_PIN`. Per-
+  operation wording needs different machinery, and withdraw — the older in-band-PIN endpoint —
+  carries byte-identical generic strings today.
+- Re-dating this ADR. The file and the index row already agree, and the date is the day the work
+  was done.
+
+- **Not addressed here:** account deletion still has no PIN check anywhere (C.1), and first-time PIN
+  enrolment still needs only a session (the live residual noted in ADR-0040).

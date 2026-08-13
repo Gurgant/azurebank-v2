@@ -21,6 +21,9 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 public class TransferEndpointTests : IntegrationTestBase
 {
+    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    private const string TestPin = "123456";
+
     public TransferEndpointTests(CustomWebApplicationFactory factory) : base(factory) { }
 
     #region External Transfer Tests
@@ -30,6 +33,9 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange - Create sender and recipient
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
+        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
+        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        await SetPinAsync(senderToken);
         var recipientData = await RegisterRecipientAsync();
 
         // Fund sender account
@@ -41,7 +47,8 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipientData.AzureTag,
             Amount = 100m,
-            Description = "Test transfer"
+            Description = "Test transfer",
+            Pin = TestPin
         };
 
         // Act
@@ -71,6 +78,9 @@ public class TransferEndpointTests : IntegrationTestBase
           pipeline instead.
         */
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
+        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
+        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        await SetPinAsync(senderToken);
         var recipientData = await RegisterRecipientAsync();
         await DepositAsync(senderToken, senderAccountId, 1000m);
 
@@ -79,7 +89,8 @@ public class TransferEndpointTests : IntegrationTestBase
         {
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipientData.AzureTag,
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         });
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
@@ -105,6 +116,9 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange
         var (token, _, accountId) = await RegisterTestUserAsync();
+        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
+        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        await SetPinAsync(token);
         await DepositAsync(token, accountId, 1000m);
 
         SetAuthHeader(token);
@@ -114,7 +128,8 @@ public class TransferEndpointTests : IntegrationTestBase
             // Valid-format tag (passes validation) that no registered user owns
             RecipientAzureTag = "nonexistent_user_999",
             Amount = 100m,
-            Description = "Test transfer"
+            Description = "Test transfer",
+            Pin = TestPin
         };
 
         // Act
@@ -129,6 +144,10 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
+        // ADR-0041: without an enrolled PIN this request is refused 422 PIN_REQUIRED — which is the
+        // SAME status the funds check answers, so the status-only assertion below stayed green while
+        // testing something else entirely. The errorCode assertion is what makes it honest.
+        await SetPinAsync(senderToken);
         var recipientData = await RegisterRecipientAsync();
 
         // No deposit - balance is 0
@@ -138,7 +157,8 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipientData.AzureTag,
             Amount = 100m,
-            Description = "Overdraft attempt"
+            Description = "Overdraft attempt",
+            Pin = TestPin
         };
 
         // Act
@@ -146,6 +166,11 @@ public class TransferEndpointTests : IntegrationTestBase
 
         // Assert - business-rule violations are 422 per contract (BusinessRuleException)
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var body = await response.Content.ReadAsStringAsync();
+        using var problem = System.Text.Json.JsonDocument.Parse(body);
+        problem.RootElement.GetProperty("errorCode").GetString()
+            .Should().Be(ErrorCodes.InsufficientFunds,
+                "422 alone cannot tell INSUFFICIENT_FUNDS from PIN_REQUIRED");
     }
 
     #endregion
@@ -157,6 +182,9 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange
         var (token, _, primaryAccountId) = await RegisterTestUserAsync();
+        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
+        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        await SetPinAsync(token);
         SetAuthHeader(token);
 
         // Create second account
@@ -175,7 +203,8 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = primaryAccountId,
             ToAccountId = secondAccount!.Data!.Id,
             Amount = 300m,
-            Description = "Move to savings"
+            Description = "Move to savings",
+            Pin = TestPin
         };
 
         // Act
@@ -205,7 +234,8 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = accountId1,
             ToAccountId = accountId2, // Other user's account
             Amount = 100m,
-            Description = "Unauthorized transfer"
+            Description = "Unauthorized transfer",
+            Pin = TestPin
         };
 
         // Act
@@ -228,7 +258,8 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = accountId,
             ToAccountId = accountId, // Same account
             Amount = 100m,
-            Description = "Self transfer"
+            Description = "Self transfer",
+            Pin = TestPin
         };
 
         // Act
@@ -262,7 +293,8 @@ public class TransferEndpointTests : IntegrationTestBase
         {
             FromAccountId = accountId,
             ToAccountId = accountId,
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -289,6 +321,9 @@ public class TransferEndpointTests : IntegrationTestBase
         // CONSTANT, never an echo of caller input, or a client switching on it can never match and
         // an unvalidated string leaks into a field consumers treat as a closed enum.
         var (token, _, accountId) = await RegisterTestUserAsync();
+        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
+        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        await SetPinAsync(token);
         await DepositAsync(token, accountId, 1000m);
 
         const string unknownHandle = "nobody_here_at_all";
@@ -297,7 +332,8 @@ public class TransferEndpointTests : IntegrationTestBase
         {
             FromAccountId = accountId,
             RecipientAzureTag = unknownHandle,
-            Amount = 100m
+            Amount = 100m,
+            Pin = TestPin
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);

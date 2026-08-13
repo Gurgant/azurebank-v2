@@ -10,6 +10,9 @@ namespace AzureBank.Tests.Unit.Validators;
 /// </summary>
 public class TransferRequestValidatorTests
 {
+    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    private const string TestPin = "123456";
+
     private readonly TransferRequestValidator _validator = new();
 
     private static TransferRequest CreateValidRequest() => new()
@@ -17,7 +20,8 @@ public class TransferRequestValidatorTests
         FromAccountId = Guid.NewGuid(),
         RecipientAzureTag = "recipient",
         Amount = 100m,
-        Description = "Test transfer"
+        Description = "Test transfer",
+        Pin = TestPin
     };
 
     #region Valid Request Tests

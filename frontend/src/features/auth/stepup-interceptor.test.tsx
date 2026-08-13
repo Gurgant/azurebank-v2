@@ -13,10 +13,25 @@ import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { StepUpModal } from './StepUpModal';
 
 /**
- * PR-11 — the step-up interceptor end to end (ADR-0022). A level-2-gated transfer 403s,
- * the root StepUpModal appears, verify-pin elevates the session, and the ORIGINAL request is
- * replayed ONCE with the identical Idempotency-Key — the money-critical no-double-spend
- * property. Also pins cancel (STEP_UP_CANCELLED, no replay) and wrong-PIN-stays.
+ * The step-up interceptor end to end (ADR-0022): a 403 pops the root StepUpModal, verify-pin
+ * elevates the session, and the ORIGINAL request is replayed ONCE with the identical
+ * Idempotency-Key — the money-critical no-double-spend property. Also pins cancel
+ * (STEP_UP_CANCELLED, no replay) and wrong-PIN-stays.
+ *
+ * ⚠️ READ THIS BEFORE TRUSTING THE ENDPOINT IN THESE TESTS.
+ *
+ * `/api/transfers` here is a VEHICLE for the interceptor, not a claim about transfers. Since
+ * ADR-0041 the BFF does NOT answer 403 for a transfer — the PIN travels in the body and the API
+ * verifies it — and every 403 below is fabricated by this file's own `spyTransfer`, which
+ * overrides the aligned mock handler. The interceptor itself is still live code, because
+ * `/full-number` keeps the session model (decision D3a), so the mechanism is worth pinning; it is
+ * the pairing with THIS endpoint that is now synthetic.
+ *
+ * The consequence is worth stating plainly rather than leaving for someone to discover: after
+ * ADR-0041, no monetary endpoint sits behind the step-up gate, so the replay-with-the-same-key
+ * path has no live caller. `/full-number` is a GET and carries no Idempotency-Key. Whether to
+ * retire that half of the interceptor is a separate decision, deliberately not taken here.
+ * `TransferDoesNotTriggerStepUp` at the bottom is the guard that keeps the new truth true.
  */
 
 /** A minimal transfer trigger + the root modal, so the interceptor runs for real. */
@@ -34,6 +49,7 @@ function Harness() {
               fromAccountId: 'a',
               recipientAzureTag: 'friend',
               amount: 25,
+              pin: '123456',
             });
             setOut(`ok:${result.transactionNumber}`);
           } catch (caught) {
@@ -144,6 +160,7 @@ describe('step-up interceptor (PR-11)', () => {
       fromAccountId: 'a',
       recipientAzureTag: 'friend',
       amount: 25,
+      pin: '123456',
     });
     // Content checked once; `===` carries it to the replay transitively. Keep BOTH assertions —
     // JSON.parse discards key order and whitespace, which is the byte-level property claimed above.
@@ -215,6 +232,26 @@ describe('step-up interceptor (PR-11)', () => {
     await enterPin('000000'); // 3rd miss trips the shared lockout
 
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+  });
+
+  it('a transfer against the ALIGNED mock never triggers step-up (ADR-0041)', async () => {
+    /*
+      Deliberately NO `server.use` — this runs against the real handler set, which is aligned to
+      the backend. Every other test in this file overrides it with a 403; this one must not, or it
+      would pin the behaviour it exists to forbid.
+
+      If someone puts `/api/transfers` back into `AuthLevelMiddleware.PinRequiredPaths` and aligns
+      the mock to match, this fails: the modal appears and no receipt arrives. That is the whole
+      point — the in-band check would then be double-gated, and the weaker of the two would be
+      deciding again.
+    */
+    mockState.authLevel = 1;
+    renderWithProviders(<Harness />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await screen.findByText(/^(ok|err):/);
+    expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
   });
 
   it('an unexpected verify-pin error (500) is SURFACED, not masked as a cancellation', async () => {

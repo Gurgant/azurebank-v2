@@ -197,23 +197,24 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
   });
 
   it('4 — the step-up 403 (X-Auth-Level-Required header, D2) drives the interceptor; cancel → STEP_UP_CANCELLED', async () => {
-    // The stateful transfers handler answers with the bare-token 403 at authLevel 1. The
-    // interceptor (baseQueryWithStepUp) recognizes it from the normalized STEP_UP_REQUIRED
-    // and requests step-up. With no modal mounted here, cancel it — the surfaced error is
-    // STEP_UP_CANCELLED (carrying requiredAuthLevel), which PROVES the 403 was recognized as
-    // step-up, not a generic error. The elevate+replay flagship (byte-identical, same key,
-    // D21) is pinned in features/auth/stepup-interceptor.test.tsx.
+    /*
+      Driven through the REVEAL endpoint, not a transfer.
+
+      This test used to dispatch a transfer, because the stateful transfers handler answered a bare
+      403 at authLevel 1. Since ADR-0041 it does not: the PIN travels in the transfer body and the
+      API verifies it, so a transfer never produces the 403 this test is about. Reveal keeps the
+      session model deliberately (D3a) and is now the only endpoint that emits one.
+
+      The property is unchanged. The interceptor (baseQueryWithStepUp) recognizes the bare 403 from
+      the normalized STEP_UP_REQUIRED and requests step-up; with no modal mounted here, cancelling
+      surfaces STEP_UP_CANCELLED carrying requiredAuthLevel, which PROVES it was read as step-up
+      rather than as a generic error. The elevate+replay flagship is pinned in
+      features/auth/stepup-interceptor.test.tsx.
+    */
     const { store } = hookWrapper();
 
     const pending = settle(
-      store
-        .dispatch(
-          apiSlice.endpoints.transfer.initiate({
-            idempotencyKey: crypto.randomUUID(),
-            body: { fromAccountId: UUID, recipientAzureTag: 'john_doe', amount: 25 },
-          }),
-        )
-        .unwrap(),
+      store.dispatch(apiSlice.endpoints.revealAccountNumber.initiate(UUID)).unwrap(),
     );
 
     // The interceptor opened a step-up request; cancel it to unblock the replay path.

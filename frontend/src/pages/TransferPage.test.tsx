@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -9,6 +9,18 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
 import { seedMockSession } from '../mocks/state';
+
+/**
+ * Review -> PIN -> Send (ADR-0041). The flow gained a step: the review screen's primary button is
+ * now Continue, and the PIN that authorises the transfer is entered here rather than supplied by
+ * the root step-up modal off a 403.
+ */
+async function confirmWithPinAndSend(sendLabel: string) {
+  await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+  await userEvent.paste('123456');
+  await userEvent.click(screen.getByRole('button', { name: sendLabel }));
+}
 
 /**
  * PR-11 — the external transfer end to end, INCLUDING the step-up interceptor: pick an
@@ -59,7 +71,7 @@ beforeEach(() => {
 });
 
 describe('external transfer (PR-11)', () => {
-  it('confirms a recipient, transfers, steps up with a PIN, and shows the receipt', async () => {
+  it('confirms a recipient, authorises with a PIN in-form, and shows the receipt', async () => {
     renderTransfer();
     await screen.findByText('Main Account'); // accounts loaded; first is auto-selected
 
@@ -70,17 +82,17 @@ describe('external transfer (PR-11)', () => {
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
 
-    // Review → Send triggers the level-2 403 → the step-up modal.
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
-    expect(await screen.findByText("Verify it's you")).toBeInTheDocument();
-
-    await enterPin('123456');
+    /*
+      Review -> Continue -> PIN -> Send, all in the page. Until ADR-0041 this line waited for the
+      root step-up modal ("Verify it's you") to appear off a 403 from the BFF; the PIN now travels
+      in the request body and the API verifies it, so there is no modal and no 403 to react to.
+    */
+    await confirmWithPinAndSend('Send €50.00');
+    expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
 
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
     expect(screen.getByText('-€50.00')).toBeInTheDocument();
     expect(screen.getByText('€1,200.50')).toBeInTheDocument(); // 1250.50 - 50
-    // findBy: the step-up modal's EXIT is async — until its aria-hidden lifts off the
-    // background, role queries can't see the receipt buttons (P1.9 sweep).
     await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
   });
@@ -96,42 +108,31 @@ describe('external transfer (PR-11)', () => {
     expect(screen.getByRole('button', { name: 'Review Transfer' })).toBeDisabled();
   });
 
-  // 15s budget: the PR-12 fix gave the Cancel lookup a 5s findByRole timeout (the Fluent
-  // alert-dialog's open transition keeps it aria-hidden briefly under load), but vitest's
-  // DEFAULT test budget is also 5s — so on a loaded runner the inner wait could never
-  // finish before the test itself timed out. The budget must exceed the inner waits.
-  it(
-    'cancelling the PIN modal returns to review without sending',
-    { timeout: 15_000 },
-    async () => {
-      renderTransfer();
-      await screen.findByText('Main Account');
-      await verifyRecipient('friend');
-      await screen.findByText('A. Friend');
-      await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
-      await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-      await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+  it('Back from the PIN step returns to review without sending', async () => {
+    /*
+      This used to be "cancelling the PIN modal returns to review without sending" — the modal was
+      the root step-up dialog, driven by a 403. ADR-0041 removed both, so the property is now about
+      the page's own step machine: leaving the PIN step must not send, and must land on review with
+      the send control still reachable.
+    */
+    renderTransfer();
+    await screen.findByText('Main Account');
+    await verifyRecipient('friend');
+    await screen.findByText('A. Friend');
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-      await screen.findByText("Verify it's you");
-      // hidden-inclusive + fireEvent, the #34-proven pattern: even with reduced motion
-      // stubbed, tabster's aria-hidden bookkeeping is MutationObserver-driven and starves
-      // under a saturated worker — a strict role query can miss the button for 5s+ while
-      // the title (a TEXT query) proves it is really in the DOM. This test pins
-      // cancel-returns-to-review, not the dialog's aria lifecycle (the step-up suite and
-      // the live browser cover that).
-      fireEvent.click(
-        await screen.findByRole('button', { name: 'Cancel', hidden: true }, { timeout: 5000 }),
-      );
+    await enterPin('123456');
+    const backs = screen.getAllByRole('button', { name: 'Back' });
+    await userEvent.click(backs[backs.length - 1]);
 
-      // Still on review, no receipt — the user can Send again to retry step-up.
-      // (Same starved-runner headroom for the exit transition.)
-      await waitFor(() => expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument(), {
-        timeout: 5000,
-      });
-      expect(screen.getByRole('button', { name: 'Send €50.00' })).toBeInTheDocument();
-      expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
-    },
-  );
+    expect(await screen.findByRole('button', { name: 'Continue' })).toBeInTheDocument();
+    expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
+    // And the PIN did not survive the trip: coming back must re-ask rather than reuse it.
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByRole('button', { name: 'Send €50.00' })).toBeDisabled();
+  });
 
   it('after IN_FLIGHT the retained key freezes Back; Send reuses the SAME key (no double-spend)', async () => {
     // The transfer returns IN_FLIGHT (a keep-key outcome) — the review Back must be disabled
@@ -170,13 +171,19 @@ describe('external transfer (PR-11)', () => {
     await screen.findByText('A. Friend');
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+    await confirmWithPinAndSend('Send €50.00');
 
     expect(await screen.findByText(/Still processing/)).toBeInTheDocument();
     // Both the header and review Back are frozen while the key is retained (can't reach the
     // form to edit the body and null the key).
     screen.getAllByRole('button', { name: 'Back' }).forEach((b) => expect(b).toBeDisabled());
 
+    /*
+      The retry is a SECOND press of the same Send, not another walk through the flow: an
+      IN_FLIGHT failure leaves the user on the PIN step with the PIN they already typed, because
+      the page only clears it for PIN-specific refusals. That is the safe forward action — it
+      reuses the retained key instead of minting a new one.
+    */
     await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
@@ -297,7 +304,7 @@ describe('external transfer (PR-11)', () => {
     await screen.findByText('A. Friend');
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+    await confirmWithPinAndSend('Send €50.00');
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Insufficient funds for this transfer.');
