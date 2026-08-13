@@ -150,8 +150,13 @@ this, and has not yet.
   now, so the lockout bites them immediately whatever the session says. That is why a per-request
   cross-process check is not worth its cost today.
 
-  **Reopen this if either becomes true:** (a) anything is added back to `PinRequiredPaths`, so the
-  gate protects more than a read; or (b) the session store becomes shared or user-indexed — the
+  **Reopen this if either becomes true:** (a) the level-2 gate starts protecting anything beyond a
+  read. Deliberately stated as a PROPERTY rather than as a list of mechanisms: `AuthLevelMiddleware`
+  has **two independent branches** — an exact-path set (`PinRequiredPaths`, empty today) and a
+  `PinRequiredPrefixes` × `PinRequiredSuffixes` pair, which is what actually gates `/full-number`.
+  A trigger naming only the set would miss a level-2 route added through the other branch, and would
+  miss a third branch entirely. The condition is `RequiresPinVerification` returning true for a new
+  operation, whichever rule decides it. Or (b) the session store becomes shared or user-indexed — the
   Redis move `InMemoryTokenStore` already anticipates — because per-user revocation is then cheap,
   and the response-observation design that is inadequate today becomes a real fix. Until then, note
   that observing a 429 on the locked-out user's OWN session would close only that case and leave the

@@ -224,12 +224,16 @@ private static readonly HashSet<string> SessionRequiredPaths = new(StringCompare
     "/api/transfers/internal"
 };
 
-// Routes requiring PIN verification (AuthLevel 2). EMPTY since ADR-0041 — transfers moved to the
-// set above and the API verifies their PIN itself. The set stays because the suffix rule below
-// still uses this gate for /full-number.
+// TWO INDEPENDENT BRANCHES decide level 2. Keep them apart when reading this.
+//
+// (1) An exact-path set, checked for POST. EMPTY since ADR-0041 — transfers moved to the set above
+//     and the API verifies their PIN itself. Nothing matches it today, so this branch never fires;
+//     it is kept as the place a future exact-path route would go, not because anything needs it.
 private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
 
-// Patterns for dynamic routes
+// (2) A prefix x suffix pair, checked for ANY method. This — not the set above — is what retains
+//     the /full-number gate, and it is therefore the only level-2 enforcement left in the BFF.
+private static readonly string[] PinRequiredPrefixes = { "/api/accounts/" };
 private static readonly string[] PinRequiredSuffixes = { "/full-number" };
 ```
 

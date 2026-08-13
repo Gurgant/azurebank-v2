@@ -429,7 +429,7 @@ public class ApplicationUser : IdentityUser<Guid>
 > | Operation | Enforced today? | By what |
 > |---|---|---|
 > | Transfer, Internal transfer | ✅ yes | **PIN in the request body, verified by the API** through `IPinVerifier` — the same mechanism withdraw uses. The BFF still requires a SESSION for these paths (`SessionRequiredPaths`) but no longer a PIN |
-> | Reveal full account number | ✅ yes | `AuthLevelMiddleware` — now the **only** thing left behind the level-2 gate; `PinRequiredPaths` is empty |
+> | Reveal full account number | ✅ yes | `AuthLevelMiddleware`'s prefix/suffix rule — now the **only** thing left behind the level-2 gate. Note the mechanism: the exact-path set `PinRequiredPaths` is empty and plays no part here |
 >
 > So point 1 above inverted: the *"one decision, two implementations"* split is gone, and withdraw is
 > no longer the odd one out. Point 2 (delete account) is unchanged and still open.
