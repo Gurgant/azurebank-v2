@@ -4,6 +4,7 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Utilities;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
@@ -108,9 +109,22 @@ public class UserService : IUserService
             throw new ConflictException("That handle is already taken.", ErrorCodes.AzureTagTaken);
         }
 
+        /*
+          Sanitized for the LOG only; `normalized` is still returned unchanged.
+
+          Both values are AzureTags and therefore already pattern-constrained (anchored
+          ^[a-z][a-z0-9_]{2,19}$), which is the argument this alert was dismissed on. It reopened
+          the moment the line moved, and it will keep reopening: the barrier is what ends that, and
+          it does not rely on a validator in a different file staying in force on every path.
+          `previous` is the older handle read back from the row — user-authored once, so it gets the
+          same treatment as the new one rather than being trusted for having been stored.
+        */
         _logger.LogInformation(
             "SecurityEvent {SecurityEvent}: user {UserId} renamed their handle from {PreviousAzureTag} to {AzureTag}",
-            SecurityEvents.AzureTagRenamed, userId, previous, normalized);
+            SecurityEvents.AzureTagRenamed,
+            userId,
+            LogSanitizer.Sanitize(previous),
+            LogSanitizer.Sanitize(normalized));
 
         return normalized;
     }

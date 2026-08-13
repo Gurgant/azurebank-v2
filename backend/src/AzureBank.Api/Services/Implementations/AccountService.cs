@@ -173,9 +173,23 @@ public class AccountService : IAccountService
     {
         var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
 
-        // Detective audit line (SecurityEvent series): WHO revealed WHICH account —
-        // never the number itself. PII redaction is opt-in per call site, so the value
-        // must not enter the logging pipeline at all.
+        /*
+          Detective audit line (SecurityEvent series): WHO revealed WHICH account — never the number
+          itself. PII redaction is opt-in per call site, so the value must not enter the logging
+          pipeline at all.
+
+          THE TWO IDENTIFIERS STAY IN CLEAR, and that is the control, not an oversight.
+          CodeQL raises cs/cleartext-storage here (twice now: dismissed as alert #25, reopened the
+          moment this line moved), and the automated suggestion is to log SHA-256 prefixes of both
+          Guids instead. That must not be applied: hashing them makes the record un-joinable to the
+          accounts and users tables, so the line stops answering the only question it exists to
+          answer — who revealed which account. A control that cannot be correlated is not a weaker
+          control, it is a decoration.
+
+          They are also not sensitive. Both are opaque surrogate keys: not credentials, not PII, and
+          useless to anyone without the database they index. The sensitive value in this method is
+          the account NUMBER, and it is deliberately absent from the message above.
+        */
         _logger.LogInformation(
             "SecurityEvent {SecurityEvent}: user {UserId} revealed the full account number of account {AccountId}",
             SecurityEvents.AccountNumberRevealed, userId, accountId);
