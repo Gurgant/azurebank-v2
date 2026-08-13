@@ -420,4 +420,4 @@ The API uses **Problem Details** (RFC 7807) for error responses.
 - [Root README](../../README.md) - Solution overview
 - [AzureBank.Shared](../AzureBank.Shared/README.md) - DTOs and entities
 - [AzureBank.Infrastructure](../AzureBank.Infrastructure/README.md) - Data layer
-- [Architecture Overview](../../docs/architecture/overview.md) - System design
+- [Architecture Overview](../../../docs/architecture/overview.md) - System design

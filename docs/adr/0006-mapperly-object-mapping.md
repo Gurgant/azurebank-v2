@@ -191,7 +191,7 @@ Success criteria:
 ## Related
 
 - [ADR-0007: FluentValidation](./0007-fluentvalidation.md)
-- [AzureBank.Shared README](../../src/AzureBank.Shared/README.md)
+- [AzureBank.Shared README](../../backend/src/AzureBank.Shared/README.md)
 
 ---
 

@@ -311,7 +311,7 @@ public class LoginRequestValidatorTests
 ## Related
 
 - [ADR-0006: Mapperly Object Mapping](./0006-mapperly-object-mapping.md)
-- [AzureBank.Api README](../../src/AzureBank.Api/README.md)
+- [AzureBank.Api README](../../backend/src/AzureBank.Api/README.md)
 
 ---
 

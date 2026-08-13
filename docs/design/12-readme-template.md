@@ -13,7 +13,7 @@
 
 This template has been completed and finalized as the project's main README.md file.
 
-**See**: [README.md](../README.md) for the full, production-ready documentation.
+**See**: [README.md](../../README.md) for the full, production-ready documentation.
 
 ---
 

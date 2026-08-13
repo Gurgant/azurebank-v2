@@ -108,7 +108,7 @@ Success criteria:
 
 - [ADR-0001: BFF Pattern](./0001-bff-pattern.md)
 - [YARP Documentation](https://microsoft.github.io/reverse-proxy/)
-- [BFF Implementation](../../src/AzureBank.Bff/README.md)
+- [BFF Implementation](../../backend/src/AzureBank.Bff/README.md)
 
 ---
 

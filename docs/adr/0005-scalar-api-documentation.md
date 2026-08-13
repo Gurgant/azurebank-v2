@@ -171,7 +171,7 @@ Success criteria:
 ## Related
 
 - [ADR-0001: BFF Pattern](./0001-bff-pattern.md)
-- [AzureBank.Api README](../../src/AzureBank.Api/README.md)
+- [AzureBank.Api README](../../backend/src/AzureBank.Api/README.md)
 
 ---
 

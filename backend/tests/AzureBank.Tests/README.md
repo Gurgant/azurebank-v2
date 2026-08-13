@@ -648,4 +648,4 @@ colima start
 
 - [Root README](../../README.md) - Solution overview
 - [AzureBank.Api](../../src/AzureBank.Api/README.md) - Tested API
-- [Architecture Decisions](../../docs/adr/) - Design decisions being tested
+- [Architecture Decisions](../../../docs/adr/) - Design decisions being tested

@@ -3,7 +3,10 @@
 > **Document Version**: 1.0
 > **Created**: 2026-01-14
 > **Status**: Active Implementation
-> **Related**: [30-business-rule-validation-implementation-plan.md](./30-business-rule-validation-implementation-plan.md)
+> **Related**: `30-business-rule-validation-implementation-plan.md` — **never written.** The link
+> was verified broken on 2026-08-13 and de-linked rather than repointed: no file of that name
+> exists anywhere in the repo, and this folder's numbering skips from 21 to 32. It was planned
+> and dropped, not moved.
 
 ---
 
@@ -442,9 +445,9 @@ schemathesis run ./openapiv1.json --stateful=links --url http://localhost:5068
 
 ### 9.3 Related Project Documents
 
-- [30-business-rule-validation-implementation-plan.md](./30-business-rule-validation-implementation-plan.md)
-- [06-api-contracts.md](./06-api-contracts.md)
-- [08-security-design.md](./08-security-design.md)
+- `30-business-rule-validation-implementation-plan.md` — never written; see the header note
+- [06-api-contracts.md](../06-api-contracts.md)
+- [08-security-design.md](../08-security-design.md)
 
 ---
 

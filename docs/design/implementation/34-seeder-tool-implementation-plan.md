@@ -832,8 +832,8 @@ dotnet build src/AzureBank.Infrastructure/AzureBank.Infrastructure.csproj
 ## 6. References
 
 ### 6.1 Related Documents
-- [ADR-0003: Argon2id Password Hashing](../docs/adr/0003-argon2id-password-hashing.md)
-- [ADR-0007: FluentValidation](../docs/adr/0007-fluentvalidation.md)
+- [ADR-0003: Argon2id Password Hashing](../../adr/0003-argon2id-password-hashing.md)
+- [ADR-0007: FluentValidation](../../adr/0007-fluentvalidation.md)
 
 ### 6.2 External Resources
 - [System.CommandLine Documentation](https://learn.microsoft.com/en-us/dotnet/standard/commandline/)

@@ -417,6 +417,26 @@ public class ApplicationUser : IdentityUser<Guid>
 >
 > **3 — The table predates the reveal endpoint**, so this list of level-2 operations has been
 > incomplete since ADR-0020 shipped.
+>
+> ---
+>
+> **Correction (2026-08-13) to the correction above — row 1 was stale within a day.**
+>
+> [ADR-0041](0041-the-api-verifies-the-transfer-pin.md) moved transfers off the level-2 gate the
+> very next day, so *"Transfer, Internal transfer · enforced by `AuthLevelMiddleware` (BFF session
+> flag)"* no longer describes anything. What is true now:
+>
+> | Operation | Enforced today? | By what |
+> |---|---|---|
+> | Transfer, Internal transfer | ✅ yes | **PIN in the request body, verified by the API** through `IPinVerifier` — the same mechanism withdraw uses. The BFF still requires a SESSION for these paths (`SessionRequiredPaths`) but no longer a PIN |
+> | Reveal full account number | ✅ yes | `AuthLevelMiddleware`'s prefix/suffix rule — now the **only** thing left behind the level-2 gate. Note the mechanism: the exact-path set `PinRequiredPaths` is empty and plays no part here |
+>
+> So point 1 above inverted: the *"one decision, two implementations"* split is gone, and withdraw is
+> no longer the odd one out. Point 2 (delete account) is unchanged and still open.
+>
+> Recorded rather than edited in place, per this file's own rule at the top. The lesson is worth
+> keeping: a correction table is a snapshot of the code, and it decays exactly as fast as the code
+> moves — this one lasted 24 hours.
 
 ## Validation
 

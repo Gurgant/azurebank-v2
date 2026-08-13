@@ -182,8 +182,14 @@ All `/api/*` routes are proxied to the backend API with JWT injection:
 |-----------|---------------|---------------------|
 | `/api/accounts` | `/api/accounts` | 1 |
 | `/api/transactions` | `/api/transactions` | 1 |
-| `/api/transfers` | `/api/transfers` | 2 (PIN required) |
+| `/api/transfers` | `/api/transfers` | 1 — **session required, PIN NOT checked here** |
 | `/api/accounts/*/full-number` | `/api/accounts/*/full-number` | 2 (PIN required) |
+
+Since [ADR-0041](../../../docs/adr/0041-the-api-verifies-the-transfer-pin.md) a transfer carries its
+PIN in the request body and the **API** verifies it. The BFF still refuses a transfer with no
+session — locally, with the API's own 401 shape — but it no longer gates one at level 2, because
+double-gating would leave the weaker of the two checks in the path and keep the five-minute session
+window alive for money movement. `/full-number` is now the only route behind the level-2 gate.
 
 ---
 
@@ -211,14 +217,23 @@ Updates `LastActivity` timestamp on every authenticated request for timeout trac
 Enforces step-up authentication for sensitive routes:
 
 ```csharp
-// Routes requiring PIN verification (AuthLevel 2)
-private static readonly HashSet<string> PinRequiredPaths = new()
+// Routes needing a live session, decided HERE rather than delegated downstream (ADR-0041).
+private static readonly HashSet<string> SessionRequiredPaths = new(StringComparer.OrdinalIgnoreCase)
 {
     "/api/transfers",
     "/api/transfers/internal"
 };
 
-// Patterns for dynamic routes
+// TWO INDEPENDENT BRANCHES decide level 2. Keep them apart when reading this.
+//
+// (1) An exact-path set, checked for POST. EMPTY since ADR-0041 — transfers moved to the set above
+//     and the API verifies their PIN itself. Nothing matches it today, so this branch never fires;
+//     it is kept as the place a future exact-path route would go, not because anything needs it.
+private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
+
+// (2) A prefix x suffix pair, checked for ANY method. This — not the set above — is what retains
+//     the /full-number gate, and it is therefore the only level-2 enforcement left in the BFF.
+private static readonly string[] PinRequiredPrefixes = { "/api/accounts/" };
 private static readonly string[] PinRequiredSuffixes = { "/full-number" };
 ```
 
@@ -504,5 +519,5 @@ rejected by the Fetch-Metadata middleware.
 
 - [Root README](../../README.md) - Solution overview
 - [AzureBank.Api](../AzureBank.Api/README.md) - Backend API
-- [ADR-0001: BFF Pattern](../../docs/adr/0001-bff-pattern.md) - Architecture decision
-- [ADR-0002: YARP Selection](../../docs/adr/0002-yarp-proxy.md) - Proxy choice
+- [ADR-0001: BFF Pattern](../../../docs/adr/0001-bff-pattern.md) - Architecture decision
+- [ADR-0002: YARP Selection](../../../docs/adr/0002-yarp-proxy.md) - Proxy choice

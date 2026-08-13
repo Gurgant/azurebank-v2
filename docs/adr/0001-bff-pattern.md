@@ -90,7 +90,7 @@ Success criteria:
 
 - [ADR-0002: YARP Proxy Selection](./0002-yarp-proxy.md)
 - [Architecture Overview](../architecture/overview.md)
-- [BFF Documentation](../../src/AzureBank.Bff/README.md)
+- [BFF Documentation](../../backend/src/AzureBank.Bff/README.md)
 
 ---
 

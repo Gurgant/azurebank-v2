@@ -143,6 +143,26 @@ this, and has not yet.
   out. Closing it needs a cross-process signal that does not exist today; recorded here rather than
   invented.
 
+  **What is actually exposed, and when to revisit.** The window is bounded by
+  `SecurityOptions.PinValidityMinutes` — 5 by default, 10 in dev — after which `GetAuthLevel` drops
+  the session unconditionally. And after this ADR the level-2 gate protects exactly one thing, an
+  owner-checked read-only GET. No money moves: transfers and withdraw both verify in-band at the API
+  now, so the lockout bites them immediately whatever the session says. That is why a per-request
+  cross-process check is not worth its cost today.
+
+  **Reopen this if either becomes true:** (a) the level-2 gate starts protecting anything beyond a
+  read. Deliberately stated as a PROPERTY rather than as a list of mechanisms: `AuthLevelMiddleware`
+  has **two independent branches** — an exact-path set (`PinRequiredPaths`, empty today) and a
+  `PinRequiredPrefixes` × `PinRequiredSuffixes` pair, which is what actually gates `/full-number`.
+  A trigger naming only the set would miss a level-2 route added through the other branch, and would
+  miss a third branch entirely. The condition is `RequiresPinVerification` returning true for a new
+  operation, whichever rule decides it. Or (b) the session store becomes shared or user-indexed — the
+  Redis move `InMemoryTokenStore` already anticipates — because per-user revocation is then cheap,
+  and the response-observation design that is inadequate today becomes a real fix. Until then, note
+  that observing a 429 on the locked-out user's OWN session would close only that case and leave the
+  stolen-second-session one open, which is worse than leaving it visibly open: it would let someone
+  write "closed" over a hole that is not.
+
 ### What review round 1 changed
 
 Three of these were real defects in the first cut of this ADR's implementation, and all three are
