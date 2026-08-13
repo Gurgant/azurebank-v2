@@ -1,4 +1,5 @@
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Utilities;
 using Microsoft.Data.SqlClient;
@@ -163,7 +164,7 @@ internal static class ConcurrencyRetry
                 logger.LogWarning(ex,
                     "SecurityEvent {SecurityEvent}: generated account number was already taken for "
                         + "user {UserId}, regenerating (attempt {Attempt})",
-                    "AccountNumberCollision", userId, attempt);
+                    SecurityEvents.AccountNumberCollision, userId, attempt);
 
                 account.AccountNumber = IdGenerator.GenerateAccountNumber();
             }

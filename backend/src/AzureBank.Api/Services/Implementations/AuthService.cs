@@ -239,14 +239,14 @@ public class AuthService : IAuthService
             // an operator to spot a targeted enumeration probe against one address.
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: registration rejected, email already registered ({Email})",
-                "DuplicateRegistration", _piiRedactor.Redact(request.Email));
+                SecurityEvents.DuplicateRegistration, _piiRedactor.Redact(request.Email));
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
         if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag))
         {
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: registration rejected, handle already taken ({AzureTag})",
-                "DuplicateRegistration", normalizedAzureTag);
+                SecurityEvents.DuplicateRegistration, normalizedAzureTag);
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
 
@@ -326,7 +326,7 @@ public class AuthService : IAuthService
                 // retried while the very same deadlock on the USER insert became a 409.
                 _logger.LogWarning(ex,
                     "SecurityEvent {SecurityEvent}: registration lost the unique-index race",
-                    "DuplicateRegistration");
+                    SecurityEvents.DuplicateRegistration);
                 throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
             }
 
@@ -342,7 +342,8 @@ public class AuthService : IAuthService
                 var isDuplicate = result.Errors.Any(e => e.Code is "DuplicateUserName" or "DuplicateEmail");
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: registration rejected by Identity ({Codes})",
-                    isDuplicate ? "DuplicateRegistration" : "RegistrationRejected", codes);
+                    isDuplicate ? SecurityEvents.DuplicateRegistration : SecurityEvents.RegistrationRejected,
+                    codes);
                 if (isDuplicate)
                 {
                     throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
@@ -373,7 +374,7 @@ public class AuthService : IAuthService
                 {
                     _logger.LogWarning(
                         "SecurityEvent {SecurityEvent}: registration lost the race during role assignment",
-                        "DuplicateRegistration");
+                        SecurityEvents.DuplicateRegistration);
                     throw new ConflictException(
                         "Registration could not be completed.", ErrorCodes.RegistrationFailed);
                 }

@@ -110,7 +110,7 @@ public class UserService : IUserService
 
         _logger.LogInformation(
             "SecurityEvent {SecurityEvent}: user {UserId} renamed their handle from {PreviousAzureTag} to {AzureTag}",
-            "AzureTagRenamed", userId, previous, normalized);
+            SecurityEvents.AzureTagRenamed, userId, previous, normalized);
 
         return normalized;
     }

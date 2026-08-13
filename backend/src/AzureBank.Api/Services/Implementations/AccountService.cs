@@ -178,7 +178,7 @@ public class AccountService : IAccountService
         // must not enter the logging pipeline at all.
         _logger.LogInformation(
             "SecurityEvent {SecurityEvent}: user {UserId} revealed the full account number of account {AccountId}",
-            "AccountNumberRevealed", userId, accountId);
+            SecurityEvents.AccountNumberRevealed, userId, accountId);
 
         // Deliberately NOT via AccountMapper: the mapper's contract is "account numbers
         // leave masked". Constructing the one unmasked shape by hand keeps that invariant
