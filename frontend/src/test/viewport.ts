@@ -51,13 +51,20 @@ function matchesWidth(query: string): boolean {
 }
 
 /**
- * Reduced motion, defaulting to PREFERRED — and that default is load-bearing, not an oversight.
+ * Reduced motion, defaulting to PREFERRED — worth keeping, but NOT for the reason once written here.
  *
- * Without it Fluent's `useIsReducedMotion` keeps animations enabled. On a starved runner a dialog's
- * open transition then stalls for seconds with the surface still `aria-hidden`, so role queries miss
- * buttons that are really there — the PR #34 PIN-modal Cancel saga, and still live: that same test
- * flaked once during this session's gate runs. Reporting `reduce` makes dialog enter and exit
- * synchronous and deterministic on any runner.
+ * The old text claimed this was what stopped the PIN-modal Cancel flake: that an open transition
+ * stalled on a starved runner "with the surface still `aria-hidden`", so role queries missed buttons
+ * that were really there. The symptom was described correctly and the cause was wrong, which is the
+ * expensive kind of wrong — it made the flake look solved and it stayed live for months. Measured
+ * on main 8c1c521 with reduced motion already in force: 4 of 6 full `vitest run` passes red across
+ * three files. The `aria-hidden` was never Fluent's animation. It was tabster hiding the OPEN dialog
+ * because jsdom's absent layout convinced it the dialog held nothing focusable — the whole chain,
+ * with its measurements, is in `test/layout.ts`, and `layout.test.tsx` pins it.
+ *
+ * What this default is genuinely worth: enter and exit commit synchronously, so a test does not wait
+ * on a transition that jsdom cannot run anyway. That is a real convenience and a real determinism
+ * win. It is not an accessibility guarantee, and it never was.
  *
  * The cost is that the normal-motion path goes unexercised, which is real. {@link setReducedMotion}
  * is the way out: flip it for the one test that needs the other branch, rather than paying the flake
