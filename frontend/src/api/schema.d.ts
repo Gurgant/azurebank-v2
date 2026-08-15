@@ -2345,20 +2345,8 @@ export interface components {
             /** @description PIN must be exactly 6 digits. */
             currentPin?: null | string;
             /**
-             * @description The account password. Required when ENROLLING a PIN (no hash yet), ignored when changing one.
-             *
-             *                  The mirror image of string? SetPinRequest.CurrentPin, and for the same reason: each transition has to
-             *     be paid for with a proof the caller could not have obtained from the session alone. Change
-             *     costs the old PIN; enrolment costs the password, because there is no old PIN to ask for.Without it, a session cookie WAS the whole proof. Measured end to end through the BFF on
-             *     `main` @ 4811667, before this field existed: register → authLevel 1 → set-pin "424242"
-             *     (200, cookie only) → verify-pin "424242" → authLevel 2 → deposit 250 → withdraw 250
-             *     (201, balanceAfter 0.0000) → GET /full-number → 200 unmasked. Nothing was guessed, so
-             *     ADR-0010's attempt-limiting never engaged; ADR-0008's gate checks that A PIN was entered,
-             *     not whose.NIST SP 800-63-4B §4.1.2 sets the bar and also caps it: binding a new authenticator SHALL
-             *     require authentication at the maximum AAL currently available on the account or the maximum
-             *     at which the authenticator will be used, WHICHEVER IS LOWER. With no PIN enrolled the
-             *     account's maximum is the password — so the password is required, and nothing heavier is.Not [Required], for the same reason as string? SetPinRequest.CurrentPin: which of the two is
-             *     mandatory depends on the stored hash, which only AuthService.SetPinAsync can see.
+             * @description The account password. Required when enrolling a PIN; ignored when changing an existing one,
+             *     where `currentPin` is the proof instead.
              */
             password?: null | string;
         };
