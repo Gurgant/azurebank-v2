@@ -43,7 +43,11 @@ public class PinReplacementTests : IntegrationTestBase
     /// Named apart from the base helper deliberately — same name, different arity hid it (CS0108).</summary>
     private async Task<HttpResponseMessage> PostSetPin(string pin, string? currentPin) =>
         await Client.PostAsJsonAsync("/api/auth/pin",
-            new SetPinRequest { Pin = pin, CurrentPin = currentPin }, JsonOptions);
+            // Password supplied unconditionally: enrolling needs it, changing ignores it. That keeps
+            // every case in this file expressible through ONE helper, which is what lets the tests
+            // below stay about the CurrentPin rule rather than about request assembly.
+            new SetPinRequest { Pin = pin, CurrentPin = currentPin, Password = TestUserPassword },
+            JsonOptions);
 
     private async Task<string?> ErrorCodeOf(HttpResponseMessage response)
     {

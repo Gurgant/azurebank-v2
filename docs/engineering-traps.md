@@ -223,3 +223,29 @@ close goes through the same 250ms debounce, so for up to a quarter second after 
 page underneath is still outside the accessibility tree. A bare `getByRole` on the page immediately
 after closing a dialog therefore fails — measured 6 of 6 runs under load. Use `findBy*`: the state
 does settle, and waiting for it is what a user experiences.
+
+## An XML `<summary>` on a DTO property IS the published API contract
+
+`Swashbuckle`/OpenAPI lifts the XML doc comment of a request-DTO property into that property's
+`description` in `openapiv1.json` — **unless a validation attribute already supplies one**, in which
+case the attribute's message wins and the summary never reaches the wire.
+
+That exception is why the trap stayed invisible. `Pin` and `CurrentPin` on `SetPinRequest` both
+carry `[Pin]`, whose message ("PIN must be exactly 6 digits.") becomes their description, so the
+long forensic histories in their summaries were masked by accident rather than by design. Add a
+property with **no** attribute and the whole summary ships.
+
+Measured on the T8 branch: a first draft of `SetPinRequest.Password` published **1391 characters**
+into `docs/api/openapiv1.json` and into the generated frontend types — internal engineering history,
+a commit SHA, and a step-by-step attack recipe against the product, in the public contract of a
+public repository. The other two descriptions over 200 characters in the whole spec are 557 and 453,
+both legitimate contract prose about refresh tokens.
+
+Two further wrinkles seen in the same output: consecutive `<para>` blocks concatenate with **no
+separator** (`…to ask for.Without it…`), and `<see cref="CurrentPin"/>` renders as the C# member
+(`string? SetPinRequest.CurrentPin`) rather than the JSON field a consumer sees — use `<c>currentPin</c>`.
+
+**Rule:** the `<summary>` of a DTO property is consumer-facing contract prose — one or two lines
+saying when the field is required and what it means. Everything else (why it exists, what it
+prevents, what was measured) goes in a plain `/* … */` comment, which the generator ignores. After
+touching a DTO, `node scripts/openapi-spec.mjs regen` and read the property's `description` back.

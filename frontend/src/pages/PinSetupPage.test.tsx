@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { makeTestStore, renderWithProviders, type TestStore } from '../test/renderWithProviders';
 import { PinSetupPage } from './PinSetupPage';
-import { MOCK_USER, seedMockSession } from '../mocks/state';
+import { MOCK_PASSWORD, MOCK_USER, seedMockSession } from '../mocks/state';
 
 /**
  * PR-10 — the PIN onboarding wizard (enter → confirm → done). Pins: the confirm-must-match
@@ -69,6 +69,12 @@ beforeEach(() => {
 });
 
 describe('PIN setup wizard (PR-10)', () => {
+  /** The account password now gates the commit (T7/#201) — typed on the confirm step. */
+  async function typePassword(value = MOCK_PASSWORD) {
+    await userEvent.click(screen.getByLabelText('Account password'));
+    await userEvent.paste(value);
+  }
+
   it('enter → confirm → success, then hands back to returnTo', async () => {
     renderPinSetup();
 
@@ -77,11 +83,50 @@ describe('PIN setup wizard (PR-10)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByText('Confirm your PIN')).toBeInTheDocument();
-    await pasteDigits('123456'); // onComplete auto-submits
+    // Password FIRST: the auto-submit on the sixth digit is deliberately suppressed until one is
+    // present, so that a wizard cannot spend a refusal to tell the user about a field it can see
+    // is empty.
+    await typePassword();
+    await pasteDigits('123456'); // onComplete auto-submits once the password is in hand
 
     expect(await screen.findByText('PIN Setup Complete!')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('ACCOUNTS PAGE')).toBeInTheDocument();
+  });
+
+  it('will not commit a PIN until the account password is supplied', async () => {
+    /*
+      The client half of T7. The server refuses a password-less enrolment with 422
+      PASSWORD_REQUIRED — measured — but a form that lets the user press the button and then
+      reports a refusal has taught them nothing they could not have been told for free.
+    */
+    renderPinSetup();
+    await pasteDigits('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+
+    await pasteDigits('123456');
+
+    // Six digits in, PINs matching, and still nothing has been sent.
+    expect(screen.queryByText('PIN Setup Complete!')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Set PIN' })).toBeDisabled();
+
+    await typePassword();
+    expect(screen.getByRole('button', { name: 'Set PIN' })).toBeEnabled();
+  });
+
+  it('says which credential was wrong when the password is rejected', async () => {
+    // The PIN boxes are fine; asking the user to retype six digits because a password was
+    // mistyped is the kind of friction that produces shorter passwords.
+    renderPinSetup();
+    await pasteDigits('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByText('Confirm your PIN');
+    await typePassword('WrongPassword1!');
+    await pasteDigits('123456');
+
+    expect(await screen.findByText('That password is not correct.')).toBeInTheDocument();
+    expect(screen.queryByText('PIN Setup Complete!')).not.toBeInTheDocument();
   });
 
   it('rejects a mismatched confirmation and keeps the user on the confirm step', async () => {
@@ -89,6 +134,7 @@ describe('PIN setup wizard (PR-10)', () => {
     await pasteDigits('123456');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await screen.findByText('Confirm your PIN');
+    await typePassword();
     await pasteDigits('654321');
 
     expect(await screen.findByText('PINs do not match. Please try again.')).toBeInTheDocument();

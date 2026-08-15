@@ -180,7 +180,7 @@ internal static class IdempotencyConcurrencyProof
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin")
         {
-            Content = JsonContent.Create(new SetPinRequest { Pin = TestPin }, options: Json)
+            Content = JsonContent.Create(new SetPinRequest { Pin = TestPin, Password = "TestPass123!" }, options: Json)
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
         var response = await client.SendAsync(request);

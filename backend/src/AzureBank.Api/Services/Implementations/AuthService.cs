@@ -548,8 +548,12 @@ public class AuthService : IAuthService
             throw new NotFoundException("User", userId);
         }
 
+        // Read BEFORE the hash below is overwritten — afterwards every enrolment looks like a change.
+        var enrolling = string.IsNullOrEmpty(user.PinHash);
+
         /*
-          CHANGING a PIN requires the old one. Enrolling does not.
+          Each transition costs a proof the SESSION cannot supply. Changing costs the old PIN;
+          enrolling costs the password, because there is no old PIN to ask for.
 
           This assignment used to be unconditional, which made the whole step-up story decorative:
           a caller holding only a session could overwrite the PIN and then pass every gate that
@@ -569,7 +573,39 @@ public class AuthService : IAuthService
           counts against the SAME lockout as every other wrong PIN — otherwise this endpoint would
           be an uncounted brute-force oracle, which is strictly worse than what it replaces.
         */
-        if (!string.IsNullOrEmpty(user.PinHash))
+        if (string.IsNullOrEmpty(user.PinHash))
+        {
+            /*
+              ENROLLING. The mirror of the change branch below, and it closes the half ADR-0040 left
+              open on purpose. Its deferral said the reasoning was "worth re-examining if the
+              enrolment entry point ever moves away from the post-registration handoff" — #105 moved
+              it: there are now four ways into /pin-setup and three of them can be days after login.
+
+              Measured through the BFF on `main` @ 4811667, before this branch existed:
+                register                    -> 201, hasPin:false, authLevel 1
+                set-pin "424242"            -> 200      cookie ONLY, no password
+                verify-pin "424242"         -> 200, authLevel 2
+                deposit 250 / withdraw 250  -> 201, balanceAfter 0.0000
+                GET .../full-number         -> 200, "AB-8512-2148-18"
+              A session cookie was the entire proof required to mint the credential that authorises
+              every money movement.
+
+              The password is the bar and also the CEILING: NIST SP 800-63-4B §4.1.2 requires binding
+              at the maximum AAL currently available on the account or the maximum at which the new
+              authenticator will be used, WHICHEVER IS LOWER. With no PIN enrolled, the account's
+              maximum is the password — so demanding anything heavier would be invention, not rigour.
+            */
+            if (string.IsNullOrEmpty(request.Password))
+            {
+                // 422 for the same reason as the CurrentPin branch: "required only when no PIN
+                // exists yet" is a business rule the schema cannot express.
+                throw new BusinessRuleException(
+                    "Your password is required to set a PIN.", ErrorCodes.PasswordRequired);
+            }
+
+            await VerifyAccountPasswordAsync(user, request.Password);
+        }
+        else
         {
             if (string.IsNullOrEmpty(request.CurrentPin))
             {
@@ -616,6 +652,82 @@ public class AuthService : IAuthService
             throw new BusinessRuleException($"Failed to set PIN: {errors}");
         }
 
+        if (enrolling)
+        {
+            // Detective control, in the OPERATOR's log — see SecurityEvents.PinEnrolled: this is
+            // deliberately NOT the independent notification to the account owner that NIST
+            // SP 800-63-4B §4.1.2 also requires, because there is no mail transport in this system
+            // to send one with. Saying so here rather than letting the line read as compliance.
+            _logger.LogInformation(
+                "SecurityEvent {SecurityEvent}: user {UserId} enrolled a PIN after proving their password",
+                SecurityEvents.PinEnrolled, userId);
+        }
+
         _logger.LogInformation("User {UserId} set their PIN", userId);
+    }
+
+    /// <summary>
+    /// Prove the account password for a sensitive action that is NOT a login, on the SAME lockout.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The counting is the whole point, and skipping it would have been strictly worse than the hole
+    /// this closes: an endpoint that checks a password without counting failures is an UNCOUNTED
+    /// PASSWORD-GUESSING ORACLE, reachable with nothing but a session. The same sentence is already
+    /// written a few lines above about <c>CurrentPin</c>, which is verified through
+    /// <c>IPinVerifier</c> precisely so wrong values land on the shared PIN lockout.
+    /// </para>
+    /// <para>
+    /// Every branch mirrors <see cref="LoginAsync"/>, on purpose — including revealing a lock ONLY
+    /// once the password has been proven (ADR-0012), so the lock state never becomes a signal for a
+    /// guesser. What it does NOT mirror is the generic "Invalid email or password": the caller is
+    /// already authenticated as a known account, so there is no enumeration to protect and a vague
+    /// message would only leave the user guessing which field was wrong.
+    /// </para>
+    /// </remarks>
+    private async Task VerifyAccountPasswordAsync(ApplicationUser user, string password)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var passwordOk = await _userManager.CheckPasswordAsync(user, password);
+        // Respect Identity's per-user LockoutEnabled opt-out, exactly as the login path does.
+        var lockedUntil = user.LockoutEnabled && user.LockoutEnd is { } end && end > now
+            ? end
+            : (DateTimeOffset?)null;
+
+        if (passwordOk)
+        {
+            if (lockedUntil is { } until)
+            {
+                _logger.LogWarning(
+                    "PIN enrolment refused for locked account {UserId} until {Until}", user.Id, until);
+                throw AccountLockedException.Until(until, now);
+            }
+
+            if (user.AccessFailedCount != 0 || user.LockoutEnd is not null)
+            {
+                await ResetLoginLockoutAsync(user);
+                /*
+                  MIRROR the reset onto the TRACKED entity — the same aliasing trap the CurrentPin
+                  branch documents. ResetLoginLockoutAsync writes through its own path; `user` here
+                  was loaded by _userManager and still holds the pre-reset counters, and the
+                  UpdateAsync that persists the new PIN hash writes the whole tracked row. Without
+                  these two lines the reset is resurrected by the very call that stores the PIN.
+                */
+                user.AccessFailedCount = 0;
+                user.LockoutEnd = null;
+            }
+
+            return;
+        }
+
+        // Wrong password. Count it — but not while already locked, so a persistent attacker cannot
+        // extend the window by hammering this endpoint instead of the login one.
+        if (lockedUntil is null)
+        {
+            await IncrementAndMaybeLockLoginAsync(user, now);
+        }
+
+        _logger.LogWarning("PIN enrolment refused: wrong password for account {UserId}", user.Id);
+        throw new AuthenticationException("Invalid password.", ErrorCodes.InvalidCredentials);
     }
 }

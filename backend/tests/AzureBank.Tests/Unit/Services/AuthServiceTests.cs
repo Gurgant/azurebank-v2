@@ -795,12 +795,17 @@ public class AuthServiceTests : IDisposable
     {
         // Arrange
         var user = CreateTestUser();
-        var request = new SetPinRequest { Pin = "123456" };
+        // ENROLLING (the fixture's user has no PinHash), so the password is the required proof.
+        var request = new SetPinRequest { Pin = "123456", Password = "TestPass123!" };
         var expectedHash = "hashed-new-pin";
 
         _userManagerMock
             .Setup(x => x.FindByIdAsync(user.Id.ToString()))
             .ReturnsAsync(user);
+
+        _userManagerMock
+            .Setup(x => x.CheckPasswordAsync(user, request.Password!))
+            .ReturnsAsync(true);
 
         _passwordHasherMock
             .Setup(x => x.HashPin(request.Pin))
@@ -816,6 +821,25 @@ public class AuthServiceTests : IDisposable
         // Assert
         user.PinHash.Should().Be(expectedHash);
         _userManagerMock.Verify(x => x.UpdateAsync(user), Times.Once);
+    }
+
+    [Fact]
+    public async Task SetPinAsync_Enrolling_WithoutPassword_NeverTouchesTheHash()
+    {
+        // The cheapest possible statement of T7's rule: refused BEFORE anything is hashed or
+        // written, so a rejected enrolment cannot leave a half-applied credential behind.
+        var user = CreateTestUser();
+
+        _userManagerMock
+            .Setup(x => x.FindByIdAsync(user.Id.ToString()))
+            .ReturnsAsync(user);
+
+        var act = () => _sut.SetPinAsync(user.Id, new SetPinRequest { Pin = "123456" });
+
+        (await act.Should().ThrowAsync<BusinessRuleException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.PasswordRequired);
+        user.PinHash.Should().BeNull();
+        _userManagerMock.Verify(x => x.UpdateAsync(It.IsAny<ApplicationUser>()), Times.Never);
     }
 
     [Fact]
@@ -841,11 +865,15 @@ public class AuthServiceTests : IDisposable
     {
         // Arrange
         var user = CreateTestUser();
-        var request = new SetPinRequest { Pin = "123456" };
+        var request = new SetPinRequest { Pin = "123456", Password = "TestPass123!" };
 
         _userManagerMock
             .Setup(x => x.FindByIdAsync(user.Id.ToString()))
             .ReturnsAsync(user);
+
+        _userManagerMock
+            .Setup(x => x.CheckPasswordAsync(user, request.Password!))
+            .ReturnsAsync(true);
 
         _passwordHasherMock
             .Setup(x => x.HashPin(request.Pin))

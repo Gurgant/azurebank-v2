@@ -2991,6 +2991,13 @@
               "string"
             ],
             "description": "PIN must be exactly 6 digits."
+          },
+          "password": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The account password. Required when enrolling a PIN; ignored when changing an existing one,\r\nwhere `currentPin` is the proof instead."
           }
         }
       },

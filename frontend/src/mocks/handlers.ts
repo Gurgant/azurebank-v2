@@ -2577,7 +2577,20 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     format check above runs first (ASP.NET binds and validates before the action), then the session,
     then this. `mockState.pin` being set is the mock's equivalent of a non-null PinHash.
   */
+  /*
+    ENROLLING costs the PASSWORD (T7/#201), and the mock enforces it because the mock's job is to
+    be a faithful consumer of the contract, never a softer one. Measured against the real pipeline
+    on this branch:
+      enrol, no password        -> 422 PASSWORD_REQUIRED
+      enrol, wrong password     -> 401 INVALID_CREDENTIALS (and it COUNTS toward the login lockout)
+      enrol, correct password   -> 200
+      change, password only     -> 422 PIN_REQUIRED  (the two proofs are not interchangeable)
+    The lockout half is deliberately NOT modelled here: this mock has no login-lockout state, and
+    inventing one would be a shape the real system does not have. The API integration tests own it.
+  */
+  const password = authBody.body.password as string | undefined;
   const currentPin = authBody.body.currentPin as string | undefined;
+
   /*
     The gate is `session.hasPin` — the mock's stand-in for a non-null PinHash — NOT `mockState.pin`.
     A first draft used the latter and broke the PIN-setup wizard: `mockState.pin` is the VALUE
@@ -2609,6 +2622,28 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
     // binding and rejects it, so the API answers 400 — measured — where a genuinely missing value
     // gets the 422 below. A first draft skipped empty strings and produced 422 for both.
     return modelStateProblem({ CurrentPin: ['PIN must be exactly 6 digits.'] });
+  }
+
+  if (!mockState.session.hasPin) {
+    if (typeof password !== 'string' || password.length === 0) {
+      // `problem`, not `bffProblem`: the BFF forwards the API's ProblemDetails verbatim through
+      // ForwardUpstreamError, so the body carries errorCode and the API's own instance — the same
+      // shape the PIN_REQUIRED branch below already returns.
+      return problem({
+        instance: '/api/auth/pin',
+        status: 422,
+        errorCode: 'PASSWORD_REQUIRED',
+        detail: 'Your password is required to set a PIN.',
+      });
+    }
+    if (password !== MOCK_PASSWORD) {
+      return problem({
+        instance: '/api/auth/pin',
+        status: 401,
+        errorCode: 'INVALID_CREDENTIALS',
+        detail: 'Invalid password.',
+      });
+    }
   }
 
   if (mockState.session.hasPin) {

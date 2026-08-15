@@ -365,6 +365,105 @@ public class AuthEndpointTests : IntegrationTestBase
 
     #region PIN Tests
 
+    /// <summary>
+    /// THE ACCEPTANCE CRITERION for T7/T8, written as the attack it refuses.
+    ///
+    /// <para>
+    /// Measured on `main` @ 4811667 through the real BFF before this existed: a session cookie on an
+    /// account that had never enrolled a PIN was enough to choose one, verify it to authLevel 2,
+    /// withdraw the whole balance and unmask the account number. Nothing was ever guessed, so
+    /// ADR-0010's attempt-limiting never engaged, and ADR-0008's gate only checks that A PIN was
+    /// entered — not whose.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task SetPin_Enrolling_WithoutPassword_IsRefused()
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        // Exactly the request that used to succeed: authenticated, well-formed, no password.
+        var response = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "424242" }, JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PasswordRequired);
+
+        // And the refusal is real, not cosmetic: the PIN it would have bound does not work.
+        var verify = await Client.PostAsJsonAsync(
+            "/api/auth/pin/verify", new VerifyPinRequest { Pin = "424242" }, JsonOptions);
+        verify.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await verify.Content.ReadAsStringAsync()).Should()
+            .Contain("\"verified\":false", "no PIN was ever enrolled");
+    }
+
+    [Fact]
+    public async Task SetPin_Enrolling_WithWrongPassword_IsRefused_AndCountsTowardTheLoginLockout()
+    {
+        /*
+          The trap this test exists for: a password check that does NOT count failures turns
+          /api/auth/pin into an uncounted password-guessing oracle reachable with a session alone —
+          strictly worse than the hole it closes. So the assertion is not merely "401": it is that
+          the SAME login lockout engages, which is what makes guessing here no cheaper than guessing
+          at /api/auth/login.
+        */
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        var wrong = new SetPinRequest { Pin = "424242", Password = "NotThePassword1!" };
+
+        for (var i = 0; i < ValidationRules.MaxLoginAttempts - 1; i++)
+        {
+            (await Client.PostAsJsonAsync("/api/auth/pin", wrong, JsonOptions)).StatusCode
+                .Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        // The crossing attempt locks the account, exactly as the login path would.
+        (await Client.PostAsJsonAsync("/api/auth/pin", wrong, JsonOptions)).StatusCode
+            .Should().Be(HttpStatusCode.Unauthorized);
+
+        // Proven by the CORRECT password now reporting the lock — the login path reveals it only
+        // once knowledge of the password is established, and so does this one.
+        var correct = new SetPinRequest { Pin = "424242", Password = TestUserPassword };
+        var locked = await Client.PostAsJsonAsync("/api/auth/pin", correct, JsonOptions);
+        locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        (await locked.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.AccountLocked);
+    }
+
+    [Fact]
+    public async Task SetPin_Enrolling_WithCorrectPassword_Succeeds_AndTheEnrolledPinWorks()
+    {
+        var (token, _, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        var response = await Client.PostAsJsonAsync(
+            "/api/auth/pin",
+            new SetPinRequest { Pin = "424242", Password = TestUserPassword },
+            JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var verify = await Client.PostAsJsonAsync(
+            "/api/auth/pin/verify", new VerifyPinRequest { Pin = "424242" }, JsonOptions);
+        (await verify.Content.ReadAsStringAsync()).Should().Contain("\"verified\":true");
+    }
+
+    [Fact]
+    public async Task SetPin_Changing_StillCostsTheOldPin_NotThePassword()
+    {
+        // The two proofs are not interchangeable: a password does not buy a PIN change, because
+        // once a PIN exists the old one is the cheaper and more specific proof to demand.
+        var (token, _, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token, "123456");
+
+        var withPasswordOnly = await Client.PostAsJsonAsync(
+            "/api/auth/pin",
+            new SetPinRequest { Pin = "999999", Password = TestUserPassword },
+            JsonOptions);
+
+        withPasswordOnly.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await withPasswordOnly.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.PinRequired);
+    }
+
     [Fact]
     public async Task SetPin_WithValidPin_ReturnsOk()
     {
@@ -375,6 +474,7 @@ public class AuthEndpointTests : IntegrationTestBase
         // Act
         var response = await Client.PostAsJsonAsync("/api/auth/pin", new SetPinRequest
         {
+            Password = TestUserPassword,
             Pin = "123456"
         }, JsonOptions);
 

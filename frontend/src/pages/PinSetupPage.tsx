@@ -8,6 +8,8 @@ import {
   Spinner,
   MessageBar,
   MessageBarBody,
+  Field,
+  Input,
   tokens,
 } from '@fluentui/react-components';
 import { LockClosed24Regular, CheckmarkCircle24Filled } from '@fluentui/react-icons';
@@ -128,6 +130,15 @@ export function PinSetupPage() {
   const [step, setStep] = useState<Step>('enter');
   const [firstPin, setFirstPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  /*
+    The account password, proving that whoever is choosing this PIN is the account holder and not
+    merely the holder of a session cookie (T7/#201). Measured before this existed: a cookie alone
+    was enough to pick a PIN, reach authLevel 2 and empty the account.
+
+    It lives on the CONFIRM step rather than in a step of its own — the commitment happens here, so
+    the proof belongs here, and adding a fourth screen to a three-screen wizard buys nothing.
+  */
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // A user who already has a PIN has nothing to do here — bounce them to where they were
@@ -149,7 +160,7 @@ export function PinSetupPage() {
     setError(null);
     settled.current = true;
     try {
-      await setPinTrigger({ pin: confirmed }).unwrap();
+      await setPinTrigger({ pin: confirmed, password }).unwrap();
       setStep('success');
     } catch (caught) {
       settled.current = false;
@@ -157,12 +168,23 @@ export function PinSetupPage() {
       if (problem.errorCode === 'VALIDATION_ERROR') {
         const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
         setError(firstFieldError ?? 'That PIN is not allowed. Please choose another.');
+      } else if (problem.errorCode === 'PASSWORD_REQUIRED') {
+        setError('Enter your account password to set a PIN.');
+      } else if (problem.errorCode === 'INVALID_CREDENTIALS') {
+        // Named, not generic: the PIN boxes are fine and re-entering them would be busywork.
+        setError('That password is not correct.');
+      } else if (problem.errorCode === 'ACCOUNT_LOCKED') {
+        // Wrong passwords here count toward the SAME login lockout — say so, rather than leaving
+        // the user to discover it at the login screen.
+        setError('Too many incorrect passwords. Your account is locked; try again later.');
       } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
         setError(CONNECTION_FAILED);
       } else {
         setError(problem.detail || 'Could not set your PIN. Please try again.');
       }
-      // Restart the confirm step so the boxes are usable again.
+      // Restart the confirm step so the boxes are usable again. The password is KEPT: retyping a
+      // correct password because the PIN needed re-entering is the kind of friction that teaches
+      // people to choose shorter passwords.
       setConfirmPin('');
     }
   };
@@ -232,13 +254,41 @@ export function PinSetupPage() {
               setConfirmPin(next);
               setError(null);
             }}
-            onComplete={handleConfirmComplete}
+            /*
+              Guarded: PinInput fires this the instant the sixth digit lands, which on this step
+              would submit before the password has been typed and spend a refusal to say so. The
+              button below is the deliberate commit; auto-submit only survives for the case where
+              the password is already in hand.
+            */
+            onComplete={(value) => {
+              if (password.length > 0) void handleConfirmComplete(value);
+            }}
             error={!!error}
             disabled={isLoading}
             autoFocus
             ariaLabel="Confirm your PIN"
             ariaDescribedBy={error ? errorId : undefined}
           />
+        )}
+
+        {!onEnter && (
+          <Field
+            label="Account password"
+            hint="Proves it is you setting this PIN, not just someone using your open session."
+            style={{ width: '100%' }}
+          >
+            <Input
+              type="password"
+              value={password}
+              onChange={(_, data) => {
+                setPassword(data.value);
+                setError(null);
+              }}
+              disabled={isLoading}
+              autoComplete="current-password"
+              placeholder="Your account password"
+            />
+          </Field>
         )}
 
         {error && (
@@ -266,7 +316,7 @@ export function PinSetupPage() {
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => void handleConfirmComplete(confirmPin)}
-              disabled={confirmPin.length !== 6 || isLoading}
+              disabled={confirmPin.length !== 6 || password.length === 0 || isLoading}
             >
               {isLoading ? <Spinner size="tiny" /> : 'Set PIN'}
             </Button>

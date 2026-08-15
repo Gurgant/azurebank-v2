@@ -110,7 +110,7 @@ public sealed class PinPepperMigrationSqlServerTests : IDisposable
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin")
         {
-            Content = JsonContent.Create(new SetPinRequest { Pin = pin }, options: Json)
+            Content = JsonContent.Create(new SetPinRequest { Pin = pin, Password = "TestPass123!" }, options: Json)
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         (await client.SendAsync(request)).EnsureSuccessStatusCode();

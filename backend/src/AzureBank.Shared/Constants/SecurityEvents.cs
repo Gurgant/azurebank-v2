@@ -107,6 +107,22 @@ public static class SecurityEvents
     /// <remarks>OWASP: <c>user_updated:[userid,onuserid,attributes[…]]</c>.</remarks>
     public const string AzureTagRenamed = "AzureTagRenamed";
 
+    /// <summary>A PIN was bound to an account for the FIRST time, behind a password proof.</summary>
+    /// <remarks>
+    /// OWASP has no exact counterpart: <c>user_updated:[userid,onuserid,attributes[…]]</c> is the
+    /// closest, and it undersells the event — this binds an authentication factor that unlocks
+    /// every money movement, which is why it is recorded separately from an ordinary profile edit.
+    ///
+    /// <para>
+    /// ⚠️ This is a DETECTIVE record in the operator's log. It is NOT the notification NIST
+    /// SP 800-63-4B §4.1.2 requires ("the CSP SHALL notify the subscriber via a mechanism
+    /// INDEPENDENT of the transaction binding the new authenticator") — that has to reach the
+    /// account owner, not the operator, and this codebase has no email transport at all. Tracked
+    /// separately; do not let this line stand in for it.
+    /// </para>
+    /// </remarks>
+    public const string PinEnrolled = "PinEnrolled";
+
     /// <summary>A self-registration was refused because the email or handle already exists.</summary>
     /// <remarks>
     /// No OWASP counterpart: <c>user_created</c> covers the success only. This exists because the

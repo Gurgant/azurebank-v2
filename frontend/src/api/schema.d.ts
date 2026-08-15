@@ -2344,6 +2344,11 @@ export interface components {
             pin: string;
             /** @description PIN must be exactly 6 digits. */
             currentPin?: null | string;
+            /**
+             * @description The account password. Required when enrolling a PIN; ignored when changing an existing one,
+             *     where `currentPin` is the proof instead.
+             */
+            password?: null | string;
         };
         /** @description Token information returned in authentication responses. */
         TokenResponse: {
