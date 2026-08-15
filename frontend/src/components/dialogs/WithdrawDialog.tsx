@@ -15,7 +15,7 @@ import {
   Warning24Regular,
   LockClosed24Regular,
 } from '@fluentui/react-icons';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../../theme/tokens';
 import type { ApiProblem } from '../../api/problemBaseQuery';
@@ -27,11 +27,14 @@ import { RetryCountdown, retryDeadline } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
+  insufficientFundsMessage,
   parseAmountInput,
   withdrawFormSchema,
   type WithdrawFormOutput,
   type WithdrawFormValues,
 } from '../../forms/moneySchemas';
+import { availableBalanceOf } from '../../utils/availableBalance';
+import { useFundsGate } from '../../hooks/useFundsGate';
 import { AmountField } from '../form/AmountField';
 import { DescriptionField } from '../form/DescriptionField';
 import { PinInput } from '../PinInput';
@@ -152,7 +155,16 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const defaultAccountId = accounts.length > 0 ? accounts[0].id : '';
   const [resolvedBalanceOf, setResolvedBalanceOf] = useState(defaultAccountId);
   const selectedForBalance = accounts.find((a) => a.id === resolvedBalanceOf) ?? null;
-  const availableBalance = selectedForBalance?.balance ?? 0;
+  const availableBalance = selectedForBalance ? availableBalanceOf(selectedForBalance) : 0;
+
+  /*
+    The client half of "the PIN is never asked for an operation that cannot succeed". The Zod bound
+    above is built from a CACHED balance; this re-reads it from the server at the moment the user
+    commits. See `useFundsGate` for why that matters — measured, a doomed request still spends a
+    PIN attempt, and three of those lock the PIN for fifteen minutes.
+  */
+  const confirmFunds = useFundsGate();
+  const [checkingFunds, setCheckingFunds] = useState(false);
 
   // The balance bound is dynamic: the schema (and so the resolver) is rebuilt when the
   // selected account's balance changes — RHF revalidates through the new bounds.
@@ -167,9 +179,10 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     defaultValues: { accountId: defaultAccountId, amount: '', description: '' },
   });
 
-  // Re-run amount validation when the balance bound changes (an over-balance amount is
-  // already RESET on switch, but a kept amount's hint text embeds the balance — the
-  // cached result must not describe the previous account).
+  // Re-run amount validation when the balance bound changes. The amount is KEPT on an account
+  // switch (see the account card's handler), so THIS is what marks an over-balance value against
+  // the new bound — the effect is load-bearing, not a belt-and-braces revalidation. The hint text
+  // also embeds the balance, so a cached result would describe the previous account.
   useEffect(() => {
     void trigger('amount');
   }, [availableBalance, trigger]);
@@ -210,12 +223,67 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     setInFlight(false);
   };
 
+  /**
+   * Continue → PIN, but only once the SERVER has confirmed the amount still fits.
+   *
+   * This is the whole point of the change: a strong-authentication ceremony must never be spent on
+   * a request that is already known to fail. Measured on the running API, an over-balance
+   * withdrawal with a mistyped PIN answers 401 INVALID_PIN — the funds check comes AFTER the PIN —
+   * so reaching this step with a stale balance costs the user a PIN attempt, and three of those
+   * lock them out for fifteen minutes over an operation that could never have succeeded.
+   *
+   * On refusal we stay on the form. The banner explains the action; the field's own hint turns red
+   * on its own, because the refetch updated the cache the Zod bound is built from.
+   */
+  const advanceToPin = async () => {
+    if (!selectedAccount) return;
+    setCheckingFunds(true);
+    try {
+      const verdict = await confirmFunds(selectedAccount.id, amountNumber);
+      if (verdict.status === 'insufficient') {
+        setError(insufficientFundsMessage(verdict.available));
+        return;
+      }
+      // 'unknown' advances on purpose — see useFundsGate. A courtesy check that became a blocker
+      // when the network hiccupped would be worse than the problem it solves.
+      goToStep('pin');
+    } finally {
+      setCheckingFunds(false);
+    }
+  };
+
+  /**
+   * `handleSubmit`'s SECOND argument, and the reason it now has one.
+   *
+   * The Withdraw button's disabled condition never mentioned form validity, so when the balance
+   * moved while the PIN step was open the click ran `handleSubmit`, the resolver refused, and
+   * NOTHING happened — no request, no message, no state change. A dead control that looks alive.
+   * The errors are passed in rather than read from `formState`, so this reports what actually
+   * failed instead of guessing.
+   */
+  const onInvalid = (errors: FieldErrors<WithdrawFormValues>) => {
+    setStep('form');
+    setError(errors.amount?.message ?? 'Please check the details and try again.');
+  };
+
   const amountValid = amountNumber > 0 && !formState.errors.amount;
   const newBalance = selectedAccount ? availableBalance - amountNumber : 0;
 
   const onValid = async (data: WithdrawFormOutput) => {
     const account = accounts.find((a) => a.id === data.accountId);
     if (!account || pin.length !== PIN_LENGTH || lockDeadline !== null) {
+      return;
+    }
+    /*
+      Last look before the request leaves. The funds gate took a round trip when Continue was
+      pressed; this one is free — it reads the freshest CACHED balance, which a mutation elsewhere
+      in this tab may have moved since. Cheap enough to always do, and it means an over-balance
+      request is not merely refused by the server but never sent.
+    */
+    const stillAvailable = availableBalanceOf(account);
+    if (data.amount > stillAvailable) {
+      setStep('form');
+      setError(insufficientFundsMessage(stillAvailable));
       return;
     }
     setError(null);
@@ -380,11 +448,16 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                     const selectAccount = () => {
                       field.onChange(account.id);
                       setResolvedBalanceOf(account.id);
-                      // Switching to a smaller account may strand an over-balance
-                      // amount — clear it, exactly like the legacy handler.
-                      if (amountNumber > account.balance) {
-                        setValue('amount', '', { shouldValidate: true });
-                      }
+                      /*
+                        Switching to a smaller account used to CLEAR an over-balance amount. It no
+                        longer does. Silently deleting what someone typed is the hostile half of
+                        "don't let them enter too much": the figure vanishes with no explanation,
+                        and the very message that would explain it — the red hint naming the new
+                        balance — never gets a value to attach to. The amount stays, the schema's
+                        `trigger('amount')` effect re-validates it against the new bound, and the
+                        user sees exactly why they cannot continue. The two transfer pages already
+                        behaved this way; this is the surface that disagreed.
+                      */
                       onBodyEdit();
                     };
                     return (
@@ -434,17 +507,31 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
                 currency: styles.amountCurrency,
                 input: styles.amountInput,
                 hint: styles.amountHint,
+                invalid: styles.amountInvalid,
               }}
               belowSlot={
-                selectedAccount && amountValid ? (
+                <div className={styles.availableRow}>
                   <Text className={styles.newBalance}>
-                    New balance: {formatCurrency(newBalance)}
+                    {selectedAccount && amountValid
+                      ? `New balance: ${formatCurrency(newBalance)}`
+                      : `Available: ${formatCurrency(availableBalance)}`}
                   </Text>
-                ) : (
-                  <Text className={styles.newBalance}>
-                    Available: {formatCurrency(availableBalance)}
-                  </Text>
-                )
+                  {/*
+                    The constructive half of "don't let them send more than they have": until now
+                    a user who wanted to move everything had to read the balance and retype it,
+                    which is exactly where an over-balance typo comes from. The accessible name
+                    carries the figure, because "Use max" alone tells a screen-reader user nothing.
+                  */}
+                  <button
+                    type="button"
+                    className={styles.useMaxBtn}
+                    onClick={() => handleQuickAmount(availableBalance)}
+                    disabled={availableBalance <= 0}
+                    aria-label={`Use maximum, ${formatCurrency(availableBalance)}`}
+                  >
+                    Use max
+                  </button>
+                </div>
               }
             />
           </div>
@@ -596,10 +683,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             appearance="primary"
             size="large"
             style={{ width: '100%', height: '48px' }}
-            onClick={() => goToStep('pin')}
-            disabled={!formState.isValid}
+            onClick={() => void advanceToPin()}
+            disabled={!formState.isValid || checkingFunds}
           >
-            {`Continue ${amountNumber > 0 && amountValid ? `· ${formatCurrency(amountNumber)}` : ''}`.trim()}
+            {checkingFunds ? (
+              <Spinner size="tiny" />
+            ) : (
+              `Continue ${amountNumber > 0 && amountValid ? `· ${formatCurrency(amountNumber)}` : ''}`.trim()
+            )}
           </Button>
         ) : (
           <>
@@ -607,7 +698,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               appearance="primary"
               size="large"
               style={{ width: '100%', height: '48px' }}
-              onClick={() => void handleSubmit(onValid)()}
+              onClick={() => void handleSubmit(onValid, onInvalid)()}
               disabled={isSubmitting || pin.length !== PIN_LENGTH || lockDeadline !== null}
             >
               {isSubmitting ? <Spinner size="tiny" /> : `Withdraw ${formatCurrency(amountNumber)}`}

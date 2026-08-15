@@ -48,6 +48,27 @@ export function normalizeAzureTag(value: string): string {
   return value.trim().replace(/^@/, '');
 }
 
+/**
+ * What the FIELD says about a value that is too large. All three outflow schemas built this string
+ * inline, identically — which is how one condition ends up phrased two ways the moment somebody
+ * edits one of them.
+ */
+export function exceedsBalanceMessage(availableBalance: number): string {
+  return `Exceeds available balance of ${formatCurrency(availableBalance)}.`;
+}
+
+/**
+ * What the BANNER says when an operation was refused for the same reason.
+ *
+ * Deliberately a different sentence from {@link exceedsBalanceMessage}, because it answers a
+ * different question. The field hint explains a value the user can see and edit; this one explains
+ * that an action they just took did not happen, and names the balance as it is NOW — which, when
+ * the funds gate fires, is a number they have not seen yet.
+ */
+export function insufficientFundsMessage(availableBalance: number): string {
+  return `Insufficient balance for this operation — ${formatCurrency(availableBalance)} available.`;
+}
+
 interface AmountBoundsMessages {
   min: string;
   max: string;
@@ -104,7 +125,7 @@ export function withdrawFormSchema(availableBalance: number) {
       messages: {
         min: 'Minimum withdrawal is €0.01.',
         max: 'Maximum withdrawal is €100,000.',
-        balance: `Exceeds available balance of ${formatCurrency(availableBalance)}.`,
+        balance: exceedsBalanceMessage(availableBalance),
       },
     }),
     description: descriptionField,
@@ -123,7 +144,7 @@ export function transferFormSchema(availableBalance: number) {
       messages: {
         min: 'Minimum transfer is €0.01.',
         max: 'Maximum transfer is €100,000.',
-        balance: `Exceeds available balance of ${formatCurrency(availableBalance)}.`,
+        balance: exceedsBalanceMessage(availableBalance),
       },
     }),
   });
@@ -140,7 +161,7 @@ export function internalTransferFormSchema(availableBalance: number) {
         messages: {
           min: 'Minimum transfer is €0.01.',
           max: 'Maximum transfer is €100,000.',
-          balance: `Exceeds available balance of ${formatCurrency(availableBalance)}.`,
+          balance: exceedsBalanceMessage(availableBalance),
         },
       }),
     })

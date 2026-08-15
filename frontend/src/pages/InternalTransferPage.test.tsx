@@ -8,7 +8,7 @@ import { problem } from '../mocks/problem';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
-import { seedMockSession } from '../mocks/state';
+import { mockState, seedMockSession } from '../mocks/state';
 
 /**
  * Review -> PIN -> Send (ADR-0041). The flow gained a step: the review screen's primary button is
@@ -58,6 +58,42 @@ function renderInternal() {
 */
 beforeEach(() => {
   seedMockSession();
+});
+
+/**
+ * T11, on a wizard page. `balance-guard.test.tsx` proves the shared pieces against the withdraw
+ * dialog; this proves the WIRING here, which is per-page and is the part that can silently be
+ * missing: the gate has to run on the review screen's Continue, and its refusal has to reach the
+ * banner through `wizard.fail` rather than vanishing.
+ */
+describe('the balance guard on an internal transfer', () => {
+  it('does not reach the PIN step when the server says the source balance has moved', async () => {
+    let reads = 0;
+    server.use(
+      http.get('*/api/accounts', () => {
+        reads += 1;
+        // Read 1 renders the form with the seeded €1,250.50; from the gate's read onward the
+        // source account holds €10, so the €50 the user is reviewing can no longer be sent.
+        const balance = reads === 1 ? 1250.5 : 10;
+        const [main, ...rest] = mockState.accounts;
+        return HttpResponse.json({ data: [{ ...main, balance }, ...rest], message: null });
+      }),
+    );
+    renderInternal();
+    await screen.findByRole('button', { name: 'From Main Account' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
+    await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(
+      await screen.findByText('Insufficient balance for this operation — €10.00 available.'),
+    ).toBeInTheDocument();
+    // The ceremony is never rendered — which is the whole requirement.
+    expect(screen.queryByLabelText('Digit 1 of 6')).not.toBeInTheDocument();
+  });
 });
 
 describe('internal transfer (PR-11b)', () => {

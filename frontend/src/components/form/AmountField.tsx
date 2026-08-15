@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { Controller, type Control, type FieldPath, type FieldValues } from 'react-hook-form';
-import { Text } from '@fluentui/react-components';
+import { mergeClasses, Text } from '@fluentui/react-components';
 import { sanitizeAmountInput } from '../../forms/moneySchemas';
 
 export interface AmountFieldProps<
@@ -24,6 +24,12 @@ export interface AmountFieldProps<
     currency: string;
     input: string;
     hint: string;
+    /**
+     * Applied to the numerals AND the € prefix while the field is in error, so the figure itself
+     * turns red rather than only the sentence beneath it. Optional: deposit has no balance bound
+     * and its only errors are the fixed min/max, so it opts out.
+     */
+    invalid?: string;
   };
 }
 
@@ -47,26 +53,46 @@ export function AmountField<
   belowSlot,
   classNames,
 }: AmountFieldProps<TFieldValues, TContext, TTransformedValues>) {
+  const hintId = useId();
   return (
     <Controller
       control={control}
       name={name}
       render={({ field, fieldState }) => {
         const showHint = field.value !== '' && fieldState.error !== undefined;
+        /*
+          `mergeClasses`, not string concatenation. Griffel's atomic classes all carry the same
+          specificity, so two classes declaring `color` are resolved by STYLESHEET INSERTION ORDER —
+          concatenating happened to work only because `amountInvalid` is declared after
+          `amountInput` in the styles object, and reordering those keys would silently un-red the
+          figure. `mergeClasses` drops the losing atom outright and makes the last argument win.
+
+          The prefix and the numerals take the SAME class on purpose: a red sentence under a black
+          figure reads as a note about the form; a red figure reads as "this number".
+        */
+        const invalid = showHint ? classNames.invalid : undefined;
         return (
           <>
             <div className={classNames.wrapper}>
-              <span className={classNames.currency}>€</span>
+              <span className={mergeClasses(classNames.currency, invalid)}>€</span>
               <input
                 type="text"
                 inputMode="decimal"
                 placeholder="0"
                 aria-label={ariaLabel}
-                className={classNames.input}
+                className={mergeClasses(classNames.input, invalid)}
                 ref={field.ref}
                 name={field.name}
                 value={field.value}
                 disabled={disabled}
+                /*
+                  The hint used to be red text floating near an input that never referenced it, so
+                  a screen reader announced the message once (role="alert") and then, on returning
+                  to the field, said nothing about why it was wrong. `aria-invalid` carries the
+                  state and `aria-describedby` carries the reason — including the exact figure.
+                */
+                aria-invalid={showHint || undefined}
+                aria-describedby={showHint ? hintId : undefined}
                 onBlur={field.onBlur}
                 onChange={(e) => {
                   field.onChange(sanitizeAmountInput(e.target.value));
@@ -76,7 +102,7 @@ export function AmountField<
             </div>
             {belowSlot}
             {showHint && (
-              <Text role="alert" className={classNames.hint}>
+              <Text role="alert" id={hintId} className={classNames.hint}>
                 {fieldState.error?.message}
               </Text>
             )}
