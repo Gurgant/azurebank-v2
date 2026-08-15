@@ -91,6 +91,14 @@ export interface MoneyWizard<TBody, TResult> {
   /** Review -> PIN. The last thing before the money moves. */
   toPin: () => void;
   /** Back to the form. Guarded: a live key must not reach the fields that would rotate it. */
+  /**
+   * Refuse to advance, and say why, with no request having been made.
+   *
+   * The banner otherwise only ever comes from a failed `run`, which means the only way a flow could
+   * explain a refusal was to attempt the thing it was refusing. The funds gate needs the opposite:
+   * stop BEFORE the PIN step, and still say something.
+   */
+  fail: (text: string) => void;
   toForm: () => void;
   /** The verify view's "it didn't go through" — abandons the intent so the next send is a NEW one. */
   startOver: () => void;
@@ -254,6 +262,13 @@ export function useMoneyWizard<TBody, TResult>(
       // keepInputErrors: false — an INSUFFICIENT_FUNDS banner from a previous attempt must not
       // follow the user onto a screen where the only editable thing is the PIN.
       goToStep('pin', { keepInputErrors: false });
+    },
+
+    fail(text) {
+      // 'input' scope, by the rule in moneyProblem: the message names a value that is editable on
+      // the destination step (the amount), so it must SURVIVE the trip back to the form rather
+      // than being cleared by the transition that takes the user to where they can fix it.
+      setFailure({ text, scope: 'input' });
     },
 
     toForm() {

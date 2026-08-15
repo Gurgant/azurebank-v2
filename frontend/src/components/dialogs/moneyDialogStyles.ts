@@ -147,6 +147,21 @@ export const useMoneyDialogStyles = makeStyles({
   },
   newBalance: { fontSize: '13px', color: colors.neutral[500] },
   amountHint: { fontSize: '13px', fontWeight: 500, color: colors.semantic.error.main },
+  // Composed ON TOP of amountCurrency/amountInput, so it only needs to restate the colour.
+  amountInvalid: { color: colors.semantic.error.main },
+  availableRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '8px' },
+  useMaxBtn: {
+    background: 'none',
+    border: 'none',
+    padding: '0 2px',
+    font: 'inherit',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: colors.brand[60],
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    ':disabled': { color: colors.neutral[300], cursor: 'not-allowed', textDecoration: 'none' },
+  },
   quickAmounts: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' },
   quickBtn: {
     minWidth: '70px',

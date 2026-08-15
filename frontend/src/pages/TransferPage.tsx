@@ -10,7 +10,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../theme/tokens';
 import type { ApiProblem } from '../api/problemBaseQuery';
@@ -28,6 +28,7 @@ import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
 import {
+  insufficientFundsMessage,
   normalizeAzureTag,
   parseAmountInput,
   transferFormSchema,
@@ -35,6 +36,8 @@ import {
   type TransferFormValues,
 } from '../forms/moneySchemas';
 import { AmountField } from '../components/form/AmountField';
+import { availableBalanceOf } from '../utils/availableBalance';
+import { useFundsGate } from '../hooks/useFundsGate';
 import { PinInput } from '../components/PinInput';
 import { CONNECTION_FAILED } from '../api/problemMessages';
 
@@ -204,7 +207,12 @@ export function TransferPage() {
     accounts.find((a) => a.isPrimary) ??
     accounts[0] ??
     null;
-  const availableBalance = selectedAccount?.balance ?? 0;
+  const availableBalance = selectedAccount ? availableBalanceOf(selectedAccount) : 0;
+
+  // See `useFundsGate`: the Zod bound is built from a CACHED balance, and reaching the PIN step
+  // with a stale one costs a PIN attempt on a request that cannot succeed.
+  const confirmFunds = useFundsGate();
+  const [checkingFunds, setCheckingFunds] = useState(false);
 
   // Auto-select the legacy default (primary ?? first) into the form once accounts load,
   // and keep the schema's balance bound in lockstep with the selected account.
@@ -279,13 +287,45 @@ export function TransferPage() {
   const canReview = formState.isValid && !!selectedAccount && !!recipient;
   const newBalance = availableBalance - amountNumber;
 
-  /** Review -> PIN. Validation has already passed; nothing is sent yet. */
-  const onReviewed = () => {
+  /**
+   * Review -> PIN, but only once the SERVER has confirmed the amount still fits.
+   *
+   * The form's validity was decided against a cached balance, possibly a page load ago. Asking the
+   * server here — before the PIN screen exists — is what keeps a strong-authentication ceremony
+   * from being spent on a transfer that is already known to fail, and what keeps a mistyped PIN on
+   * such an attempt from counting toward the fifteen-minute lockout.
+   */
+  const onReviewed = async () => {
     if (!selectedAccount || !recipient) return;
-    setPin('');
-    setPinError(false);
-    setPinNonce((n) => n + 1);
-    wizard.toPin();
+    setCheckingFunds(true);
+    try {
+      const verdict = await confirmFunds(selectedAccount.id, amountNumber);
+      if (verdict.status === 'insufficient') {
+        // Back to the form, where the amount is editable — and `fail` is 'input'-scoped, so the
+        // banner survives that transition rather than being cleared by it.
+        wizard.toForm();
+        wizard.fail(insufficientFundsMessage(verdict.available));
+        return;
+      }
+      // 'unknown' proceeds on purpose: a courtesy check must not become an outage. The server
+      // still refuses, and `INSUFFICIENT_FUNDS` is already handled below.
+      setPin('');
+      setPinError(false);
+      setPinNonce((n) => n + 1);
+      wizard.toPin();
+    } finally {
+      setCheckingFunds(false);
+    }
+  };
+
+  /**
+   * `handleSubmit`'s invalid branch. Without it, a form that went invalid while the PIN step was
+   * open made Send do nothing at all — no request, no message. The errors arrive as an argument so
+   * this reports what actually failed rather than guessing.
+   */
+  const onInvalid = (errors: FieldErrors<TransferFormValues>) => {
+    wizard.toForm();
+    wizard.fail(errors.amount?.message ?? 'Please check the details and try again.');
   };
 
   const onValid = async (data: TransferFormOutput) => {
@@ -294,6 +334,19 @@ export function TransferPage() {
     // Narrowed to a const BEFORE the await, and the receipt is built from that same const. The
     // review screen and the request therefore cannot name two different people.
     const confirmed = recipient;
+
+    /*
+      Last look before the request leaves. The funds gate took a round trip at Continue; this one
+      is free — the freshest CACHED balance, which a mutation elsewhere in this tab may have moved
+      since. An over-balance transfer is therefore not merely refused by the server: it is never
+      sent.
+    */
+    const stillAvailable = availableBalanceOf(selectedAccount);
+    if (data.amount > stillAvailable) {
+      wizard.toForm();
+      wizard.fail(insufficientFundsMessage(stillAvailable));
+      return;
+    }
 
     const result = await wizard.run({
       fromAccountId: data.fromAccountId,
@@ -595,11 +648,25 @@ export function TransferPage() {
                   currency: styles.amountCurrency,
                   input: styles.amountInput,
                   hint: styles.hint,
+                  invalid: styles.amountInvalid,
                 }}
                 belowSlot={
-                  <Text className={styles.subtle}>
-                    Available: {formatCurrency(availableBalance)}
-                  </Text>
+                  <div className={styles.availableRow}>
+                    <Text className={styles.subtle}>
+                      Available: {formatCurrency(availableBalance)}
+                    </Text>
+                    {/* The constructive half of the balance cap: reaching the maximum without
+                        retyping it is what stops the over-balance typo at the source. */}
+                    <button
+                      type="button"
+                      className={styles.useMaxBtn}
+                      onClick={() => handleQuickAmount(availableBalance)}
+                      disabled={keyLive || availableBalance <= 0}
+                      aria-label={`Use maximum, ${formatCurrency(availableBalance)}`}
+                    >
+                      Use max
+                    </button>
+                  </div>
                 }
               />
             </div>
@@ -681,7 +748,7 @@ export function TransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => void handleSubmit(onValid)()}
+                onClick={() => void handleSubmit(onValid, onInvalid)()}
                 disabled={isSubmitting || pin.length !== PIN_LENGTH || pinLockDeadline !== null}
               >
                 {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
@@ -728,10 +795,10 @@ export function TransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={onReviewed}
-                disabled={isSubmitting}
+                onClick={() => void onReviewed()}
+                disabled={isSubmitting || checkingFunds}
               >
-                Continue
+                {checkingFunds ? <Spinner size="tiny" /> : 'Continue'}
               </Button>
               <Button
                 appearance="secondary"

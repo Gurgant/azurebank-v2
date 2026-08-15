@@ -8,7 +8,7 @@ import {
   MessageBarActions,
 } from '@fluentui/react-components';
 import { CheckmarkCircle24Filled, ArrowSwap24Regular } from '@fluentui/react-icons';
-import { useForm } from 'react-hook-form';
+import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import { useTransferWizardStyles } from './transferWizardStyles';
@@ -24,12 +24,15 @@ import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { formatCurrency, maskAccountNumber } from '../utils/format';
 import { RetryCountdown, retryDeadline } from '../components/feedback';
 import {
+  insufficientFundsMessage,
   internalTransferFormSchema,
   parseAmountInput,
   type InternalTransferFormOutput,
   type InternalTransferFormValues,
 } from '../forms/moneySchemas';
 import { AmountField } from '../components/form/AmountField';
+import { availableBalanceOf } from '../utils/availableBalance';
+import { useFundsGate } from '../hooks/useFundsGate';
 import { PinInput } from '../components/PinInput';
 
 const QUICK_AMOUNTS = [10, 25, 50, 100, 250];
@@ -120,7 +123,12 @@ export function InternalTransferPage() {
     accounts[0] ??
     null;
   const toAccount = accounts.find((a) => a.id === watchedToId) ?? null;
-  const availableBalance = fromAccount?.balance ?? 0;
+  const availableBalance = fromAccount ? availableBalanceOf(fromAccount) : 0;
+
+  // See `useFundsGate`: the Zod bound is built from a CACHED balance, and reaching the PIN step
+  // with a stale one costs a PIN attempt on a request that cannot succeed.
+  const confirmFunds = useFundsGate();
+  const [checkingFunds, setCheckingFunds] = useState(false);
 
   // Auto-select the legacy default source (primary ?? first) once accounts load, and keep
   // the schema's balance bound in lockstep with the source account.
@@ -167,13 +175,40 @@ export function InternalTransferPage() {
     formState.isValid && !!fromAccount && !!toAccount && fromAccount.id !== toAccount.id;
   const fromNewBalance = availableBalance - amountNumber;
 
-  /** Review -> PIN. Validation has already passed; nothing is sent yet. */
-  const onReviewed = () => {
+  /**
+   * Review -> PIN, but only once the SERVER has confirmed the amount still fits.
+   *
+   * Same reasoning as the external transfer: the form's validity was decided against a cached
+   * balance, and reaching the PIN screen on a stale one spends an attempt from a three-strike
+   * budget on a transfer that could never have completed.
+   */
+  const onReviewed = async () => {
     if (!fromAccount || !toAccount || fromAccount.id === toAccount.id) return;
-    setPin('');
-    setPinError(false);
-    setPinNonce((n) => n + 1);
-    wizard.toPin();
+    setCheckingFunds(true);
+    try {
+      const verdict = await confirmFunds(fromAccount.id, amountNumber);
+      if (verdict.status === 'insufficient') {
+        wizard.toForm();
+        wizard.fail(insufficientFundsMessage(verdict.available));
+        return;
+      }
+      // 'unknown' proceeds on purpose — see useFundsGate. The server is still the control.
+      setPin('');
+      setPinError(false);
+      setPinNonce((n) => n + 1);
+      wizard.toPin();
+    } finally {
+      setCheckingFunds(false);
+    }
+  };
+
+  /**
+   * `handleSubmit`'s invalid branch. Without it, a form that went invalid while the PIN step was
+   * open made Send do nothing at all — no request, no message.
+   */
+  const onInvalid = (errors: FieldErrors<InternalTransferFormValues>) => {
+    wizard.toForm();
+    wizard.fail(errors.amount?.message ?? 'Please check the details and try again.');
   };
 
   const onValid = async (data: InternalTransferFormOutput) => {
@@ -186,6 +221,18 @@ export function InternalTransferPage() {
     // review screen and the receipt cannot name two different accounts.
     const from = fromAccount;
     const to = toAccount;
+
+    /*
+      Last look before the request leaves. The funds gate took a round trip at Continue; this one
+      is free — the freshest CACHED balance, which a mutation elsewhere in this tab may have moved
+      since. So an over-balance transfer is not merely refused by the server: it is never sent.
+    */
+    const stillAvailable = availableBalanceOf(from);
+    if (data.amount > stillAvailable) {
+      wizard.toForm();
+      wizard.fail(insufficientFundsMessage(stillAvailable));
+      return;
+    }
 
     const result = await wizard.run({
       fromAccountId: data.fromAccountId,
@@ -442,11 +489,25 @@ export function InternalTransferPage() {
                   currency: styles.amountCurrency,
                   input: styles.amountInput,
                   hint: styles.hint,
+                  invalid: styles.amountInvalid,
                 }}
                 belowSlot={
-                  <Text className={styles.subtle}>
-                    Available: {formatCurrency(availableBalance)}
-                  </Text>
+                  <div className={styles.availableRow}>
+                    <Text className={styles.subtle}>
+                      Available: {formatCurrency(availableBalance)}
+                    </Text>
+                    {/* The constructive half of the balance cap: reaching the maximum without
+                        retyping it is what stops the over-balance typo at the source. */}
+                    <button
+                      type="button"
+                      className={styles.useMaxBtn}
+                      onClick={() => handleQuickAmount(availableBalance)}
+                      disabled={keyLive || availableBalance <= 0}
+                      aria-label={`Use maximum, ${formatCurrency(availableBalance)}`}
+                    >
+                      Use max
+                    </button>
+                  </div>
                 }
               />
             </div>
@@ -524,7 +585,7 @@ export function InternalTransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={() => void handleSubmit(onValid)()}
+                onClick={() => void handleSubmit(onValid, onInvalid)()}
                 disabled={isSubmitting || pin.length !== PIN_LENGTH || pinLockDeadline !== null}
               >
                 {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
@@ -568,10 +629,10 @@ export function InternalTransferPage() {
                 appearance="primary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
-                onClick={onReviewed}
-                disabled={isSubmitting}
+                onClick={() => void onReviewed()}
+                disabled={isSubmitting || checkingFunds}
               >
-                Continue
+                {checkingFunds ? <Spinner size="tiny" /> : 'Continue'}
               </Button>
               <Button
                 appearance="secondary"

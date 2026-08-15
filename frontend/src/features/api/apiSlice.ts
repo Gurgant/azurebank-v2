@@ -14,6 +14,7 @@ import {
   bffSessionStatusResponseSchema,
 } from '../../api/bffSchemas';
 import { baseQueryWithStepUp } from '../../api/baseQueryWithStepUp';
+import type { ApiProblem } from '../../api/problemBaseQuery';
 import {
   accountNumberResponseSchema,
   accountResponseSchema,
@@ -33,6 +34,25 @@ import {
 import type { components } from '../../api/schema';
 
 type Schemas = components['schemas'];
+
+/**
+ * Which tags a FAILED money mutation should invalidate.
+ *
+ * Every money endpoint invalidates nothing on error, which is right for almost all of them: a
+ * rejected request changed no server state, so refetching would only add load. `INSUFFICIENT_FUNDS`
+ * is the exception, and it is exactly backwards — that error IS the server telling us the balance
+ * we hold is wrong. Leaving the cache alone meant the form kept the very number that caused the
+ * rejection, so the user could walk into the same wall again, and the funds gate's own bound stayed
+ * stale until something unrelated refreshed it.
+ */
+function staleBalanceTags(error: unknown, accountIds: (string | undefined)[]) {
+  if ((error as ApiProblem | undefined)?.errorCode !== 'INSUFFICIENT_FUNDS') {
+    return [];
+  }
+  return accountIds
+    .filter((id): id is string => Boolean(id))
+    .map((id) => ({ type: 'Account' as const, id }));
+}
 
 export type LoginRequest = Schemas['LoginRequest'];
 export type RegisterRequest = Schemas['RegisterRequest'];
@@ -331,7 +351,7 @@ export const apiSlice = createApi({
         withReplay(unwrap(response, withdrawResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error
-          ? []
+          ? staleBalanceTags(error, [body.accountId])
           : [
               { type: 'Account' as const, id: body.accountId },
               { type: 'Transaction' as const, id: 'LIST' },
@@ -360,7 +380,7 @@ export const apiSlice = createApi({
         withReplay(unwrap(response, transferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error
-          ? []
+          ? staleBalanceTags(error, [body.fromAccountId])
           : [
               { type: 'Account' as const, id: body.fromAccountId },
               { type: 'Transaction' as const, id: 'LIST' },
@@ -469,7 +489,7 @@ export const apiSlice = createApi({
         withReplay(unwrap(response, internalTransferResponseSchema), meta),
       invalidatesTags: (_result, error, { body }) =>
         error
-          ? []
+          ? staleBalanceTags(error, [body.fromAccountId, body.toAccountId])
           : [
               { type: 'Account' as const, id: body.fromAccountId },
               { type: 'Account' as const, id: body.toAccountId },
