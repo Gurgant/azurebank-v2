@@ -1515,6 +1515,178 @@
         }
       }
     },
+    "/api/transfers/authorizations": {
+      "post": {
+        "tags": [
+          "Transfer"
+        ],
+        "summary": "Authorise a transfer to another user.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferAuthorizationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferAuthorizationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferAuthorizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfStepUpAuthorizationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+          },
+          "403": {
+            "description": "Forbidden - You don't have permission to access this resource."
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transfers/internal/authorizations": {
+      "post": {
+        "tags": [
+          "Transfer"
+        ],
+        "summary": "Authorise a transfer between your own accounts.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InternalTransferAuthorizationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InternalTransferAuthorizationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/InternalTransferAuthorizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfStepUpAuthorizationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+          },
+          "403": {
+            "description": "Forbidden - You don't have permission to access this resource."
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/transfers": {
       "post": {
         "tags": [
@@ -1522,6 +1694,14 @@
         ],
         "summary": "Transfer money to another user's primary account.",
         "parameters": [
+          {
+            "name": "Step-Up-Authorization",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
           {
             "name": "Idempotency-Key",
             "in": "header",
@@ -1534,7 +1714,7 @@
           }
         ],
         "requestBody": {
-          "description": "Transfer details",
+          "description": "Authorisation reference from the Step-Up-Authorization header (ADR-0042)",
           "content": {
             "application/json": {
               "schema": {
@@ -1728,6 +1908,14 @@
         "summary": "Transfer money between own accounts.",
         "parameters": [
           {
+            "name": "Step-Up-Authorization",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "description": "Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID.",
@@ -1739,7 +1927,7 @@
           }
         ],
         "requestBody": {
-          "description": "Internal transfer details",
+          "description": "Authorisation reference from the Step-Up-Authorization header (ADR-0042)",
           "content": {
             "application/json": {
               "schema": {
@@ -2380,6 +2568,27 @@
           }
         }
       },
+      "ApiResponseOfStepUpAuthorizationResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StepUpAuthorizationResponse"
+              }
+            ]
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ApiResponseOfTransactionResponse": {
         "type": "object",
         "properties": {
@@ -2605,6 +2814,43 @@
           }
         },
         "description": "Response returned after a successful deposit.\r\nIncludes the created transaction and updated balance."
+      },
+      "InternalTransferAuthorizationRequest": {
+        "required": [
+          "fromAccountId",
+          "toAccountId",
+          "amount",
+          "pin"
+        ],
+        "type": "object",
+        "properties": {
+          "fromAccountId": {
+            "type": "string",
+            "description": "A valid non-empty UUID is required.",
+            "format": "uuid"
+          },
+          "toAccountId": {
+            "type": "string",
+            "description": "A valid non-empty UUID is required.",
+            "format": "uuid"
+          },
+          "amount": {
+            "multipleOf": 0.01,
+            "maximum": 100000.00,
+            "minimum": 0.01,
+            "type": "number",
+            "description": "Amount must be between $0.01 and $100,000.00.",
+            "format": "double"
+          },
+          "pin": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string",
+            "description": "PIN must be exactly 6 digits."
+          }
+        },
+        "description": "Authorises one transfer between the caller's own accounts: proves the PIN and returns a reference\r\nvalid only for this amount and this pair of accounts."
       },
       "InternalTransferRequest": {
         "required": [
@@ -3001,6 +3247,26 @@
           }
         }
       },
+      "StepUpAuthorizationResponse": {
+        "required": [
+          "authorizationId",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "authorizationId": {
+            "type": "string",
+            "description": "The authorisation reference to echo back in the request header.",
+            "format": "uuid"
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "When it stops being spendable (UTC). Not extendable.",
+            "format": "date-time"
+          }
+        },
+        "description": "A minted authorisation. Send `authorizationId` back in the `Step-Up-Authorization`\r\nheader of the transfer it authorises; it is accepted once, and only before `expiresAt`."
+      },
       "TokenResponse": {
         "required": [
           "accessToken",
@@ -3157,6 +3423,45 @@
         ],
         "type": "string",
         "description": "Types of transaction: Deposit, Withdrawal, TransferIn, TransferOut"
+      },
+      "TransferAuthorizationRequest": {
+        "required": [
+          "fromAccountId",
+          "recipientAzureTag",
+          "amount",
+          "pin"
+        ],
+        "type": "object",
+        "properties": {
+          "fromAccountId": {
+            "type": "string",
+            "description": "A valid non-empty UUID is required.",
+            "format": "uuid"
+          },
+          "recipientAzureTag": {
+            "maxLength": 20,
+            "minLength": 3,
+            "pattern": "^[a-z][a-z0-9_]{2,19}$",
+            "type": "string",
+            "description": "Must start with a letter and contain only lowercase letters, numbers, and underscores."
+          },
+          "amount": {
+            "multipleOf": 0.01,
+            "maximum": 100000.00,
+            "minimum": 0.01,
+            "type": "number",
+            "description": "Amount must be between $0.01 and $100,000.00.",
+            "format": "double"
+          },
+          "pin": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string",
+            "description": "PIN must be exactly 6 digits."
+          }
+        },
+        "description": "Authorises one transfer to another user: proves the PIN and returns a reference valid only for\r\nthis amount and this payee."
       },
       "TransferRequest": {
         "required": [

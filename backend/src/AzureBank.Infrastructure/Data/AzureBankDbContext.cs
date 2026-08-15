@@ -36,6 +36,7 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     public DbSet<Transaction> Transactions => Set<Transaction>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+    public DbSet<StepUpAuthorization> StepUpAuthorizations => Set<StepUpAuthorization>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

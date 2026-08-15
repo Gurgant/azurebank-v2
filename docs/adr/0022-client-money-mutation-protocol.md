@@ -70,9 +70,12 @@ of ADR-0009, written into the repository so the pointers have somewhere real to 
 9. **Two PIN transports, one `PinInput` component.** INTERCEPTOR mode (a 403 with
    `X-Auth-Level-Required` opens the modal, then the request replays) and BODY mode (a masked
    `autocomplete="one-time-code"` field whose value travels inside the request body). BODY mode is
-   **withdraw only**, because withdraw's PIN is part of the HMAC-hashed payload while a transfer's
-   PIN merely raises the session level. A third pattern is not permitted: a new PIN surface picks
-   one of these two. `hasPin: false` routes to set-pin onboarding rather than failing at submit.
+   **withdraw only**. _Stale reason, corrected 2026-08-16:_ this said a transfer's PIN "merely
+   raises the session level". Since ADR-0041 a transfer's PIN travels in the body too, and is
+   therefore equally part of the HMAC-hashed payload. The rule survives its reason — BODY mode is
+   still withdraw-only on the client — and ADR-0042 is what will retire both transports for
+   transfers, replacing them with an authorisation carried in a header. A third pattern is not
+   permitted: a new PIN surface picks one of these two. `hasPin: false` routes to set-pin onboarding rather than failing at submit.
 
 10. **Never display an attempts-remaining counter.** No such field exists anywhere in the contract.
     A "2 attempts left" message would be fabricated data on a security surface. `429 PIN_LOCKED`

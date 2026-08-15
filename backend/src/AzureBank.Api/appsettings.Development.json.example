@@ -20,6 +20,14 @@
     "HashKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
   },
 
+  "StepUp": {
+    // HMAC key binding a transfer authorisation to its amount and payee (ADR-0042).
+    // Server-side only, never stored in the database. Generate a random string, 32+ chars.
+    // DISTINCT from Idempotency:HashKey on purpose — the two hashes answer different
+    // questions, and one leaked key must not forge the other's answer.
+    "BindingKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
+  },
+
   "Security": {
     // PIN-hash pepper keyring (ADR-0011): a server-side secret mixed into the
     // Argon2id PIN hash so a stolen database can't brute-force the low-entropy PIN

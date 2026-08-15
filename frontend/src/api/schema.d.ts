@@ -1524,6 +1524,190 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transfers/authorizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authorise a transfer to another user. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TransferAuthorizationRequest"];
+                    "text/json": components["schemas"]["TransferAuthorizationRequest"];
+                    "application/*+json": components["schemas"]["TransferAuthorizationRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfStepUpAuthorizationResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - You don't have permission to access this resource. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unprocessable Entity */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transfers/internal/authorizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Authorise a transfer between your own accounts. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["InternalTransferAuthorizationRequest"];
+                    "text/json": components["schemas"]["InternalTransferAuthorizationRequest"];
+                    "application/*+json": components["schemas"]["InternalTransferAuthorizationRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfStepUpAuthorizationResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - You don't have permission to access this resource. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unprocessable Entity */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/transfers": {
         parameters: {
             query?: never;
@@ -1538,13 +1722,14 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    "Step-Up-Authorization"?: string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
                 };
                 path?: never;
                 cookie?: never;
             };
-            /** @description Transfer details */
+            /** @description Authorisation reference from the Step-Up-Authorization header (ADR-0042) */
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["TransferRequest"];
@@ -1693,13 +1878,14 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    "Step-Up-Authorization"?: string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
                 };
                 path?: never;
                 cookie?: never;
             };
-            /** @description Internal transfer details */
+            /** @description Authorisation reference from the Step-Up-Authorization header (ADR-0042) */
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["InternalTransferRequest"];
@@ -2090,6 +2276,10 @@ export interface components {
             data?: null | components["schemas"]["RegisterResponse"];
             message?: null | string;
         };
+        ApiResponseOfStepUpAuthorizationResponse: {
+            data?: null | components["schemas"]["StepUpAuthorizationResponse"];
+            message?: null | string;
+        };
         ApiResponseOfTransactionResponse: {
             data?: null | components["schemas"]["TransactionResponse"];
             message?: null | string;
@@ -2168,6 +2358,29 @@ export interface components {
              * @description Updated account balance after the deposit
              */
             newBalance: number;
+        };
+        /**
+         * @description Authorises one transfer between the caller's own accounts: proves the PIN and returns a reference
+         *     valid only for this amount and this pair of accounts.
+         */
+        InternalTransferAuthorizationRequest: {
+            /**
+             * Format: uuid
+             * @description A valid non-empty UUID is required.
+             */
+            fromAccountId: string;
+            /**
+             * Format: uuid
+             * @description A valid non-empty UUID is required.
+             */
+            toAccountId: string;
+            /**
+             * Format: double
+             * @description Amount must be between $0.01 and $100,000.00.
+             */
+            amount: number;
+            /** @description PIN must be exactly 6 digits. */
+            pin: string;
         };
         InternalTransferRequest: {
             /**
@@ -2350,6 +2563,22 @@ export interface components {
              */
             password?: null | string;
         };
+        /**
+         * @description A minted authorisation. Send `authorizationId` back in the `Step-Up-Authorization`
+         *     header of the transfer it authorises; it is accepted once, and only before `expiresAt`.
+         */
+        StepUpAuthorizationResponse: {
+            /**
+             * Format: uuid
+             * @description The authorisation reference to echo back in the request header.
+             */
+            authorizationId: string;
+            /**
+             * Format: date-time
+             * @description When it stops being spendable (UTC). Not extendable.
+             */
+            expiresAt: string;
+        };
         /** @description Token information returned in authentication responses. */
         TokenResponse: {
             /** @description JWT access token */
@@ -2441,6 +2670,26 @@ export interface components {
          * @enum {string}
          */
         TransactionType: "Deposit" | "Withdrawal" | "TransferIn" | "TransferOut";
+        /**
+         * @description Authorises one transfer to another user: proves the PIN and returns a reference valid only for
+         *     this amount and this payee.
+         */
+        TransferAuthorizationRequest: {
+            /**
+             * Format: uuid
+             * @description A valid non-empty UUID is required.
+             */
+            fromAccountId: string;
+            /** @description Must start with a letter and contain only lowercase letters, numbers, and underscores. */
+            recipientAzureTag: string;
+            /**
+             * Format: double
+             * @description Amount must be between $0.01 and $100,000.00.
+             */
+            amount: number;
+            /** @description PIN must be exactly 6 digits. */
+            pin: string;
+        };
         TransferRequest: {
             /**
              * Format: uuid

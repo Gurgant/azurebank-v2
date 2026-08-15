@@ -394,9 +394,13 @@ public class TransferPinVerificationTests : IntegrationTestBase
     public async Task IdempotencyKeyIsCheckedBeforeThePin()
     {
         /*
-          ORDER, not just outcomes. The idempotency filter is an action filter, so it runs before
-          the controller action and therefore before the service's PIN check — which means a
-          request with a CORRECT PIN and no key is refused for the key, not waved through.
+          ORDER, not just outcomes. Idempotency is MIDDLEWARE (`app.UseIdempotency()`,
+          Program.cs:139), not an action filter — this comment said "action filter" until ADR-0042
+          had to reason about the ordering and found the claim wrong. The distinction matters: a
+          filter would run INSIDE MVC after model binding, whereas this runs before MVC is entered
+          at all, which is why a replay skips validation, the controller and the service entirely.
+          The outcome pinned here is the same either way — a request with a CORRECT PIN and no key
+          is refused for the key, not waved through.
 
           Worth pinning because the mock has to reproduce the same order, and an order asserted only
           in the mock is an order nobody measured.
