@@ -10,6 +10,13 @@ public static class ErrorCodes
     public const string AccountLocked = "ACCOUNT_LOCKED";
     public const string SessionExpired = "SESSION_EXPIRED";
     public const string PinRequired = "PIN_REQUIRED";
+
+    /// <summary>
+    /// The account password is required for this action. Today: ENROLLING a PIN, where there is no
+    /// previous PIN to ask for and the session alone is not a proof of identity (NIST SP 800-63-4B
+    /// §4.1.2 — bind an authenticator behind authentication, not behind a session).
+    /// </summary>
+    public const string PasswordRequired = "PASSWORD_REQUIRED";
     public const string InvalidPin = "INVALID_PIN";
     public const string PinLocked = "PIN_LOCKED";
 

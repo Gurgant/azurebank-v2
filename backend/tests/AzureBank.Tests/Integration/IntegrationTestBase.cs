@@ -43,6 +43,9 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
     /// Registers a new test user and returns the authentication token.
     /// Each call creates a unique user to ensure test isolation.
     /// </summary>
+    /// <summary>The password every helper-created user gets — one place, so proofs can reuse it.</summary>
+    protected const string TestUserPassword = "TestPass123!";
+
     protected async Task<(string Token, Guid UserId, Guid AccountId)> RegisterTestUserAsync()
     {
         var uniqueId = Guid.NewGuid().ToString("N")[..8];
@@ -51,7 +54,7 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
         {
             AzureTag = $"test_user_{uniqueId}",
             Email = $"test{uniqueId}@example.com",
-            Password = "TestPass123!",
+            Password = TestUserPassword,
             FirstName = "Test",
             LastName = "User"
         }, JsonOptions);
@@ -88,10 +91,14 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
     /// <summary>
     /// Sets PIN for the authenticated user.
     /// </summary>
-    protected async Task SetPinAsync(string token, string pin = "123456")
+    protected async Task SetPinAsync(string token, string pin = "123456", string password = TestUserPassword)
     {
         SetAuthHeader(token);
-        var response = await Client.PostAsJsonAsync("/api/auth/pin", new SetPinRequest { Pin = pin }, JsonOptions);
+        // The password is not optional bookkeeping: enrolling a PIN requires proving it (T7/#201).
+        // Defaulted to what RegisterTestUserAsync uses so the thirty-odd existing call sites keep
+        // reading as "give this user a PIN" rather than sprouting a credential each.
+        var response = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = pin, Password = password }, JsonOptions);
         response.EnsureSuccessStatusCode();
     }
 

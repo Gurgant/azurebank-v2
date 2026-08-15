@@ -216,7 +216,7 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
         // retry these tests exist to prove would never be reached.
         using var setPin = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin")
         {
-            Content = JsonContent.Create(new SetPinRequest { Pin = TestPin }, options: Json)
+            Content = JsonContent.Create(new SetPinRequest { Pin = TestPin, Password = "TestPass123!" }, options: Json)
         };
         setPin.Headers.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
         (await client.SendAsync(setPin)).EnsureSuccessStatusCode();
