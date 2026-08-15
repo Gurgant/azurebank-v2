@@ -159,13 +159,42 @@ describe('the balance guard', () => {
       'Exceeds available balance of €1,250.50.',
     );
     expect(continueButton()).toBeDisabled();
+
+    /*
+      THE COLOUR ITSELF — the thing that was asked for first ("il numero diventa rosso") and the
+      one thing nothing verified. `aria-invalid` and the hint text can both be right while the
+      figure still renders black, because Griffel's atomic classes share a specificity and are
+      resolved by stylesheet insertion order: composing them by hand worked only as long as
+      `amountInvalid` happened to be declared after `amountInput`. `mergeClasses` settles that,
+      and this is what proves it stayed settled.
+
+      jsdom does not resolve custom properties, so the token is compared as the literal it is —
+      which is the honest comparison here: the assertion is that the ERROR token won, not that a
+      particular RGB was painted.
+    */
+    const errorToken = 'var(--ab-colors-semantic-error-main)';
+    expect(getComputedStyle(input).color).toBe(errorToken);
+    // The € prefix travels with the numerals; a red figure beside a black € reads as a glitch.
+    expect(getComputedStyle(input.previousElementSibling as HTMLElement).color).toBe(errorToken);
   });
 
   it('offers the maximum instead of making the user retype the balance', async () => {
     serveBalance([START_BALANCE]);
     renderDialog();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Use maximum, €1,250.50' }));
+    const useMax = screen.getByRole('button', { name: 'Use maximum, €1,250.50' });
+
+    /*
+      The button's own type scale, and why it is asserted at all: the style block first wrote
+      `font: 'inherit'`. Griffel does NOT expand `font` — measured, it emits `.f15dniw2 { font:
+      inherit; }` verbatim — so it competed with the `fontSize`/`fontWeight` longhands as an
+      ordinary same-specificity atom and won on insertion order. The measured result was a button
+      rendering at the INHERITED base size instead of 13px. `fontFamily` carries the intent without
+      resetting anything.
+    */
+    expect(getComputedStyle(useMax).fontSize).toBe('13px');
+
+    await userEvent.click(useMax);
 
     expect(screen.getByLabelText('Withdraw amount')).toHaveValue('1250.5');
     await waitFor(() => expect(continueButton()).toBeEnabled());
@@ -230,12 +259,16 @@ describe('the balance guard', () => {
     await userEvent.paste('123456');
     await userEvent.click(screen.getByRole('button', { name: /^Withdraw/ }));
 
-    // Back on the amount step, saying why. `findAllByText` rather than `findByText` on purpose:
-    // BOTH surfaces speak — the banner explains the refused action, the field hint marks the value
-    // — and a single-match query would fail on the very thing this change is meant to produce.
+    /*
+      Back on the amount step, saying why — on BOTH surfaces. The banner explains the refused
+      action; the field hint marks the value. The count is asserted EXACTLY rather than as "at
+      least one": the whole point of the change is that neither surface stays silent, and a
+      `toBeGreaterThanOrEqual(1)` passes in precisely the half-fixed state this test exists to
+      catch. Measured: 2.
+    */
     expect(await screen.findByLabelText('Withdraw amount')).toBeInTheDocument();
     const stated = await screen.findAllByText('Exceeds available balance of €100.00.');
-    expect(stated.length).toBeGreaterThanOrEqual(1);
+    expect(stated).toHaveLength(2);
     // And the request never left.
     expect(posts).toEqual([]);
   });

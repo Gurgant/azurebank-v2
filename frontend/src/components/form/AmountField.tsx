@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from 'react';
 import { Controller, type Control, type FieldPath, type FieldValues } from 'react-hook-form';
-import { Text } from '@fluentui/react-components';
+import { mergeClasses, Text } from '@fluentui/react-components';
 import { sanitizeAmountInput } from '../../forms/moneySchemas';
 
 export interface AmountFieldProps<
@@ -60,20 +60,27 @@ export function AmountField<
       name={name}
       render={({ field, fieldState }) => {
         const showHint = field.value !== '' && fieldState.error !== undefined;
-        // Griffel composes by concatenation, so an empty suffix is a no-op rather than a
-        // stray class. The prefix and the numerals take the SAME class: a red sentence under
-        // a black figure reads as a note about the form; a red figure reads as "this number".
-        const invalid = showHint && classNames.invalid ? ` ${classNames.invalid}` : '';
+        /*
+          `mergeClasses`, not string concatenation. Griffel's atomic classes all carry the same
+          specificity, so two classes declaring `color` are resolved by STYLESHEET INSERTION ORDER —
+          concatenating happened to work only because `amountInvalid` is declared after
+          `amountInput` in the styles object, and reordering those keys would silently un-red the
+          figure. `mergeClasses` drops the losing atom outright and makes the last argument win.
+
+          The prefix and the numerals take the SAME class on purpose: a red sentence under a black
+          figure reads as a note about the form; a red figure reads as "this number".
+        */
+        const invalid = showHint ? classNames.invalid : undefined;
         return (
           <>
             <div className={classNames.wrapper}>
-              <span className={`${classNames.currency}${invalid}`}>€</span>
+              <span className={mergeClasses(classNames.currency, invalid)}>€</span>
               <input
                 type="text"
                 inputMode="decimal"
                 placeholder="0"
                 aria-label={ariaLabel}
-                className={`${classNames.input}${invalid}`}
+                className={mergeClasses(classNames.input, invalid)}
                 ref={field.ref}
                 name={field.name}
                 value={field.value}

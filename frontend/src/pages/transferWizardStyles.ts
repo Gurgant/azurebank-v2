@@ -113,7 +113,9 @@ export const useTransferWizardStyles = makeStyles({
     background: 'none',
     border: 'none',
     padding: '0 2px',
-    font: 'inherit',
+    // `fontFamily`, NOT the `font` shorthand — Griffel emits `font` verbatim and it then beats the
+    // longhands below on insertion order. Same fix as `moneyDialogStyles`, same measurement.
+    fontFamily: 'inherit',
     fontSize: '13px',
     fontWeight: 600,
     color: colors.brand[60],

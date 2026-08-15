@@ -154,7 +154,11 @@ export const useMoneyDialogStyles = makeStyles({
     background: 'none',
     border: 'none',
     padding: '0 2px',
-    font: 'inherit',
+    // `fontFamily`, NOT the `font` shorthand. Griffel does not expand `font` — measured, it emits
+    // it verbatim as `.f15dniw2 { font: inherit; }` — so it competes with the longhands below as
+    // an ordinary same-specificity atom and wins on stylesheet insertion order. Measured result:
+    // the button's computed font-size came out as the INHERITED base, not the 13px declared here.
+    fontFamily: 'inherit',
     fontSize: '13px',
     fontWeight: 600,
     color: colors.brand[60],

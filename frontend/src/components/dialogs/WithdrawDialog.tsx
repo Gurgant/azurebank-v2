@@ -179,9 +179,10 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     defaultValues: { accountId: defaultAccountId, amount: '', description: '' },
   });
 
-  // Re-run amount validation when the balance bound changes (an over-balance amount is
-  // already RESET on switch, but a kept amount's hint text embeds the balance — the
-  // cached result must not describe the previous account).
+  // Re-run amount validation when the balance bound changes. The amount is KEPT on an account
+  // switch (see the account card's handler), so THIS is what marks an over-balance value against
+  // the new bound — the effect is load-bearing, not a belt-and-braces revalidation. The hint text
+  // also embeds the balance, so a cached result would describe the previous account.
   useEffect(() => {
     void trigger('amount');
   }, [availableBalance, trigger]);
