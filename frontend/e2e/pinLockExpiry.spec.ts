@@ -9,6 +9,11 @@ import { expect, test } from '@playwright/test';
  * `retryAfterSeconds` the server actually chose (measured: 900, with `Retry-After: 900` and
  * `lockedUntil`).
  *
+ * WHAT THIS FILE DOES NOT PROVE, said here rather than left to be discovered: the far side of the
+ * lockout window. `page.clock` moves this browser and nothing else, so the server is still locked
+ * when the client releases. A withdrawal SUCCEEDING after the window is proven against the API in
+ * `TransactionEndpointTests.Withdraw_AfterPinLockoutWindowPasses_Succeeds_AndMovesMoney`.
+ *
  * ⚠️ IT DELIBERATELY LOCKS AN ACCOUNT, which every other spec in this directory is forbidden from
  * doing — `fixtures.ts` says so, because `PinLockoutMinutes` is 15 and the seeded admin is the only
  * account the rest of the suite has. So this spec signs in as its OWN user, created for the run,
@@ -89,7 +94,21 @@ test.describe('the PIN lock counts down and expires', () => {
     await expect(lockBanner).toBeHidden();
     await expect(dialog.getByLabel('Digit 1 of 6')).toBeEnabled();
 
-    // The proof that matters to a person: the withdrawal they were locked out of can be completed.
+    /*
+      The PIN is enterable again and the submit control comes back. That is the CLIENT half of the
+      release, and it is the half this file can honestly prove.
+
+      It deliberately stops short of pressing Withdraw. `page.clock` advances THIS BROWSER only —
+      the API's `lockedUntil` is real wall-clock time, still fifteen minutes out — so a submit here
+      would answer 429 again, and asserting on that would be a test of the harness rather than of
+      the product. The far side of the window is unreachable from a browser at all.
+
+      That property is proven where the clock is real, against the API, by
+      `TransactionEndpointTests.Withdraw_AfterPinLockoutWindowPasses_Succeeds_AndMovesMoney`: a lock
+      earned through the real endpoint, aged past its end, then the refused withdrawal succeeding
+      with the money actually moved. Between the two files the whole journey is covered; neither
+      one claims the other's half.
+    */
     await dialog.getByLabel('Digit 1 of 6').click();
     await page.keyboard.type(CORRECT_PIN);
     await expect(dialog.getByRole('button', { name: /^Withdraw/ })).toBeEnabled();
