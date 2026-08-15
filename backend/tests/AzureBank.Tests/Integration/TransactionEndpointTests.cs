@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Common;
@@ -7,6 +8,7 @@ using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AzureBank.Tests.Integration;
 
@@ -203,6 +205,74 @@ public class TransactionEndpointTests : IntegrationTestBase
         list.EnsureSuccessStatusCode();
         var page = await list.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(JsonOptions);
         page!.Data.Count(t => t.Type == TransactionType.Withdrawal).Should().Be(0);
+    }
+
+    /// <summary>
+    /// The complement of the test above, and the half a browser cannot prove: once the lockout
+    /// window has passed, the withdrawal the user was refused actually SUCCEEDS against the server.
+    ///
+    /// The frontend has its own expiry coverage — `withdraw.test.tsx` with fake timers, and
+    /// `e2e/pinLockExpiry.spec.ts` against a real 429 — but both advance the CLIENT's clock only.
+    /// Playwright's `page.clock` moves one browser; the API's `lockedUntil` is real wall-clock time
+    /// fifteen minutes out, so no browser test can reach the far side of the window. That property
+    /// belongs here, where the lock can be aged directly.
+    ///
+    /// The lock is NOT fabricated: it is earned with real wrong PINs through the real endpoint, and
+    /// only its `PinLockoutEnd` is then moved into the past — the same shape as
+    /// `PinServiceTests.VerifyPinAsync_ExpiredLock_AllowsFreshAttempt`, one layer up.
+    /// </summary>
+    [Fact]
+    public async Task Withdraw_AfterPinLockoutWindowPasses_Succeeds_AndMovesMoney()
+    {
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token, "123456");
+        await DepositAsync(token, accountId, 1000m);
+
+        // Earn a genuine lock through the endpoint, exactly as a user would.
+        var wrong = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "654321", Description = "x" };
+        for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
+        {
+            (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+                .Should().Be(HttpStatusCode.Unauthorized);
+        }
+        (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+            .Should().Be(HttpStatusCode.TooManyRequests);
+
+        // Age the lock past its end. This is the ONLY thing simulated: the lock itself, the
+        // failure counter and every code path below are the real ones.
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var locked = await db.Users.FindAsync(userId);
+            locked.Should().NotBeNull("the lock must exist before it can be aged");
+            locked!.PinLockoutEnd.Should().NotBeNull("the endpoint must have written a lockout end");
+            locked.PinLockoutEnd = DateTimeOffset.UtcNow.AddSeconds(-1);
+            await db.SaveChangesAsync();
+        }
+
+        // The withdrawal that was refused now goes through.
+        var correct = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "123456", Description = "after lockout" };
+        var response = await PostMonetaryAsync("/api/transactions/withdraw", correct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<WithdrawResponse>>(JsonOptions);
+        body!.Data!.NewBalance.Should().Be(800m, "1000 deposited minus the 200 that was locked out");
+
+        // And the money really moved — the receipt is not the ledger.
+        var list = await Client.GetAsync($"/api/transactions?accountId={accountId}&pageSize=50");
+        list.EnsureSuccessStatusCode();
+        var page = await list.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(JsonOptions);
+        page!.Data.Count(t => t.Type == TransactionType.Withdrawal).Should().Be(1);
+
+        // A successful verify clears the counter, so the next mistake starts a fresh window
+        // rather than re-locking immediately.
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var unlocked = await db.Users.FindAsync(userId);
+            unlocked!.PinAccessFailedCount.Should().Be(0);
+            unlocked.PinLockoutEnd.Should().BeNull();
+        }
     }
 
     #endregion

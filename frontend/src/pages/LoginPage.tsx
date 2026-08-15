@@ -173,15 +173,19 @@ export function LoginPage() {
           instead does NOT help: measured in Chrome, disabling a focused button also drops focus to
           <body>. The announcement is the fix; the button's behaviour is not the problem. */}
       {accountLocked && lockDeadline !== null && (
-        <MessageBar intent="error" role="alert" className={styles.errorMessage}>
-          <MessageBarBody>
-            Too many failed sign-in attempts — your account is temporarily locked.{' '}
-            <RetryCountdown
-              deadline={lockDeadline}
-              onElapsed={() => setElapsedDeadline(lockDeadline)}
-            />
-          </MessageBarBody>
-        </MessageBar>
+        <>
+          <MessageBar intent="error" role="alert" className={styles.errorMessage}>
+            <MessageBarBody>
+              Too many failed sign-in attempts — your account is temporarily locked.
+            </MessageBarBody>
+          </MessageBar>
+          {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
+              re-announce the whole banner every second. It carries its own polite region. */}
+          <RetryCountdown
+            deadline={lockDeadline}
+            onElapsed={() => setElapsedDeadline(lockDeadline)}
+          />
+        </>
       )}
 
       {problem &&
@@ -255,15 +259,16 @@ export function LoginPage() {
         )}
 
         {rateLimited && lockDeadline !== null && (
-          <MessageBar intent="warning" role="alert">
-            <MessageBarBody>
-              Too many attempts from your connection.{' '}
-              <RetryCountdown
-                deadline={lockDeadline}
-                onElapsed={() => setElapsedDeadline(lockDeadline)}
-              />
-            </MessageBarBody>
-          </MessageBar>
+          <>
+            <MessageBar intent="warning" role="alert">
+              <MessageBarBody>Too many attempts from your connection.</MessageBarBody>
+            </MessageBar>
+            {/* Sibling, not child — see the account-lock banner above. */}
+            <RetryCountdown
+              deadline={lockDeadline}
+              onElapsed={() => setElapsedDeadline(lockDeadline)}
+            />
+          </>
         )}
       </form>
 

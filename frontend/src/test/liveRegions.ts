@@ -6,7 +6,7 @@ import { expect } from 'vitest';
  * ARE live regions — the attribute never has to be spelled out for the region to exist, which is
  * exactly why nesting one inside the other is easy to do by accident.
  */
-const LIVE_REGION = '[role="alert"],[role="status"]';
+const LIVE_REGION = '[role="alert"],[role="status"],[aria-live]';
 
 /**
  * Assert that no live region sits inside another live region.

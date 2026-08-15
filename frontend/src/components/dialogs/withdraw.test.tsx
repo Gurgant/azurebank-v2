@@ -1,7 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { problem } from '../../mocks/problem';
@@ -9,6 +9,21 @@ import { mockState } from '../../mocks/state';
 import { makeTestStore, renderWithProviders } from '../../test/renderWithProviders';
 import { expectNoNestedLiveRegions } from '../../test/liveRegions';
 import { WithdrawDialog } from './WithdrawDialog';
+
+/*
+  UNMOUNT FIRST, then restore the clock — the order is load-bearing and cost a debugging round.
+
+  Vitest runs afterEach hooks in reverse registration order, so this file's hook runs BEFORE the
+  `cleanup()` in `test/setup.ts`. Restoring real timers here first left the countdown still mounted
+  with a live FAKE interval; its unmount then called `clearInterval` with a fake id against the real
+  implementation, so the interval was never cancelled and kept firing setState into the NEXT test —
+  which the console.error gate caught as act(...) violations, and only when the whole file ran.
+  `cleanup()` is idempotent, so calling it here and again in setup.ts is free.
+*/
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 /**
  * PR-10 — withdraw is the deposit protocol PLUS the PIN-in-body gate (D1). Pins: the two-step
@@ -159,8 +174,72 @@ describe('withdraw (PR-10 — PIN-in-body idempotent mutation)', () => {
     await enterPin('123456');
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
 
-    expect(await screen.findByText(/Try again in about 15 minutes/)).toBeInTheDocument();
+    expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+    // 900s off the response, rendered live by the shared countdown rather than frozen prose.
+    expect(screen.getByRole('timer')).toHaveTextContent('Try again in 15:00');
     expect(screen.getByRole('button', { name: /^Withdraw/ })).toBeDisabled();
+    /*
+      The countdown must not sit INSIDE the alert. `role="alert"` implies `aria-atomic="true"`, so a
+      timer nested in it would re-announce the whole banner every second — assertively. A review
+      caught this on the first version of the change; the oracle now treats any `aria-live` element
+      as a region, not just role=alert/status, because `role="timer"` carries the attribute
+      explicitly rather than implicitly.
+    */
+    expectNoNestedLiveRegions();
+  });
+
+  it('the lock EXPIRES — Withdraw is usable again once the window closes', async () => {
+    /*
+      The property nothing asserted until now, and the reason this dialog shipped broken: it stored
+      the number of seconds and never touched it again, so the countdown froze and Withdraw stayed
+      disabled for as long as the dialog was open. Closing and reopening escaped it — at the cost of
+      the whole form — which is why the defect read as cosmetic and survived review.
+
+      Fake timers are installed BEFORE the render, not after: `RetryCountdown` creates its interval
+      on mount, and an interval scheduled against the real clock is invisible to
+      `advanceTimersByTime`. `shouldAdvanceTime` keeps userEvent's own zero-delay waits resolving.
+    */
+    server.use(
+      http.post('*/api/transactions/withdraw', () =>
+        problem({
+          status: 429,
+          errorCode: 'PIN_LOCKED',
+          detail: 'Too many attempts.',
+          extensions: { retryAfterSeconds: 5 },
+        }),
+      ),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+
+    // Installed here, not at the top: before this click no countdown exists, so nothing can tick.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(6000);
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Too many incorrect PIN attempts/)).not.toBeInTheDocument(),
+    );
+
+    /*
+      The PIN BOXES are what the lock disabled, so they are what must come back. Withdraw stays
+      disabled a moment longer and that is correct, not a residue: the lock branch clears the PIN
+      (WithdrawDialog.tsx), so the button is waiting for six digits rather than for the lock. The
+      first version of this test asserted the button directly and failed for exactly that reason —
+      worth recording, because "the control is still disabled" reads like the bug it is not.
+
+      Re-entering the PIN is the real proof: the user can finish the withdrawal they were locked out
+      of, which is the property, rather than merely seeing a message disappear.
+    */
+    expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled();
+    await enterPin('123456');
+    expect(screen.getByRole('button', { name: /^Withdraw/ })).toBeEnabled();
   });
 
   it('a mid-flight INSUFFICIENT_FUNDS returns to the amount step with a message', async () => {

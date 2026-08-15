@@ -26,6 +26,7 @@ import {
 } from '../features/api/apiSlice';
 import { useMoneyWizard } from '../hooks/useMoneyWizard';
 import { formatCurrency, formatLockHorizon, maskAccountNumber } from '../utils/format';
+import { RetryCountdown, retryDeadline } from '../components/feedback';
 import {
   normalizeAzureTag,
   parseAmountInput,
@@ -166,26 +167,16 @@ export function TransferPage() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
   const [pinNonce, setPinNonce] = useState(0);
-  const [pinLockedSeconds, setPinLockedSeconds] = useState<number | null>(null);
-
   /*
-    THE LOCK MUST EXPIRE. Storing a duration and never touching it again leaves the PIN box and Send
-    disabled for the life of the page, long after the server-side window has closed.
+    An ABSOLUTE deadline (D13), shared with the withdraw dialog and the step-up modal.
 
-    This is a REGRESSION introduced with the PIN step, not inherited: before ADR-0041 a locked-out
-    user met the root step-up modal, whose Cancel stays enabled under a lock — one click, form and
-    verified recipient intact. The step below offers Send (disabled by the lock) and Back (which
-    does not clear it), so without this effect the only escape is discarding the whole transfer.
+    This page used to drive its own one-second decrement, and so did the sibling transfer page, and
+    the two dialogs drove nothing at all — three implementations of one requirement, two of which
+    were a frozen countdown. `RetryCountdown` is the single primitive; storing the deadline rather
+    than a duration is what makes a second lock with the identical retryAfterSeconds mint a fresh one
+    instead of reviving an elapsed number.
   */
-  useEffect(() => {
-    if (pinLockedSeconds === null) return;
-    if (pinLockedSeconds <= 0) {
-      setPinLockedSeconds(null);
-      return;
-    }
-    const tick = setTimeout(() => setPinLockedSeconds((s) => (s === null ? null : s - 1)), 1000);
-    return () => clearTimeout(tick);
-  }, [pinLockedSeconds]);
+  const [pinLockDeadline, setPinLockDeadline] = useState<number | null>(null);
 
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [recipientError, setRecipientError] = useState<string | null>(null);
@@ -299,7 +290,7 @@ export function TransferPage() {
 
   const onValid = async (data: TransferFormOutput) => {
     if (!selectedAccount || !recipient) return;
-    if (pin.length !== PIN_LENGTH || pinLockedSeconds !== null) return;
+    if (pin.length !== PIN_LENGTH || pinLockDeadline !== null) return;
     // Narrowed to a const BEFORE the await, and the receipt is built from that same const. The
     // review screen and the request therefore cannot name two different people.
     const confirmed = recipient;
@@ -330,7 +321,7 @@ export function TransferPage() {
         setPinNonce((n) => n + 1);
       } else if (refusal?.errorCode === 'PIN_LOCKED') {
         setPin('');
-        setPinLockedSeconds(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
+        setPinLockDeadline(retryDeadline(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
       } else if (refusal?.errorCode === 'PIN_REQUIRED') {
         // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
         // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
@@ -669,16 +660,21 @@ export function TransferPage() {
                 setPin(next);
                 setPinError(false);
               }}
-              disabled={isSubmitting || pinLockedSeconds !== null}
+              disabled={isSubmitting || pinLockDeadline !== null}
               error={pinError}
             />
-            {pinLockedSeconds !== null && (
-              <MessageBar intent="error" role="alert">
-                <MessageBarBody>
-                  Too many incorrect PIN attempts. Try again in{' '}
-                  {formatLockHorizon(pinLockedSeconds)}.
-                </MessageBarBody>
-              </MessageBar>
+            {pinLockDeadline !== null && (
+              <>
+                <MessageBar intent="error" role="alert">
+                  <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
+                </MessageBar>
+                {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
+                    re-announce the whole banner every second. It carries its own polite region. */}
+                <RetryCountdown
+                  deadline={pinLockDeadline}
+                  onElapsed={() => setPinLockDeadline(null)}
+                />
+              </>
             )}
             <div className={styles.actions}>
               <Button
@@ -686,7 +682,7 @@ export function TransferPage() {
                 size="large"
                 style={{ width: '100%', height: '48px' }}
                 onClick={() => void handleSubmit(onValid)()}
-                disabled={isSubmitting || pin.length !== PIN_LENGTH || pinLockedSeconds !== null}
+                disabled={isSubmitting || pin.length !== PIN_LENGTH || pinLockDeadline !== null}
               >
                 {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
               </Button>

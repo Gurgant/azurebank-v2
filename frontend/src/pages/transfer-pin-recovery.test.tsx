@@ -1,6 +1,6 @@
-import { screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http } from 'msw';
 import { Route, Routes } from 'react-router-dom';
 import { server } from '../mocks/server';
@@ -9,6 +9,21 @@ import { seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
+
+/*
+  UNMOUNT FIRST, then restore the clock — the order is load-bearing and cost a debugging round.
+
+  Vitest runs afterEach hooks in reverse registration order, so this file's hook runs BEFORE the
+  `cleanup()` in `test/setup.ts`. Restoring real timers here first left the countdown still mounted
+  with a live FAKE interval; its unmount then called `clearInterval` with a fake id against the real
+  implementation, so the interval was never cancelled and kept firing setState into the NEXT test —
+  which the console.error gate caught as act(...) violations, and only when the whole file ran.
+  `cleanup()` is idempotent, so calling it here and again in setup.ts is free.
+*/
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 /**
  * The PIN step's RECOVERY behaviour — the half of ADR-0041 that had no test at all.
@@ -86,7 +101,54 @@ describe('the PIN step recovers from what the server refuses', () => {
 
     // 120s from the server, NOT the 15-minute client default — proving the value travelled.
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
-    expect(screen.getByText(/2 minutes/)).toBeInTheDocument();
+    // 120s off the response, rendered by the shared countdown as m:ss — NOT a client-side default.
+    expect(screen.getByRole('timer')).toHaveTextContent('Try again in 2:00');
+  });
+
+  it('the lock EXPIRES — the PIN boxes come back once the window closes', async () => {
+    /*
+      Nothing asserted this before, on any of the four surfaces that can be PIN-locked, which is how
+      two of them shipped with a countdown that never moved. Here the page did tick — with its own
+      private copy of the effect, one of three implementations of the same requirement. All four now
+      share `RetryCountdown`, and this is the test that would catch any of them freezing again.
+
+      The timers are installed AFTER the navigation and BEFORE the lock, and NOT with
+      `shouldAdvanceTime`. Measured: with it, the countdown re-renders once per real second, and any
+      second that elapses between the lock and the assertions lands outside `act(...)` — the
+      console.error gate in `test/setup.ts` fails the test for it, correctly. A frozen clock plus
+      `userEvent.setup({ advanceTimers })` removes the window entirely.
+    */
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({
+          status: 429,
+          errorCode: 'PIN_LOCKED',
+          detail: 'Too many attempts.',
+          extensions: { retryAfterSeconds: 5 },
+        }),
+      ),
+    );
+    renderTransfer();
+    await reachPinStep();
+
+    // Installed here, not at the top: before this click no countdown exists, so nothing can tick.
+    // The window between the lock appearing and the advance below is where an unacted tick would
+    // land — the console.error gate catches those, so it is kept to a single assertion.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+
+    expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(6000);
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Too many incorrect PIN attempts/)).not.toBeInTheDocument(),
+    );
+    // The boxes are what the lock disabled, so they are what has to come back. Send waits for six
+    // digits, because the lock branch cleared the PIN — that is the flow, not a residue.
+    expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled();
   });
 
   it('PIN_REQUIRED routes to PIN setup, which is the only place it can be fixed', async () => {
@@ -181,6 +243,42 @@ describe('the internal transfer recovers the same way', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
-    expect(screen.getByText(/2 minutes/)).toBeInTheDocument();
+    // 120s off the response, rendered by the shared countdown as m:ss — NOT a client-side default.
+    expect(screen.getByRole('timer')).toHaveTextContent('Try again in 2:00');
+  });
+
+  it('the lock EXPIRES here too — one primitive, four surfaces', async () => {
+    // The sibling page carried its own copy of the tick; both now share `RetryCountdown`. This is
+    // the assertion that keeps them from drifting apart again, which a shared component alone
+    // cannot guarantee — the two pages could still differ in how they clear it.
+    server.use(
+      http.post('*/api/transfers/internal', () =>
+        problem({
+          status: 429,
+          errorCode: 'PIN_LOCKED',
+          detail: 'Too many attempts.',
+          extensions: { retryAfterSeconds: 5 },
+        }),
+      ),
+    );
+    renderInternal();
+    await reachInternalPinStep();
+
+    // Installed here, not at the top: before this click no countdown exists, so nothing can tick.
+    // The window between the lock appearing and the advance below is where an unacted tick would
+    // land — the console.error gate catches those, so it is kept to a single assertion.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+
+    expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(6000);
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Too many incorrect PIN attempts/)).not.toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText('Digit 1 of 6')).toBeEnabled();
   });
 });

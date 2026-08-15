@@ -22,7 +22,8 @@ import type { ApiProblem } from '../../api/problemBaseQuery';
 import { useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
-import { formatCurrency, formatLockHorizon } from '../../utils/format';
+import { formatCurrency } from '../../utils/format';
+import { RetryCountdown, retryDeadline } from '../feedback';
 import { MoneyDialogShell } from './MoneyDialogShell';
 import { useMoneyDialogStyles } from './moneyDialogStyles';
 import {
@@ -138,7 +139,14 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pinError, setPinError] = useState(false);
-  const [lockedSeconds, setLockedSeconds] = useState<number | null>(null);
+  /*
+    An ABSOLUTE deadline (D13), not a countdown this dialog drives itself. It used to be a number of
+    seconds stored once and never touched, so the PIN box and Withdraw stayed disabled and the
+    message kept promising "about 15 minutes" for as long as the dialog was open, well past the
+    server's window. `RetryCountdown` ticks and calls back at zero; a deadline rather than a duration
+    is what makes a second lock with the same retryAfterSeconds mint a fresh one.
+  */
+  const [lockDeadline, setLockDeadline] = useState<number | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
   const defaultAccountId = accounts.length > 0 ? accounts[0].id : '';
@@ -207,7 +215,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
   const onValid = async (data: WithdrawFormOutput) => {
     const account = accounts.find((a) => a.id === data.accountId);
-    if (!account || pin.length !== PIN_LENGTH || lockedSeconds !== null) {
+    if (!account || pin.length !== PIN_LENGTH || lockDeadline !== null) {
       return;
     }
     setError(null);
@@ -245,7 +253,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         setError('Invalid PIN. Please try again.');
       } else if (problem.errorCode === 'PIN_LOCKED') {
         setPin('');
-        setLockedSeconds(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS);
+        setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
       } else if (problem.errorCode === 'PIN_REQUIRED') {
         // Defensive: the hasPin gate should have caught this. Send them to set a PIN.
         navigate('/pin-setup?returnTo=/accounts');
@@ -479,11 +487,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             value={pin}
             onChange={handlePinChange}
             length={PIN_LENGTH}
-            disabled={isSubmitting || lockedSeconds !== null}
+            disabled={isSubmitting || lockDeadline !== null}
             error={pinError}
             autoFocus
             ariaLabel="Enter your PIN"
-            ariaDescribedBy={error || lockedSeconds !== null ? errorId : undefined}
+            ariaDescribedBy={error || lockDeadline !== null ? errorId : undefined}
           />
         </div>
       )}
@@ -496,20 +504,23 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
             ancestors — read twice, and with the error and the lock countdown merged into a single
             utterance. The id stays: it is how someone tabbing back to the PIN field hears why the
             attempt failed. */}
-        {(error || lockedSeconds !== null) && (
+        {(error || lockDeadline !== null) && (
           <div id={errorId}>
             {error && (
               <MessageBar intent="error" role="alert" className={styles.errorMessage}>
                 <MessageBarBody>{error}</MessageBarBody>
               </MessageBar>
             )}
-            {lockedSeconds !== null && (
-              <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
-                <MessageBarBody>
-                  Too many incorrect PIN attempts. Try again in about{' '}
-                  {formatLockHorizon(lockedSeconds)}.
-                </MessageBarBody>
-              </MessageBar>
+            {lockDeadline !== null && (
+              <>
+                <MessageBar intent="warning" role="alert" className={styles.errorMessage}>
+                  <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
+                </MessageBar>
+                {/* The countdown is a SIBLING of the alert, never a child: role="alert" implies
+                    aria-atomic, so a nested timer would re-announce the whole banner every second,
+                    assertively. It carries its own polite region. */}
+                <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
+              </>
             )}
           </div>
         )}
@@ -597,7 +608,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
               size="large"
               style={{ width: '100%', height: '48px' }}
               onClick={() => void handleSubmit(onValid)()}
-              disabled={isSubmitting || pin.length !== PIN_LENGTH || lockedSeconds !== null}
+              disabled={isSubmitting || pin.length !== PIN_LENGTH || lockDeadline !== null}
             >
               {isSubmitting ? <Spinner size="tiny" /> : `Withdraw ${formatCurrency(amountNumber)}`}
             </Button>
