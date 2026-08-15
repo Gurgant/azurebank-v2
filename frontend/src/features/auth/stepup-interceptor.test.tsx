@@ -209,6 +209,22 @@ describe('step-up interceptor (PR-11)', () => {
     expect(await screen.findByText('Incorrect PIN. Please try again.')).toBeInTheDocument();
     expect(screen.getByText("Verify it's you")).toBeInTheDocument(); // still open
 
+    /*
+      The PIN group's `aria-describedby` must RESOLVE to the banner. The id sits on the MessageBar
+      itself rather than on a wrapper around it (the app-wide pattern), so this assertion is also
+      what proves Fluent forwards `id` to the rendered root: the day it stops, the reference dangles
+      and a screen-reader user is told a PIN was rejected by an element that announces nothing.
+      Asserting the text through getElementById is deliberate — matching only the attribute would
+      pass against a dangling id.
+    */
+    const describedBy = screen
+      .getByRole('group', { name: 'Enter your PIN' })
+      .getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent(
+      'Incorrect PIN. Please try again.',
+    );
+
     await enterPin('123456');
     expect(await screen.findByText('ok:TXN-STEPUP-1')).toBeInTheDocument();
   });

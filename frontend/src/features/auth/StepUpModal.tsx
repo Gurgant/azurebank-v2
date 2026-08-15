@@ -162,20 +162,20 @@ function StepUpForm() {
               ariaDescribedBy={describedBy}
             />
           </div>
+          {/* The live-region role goes ON the MessageBar, never on a wrapper around it. A wrapper
+              works, but it puts the announcement on an element the component does not own, so the
+              banner's semantics depend on markup a refactor can quietly drop. This was the last
+              surface still carrying the wrapper form after the other five were converted. */}
           {error && (
-            <div role="alert" id={errorId}>
-              <MessageBar intent="error">
-                <MessageBarBody>{error}</MessageBarBody>
-              </MessageBar>
-            </div>
+            <MessageBar intent="error" role="alert" id={errorId}>
+              <MessageBarBody>{error}</MessageBarBody>
+            </MessageBar>
           )}
           {lockDeadline !== null && (
             <div id={errorId}>
-              <div role="alert">
-                <MessageBar intent="warning">
-                  <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
-                </MessageBar>
-              </div>
+              <MessageBar intent="warning" role="alert">
+                <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
+              </MessageBar>
               {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would
                   re-announce the whole banner every second. It carries its own polite region. */}
               <RetryCountdown deadline={lockDeadline} onElapsed={() => setLockDeadline(null)} />
