@@ -1697,6 +1697,7 @@
           {
             "name": "Step-Up-Authorization",
             "in": "header",
+            "description": "Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof.",
             "schema": {
               "type": "string",
               "format": "uuid"
@@ -1714,7 +1715,7 @@
           }
         ],
         "requestBody": {
-          "description": "Authorisation reference from the Step-Up-Authorization header (ADR-0042)",
+          "description": "Transfer details",
           "content": {
             "application/json": {
               "schema": {
@@ -1910,6 +1911,7 @@
           {
             "name": "Step-Up-Authorization",
             "in": "header",
+            "description": "Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof.",
             "schema": {
               "type": "string",
               "format": "uuid"
@@ -1927,7 +1929,7 @@
           }
         ],
         "requestBody": {
-          "description": "Authorisation reference from the Step-Up-Authorization header (ADR-0042)",
+          "description": "Internal transfer details",
           "content": {
             "application/json": {
               "schema": {

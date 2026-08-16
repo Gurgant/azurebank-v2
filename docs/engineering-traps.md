@@ -249,3 +249,64 @@ separator** (`…to ask for.Without it…`), and `<see cref="CurrentPin"/>` rend
 saying when the field is required and what it means. Everything else (why it exists, what it
 prevents, what was measured) goes in a plain `/* … */` comment, which the generator ignores. After
 touching a DTO, `node scripts/openapi-spec.mjs regen` and read the property's `description` back.
+
+## A `<param>` on a renamed `[FromHeader]` argument lands on the REQUEST BODY
+
+Same family as the DTO-summary trap above, and found the same way — by reading the regenerated
+document instead of trusting the source.
+
+`TransferController.Transfer` documented its new header argument the obvious way:
+
+```csharp
+/// <param name="request">Transfer details</param>
+/// <param name="stepUpAuthorizationId">Authorisation reference from the Step-Up-Authorization header</param>
+public async Task<…> Transfer(
+    [FromBody] TransferRequest request,
+    [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
+```
+
+`[FromHeader(Name = …)]` renames the OpenAPI parameter to `Step-Up-Authorization`, so the
+`<param name="stepUpAuthorizationId">` tag matches **nothing**. Measured on #113: the generator did
+not drop it — it applied it to the **`requestBody`**, replacing `"Transfer details"` on both
+money-moving endpoints, and left the header parameter with no description at all. The published
+contract then described the body of a transfer as an authorisation reference.
+
+The compiler pushes you into this: documenting only `request` raises **CS1573** ("has no matching
+param tag"), so the natural fix is to add the second `<param>` — the one that breaks it.
+
+**Rule:** for any argument whose OpenAPI name differs from its C# name — every renamed
+`[FromHeader]`, `[FromQuery]` or `[FromRoute]` — describe it with
+`[Description("…")]` (`System.ComponentModel`) on the parameter, not with `<param>`. Do the same for
+the `[FromBody]` argument in the same signature, so no `<param>` tags remain to be mismatched. Then
+regenerate and **read the description back out of the JSON**, at both the `requestBody` and the
+`parameters` entry.
+
+## A new `ValidateOnStart` option must be taught to five places, and the test suite is not one of them
+
+Adding `StepUp:BindingKey` with `.Validate(…).ValidateOnStart()` (ADR-0042) is correct — a missing
+HMAC key should stop startup, not surface as a 500 on the first transfer. But `ValidateOnStart`
+turns a missing value into a **startup crash**, and the whole test suite is blind to it because
+`CustomWebApplicationFactory` injects the value with `UseSetting`. #113 shipped 799 green tests and
+still broke two things nothing could catch:
+
+- **`Real-stack layers` in CI went red** with
+  `OptionsValidationException: StepUp:BindingKey must be configured` → `API never became ready at
+  http://localhost:5068/health/ready`. The workflows set `Jwt__Secret`, `Idempotency__HashKey` and
+  `Security__PinPepper`; nobody had told them about the fourth.
+- **The dev database had no table**, because a migration is only exercised against a real database
+  by a human running the stack — the suites build their schema from the model.
+
+**Checklist when adding a required option.** Miss any one and the failure appears somewhere the
+tests are silent:
+
+1. `appsettings.json` — the non-secret parts (the window, the TTL).
+2. `appsettings.Development.json.example` — the section **and** the `user-secrets` command list in
+   its header comment; a developer who reads only the list gets a crash.
+3. `README.md` and `docs/engineering-practices.md` — both carry the same setup recipe.
+4. `.github/workflows/*.yml` — an env var plus **every** "Start API" step. `ci.yml` has one,
+   `contract-tests.yml` has two.
+5. `CustomWebApplicationFactory` — `UseSetting`, which is the one that makes the tests pass while
+   everything above is still missing.
+
+Grep for an existing required secret (`Idempotency__HashKey`) and mirror every hit. That grep is the
+cheapest form of this checklist, and it finds all five.

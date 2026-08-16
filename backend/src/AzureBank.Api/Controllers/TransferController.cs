@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.Claims;
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Services.Interfaces;
@@ -22,15 +23,21 @@ public class TransferController : ControllerBase
     private readonly ITransferService _transferService;
     private readonly IValidator<TransferRequest> _transferValidator;
     private readonly IValidator<InternalTransferRequest> _internalTransferValidator;
+    private readonly IValidator<TransferAuthorizationRequest> _transferAuthValidator;
+    private readonly IValidator<InternalTransferAuthorizationRequest> _internalTransferAuthValidator;
 
     public TransferController(
         ITransferService transferService,
         IValidator<TransferRequest> transferValidator,
-        IValidator<InternalTransferRequest> internalTransferValidator)
+        IValidator<InternalTransferRequest> internalTransferValidator,
+        IValidator<TransferAuthorizationRequest> transferAuthValidator,
+        IValidator<InternalTransferAuthorizationRequest> internalTransferAuthValidator)
     {
         _transferService = transferService;
         _transferValidator = transferValidator;
         _internalTransferValidator = internalTransferValidator;
+        _transferAuthValidator = transferAuthValidator;
+        _internalTransferAuthValidator = internalTransferAuthValidator;
     }
 
     /*
@@ -62,6 +69,10 @@ public class TransferController : ControllerBase
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseTransfer(
         [FromBody] TransferAuthorizationRequest request)
     {
+        // Same two-layer guard as the transfer itself: DataAnnotations from [ApiController], then
+        // FluentValidation. Only the first was mirrored at first, and the scale rule lives here.
+        await _transferAuthValidator.ValidateAndThrowAsync(request);
+
         var result = await _transferService.AuthoriseTransferAsync(GetCurrentUserId(), request);
 
         return StatusCode(StatusCodes.Status201Created,
@@ -84,6 +95,8 @@ public class TransferController : ControllerBase
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseInternalTransfer(
         [FromBody] InternalTransferAuthorizationRequest request)
     {
+        await _internalTransferAuthValidator.ValidateAndThrowAsync(request);
+
         var result = await _transferService.AuthoriseInternalTransferAsync(GetCurrentUserId(), request);
 
         return StatusCode(StatusCodes.Status201Created,
@@ -93,8 +106,6 @@ public class TransferController : ControllerBase
     /// <summary>
     /// Transfer money to another user's primary account.
     /// </summary>
-    /// <param name="request">Transfer details</param>
-    /// <param name="stepUpAuthorizationId">Authorisation reference from the Step-Up-Authorization header (ADR-0042)</param>
     /// <returns>Transfer result with new balance</returns>
     [HttpPost]
     [EndpointSummary("Transfer to user")]
@@ -111,7 +122,8 @@ public class TransferController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<TransferResponse>>> Transfer(
-        [FromBody] TransferRequest request,
+        [Description("Transfer details")] [FromBody] TransferRequest request,
+        [Description("Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof.")]
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {
         await _transferValidator.ValidateAndThrowAsync(request);
@@ -126,8 +138,6 @@ public class TransferController : ControllerBase
     /// <summary>
     /// Transfer money between own accounts.
     /// </summary>
-    /// <param name="request">Internal transfer details</param>
-    /// <param name="stepUpAuthorizationId">Authorisation reference from the Step-Up-Authorization header (ADR-0042)</param>
     /// <returns>Transfer result with both account balances</returns>
     [HttpPost("internal")]
     [EndpointSummary("Internal transfer")]
@@ -144,7 +154,8 @@ public class TransferController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<InternalTransferResponse>>> InternalTransfer(
-        [FromBody] InternalTransferRequest request,
+        [Description("Internal transfer details")] [FromBody] InternalTransferRequest request,
+        [Description("Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof.")]
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {
         await _internalTransferValidator.ValidateAndThrowAsync(request);

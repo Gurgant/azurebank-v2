@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Auth;
@@ -94,6 +95,67 @@ public sealed class StepUpConcurrencySqlServerTests : IDisposable
         {
             response.Dispose();
         }
+    }
+
+    /// <summary>
+    /// ADR-0042 claims an authorisation is never spent by a transfer that rolled back. Until this
+    /// test the claim rested on <c>ExecuteUpdateAsync</c> enlisting in the ambient transaction —
+    /// true, but asserted nowhere.
+    ///
+    /// <para>
+    /// Proven at the seam that carries the risk: consume inside an explicit transaction on a REAL
+    /// relational context, roll it back, then read through a FRESH context. A fresh one matters —
+    /// the consuming context's change tracker would happily report whatever it last wrote.
+    /// SQL-gated because InMemory has no real transactions, so a green run there would prove the
+    /// opposite of what it claims.
+    /// </para>
+    /// </summary>
+    [SqlServerFact]
+    public async Task ConsumeAsync_InsideARolledBackTransaction_LeavesTheAuthorisationSpendable()
+    {
+        var client = CreateSqlClient();
+        var (token, accountId) = await RegisterFundedAsync(client, funding: 100m);
+        var recipientTag = await RegisterRecipientAsync(client);
+        var authorizationId = await MintAsync(client, token, accountId, recipientTag);
+
+        Guid userId;
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            userId = await db.StepUpAuthorizations.AsNoTracking()
+                .Where(a => a.Id == authorizationId).Select(a => a.UserId).SingleAsync();
+        }
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var stepUp = scope.ServiceProvider.GetRequiredService<IStepUpAuthorizationService>();
+
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            await stepUp.ConsumeAsync(userId, authorizationId, Guid.CreateVersion7());
+
+            // The transfer this consumption belonged to fails after the row was marked spent.
+            await transaction.RollbackAsync();
+        }
+
+        using (var scope = _factory!.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var authorization = await db.StepUpAuthorizations.AsNoTracking()
+                .SingleAsync(a => a.Id == authorizationId);
+
+            authorization.Status.Should().Be(StepUpAuthorizationStatus.Pending,
+                "a rolled-back transfer must leave the authorisation spendable — otherwise the user "
+                + "cannot resend money that never moved");
+            authorization.ConsumedAt.Should().BeNull();
+            authorization.ConsumedByTransactionId.Should().BeNull();
+        }
+
+        // And it really is still spendable, not merely Pending on paper.
+        var response = await TransferAsync(
+            client, token, accountId, recipientTag, authorizationId, Guid.NewGuid());
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Dispose();
     }
 
     // ─────────────────────────────────────────────────────────────────────────

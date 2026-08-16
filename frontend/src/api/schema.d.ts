@@ -1722,6 +1722,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof. */
                     "Step-Up-Authorization"?: string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
@@ -1729,7 +1730,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description Authorisation reference from the Step-Up-Authorization header (ADR-0042) */
+            /** @description Transfer details */
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["TransferRequest"];
@@ -1878,6 +1879,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof. */
                     "Step-Up-Authorization"?: string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
@@ -1885,7 +1887,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description Authorisation reference from the Step-Up-Authorization header (ADR-0042) */
+            /** @description Internal transfer details */
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["InternalTransferRequest"];

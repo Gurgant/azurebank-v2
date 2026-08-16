@@ -157,12 +157,15 @@ public class StepUpAuthorizationTests : IntegrationTestBase
     {
         var (_, userId, account, recipient) = await ScenarioAsync();
 
+        // Captured BEFORE minting so the assertion pins the WINDOW, not merely "some future time".
+        // An earlier version accepted anything under five minutes, which a four-minute window would
+        // have passed — and the two minutes is a decision, not an implementation detail.
+        var mintedAt = DateTime.UtcNow;
         var minted = await MintOkAsync(account, recipient);
 
         minted.AuthorizationId.Should().NotBeEmpty();
-        minted.ExpiresAt.Should().BeAfter(DateTime.UtcNow, "a fresh authorisation must still be spendable");
-        minted.ExpiresAt.Should().BeBefore(DateTime.UtcNow.AddMinutes(5),
-            "the window is two minutes; anything near the session's five would mean the wrong option was bound");
+        minted.ExpiresAt.Should().BeCloseTo(mintedAt.AddMinutes(2), TimeSpan.FromSeconds(30),
+            "the window is two minutes (StepUpOptions.Window); the tolerance covers only the round trip");
 
         var stored = await ReadAsync(minted.AuthorizationId);
         stored.Should().NotBeNull();

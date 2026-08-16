@@ -36,6 +36,7 @@ PEPPER="$(openssl rand -base64 48)"
 
 dotnet user-secrets --project $API    set "Jwt:Secret" "$(openssl rand -base64 64)"
 dotnet user-secrets --project $API    set "Idempotency:HashKey" "$(openssl rand -base64 32)"
+dotnet user-secrets --project $API    set "StepUp:BindingKey" "$(openssl rand -base64 32)"
 dotnet user-secrets --project $API    set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $API    set "ConnectionStrings:DefaultConnection" "$CONN"
 dotnet user-secrets --project $SEEDER set "Security:PinPepper" "$PEPPER"

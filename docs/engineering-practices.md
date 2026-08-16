@@ -27,6 +27,7 @@ PEPPER='<32+ chars>'   # the SAME value goes to both projects
 
 dotnet user-secrets --project $API    set "Jwt:Secret" "<64+ chars>"
 dotnet user-secrets --project $API    set "Idempotency:HashKey" "<32+ chars>"
+dotnet user-secrets --project $API    set "StepUp:BindingKey" "<32+ chars>"
 dotnet user-secrets --project $API    set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $API    set "ConnectionStrings:DefaultConnection" "$CONN"
 
