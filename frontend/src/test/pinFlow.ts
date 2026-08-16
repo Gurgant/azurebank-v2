@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MOCK_PIN } from '../mocks/state';
 
 /**
  * Filling a PIN, in one place instead of five.
@@ -17,8 +18,14 @@ import userEvent from '@testing-library/user-event';
  * this repo already worked around it; the workaround now lives here with its reason attached.
  */
 
-/** The seeded PIN every mock fixture accepts (`MOCK_PIN`). */
-export const TEST_PIN = '123456';
+/**
+ * The seeded PIN every mock fixture accepts.
+ *
+ * RE-EXPORTED, not restated. A copy would drift silently the day the mock reseeds, and it would
+ * take every PIN test with it at once — with a failure that points at the pages rather than at the
+ * fixture. One value, one home.
+ */
+export const TEST_PIN = MOCK_PIN;
 
 /**
  * Fill the PIN boxes.

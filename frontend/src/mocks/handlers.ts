@@ -2015,29 +2015,108 @@ const STEP_UP_WINDOW_MS = 2 * 60 * 1000;
 const STEP_UP_HEADER = 'Step-Up-Authorization';
 
 /**
- * The model-binding error a `Step-Up-Authorization` that is not a GUID produces — a FOURTH 400
- * shape on these endpoints, and the one a client is most likely to mis-handle.
+ * Read the `Step-Up-Authorization` header the way MVC binds it: PARSE it, do not merely shape-check
+ * it, and hand back the CANONICAL id so the lookup cannot miss on formatting alone.
  *
- * It belongs HERE, beside `Pin` and `Amount`, and not inside `consumeAuthorization`, because
- * `[FromHeader(Name = "Step-Up-Authorization")] Guid?` is bound by MVC: a malformed value fails in
- * model binding, before the action, before ownership, before the PIN is ever verified. Checking it
- * later would have made a junk header cost a PIN attempt the real server never charges.
+ * `[FromHeader(Name = "Step-Up-Authorization")] Guid?` goes through `Guid.TryParse`, which accepts
+ * all five .NET formats and trims surrounding whitespace. The first draft here tested a dashed-only
+ * regex, which was wrong in both directions and MEASURED so on the running API — every one of these
+ * answered 401 (bound, unknown authorisation) where the mock answered 400:
  *
- * Measured on the real stack (A2-PR2-MEASURED-CONTRACT.md):
+ *   D  3f2504e0-4f89-41d3-9a0c-0305e82c3399          N  3f2504e04f8941d39a0c0305e82c3399
+ *   B  {3f2504e0-…}                                  P  (3f2504e0-…)
+ *   X  {0x3f2504e0,0x4f89,0x41d3,{0x9a,0x0c,…}}      and the D form UPPERCASED
+ *
+ * — while `not-a-guid` alone answered 400. And the canonicalisation half is not theoretical either:
+ * an id minted as `01a00ae5-32dd-…` and presented UPPERCASED, or with the dashes stripped, was
+ * **spent successfully (201)** by the real API. The mock keys `stepUpAuthorizations` by the
+ * lowercase dashed string `crypto.randomUUID()` returns, so a raw-string lookup would have answered
+ * AUTHORIZATION_INVALID for an authorisation the server spends.
+ *
+ * `parseGuid` already existed for exactly this reason on `Idempotency-Key` — same problem, same
+ * answer, and its own comment records the whitespace measurement.
+ *
+ * The refusal stays in the BINDING stage, beside `Pin` and `Amount`, because model binding runs
+ * before the action: a junk header must not cost the PIN attempt that a later check would charge.
+ * Measured shape, and two details a guess would get wrong — there is **no `errorCode`**, so
+ * `classifyMoneyProblem` falls through to the flow's fallback sentence, and the key is the WIRE
+ * header name rather than a C# parameter name, because binding keys by the binding source:
  *
  *   400 {"type":"…rfc9110#section-15.5.1","title":"One or more validation errors occurred.",
  *        "errors":{"Step-Up-Authorization":["The value 'not-a-guid' is not valid."]}}
- *
- * Two details a guess would get wrong: there is **no `errorCode`**, so `classifyMoneyProblem` falls
- * through every branch to the flow's fallback sentence; and the key is the WIRE header name, not a
- * C# parameter name — model binding keys by the binding source, which `[FromHeader(Name = …)]`
- * renamed.
  */
-function stepUpHeaderErrors(request: Request): string[] {
+function readStepUpHeader(request: Request): { id: string | null; errors: string[] } {
   const raw = request.headers.get(STEP_UP_HEADER);
-  if (raw === null) return [];
-  const isGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw);
-  return isGuid ? [] : [`The value '${raw}' is not valid.`];
+  if (raw === null) return { id: null, errors: [] };
+  const canonical = parseGuid(raw);
+  if (canonical === null) return { id: null, errors: [`The value '${raw}' is not valid.`] };
+  return { id: canonical, errors: [] };
+}
+
+/** The all-zero GUID. `[NotEmptyGuid]` refuses it exactly as it refuses an absent value. */
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * An account id that is absent or all-zero, refused where the API refuses it: in MODEL STATE.
+ *
+ * `[NotEmptyGuid(ErrorMessage = "A valid account ID is required.")]` is a DataAnnotation, so it
+ * fires before FluentValidation, before the same-account rule, and before any ownership lookup.
+ * MEASURED on all four endpoints — both mints and both transfers — for an absent id and for the
+ * all-zero one alike:
+ *
+ *   400 {"title":"One or more validation errors occurred.",
+ *        "errors":{"FromAccountId":["A valid account ID is required."],
+ *                  "ToAccountId":["A valid account ID is required."]}}
+ *
+ * PascalCase, because model state keys by the CLR property. A well-formed but unknown id is a
+ * different thing entirely and still answers 404 ACCOUNT_NOT_FOUND — measured alongside.
+ *
+ * Without this the mock reached its own later branches with `undefined`, and answered two different
+ * wrong things: the internal MINT compared `undefined === undefined` and claimed "Cannot transfer to
+ * the same account", while the transfers fell through to the ownership lookup and answered 404. A
+ * review bot read that 404 back as the contract — which is precisely why the mock is never the
+ * oracle.
+ */
+function accountIdErrors(value: unknown): string[] {
+  // A value that is not a GUID at all never reaches this stage — `accountIdBindFailure` below has
+  // already aborted the bind. What is left is ABSENT or ALL-ZERO, which is what `[NotEmptyGuid]`
+  // refuses. Verbatim from the wire; the source of truth is `ValidationRules.AccountNotEmptyGuid`.
+  if (value === undefined) return ['A valid account ID is required.'];
+  const canonical = typeof value === 'string' ? parseGuid(value) : null;
+  return canonical === EMPTY_GUID ? ['A valid account ID is required.'] : [];
+}
+
+/**
+ * A THIRD envelope for the same field: the JSON value is present but is not a GUID.
+ *
+ * System.Text.Json fails the conversion before DataAnnotations run, so this is not the
+ * `[NotEmptyGuid]` message and not a 404 — it is the same bind-abort shape a non-string `pin`
+ * produces, keyed by JSON PATH. MEASURED:
+ *
+ *   {"fromAccountId":"no-such-account"} -> 400
+ *     {"request":["The request field is required."],
+ *      "$.fromAccountId":["The JSON value could not be converted to System.Guid.
+ *                          Path: $.fromAccountId | LineNumber: 0 | BytePositionInLine: …"]}
+ *
+ * The mock answered 404 ACCOUNT_NOT_FOUND for this body, and `fidelity.test.ts` pinned that 404 as
+ * if it were the contract — a test written from the mock rather than from the server. A well-formed
+ * id nobody owns IS still a 404; the two cases are simply not the same request.
+ */
+function accountIdBindFailure(
+  body: Record<string, unknown>,
+  fields: readonly string[],
+): Response | null {
+  for (const field of fields) {
+    const value = body[field];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || parseGuid(value) === null) {
+      return invalidJsonValueProblem(
+        `$.${field}`,
+        `The JSON value could not be converted to System.Guid. Path: $.${field}`,
+      );
+    }
+  }
+  return null;
 }
 
 function mintAuthorization(record: Omit<StoredStepUpAuthorization, 'consumed' | 'expiresAtMs'>) {
@@ -2048,17 +2127,32 @@ function mintAuthorization(record: Omit<StoredStepUpAuthorization, 'consumed' | 
 }
 
 /**
- * Spend an authorisation, or explain why not.
+ * EXAMINE an authorisation — and do not spend it. Spending is `spendAuthorization`, below.
  *
- * Mirrors `StepUpAuthorizationService`: expiry is checked BEFORE the binding, because someone who
- * waited too long with the right details deserves "your confirmation expired" rather than the
- * uniform refusal a mismatched or forged reference gets. Everything else — unknown, already spent,
- * wrong binding — collapses to AUTHORIZATION_INVALID, so the mock is no more of an oracle than the
- * server is.
+ * The split is the whole point, and it is measured rather than stylistic. `StepUpAuthorizationService`
+ * has two methods and `TransferService` calls them at two different moments: `ValidateAsync` here,
+ * where a refusal is cheap, and `ConsumeAsync` INSIDE the database transaction, after the funds
+ * check, beside the ledger write. The first draft of this mock did both at once, so a transfer that
+ * failed on funds burned the authorisation.
  *
- * Returns a Response to send, or null when the authorisation is good AND now spent.
+ * MEASURED on the running stack, minting for €60,000 against a €49,952 balance and sending it:
+ *
+ *   422 INSUFFICIENT_FUNDS   ->  SELECT Status, ConsumedAt FROM StepUpAuthorizations
+ *                                Pending | NULL
+ *
+ * — still Pending after three attempts, and no `Idempotency-Replayed` header on any of them, so
+ * every retry re-executed and answered INSUFFICIENT_FUNDS again. Under the old ordering the mock
+ * answered AUTHORIZATION_INVALID on the second attempt: it told the user their confirmation was
+ * dead when the only thing wrong was the balance, which is both untrue and unactionable.
+ *
+ * Expiry is checked BEFORE the binding, because someone who waited too long with the right details
+ * deserves "your confirmation expired" rather than the uniform refusal a mismatched or forged
+ * reference gets. Everything else — unknown, already spent, wrong binding — collapses to
+ * AUTHORIZATION_INVALID, so the mock is no more of an oracle than the server is.
+ *
+ * Returns the refusal to send, or the held record (or null when no header was presented at all).
  */
-function consumeAuthorization(
+function validateAuthorization(
   id: string | null,
   request: Request,
   /*
@@ -2073,10 +2167,10 @@ function consumeAuthorization(
     toAccountId?: string;
     amount?: number;
   },
-): Response | null {
+): { refusal: Response | null; held: StoredStepUpAuthorization | null } {
   // MEASURED: no header at all -> 201. PR 2 is backward compatible; the in-band PIN is still the
   // proof the server acts on, so an absent authorisation refuses nothing.
-  if (!id) return null;
+  if (!id) return { refusal: null, held: null };
 
   const invalid = () =>
     problem({
@@ -2087,16 +2181,19 @@ function consumeAuthorization(
     });
 
   const held = mockState.stepUpAuthorizations.get(id);
-  if (!held || held.consumed) return invalid();
+  if (!held || held.consumed) return { refusal: invalid(), held: null };
 
   if (held.expiresAtMs <= Date.now()) {
     // OBSERVED: 401 / AUTHORIZATION_EXPIRED, detail verbatim from the API.
-    return problem({
-      instance: pathOf(request),
-      status: 401,
-      errorCode: 'AUTHORIZATION_EXPIRED',
-      detail: 'This authorisation has expired. Enter your PIN again to confirm.',
-    });
+    return {
+      refusal: problem({
+        instance: pathOf(request),
+        status: 401,
+        errorCode: 'AUTHORIZATION_EXPIRED',
+        detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+      }),
+      held: null,
+    };
   }
 
   if (
@@ -2107,11 +2204,21 @@ function consumeAuthorization(
     held.amount !== expected.amount
   ) {
     // RTS Art. 5(1)(d) reaching the wire: any change to the amount or the payee invalidates it.
-    return invalid();
+    return { refusal: invalid(), held: null };
   }
 
-  held.consumed = true;
-  return null;
+  return { refusal: null, held };
+}
+
+/**
+ * Spend it — the mock's `ConsumeAsync`, and the ONLY line that mutates an authorisation.
+ *
+ * Called from the same place the real one is: after the funds check, beside the ledger write, on
+ * the path where the transfer actually happens. `held` is null when no header was presented, which
+ * is still a valid transfer (PR 2 is backward compatible), so this is a no-op there.
+ */
+function spendAuthorization(held: StoredStepUpAuthorization | null): void {
+  if (held) held.consumed = true;
 }
 
 /**
@@ -2128,13 +2235,45 @@ function consumeAuthorization(
  * transfer — the opposite of the property ADR-0042 needs. It is a real, pre-existing gap rather
  * than a decision, and it is written down instead of quietly closed in a PR about something else.
  */
-function mintBindingErrors(body: { amount?: number; pin?: string }): Record<string, string[]> {
+function mintBindingErrors(
+  body: { amount?: number; pin?: unknown; fromAccountId?: string; toAccountId?: string },
+  // Explicit rather than inferred from the body's own shape: the EXTERNAL mint names its payee by
+  // handle and has no ToAccountId in its DTO at all, so a caller that sent one would otherwise have
+  // it validated against a rule the server does not apply.
+  { bindsDestination = false }: { bindsDestination?: boolean } = {},
+): Record<string, string[]> {
   const errors: Record<string, string[]> = {};
+  const badFrom = accountIdErrors(body.fromAccountId);
+  if (badFrom.length > 0) errors.FromAccountId = badFrom;
+  if (bindsDestination) {
+    const badTo = accountIdErrors(body.toAccountId);
+    if (badTo.length > 0) errors.ToAccountId = badTo;
+  }
   const badAmount = amountErrors(body.amount);
   if (badAmount.length > 0) errors.Amount = badAmount;
   const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
   if (badPin.length > 0) errors.Pin = badPin;
   return errors;
+}
+
+/**
+ * The PIN member's BIND failures on a mint — the shapes that never reach DataAnnotations at all.
+ *
+ * The two transfer handlers already route their pin through `transferPinBindFailure`; the mints did
+ * not, so a non-string pin reached `pinAnnotationErrors` and a regex met a number. MEASURED on both
+ * mint endpoints, and identical to the transfers':
+ *
+ *   pin absent  -> 400 {"$":["JSON deserialization for type '…TransferAuthorizationRequest' was
+ *                            missing required properties including: 'pin'."],
+ *                       "request":["The request field is required."]}
+ *   pin null    -> 400 {"Pin":["The Pin field is required."]}
+ *   pin 123456  -> 400 {"request":[…], "$.pin":["The JSON value could not be converted to
+ *                       System.String. Path: $.pin"]}
+ *
+ * Same helper, different CLR type name — that is the whole difference between the two doors.
+ */
+function mintPinBindFailure(body: { pin?: unknown }, clrType: string): Response | null {
+  return transferPinBindFailure(body, clrType);
 }
 
 /**
@@ -2160,6 +2299,14 @@ const authoriseTransfer = api.post(
       amount: number;
       pin?: string;
     };
+
+    const idBind = accountIdBindFailure(body as Record<string, unknown>, ['fromAccountId']);
+    if (idBind) return response.untyped(idBind);
+    const pinBind = mintPinBindFailure(
+      body,
+      'AzureBank.Shared.DTOs.Transfer.TransferAuthorizationRequest',
+    );
+    if (pinBind) return response.untyped(pinBind);
 
     const bindingErrors = mintBindingErrors(body);
     if (Object.keys(bindingErrors).length > 0) {
@@ -2237,7 +2384,18 @@ const authoriseInternalTransfer = api.post(
       pin?: string;
     };
 
-    const bindingErrors = mintBindingErrors(body);
+    const idBind = accountIdBindFailure(body as Record<string, unknown>, [
+      'fromAccountId',
+      'toAccountId',
+    ]);
+    if (idBind) return response.untyped(idBind);
+    const pinBind = mintPinBindFailure(
+      body,
+      'AzureBank.Shared.DTOs.Transfer.InternalTransferAuthorizationRequest',
+    );
+    if (pinBind) return response.untyped(pinBind);
+
+    const bindingErrors = mintBindingErrors(body, { bindsDestination: true });
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
@@ -2368,6 +2526,8 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   */
   // Model binding runs before the action, so a malformed pin never reaches the service. The
   // bind-failure half first: it aborts, so nothing else is validated after it.
+  const idBind = accountIdBindFailure(body as Record<string, unknown>, ['fromAccountId']);
+  if (idBind) return response.untyped(idBind);
   const pinBind = transferPinBindFailure(body, 'AzureBank.Shared.DTOs.Transfer.TransferRequest');
   if (pinBind) return response.untyped(pinBind);
 
@@ -2389,9 +2549,12 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
   if (badPin.length > 0) bindingErrors.Pin = badPin;
   // The header binds in the same stage as the body's annotations, so a request wrong in both ways
-  // reports both keys at once. See `stepUpHeaderErrors`.
-  const badStepUp = stepUpHeaderErrors(request);
-  if (badStepUp.length > 0) bindingErrors[STEP_UP_HEADER] = badStepUp;
+  // reports every key at once — measured: a junk header AND a junk PIN come back as ONE 400
+  // carrying both `Pin` and `Step-Up-Authorization`. See `readStepUpHeader`.
+  const stepUp = readStepUpHeader(request);
+  if (stepUp.errors.length > 0) bindingErrors[STEP_UP_HEADER] = stepUp.errors;
+  const badFrom = accountIdErrors(body.fromAccountId);
+  if (badFrom.length > 0) bindingErrors.FromAccountId = badFrom;
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
@@ -2426,7 +2589,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
         instance: pathOf(request),
         status: 422,
         errorCode: 'SELF_TRANSFER_NOT_ALLOWED',
-        detail: 'You cannot transfer money to yourself.',
+        // MEASURED on both the transfer and the mint, byte-identical, because `ResolveExternalPayeeAsync`
+        // is the single producer: "Cannot transfer to yourself. Use internal account transfer
+        // instead." The mock carried an invented sentence here — pre-existing, unrelated to ADR-0042,
+        // but measured in this round and one line to correct.
+        detail: 'Cannot transfer to yourself. Use internal account transfer instead.',
       }),
     );
   }
@@ -2450,13 +2617,13 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
 
     A request with no header falls through — MEASURED 201, PR 2 is backward compatible.
   */
-  const authRefusal = consumeAuthorization(request.headers.get(STEP_UP_HEADER), request, {
+  const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'Transfer',
     fromAccountId: body.fromAccountId,
     recipientAzureTag: body.recipientAzureTag,
     amount: body.amount,
   });
-  if (authRefusal) return response.untyped(authRefusal);
+  if (authorization.refusal) return response.untyped(authorization.refusal);
 
   const available = account.balance;
   if (amount > available) {
@@ -2472,6 +2639,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
       }),
     );
   }
+
+  // Spent HERE, not above: `ConsumeAsync` runs inside the transfer's own transaction, after the
+  // funds check, so a 422 leaves the authorisation Pending and re-usable. Measured — see
+  // `validateAuthorization`.
+  spendAuthorization(authorization.held);
 
   const newBalance = available - amount;
   account.balance = newBalance;
@@ -2584,6 +2756,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     pin?: string;
   };
   // Model binding first: a malformed pin is 400, never a counted attempt.
+  const idBind = accountIdBindFailure(body as Record<string, unknown>, [
+    'fromAccountId',
+    'toAccountId',
+  ]);
+  if (idBind) return response.untyped(idBind);
   const pinBind = transferPinBindFailure(
     body,
     'AzureBank.Shared.DTOs.Transfer.InternalTransferRequest',
@@ -2608,14 +2785,22 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
   if (badPin.length > 0) bindingErrors.Pin = badPin;
   // The header binds in the same stage as the body's annotations, so a request wrong in both ways
-  // reports both keys at once. See `stepUpHeaderErrors`.
-  const badStepUp = stepUpHeaderErrors(request);
-  if (badStepUp.length > 0) bindingErrors[STEP_UP_HEADER] = badStepUp;
+  // reports every key at once — measured: a junk header AND a junk PIN come back as ONE 400
+  // carrying both `Pin` and `Step-Up-Authorization`. See `readStepUpHeader`.
+  const stepUp = readStepUpHeader(request);
+  if (stepUp.errors.length > 0) bindingErrors[STEP_UP_HEADER] = stepUp.errors;
+  const badFrom = accountIdErrors(body.fromAccountId);
+  if (badFrom.length > 0) bindingErrors.FromAccountId = badFrom;
+  const badTo = accountIdErrors(body.toAccountId);
+  if (badTo.length > 0) bindingErrors.ToAccountId = badTo;
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
   const amount = body.amount as number;
 
+  // The truthiness test is now redundant — `accountIdErrors` already refused an absent or all-zero
+  // id above — but it is kept because it costs nothing and the rule below must never fire on two
+  // undefineds if that guard is ever moved.
   if (body.fromAccountId && body.fromAccountId === body.toAccountId) {
     /*
       A FIELD error at 400, not a domain code at 422 — three differences, and the mock had all
@@ -2670,13 +2855,13 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     and after the same-account rule, so every cheaper refusal above still answers as itself. There
     is no payee to resolve on this endpoint, which is the one difference from the external path.
   */
-  const authRefusal = consumeAuthorization(request.headers.get(STEP_UP_HEADER), request, {
+  const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'InternalTransfer',
     fromAccountId: body.fromAccountId,
     toAccountId: body.toAccountId,
     amount: body.amount,
   });
-  if (authRefusal) return response.untyped(authRefusal);
+  if (authorization.refusal) return response.untyped(authorization.refusal);
   if (amount > from.balance) {
     return response.untyped(
       problem({
@@ -2690,6 +2875,9 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
       }),
     );
   }
+
+  // Same rule as the external path: spend only where the money actually moves.
+  spendAuthorization(authorization.held);
 
   from.balance -= amount;
   to.balance += amount;

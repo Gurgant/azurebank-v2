@@ -125,7 +125,9 @@ describe('external transfer (PR-11)', () => {
     expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
     // And the PIN did not survive the trip: coming back must re-ask rather than reuse it.
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+    // findBy, not getBy: `onReviewed` awaits the funds gate before it calls `wizard.toPin()`, so a
+    // synchronous query here depends on that request settling inside userEvent's act scope.
+    expect(await screen.findByLabelText('Digit 1 of 6')).toHaveValue('');
   });
 
   it('after IN_FLIGHT the retained key freezes Back; Send reuses the SAME key (no double-spend)', async () => {

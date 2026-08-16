@@ -241,6 +241,79 @@ describe('contract: step-up authorisations', () => {
     expect(Object.keys(problem.errors ?? {})).toContain('Step-Up-Authorization');
   });
 
+  it('BINDS every GUID format, and reserves the 400 for a value that is not one', async () => {
+    /*
+      `Guid.TryParse` accepts five formats and trims whitespace, so the wire contract is not "a
+      dashed lowercase GUID" — it is "anything .NET calls a GUID". The distinction is visible from
+      outside without spending anything: a well-formed id that names nothing answers **401** because
+      it BOUND and then missed, while a value that is not a GUID answers **400** because binding
+      itself failed. So the status alone separates the two, and neither moves money.
+
+      Measured on the real API, all six answering 401:
+
+        D  3f2504e0-4f89-41d3-9a0c-0305e82c3399      N  3f2504e04f8941d39a0c0305e82c3399
+        B  {3f2504e0-…}                              P  (3f2504e0-…)
+        X  {0x3f2504e0,0x4f89,0x41d3,{0x9a,…}}       and D uppercased
+
+      The mock refused four of these with a 400 until this test existed.
+    */
+    const id = await firstAccountId();
+    const g = UNKNOWN_AUTHORIZATION;
+    const forms: [string, string][] = [
+      ['D', g],
+      ['D uppercase', g.toUpperCase()],
+      ['N', g.replace(/-/g, '')],
+      ['B', `{${g}}`],
+      ['P', `(${g})`],
+    ];
+
+    for (const [label, header] of forms) {
+      const { status, body } = await call('/api/transfers', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey(), 'Step-Up-Authorization': header },
+        body: JSON.stringify({
+          fromAccountId: id,
+          recipientAzureTag: FIXTURES.recipientAzureTag,
+          amount: 1,
+          pin: FIXTURES.pin,
+        }),
+      });
+
+      expect(
+        status,
+        `${label} must BIND — a 400 here means the parser is narrower than the server's`,
+      ).toBe(401);
+      expect(asProblem(body).errorCode).toBe('AUTHORIZATION_INVALID');
+    }
+  });
+
+  it('refuses an absent account id in MODEL STATE, keyed PascalCase', async () => {
+    /*
+      `[NotEmptyGuid(ErrorMessage = "A valid account ID is required.")]`, so it fires before
+      FluentValidation and before any ownership lookup — measured identically on all four endpoints,
+      for an absent id and for the all-zero one.
+
+      Worth a contract test because it is the refusal a mock is most likely to get wrong by
+      omission: skip the annotation and the request simply flows on to the next check, which answers
+      something plausible. Ours answered 404 ACCOUNT_NOT_FOUND on the transfers and "Cannot transfer
+      to the same account" on the internal mint — two different wrong answers, both reachable.
+    */
+    const { status, body } = await call('/api/transfers/authorizations', {
+      method: 'POST',
+      body: JSON.stringify({
+        recipientAzureTag: FIXTURES.recipientAzureTag,
+        amount: 1,
+        pin: FIXTURES.pin,
+      }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(problem.errorCode).toBeUndefined();
+    expect(problem.errors?.FromAccountId).toEqual(['A valid account ID is required.']);
+  });
+
   it('reports the header and the body in ONE 400, which places the refusal in binding', async () => {
     /*
       Where, not just what. A junk header sent with a junk PIN comes back with BOTH keys in a single

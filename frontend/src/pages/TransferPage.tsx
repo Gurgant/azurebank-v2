@@ -169,6 +169,20 @@ export function TransferPage() {
   const [authoriseTransfer, { isLoading: isMinting }] = useAuthoriseTransferMutation();
 
   /*
+    Every exit, held for BOTH phases of the submit.
+
+    `keyLive` is `isSubmitting || keyRetained` (useMoneyWizard.ts:142), and neither is set until
+    `wizard.run` starts — so for the whole MINT round trip `keyLive` is false and every control it
+    guards is live. The PIN input was taught the two-phase guard when the mint landed; the exits
+    were not, so a user could press Back mid-mint, watch the wizard step backwards, and have the
+    transfer complete underneath them.
+
+    One name for the rule, used by the header and by the PIN step's own Back, so the two cannot
+    answer differently.
+  */
+  const exitLocked = keyLive || isMinting;
+
+  /*
     The PIN the sixth digit just completed.
 
     A REF, not the state, and for the reason `lastProblem` is one: `onComplete` fires from inside
@@ -387,7 +401,7 @@ export function TransferPage() {
     let authorizationId: string;
     if (keyLive && lastAuthorization.current) {
       authorizationId = lastAuthorization.current;
-    } else
+    } else {
       try {
         const minted = await authoriseTransfer({
           fromAccountId: data.fromAccountId,
@@ -403,6 +417,7 @@ export function TransferPage() {
         handleRefusal(caught as ApiProblem);
         return;
       }
+    }
 
     const result = await wizard.run(
       {
@@ -578,9 +593,9 @@ export function TransferPage() {
               ? wizard.toForm()
               : requestLeave('/dashboard')
         }
-        backDisabled={keyLive}
+        backDisabled={exitLocked}
         onClose={() => requestLeave('/dashboard')}
-        closeDisabled={keyLive}
+        closeDisabled={exitLocked}
       />
 
       <div className={styles.body}>
@@ -627,7 +642,14 @@ export function TransferPage() {
               <Button
                 appearance="primary"
                 size="small"
-                disabled={isSubmitting}
+                /*
+                  BOTH phases, exactly as the PIN input above. Today this control cannot actually
+                  reach the mint — `onValid` re-presents `lastAuthorization.current` whenever a key
+                  is live, and a live key implies a send, which implies a mint that already
+                  succeeded. The guard does not depend on that invariant on purpose: it is one
+                  identifier, and the invariant is three files away from anyone editing this button.
+                */
+                disabled={isMinting || isSubmitting}
                 onClick={() => void handleSubmit(onValid, onInvalid)()}
               >
                 Check again
@@ -887,7 +909,7 @@ export function TransferPage() {
                 size="large"
                 style={{ width: '100%', height: '48px' }}
                 onClick={() => wizard.toReview()}
-                disabled={keyLive}
+                disabled={exitLocked}
               >
                 Back
               </Button>

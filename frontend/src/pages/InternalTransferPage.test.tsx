@@ -96,8 +96,8 @@ describe('internal transfer (PR-11b)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
 
     await confirmWithPin();
-    // The PIN is entered in the page now (confirmWithPinAndSend above), not by the root step-up
-    // modal reacting to a 403 — see ADR-0041.
+    // The PIN is entered in the page now (`confirmWithPin`), not by the root step-up modal
+    // reacting to a 403 — see ADR-0041.
     expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
 
     expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
@@ -250,7 +250,7 @@ describe('internal transfer (PR-11b)', () => {
     screen.getAllByRole('button', { name: 'Back' }).forEach((b) => expect(b).toBeDisabled());
 
     /*
-      The retry is a SECOND press of the same Send, not another walk through the flow: an
+      The retry is the banner's own `Check again`, not another walk through the flow: an
       IN_FLIGHT failure leaves the user on the PIN step with the PIN they already typed, because
       the page only clears it for PIN-specific refusals. That is the safe forward action — it
       reuses the retained key instead of minting a new one.

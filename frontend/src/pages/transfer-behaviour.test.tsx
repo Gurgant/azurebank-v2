@@ -271,7 +271,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
 
         There is no Send button to double-click any more — the sixth digit submits — so the second
         submit a user can physically attempt is a second COMPLETION of the PIN boxes. The guard that
-        must stop it moved with the trigger: `disabled={isSubmitting || pinLockDeadline !== null}`
+        must stop it moved with the trigger: `disabled={isMinting || isSubmitting || pinLockDeadline !== null}`
         on `PinInput`. A disabled input takes no input, so `onComplete` cannot fire twice.
 
         Same caveat as before, restated so nobody reads more into this than it proves: two

@@ -7,7 +7,7 @@ import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { mockState, seedMockSession } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
-import { TEST_PIN, enterPin } from '../test/pinFlow';
+import { enterPin } from '../test/pinFlow';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
 
@@ -55,10 +55,6 @@ async function externalToPinStep(amount = '50') {
   await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
 }
 
-async function completePin(pin = TEST_PIN) {
-  await enterPin(pin);
-}
-
 /** One step back in the wizard. See the note at the call site for why the FIRST match. */
 async function clickBack() {
   await userEvent.click(screen.getAllByRole('button', { name: 'Back' })[0]);
@@ -85,7 +81,7 @@ describe('the client mints an authorisation and presents it', () => {
     */
     renderTransfer();
     await externalToPinStep();
-    await completePin();
+    await enterPin();
 
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
 
@@ -108,14 +104,16 @@ describe('the client mints an authorisation and presents it', () => {
       http.post('*/api/transfers', async ({ request }) => {
         header = request.headers.get('Step-Up-Authorization');
         bodyText = await request.text();
-        // A canned success — this override REPLACES the real handler, so it must not call through.
+        // A canned REFUSAL, and deliberately so: this override REPLACES the real handler, so it
+        // must not call through, and the test needs nothing after the header is captured. The
+        // status is irrelevant to what is asserted — only that the flow stops here.
         return problem({ status: 401, errorCode: 'AUTHORIZATION_INVALID', detail: 'stop here' });
       }),
     );
 
     renderTransfer();
     await externalToPinStep();
-    await completePin();
+    await enterPin();
 
     await waitFor(() => expect(header).toBeTruthy());
     expect(header).toMatch(/^[0-9a-f-]{36}$/i);
@@ -131,7 +129,7 @@ describe('the client mints an authorisation and presents it', () => {
     // can submit is the input itself.
     expect(screen.queryByRole('button', { name: /^Send/ })).not.toBeInTheDocument();
 
-    await completePin();
+    await enterPin();
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
   });
 
@@ -149,7 +147,7 @@ describe('the client mints an authorisation and presents it', () => {
 
     renderTransfer();
     await externalToPinStep();
-    await completePin('999999');
+    await enterPin('999999');
 
     // Emptied boxes are something ONLY the INVALID_PIN branch does — a banner could come from the
     // generic failure path and would pass even if that branch never ran.
@@ -180,7 +178,7 @@ describe('what an expired authorisation does to the screen', () => {
 
     renderTransfer();
     await externalToPinStep();
-    await completePin();
+    await enterPin();
 
     expect(await screen.findByText(/your confirmation expired/i)).toBeInTheDocument();
 
@@ -214,7 +212,7 @@ describe('what an expired authorisation does to the screen', () => {
 
     renderTransfer();
     await externalToPinStep();
-    await completePin();
+    await enterPin();
 
     const banner = await screen.findByText(/that confirmation can no longer be used/i);
     expect(banner).toBeInTheDocument();
@@ -231,7 +229,7 @@ describe('the internal transfer speaks the same protocol', () => {
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    await completePin();
+    await enterPin();
 
     expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
 
