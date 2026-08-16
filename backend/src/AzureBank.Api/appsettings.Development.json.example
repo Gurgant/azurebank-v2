@@ -4,6 +4,7 @@
   //   dotnet user-secrets init
   //   dotnet user-secrets set "Jwt:Secret" "<random string, 64+ chars>"
   //   dotnet user-secrets set "Idempotency:HashKey" "<random string, 32+ chars>"
+  //   dotnet user-secrets set "StepUp:BindingKey" "<random string, 32+ chars>"
   //   dotnet user-secrets set "Security:PinPepper" "<random string, 32+ chars>"
   //   dotnet user-secrets set "ConnectionStrings:DefaultConnection" "<connection string>"
   "ConnectionStrings": {
@@ -18,6 +19,14 @@
     // HMAC key for request fingerprinting (ADR-0009). Server-side only,
     // never stored in the database. Generate a random string, 32+ chars.
     "HashKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
+  },
+
+  "StepUp": {
+    // HMAC key binding a transfer authorisation to its amount and payee (ADR-0042).
+    // Server-side only, never stored in the database. Generate a random string, 32+ chars.
+    // DISTINCT from Idempotency:HashKey on purpose — the two hashes answer different
+    // questions, and one leaked key must not forge the other's answer.
+    "BindingKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
   },
 
   "Security": {

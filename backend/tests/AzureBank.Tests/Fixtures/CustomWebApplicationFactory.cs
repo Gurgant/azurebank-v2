@@ -39,6 +39,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         "integration-tests-only-idempotency-hmac-key-0123456789abcdef";
 
     /// <summary>
+    /// Test-only HMAC key binding a transfer authorisation to its amount and payee (ADR-0042).
+    /// Public so tests can recompute a binding when seeding authorisations directly.
+    /// </summary>
+    public const string StepUpBindingKey =
+        "integration-tests-only-stepup-binding-key-0123456789abcdef";
+
+    /// <summary>
     /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
     /// PasswordHasher when recomputing hashes directly. NOT a real secret.
     /// </summary>
@@ -106,6 +113,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
         builder.UseSetting("Idempotency:HashKey", IdempotencyHashKey);
+        builder.UseSetting("StepUp:BindingKey", StepUpBindingKey);
 
         // PIN-hash pepper (ADR-0011). Test-only value.
         builder.UseSetting("Security:PinPepper", PinPepper);

@@ -259,6 +259,11 @@ jobs:
       CONNECTION_STRING: "Server=localhost,1433;Database=AzureBankE2E;User Id=sa;Password=YourStrong@Passw0rd123;TrustServerCertificate=true"
       JWT_SECRET: "ci-only-throwaway-signing-key-0123456789abcdef0123456789abcdef"
       IDEMPOTENCY_HASH_KEY: "ci-only-throwaway-idempotency-hmac-key-0123456789abcdef"
+      # ADR-0042. A SEPARATE key from IDEMPOTENCY_HASH_KEY on purpose: the two hashes answer
+      # different questions, so one leaked key must not forge the other's answer. Required —
+      # StepUp:BindingKey is ValidateOnStart, so an unset value is a startup crash, not a
+      # degraded run.
+      STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
       PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"
       # The suites expect the dev topology: API on 5068 (http — no dev cert in CI), BFF on 5000.
       API_URL: "http://localhost:5068"
@@ -297,6 +302,7 @@ jobs:
           ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
           Jwt__Secret: ${{ env.JWT_SECRET }}
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
+          StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
           Security__PinPepper: ${{ env.PIN_PEPPER }}
           ASPNETCORE_ENVIRONMENT: Development
         run: |

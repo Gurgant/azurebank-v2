@@ -56,9 +56,14 @@ API with no BFF in the path):
 | PIN field absent (an old client) | 400 | validation |
 | no `Idempotency-Key`, correct PIN | 400 | `IDEMPOTENCY_KEY_MISSING` |
 
-The last row records an **order**, not just an outcome: the idempotency filter is an action filter,
-so it runs before the controller action and therefore before the PIN check. The mock reproduces that
-order, and this is where it was measured rather than assumed.
+The last row records an **order**, not just an outcome: idempotency is **middleware**
+(`app.UseIdempotency()`), so it runs before MVC is entered at all — and therefore before model
+binding, the controller and the PIN check. The mock reproduces that order, and this is where it was
+measured rather than assumed.
+
+_Corrected 2026-08-16 (ADR-0042): this paragraph said "action filter". The outcome is unchanged, but
+the distinction is load-bearing for ADR-0042 — a filter would run inside MVC after model binding,
+whereas middleware short-circuits a replay before any of it._
 
 ### What moved at the BFF, and what deliberately did not
 

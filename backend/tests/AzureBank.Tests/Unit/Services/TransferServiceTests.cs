@@ -6,9 +6,11 @@ using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Options;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace AzureBank.Tests.Unit.Services;
@@ -45,8 +47,17 @@ public class TransferServiceTests : IDisposable
             .ReturnsAsync(true);
         _loggerMock = new Mock<ILogger<TransferService>>();
 
+        // A REAL step-up service over the same InMemory context, not a mock: every test here passes
+        // no authorisation, so it stays inert — and if one ever starts passing a reference, it will
+        // exercise the actual mint/validate/consume rather than a stub that always agrees.
+        var stepUp = new StepUpAuthorizationService(
+            _context,
+            _pinVerifierMock.Object,
+            Options.Create(new StepUpOptions { BindingKey = new string('k', 32) }),
+            new Mock<ILogger<StepUpAuthorizationService>>().Object);
+
         _sut = new TransferService(
-            _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, _loggerMock.Object);
+            _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, stepUp, _loggerMock.Object);
     }
 
     public void Dispose()

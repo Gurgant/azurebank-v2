@@ -176,6 +176,19 @@ export const ApiResponseOfRegisterResponse = z
   .object({ data: RegisterResponse.nullable(), message: z.string().nullable() })
   .partial();
 
+export type StepUpAuthorizationResponse = z.infer<typeof StepUpAuthorizationResponse>;
+export const StepUpAuthorizationResponse = z.object({
+  authorizationId: z.uuid(),
+  expiresAt: z.iso.datetime(),
+});
+
+export type ApiResponseOfStepUpAuthorizationResponse = z.infer<
+  typeof ApiResponseOfStepUpAuthorizationResponse
+>;
+export const ApiResponseOfStepUpAuthorizationResponse = z
+  .object({ data: StepUpAuthorizationResponse.nullable(), message: z.string().nullable() })
+  .partial();
+
 export type ApiResponseOfTransactionResponse = z.infer<typeof ApiResponseOfTransactionResponse>;
 export const ApiResponseOfTransactionResponse = z
   .object({ data: TransactionResponse.nullable(), message: z.string().nullable() })
@@ -261,6 +274,16 @@ export const DepositRequest = z.object({
   description: z.string().max(500).nullable().optional(),
 });
 
+export type InternalTransferAuthorizationRequest = z.infer<
+  typeof InternalTransferAuthorizationRequest
+>;
+export const InternalTransferAuthorizationRequest = z.object({
+  fromAccountId: z.uuid(),
+  toAccountId: z.uuid(),
+  amount: z.number().min(0.01).max(100000).multipleOf(0.01),
+  pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
+});
+
 export type InternalTransferRequest = z.infer<typeof InternalTransferRequest>;
 export const InternalTransferRequest = z.object({
   fromAccountId: z.uuid(),
@@ -329,6 +352,14 @@ export const SetPinRequest = z.object({
   pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
   currentPin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')).nullable().optional(),
   password: z.string().nullable().optional(),
+});
+
+export type TransferAuthorizationRequest = z.infer<typeof TransferAuthorizationRequest>;
+export const TransferAuthorizationRequest = z.object({
+  fromAccountId: z.uuid(),
+  recipientAzureTag: z.string().min(3).max(20).regex(new RegExp('^[a-z][a-z0-9_]{2,19}$')),
+  amount: z.number().min(0.01).max(100000).multipleOf(0.01),
+  pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
 });
 
 export type TransferRequest = z.infer<typeof TransferRequest>;

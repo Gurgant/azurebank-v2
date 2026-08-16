@@ -20,6 +20,32 @@ public static class ErrorCodes
     public const string InvalidPin = "INVALID_PIN";
     public const string PinLocked = "PIN_LOCKED";
 
+    // Step-up authorisation (ADR-0042). Three codes because the user-facing sentences differ, and
+    // before this the difference could not be said at all: an elapsed elevation and one that was
+    // never granted were the same 403 STEP_UP_REQUIRED from AuthLevelMiddleware.
+
+    /// <summary>
+    /// The operation needs an authorisation and none was presented. "You have not authorised this
+    /// yet" — distinct from having authorised and run out of time.
+    /// </summary>
+    public const string AuthorizationRequired = "AUTHORIZATION_REQUIRED";
+
+    /// <summary>
+    /// The authorisation was valid and its window has passed. Nothing was written and no PIN attempt
+    /// was spent — an expiry is not a failed authentication, and must never count towards the lock.
+    /// The client re-prompts for the PIN; the amount and payee stay on screen (WCAG 2.2 SC 3.3.7
+    /// Redundant Entry, Level A: only the security information may be asked for again).
+    /// </summary>
+    public const string AuthorizationExpired = "AUTHORIZATION_EXPIRED";
+
+    /// <summary>
+    /// Deliberately UNIFORM across unknown, not-yours, already-spent, and bound-to-different-data.
+    /// Same reasoning as <see cref="RefreshTokenInvalid"/>: the specific reason is logged server-side
+    /// and never put on the wire, so the response is not an oracle for whether a given authorisation
+    /// reference exists or who owns it.
+    /// </summary>
+    public const string AuthorizationInvalid = "AUTHORIZATION_INVALID";
+
     // Token Authentication (JWT Bearer)
     public const string TokenMissing = "AUTH_TOKEN_MISSING";
     public const string TokenInvalid = "AUTH_TOKEN_INVALID";

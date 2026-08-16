@@ -21,6 +21,7 @@ public class TransferService : ITransferService
     private readonly IAccountAccessService _accountAccess;
     private readonly UserMapper _userMapper;
     private readonly IPinVerifier _pinVerifier;
+    private readonly IStepUpAuthorizationService _stepUp;
     private readonly ILogger<TransferService> _logger;
 
     public TransferService(
@@ -28,12 +29,14 @@ public class TransferService : ITransferService
         IAccountAccessService accountAccess,
         UserMapper userMapper,
         IPinVerifier pinVerifier,
+        IStepUpAuthorizationService stepUp,
         ILogger<TransferService> logger)
     {
         _context = context;
         _accountAccess = accountAccess;
         _userMapper = userMapper;
         _pinVerifier = pinVerifier;
+        _stepUp = stepUp;
         _logger = logger;
     }
 
@@ -79,14 +82,48 @@ public class TransferService : ITransferService
         }
     }
 
-    /// <inheritdoc />
-    public async Task<TransferResponse> TransferAsync(Guid userId, TransferRequest request)
+    /*
+      WHY THE AUTHORISATION IS CHECKED HERE AND NOT IN FRONT OF THE PIPELINE (ADR-0042).
+
+      The obvious place for a step-up gate is the BFF's AuthLevelMiddleware, or a middleware beside
+      the idempotency claim. Both are wrong, and the reason is measured rather than argued:
+      IdempotencyMiddleware.cs:107-112 writes the stored response and RETURNS, never reaching
+      `await _next(context)` at :126. A replay therefore runs no model binding, no validation, no
+      controller and no service — so it also runs no authorisation check.
+
+      That is the correct behaviour, and every payment API that documents the ordering agrees:
+      authenticate the CALLER upstream of the replay lookup, authorise the CUSTOMER downstream of it.
+      A gate in front of the claim would refuse a retry whose two-minute authorisation had lapsed
+      BEFORE TryAcquireAsync could hand back the stored 201 — leaving the one client that provably
+      cannot know whether its money moved unable to find out. The in-body PIN already has this
+      property; the authorisation must keep it.
+
+      PR 1 IS BACKEND-ONLY, so the header is optional here: no client sends it yet, and its absence
+      falls through to the in-band PIN that A1 already verifies on every transfer. That is not a
+      bypass — the PIN is still proved either way — it is the additive half of a two-PR change. PR 2
+      makes the header required and removes TransferRequest.Pin.
+
+      Validation happens where the payee is known (an external transfer's binding names the
+      RECIPIENT USER, which only exists after the tag is resolved) and before anything is written, so
+      an expired authorisation still costs nothing. Consumption is deferred into the transaction
+      below, so an authorisation is never spent by a transfer that rolled back.
+    */
+
+    /// <summary>
+    /// Resolves an external transfer's payee, with the same three refusals in the same order the
+    /// transfer has always applied: 404 for a sender whose row is gone, 422
+    /// <c>SELF_TRANSFER_NOT_ALLOWED</c>, 404 <c>Recipient</c>, 422 <c>RECIPIENT_NO_ACCOUNT</c>.
+    ///
+    /// <para>
+    /// Extracted so minting and sending cannot drift. An authorisation that could name a payee the
+    /// transfer would then refuse is an authorisation for something that cannot happen, and the
+    /// existing TransferEndpointTests are what prove the extraction faithful — they exercise all
+    /// four refusals through the endpoint and never touched this method.
+    /// </para>
+    /// </summary>
+    private async Task<(ApplicationUser Sender, ApplicationUser Recipient, Account RecipientAccount)>
+        ResolveExternalPayeeAsync(Guid userId, string recipientAzureTag)
     {
-        // Get sender's account with ownership check
-        var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
-
-        await VerifyPinOrThrowAsync(userId, request.Pin);
-
         // Get sender user for self-transfer check
         var senderUser = await _context.Users.FindAsync(userId);
         if (senderUser == null)
@@ -95,7 +132,7 @@ public class TransferService : ITransferService
         }
 
         // Prevent self-transfer
-        if (senderUser.AzureTag.Equals(request.RecipientAzureTag, StringComparison.OrdinalIgnoreCase))
+        if (senderUser.AzureTag.Equals(recipientAzureTag, StringComparison.OrdinalIgnoreCase))
         {
             throw new BusinessRuleException(
                 "Cannot transfer to yourself. Use internal account transfer instead.",
@@ -105,11 +142,11 @@ public class TransferService : ITransferService
         // Find recipient by AzureTag
         var recipient = await _context.Users
             .Include(u => u.Accounts)
-            .FirstOrDefaultAsync(u => u.AzureTag == request.RecipientAzureTag.ToLower());
+            .FirstOrDefaultAsync(u => u.AzureTag == recipientAzureTag.ToLower());
 
         if (recipient == null)
         {
-            throw new NotFoundException("Recipient", request.RecipientAzureTag);
+            throw new NotFoundException("Recipient", recipientAzureTag);
         }
 
         // Get recipient's primary account
@@ -119,6 +156,77 @@ public class TransferService : ITransferService
         if (recipientAccount == null)
         {
             throw new BusinessRuleException("Recipient does not have an active account.", ErrorCodes.RecipientNoAccount);
+        }
+
+        return (senderUser, recipient, recipientAccount);
+    }
+
+    /// <inheritdoc />
+    public async Task<StepUpAuthorizationResponse> AuthoriseTransferAsync(
+        Guid userId, TransferAuthorizationRequest request)
+    {
+        // Ownership first, exactly as the transfer does: an unknown source account is a 404 before
+        // the PIN is ever consulted, so a probe of someone else's account costs no attempt.
+        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
+
+        var (_, recipient, _) = await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag);
+
+        var authorization = await _stepUp.MintAsync(
+            userId,
+            StepUpOperation.Transfer,
+            new StepUpBinding(request.FromAccountId, null, recipient.Id, request.Amount),
+            request.Pin);
+
+        return new StepUpAuthorizationResponse
+        {
+            AuthorizationId = authorization.Id,
+            ExpiresAt = authorization.ExpiresAt
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<StepUpAuthorizationResponse> AuthoriseInternalTransferAsync(
+        Guid userId, InternalTransferAuthorizationRequest request)
+    {
+        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
+        await _accountAccess.GetAccountWithOwnershipCheckAsync(request.ToAccountId, userId);
+
+        if (request.FromAccountId == request.ToAccountId)
+        {
+            throw new BusinessRuleException("Cannot transfer to the same account.", ErrorCodes.SameAccountTransfer);
+        }
+
+        var authorization = await _stepUp.MintAsync(
+            userId,
+            StepUpOperation.InternalTransfer,
+            new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount),
+            request.Pin);
+
+        return new StepUpAuthorizationResponse
+        {
+            AuthorizationId = authorization.Id,
+            ExpiresAt = authorization.ExpiresAt
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<TransferResponse> TransferAsync(
+        Guid userId, TransferRequest request, Guid? stepUpAuthorizationId = null)
+    {
+        // Get sender's account with ownership check
+        var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
+
+        await VerifyPinOrThrowAsync(userId, request.Pin);
+
+        var (senderUser, recipient, recipientAccount) =
+            await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag);
+
+        // Bound to recipient.Id, not the tag: a handle is renameable (ADR-0015), so an authorisation
+        // naming @admin would survive @admin becoming someone else's handle.
+        var binding = new StepUpBinding(request.FromAccountId, null, recipient.Id, request.Amount);
+        if (stepUpAuthorizationId is { } authorizationId)
+        {
+            await _stepUp.ValidateAsync(userId, authorizationId, StepUpOperation.Transfer, binding);
         }
 
         // Use transaction for atomicity; retry optimistic-concurrency
@@ -225,6 +333,19 @@ public class TransferService : ITransferService
                         outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
                         await _context.SaveChangesAsync();
 
+                        /*
+                          Spend the authorisation INSIDE this transaction, and after the rows exist
+                          so the evidence can name the movement it paid for. One set-based UPDATE
+                          conditional on the row still being Pending: two concurrent transfers
+                          presenting the same authorisation resolve to exactly one success, because
+                          the loser matches zero rows and ConsumeAsync throws — which rolls this
+                          transaction back rather than moving money on a spent authorisation.
+                        */
+                        if (stepUpAuthorizationId is { } toConsume)
+                        {
+                            await _stepUp.ConsumeAsync(userId, toConsume, outgoingTransaction.Id);
+                        }
+
                         await dbTransaction.CommitAsync();
 
                         // No amount in the log line: logs are exported (Loki), and a money amount
@@ -284,7 +405,8 @@ public class TransferService : ITransferService
     }
 
     /// <inheritdoc />
-    public async Task<InternalTransferResponse> InternalTransferAsync(Guid userId, InternalTransferRequest request)
+    public async Task<InternalTransferResponse> InternalTransferAsync(
+        Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId = null)
     {
         // Validate accounts belong to user
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
@@ -296,6 +418,17 @@ public class TransferService : ITransferService
         if (request.FromAccountId == request.ToAccountId)
         {
             throw new BusinessRuleException("Cannot transfer to the same account.", ErrorCodes.SameAccountTransfer);
+        }
+
+        // The payee is the payer, so the binding names the destination ACCOUNT instead of a
+        // recipient user. Same hash definition, different populated fields.
+        if (stepUpAuthorizationId is { } authorizationId)
+        {
+            await _stepUp.ValidateAsync(
+                userId,
+                authorizationId,
+                StepUpOperation.InternalTransfer,
+                new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount));
         }
 
         // Use transaction for atomicity; retry optimistic-concurrency
@@ -385,6 +518,12 @@ public class TransferService : ITransferService
                         // Write-once back-link (see immutability guard)
                         outgoingTransaction.RelatedTransactionId = incomingTransaction.Id;
                         await _context.SaveChangesAsync();
+
+                        // Spent inside the transaction, same as the external transfer above.
+                        if (stepUpAuthorizationId is { } toConsume)
+                        {
+                            await _stepUp.ConsumeAsync(userId, toConsume, outgoingTransaction.Id);
+                        }
 
                         await dbTransaction.CommitAsync();
 
