@@ -259,12 +259,23 @@ describe('contract: step-up authorisations', () => {
     */
     const id = await firstAccountId();
     const g = UNKNOWN_AUTHORIZATION;
+    const [p1, p2, p3, p4, p5] = g.split('-');
+    const xBytes = p4 + p5;
     const forms: [string, string][] = [
       ['D', g],
       ['D uppercase', g.toUpperCase()],
       ['N', g.replace(/-/g, '')],
       ['B', `{${g}}`],
       ['P', `(${g})`],
+      // The X form was in the measured list from the start and missing from this array — the prose
+      // was doing work the assertion was not. It is also the shape a hand-written parser is most
+      // likely to drop, which makes it the one worth asserting rather than the one worth omitting.
+      [
+        'X',
+        `{0x${p1},0x${p2},0x${p3},{` +
+          Array.from({ length: 8 }, (_, i) => `0x${xBytes.slice(i * 2, i * 2 + 2)}`).join(',') +
+          '}}',
+      ],
     ];
 
     for (const [label, header] of forms) {

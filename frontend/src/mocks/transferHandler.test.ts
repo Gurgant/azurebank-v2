@@ -1139,3 +1139,100 @@ describe('the internal transfer spends its own authorisations', () => {
     expect(mockState.accounts[1].balance).toBe(before + 10);
   });
 });
+
+describe('a GUID in the BODY is not a GUID in a HEADER', () => {
+  /*
+    Two parsers, and which one you get depends on where the value was bound from. MEASURED on the
+    running API with one account id in six spellings:
+
+      POST /api/transfers/authorizations   {"fromAccountId": …}
+        D            -> 201        N (no dashes) -> 400 $.fromAccountId
+        D UPPERCASE  -> 201        B {braces}    -> 400 $.fromAccountId
+                                   X hex-groups  -> 400 $.fromAccountId
+                                   "  D  "       -> 400 $.fromAccountId
+
+      GET /api/transactions/{id}           D · N · UPPERCASE · B  -> 200, all four
+
+    So System.Text.Json takes the D form ONLY (case-insensitively) for a body member, while MVC's
+    TryParse takes all five plus whitespace for a route or a header. A review comment reasoned from
+    the header fix and proposed accepting every format in the body too; that would have made the
+    mock accept four shapes the server refuses.
+  */
+  const REFUSED: [string, (id: string) => string][] = [
+    ['N (no dashes)', (id) => id.replace(/-/g, '')],
+    ['B {braces}', (id) => `{${id}}`],
+    ['P (parens)', (id) => `(${id})`],
+    ['leading/trailing space', (id) => `  ${id}  `],
+  ];
+
+  for (const [label, shape] of REFUSED) {
+    it(`refuses ${label} in the body, the way System.Text.Json does`, async () => {
+      seedMockSession();
+      const res = await mint(AUTH_URL, {
+        fromAccountId: shape(acct()),
+        recipientAzureTag: 'friend',
+        amount: 10,
+        pin: MOCK_PIN,
+      });
+
+      // 400 and keyed by JSON PATH — NOT the 404 an unknown-but-well-formed id gets, and not the
+      // PascalCase `[NotEmptyGuid]` message an absent one gets. Three envelopes, one field.
+      expect(res.status).toBe(400);
+      const keys = Object.keys((await res.json()).errors);
+      expect(keys).toContain('$.fromAccountId');
+      expect(keys).not.toContain('FromAccountId');
+      expect(mockState.stepUpAuthorizations.size).toBe(0);
+    });
+  }
+
+  it('ACCEPTS the D form uppercased, and resolves it to the same account', async () => {
+    /*
+      The one spelling that binds and is not already canonical — so it is the one a raw-string
+      lookup loses. Before `bindAccountIds` rewrote the member, this answered 404 ACCOUNT_NOT_FOUND
+      for an account the server resolves without blinking.
+    */
+    seedMockSession();
+    const res = await mint(AUTH_URL, {
+      fromAccountId: acct().toUpperCase(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+
+    expect(res.status).toBe(201);
+    // The STORED binding is canonical too, which is the half a status code cannot show: the
+    // authorisation must be spendable by a client that then sends the id in its usual lowercase.
+    const [held] = [...mockState.stepUpAuthorizations.values()];
+    expect(held.fromAccountId).toBe(acct());
+  });
+
+  it('spends an authorisation minted with an UPPERCASE id from a lowercase transfer', async () => {
+    // The end-to-end version of the same property, and the one that would break a real client:
+    // the binding compares parsed values on the server, so the spelling used at mint time cannot
+    // decide whether the transfer goes through.
+    seedMockSession();
+    const minted = await mint(AUTH_URL, {
+      fromAccountId: acct().toUpperCase(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    const { data } = await minted.json();
+
+    const res = await transferWithAuth(data.authorizationId, externalBody());
+    expect(res.status).toBe(201);
+  });
+
+  it('binds BOTH account ids on the internal endpoints', async () => {
+    seedMockSession();
+    const res = await mint(AUTH_I_URL, {
+      fromAccountId: acct(),
+      toAccountId: acct2().toUpperCase(),
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(201);
+    const [held] = [...mockState.stepUpAuthorizations.values()];
+    expect(held.toAccountId).toBe(acct2());
+  });
+});

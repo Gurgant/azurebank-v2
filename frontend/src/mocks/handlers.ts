@@ -2053,6 +2053,40 @@ function readStepUpHeader(request: Request): { id: string | null; errors: string
   return { id: canonical, errors: [] };
 }
 
+/**
+ * A GUID in the JSON BODY — parsed the way System.Text.Json parses one, which is NOT how
+ * `Guid.TryParse` does.
+ *
+ * THIS IS THE DISTINCTION THE WHOLE FILE TURNS ON, and it is measured, not inferred. The same value
+ * is accepted or refused depending on WHERE it was bound from:
+ *
+ *   route   `[FromRoute] Guid`     MVC TryParse   D · N · B · P · X · any case  -> 200
+ *   header  `[FromHeader] Guid?`   MVC TryParse   D · N · B · P · X · any case  -> bound
+ *   BODY    a `Guid` member        System.Text.Json   **D FORM ONLY**, case-insensitive
+ *
+ * Measured on `POST /api/transfers/authorizations`, same account id in six spellings:
+ *
+ *   D            -> 201        N (no dashes) -> 400 $.fromAccountId
+ *   D UPPERCASE  -> 201        B {braces}    -> 400 $.fromAccountId
+ *                              X hex-groups  -> 400 $.fromAccountId
+ *                              "  D  "       -> 400 $.fromAccountId   (STJ does not trim)
+ *
+ * and `GET /api/transactions/{id}` answered 200 to D, N, uppercase AND braces — same value, other
+ * binding kind, other parser.
+ *
+ * So `parseGuid` is right for the header and the Idempotency-Key and wrong here: using it for a body
+ * member would make the mock ACCEPT four shapes the server refuses. A review comment proposed
+ * exactly that, reasoning from the header fix; it would have widened the mock instead of converging
+ * it. What IS shared with the header is the canonicalisation: uppercase binds on both, and a raw
+ * lookup would then miss a map keyed lowercase.
+ */
+function parseBodyGuid(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  // No `.trim()`, deliberately — measured above, STJ refuses a padded value.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return null;
+  return value.toLowerCase();
+}
+
 /** The all-zero GUID. `[NotEmptyGuid]` refuses it exactly as it refuses an absent value. */
 const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
 
@@ -2078,12 +2112,13 @@ const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
  * oracle.
  */
 function accountIdErrors(value: unknown): string[] {
-  // A value that is not a GUID at all never reaches this stage — `accountIdBindFailure` below has
+  // A value that is not a GUID at all never reaches this stage — `bindAccountIds` below has
   // already aborted the bind. What is left is ABSENT or ALL-ZERO, which is what `[NotEmptyGuid]`
   // refuses. Verbatim from the wire; the source of truth is `ValidationRules.AccountNotEmptyGuid`.
   if (value === undefined) return ['A valid account ID is required.'];
-  const canonical = typeof value === 'string' ? parseGuid(value) : null;
-  return canonical === EMPTY_GUID ? ['A valid account ID is required.'] : [];
+  // Already canonical by now — `bindAccountIds` ran first and rewrote the member, exactly as MVC
+  // hands the action a bound `Guid` rather than the string that arrived.
+  return value === EMPTY_GUID ? ['A valid account ID is required.'] : [];
 }
 
 /**
@@ -2102,19 +2137,33 @@ function accountIdErrors(value: unknown): string[] {
  * if it were the contract — a test written from the mock rather than from the server. A well-formed
  * id nobody owns IS still a 404; the two cases are simply not the same request.
  */
-function accountIdBindFailure(
-  body: Record<string, unknown>,
-  fields: readonly string[],
-): Response | null {
+function bindAccountIds(body: Record<string, unknown>, fields: readonly string[]): Response | null {
   for (const field of fields) {
     const value = body[field];
     if (value === undefined) continue;
-    if (typeof value !== 'string' || parseGuid(value) === null) {
+    const canonical = parseBodyGuid(value);
+    if (canonical === null) {
       return invalidJsonValueProblem(
         `$.${field}`,
         `The JSON value could not be converted to System.Guid. Path: $.${field}`,
       );
     }
+    /*
+      THE BIND ITSELF, and the reason this is a mutation rather than a return value.
+
+      MVC binds once and every later line sees the bound `Guid`; nothing downstream re-reads the
+      string that arrived. Writing the canonical value back onto the parsed body reproduces that in
+      one place, so the ownership lookups, the minted binding record and the comparison in
+      `validateAuthorization` cannot disagree about which spelling counts — and a future handler
+      cannot reintroduce a raw-string compare by forgetting to call something.
+
+      Without it, an id sent as `01A00ABC-…` bound fine and then missed a map keyed lowercase: a
+      404 ACCOUNT_NOT_FOUND for an account the server resolves, or a 401 for an authorisation whose
+      binding is identical once parsed. Uppercase is the only spelling that reaches this line, since
+      every other one was refused above — but it is the spelling a `.toUpperCase()` anywhere in a
+      caller would produce.
+    */
+    body[field] = canonical;
   }
   return null;
 }
@@ -2300,7 +2349,7 @@ const authoriseTransfer = api.post(
       pin?: string;
     };
 
-    const idBind = accountIdBindFailure(body as Record<string, unknown>, ['fromAccountId']);
+    const idBind = bindAccountIds(body as Record<string, unknown>, ['fromAccountId']);
     if (idBind) return response.untyped(idBind);
     const pinBind = mintPinBindFailure(
       body,
@@ -2384,7 +2433,7 @@ const authoriseInternalTransfer = api.post(
       pin?: string;
     };
 
-    const idBind = accountIdBindFailure(body as Record<string, unknown>, [
+    const idBind = bindAccountIds(body as Record<string, unknown>, [
       'fromAccountId',
       'toAccountId',
     ]);
@@ -2526,7 +2575,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   */
   // Model binding runs before the action, so a malformed pin never reaches the service. The
   // bind-failure half first: it aborts, so nothing else is validated after it.
-  const idBind = accountIdBindFailure(body as Record<string, unknown>, ['fromAccountId']);
+  const idBind = bindAccountIds(body as Record<string, unknown>, ['fromAccountId']);
   if (idBind) return response.untyped(idBind);
   const pinBind = transferPinBindFailure(body, 'AzureBank.Shared.DTOs.Transfer.TransferRequest');
   if (pinBind) return response.untyped(pinBind);
@@ -2756,10 +2805,7 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     pin?: string;
   };
   // Model binding first: a malformed pin is 400, never a counted attempt.
-  const idBind = accountIdBindFailure(body as Record<string, unknown>, [
-    'fromAccountId',
-    'toAccountId',
-  ]);
+  const idBind = bindAccountIds(body as Record<string, unknown>, ['fromAccountId', 'toAccountId']);
   if (idBind) return response.untyped(idBind);
   const pinBind = transferPinBindFailure(
     body,
