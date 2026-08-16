@@ -8,6 +8,7 @@ import {
   InternalTransferResponse,
   PaginatedResponseOfTransactionResponse,
   RecipientLookupResponse,
+  StepUpAuthorizationResponse,
   TransactionResponse,
   TransactionSummaryResponse,
   TransferResponse,
@@ -54,6 +55,8 @@ export type _GeneratedSchemasMatchSpec = [
   AssertExtends<Schemas['AccountResponse'], z.infer<typeof AccountResponse>>,
   AssertExtends<z.infer<typeof TransactionSummaryResponse>, Schemas['TransactionSummaryResponse']>,
   AssertExtends<Schemas['TransactionSummaryResponse'], z.infer<typeof TransactionSummaryResponse>>,
+  AssertExtends<z.infer<typeof StepUpAuthorizationResponse>, Schemas['StepUpAuthorizationResponse']>,
+  AssertExtends<Schemas['StepUpAuthorizationResponse'], z.infer<typeof StepUpAuthorizationResponse>>,
 ];
 
 // ===== A — STRICT money schemas (fail-closed everywhere) =====
@@ -68,6 +71,15 @@ export const accountsListSchema = z.array(AccountResponse) as ZodType<Schemas['A
 export const transactionSummarySchema = TransactionSummaryResponse as ZodType<
   Schemas['TransactionSummaryResponse']
 >;
+
+/*
+  STRICT, not soft, even though it moves no money itself. A minted authorisation is the permission a
+  transfer is about to be spent against (ADR-0042): if `authorizationId` or `expiresAt` ever drifts,
+  the client sends a header the server cannot match and the user is refused with no way to tell why.
+  Fail closed in production, like the receipts.
+*/
+export const stepUpAuthorizationResponseSchema =
+  StepUpAuthorizationResponse as ZodType<Schemas['StepUpAuthorizationResponse']>;
 
 // ===== C — soft schemas (dev + test only; undefined in production = skip) =====
 

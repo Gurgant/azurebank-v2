@@ -27,6 +27,7 @@ import {
   recipientLookupResponseSchema,
   transactionResponseSchema,
   transactionSummarySchema,
+  stepUpAuthorizationResponseSchema,
   transferResponseSchema,
   updateAzureTagResponseSchema,
   withdrawResponseSchema,
@@ -75,6 +76,9 @@ export type TransferResponse = Schemas['TransferResponse'];
 export type InternalTransferRequest = Schemas['InternalTransferRequest'];
 export type InternalTransferResponse = Schemas['InternalTransferResponse'];
 export type RecipientLookupResponse = Schemas['RecipientLookupResponse'];
+export type TransferAuthorizationRequest = Schemas['TransferAuthorizationRequest'];
+export type InternalTransferAuthorizationRequest = Schemas['InternalTransferAuthorizationRequest'];
+export type StepUpAuthorizationResponse = Schemas['StepUpAuthorizationResponse'];
 export type UpdateAzureTagRequest = Schemas['UpdateAzureTagRequest'];
 export type UpdateAzureTagResponse = Schemas['UpdateAzureTagResponse'];
 
@@ -82,6 +86,18 @@ export type UpdateAzureTagResponse = Schemas['UpdateAzureTagResponse'];
 export interface IdempotentArg<TBody> {
   idempotencyKey: string;
   body: TBody;
+  /**
+   * The step-up authorisation minted for exactly this amount and payee (ADR-0042). A SIBLING of
+   * `body`, never a field inside it, and the separation is load-bearing rather than tidy: the
+   * server fingerprints the request BODY alone, so an authorisation carried in the body would
+   * change those bytes and make every retry a 422 `IDEMPOTENCY_KEY_REUSE` instead of reaching the
+   * endpoint. Keeping it out here is what lets the same transfer be resent byte-identically while
+   * the authorisation differs, expires, or is absent.
+   *
+   * Optional while PR 2 ships without enforcement: the in-band PIN is still the proof the server
+   * acts on, so a request without this is refused by nothing new.
+   */
+  stepUpAuthorizationId?: string;
 }
 
 /**
@@ -368,12 +384,52 @@ export const apiSlice = createApi({
         unwrap(response, devOnly(recipientLookupResponseSchema)),
     }),
 
+    /*
+      MINTING (ADR-0042). Two endpoints, no Idempotency-Key on either, and that is deliberate:
+      minting moves no money, so there is nothing to deduplicate, and a repeat simply produces a
+      second authorisation of which only one can ever be spent. Requiring a key would add a failure
+      mode to the one call whose whole job is to be easy to make again after a wrong PIN.
+
+      What a repeat DOES cost is a PIN attempt — minting IS the authentication event, and must not
+      be a cheaper oracle than the transfer itself. So these answer with the same PIN codes the
+      transfer does (401 INVALID_PIN, 429 PIN_LOCKED, 422 PIN_REQUIRED) and the pages route all
+      three through the branch that already handles them.
+
+      No cache invalidation: nothing a query can observe has changed.
+    */
+    authoriseTransfer: builder.mutation<StepUpAuthorizationResponse, TransferAuthorizationRequest>({
+      query: (body) => ({ url: '/api/transfers/authorizations', method: 'POST', body }),
+      // STRICT: a drifted authorisationId is a header the server cannot match, refused with no
+      // way for the user to tell why.
+      transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
+        unwrap(response, stepUpAuthorizationResponseSchema),
+    }),
+
+    authoriseInternalTransfer: builder.mutation<
+      StepUpAuthorizationResponse,
+      InternalTransferAuthorizationRequest
+    >({
+      query: (body) => ({
+        url: '/api/transfers/internal/authorizations',
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
+        unwrap(response, stepUpAuthorizationResponseSchema),
+    }),
+
     transfer: builder.mutation<WithReplay<TransferResponse>, IdempotentArg<TransferRequest>>({
-      query: ({ idempotencyKey, body }) => ({
+      query: ({ idempotencyKey, body, stepUpAuthorizationId }) => ({
         url: '/api/transfers',
         method: 'POST',
         body,
-        headers: { 'Idempotency-Key': idempotencyKey },
+        headers: {
+          'Idempotency-Key': idempotencyKey,
+          // Spread rather than a `?? undefined` value: an explicit `undefined` still serialises
+          // as a header with an empty value on some transports, and an empty
+          // Step-Up-Authorization is a malformed GUID (400) rather than an absent one.
+          ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
+        },
       }),
       // STRICT (A): a money receipt.
       transformResponse: (response: Schemas['ApiResponseOfTransferResponse'], meta) =>
@@ -478,11 +534,17 @@ export const apiSlice = createApi({
       WithReplay<InternalTransferResponse>,
       IdempotentArg<InternalTransferRequest>
     >({
-      query: ({ idempotencyKey, body }) => ({
+      query: ({ idempotencyKey, body, stepUpAuthorizationId }) => ({
         url: '/api/transfers/internal',
         method: 'POST',
         body,
-        headers: { 'Idempotency-Key': idempotencyKey },
+        headers: {
+          'Idempotency-Key': idempotencyKey,
+          // Spread rather than a `?? undefined` value: an explicit `undefined` still serialises
+          // as a header with an empty value on some transports, and an empty
+          // Step-Up-Authorization is a malformed GUID (400) rather than an absent one.
+          ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
+        },
       }),
       // STRICT (A): a money receipt.
       transformResponse: (response: Schemas['ApiResponseOfInternalTransferResponse'], meta) =>
@@ -520,6 +582,8 @@ export const {
   useWithdrawMutation,
   // Transfers
   useLazyLookupRecipientQuery,
+  useAuthoriseTransferMutation,
+  useAuthoriseInternalTransferMutation,
   useTransferMutation,
   useTransferInternalMutation,
   // BFF auth
