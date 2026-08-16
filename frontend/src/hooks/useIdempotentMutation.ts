@@ -46,14 +46,27 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
   }, []);
 
   const submit = useCallback(
-    async (body: TBody): Promise<TResult> => {
+    async (
+      body: TBody,
+      /*
+        Out-of-band request metadata: travels WITH the attempt, not inside the intent. The step-up
+        authorisation (ADR-0042) belongs here and not in `body` because the body is the thing that
+        must stay byte-identical across a retry — the server fingerprints it — while the
+        authorisation is exactly what may legitimately differ between attempts.
+      */
+      extras?: { stepUpAuthorizationId?: string },
+    ): Promise<TResult> => {
       if (verifyRequiredRef.current) {
         throw new Error('Previous result unknown — verify before submitting again.');
       }
       keyRef.current ??= crypto.randomUUID();
       setKeyRetained(true);
       try {
-        const result = await trigger({ idempotencyKey: keyRef.current, body }).unwrap();
+        const result = await trigger({
+          idempotencyKey: keyRef.current,
+          body,
+          ...extras,
+        }).unwrap();
         keyRef.current = null;
         setKeyRetained(false);
         return result;

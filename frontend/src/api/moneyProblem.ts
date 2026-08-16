@@ -25,6 +25,8 @@ export const PROTOCOL_CODES = [
   'STEP_UP_CANCELLED',
   'STEP_UP_REQUIRED',
   'IDEMPOTENCY_IN_FLIGHT',
+  'AUTHORIZATION_EXPIRED',
+  'AUTHORIZATION_INVALID',
   'VALIDATION_ERROR',
   'IDEMPOTENCY_KEY_REUSE',
   'IDEMPOTENCY_KEY_MISSING',
@@ -98,6 +100,38 @@ export function classifyMoneyProblem(
   }
   if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
     return { kind: 'inFlight' };
+  }
+  /*
+    The two step-up authorisation refusals (ADR-0042). PROTOCOL, not domain: they mean the same
+    thing on every authorised operation, and a flow that reworded them would be describing its own
+    control instead of the one that refused.
+
+    Both are 'attempt'-scoped. Neither names a value editable on the destination step — "your
+    confirmation expired" is about the permission, not the amount — and a step change makes both
+    stale, which is exactly what 'attempt' encodes.
+  */
+  if (problem.errorCode === 'AUTHORIZATION_EXPIRED') {
+    return {
+      kind: 'message',
+      scope: 'attempt',
+      // GOV.UK's convention: name the security reason, and never leave the data question implicit.
+      // The details ARE still on screen (WCAG 2.2 SC 3.3.7 Redundant Entry is Level A), so say so —
+      // a user who is not told assumes the opposite and starts over.
+      text: 'For your security, your confirmation expired. Your transfer details are still here — enter your PIN again to confirm.',
+    };
+  }
+  if (problem.errorCode === 'AUTHORIZATION_INVALID') {
+    /*
+      Deliberately incurious. The server answers this uniformly for unknown / not-yours /
+      already-spent / bound-to-different-data, so that it is not an oracle for which authorisation
+      references are live. Guessing which one it was here would re-create the oracle in the client's
+      copy — and would be wrong as often as not.
+    */
+    return {
+      kind: 'message',
+      scope: 'attempt',
+      text: 'That confirmation can no longer be used. Check the details and confirm again.',
+    };
   }
 
   // 5: the flow's own business codes. Cannot shadow the above — the type forbids it.
