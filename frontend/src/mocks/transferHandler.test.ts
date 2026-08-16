@@ -491,3 +491,349 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
     expect(Object.keys((await res.json()).errors)).toContain('toAccountId');
   });
 });
+
+/**
+ * The step-up protocol at the WIRE, where the pages cannot reach it.
+ *
+ * `transfer-step-up.test.tsx` drives the same protocol through the UI, and that is a different
+ * claim: it can only exercise what a page happens to send. These reach the handler directly, so
+ * they can send the things a correct client never would — an authorisation minted for €10 spent on
+ * €500, one spent twice, a header that is not a GUID — which is exactly where a mock that is merely
+ * "green" stops matching the server.
+ *
+ * Every expectation is a row of `A2-PR2-MEASURED-CONTRACT.md`, captured with curl against the API
+ * on `:5068` and quoted at the assertion rather than summarised.
+ */
+
+const AUTH_URL = '/api/transfers/authorizations';
+const AUTH_I_URL = '/api/transfers/internal/authorizations';
+
+function mint(url: string, body: unknown) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** A transfer that presents an authorisation. `null` sends no header at all. */
+function transferWithAuth(auth: string | null, body: unknown) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Idempotency-Key': crypto.randomUUID(),
+  };
+  if (auth) headers['Step-Up-Authorization'] = auth;
+  return fetch(T_URL, { method: 'POST', headers, body: JSON.stringify(body) });
+}
+
+describe('step-up authorisations (ADR-0042)', () => {
+  it('mints one, and the id is spendable exactly ONCE', async () => {
+    /*
+      The single-use property, which is the whole point of the entity: without it a captured
+      authorisation is a bearer token for as many transfers as the amount allows.
+
+      The second attempt uses a FRESH Idempotency-Key on purpose. With the same key the request
+      never reaches the service at all — `IdempotencyMiddleware` replays the stored response before
+      `_next`, so a same-key retry would answer 201 from the store and prove nothing about
+      consumption. Measured on the real stack: same key -> 201 + `Idempotency-Replayed: true`;
+      new key -> 401 AUTHORIZATION_INVALID.
+    */
+    seedMockSession();
+    const body = { fromAccountId: acct(), recipientAzureTag: 'friend', amount: 10, pin: MOCK_PIN };
+
+    const minted = await mint(AUTH_URL, body);
+    // OBSERVED: 201 {"data":{authorizationId,expiresAt},"message":"Transfer authorised"}
+    expect(minted.status).toBe(201);
+    const { data } = await minted.json();
+    expect(data.authorizationId).toMatch(/^[0-9a-f-]{36}$/i);
+    // The window is two minutes and does not refresh (StepUpOptions.Window). Asserted as a RANGE
+    // because the exact instant is the server's clock, not ours.
+    const ttl = new Date(data.expiresAt).getTime() - Date.now();
+    expect(ttl).toBeGreaterThan(60_000);
+    expect(ttl).toBeLessThanOrEqual(120_000);
+
+    const first = await transferWithAuth(data.authorizationId, body);
+    expect(first.status).toBe(201);
+
+    const second = await transferWithAuth(data.authorizationId, body);
+    expect(second.status).toBe(401);
+    expect((await second.json()).errorCode).toBe('AUTHORIZATION_INVALID');
+  });
+
+  it('refuses when the AMOUNT differs from the one authorised', async () => {
+    // RTS Art. 5(1)(c): the amount and the payee are what the code is dynamically linked to. The
+    // PIN in the body is CORRECT here — so a failure to bind would sail through on the in-band
+    // check alone, which is precisely the hole ADR-0042 closes.
+    seedMockSession();
+    const authorised = {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    };
+    const { data } = await (await mint(AUTH_URL, authorised)).json();
+
+    const res = await transferWithAuth(data.authorizationId, { ...authorised, amount: 500 });
+    // OBSERVED: 401 AUTHORIZATION_INVALID — the uniform refusal, not a "wrong amount" code.
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('AUTHORIZATION_INVALID');
+  });
+
+  it('refuses when the PAYEE differs, and says exactly the same thing', async () => {
+    // The uniform refusal is a security property, not laziness: distinct codes for unknown /
+    // not-yours / spent / mismatched would turn this endpoint into an oracle about other people's
+    // authorisations. Asserted by COMPARING the two bodies rather than by reading one.
+    seedMockSession();
+    const authorised = {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    };
+    const { data } = await (await mint(AUTH_URL, authorised)).json();
+
+    // A DIFFERENT REAL recipient, not an invented handle: an unknown one would be refused by the
+    // payee lookup, which now runs first, and the test would pass without the binding ever being
+    // examined.
+    const mismatched = await transferWithAuth(data.authorizationId, {
+      ...authorised,
+      recipientAzureTag: 'john_d',
+    });
+    const forged = await transferWithAuth(crypto.randomUUID(), authorised);
+
+    expect(mismatched.status).toBe(forged.status);
+    const [a, b] = [await mismatched.json(), await forged.json()];
+    expect(a.errorCode).toBe('AUTHORIZATION_INVALID');
+    expect(a.detail).toBe(b.detail);
+  });
+
+  it('answers an EXPIRED one distinctly, and checks expiry BEFORE the binding', async () => {
+    /*
+      Two claims in one request, and the second is the interesting half. An authorisation that is
+      both expired AND mismatched must answer EXPIRED: someone who waited too long with the right
+      details is told to re-enter a PIN, while the uniform refusal would send them back to redo the
+      form. `StepUpAuthorizationService` orders the checks that way and this pins the order.
+    */
+    seedMockSession();
+    const authorised = {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    };
+    const { data } = await (await mint(AUTH_URL, authorised)).json();
+
+    // Age it past the window. The real one was aged with SQL for the same measurement; there is no
+    // way to wait two minutes in a unit test and no reason to.
+    const held = mockState.stepUpAuthorizations.get(data.authorizationId);
+    expect(held).toBeDefined();
+    held!.expiresAtMs = Date.now() - 1;
+
+    const res = await transferWithAuth(data.authorizationId, { ...authorised, amount: 500 });
+    expect(res.status).toBe(401);
+    // OBSERVED: 401 AUTHORIZATION_EXPIRED, detail "This authorisation has expired. Enter your PIN
+    // again to confirm." — despite the amount ALSO being wrong.
+    expect((await res.json()).errorCode).toBe('AUTHORIZATION_EXPIRED');
+  });
+
+  it('is a MODEL-BINDING 400 with no errorCode when the header is not a GUID', async () => {
+    /*
+      A fourth 400 envelope on these endpoints, and the one a client is most likely to mis-handle.
+      `[FromHeader(Name = "Step-Up-Authorization")] Guid?` fails in model binding — before the
+      action — so there is no `errorCode` for `classifyMoneyProblem` to branch on, and the errors
+      dictionary is keyed by the WIRE NAME rather than the C# parameter name.
+
+      Observed: 400 {"title":"One or more validation errors occurred.",
+                     "errors":{"Step-Up-Authorization":["The value 'not-a-guid' is not valid."]}}
+    */
+    seedMockSession();
+    const res = await transferWithAuth('not-a-guid', {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.errorCode).toBeUndefined();
+    expect(Object.keys(body.errors)).toContain('Step-Up-Authorization');
+  });
+
+  it('reports that 400 in MODEL BINDING — beside a bad PIN, and before one is ever verified', async () => {
+    /*
+      Where the refusal happens, not merely what it says. A junk header sent with a junk PIN must
+      answer 400 with BOTH keys: model binding runs before the action, so the PIN is never verified
+      and no lockout attempt is charged. The first draft of the mock checked the header inside the
+      consumption step — after `checkPinInBand` — which answered 401 INVALID_PIN and cost an attempt
+      the real server does not take.
+    */
+    seedMockSession();
+    const res = await transferWithAuth('not-a-guid', {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: '12',
+    });
+
+    expect(res.status).toBe(400);
+    const keys = Object.keys((await res.json()).errors);
+    expect(keys).toContain('Step-Up-Authorization');
+    expect(keys).toContain('Pin');
+  });
+
+  it('still succeeds with NO header — PR 2 does not yet require one', async () => {
+    // Backward compatibility, asserted so that flipping enforcement in PR 4 is a deliberate edit to
+    // a failing test rather than a silent change of meaning. The in-band PIN is still the proof.
+    seedMockSession();
+    const res = await transferWithAuth(null, {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('will not spend an INTERNAL authorisation on an EXTERNAL transfer', async () => {
+    // The binding covers the OPERATION, not only the money. Both endpoints mint the same-looking
+    // id, so without this a client could route one to the other and the amounts would match.
+    seedMockSession();
+    const { data } = await (
+      await mint(AUTH_I_URL, {
+        fromAccountId: acct(),
+        toAccountId: acct2(),
+        amount: 10,
+        pin: MOCK_PIN,
+      })
+    ).json();
+
+    const res = await transferWithAuth(data.authorizationId, {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('AUTHORIZATION_INVALID');
+  });
+
+  it('costs a PIN attempt: minting refuses a wrong PIN exactly as the transfer does', async () => {
+    // Minting is the authentication event. If it were cheaper than the transfer it would become the
+    // oracle for guessing a PIN — the lock has to land on the same attempt either way.
+    seedMockSession();
+    const res = await mint(AUTH_URL, {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: '000000',
+    });
+    // OBSERVED: 401 INVALID_PIN on attempts 1-2, then 429 PIN_LOCKED with retryAfterSeconds 900 ON
+    // the third — the lock lands on the third miss, not after it.
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('INVALID_PIN');
+  });
+
+  it('resolves the payee BEFORE the PIN, so no authorisation ever names a stranger', async () => {
+    seedMockSession();
+    const res = await mint(AUTH_URL, {
+      fromAccountId: acct(),
+      recipientAzureTag: 'nosuchuser',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    // OBSERVED: 404 ACCOUNT_NOT_FOUND, detail "Recipient with identifier 'nosuchuser' was not
+    // found." — the general account code, not a dedicated recipient one.
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(mockState.stepUpAuthorizations.size).toBe(0);
+  });
+
+  it('refuses an unowned source account with a 404, before the PIN is consulted', async () => {
+    // OBSERVED, unowned id + CORRECT pin: 404 ACCOUNT_NOT_FOUND, detail "Account with identifier
+    // '3f2504e0-…' was not found." `AuthoriseTransferAsync` opens with the ownership check, so
+    // probing someone else's account through the MINT costs no attempt — exactly as through the
+    // transfer. A mint that were cheaper would be the softer of two doors into the same lock.
+    seedMockSession();
+    const res = await mint(AUTH_URL, {
+      fromAccountId: FIXED,
+      recipientAzureTag: 'friend',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    expect(mockState.stepUpAuthorizations.size).toBe(0);
+  });
+
+  it('will not mint for a move the transfer would refuse (same account)', async () => {
+    /*
+      The property that makes the two endpoints one protocol rather than two. Minting for
+      from == to would hand back an id the internal transfer then rejects with a validator 400 —
+      and the user, having already entered a PIN, would watch a confirmed operation fail.
+
+      OBSERVED: 400 {"title":"Validation Failed","instance":"/api/transfers/internal/authorizations",
+                     "errors":{"toAccountId":["Cannot transfer to the same account."]}}
+      — the validator envelope with the camelCase key, identical to the transfer's own answer.
+    */
+    seedMockSession();
+    const res = await mint(AUTH_I_URL, {
+      fromAccountId: acct(),
+      toAccountId: acct(),
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.title).toBe('Validation Failed');
+    expect(Object.keys(body.errors)).toContain('toAccountId');
+    expect(mockState.stepUpAuthorizations.size).toBe(0);
+  });
+
+  it('applies the amount annotation at the mint, in the framework envelope', async () => {
+    // OBSERVED, amount 0: 400 {"Amount":["Amount must be between $0.01 and $100,000.00"]} —
+    // PascalCase, no `detail`. `[MoneyRange]` is a DataAnnotation, so it fires in model state
+    // before the action, and the mint answers it identically to the transfer.
+    seedMockSession();
+    const res = await mint(AUTH_URL, {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 0,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(400);
+    expect(Object.keys((await res.json()).errors)).toContain('Amount');
+  });
+
+  it('resolves the payee before EXAMINING an authorisation too, so a typo stays a 404', async () => {
+    /*
+      The same ordering on the spending side, and it is the one the mock got wrong.
+
+      `TransferAsync` runs ownership → PIN → `ResolveExternalPayeeAsync` → `ValidateAsync`, so a
+      handle that does not exist is a 404 even when the presented authorisation is ALSO wrong for
+      it. The mock consumed first, which answered 401 AUTHORIZATION_INVALID and would have told a
+      user who mistyped a handle that their confirmation was no longer usable.
+    */
+    seedMockSession();
+    const { data } = await (
+      await mint(AUTH_URL, {
+        fromAccountId: acct(),
+        recipientAzureTag: 'friend',
+        amount: 10,
+        pin: MOCK_PIN,
+      })
+    ).json();
+
+    const res = await transferWithAuth(data.authorizationId, {
+      fromAccountId: acct(),
+      recipientAzureTag: 'nosuchuser',
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+
+    // ...and the authorisation is untouched, so the user can correct the handle and send.
+    expect(mockState.stepUpAuthorizations.get(data.authorizationId)?.consumed).toBe(false);
+  });
+});

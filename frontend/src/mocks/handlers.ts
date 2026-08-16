@@ -2004,6 +2004,42 @@ function checkPinInBand(
 /** The window the real server uses (StepUpOptions.Window). Two minutes, no refresh. */
 const STEP_UP_WINDOW_MS = 2 * 60 * 1000;
 
+/**
+ * The wire name, spelled out here and NOT imported from `apiSlice`.
+ *
+ * Deliberate duplication: the mock stands in for the SERVER, and a constant shared with the client
+ * would rename both halves at once — leaving every test green while the real API, which knows only
+ * `Step-Up-Authorization`, stopped receiving anything. Two independent spellings is what makes a
+ * rename fail here.
+ */
+const STEP_UP_HEADER = 'Step-Up-Authorization';
+
+/**
+ * The model-binding error a `Step-Up-Authorization` that is not a GUID produces — a FOURTH 400
+ * shape on these endpoints, and the one a client is most likely to mis-handle.
+ *
+ * It belongs HERE, beside `Pin` and `Amount`, and not inside `consumeAuthorization`, because
+ * `[FromHeader(Name = "Step-Up-Authorization")] Guid?` is bound by MVC: a malformed value fails in
+ * model binding, before the action, before ownership, before the PIN is ever verified. Checking it
+ * later would have made a junk header cost a PIN attempt the real server never charges.
+ *
+ * Measured on the real stack (A2-PR2-MEASURED-CONTRACT.md):
+ *
+ *   400 {"type":"…rfc9110#section-15.5.1","title":"One or more validation errors occurred.",
+ *        "errors":{"Step-Up-Authorization":["The value 'not-a-guid' is not valid."]}}
+ *
+ * Two details a guess would get wrong: there is **no `errorCode`**, so `classifyMoneyProblem` falls
+ * through every branch to the flow's fallback sentence; and the key is the WIRE header name, not a
+ * C# parameter name — model binding keys by the binding source, which `[FromHeader(Name = …)]`
+ * renamed.
+ */
+function stepUpHeaderErrors(request: Request): string[] {
+  const raw = request.headers.get(STEP_UP_HEADER);
+  if (raw === null) return [];
+  const isGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw);
+  return isGuid ? [] : [`The value '${raw}' is not valid.`];
+}
+
 function mintAuthorization(record: Omit<StoredStepUpAuthorization, 'consumed' | 'expiresAtMs'>) {
   const id = crypto.randomUUID();
   const expiresAtMs = Date.now() + STEP_UP_WINDOW_MS;
@@ -2079,11 +2115,41 @@ function consumeAuthorization(
 }
 
 /**
+ * The model-binding stage both mint endpoints share.
+ *
+ * MEASURED on the running API, `POST /api/transfers/authorizations`:
+ *
+ *   amount 0     -> 400 {"Amount":["Amount must be between $0.01 and $100,000.00"]}   (framework)
+ *   amount 10.00001 -> 400 "Validation Failed" {"amount":["Amount cannot have more than 2 decimal
+ *                     places."]}                                                     (validator)
+ *
+ * Only the first is modelled here, and deliberately: neither transfer handler models the SCALE
+ * rule either, so adding it to the mint alone would make the mock's mint stricter than its own
+ * transfer — the opposite of the property ADR-0042 needs. It is a real, pre-existing gap rather
+ * than a decision, and it is written down instead of quietly closed in a PR about something else.
+ */
+function mintBindingErrors(body: { amount?: number; pin?: string }): Record<string, string[]> {
+  const errors: Record<string, string[]> = {};
+  const badAmount = amountErrors(body.amount);
+  if (badAmount.length > 0) errors.Amount = badAmount;
+  const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
+  if (badPin.length > 0) errors.Pin = badPin;
+  return errors;
+}
+
+/**
  * POST /api/transfers/authorizations — mint one for an EXTERNAL transfer.
  *
- * Refusal order mirrors TransferService.AuthoriseTransferAsync: ownership, then payee resolution,
- * then the PIN. Resolving the payee BEFORE the PIN is what stops an authorisation ever naming
- * someone the transfer would then refuse.
+ * Refusal order mirrors TransferService.AuthoriseTransferAsync: binding, then OWNERSHIP of the
+ * source account, then payee resolution, then the PIN. Two of those were missing from the first
+ * draft, and both are measured:
+ *
+ *   unowned fromAccountId, CORRECT pin -> 404 ACCOUNT_NOT_FOUND
+ *     detail "Account with identifier '3f2504e0-…' was not found."
+ *   (so probing someone else's account costs no PIN attempt, exactly as on the transfer itself)
+ *
+ * Resolving the payee before the PIN is what stops an authorisation ever naming someone the
+ * transfer would then refuse.
  */
 const authoriseTransfer = api.post(
   '/api/transfers/authorizations',
@@ -2094,6 +2160,29 @@ const authoriseTransfer = api.post(
       amount: number;
       pin?: string;
     };
+
+    const bindingErrors = mintBindingErrors(body);
+    if (Object.keys(bindingErrors).length > 0) {
+      return response.untyped(modelStateProblem(bindingErrors));
+    }
+
+    // OWNERSHIP FIRST — `AuthoriseTransferAsync` opens with GetAccountWithOwnershipCheckAsync.
+    if (!mockState.accounts.some((a) => a.id === body.fromAccountId)) {
+      return response.untyped(notFound('Account', body.fromAccountId, request));
+    }
+
+    // Self-transfer precedes the recipient lookup inside `ResolveExternalPayeeAsync`, so it cannot
+    // be reported as "not found" for a handle that plainly exists — it is the caller's own.
+    if (mockState.session?.azureTag?.toLowerCase() === body.recipientAzureTag?.toLowerCase()) {
+      return response.untyped(
+        problem({
+          instance: pathOf(request),
+          status: 422,
+          errorCode: 'SELF_TRANSFER_NOT_ALLOWED',
+          detail: 'Cannot transfer to yourself. Use internal account transfer instead.',
+        }),
+      );
+    }
 
     const recipient = mockState.recipients.find(
       (r) => r.azureTag.toLowerCase() === body.recipientAzureTag?.toLowerCase(),
@@ -2124,7 +2213,20 @@ const authoriseTransfer = api.post(
   },
 );
 
-/** POST /api/transfers/internal/authorizations — the same, for a move between own accounts. */
+/**
+ * POST /api/transfers/internal/authorizations — the same, for a move between own accounts.
+ *
+ * MEASURED: from == to with a CORRECT pin is refused by the validator, not by the service —
+ *
+ *   400 {"type":"https://httpstatuses.com/400","title":"Validation Failed",
+ *        "detail":"One or more validation errors occurred.",
+ *        "instance":"/api/transfers/internal/authorizations",
+ *        "errors":{"toAccountId":["Cannot transfer to the same account."]}}
+ *
+ * — which is the same envelope and the same camelCase key the internal TRANSFER answers. Without
+ * it the mock minted an authorisation for a move the transfer would then refuse: the exact class
+ * of mismatch ADR-0042 exists to make impossible.
+ */
 const authoriseInternalTransfer = api.post(
   '/api/transfers/internal/authorizations',
   async ({ request, response }) => {
@@ -2134,6 +2236,31 @@ const authoriseInternalTransfer = api.post(
       amount: number;
       pin?: string;
     };
+
+    const bindingErrors = mintBindingErrors(body);
+    if (Object.keys(bindingErrors).length > 0) {
+      return response.untyped(modelStateProblem(bindingErrors));
+    }
+
+    // FluentValidation, so it precedes the service and both ownership checks below.
+    if (body.fromAccountId === body.toAccountId) {
+      return response.untyped(
+        problem({
+          instance: pathOf(request),
+          status: 400,
+          errors: { toAccountId: ['Cannot transfer to the same account.'] },
+        }),
+      );
+    }
+
+    // Source then destination, in turn: `AuthoriseInternalTransferAsync` makes two separate
+    // ownership calls, so the 404 names the account it could not find.
+    if (!mockState.accounts.some((a) => a.id === body.fromAccountId)) {
+      return response.untyped(notFound('Account', body.fromAccountId, request));
+    }
+    if (!mockState.accounts.some((a) => a.id === body.toAccountId)) {
+      return response.untyped(notFound('Account', body.toAccountId, request));
+    }
 
     const pinRefusal = checkPinInBand(
       body.pin,
@@ -2261,6 +2388,10 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (badAmount.length > 0) bindingErrors.Amount = badAmount;
   const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
   if (badPin.length > 0) bindingErrors.Pin = badPin;
+  // The header binds in the same stage as the body's annotations, so a request wrong in both ways
+  // reports both keys at once. See `stepUpHeaderErrors`.
+  const badStepUp = stepUpHeaderErrors(request);
+  if (badStepUp.length > 0) bindingErrors[STEP_UP_HEADER] = badStepUp;
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
@@ -2289,19 +2420,6 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
   if (pinRefusal) return response.untyped(pinRefusal);
 
-  /*
-    Spend the authorisation, if one was presented (ADR-0042). AFTER the PIN and BEFORE any money
-    moves, mirroring TransferService: an authorisation refusal must cost nothing and move nothing.
-    A request with no header falls through — MEASURED 201, PR 2 is backward compatible.
-  */
-  const authRefusal = consumeAuthorization(request.headers.get('Step-Up-Authorization'), request, {
-    operation: 'Transfer',
-    fromAccountId: body.fromAccountId,
-    recipientAzureTag: body.recipientAzureTag,
-    amount: body.amount,
-  });
-  if (authRefusal) return response.untyped(authRefusal);
-
   if (mockState.session?.azureTag === tag) {
     return response.untyped(
       problem({
@@ -2318,6 +2436,27 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     // and the ACCOUNT_NOT_FOUND code, which that constructor uses for every resource.
     return response.untyped(notFound('Recipient', tag, request));
   }
+
+  /*
+    Spend the authorisation, if one was presented (ADR-0042).
+
+    POSITION IS THE CONTRACT, and it is not where the first draft put it. `TransferAsync` runs
+    ownership → PIN → `ResolveExternalPayeeAsync` → `ValidateAsync` → funds, so the payee is
+    resolved BEFORE the authorisation is examined: an unknown handle answers 404 ACCOUNT_NOT_FOUND
+    even when the presented authorisation is also wrong. The mock validated first, which turned that
+    404 into a 401 — a client debugging a typo'd handle would have been told its confirmation was
+    invalid. Still after the PIN and before any money moves: a refusal costs nothing and moves
+    nothing.
+
+    A request with no header falls through — MEASURED 201, PR 2 is backward compatible.
+  */
+  const authRefusal = consumeAuthorization(request.headers.get(STEP_UP_HEADER), request, {
+    operation: 'Transfer',
+    fromAccountId: body.fromAccountId,
+    recipientAzureTag: body.recipientAzureTag,
+    amount: body.amount,
+  });
+  if (authRefusal) return response.untyped(authRefusal);
 
   const available = account.balance;
   if (amount > available) {
@@ -2468,6 +2607,10 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (badAmount.length > 0) bindingErrors.Amount = badAmount;
   const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
   if (badPin.length > 0) bindingErrors.Pin = badPin;
+  // The header binds in the same stage as the body's annotations, so a request wrong in both ways
+  // reports both keys at once. See `stepUpHeaderErrors`.
+  const badStepUp = stepUpHeaderErrors(request);
+  if (badStepUp.length > 0) bindingErrors[STEP_UP_HEADER] = badStepUp;
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
@@ -2522,7 +2665,12 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
   if (pinRefusal) return response.untyped(pinRefusal);
 
-  const authRefusal = consumeAuthorization(request.headers.get('Step-Up-Authorization'), request, {
+  /*
+    Spend the authorisation (ADR-0042). `InternalTransferAsync` calls `ValidateAsync` after the PIN
+    and after the same-account rule, so every cheaper refusal above still answers as itself. There
+    is no payee to resolve on this endpoint, which is the one difference from the external path.
+  */
+  const authRefusal = consumeAuthorization(request.headers.get(STEP_UP_HEADER), request, {
     operation: 'InternalTransfer',
     fromAccountId: body.fromAccountId,
     toAccountId: body.toAccountId,

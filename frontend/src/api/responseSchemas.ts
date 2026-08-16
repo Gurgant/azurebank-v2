@@ -55,8 +55,14 @@ export type _GeneratedSchemasMatchSpec = [
   AssertExtends<Schemas['AccountResponse'], z.infer<typeof AccountResponse>>,
   AssertExtends<z.infer<typeof TransactionSummaryResponse>, Schemas['TransactionSummaryResponse']>,
   AssertExtends<Schemas['TransactionSummaryResponse'], z.infer<typeof TransactionSummaryResponse>>,
-  AssertExtends<z.infer<typeof StepUpAuthorizationResponse>, Schemas['StepUpAuthorizationResponse']>,
-  AssertExtends<Schemas['StepUpAuthorizationResponse'], z.infer<typeof StepUpAuthorizationResponse>>,
+  AssertExtends<
+    z.infer<typeof StepUpAuthorizationResponse>,
+    Schemas['StepUpAuthorizationResponse']
+  >,
+  AssertExtends<
+    Schemas['StepUpAuthorizationResponse'],
+    z.infer<typeof StepUpAuthorizationResponse>
+  >,
 ];
 
 // ===== A — STRICT money schemas (fail-closed everywhere) =====
@@ -78,8 +84,9 @@ export const transactionSummarySchema = TransactionSummaryResponse as ZodType<
   the client sends a header the server cannot match and the user is refused with no way to tell why.
   Fail closed in production, like the receipts.
 */
-export const stepUpAuthorizationResponseSchema =
-  StepUpAuthorizationResponse as ZodType<Schemas['StepUpAuthorizationResponse']>;
+export const stepUpAuthorizationResponseSchema = StepUpAuthorizationResponse as ZodType<
+  Schemas['StepUpAuthorizationResponse']
+>;
 
 // ===== C — soft schemas (dev + test only; undefined in production = skip) =====
 
