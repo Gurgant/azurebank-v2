@@ -1214,8 +1214,14 @@ describe('a GUID in the BODY is not a GUID in a HEADER', () => {
     expect(res.status).toBe(201);
     // The STORED binding is canonical too, which is the half a status code cannot show: the
     // authorisation must be spendable by a client that then sends the id in its usual lowercase.
-    const [held] = [...mockState.stepUpAuthorizations.values()];
-    expect(held.fromAccountId).toBe(acct());
+    //
+    // The count is asserted BEFORE the record is read, and it is not defensive padding: "exactly
+    // one was minted" is part of the property. `values()` yields insertion order, so a second
+    // authorisation from anywhere would hand this assertion the wrong row and still pass. Same
+    // idiom as `transfer-step-up.test.tsx`, which had it and these two sites had lost it.
+    const minted = [...mockState.stepUpAuthorizations.values()];
+    expect(minted).toHaveLength(1);
+    expect(minted[0].fromAccountId).toBe(acct());
   });
 
   it('spends an authorisation minted with an UPPERCASE id from a lowercase transfer', async () => {
@@ -1244,8 +1250,9 @@ describe('a GUID in the BODY is not a GUID in a HEADER', () => {
       pin: MOCK_PIN,
     });
     expect(res.status).toBe(201);
-    const [held] = [...mockState.stepUpAuthorizations.values()];
-    expect(held.toAccountId).toBe(acct2());
+    const minted = [...mockState.stepUpAuthorizations.values()];
+    expect(minted).toHaveLength(1);
+    expect(minted[0].toAccountId).toBe(acct2());
   });
 });
 
