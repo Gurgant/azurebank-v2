@@ -141,7 +141,15 @@ describe('failure ordering matches the service, not the handler that was easiest
 
   it('transfer resolves the source account BEFORE the self-transfer guard', async () => {
     // TransferAsync's first statement is the source-account lookup; the self-transfer guard is
-    // three statements later. Sending to your own handle FROM a bad id must be the 404.
+    // three statements later. Sending to your own handle FROM an id nobody owns must be the 404.
+    //
+    // The id was `'no-such-account'` until this round, and that was wrong in a way only the server
+    // could settle: a value that is not a GUID never reaches the lookup at all — System.Text.Json
+    // aborts the bind first. MEASURED, that body answers
+    //   400 {"request":[…],"$.fromAccountId":["The JSON value could not be converted to
+    //        System.Guid. Path: $.fromAccountId …"]}
+    // and the mock's own 404 was what this test had pinned. A WELL-FORMED unknown id is what
+    // exercises the ordering the test is named for; the malformed case is asserted just below.
     mockState.authLevel = 2;
     const res = await fetch('/api/transfers', {
       method: 'POST',
@@ -150,7 +158,7 @@ describe('failure ordering matches the service, not the handler that was easiest
         'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3391',
       },
       body: JSON.stringify({
-        fromAccountId: 'no-such-account',
+        fromAccountId: '3f2504e0-4f89-41d3-9a0c-0305e82c3302',
         recipientAzureTag: mockState.session?.azureTag ?? 'demo_user',
         amount: 10,
         pin: MOCK_PIN,
@@ -159,6 +167,31 @@ describe('failure ordering matches the service, not the handler that was easiest
 
     expect(res.status).toBe(404);
     expect((await res.json()).errorCode).toBe('ACCOUNT_NOT_FOUND');
+  });
+
+  it('an account id that is not a GUID aborts the bind, before any lookup', async () => {
+    // The other half of the pair above, and a THIRD envelope for the same field: absent or all-zero
+    // is `[NotEmptyGuid]`'s PascalCase model-state 400; unparseable is System.Text.Json's, keyed by
+    // JSON path; a well-formed unknown id is the 404. Measured, all three.
+    mockState.authLevel = 2;
+    const res = await fetch('/api/transfers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3392',
+      },
+      body: JSON.stringify({
+        fromAccountId: 'no-such-account',
+        recipientAzureTag: 'friend',
+        amount: 10,
+        pin: MOCK_PIN,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const keys = Object.keys((await res.json()).errors);
+    expect(keys).toContain('$.fromAccountId');
+    expect(keys).toContain('request');
   });
 });
 

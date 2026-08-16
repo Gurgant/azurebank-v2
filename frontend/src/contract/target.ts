@@ -39,6 +39,16 @@ interface Fixtures {
   email: string;
   password: string;
   pin: string;
+  /**
+   * A handle that resolves to SOMEONE ELSE with an active account — the payee the step-up
+   * assertions name.
+   *
+   * Per-target like the credentials, and for the same reason: the mock seeds `friend`, the dev
+   * database seeds four users of whom `johnsmith` is one. Measured on the real stack rather than
+   * assumed — an unknown handle is a 404 before the step-up check runs, which would turn every
+   * authorisation assertion into a silent test of the payee lookup.
+   */
+  recipientAzureTag: string;
 }
 
 /**
@@ -48,5 +58,15 @@ interface Fixtures {
  */
 export const FIXTURES: Fixtures =
   CONTRACT_TARGET === 'mock'
-    ? { email: 'demo@azurebank.dev', password: 'Password1!', pin: '123456' }
-    : { email: 'admin@azurebank.dev', password: 'Test123!', pin: '123456' };
+    ? {
+        email: 'demo@azurebank.dev',
+        password: 'Password1!',
+        pin: '123456',
+        recipientAzureTag: 'friend',
+      }
+    : {
+        email: 'admin@azurebank.dev',
+        password: 'Test123!',
+        pin: '123456',
+        recipientAzureTag: 'johnsmith',
+      };

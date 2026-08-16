@@ -84,7 +84,18 @@ export interface MoneyWizard<TBody, TResult> {
    * already been set by then. Returning `undefined` rather than throwing is what makes
    * `if (!result) return;` a type obligation at the call site under `strict`.
    */
-  run: (body: TBody) => Promise<TResult | undefined>;
+  run: (
+    body: TBody,
+    /** Out-of-band request metadata — the step-up authorisation, which is not part of the intent. */
+    extras?: { stepUpAuthorizationId?: string },
+  ) => Promise<TResult | undefined>;
+
+  /**
+   * Apply a failure this wizard did not produce. Minting an authorisation carries no idempotency
+   * key, so it cannot go through `run` — but it fails with the same shapes, and this routes it
+   * through the same classification rather than letting a page grow its own copy.
+   */
+  failFrom: (problem: ApiProblem) => void;
   /** Call after ANY edit that changes the request body. No-op while a key is live. */
   onBodyEdit: () => void;
   toReview: () => void;
@@ -205,6 +216,17 @@ export function useMoneyWizard<TBody, TResult>(
     return () => window.removeEventListener('beforeunload', warn);
   }, [keyLive]);
 
+  /** The one place a classified failure becomes state; see `failFrom`. */
+  const applyProblem = (caught: ApiProblem) => {
+    lastProblem.current = caught ?? null;
+    const failure = classifyMoneyProblem(caught, options);
+    if (failure.kind === 'inFlight') {
+      setInFlight(true);
+    } else if (failure.kind === 'message') {
+      setFailure({ text: failure.text, scope: failure.scope });
+    }
+  };
+
   return {
     exitPrompt:
       blocker.state === 'blocked'
@@ -218,21 +240,15 @@ export function useMoneyWizard<TBody, TResult>(
     verifyRequired,
     keyLive,
 
-    async run(body) {
+    async run(body, extras) {
       setFailure(null);
       lastProblem.current = null;
       setInFlight(false);
       setIsSubmitting(true);
       try {
-        return await submit(body);
+        return await submit(body, extras);
       } catch (caught) {
-        lastProblem.current = (caught as ApiProblem) ?? null;
-        const failure = classifyMoneyProblem(caught as ApiProblem, options);
-        if (failure.kind === 'inFlight') {
-          setInFlight(true);
-        } else if (failure.kind === 'message') {
-          setFailure({ text: failure.text, scope: failure.scope });
-        }
+        applyProblem(caught as ApiProblem);
         // 'verify' — the hook has latched verifyRequired and that view renders; setting an error
         // too would put a red banner under a screen whose whole job is to say "we don't know".
         // 'silent' — the user dismissed the PIN modal. Stay on review; Send re-triggers it.
@@ -240,6 +256,18 @@ export function useMoneyWizard<TBody, TResult>(
       } finally {
         setIsSubmitting(false);
       }
+    },
+
+    /*
+      Report a failure that did NOT come through `run`.
+
+      Minting a step-up authorisation (ADR-0042) is a request this wizard does not own — it carries
+      no idempotency key, so it cannot go through `submit` — but its refusals are the same ones the
+      send path already classifies, and a page that reimplemented them would be a second copy free
+      to drift. `run` and this share one code path on purpose.
+    */
+    failFrom(problem) {
+      applyProblem(problem);
     },
 
     onBodyEdit() {

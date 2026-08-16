@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { confirmWithPin } from '../test/pinFlow';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
@@ -9,18 +10,6 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
-
-/**
- * Review -> PIN -> Send (ADR-0041). The flow gained a step: the review screen's primary button is
- * now Continue, and the PIN that authorises the transfer is entered here rather than supplied by
- * the root step-up modal off a 403.
- */
-async function confirmWithPinAndSend(sendLabel: string) {
-  await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
-  await userEvent.paste('123456');
-  await userEvent.click(screen.getByRole('button', { name: sendLabel }));
-}
 
 /**
  * U6.3a — the behaviour net the unification will be measured against.
@@ -140,7 +129,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
     it('external: offers no way out except the two that force the user to check', async () => {
       server.use(http.post('*/api/transfers', unknown));
       await externalToReview();
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
 
       expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
       expect(screen.getByText(/retrying blindly could send twice/)).toBeInTheDocument();
@@ -163,7 +152,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
       await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
       await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
 
       expect(await screen.findByText("We couldn't confirm your transfer")).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^Send/ })).not.toBeInTheDocument();
@@ -199,7 +188,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
         }),
       );
       await externalToReview();
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
       await screen.findByText("We couldn't confirm your transfer");
 
       await userEvent.click(screen.getByRole('button', { name: /didn't go through/ }));
@@ -207,7 +196,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       // Back on the form with the confirmed recipient intact — only the INTENT was reset.
       expect(await screen.findByText('A. Friend')).toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
 
       expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
       expect(keys).toHaveLength(2);
@@ -275,17 +264,30 @@ describe('money flows — the behaviour the unification must preserve', () => {
         }),
       );
       await externalToReview();
-      // Walk to the PIN step first: Send is no longer on review, and the double-click this test
-      // guards against is a double-click on THAT button.
       await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-      await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
-      await userEvent.paste('123456');
 
-      const send = screen.getByRole('button', { name: 'Send €50.00' });
+      /*
+        RE-AIMED for ADR-0042, and at the same guard rather than a weaker one.
+
+        There is no Send button to double-click any more — the sixth digit submits — so the second
+        submit a user can physically attempt is a second COMPLETION of the PIN boxes. The guard that
+        must stop it moved with the trigger: `disabled={isMinting || isSubmitting || pinLockDeadline !== null}`
+        on `PinInput`. A disabled input takes no input, so `onComplete` cannot fire twice.
+
+        Same caveat as before, restated so nobody reads more into this than it proves: two
+        overlapping submits would reuse the SAME key (`keyRef.current ??=`), so the server would
+        deduplicate them regardless. This pins the CLIENT's half — the half a refactor could delete
+        without any server test noticing.
+      */
+      const firstBox = screen.getByLabelText('Digit 1 of 6');
       try {
-        await userEvent.click(send);
-        await waitFor(() => expect(send).toBeDisabled());
-        await userEvent.click(send);
+        await userEvent.click(firstBox);
+        await userEvent.paste('123456');
+        await waitFor(() => expect(firstBox).toBeDisabled());
+
+        // A user hammering the boxes while the request is open: the disabled input swallows it.
+        await userEvent.click(firstBox);
+        await userEvent.paste('123456');
         expect(calls).toBe(1);
       } finally {
         // In a `finally`: the handler is parked on this promise, so an assertion throwing before
@@ -348,7 +350,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       */
       failWith('IDEMPOTENCY_KEY_REUSE', 422);
       await externalToReview();
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
       expect(await screen.findByText(/Something went wrong/)).toBeInTheDocument();
 
       // TWO steps back now: a failed send leaves you on the PIN step, and the form is behind
@@ -371,7 +373,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       // the scope makes that a typed consequence rather than a commented special case.
       failWith('INSUFFICIENT_FUNDS', 422);
       await externalToReview();
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
       expect(await screen.findByText(/Insufficient funds/)).toBeInTheDocument();
 
       // TWO steps back now: a failed send leaves you on the PIN step, and the form is behind
@@ -389,7 +391,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
     it('and editing the amount clears it, so it never outlives the value it describes', async () => {
       failWith('INSUFFICIENT_FUNDS', 422);
       await externalToReview();
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
       await screen.findByText(/Insufficient funds/);
       // PIN step -> review -> form: the amount chip this test edits lives on the form.
       const backToReview = screen.getAllByRole('button', { name: 'Back' });
@@ -412,7 +414,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
         http.post('*/api/transfers', () => transferOk({ 'Idempotency-Replayed': 'true' })),
       );
       await externalToReview();
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
 
       expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
       expect(screen.getByText(/already processed/)).toBeInTheDocument();
@@ -422,7 +424,7 @@ describe('money flows — the behaviour the unification must preserve', () => {
       // Without this the test above passes just as well against a banner that is ALWAYS shown.
       server.use(http.post('*/api/transfers', () => transferOk()));
       await externalToReview();
-      await confirmWithPinAndSend('Send €50.00');
+      await confirmWithPin();
 
       expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
       expect(screen.queryByText(/already processed/)).not.toBeInTheDocument();

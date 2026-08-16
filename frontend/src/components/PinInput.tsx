@@ -193,6 +193,17 @@ export function PinInput({
 
   const handlePaste = (index: number, e: ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
+    /*
+      The guard belongs HERE too, not only on the input's `disabled` attribute.
+
+      A real browser refuses to focus a disabled input and so never delivers this event, which is
+      why the omission was invisible. jsdom does deliver it, and that is not merely a test artefact
+      — it means the only thing standing between a parked request and a second submit was a
+      presentational attribute. For a component whose entire job is a credential, the handler
+      should refuse on its own terms. Found by re-aiming the anti-double-spend test at the input
+      after the Send button was removed (ADR-0042).
+    */
+    if (disabled) return;
     const pasted = e.clipboardData.getData('text').replace(/\D/g, '');
     if (!pasted) return;
     const next = (value.slice(0, index) + pasted + value.slice(index)).slice(0, length);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   makeStyles,
   Text,
@@ -21,6 +21,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import {
   useGetAccountsQuery,
   useLazyLookupRecipientQuery,
+  useAuthoriseTransferMutation,
   useTransferMutation,
   type AccountResponse,
 } from '../features/api/apiSlice';
@@ -165,6 +166,41 @@ export function TransferPage() {
     wizard;
 
   // ===== PIN step (ADR-0041) =====
+  const [authoriseTransfer, { isLoading: isMinting }] = useAuthoriseTransferMutation();
+
+  /*
+    Every exit, held for BOTH phases of the submit.
+
+    `keyLive` is `isSubmitting || keyRetained` (useMoneyWizard.ts:142), and neither is set until
+    `wizard.run` starts — so for the whole MINT round trip `keyLive` is false and every control it
+    guards is live. The PIN input was taught the two-phase guard when the mint landed; the exits
+    were not, so a user could press Back mid-mint, watch the wizard step backwards, and have the
+    transfer complete underneath them.
+
+    One name for the rule, used by the header and by the PIN step's own Back, so the two cannot
+    answer differently.
+  */
+  const exitLocked = keyLive || isMinting;
+
+  /*
+    The PIN the sixth digit just completed.
+
+    A REF, not the state, and for the reason `lastProblem` is one: `onComplete` fires from inside
+    `onChange`, so `pin` has not re-rendered yet when the submit begins. Reading state here would be
+    one render stale — invisible in a hand test, a flake in CI. `setPin` still drives the display.
+  */
+  const enteredPin = useRef('');
+
+  /*
+    The authorisation minted for the intent currently in flight.
+
+    A retry of a RETAINED key is the same intent, so it must not mint a second authorisation: the
+    first one may already have been consumed by the request whose answer never arrived, and if it
+    was not, this one is still the authorisation for these exact fields. Minting again would leave
+    an orphan row and tell the server a different story than the first attempt did.
+  */
+  const lastAuthorization = useRef<string | null>(null);
+
   // `pinNonce` remounts PinInput so a cleared retry refocuses box 1 — the same device WithdrawDialog
   // uses, for the same reason.
   const [pin, setPin] = useState('');
@@ -330,7 +366,7 @@ export function TransferPage() {
 
   const onValid = async (data: TransferFormOutput) => {
     if (!selectedAccount || !recipient) return;
-    if (pin.length !== PIN_LENGTH || pinLockDeadline !== null) return;
+    if (enteredPin.current.length !== PIN_LENGTH || pinLockDeadline !== null) return;
     // Narrowed to a const BEFORE the await, and the receipt is built from that same const. The
     // review screen and the request therefore cannot name two different people.
     const confirmed = recipient;
@@ -348,12 +384,51 @@ export function TransferPage() {
       return;
     }
 
-    const result = await wizard.run({
-      fromAccountId: data.fromAccountId,
-      recipientAzureTag: confirmed.azureTag,
-      amount: data.amount,
-      pin,
-    });
+    /*
+      MINT, then SEND (ADR-0042). Two calls, one user action — the sixth digit starts both, so the
+      two-minute window is normally milliseconds wide and the user never learns it exists.
+
+      The mint carries no idempotency key by design, so it cannot go through `wizard.run`. Its
+      refusals are nevertheless the SAME ones the send already handles — 401 INVALID_PIN, 429
+      PIN_LOCKED, 422 PIN_REQUIRED — so both paths funnel into `handleRefusal` rather than growing a
+      second copy free to drift.
+    */
+    /*
+      `keyLive` means the idempotency hook is holding a key from an attempt whose outcome is
+      unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
+      re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
+    */
+    let authorizationId: string;
+    if (keyLive && lastAuthorization.current) {
+      authorizationId = lastAuthorization.current;
+    } else {
+      try {
+        const minted = await authoriseTransfer({
+          fromAccountId: data.fromAccountId,
+          recipientAzureTag: confirmed.azureTag,
+          amount: data.amount,
+          pin: enteredPin.current,
+        }).unwrap();
+        authorizationId = minted.authorizationId;
+        lastAuthorization.current = authorizationId;
+      } catch (caught) {
+        // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
+        wizard.failFrom(caught as ApiProblem);
+        handleRefusal(caught as ApiProblem);
+        return;
+      }
+    }
+
+    const result = await wizard.run(
+      {
+        fromAccountId: data.fromAccountId,
+        recipientAzureTag: confirmed.azureTag,
+        amount: data.amount,
+        pin: enteredPin.current,
+      },
+      // A HEADER at the wire, never a body field: the server fingerprints the body alone.
+      { stepUpAuthorizationId: authorizationId },
+    );
     // `run` resolves to undefined when it failed — and it has already set the banner, the in-flight
     // note or the verify view. Under `strict` this early return is not optional: reading
     // `result.newBalance` without it does not compile.
@@ -367,25 +442,13 @@ export function TransferPage() {
         idempotency hook has already dropped the key — so the corrected-PIN retry mints a fresh one
         rather than replaying the refused body.
       */
-      const refusal = wizard.lastProblem.current;
-      if (refusal?.errorCode === 'INVALID_PIN') {
-        setPin('');
-        setPinError(true);
-        setPinNonce((n) => n + 1);
-      } else if (refusal?.errorCode === 'PIN_LOCKED') {
-        setPin('');
-        setPinLockDeadline(retryDeadline(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
-      } else if (refusal?.errorCode === 'PIN_REQUIRED') {
-        // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
-        // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
-        // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
-        // a key-DROP class, so this one goes through.
-        requestLeave('/pin-setup?returnTo=/transfer');
-      }
+      handleRefusal(wizard.lastProblem.current);
       return;
     }
 
     setPin('');
+    enteredPin.current = '';
+    lastAuthorization.current = null;
 
     setSuccess({
       amount: data.amount,
@@ -396,6 +459,46 @@ export function TransferPage() {
       replayed: result.replayed,
     });
   };
+
+  /**
+   * What the PIN step does about a refusal, shared by the mint and the send so the two cannot drift.
+   * The banner itself is the wizard's; this owns only the PIN box and the lock.
+   */
+  function handleRefusal(refusal: ApiProblem | null) {
+    if (refusal?.errorCode === 'INVALID_PIN') {
+      setPin('');
+      enteredPin.current = '';
+      setPinError(true);
+      setPinNonce((n) => n + 1);
+    } else if (
+      refusal?.errorCode === 'AUTHORIZATION_EXPIRED' ||
+      refusal?.errorCode === 'AUTHORIZATION_INVALID'
+    ) {
+      /*
+          The user STAYS on this step, and the form keeps the amount and the payee.
+
+          Not a courtesy: WCAG 2.2 SC 3.3.7 Redundant Entry is LEVEL A, and its exception covers
+          security information only. The PIN is inside it; the amount and payee are not, so
+          discarding them would be a failure of the criterion rather than a UX preference.
+
+          No `setPinError` — an expiry is not a wrong PIN. It costs no attempt server-side, and
+          styling the boxes red would tell the user the lock is closer when it is not.
+        */
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
+    } else if (refusal?.errorCode === 'PIN_LOCKED') {
+      setPin('');
+      enteredPin.current = '';
+      setPinLockDeadline(retryDeadline(refusal.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
+    } else if (refusal?.errorCode === 'PIN_REQUIRED') {
+      // No PIN enrolled. Nothing on this page can fix that, so send them where it can be.
+      // `requestLeave`, not a bare navigate: this page deliberately owns no destinations of
+      // its own, and the wizard refuses any exit while an idempotency key is live. A 422 is
+      // a key-DROP class, so this one goes through.
+      requestLeave('/pin-setup?returnTo=/transfer');
+    }
+  }
 
   // ===== Success receipt =====
   if (success) {
@@ -490,9 +593,9 @@ export function TransferPage() {
               ? wizard.toForm()
               : requestLeave('/dashboard')
         }
-        backDisabled={keyLive}
+        backDisabled={exitLocked}
         onClose={() => requestLeave('/dashboard')}
-        closeDisabled={keyLive}
+        closeDisabled={exitLocked}
       />
 
       <div className={styles.body}>
@@ -519,8 +622,39 @@ export function TransferPage() {
           </MessageBar>
         )}
         {inFlight && (
+          /*
+            The retained-key state, and the ONLY place a deliberate re-send control belongs.
+
+            Removing the Send button left this state with no way out: the page does not clear the
+            PIN on IN_FLIGHT (only PIN-specific refusals clear it), so the boxes stay full,
+            `onComplete` cannot fire again because the value never changes, and the banner asked the
+            user to tap a control that no longer existed. Found by audit, not by a test — every test
+            that reaches this state used to click Send.
+
+            This re-sends the SAME key, the SAME body and the SAME authorisation. It is a check, not
+            a second payment, which is why it is worded as one.
+          */
           <MessageBar intent="info" role="status">
-            <MessageBarBody>Still processing — tap Send again to check.</MessageBarBody>
+            <MessageBarBody>
+              Still processing — check again to see whether it went through.
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button
+                appearance="primary"
+                size="small"
+                /*
+                  BOTH phases, exactly as the PIN input above. Today this control cannot actually
+                  reach the mint — `onValid` re-presents `lastAuthorization.current` whenever a key
+                  is live, and a live key implies a send, which implies a mint that already
+                  succeeded. The guard does not depend on that invariant on purpose: it is one
+                  identifier, and the invariant is three files away from anyone editing this button.
+                */
+                disabled={isMinting || isSubmitting}
+                onClick={() => void handleSubmit(onValid, onInvalid)()}
+              >
+                Check again
+              </Button>
+            </MessageBarActions>
           </MessageBar>
         )}
 
@@ -716,8 +850,10 @@ export function TransferPage() {
                 </Text>
               </div>
             </div>
+            {/* Says what the missing button used to: with no Send control, the behaviour has to be
+                discoverable BEFORE the last digit, not discovered by it. */}
             <Text style={{ textAlign: 'center' }}>
-              Enter your 6-digit PIN to authorise this transfer.
+              Enter your 6-digit PIN. The transfer sends as soon as the last digit is in.
             </Text>
             <PinInput
               key={pinNonce}
@@ -727,7 +863,24 @@ export function TransferPage() {
                 setPin(next);
                 setPinError(false);
               }}
-              disabled={isSubmitting || pinLockDeadline !== null}
+              /*
+                The sixth digit sends (ADR-0042). Not a new pattern: `PinInput` documents
+                `onComplete` as "an Enter-less submit affordance" and `StepUpModal` has wired it
+                since PR-10 — this adopts what already shipped rather than inventing a second way
+                to confirm. Review has already discharged WCAG 2.2 SC 3.3.4 (Level AA: "reviewing,
+                confirming, and correcting"), so a second confirm buys nothing but a click.
+
+                The completed value goes to the REF first: `onValid` runs before `pin` re-renders.
+              */
+              onComplete={(entered) => {
+                enteredPin.current = entered;
+                void handleSubmit(onValid, onInvalid)();
+              }}
+              // `isMinting` as well as `isSubmitting`: the submit has TWO phases now, and
+              // `isSubmitting` only covers the second. Without this the boxes stay live for the
+              // whole mint round trip — a window in which a second completion starts a second
+              // mint AND a second send.
+              disabled={isMinting || isSubmitting || pinLockDeadline !== null}
               error={pinError}
             />
             {pinLockDeadline !== null && (
@@ -743,22 +896,20 @@ export function TransferPage() {
                 />
               </>
             )}
+            {/* No Send button: the sixth digit is the send. A spinner still has to exist, or the
+                one thing the user cannot see is the request they just started. */}
+            {isSubmitting && (
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <Spinner size="tiny" label={`Sending ${formatCurrency(amountNumber)}`} />
+              </div>
+            )}
             <div className={styles.actions}>
-              <Button
-                appearance="primary"
-                size="large"
-                style={{ width: '100%', height: '48px' }}
-                onClick={() => void handleSubmit(onValid, onInvalid)()}
-                disabled={isSubmitting || pin.length !== PIN_LENGTH || pinLockDeadline !== null}
-              >
-                {isSubmitting ? <Spinner size="tiny" /> : `Send ${formatCurrency(amountNumber)}`}
-              </Button>
               <Button
                 appearance="secondary"
                 size="large"
                 style={{ width: '100%', height: '48px' }}
                 onClick={() => wizard.toReview()}
-                disabled={keyLive}
+                disabled={exitLocked}
               >
                 Back
               </Button>
