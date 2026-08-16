@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { confirmWithPin } from '../test/pinFlow';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
@@ -9,18 +10,6 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { InternalTransferPage } from './InternalTransferPage';
 import { mockState, seedMockSession } from '../mocks/state';
-
-/**
- * Review -> PIN -> Send (ADR-0041). The flow gained a step: the review screen's primary button is
- * now Continue, and the PIN that authorises the transfer is entered here rather than supplied by
- * the root step-up modal off a 403.
- */
-async function confirmWithPinAndSend(sendLabel: string) {
-  await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
-  await userEvent.paste('123456');
-  await userEvent.click(screen.getByRole('button', { name: sendLabel }));
-}
 
 /**
  * PR-11b — internal transfer between the caller's OWN accounts, riding the same step-up
@@ -106,7 +95,7 @@ describe('internal transfer (PR-11b)', () => {
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
 
-    await confirmWithPinAndSend('Send €50.00');
+    await confirmWithPin();
     // The PIN is entered in the page now (confirmWithPinAndSend above), not by the root step-up
     // modal reacting to a 403 — see ADR-0041.
     expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
@@ -128,7 +117,7 @@ describe('internal transfer (PR-11b)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'To Rainy Day' }));
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-    await confirmWithPinAndSend('Send €50.00');
+    await confirmWithPin();
     expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
     await screen.findByText('Transfer Complete!');
 
@@ -255,7 +244,7 @@ describe('internal transfer (PR-11b)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
     // The spy answers IN_FLIGHT then 201 (no 403), so no modal — this isolates the PAGE's
     // retained-key guard: Back must freeze and Send must reuse the key.
-    await confirmWithPinAndSend('Send €50.00');
+    await confirmWithPin();
 
     expect(await screen.findByText(/Still processing/)).toBeInTheDocument();
     screen.getAllByRole('button', { name: 'Back' }).forEach((b) => expect(b).toBeDisabled());
@@ -266,7 +255,7 @@ describe('internal transfer (PR-11b)', () => {
       the page only clears it for PIN-specific refusals. That is the safe forward action — it
       reuses the retained key instead of minting a new one.
     */
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
     expect(await screen.findByText('Transfer Complete!')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]); // SAME key across the retry

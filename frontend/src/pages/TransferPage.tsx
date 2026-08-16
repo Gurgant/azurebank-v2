@@ -166,7 +166,7 @@ export function TransferPage() {
     wizard;
 
   // ===== PIN step (ADR-0041) =====
-  const [authoriseTransfer] = useAuthoriseTransferMutation();
+  const [authoriseTransfer, { isLoading: isMinting }] = useAuthoriseTransferMutation();
 
   /*
     The PIN the sixth digit just completed.
@@ -176,6 +176,16 @@ export function TransferPage() {
     one render stale — invisible in a hand test, a flake in CI. `setPin` still drives the display.
   */
   const enteredPin = useRef('');
+
+  /*
+    The authorisation minted for the intent currently in flight.
+
+    A retry of a RETAINED key is the same intent, so it must not mint a second authorisation: the
+    first one may already have been consumed by the request whose answer never arrived, and if it
+    was not, this one is still the authorisation for these exact fields. Minting again would leave
+    an orphan row and tell the server a different story than the first attempt did.
+  */
+  const lastAuthorization = useRef<string | null>(null);
 
   // `pinNonce` remounts PinInput so a cleared retry refocuses box 1 — the same device WithdrawDialog
   // uses, for the same reason.
@@ -369,21 +379,30 @@ export function TransferPage() {
       PIN_LOCKED, 422 PIN_REQUIRED — so both paths funnel into `handleRefusal` rather than growing a
       second copy free to drift.
     */
+    /*
+      `keyLive` means the idempotency hook is holding a key from an attempt whose outcome is
+      unknown — IN_FLIGHT, a network failure, a 5xx. The only sanctioned forward action there is to
+      re-send the SAME intent, so we re-present the SAME authorisation rather than minting a new one.
+    */
     let authorizationId: string;
-    try {
-      const minted = await authoriseTransfer({
-        fromAccountId: data.fromAccountId,
-        recipientAzureTag: confirmed.azureTag,
-        amount: data.amount,
-        pin: enteredPin.current,
-      }).unwrap();
-      authorizationId = minted.authorizationId;
-    } catch (caught) {
-      // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
-      wizard.failFrom(caught as ApiProblem);
-      handleRefusal(caught as ApiProblem);
-      return;
-    }
+    if (keyLive && lastAuthorization.current) {
+      authorizationId = lastAuthorization.current;
+    } else
+      try {
+        const minted = await authoriseTransfer({
+          fromAccountId: data.fromAccountId,
+          recipientAzureTag: confirmed.azureTag,
+          amount: data.amount,
+          pin: enteredPin.current,
+        }).unwrap();
+        authorizationId = minted.authorizationId;
+        lastAuthorization.current = authorizationId;
+      } catch (caught) {
+        // Not a `run` failure, so the wizard has not classified it — hand it the same classifier.
+        wizard.failFrom(caught as ApiProblem);
+        handleRefusal(caught as ApiProblem);
+        return;
+      }
 
     const result = await wizard.run(
       {
@@ -414,6 +433,7 @@ export function TransferPage() {
 
     setPin('');
     enteredPin.current = '';
+    lastAuthorization.current = null;
 
     setSuccess({
       amount: data.amount,
@@ -587,8 +607,32 @@ export function TransferPage() {
           </MessageBar>
         )}
         {inFlight && (
+          /*
+            The retained-key state, and the ONLY place a deliberate re-send control belongs.
+
+            Removing the Send button left this state with no way out: the page does not clear the
+            PIN on IN_FLIGHT (only PIN-specific refusals clear it), so the boxes stay full,
+            `onComplete` cannot fire again because the value never changes, and the banner asked the
+            user to tap a control that no longer existed. Found by audit, not by a test — every test
+            that reaches this state used to click Send.
+
+            This re-sends the SAME key, the SAME body and the SAME authorisation. It is a check, not
+            a second payment, which is why it is worded as one.
+          */
           <MessageBar intent="info" role="status">
-            <MessageBarBody>Still processing — tap Send again to check.</MessageBarBody>
+            <MessageBarBody>
+              Still processing — check again to see whether it went through.
+            </MessageBarBody>
+            <MessageBarActions>
+              <Button
+                appearance="primary"
+                size="small"
+                disabled={isSubmitting}
+                onClick={() => void handleSubmit(onValid, onInvalid)()}
+              >
+                Check again
+              </Button>
+            </MessageBarActions>
           </MessageBar>
         )}
 
@@ -810,7 +854,11 @@ export function TransferPage() {
                 enteredPin.current = entered;
                 void handleSubmit(onValid, onInvalid)();
               }}
-              disabled={isSubmitting || pinLockDeadline !== null}
+              // `isMinting` as well as `isSubmitting`: the submit has TWO phases now, and
+              // `isSubmitting` only covers the second. Without this the boxes stay live for the
+              // whole mint round trip — a window in which a second completion starts a second
+              // mint AND a second send.
+              disabled={isMinting || isSubmitting || pinLockDeadline !== null}
               error={pinError}
             />
             {pinLockDeadline !== null && (

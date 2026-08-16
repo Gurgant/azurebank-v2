@@ -69,8 +69,6 @@ describe('the PIN step recovers from what the server refuses', () => {
     renderTransfer();
     await reachPinStep();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
-
     /*
       The boxes must be EMPTY afterwards. Reading the digit inputs rather than a banner is
       deliberate: a banner can be produced by the generic failure path, so asserting one would pass
@@ -79,8 +77,12 @@ describe('the PIN step recovers from what the server refuses', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
     });
-    // ... and Send is disabled again, because six digits are no longer present.
-    expect(screen.getByRole('button', { name: 'Send €50.00' })).toBeDisabled();
+    /*
+      And there is no Send control to re-arm: since ADR-0042 the sixth digit IS the send, so the
+      emptied boxes above ARE the disarmed state. Asserting the absence keeps the old test's
+      intent — a cleared PIN must not leave the transfer one stray click from going out.
+    */
+    expect(screen.queryByRole('button', { name: /^Send/ })).not.toBeInTheDocument();
   });
 
   it('PIN_LOCKED shows the server lock horizon, not a client-invented one', async () => {
@@ -96,8 +98,6 @@ describe('the PIN step recovers from what the server refuses', () => {
     );
     renderTransfer();
     await reachPinStep();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     // 120s from the server, NOT the 15-minute client default — proving the value travelled.
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
@@ -135,7 +135,6 @@ describe('the PIN step recovers from what the server refuses', () => {
     // The window between the lock appearing and the advance below is where an unacted tick would
     // land — the console.error gate catches those, so it is kept to a single assertion.
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
 
@@ -159,8 +158,6 @@ describe('the PIN step recovers from what the server refuses', () => {
     );
     renderTransfer();
     await reachPinStep();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
   });
@@ -203,8 +200,6 @@ describe('the internal transfer recovers the same way', () => {
     renderInternal();
     await reachInternalPinStep();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
-
     await waitFor(() => {
       expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
     });
@@ -218,8 +213,6 @@ describe('the internal transfer recovers the same way', () => {
     );
     renderInternal();
     await reachInternalPinStep();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     expect(await screen.findByText('PIN SETUP')).toBeInTheDocument();
   });
@@ -239,8 +232,6 @@ describe('the internal transfer recovers the same way', () => {
     );
     renderInternal();
     await reachInternalPinStep();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
     // 120s off the response, rendered by the shared countdown as m:ss — NOT a client-side default.
@@ -268,7 +259,6 @@ describe('the internal transfer recovers the same way', () => {
     // The window between the lock appearing and the advance below is where an unacted tick would
     // land — the console.error gate catches those, so it is kept to a single assertion.
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
 
     expect(await screen.findByText(/Too many incorrect PIN attempts/)).toBeInTheDocument();
 

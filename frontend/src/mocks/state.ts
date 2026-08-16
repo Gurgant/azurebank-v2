@@ -112,9 +112,32 @@ function signedDelta(entry: { type: TransactionType; amount: number }): number {
   return entry.type === 'Deposit' || entry.type === 'TransferIn' ? entry.amount : -entry.amount;
 }
 
+/**
+ * A step-up authorisation the mock has minted (ADR-0042).
+ *
+ * STATEFUL on purpose. The single-use guarantee is the whole point of the feature, and a mock that
+ * let one be spent twice would teach the client a protocol the server does not implement — green
+ * forever, and wrong. The bound fields are stored rather than hashed: the mock has no HMAC key and
+ * does not need one, it needs to answer AUTHORIZATION_INVALID on exactly the inputs the server does.
+ */
+export interface StoredStepUpAuthorization {
+  operation: 'Transfer' | 'InternalTransfer';
+  fromAccountId: string;
+  /** External transfers bind the payee's handle here; internal ones leave it undefined. */
+  recipientAzureTag?: string;
+  /** Internal transfers bind the destination account here; external ones leave it undefined. */
+  toAccountId?: string;
+  amount: number;
+  /** Epoch ms. Past this the mock answers AUTHORIZATION_EXPIRED, not AUTHORIZATION_INVALID. */
+  expiresAtMs: number;
+  consumed: boolean;
+}
+
 interface MockState {
   /** key -> stored response, per (endpoint|key) like the backend's (user, endpoint, key). */
   idempotency: Map<string, StoredIdempotentResponse>;
+  /** authorizationId -> the authorisation minted for it (ADR-0042). Spendable exactly once. */
+  stepUpAuthorizations: Map<string, StoredStepUpAuthorization>;
   /** BFF session auth level: 1 = password, 2 = PIN-verified (transfers need 2). */
   authLevel: 1 | 2;
   /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
@@ -446,6 +469,7 @@ export const mockState: MockState = {
   sessionLastActivity: 0,
   pin: MOCK_PIN,
   pinAttempts: 0,
+  stepUpAuthorizations: new Map(),
   nextAccountSeq: 0,
   pinLockedUntil: null,
   loginFailures: {},
@@ -533,6 +557,7 @@ export function mockAccessTokenExpiry(): string {
 
 export function resetMockState(): void {
   mockState.idempotency.clear();
+  mockState.stepUpAuthorizations.clear();
   mockState.authLevel = 1;
   mockState.session = null;
   mockState.staleSessionCookie = false;

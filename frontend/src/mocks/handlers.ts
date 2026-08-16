@@ -22,6 +22,7 @@ import {
   mockState,
   toWire,
   type MockSessionUser,
+  type StoredStepUpAuthorization,
 } from './state';
 
 /**
@@ -1981,6 +1982,177 @@ function checkPinInBand(
   return null;
 }
 
+/*
+  ============================================================================================
+  STEP-UP AUTHORISATIONS (ADR-0042)
+  ============================================================================================
+
+  Every status and errorCode below was MEASURED against the running API on 2026-08-16 and is quoted
+  beside the branch that produces it. Full transcript with bodies:
+  `azurebank-work/plans/step-up-and-audit/A2-PR2-MEASURED-CONTRACT.md`.
+
+  Two off-by-ones the mock must NOT invent, both measured:
+    - the lock lands ON the third wrong PIN, not after it (checkPinInBand already does this);
+    - an unknown recipient is ACCOUNT_NOT_FOUND, not a dedicated recipient code.
+
+  No Idempotency-Key on either endpoint, deliberately (apiSlice.ts): minting moves no money, so
+  there is nothing to deduplicate. It DOES cost a PIN attempt, which is why both call
+  `checkPinInBand` — minting is the authentication event and must not be a cheaper oracle than the
+  transfer itself.
+*/
+
+/** The window the real server uses (StepUpOptions.Window). Two minutes, no refresh. */
+const STEP_UP_WINDOW_MS = 2 * 60 * 1000;
+
+function mintAuthorization(record: Omit<StoredStepUpAuthorization, 'consumed' | 'expiresAtMs'>) {
+  const id = crypto.randomUUID();
+  const expiresAtMs = Date.now() + STEP_UP_WINDOW_MS;
+  mockState.stepUpAuthorizations.set(id, { ...record, expiresAtMs, consumed: false });
+  return { authorizationId: id, expiresAt: new Date(expiresAtMs).toISOString() };
+}
+
+/**
+ * Spend an authorisation, or explain why not.
+ *
+ * Mirrors `StepUpAuthorizationService`: expiry is checked BEFORE the binding, because someone who
+ * waited too long with the right details deserves "your confirmation expired" rather than the
+ * uniform refusal a mismatched or forged reference gets. Everything else — unknown, already spent,
+ * wrong binding — collapses to AUTHORIZATION_INVALID, so the mock is no more of an oracle than the
+ * server is.
+ *
+ * Returns a Response to send, or null when the authorisation is good AND now spent.
+ */
+function consumeAuthorization(
+  id: string | null,
+  request: Request,
+  /*
+    Loosened from the stored shape on purpose: the request bodies are typed from the SPEC, where
+    every member is optional, and the handler has already refused a malformed one by the time this
+    runs. Requiring the strict shape here would only force casts at both call sites.
+  */
+  expected: {
+    operation: StoredStepUpAuthorization['operation'];
+    fromAccountId?: string;
+    recipientAzureTag?: string;
+    toAccountId?: string;
+    amount?: number;
+  },
+): Response | null {
+  // MEASURED: no header at all -> 201. PR 2 is backward compatible; the in-band PIN is still the
+  // proof the server acts on, so an absent authorisation refuses nothing.
+  if (!id) return null;
+
+  const invalid = () =>
+    problem({
+      instance: pathOf(request),
+      status: 401,
+      errorCode: 'AUTHORIZATION_INVALID',
+      detail: 'This authorisation cannot be used.',
+    });
+
+  const held = mockState.stepUpAuthorizations.get(id);
+  if (!held || held.consumed) return invalid();
+
+  if (held.expiresAtMs <= Date.now()) {
+    // OBSERVED: 401 / AUTHORIZATION_EXPIRED, detail verbatim from the API.
+    return problem({
+      instance: pathOf(request),
+      status: 401,
+      errorCode: 'AUTHORIZATION_EXPIRED',
+      detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+    });
+  }
+
+  if (
+    held.operation !== expected.operation ||
+    held.fromAccountId !== expected.fromAccountId ||
+    held.recipientAzureTag !== expected.recipientAzureTag ||
+    held.toAccountId !== expected.toAccountId ||
+    held.amount !== expected.amount
+  ) {
+    // RTS Art. 5(1)(d) reaching the wire: any change to the amount or the payee invalidates it.
+    return invalid();
+  }
+
+  held.consumed = true;
+  return null;
+}
+
+/**
+ * POST /api/transfers/authorizations — mint one for an EXTERNAL transfer.
+ *
+ * Refusal order mirrors TransferService.AuthoriseTransferAsync: ownership, then payee resolution,
+ * then the PIN. Resolving the payee BEFORE the PIN is what stops an authorisation ever naming
+ * someone the transfer would then refuse.
+ */
+const authoriseTransfer = api.post(
+  '/api/transfers/authorizations',
+  async ({ request, response }) => {
+    const body = (await request.json()) as {
+      fromAccountId: string;
+      recipientAzureTag: string;
+      amount: number;
+      pin?: string;
+    };
+
+    const recipient = mockState.recipients.find(
+      (r) => r.azureTag.toLowerCase() === body.recipientAzureTag?.toLowerCase(),
+    );
+    if (!recipient) {
+      // MEASURED: 404 / ACCOUNT_NOT_FOUND — the real code, not a dedicated recipient one.
+      return response.untyped(notFound('Recipient', body.recipientAzureTag, request));
+    }
+
+    // MEASURED: 422 PIN_REQUIRED · 429 PIN_LOCKED (retryAfterSeconds 900, on the THIRD miss) ·
+    // 401 INVALID_PIN. Same helper the transfer uses, so the two cannot drift.
+    const pinRefusal = checkPinInBand(
+      body.pin,
+      request,
+      'PIN must be set before authorising a transfer.',
+    );
+    if (pinRefusal) return response.untyped(pinRefusal);
+
+    const minted = mintAuthorization({
+      operation: 'Transfer',
+      fromAccountId: body.fromAccountId,
+      recipientAzureTag: body.recipientAzureTag,
+      amount: body.amount,
+    });
+
+    // MEASURED: 201 {"data":{authorizationId, expiresAt},"message":"Transfer authorised"}
+    return response(201).json({ data: minted, message: 'Transfer authorised' });
+  },
+);
+
+/** POST /api/transfers/internal/authorizations — the same, for a move between own accounts. */
+const authoriseInternalTransfer = api.post(
+  '/api/transfers/internal/authorizations',
+  async ({ request, response }) => {
+    const body = (await request.json()) as {
+      fromAccountId: string;
+      toAccountId: string;
+      amount: number;
+      pin?: string;
+    };
+
+    const pinRefusal = checkPinInBand(
+      body.pin,
+      request,
+      'PIN must be set before authorising a transfer.',
+    );
+    if (pinRefusal) return response.untyped(pinRefusal);
+
+    const minted = mintAuthorization({
+      operation: 'InternalTransfer',
+      fromAccountId: body.fromAccountId,
+      toAccountId: body.toAccountId,
+      amount: body.amount,
+    });
+
+    return response(201).json({ data: minted, message: 'Internal transfer authorised' });
+  },
+);
+
 /**
  * POST /api/transfers — the API's idempotency protocol plus the in-band PIN check.
  *
@@ -2116,6 +2288,19 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   */
   const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
   if (pinRefusal) return response.untyped(pinRefusal);
+
+  /*
+    Spend the authorisation, if one was presented (ADR-0042). AFTER the PIN and BEFORE any money
+    moves, mirroring TransferService: an authorisation refusal must cost nothing and move nothing.
+    A request with no header falls through — MEASURED 201, PR 2 is backward compatible.
+  */
+  const authRefusal = consumeAuthorization(request.headers.get('Step-Up-Authorization'), request, {
+    operation: 'Transfer',
+    fromAccountId: body.fromAccountId,
+    recipientAzureTag: body.recipientAzureTag,
+    amount: body.amount,
+  });
+  if (authRefusal) return response.untyped(authRefusal);
 
   if (mockState.session?.azureTag === tag) {
     return response.untyped(
@@ -2336,6 +2521,14 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   */
   const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
   if (pinRefusal) return response.untyped(pinRefusal);
+
+  const authRefusal = consumeAuthorization(request.headers.get('Step-Up-Authorization'), request, {
+    operation: 'InternalTransfer',
+    fromAccountId: body.fromAccountId,
+    toAccountId: body.toAccountId,
+    amount: body.amount,
+  });
+  if (authRefusal) return response.untyped(authRefusal);
   if (amount > from.balance) {
     return response.untyped(
       problem({
@@ -3143,6 +3336,8 @@ export const handlers = [
   withdraw,
   lookupRecipient,
   renameAzureTag,
+  authoriseTransfer,
+  authoriseInternalTransfer,
   transfer,
   transferInternal,
   verifyPin,

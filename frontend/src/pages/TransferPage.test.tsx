@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { confirmWithPin, enterPin } from '../test/pinFlow';
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
@@ -9,18 +10,6 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { StepUpModal } from '../features/auth';
 import { TransferPage } from './TransferPage';
 import { seedMockSession } from '../mocks/state';
-
-/**
- * Review -> PIN -> Send (ADR-0041). The flow gained a step: the review screen's primary button is
- * now Continue, and the PIN that authorises the transfer is entered here rather than supplied by
- * the root step-up modal off a 403.
- */
-async function confirmWithPinAndSend(sendLabel: string) {
-  await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
-  await userEvent.paste('123456');
-  await userEvent.click(screen.getByRole('button', { name: sendLabel }));
-}
 
 /**
  * PR-11 — the external transfer end to end, INCLUDING the step-up interceptor: pick an
@@ -45,11 +34,6 @@ function renderTransfer() {
     </Routes>,
     { routerEntries: ['/'] },
   );
-}
-
-async function enterPin(pin: string) {
-  await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
-  await userEvent.paste(pin);
 }
 
 async function verifyRecipient(tag: string) {
@@ -87,7 +71,7 @@ describe('external transfer (PR-11)', () => {
       root step-up modal ("Verify it's you") to appear off a 403 from the BFF; the PIN now travels
       in the request body and the API verifies it, so there is no modal and no 403 to react to.
     */
-    await confirmWithPinAndSend('Send €50.00');
+    await confirmWithPin();
     expect(screen.queryByText("Verify it's you")).not.toBeInTheDocument();
 
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
@@ -123,7 +107,17 @@ describe('external transfer (PR-11)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    await enterPin('123456');
+    /*
+      FIVE digits, not six, and that is the whole point of the rewrite.
+
+      This test used to type a full PIN and then press Back, on the premise that leaving the PIN
+      step must not send. ADR-0042 reversed the premise: the sixth digit IS the send, so a complete
+      PIN can no longer be entered without sending, and a test that tried would be asserting
+      something the product deliberately no longer offers. An INCOMPLETE PIN is the honest
+      expression of "on the PIN step, nothing sent yet" — and it still exercises what this test was
+      really defending, which is that Back returns to review and does not carry the digits with it.
+    */
+    await enterPin('12345');
     const backs = screen.getAllByRole('button', { name: 'Back' });
     await userEvent.click(backs[backs.length - 1]);
 
@@ -131,7 +125,7 @@ describe('external transfer (PR-11)', () => {
     expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
     // And the PIN did not survive the trip: coming back must re-ask rather than reuse it.
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(screen.getByRole('button', { name: 'Send €50.00' })).toBeDisabled();
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
   });
 
   it('after IN_FLIGHT the retained key freezes Back; Send reuses the SAME key (no double-spend)', async () => {
@@ -171,7 +165,7 @@ describe('external transfer (PR-11)', () => {
     await screen.findByText('A. Friend');
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-    await confirmWithPinAndSend('Send €50.00');
+    await confirmWithPin();
 
     expect(await screen.findByText(/Still processing/)).toBeInTheDocument();
     // Both the header and review Back are frozen while the key is retained (can't reach the
@@ -179,12 +173,14 @@ describe('external transfer (PR-11)', () => {
     screen.getAllByRole('button', { name: 'Back' }).forEach((b) => expect(b).toBeDisabled());
 
     /*
-      The retry is a SECOND press of the same Send, not another walk through the flow: an
-      IN_FLIGHT failure leaves the user on the PIN step with the PIN they already typed, because
-      the page only clears it for PIN-specific refusals. That is the safe forward action — it
-      reuses the retained key instead of minting a new one.
+      The retry is the banner's own `Check again`, not another walk through the flow: an IN_FLIGHT
+      failure leaves the user on the PIN step with the PIN they already typed, because the page only
+      clears it for PIN-specific refusals. With the sixth digit as the submit, re-typing is not
+      available either — the value never changes, so `onComplete` cannot fire again — which is
+      exactly why that control exists. It reuses the retained key AND re-presents the same
+      authorisation, rather than minting a second one for an intent that is already in flight.
     */
-    await userEvent.click(screen.getByRole('button', { name: 'Send €50.00' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
     expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]); // SAME key on the retry
@@ -304,7 +300,7 @@ describe('external transfer (PR-11)', () => {
     await screen.findByText('A. Friend');
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
-    await confirmWithPinAndSend('Send €50.00');
+    await confirmWithPin();
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Insufficient funds for this transfer.');
