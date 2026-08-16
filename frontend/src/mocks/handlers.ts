@@ -905,9 +905,9 @@ const createAccount = api.post('/api/accounts', async ({ request, response }) =>
  * sentinel at the bottom of this file is what makes that impossible to repeat quietly.
  */
 const getAccount = api.get('/api/accounts/{id}', ({ params, request, response }) => {
-  const account = mockState.accounts.find((a) => a.id === params.id);
+  const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
   if (!account) {
-    return response.untyped(notFound('Account', params.id, request));
+    return response.untyped(notFound('Account', routeGuid(params.id), request));
   }
   return response(200).json({ data: account, message: null });
 });
@@ -936,9 +936,9 @@ const getAccountBalance = api.get('/api/accounts/{id}/balance', ({ params, reque
     return response.untyped(modelStateProblem(badAt));
   }
 
-  const account = mockState.accounts.find((a) => a.id === params.id);
+  const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
   if (!account) {
-    return response.untyped(notFound('Account', params.id, request));
+    return response.untyped(notFound('Account', routeGuid(params.id), request));
   }
 
   const atMs = at ? Date.parse(at) : Number.NaN;
@@ -998,9 +998,9 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
     return response.untyped(modelStateProblem({ Name: renameError }));
   }
 
-  const account = mockState.accounts.find((a) => a.id === params.id);
+  const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
   if (!account) {
-    return response.untyped(notFound('Account', params.id, request));
+    return response.untyped(notFound('Account', routeGuid(params.id), request));
   }
   account.name = parsed.body.name as string;
   return response(200).json({ data: account, message: 'Account updated successfully' });
@@ -1010,9 +1010,9 @@ const renameAccount = api.patch('/api/accounts/{id}', async ({ params, request, 
 const setPrimaryAccount = api.patch(
   '/api/accounts/{id}/set-primary',
   ({ params, request, response }) => {
-    const account = mockState.accounts.find((a) => a.id === params.id);
+    const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
     if (!account) {
-      return response.untyped(notFound('Account', params.id, request));
+      return response.untyped(notFound('Account', routeGuid(params.id), request));
     }
     for (const a of mockState.accounts) {
       a.isPrimary = false;
@@ -1027,9 +1027,9 @@ const setPrimaryAccount = api.patch(
  * BusinessRuleException for non-zero balance or primary, else soft delete.
  */
 const deleteAccount = api.delete('/api/accounts/{id}', ({ params, request, response }) => {
-  const account = mockState.accounts.find((a) => a.id === params.id);
+  const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
   if (!account) {
-    return response.untyped(notFound('Account', params.id, request));
+    return response.untyped(notFound('Account', routeGuid(params.id), request));
   }
   if (account.balance !== 0) {
     return response.untyped(
@@ -1053,7 +1053,7 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, request, respo
       }),
     );
   }
-  mockState.accounts = mockState.accounts.filter((a) => a.id !== params.id);
+  mockState.accounts = mockState.accounts.filter((a) => a.id !== routeGuid(params.id));
   return response(200).json({ message: 'Account deleted successfully' });
 });
 
@@ -1068,9 +1068,9 @@ const revealAccountNumber = api.get(
     if (mockState.authLevel < 2) {
       return response.untyped(stepUp403(mockState.authLevel));
     }
-    const account = mockState.accounts.find((a) => a.id === params.id);
+    const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
     if (!account) {
-      return response.untyped(notFound('Account', params.id, request));
+      return response.untyped(notFound('Account', routeGuid(params.id), request));
     }
     return response(200).json(
       {
@@ -1435,9 +1435,9 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
 
 /** GET /api/transactions/{id} — T2 detail, enveloped; unknown ids are a real 404. */
 const getTransaction = api.get('/api/transactions/{id}', ({ params, request, response }) => {
-  const transaction = mockState.transactions.find((t) => t.id === params.id);
+  const transaction = mockState.transactions.find((t) => t.id === routeGuid(params.id));
   if (!transaction) {
-    return response.untyped(notFound('Transaction', params.id, request));
+    return response.untyped(notFound('Transaction', routeGuid(params.id), request));
   }
   return response(200).json({ data: toWire(transaction), message: null });
 });
@@ -1480,6 +1480,14 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
     return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
+  /*
+    Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
+
+    `IdempotencyService.ComputeRequestHashAsync(Stream body, …)` HMACs the raw stream, so two bodies
+    differing only in a GUID's casing legitimately hash differently on the server — and must here.
+    Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
+    as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
+  */
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`deposit|${parsedKey}`);
   if (stored) {
@@ -1609,6 +1617,14 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
+  /*
+    Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
+
+    `IdempotencyService.ComputeRequestHashAsync(Stream body, …)` HMACs the raw stream, so two bodies
+    differing only in a GUID's casing legitimately hash differently on the server — and must here.
+    Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
+    as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
+  */
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`withdraw|${parsedKey}`);
   if (stored) {
@@ -2054,6 +2070,27 @@ function readStepUpHeader(request: Request): { id: string | null; errors: string
 }
 
 /**
+ * A GUID from the ROUTE — `[HttpGet("{id:guid}")] … Guid id`, so MVC's parser, so every format.
+ *
+ * MEASURED: `GET /api/transactions/{id}` answered **200 to all four** of D, N, UPPERCASE and
+ * `{braces}` for the same transaction, because the constraint is `Guid.TryParse` and the lookup is
+ * then `t.Id == transactionId` — a struct compare, sixteen bytes, spelling long gone.
+ *
+ * The mock compared the raw URL segment against ids seeded lowercase, so it answered 404 to three
+ * of those four. Reachable from the app, not just from curl: `/transactions/:id` hands the segment
+ * to the query verbatim, so a pasted uppercase id renders "not found" under MSW and the real
+ * transaction against the API.
+ *
+ * Returns the canonical id, or the raw value when it is not a GUID at all — the caller then misses
+ * the lookup and answers its own 404, which is what the API does for an unparseable segment too
+ * (no route matches, so the framework 404s before any handler).
+ */
+function routeGuid(value: string | readonly string[] | undefined): string {
+  const raw = typeof value === 'string' ? value : '';
+  return parseGuid(raw) ?? raw;
+}
+
+/**
  * A GUID in the JSON BODY — parsed the way System.Text.Json parses one, which is NOT how
  * `Guid.TryParse` does.
  *
@@ -2116,9 +2153,11 @@ function accountIdErrors(value: unknown): string[] {
   // already aborted the bind. What is left is ABSENT or ALL-ZERO, which is what `[NotEmptyGuid]`
   // refuses. Verbatim from the wire; the source of truth is `ValidationRules.AccountNotEmptyGuid`.
   if (value === undefined) return ['A valid account ID is required.'];
-  // Already canonical by now — `bindAccountIds` ran first and rewrote the member, exactly as MVC
-  // hands the action a bound `Guid` rather than the string that arrived.
-  return value === EMPTY_GUID ? ['A valid account ID is required.'] : [];
+  // `bindAccountIds` ran first and rewrote the member — exactly as MVC hands the action a bound
+  // `Guid` rather than the string that arrived — so `value` is already canonical here. The parse is
+  // kept anyway: it costs nothing, and without it this function would silently pass an all-zero id
+  // in any other spelling the day someone calls it before the bind.
+  return parseBodyGuid(value) === EMPTY_GUID ? ['A valid account ID is required.'] : [];
 }
 
 /**
@@ -2535,6 +2574,14 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
+  /*
+    Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
+
+    `IdempotencyService.ComputeRequestHashAsync(Stream body, …)` HMACs the raw stream, so two bodies
+    differing only in a GUID's casing legitimately hash differently on the server — and must here.
+    Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
+    as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
+  */
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`transfer|${parsedKey}`);
   if (stored) {
@@ -2776,6 +2823,14 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     return response.untyped(unreadableBodyProblem(await request.clone().text()));
   }
   const raw = parsedBody.raw;
+  /*
+    Fingerprint the WIRE BYTES, and do it BEFORE `bindAccountIds` rewrites the parsed body.
+
+    `IdempotencyService.ComputeRequestHashAsync(Stream body, …)` HMACs the raw stream, so two bodies
+    differing only in a GUID's casing legitimately hash differently on the server — and must here.
+    Moving this below the bind, or switching it to `JSON.stringify(body)`, would make the mock replay
+    as one request a pair the API answers with 422 IDEMPOTENCY_KEY_REUSE.
+  */
   const fp = fingerprint(raw);
   const stored = mockState.idempotency.get(`internal|${parsedKey}`);
   if (stored) {

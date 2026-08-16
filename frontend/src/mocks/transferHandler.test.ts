@@ -1162,6 +1162,18 @@ describe('a GUID in the BODY is not a GUID in a HEADER', () => {
     ['N (no dashes)', (id) => id.replace(/-/g, '')],
     ['B {braces}', (id) => `{${id}}`],
     ['P (parens)', (id) => `(${id})`],
+    [
+      'X (hex groups)',
+      (id) => {
+        const [a, b, c, d, e] = id.split('-');
+        const bytes = d + e;
+        return (
+          `{0x${a},0x${b},0x${c},{` +
+          Array.from({ length: 8 }, (_, i) => `0x${bytes.slice(i * 2, i * 2 + 2)}`).join(',') +
+          '}}'
+        );
+      },
+    ],
     ['leading/trailing space', (id) => `  ${id}  `],
   ];
 
@@ -1234,5 +1246,42 @@ describe('a GUID in the BODY is not a GUID in a HEADER', () => {
     expect(res.status).toBe(201);
     const [held] = [...mockState.stepUpAuthorizations.values()];
     expect(held.toAccountId).toBe(acct2());
+  });
+});
+
+describe('a route GUID takes every format, because MVC binds it', () => {
+  it('finds the same transaction from D, N, uppercase and braces', async () => {
+    /*
+      The third binding kind, and the last place the canonicalisation rule was missing. MEASURED:
+      `GET /api/transactions/{id}` answered 200 to all four spellings of one id, because
+      `[HttpGet("{id:guid}")] … Guid id` is `Guid.TryParse` and `t.Id == transactionId` is a struct
+      compare.
+
+      Reachable from the app rather than only from curl: `/transactions/:id` hands the URL segment
+      to the query verbatim, so a pasted uppercase id rendered "not found" under MSW while the real
+      API served the transaction.
+    */
+    seedMockSession();
+    const canonical = mockState.transactions[0].id;
+    const forms = [
+      ['D', canonical],
+      ['N', canonical.replace(/-/g, '')],
+      ['UPPERCASE', canonical.toUpperCase()],
+      ['B {braces}', `{${canonical}}`],
+    ] as const;
+
+    for (const [label, id] of forms) {
+      const res = await fetch(`/api/transactions/${id}`);
+      expect(res.status, `${label} must resolve the same row`).toBe(200);
+    }
+  });
+
+  it('still 404s an id nobody has, and names it canonically', async () => {
+    // The API's `NotFoundException` formats a BOUND Guid, so the detail is lowercase D whatever the
+    // caller sent. The mock echoed the caller's spelling back.
+    seedMockSession();
+    const res = await fetch('/api/transactions/3F2504E0-4F89-41D3-9A0C-0305E82C3399');
+    expect(res.status).toBe(404);
+    expect((await res.json()).detail).toContain('3f2504e0-4f89-41d3-9a0c-0305e82c3399');
   });
 });
