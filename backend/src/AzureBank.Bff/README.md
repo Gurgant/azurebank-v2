@@ -217,11 +217,14 @@ Updates `LastActivity` timestamp on every authenticated request for timeout trac
 Enforces step-up authentication for sensitive routes:
 
 ```csharp
-// Routes needing a live session, decided HERE rather than delegated downstream (ADR-0041).
-private static readonly HashSet<string> SessionRequiredPaths = new(StringComparer.OrdinalIgnoreCase)
+// EVERY proxied POST needs a live session, decided HERE rather than delegated downstream
+// (ADR-0041). These two are the only exceptions, because they are how a caller obtains the
+// session the rest require. /api/auth/refresh never reaches this check: it is answered 404
+// earlier, since the browser must never drive token rotation.
+private static readonly HashSet<string> SessionlessPostPaths = new(StringComparer.OrdinalIgnoreCase)
 {
-    "/api/transfers",
-    "/api/transfers/internal"
+    "/api/auth/login",
+    "/api/auth/register"
 };
 
 // TWO INDEPENDENT BRANCHES decide level 2. Keep them apart when reading this.

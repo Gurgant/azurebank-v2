@@ -78,6 +78,26 @@ it would have moved the decision to another process while this ADR claimed to be
 So the two questions are now separate sets, and transfers sit in `SessionRequiredPaths`: refused
 locally, at the BFF, with the API's own 401 shape, trailing slash normalised the same way.
 
+> **Amended 2026-08-17.** `SessionRequiredPaths` is gone; the check is now deny-by-default and the
+> set that remains, `SessionlessPostPaths`, names the two paths that may be reached WITHOUT a session.
+> The reasoning above is unchanged and is now the general rule rather than a rule about transfers.
+>
+> The allowlist was silently incomplete, which is the defect an allowlist has by construction: it
+> named two paths and could not notice the ones nobody added. Both authorisation mint endpoints
+> (ADR-0042), deposit, withdraw, PIN binding and account creation had all fallen through it.
+>
+> Measured on the running stack before the change, every one of those already answered 401, and the
+> BFF's 401 and the API's are byte-identical apart from `traceId` — so this changed no response a
+> client can observe, only which process decided it. What it buys is that the refusal no longer
+> depends on `BearerTokenTransformProvider` continuing to clear the inbound `Authorization` header;
+> the paragraph above is precisely the argument for not resting a layer on another file's
+> correctness, and it applied to two paths while six went without.
+>
+> Deliberately still out of reach: the check is POST-only and matches exact paths, so
+> `PATCH /api/accounts/{id}`, `PATCH /api/accounts/{id}/set-primary`, `DELETE /api/accounts/{id}` and
+> `PATCH /api/users/me/azuretag` are not covered by it. Covering them needs pattern matching against
+> parameterised routes, which is a separate decision and not made here.
+
 `/full-number` keeps the session model (decision D3a). It is a GET with no body, no amount and no
 payee — there is nothing for an in-band credential to be **bound to**. Two questions, two mechanisms,
 on purpose.

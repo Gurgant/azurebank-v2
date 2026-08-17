@@ -34,13 +34,32 @@ public class AuthLevelMiddleware
     */
 
     /// <summary>
-    /// POST paths that need a live session, decided HERE rather than delegated downstream.
-    /// Transfers sit here since ADR-0041: the PIN now travels in-band and the API verifies it, so
-    /// the level-2 gate would be the weaker of the two checks and would keep the five-minute
-    /// session window alive for money movement. The session check is a different question and stays.
+    /// The ONLY proxied POST paths a caller may reach without a live session. Every other POST under
+    /// /api/ is refused here rather than delegated downstream.
     /// </summary>
-    private static readonly HashSet<string> SessionRequiredPaths =
-        new(StringComparer.OrdinalIgnoreCase) { "/api/transfers", "/api/transfers/internal" };
+    /*
+      DENY BY DEFAULT, because the allowlist this replaces was silently incomplete.
+
+      It named "/api/transfers" and "/api/transfers/internal" and nothing else, so every money
+      endpoint added afterwards fell straight through: both authorisation mint endpoints (ADR-0042),
+      deposit, withdraw, and the PIN-binding endpoint too. Nothing caught it, because a list of paths
+      cannot notice a path that was never added to it.
+
+      Inverting fixes the failure MODE, not just today's omissions. Forgetting to allowlist a
+      genuinely public endpoint fails closed and the first call reveals it; forgetting to list a money
+      endpoint failed open and revealed nothing to anyone. Only login and register are public: they
+      are how a caller obtains the session everything else requires. /api/auth/refresh never reaches
+      here at all — it is answered 404 above, since the browser must never drive token rotation.
+
+      This is defence in depth, not a bypass fix. Measured on the running stack before the change,
+      every one of those paths already answered 401, because BearerTokenTransformProvider clears the
+      inbound Authorization header unconditionally and injects nothing without a session. The BFF's
+      401 and the API's are byte-identical apart from traceId, so no client can observe this change.
+      What changes is that the refusal no longer depends on that transform staying correct — and its
+      absence was once a live, measured bypass.
+    */
+    private static readonly HashSet<string> SessionlessPostPaths =
+        new(StringComparer.OrdinalIgnoreCase) { "/api/auth/login", "/api/auth/register" };
 
     /*
       Routes gated on the BFF session flag at level 2. EMPTY since ADR-0041 — see above. The set and
@@ -202,14 +221,28 @@ public class AuthLevelMiddleware
     }
 
     /// <summary>
-    /// Paths that must have a live session before the request leaves the BFF. Same trailing-slash
-    /// normalisation as the PIN gate, and for the same reason it was needed there (PR #64): endpoint
-    /// routing tolerates "/api/transfers/", so raw exact matching would let a slash-suffixed POST
-    /// past the check.
+    /// Every proxied POST must have a live session before the request leaves the BFF, except the two
+    /// paths that exist to create one.
     /// </summary>
-    private static bool RequiresSession(string path, string method) =>
-        method.Equals("POST", StringComparison.OrdinalIgnoreCase)
-        && SessionRequiredPaths.Contains(path.TrimEnd('/'));
+    /// <remarks>
+    /// The prefix test uses the RAW path so that "/api/" itself cannot slip through a trim, while the
+    /// allowlist is matched on the NORMALIZED one — same trailing-slash handling as the PIN gate, and
+    /// for the same reason it was needed there (PR #64): endpoint routing tolerates "/api/transfers/",
+    /// so raw exact matching would let a slash-suffixed POST past the check. It has to normalise in
+    /// both directions now: "/api/auth/login/" reaches login and must stay reachable.
+    /// Scoped to /api/ deliberately — the BFF's own controllers live under /bff/ and are mapped after
+    /// this middleware, so a wider prefix would lock the front door.
+    /// </remarks>
+    private static bool RequiresSession(string path, string method)
+    {
+        if (!method.Equals("POST", StringComparison.OrdinalIgnoreCase)
+            || !path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !SessionlessPostPaths.Contains(path.TrimEnd('/'));
+    }
 
     private static bool RequiresPinVerification(string path, string method)
     {
