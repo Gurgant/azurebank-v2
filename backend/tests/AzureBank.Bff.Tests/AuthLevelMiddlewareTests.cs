@@ -386,4 +386,220 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
             .Which.Should().BeNull("with no session there is no token to inject, and the client's "
                 + "must not stand in for one — the API then answers 401 for real");
     }
+
+    /*
+      WHICH POSTS THE GATE COVERS — the question the four tests below answer.
+
+      Until this change the covered set was an allowlist of two, "/api/transfers" and
+      "/api/transfers/internal", so every other money endpoint was refused by the API instead of
+      here. Measured on the running stack (API :5068, BFF :5000) before the change, sessionless and
+      with no Authorization header:
+
+        POST /api/transfers                            -> 401  decided by the BFF
+        POST /api/transfers/authorizations             -> 401  decided by the API
+        POST /api/transfers/internal/authorizations    -> 401  decided by the API
+        POST /api/transactions/deposit                 -> 401  decided by the API
+        POST /api/transactions/withdraw                -> 401  decided by the API
+        POST /api/auth/pin                             -> 401  decided by the API
+        POST /api/accounts                             -> 401  decided by the API
+        POST /api/auth/login                           -> 400  reachable, and must stay so
+        POST /api/auth/register                        -> 400  reachable, and must stay so
+        POST /api/auth/refresh                         -> 404  hard-blocked above, before this gate
+
+      The two 401s are byte-identical apart from traceId, so this is not a bypass and closing it
+      changes no response a client can observe — only who produced it. What it buys is that the
+      refusal stops depending on BearerTokenTransformProvider.cs:57 continuing to clear the inbound
+      Authorization header. That line is the reason the gap is not exploitable today, and its absence
+      is exactly the live bypass recorded above.
+    */
+
+    /// <summary>Every POST path the committed OpenAPI spec declares, in file order.</summary>
+    private static IEnumerable<string> SpecPostPaths()
+    {
+        var spec = Path.Combine(RepoRoot(), "docs", "api", "openapiv1.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(spec));
+        foreach (var path in document.RootElement.GetProperty("paths").EnumerateObject())
+        {
+            var hasPost = path.Value.EnumerateObject()
+                .Any(verb => verb.Name.Equals("post", StringComparison.OrdinalIgnoreCase));
+            if (hasPost)
+            {
+                yield return path.Name;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Walks up from the test binary to the repository root, the same way the architecture tests do
+    /// (<c>SecurityEventConstantTests.RepoBackendRoot</c>, which anchors on AzureBank.slnx) — and for
+    /// the same stated reason: a guard that cannot find its input must fail loudly, because a drift
+    /// sweep that silently finds no cases reports green while asserting nothing. Anchored on the spec
+    /// itself rather than the solution file, so the thing being located is the thing being tested for.
+    /// </summary>
+    private static string RepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null
+               && !File.Exists(Path.Combine(directory.FullName, "docs", "api", "openapiv1.json")))
+        {
+            directory = directory.Parent;
+        }
+
+        directory.Should().NotBeNull(
+            because: "the sweep reads its cases from docs/api/openapiv1.json; not finding it must be "
+                + "a failure, never an empty sweep");
+        return directory!.FullName;
+    }
+
+    [Theory]
+    [InlineData("/api/transfers/authorizations")]
+    [InlineData("/api/transfers/internal/authorizations")]
+    [InlineData("/api/transactions/deposit")]
+    [InlineData("/api/transactions/withdraw")]
+    public async Task AMoneyPost_WithNoSession_IsRefusedHereAndNeverForwarded(string path)
+    {
+        /*
+          The four that used to fall through. The mint endpoints are the sharpest of them: they
+          authorise an amount to a payee (ADR-0042), so an unauthenticated caller reaching one is
+          reaching the step-up factor itself rather than merely the payment it protects.
+
+          Falsified by restoring the old allowlist: all four go red.
+        */
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(new { })
+        };
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        backend.ForwardedPaths.Should().BeEmpty(
+            "no session is a refusal this process makes, not one it delegates to the API");
+        await AssertLooksLikeTheApisOwn401(response);
+    }
+
+    [Fact]
+    public async Task AMintPost_WithATrailingSlash_IsRefusedToo()
+    {
+        // The normalization hole PR #64 closed, re-pointed at the endpoint ADR-0042 added.
+        // "/api/transfers/authorizations/" reaches the endpoint, so the gate must match the
+        // normalized path or the slash alone walks past it.
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers/authorizations/")
+        {
+            Content = JsonContent.Create(new { })
+        };
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        backend.ForwardedPaths.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LoginWithATrailingSlash_IsStillReachableWithoutASession()
+    {
+        /*
+          The trailing-slash normalisation now matters in the OTHER direction, and this is the test
+          that proves it — the mint one above cannot, because under deny-by-default a slash-suffixed
+          money path is refused whether it normalises or not.
+
+          "/api/auth/login/" reaches login, so if the allowlist were matched on the raw path the
+          slash alone would demand a session to obtain a session. Found by falsifying: removing
+          TrimEnd('/') left every other guard here green.
+        */
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login/")
+        {
+            Content = JsonContent.Create(new { })
+        };
+        await client.SendAsync(request);
+
+        backend.ForwardedPaths.Should().Contain("/api/auth/login/",
+            "a trailing slash must not lock the front door");
+    }
+
+    [Fact]
+    public async Task AMintPost_WithALevel1Session_IsForwarded()
+    {
+        /*
+          The gate asks "is there a caller at all", never "has the caller just proved it is them".
+          Minting IS the proof — the PIN travels in the body and the API verifies it (ADR-0041) — so
+          answering 403 here would demand a PIN before the endpoint that exists to take one.
+
+          If this ever goes red with a 403, the gate has grown a second question it must not ask.
+        */
+        var (factory, backend) = WithRecorder();
+        var (sessionId, cookieName, _) = CreateSession(factory);
+        var client = factory.CreateClient();
+
+        var request = Request(HttpMethod.Post, "/api/transfers/authorizations", cookieName, sessionId);
+        request.Content = JsonContent.Create(new { });
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+        backend.ForwardedPaths.Should().Contain("/api/transfers/authorizations");
+    }
+
+    [Fact]
+    public async Task NoPostInTheSpecReachesTheBackendWithoutASession_ExceptLoginAndRegister()
+    {
+        /*
+          THE DRIFT SWEEP, and the reason it is written this way.
+
+          A test that restates the middleware's own constant is a tautology: it goes green forever and
+          proves nothing. This one enumerates the POST paths from the committed OpenAPI spec — which
+          is generated from the backend and is the contract — and drives each one through the real
+          pipeline, asserting where it ends up. So it goes RED when someone adds a POST endpoint to
+          the API and regenerates the spec without deciding whether it needs a session, which is the
+          failure this task exists to prevent.
+
+          The assertion is deliberately about the BACKEND being reached rather than about the status
+          code: /api/auth/refresh is answered 404 by the hard block above and never forwarded, and
+          collapsing both refusals into one property keeps the sweep about the invariant that matters
+          — nothing gets through — instead of the shape each refusal happens to take.
+
+          Falsified by deleting the negation in RequiresSession: every path but login and register
+          flips to forwarded.
+        */
+        var sessionless = new[] { "/api/auth/login", "/api/auth/register" };
+        var paths = SpecPostPaths().ToList();
+
+        paths.Should().HaveCountGreaterThan(10, "the spec is the source of cases; an empty or "
+            + "truncated read must fail loudly rather than sweep nothing");
+        paths.Should().NotContain(p => p.Contains('{'),
+            "the sweep sends each path as a literal request, so a templated one would probe "
+            + "\"/api/things/{id}\" itself rather than a real route — reporting green about a path "
+            + "nobody can call. The gate would still cover it (it matches on the /api/ prefix); it "
+            + "is this test that cannot, so it must fail loudly instead of quietly testing nothing");
+
+        foreach (var path in paths)
+        {
+            var (factory, backend) = WithRecorder();
+            var client = factory.CreateClient();
+
+            var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = JsonContent.Create(new { })
+            };
+            await client.SendAsync(request);
+
+            if (sessionless.Contains(path, StringComparer.OrdinalIgnoreCase))
+            {
+                backend.ForwardedPaths.Should().Contain(path,
+                    $"{path} must stay reachable with no session, or nobody can ever get one");
+            }
+            else
+            {
+                backend.ForwardedPaths.Should().BeEmpty(
+                    $"{path} is a POST that changes state; with no session the BFF must refuse it "
+                    + "itself rather than let an unauthenticated caller reach the API");
+            }
+        }
+    }
 }
