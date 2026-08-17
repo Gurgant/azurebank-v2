@@ -2751,7 +2751,23 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     type: 'TransferOut',
     amount,
     balanceAfter: newBalance,
-    description: body.description ?? null,
+    /*
+      The API DEFAULTS this; it does not store null. TransferService.cs:294 writes
+      `request.Description ?? $"Transfer to @{recipient.AzureTag}"`, and the row it produces was read
+      back off the running stack rather than off the C#:
+
+        POST /api/transfers  {fromAccountId, recipientAzureTag:"janesmith", amount:1.11, pin}
+          -- no description field at all --
+        GET  /api/transactions
+          -> TransferOut  1.11  "Transfer to @janesmith"
+
+      The internal transfer below already modelled its two defaults; this side stored null, so a
+      history rendered under MSW showed an empty description where the product shows a sentence.
+      Deposit and withdraw are NOT this case and must keep `?? null`: TransactionService.cs:63 and
+      :153 assign `request.Description` raw, measured the same way (deposit with no description came
+      back with description null).
+    */
+    description: body.description ?? `Transfer to @${tag}`,
     recipientAzureTag: tag,
     senderAzureTag: null,
     status: 'Completed',

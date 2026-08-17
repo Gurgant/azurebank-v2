@@ -169,6 +169,51 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
     expect(reuse.status).toBe(422);
     expect((await reuse.json()).errorCode).toBe('IDEMPOTENCY_KEY_REUSE');
   });
+
+  it('DEFAULTS the ledger description when none was sent, the way the API does', async () => {
+    /*
+      The mock stored null here while the product stores a sentence, so a history rendered under MSW
+      showed an empty description where the real one shows text. Measured on the running stack rather
+      than read off the C# (API :7215, seeded dev database, migrations applied):
+
+        POST /api/transfers  {fromAccountId, recipientAzureTag:"janesmith", amount:1.11, pin}
+          -- the description field ABSENT from the body --
+        GET  /api/transactions
+          -> TransferOut  1.11  "Transfer to @janesmith"
+
+      Same run, as the control that makes this specific rather than a blanket rule: a deposit with no
+      description came back with description null, because TransactionService.cs:63 assigns
+      request.Description raw. Only the four transfer ledger rows default (TransferService.cs:294,
+      :316, :487, :504) — and the internal transfer's RESPONSE does not, which is why
+      InternalTransferResponse still carries null here.
+
+      Falsified by restoring `?? null`.
+    */
+    elevate();
+    await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 5,
+      pin: MOCK_PIN,
+    });
+
+    const row = mockState.transactions.at(-1);
+    expect(row?.type).toBe('TransferOut');
+    expect(row?.description).toBe('Transfer to @friend');
+  });
+
+  it('keeps a description the caller DID send, rather than overwriting it with the default', async () => {
+    elevate();
+    await transfer(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      recipientAzureTag: 'friend',
+      amount: 5,
+      pin: MOCK_PIN,
+      description: 'rent',
+    });
+
+    expect(mockState.transactions.at(-1)?.description).toBe('rent');
+  });
 });
 
 const I_URL = '/api/transfers/internal';
