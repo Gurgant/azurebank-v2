@@ -15,6 +15,14 @@ function isGetMeAction(action: unknown): boolean {
  * The global 401 rule (D3), routed on errorCode — never on endpoint identity:
  *  - INVALID_PIN         stays in the calling form (withdraw dialog / step-up);
  *  - INVALID_CREDENTIALS stays on the login form;
+ *  - AUTHORIZATION_EXPIRED / AUTHORIZATION_INVALID stay in the transfer wizard (ADR-0042). These
+ *    are 401s about a step-up AUTHORISATION, not about the session, and the pipeline proves it:
+ *    `IdempotencyMiddleware` is registered AFTER UseAuthentication/UseAuthorization, so reaching
+ *    `StepUpAuthorizationService.ValidateAsync` at all means the cookie was accepted. Treating
+ *    them as a dead session signed the user out mid-transfer — and the wizard's exit blocker
+ *    exempts /login, so they were not even asked whether to abandon a payment whose outcome they
+ *    did not know. Measured through the BFF: the `errorCode` extension survives on this 401, so
+ *    routing on it here is safe;
  *  - a 401 while NOT authenticated is the calling surface's business (the boot probe
  *    resolves to 'anonymous' in the slice; an anonymous user must never see a
  *    "session expired" banner for a session they never had, and their form's mutation
@@ -41,6 +49,20 @@ const NON_ACTIVITY_ENDPOINTS = new Set(['getSessionStatus']);
 
 /** Transport-level failures: the request never reached the BFF, so its clock did not move. */
 const TRANSPORT_FAILURES = new Set(['NETWORK', 'PARSE']);
+
+/**
+ * 401s that belong to the surface that asked, not to the session. See the D3 note above.
+ *
+ * A set rather than a chain of `!==` because the chain had already grown to two and was about to
+ * grow to four: the shape invites someone to add a third `&&` and invites nobody to ask what the
+ * list means.
+ */
+const IN_FLOW_401_CODES = new Set([
+  'INVALID_PIN',
+  'INVALID_CREDENTIALS',
+  'AUTHORIZATION_EXPIRED',
+  'AUTHORIZATION_INVALID',
+]);
 
 function countsAsActivity(action: unknown): boolean {
   const type = (action as { type?: unknown }).type;
@@ -74,11 +96,7 @@ export const sessionMiddleware: Middleware = (middlewareApi) => (next) => (actio
 
   if (isRejectedWithValue(action)) {
     const problem = action.payload as Partial<ApiProblem> | undefined;
-    if (
-      problem?.status === 401 &&
-      problem.errorCode !== 'INVALID_PIN' &&
-      problem.errorCode !== 'INVALID_CREDENTIALS'
-    ) {
+    if (problem?.status === 401 && !IN_FLOW_401_CODES.has(problem.errorCode ?? '')) {
       const { status } = (middlewareApi.getState() as { auth: { status: string } }).auth;
       if (status === 'authenticated') {
         middlewareApi.dispatch(sessionExpired());

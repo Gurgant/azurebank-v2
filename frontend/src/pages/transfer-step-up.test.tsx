@@ -1,12 +1,13 @@
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { http } from 'msw';
+import { http, HttpResponse } from 'msw';
 import { Route, Routes } from 'react-router-dom';
 import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { mockState, seedMockSession } from '../mocks/state';
-import { renderWithProviders } from '../test/renderWithProviders';
+import { makeTestStore, renderWithProviders } from '../test/renderWithProviders';
+import { apiSlice } from '../features/api/apiSlice';
 import { enterPin } from '../test/pinFlow';
 import { TransferPage } from './TransferPage';
 import { InternalTransferPage } from './InternalTransferPage';
@@ -53,11 +54,6 @@ async function externalToPinStep(amount = '50') {
   await userEvent.type(screen.getByLabelText('Transfer amount'), amount);
   await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
   await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-}
-
-/** One step back in the wizard. See the note at the call site for why the FIRST match. */
-async function clickBack() {
-  await userEvent.click(screen.getAllByRole('button', { name: 'Back' })[0]);
 }
 
 beforeEach(() => {
@@ -187,14 +183,29 @@ describe('what an expired authorisation does to the screen', () => {
       expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
     });
 
-    // ...and the transfer details are still on screen, so the user re-enters six digits, not a form.
-    // Two controls answer to "Back" on every step — the header's icon and the body's button — and
-    // both run the same `wizard.toReview()` / `wizard.toForm()`. Taking the first is not a
-    // preference; a `getByRole` would fail as ambiguous, which is what it did before this comment.
-    await clickBack(); // pin -> review
-    await clickBack(); // review -> form
-    expect(screen.getByLabelText('Transfer amount')).toHaveValue('50');
-    expect(screen.getByLabelText('Recipient handle')).toHaveValue('friend');
+    /*
+      And the details survived — asserted by USING them rather than by reading them back.
+
+      This test used to press Back twice and read the two form fields. It cannot any more, and the
+      reason is the point of this PR: a refused authorisation now KEEPS the idempotency key, so
+      `exitLocked` holds every backward exit. That is deliberate — the retry must stay the same
+      intent — but it means "the values are still there" can no longer be shown by navigating to
+      them.
+
+      Using them is the stronger claim anyway. A page that merely re-rendered the old numbers would
+      satisfy a field read; only a page that still HOLDS them can put them back on the wire.
+    */
+    let retried: { amount?: number; recipientAzureTag?: string } = {};
+    server.use(
+      http.post('*/api/transfers', async ({ request }) => {
+        retried = (await request.json()) as typeof retried;
+        return problem({ status: 401, errorCode: 'AUTHORIZATION_EXPIRED', detail: 'again' });
+      }),
+    );
+    await enterPin();
+
+    await waitFor(() => expect(retried.amount).toBe(50));
+    expect(retried.recipientAzureTag).toBe('friend');
   });
 
   it('says nothing about WHICH cause when the server answers the uniform refusal', async () => {
@@ -239,5 +250,215 @@ describe('the internal transfer speaks the same protocol', () => {
     // Bound to the OPERATION as well: an authorisation for an internal move must never be
     // spendable on an external one, and the mock refuses on exactly that field.
     expect(minted[0].operation).toBe('InternalTransfer');
+  });
+});
+
+describe('a lost response, and the way back to the PIN', () => {
+  /*
+    #211. The four rows the server can answer to the SAME key and the SAME body — measured on the
+    running API and written down in `A2-PR3-MEASURED-CONTRACT.md`:
+
+      Completed                -> 201 + Idempotency-Replayed: true    done, no PIN
+      Executed, fresh          -> 409 IDEMPOTENCY_IN_FLIGHT           wait, no PIN
+      Executed, stale > 10 min -> 409 IDEMPOTENCY_RESULT_UNKNOWN      never re-execute
+      record absent / released -> 401 AUTHORIZATION_EXPIRED           nothing moved; NOW ask a PIN
+
+    Only the last needs a PIN, and by then the server has said nothing happened.
+  */
+
+  /** A transport failure: the request left, the answer never came. `status: 'NETWORK'`. */
+  function loseTheResponse() {
+    server.use(http.post('*/api/transfers', () => HttpResponse.error(), { once: true }));
+  }
+
+  it('offers a way to re-send when the response is LOST, not only on a 409', async () => {
+    /*
+      The control existed and did not render for the case it was built for.
+
+      It was gated on `inFlight`, which is set only for 409 IDEMPOTENCY_IN_FLIGHT. A lost response
+      is `status: 'NETWORK'`, which `classifyMoneyProblem` routes to a plain message — so the one
+      re-send affordance stayed hidden while every exit was held by `exitLocked`. Not a loop: a
+      dead end, with the key retained and nothing on screen able to use it.
+
+      Falsified by putting the gate back to `{inFlight && (`.
+    */
+    renderTransfer();
+    await externalToPinStep();
+    loseTheResponse();
+    await enterPin();
+
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeInTheDocument();
+    // And it says the honest thing: nobody told us it is processing, so we do not claim it is.
+    expect(screen.getByText(/may or may not have gone through/i)).toBeInTheDocument();
+  });
+
+  it('re-sends the SAME key and the SAME body, and lands the transfer', async () => {
+    /*
+      The whole point of retaining the key — and the key is only half of it.
+
+      The server fingerprints the request BODY and compares it to the one stored under the key, so a
+      retry whose bytes differ is a 422 IDEMPOTENCY_KEY_REUSE rather than a replay. Asserting the key
+      alone would pass on a client that reused it while rebuilding the body from a different source —
+      the PIN from state instead of the ref, an amount reformatted, a field added — and that client
+      would be broken in a way only the server could tell it about.
+
+      Observed through `server.events` rather than through an override, because the second request
+      must reach the REAL handler: `once: true` retires the failing override after one request, so
+      the retry executes normally and the receipt at the end is a real 201. That is what makes the
+      last clause of this test's name true; the first draft ended on a canned 401 and never landed
+      anything.
+    */
+    const sent: { key: string; body: string }[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.method !== 'POST' || !request.url.includes('/api/transfers')) return;
+      if (request.url.includes('/authorizations')) return;
+      void request
+        .clone()
+        .text()
+        .then((body) => sent.push({ key: request.headers.get('Idempotency-Key') ?? '', body }));
+    });
+
+    // `once` — the FIRST send is lost; everything after it meets the real handler.
+    server.use(http.post('*/api/transfers', () => HttpResponse.error(), { once: true }));
+
+    renderTransfer();
+    await externalToPinStep();
+    await enterPin();
+    await screen.findByRole('button', { name: 'Check again' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
+
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(sent[1].key, 'the retry must reuse the key, or it is a second payment').toBe(
+      sent[0].key,
+    );
+    expect(sent[1].body, 'a differing body under the same key is a 422, not a replay').toBe(
+      sent[0].body,
+    );
+
+    server.events.removeAllListeners();
+  });
+
+  it('after AUTHORIZATION_EXPIRED the next PIN mints a FRESH authorisation, same key', async () => {
+    /*
+      Row 4, and the property #211 exists for.
+
+      Before this PR the page re-presented `lastAuthorization.current` whenever a key was live, so
+      the six digits the user kept typing would have re-sent the dead authorisation forever. The
+      refusal now drops it, which sends the next completion down the mint branch while `submit`'s
+      `keyRef.current ??=` keeps the key.
+
+      Both halves are asserted because either alone is satisfiable by a wrong implementation: a new
+      authorisation with a new key is a second payment, and the same key with the same authorisation
+      is the loop.
+
+      Falsified by deleting `lastAuthorization.current = null` from handleRefusal's expired branch.
+    */
+    const seen: { key: string; auth: string; body: string }[] = [];
+    server.use(
+      http.post('*/api/transfers', async ({ request }) => {
+        seen.push({
+          key: request.headers.get('Idempotency-Key') ?? '',
+          auth: request.headers.get('Step-Up-Authorization') ?? '',
+          // Captured here for the same reason as the test above: the key is only half the
+          // idempotency contract, and re-typing the PIN is exactly where a body could drift.
+          body: await request.text(),
+        });
+        return problem({
+          status: 401,
+          errorCode: 'AUTHORIZATION_EXPIRED',
+          detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+        });
+      }),
+    );
+
+    renderTransfer();
+    await externalToPinStep();
+    await enterPin();
+    await screen.findByText(/your confirmation expired/i);
+
+    // The boxes are empty, so six more digits are a NEW completion rather than a no-op.
+    await waitFor(() => expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue(''));
+    await enterPin();
+
+    await waitFor(() => expect(seen).toHaveLength(2));
+    expect(seen[1].key, 'same intent, same key').toBe(seen[0].key);
+    expect(seen[1].body, 'and the same bytes — the six digits were re-typed, not re-shaped').toBe(
+      seen[0].body,
+    );
+    expect(seen[1].auth, 'a FRESH authorisation, not the refused one').not.toBe(seen[0].auth);
+    expect(seen[1].auth).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it('does not sign the user out — an authorisation 401 is not a dead session', async () => {
+    /*
+      The sharpest defect this PR fixes, and the one a user would have met first.
+
+      Both authorisation refusals are 401s, and `sessionMiddleware` treated every 401 that was not
+      INVALID_PIN or INVALID_CREDENTIALS as a dead session: `sessionExpired()` + `resetApiState()`,
+      then `ProtectedRoute` to /login — and the wizard's exit blocker exempts /login, so the user
+      was not even asked about a payment whose outcome they did not know.
+
+      The session was never in question. `IdempotencyMiddleware` sits after UseAuthentication, so
+      reaching the step-up check at all proves the cookie was accepted.
+
+      Falsified by removing either code from IN_FLOW_401_CODES.
+    */
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({ status: 401, errorCode: 'AUTHORIZATION_EXPIRED', detail: 'expired' }),
+      ),
+    );
+
+    /*
+      BOOT THE STORE TO 'authenticated' FIRST, or this test cannot fail.
+
+      `sessionMiddleware` only reacts when `auth.status === 'authenticated'`, and a fresh test store
+      sits at 'unknown'. The first version of this test skipped the boot and stayed green with the
+      fix reverted — a test that pins nothing. Caught by running the falsification probe and finding
+      it did NOT bite, which is the only reason to run them.
+
+      The boot is the same one `policies.test.tsx` uses for the same reason: dispatch `getMe`
+      against the seeded mock session and assert the status flipped.
+    */
+    const store = makeTestStore();
+    await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+    expect(store.getState().auth.status).toBe('authenticated');
+    renderWithProviders(
+      <Routes>
+        <Route path="/" element={<TransferPage />} />
+        <Route path="/login" element={<div>LOGIN</div>} />
+      </Routes>,
+      { routerEntries: ['/'], store },
+    );
+    await externalToPinStep();
+    await enterPin();
+
+    await screen.findByText(/your confirmation expired/i);
+    // The user is still on the PIN step of the transfer, still authenticated.
+    expect(screen.getByLabelText('Digit 1 of 6')).toBeInTheDocument();
+    expect(screen.queryByText('LOGIN')).not.toBeInTheDocument();
+    // The assertion that bites: without the exemption this reads 'expired'.
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it('says something DIFFERENT when the authorisation was never granted', async () => {
+    // Expired and unusable are distinct server answers and must stay distinct sentences: one asks
+    // for six digits again, the other says the confirmation cannot be used at all.
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({ status: 401, errorCode: 'AUTHORIZATION_INVALID', detail: 'nope' }),
+      ),
+    );
+
+    renderTransfer();
+    await externalToPinStep();
+    await enterPin();
+
+    expect(await screen.findByText(/can no longer be used/i)).toBeInTheDocument();
+    expect(screen.queryByText(/your confirmation expired/i)).not.toBeInTheDocument();
   });
 });

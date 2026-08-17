@@ -119,6 +119,30 @@ export function InternalTransferPage() {
   */
   const lastAuthorization = useRef<string | null>(null);
 
+  /*
+    A reactive mirror of "we are holding an authorisation", because a ref cannot gate a render.
+
+    The ref stays the source of truth — `onValid` reads it synchronously between the mint and the
+    send, and turning it into state would reintroduce exactly the stale read `useMoneyWizard`
+    documents. This is the same split `useIdempotentMutation` already uses for the key itself.
+  */
+  const [authorizationHeld, setAuthorizationHeld] = useState(false);
+
+  /*
+    When to offer a re-send, and why it is not `inFlight`.
+
+    `inFlight` is set only for 409 IDEMPOTENCY_IN_FLIGHT. But the case this control was built for —
+    a response that never arrived — is `status: 'NETWORK'`, which `classifyMoneyProblem` routes to a
+    plain message. So for the exact scenario it exists to serve, the button did not render, and with
+    every exit held by `exitLocked` the user had no control at all: not a loop, a dead end.
+
+    The honest condition is "we are holding a key AND an authorisation to re-present". That also
+    makes the two states mutually exclusive by construction rather than by invariant: holding an
+    authorisation offers the re-send, and having had it refused empties the PIN boxes and asks for
+    six digits instead.
+  */
+  const canResend = keyLive && authorizationHeld && !isSubmitting && !isMinting;
+
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
   const [pinNonce, setPinNonce] = useState(0);
@@ -291,6 +315,7 @@ export function InternalTransferPage() {
         }).unwrap();
         authorizationId = minted.authorizationId;
         lastAuthorization.current = authorizationId;
+        setAuthorizationHeld(true);
       } catch (caught) {
         wizard.failFrom(caught as ApiProblem);
         handleRefusal(caught as ApiProblem);
@@ -318,6 +343,7 @@ export function InternalTransferPage() {
     setPin('');
     enteredPin.current = '';
     lastAuthorization.current = null;
+    setAuthorizationHeld(false);
 
     setSuccess({
       amount: data.amount,
@@ -349,6 +375,22 @@ export function InternalTransferPage() {
       setPin('');
       enteredPin.current = '';
       setPinNonce((n) => n + 1);
+      /*
+          AND DROP THE AUTHORISATION — the line this whole PR exists for.
+
+          `onValid` re-presents `lastAuthorization.current` whenever a key is live, which is right
+          for a lost response (re-send the same intent) and catastrophic here: the authorisation the
+          server just refused would be re-sent forever, and the six digits the user keeps typing
+          would never reach a mint. Dropping it sends the next completion down the mint branch,
+          while `submit`'s `keyRef.current ??=` reuses the SAME idempotency key and the body is
+          rebuilt from the same unchanged form values — byte-identical, so no 422.
+
+          MEASURED end to end on the running API: key K with an expired authorisation answers 401
+          AUTHORIZATION_EXPIRED and releases the record; key K with a freshly minted one answers
+          201, no `Idempotency-Replayed`. One payment, one key, two authorisations.
+        */
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
     } else if (refusal?.errorCode === 'PIN_LOCKED') {
       setPin('');
       enteredPin.current = '';
@@ -482,7 +524,7 @@ export function InternalTransferPage() {
             <MessageBarBody>{error}</MessageBarBody>
           </MessageBar>
         )}
-        {inFlight && (
+        {canResend && (
           /*
             The retained-key state, and the ONLY place a deliberate re-send control belongs.
 
@@ -493,11 +535,16 @@ export function InternalTransferPage() {
             that reaches this state used to click Send.
 
             This re-sends the SAME key, the SAME body and the SAME authorisation. It is a check, not
-            a second payment, which is why it is worded as one.
+            a second payment, which is why it is worded as one — and the wording splits, because the
+            two ways to get here are not equally knowable. A 409 IN_FLIGHT means the server told us
+            it is working on it. A lost response means we do not know whether anything happened, and
+            saying "still processing" there would assert something nobody has been told.
           */
           <MessageBar intent="info" role="status">
             <MessageBarBody>
-              Still processing — check again to see whether it went through.
+              {inFlight
+                ? 'Still processing — check again to see whether it went through.'
+                : "We couldn't reach the bank. Your transfer may or may not have gone through — check again."}
             </MessageBarBody>
             <MessageBarActions>
               <Button
