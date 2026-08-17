@@ -294,34 +294,52 @@ describe('a lost response, and the way back to the PIN', () => {
 
   it('re-sends the SAME key and the SAME body, and lands the transfer', async () => {
     /*
-      The whole point of retaining the key. Asserts the KEY, not the outcome: a client that quietly
-      minted a fresh key would also reach a 201 here, and would have made a second payment.
+      The whole point of retaining the key — and the key is only half of it.
+
+      The server fingerprints the request BODY and compares it to the one stored under the key, so a
+      retry whose bytes differ is a 422 IDEMPOTENCY_KEY_REUSE rather than a replay. Asserting the key
+      alone would pass on a client that reused it while rebuilding the body from a different source —
+      the PIN from state instead of the ref, an amount reformatted, a field added — and that client
+      would be broken in a way only the server could tell it about.
+
+      Observed through `server.events` rather than through an override, because the second request
+      must reach the REAL handler: `once: true` retires the failing override after one request, so
+      the retry executes normally and the receipt at the end is a real 201. That is what makes the
+      last clause of this test's name true; the first draft ended on a canned 401 and never landed
+      anything.
     */
-    const keys: string[] = [];
-    server.use(
-      http.post('*/api/transfers', async ({ request }) => {
-        keys.push(request.headers.get('Idempotency-Key') ?? '');
-        return HttpResponse.error();
-      }),
-    );
+    const sent: { key: string; body: string }[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.method !== 'POST' || !request.url.includes('/api/transfers')) return;
+      if (request.url.includes('/authorizations')) return;
+      void request
+        .clone()
+        .text()
+        .then((body) => sent.push({ key: request.headers.get('Idempotency-Key') ?? '', body }));
+    });
+
+    // `once` — the FIRST send is lost; everything after it meets the real handler.
+    server.use(http.post('*/api/transfers', () => HttpResponse.error(), { once: true }));
 
     renderTransfer();
     await externalToPinStep();
     await enterPin();
     await screen.findByRole('button', { name: 'Check again' });
 
-    server.resetHandlers();
-    server.use(
-      http.post('*/api/transfers', async ({ request }) => {
-        keys.push(request.headers.get('Idempotency-Key') ?? '');
-        return problem({ status: 401, errorCode: 'AUTHORIZATION_INVALID', detail: 'stop' });
-      }),
-    );
     await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
 
-    await waitFor(() => expect(keys).toHaveLength(2));
-    expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(keys[1], 'the retry must reuse the key, or it is a second payment').toBe(keys[0]);
+    expect(await screen.findByText('Transfer Sent!')).toBeInTheDocument();
+
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(sent[1].key, 'the retry must reuse the key, or it is a second payment').toBe(
+      sent[0].key,
+    );
+    expect(sent[1].body, 'a differing body under the same key is a 422, not a replay').toBe(
+      sent[0].body,
+    );
+
+    server.events.removeAllListeners();
   });
 
   it('after AUTHORIZATION_EXPIRED the next PIN mints a FRESH authorisation, same key', async () => {
@@ -339,12 +357,15 @@ describe('a lost response, and the way back to the PIN', () => {
 
       Falsified by deleting `lastAuthorization.current = null` from handleRefusal's expired branch.
     */
-    const seen: { key: string; auth: string }[] = [];
+    const seen: { key: string; auth: string; body: string }[] = [];
     server.use(
       http.post('*/api/transfers', async ({ request }) => {
         seen.push({
           key: request.headers.get('Idempotency-Key') ?? '',
           auth: request.headers.get('Step-Up-Authorization') ?? '',
+          // Captured here for the same reason as the test above: the key is only half the
+          // idempotency contract, and re-typing the PIN is exactly where a body could drift.
+          body: await request.text(),
         });
         return problem({
           status: 401,
@@ -365,6 +386,9 @@ describe('a lost response, and the way back to the PIN', () => {
 
     await waitFor(() => expect(seen).toHaveLength(2));
     expect(seen[1].key, 'same intent, same key').toBe(seen[0].key);
+    expect(seen[1].body, 'and the same bytes — the six digits were re-typed, not re-shaped').toBe(
+      seen[0].body,
+    );
     expect(seen[1].auth, 'a FRESH authorisation, not the refused one').not.toBe(seen[0].auth);
     expect(seen[1].auth).toMatch(/^[0-9a-f-]{36}$/i);
   });
