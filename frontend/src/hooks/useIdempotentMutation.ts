@@ -14,6 +14,25 @@ export type IdempotentTrigger<TBody, TResult> = (arg: IdempotentArg<TBody>) => {
  */
 function shouldKeepKey(problem: ApiProblem): boolean {
   if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') return true;
+  /*
+    An authorisation refusal KEEPS the key, and the server is why (ADR-0042).
+
+    `TransferService` throws it from inside the action, so `IdempotencyMiddleware` takes its catch
+    and calls `ReleaseQuietlyAsync` -> `ReleaseIfNotExecutedAsync`, which removes the row only while
+    database truth is still `Processing`. Nothing committed; the key is free. And the fingerprint is
+    over the body alone, which a re-authorisation does not touch — the reference travels in a header
+    precisely so it can change while the bytes do not.
+
+    MEASURED on the running API, and this is the whole foundation of the retry:
+      key K + EXPIRED authorisation -> 401 AUTHORIZATION_EXPIRED
+      key K + FRESH  authorisation -> 201            (same key, same body, no replay header)
+
+    Keeping it is also the SAFER half of the trade. If the release ever failed, a retained key
+    answers 409 IN_FLIGHT or RESULT_UNKNOWN; a fresh key would execute a second payment. A wrong
+    PIN is deliberately not in this set — it never reached the service, so nothing was claimed.
+  */
+  if (problem.errorCode === 'AUTHORIZATION_EXPIRED') return true;
+  if (problem.errorCode === 'AUTHORIZATION_INVALID') return true;
   if (problem.status === 'NETWORK' || problem.status === 'PARSE') return true;
   return typeof problem.status === 'number' && problem.status >= 500;
 }
