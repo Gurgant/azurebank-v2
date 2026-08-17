@@ -573,8 +573,10 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
         paths.Should().HaveCountGreaterThan(10, "the spec is the source of cases; an empty or "
             + "truncated read must fail loudly rather than sweep nothing");
         paths.Should().NotContain(p => p.Contains('{'),
-            "every POST path is concrete today, which is what lets an exact-match set cover them — "
-            + "a parameterised one would need pattern matching and a decision this test cannot make");
+            "the sweep sends each path as a literal request, so a templated one would probe "
+            + "\"/api/things/{id}\" itself rather than a real route — reporting green about a path "
+            + "nobody can call. The gate would still cover it (it matches on the /api/ prefix); it "
+            + "is this test that cannot, so it must fail loudly instead of quietly testing nothing");
 
         foreach (var path in paths)
         {

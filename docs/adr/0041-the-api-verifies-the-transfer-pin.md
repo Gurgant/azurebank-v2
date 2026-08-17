@@ -93,10 +93,18 @@ locally, at the BFF, with the API's own 401 shape, trailing slash normalised the
 > the paragraph above is precisely the argument for not resting a layer on another file's
 > correctness, and it applied to two paths while six went without.
 >
-> Deliberately still out of reach: the check is POST-only and matches exact paths, so
-> `PATCH /api/accounts/{id}`, `PATCH /api/accounts/{id}/set-primary`, `DELETE /api/accounts/{id}` and
-> `PATCH /api/users/me/azuretag` are not covered by it. Covering them needs pattern matching against
-> parameterised routes, which is a separate decision and not made here.
+> Deliberately still uncovered: the check is POST-only, so `PATCH /api/accounts/{id}`,
+> `PATCH /api/accounts/{id}/set-primary`, `DELETE /api/accounts/{id}` and
+> `PATCH /api/users/me/azuretag` fall outside it. Reaching them is a matter of widening the METHOD
+> condition, nothing more — the gate matches on the `/api/` prefix, so a parameterised path is
+> already covered the moment its method is.
+>
+> It is a separate decision because of the exemption side, not the matching side. `SessionlessPostPaths`
+> is a POST-shaped set: login and register are POST, so today no exemption has to name a method. Widen
+> the gate to every method and the set has to become per-method, or the first sessionless GET anyone
+> adds is refused by a list that cannot express it. Widening to ALL methods also swallows the reads,
+> where `/full-number` already has its own rule at a different level. So it is one decision with two
+> halves, and only the POST half is made here.
 
 `/full-number` keeps the session model (decision D3a). It is a GET with no body, no amount and no
 payee — there is nothing for an in-band credential to be **bound to**. Two questions, two mechanisms,
