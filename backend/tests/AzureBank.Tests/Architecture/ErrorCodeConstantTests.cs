@@ -81,6 +81,7 @@ public class ErrorCodeConstantTests
         // names live in Program/Observability/Middleware, which are deliberately not scanned.
         var root = RepoBackendRoot();
         var offenders = new List<string>();
+        var scanned = 0;
 
         foreach (var relative in ScannedFolders)
         {
@@ -89,11 +90,20 @@ public class ErrorCodeConstantTests
 
             foreach (var file in Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories))
             {
+                scanned++;
                 offenders.AddRange(
                     ScreamingSnakeLiteral.Matches(File.ReadAllText(file))
                         .Select(m => $"{Path.GetFileName(file)}: {m.Value} — declare it in ErrorCodes and reference it"));
             }
         }
+
+        // LIVENESS, and it is not ceremony. A scan that reads nothing reports clean forever, and
+        // there is no way to tell that from a scan that read everything and found nothing. On PR #118
+        // a sibling guard in this folder spent a whole session reporting clean while an offender sat
+        // in the tree, because one character had disabled its pattern; a scan whose input silently
+        // empties produces the identical green. Assert the input, not only the verdict.
+        scanned.Should().BeGreaterThan(10,
+            "the rule is only meaningful if it actually read the sources it claims to scan");
 
         offenders.Should().BeEmpty(
             because: "a code written as a literal drifts from its constant, or never gets one, without failing anything");
@@ -125,5 +135,37 @@ public class ErrorCodeConstantTests
         values.Should().OnlyContain(
             value => ScreamingSnakeLiteral.IsMatch($"\"{value}\""),
             because: "a code the scanner's own pattern cannot match is a code the scanner cannot guard");
+    }
+
+    /*
+      WHAT THE DETECTOR ITSELF CAN AND CANNOT SEE.
+
+      The scan above answers "are the two folders clean today". It cannot answer "would this rule
+      notice", and that is the question that failed on PR #118: a guard in this same folder read
+      every file and reported clean while an offender sat in the tree, because its pattern had been
+      silently corrupted. A prohibition nobody has watched refuse anything is a wish.
+
+      So the pattern is driven directly against shapes that are NOT in the tree.
+    */
+    [Theory]
+    [InlineData("a bare code at a throw site", "throw new BusinessRuleException(msg, \"RECIPIENT_NO_ACCOUNT\");")]
+    [InlineData("a code chosen inline as a default", "code ??= \"CONFLICT_DETECTED\";")]
+    [InlineData("exactly at the six-character floor", "var x = \"ABC123\";")]
+    [InlineData("digits and underscores mixed in", "var x = \"PIN_LOCKED_15M\";")]
+    public void TheScannerSeesWhatItClaimsTo(string shape, string snippet)
+    {
+        ScreamingSnakeLiteral.IsMatch(snippet).Should().BeTrue(
+            $"{shape} is an error code written as a literal, and must not slip past the scan");
+    }
+
+    [Theory]
+    [InlineData("a reference to the constant", "throw new BusinessRuleException(msg, ErrorCodes.InsufficientFunds);")]
+    [InlineData("ordinary prose in a comment", "// the code travels in the errorCode extension")]
+    [InlineData("below the six-character floor", "var x = \"ABCDE\";")]
+    [InlineData("not screaming case", "var x = \"RecipientNoAccount\";")]
+    public void TheScannerDoesNotCryWolf(string shape, string snippet)
+    {
+        ScreamingSnakeLiteral.IsMatch(snippet).Should().BeFalse(
+            $"{shape} is not an error-code literal, and a guard that fires on it would be turned off");
     }
 }

@@ -310,3 +310,72 @@ tests are silent:
 
 Grep for an existing required secret (`Idempotency__HashKey`) and mirror every hit. That grep is the
 cheapest form of this checklist, and it finds all five.
+
+## The dev database goes stale and EVERY money endpoint answers 500
+
+Hit twice. On 2026-08-15 the first live PIN-mint answered `500 Invalid object name`; on 2026-08-17
+deposit, withdraw and both transfers all answered
+
+```
+String or binary data would be truncated in table 'AzureBankDev.dbo.Transactions',
+column 'TransactionNumber'. Truncated value: 'TXN-20260817-AJKNG5F'.
+```
+
+`AzureBankDev` was two migrations behind (`WidenTransactionNumberForCheckSymbol`,
+`AddStepUpAuthorizations`), so the column was still 20 characters while `IdGenerator` produces 24:
+`TXN-` + 8 date digits + `-` + a 10-character suffix + a check symbol.
+
+**The part that wastes the hour.** SQL Server prints the value ALREADY TRUNCATED to the column
+width, so `TXN-20260817-AJKNG5F` looks like exactly 20 characters and therefore looks like it should
+have fitted. Count what `IdGenerator.GenerateTransactionNumber` produces, not what the error prints.
+
+No suite catches this. The SQL CI job and the integration tests build their schema from migrations,
+so they stay green while the hand-maintained dev database rots. Diagnose by comparing
+`dbo.__EFMigrationsHistory` against `dotnet ef migrations list`.
+
+```bash
+cd backend/src/AzureBank.Api
+dotnet ef database update --no-build --connection "Server=(localdb)\MSSQLLocalDB;Database=AzureBankDev;Trusted_Connection=True;TrustServerCertificate=True"
+```
+
+The `--connection` is not optional: the plain form fails with *"The ConnectionString property has
+not been initialized"*, because user-secrets are not picked up in that host build even with
+`ASPNETCORE_ENVIRONMENT=Development`.
+
+## A tool that writes source can inject a control character the compiler accepts
+
+`MoneyFormattingTests` shipped a regex whose pattern began with a literal `U+0008` BACKSPACE, where
+a backslash-b was intended. The writer expanded the escape on its way to disk; C# verbatim strings
+do not process escapes, so the byte went into the pattern as a character to match. The guard could
+never match anything and reported clean for a full session while the defect it existed to catch sat
+in the tree.
+
+Every ordinary instrument was blind to it. The compiler accepted it — a backspace in a regex is
+legal and means "match a backspace". `grep` rendered it as nothing. Reading the file showed the
+intended text. **Only `od -c` revealed it**, because there the byte prints as ONE token where real
+backslashes print as two:
+
+```
+new  R e g e x ( @ "  \b  C u r r e n c y  \ s * ...
+                     ^^ one token: this is 0x08, not backslash-b
+```
+
+`SourceHygieneTests` now fails the build on any control character outside tab/CR/LF in hand-written
+source. When writing C# through a script, prefer a form with no backslash at all — `(char)0x08`
+rather than `'\b'` — because the escape is what the intermediate tool rewrites.
+
+## A guard that has never been watched refusing anything is a wish
+
+Both incidents above have the same shape: a rule that reports clean, and no way to tell that from a
+rule that cannot report anything else. Two independent mechanisms produce that identical green — a
+corrupted pattern, and a path filter that silently eats its own input (an unnormalised root
+containing `\bin\` skips every file while `Directory.Exists` still answers true).
+
+So every source-scanning guard in `tests/AzureBank.Tests/Architecture/` now carries both halves:
+
+- **liveness** — assert the scan read a plausible number of files, not merely that the folder exists;
+- **coverage** — a `[Theory]` driving the detector against shapes that are NOT in the tree, so the
+  rule is observed refusing something on every run.
+
+Add both when adding a scanner. The coverage theory is the one that pays: writing it for the
+currency rule immediately exposed a second hole the scan could never have shown.
