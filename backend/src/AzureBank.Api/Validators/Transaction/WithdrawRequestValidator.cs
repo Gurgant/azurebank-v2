@@ -17,9 +17,9 @@ public class WithdrawRequestValidator : AbstractValidator<WithdrawRequest>
 
         RuleFor(x => x.Amount)
             .GreaterThanOrEqualTo(ValidationRules.TransactionMinAmount)
-            .WithMessage($"Amount must be at least {ValidationRules.TransactionMinAmount:C}.")
+            .WithMessage($"Amount must be at least {ValidationRules.DescribeAmount(ValidationRules.TransactionMinAmount)}.")
             .LessThanOrEqualTo(ValidationRules.TransactionMaxAmount)
-            .WithMessage($"Amount cannot exceed {ValidationRules.TransactionMaxAmount:C}.")
+            .WithMessage($"Amount cannot exceed {ValidationRules.DescribeAmount(ValidationRules.TransactionMaxAmount)}.")
             .ValidMoneyScale();
 
         RuleFor(x => x.Pin)

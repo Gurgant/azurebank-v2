@@ -67,7 +67,6 @@ public partial class AccountMapper
         {
             AccountId = entity.Id,
             Balance = entity.Balance,
-            Currency = "EUR",
             AsOf = asOf,
             IsHistorical = isHistorical
         };
@@ -82,7 +81,6 @@ public partial class AccountMapper
         {
             AccountId = accountId,
             Balance = balance,
-            Currency = "EUR",
             AsOf = asOf,
             IsHistorical = true
         };

@@ -2343,7 +2343,7 @@ export interface components {
             accountId: string;
             /**
              * Format: double
-             * @description Amount must be between $0.01 and $100,000.00.
+             * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
             description?: null | string;
@@ -2378,7 +2378,7 @@ export interface components {
             toAccountId: string;
             /**
              * Format: double
-             * @description Amount must be between $0.01 and $100,000.00.
+             * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
             /** @description PIN must be exactly 6 digits. */
@@ -2397,7 +2397,7 @@ export interface components {
             toAccountId: string;
             /**
              * Format: double
-             * @description Amount must be between $0.01 and $100,000.00.
+             * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
             /** @description PIN must be exactly 6 digits. */
@@ -2686,7 +2686,7 @@ export interface components {
             recipientAzureTag: string;
             /**
              * Format: double
-             * @description Amount must be between $0.01 and $100,000.00.
+             * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
             /** @description PIN must be exactly 6 digits. */
@@ -2702,7 +2702,7 @@ export interface components {
             recipientAzureTag: string;
             /**
              * Format: double
-             * @description Amount must be between $0.01 and $100,000.00.
+             * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
             /** @description PIN must be exactly 6 digits. */
@@ -2761,7 +2761,7 @@ export interface components {
             accountId: string;
             /**
              * Format: double
-             * @description Amount must be between $0.01 and $100,000.00.
+             * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
             /** @description PIN must be exactly 6 digits. */

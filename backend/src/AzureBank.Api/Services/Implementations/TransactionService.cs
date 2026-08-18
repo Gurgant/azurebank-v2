@@ -100,7 +100,7 @@ public class TransactionService : ITransactionService
             }
 
             _logger.LogInformation(
-                "Deposit of {Amount:C} to account {AccountId}. New balance: {Balance:C}",
+                "Deposit of {Amount} to account {AccountId}. New balance: {Balance}",
                 request.Amount, account.Id, balanceAfter);
 
             return _mapper.ToDepositResponse(transaction, balanceAfter);
@@ -190,7 +190,7 @@ public class TransactionService : ITransactionService
             }
 
             _logger.LogInformation(
-                "Withdrawal of {Amount:C} from account {AccountId}. New balance: {Balance:C}",
+                "Withdrawal of {Amount} from account {AccountId}. New balance: {Balance}",
                 request.Amount, account.Id, balanceAfter);
 
             return _mapper.ToWithdrawResponse(transaction, balanceAfter);
