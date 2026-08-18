@@ -29,12 +29,9 @@ public class TransferRequestValidator : AbstractValidator<TransferRequest>
             .WithMessage($"Amount cannot exceed {ValidationRules.DescribeAmount(ValidationRules.TransactionMaxAmount)}.")
             .ValidMoneyScale();
 
-        // Mirrors WithdrawRequestValidator exactly: same two rules, same order, same messages,
-        // so the two in-band PIN endpoints answer a malformed PIN identically.
-        RuleFor(x => x.Pin)
-            .NotEmpty().WithMessage("PIN is required for transfers.")
-            .Matches(ValidationRules.PinPattern)
-            .WithMessage(ValidationRules.PinPatternMessage);
+        // No PIN rule: the transfer no longer carries one (ADR-0042). The PIN is validated where it
+        // is now presented — TransferAuthorizationRequestValidator — which kept the mirror of
+        // WithdrawRequestValidator this rule used to hold.
 
         RuleFor(x => x.Description)
             .MaximumLength(ValidationRules.TransactionDescriptionMaxLength)

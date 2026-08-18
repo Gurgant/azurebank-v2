@@ -33,8 +33,8 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange - Create sender and recipient
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(senderToken);
         var recipientData = await RegisterRecipientAsync();
 
@@ -47,12 +47,12 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipientData.AzureTag,
             Amount = 100m,
-            Description = "Test transfer",
-            Pin = TestPin
+            Description = "Test transfer"
         };
 
         // Act
-        var response = await PostMonetaryAsync("/api/transfers", request);
+        var authorization = await AuthoriseTransferAsync(senderAccountId, recipientData.AzureTag, 100m);
+        var response = await PostMonetaryAsync("/api/transfers", request, stepUpAuthorizationId: authorization);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -78,20 +78,20 @@ public class TransferEndpointTests : IntegrationTestBase
           pipeline instead.
         */
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(senderToken);
         var recipientData = await RegisterRecipientAsync();
         await DepositAsync(senderToken, senderAccountId, 1000m);
 
         SetAuthHeader(senderToken);
+        var authorization = await AuthoriseTransferAsync(senderAccountId, recipientData.AzureTag, 100m);
         var response = await PostMonetaryAsync("/api/transfers", new TransferRequest
         {
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipientData.AzureTag,
-            Amount = 100m,
-            Pin = TestPin
-        });
+            Amount = 100m
+        }, stepUpAuthorizationId: authorization);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         var reported = (await response.Content.ReadFromJsonAsync<ApiResponse<TransferResponse>>(JsonOptions))!
@@ -116,8 +116,8 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange
         var (token, _, accountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(token);
         await DepositAsync(token, accountId, 1000m);
 
@@ -128,12 +128,13 @@ public class TransferEndpointTests : IntegrationTestBase
             // Valid-format tag (passes validation) that no registered user owns
             RecipientAzureTag = "nonexistent_user_999",
             Amount = 100m,
-            Description = "Test transfer",
-            Pin = TestPin
+            Description = "Test transfer"
         };
 
-        // Act
-        var response = await PostMonetaryAsync("/api/transfers", request);
+        // Act — presented and worthless: the recipient lookup sits between "none presented" and
+        // the binding check, so this proves the 404 still comes first.
+        var response = await PostMonetaryAsync(
+            "/api/transfers", request, stepUpAuthorizationId: PresentedAuthorization());
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -144,9 +145,11 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: without an enrolled PIN this request is refused 422 PIN_REQUIRED — which is the
-        // SAME status the funds check answers, so the status-only assertion below stayed green while
-        // testing something else entirely. The errorCode assertion is what makes it honest.
+        // ADR-0041 put a 422 PIN_REQUIRED on this endpoint carrying the SAME status the funds
+        // check answers, so the status-only assertion below stayed green while testing something
+        // else entirely. ADR-0042 moved that refusal to the mint, so the collision is gone — but
+        // the errorCode assertion stays, because it is what made the test honest and what would
+        // catch the next status collision.
         await SetPinAsync(senderToken);
         var recipientData = await RegisterRecipientAsync();
 
@@ -157,12 +160,15 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipientData.AzureTag,
             Amount = 100m,
-            Description = "Overdraft attempt",
-            Pin = TestPin
+            Description = "Overdraft attempt"
         };
 
+        // A REAL authorisation: the funds check sits BELOW ValidateAsync, so a worthless reference
+        // would refuse 401 and this test would stop being about the balance.
+        var authorization = await AuthoriseTransferAsync(senderAccountId, recipientData.AzureTag, 100m);
+
         // Act
-        var response = await PostMonetaryAsync("/api/transfers", request);
+        var response = await PostMonetaryAsync("/api/transfers", request, stepUpAuthorizationId: authorization);
 
         // Assert - business-rule violations are 422 per contract (BusinessRuleException)
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
@@ -182,8 +188,8 @@ public class TransferEndpointTests : IntegrationTestBase
     {
         // Arrange
         var (token, _, primaryAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(token);
         SetAuthHeader(token);
 
@@ -203,12 +209,14 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = primaryAccountId,
             ToAccountId = secondAccount!.Data!.Id,
             Amount = 300m,
-            Description = "Move to savings",
-            Pin = TestPin
+            Description = "Move to savings"
         };
 
         // Act
-        var response = await PostMonetaryAsync("/api/transfers/internal", request);
+        var authorization = await AuthoriseInternalTransferAsync(
+            primaryAccountId, secondAccount.Data.Id, 300m);
+        var response = await PostMonetaryAsync(
+            "/api/transfers/internal", request, stepUpAuthorizationId: authorization);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -234,8 +242,7 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = accountId1,
             ToAccountId = accountId2, // Other user's account
             Amount = 100m,
-            Description = "Unauthorized transfer",
-            Pin = TestPin
+            Description = "Unauthorized transfer"
         };
 
         // Act
@@ -258,8 +265,7 @@ public class TransferEndpointTests : IntegrationTestBase
             FromAccountId = accountId,
             ToAccountId = accountId, // Same account
             Amount = 100m,
-            Description = "Self transfer",
-            Pin = TestPin
+            Description = "Self transfer"
         };
 
         // Act
@@ -293,8 +299,7 @@ public class TransferEndpointTests : IntegrationTestBase
         {
             FromAccountId = accountId,
             ToAccountId = accountId,
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -321,8 +326,8 @@ public class TransferEndpointTests : IntegrationTestBase
         // CONSTANT, never an echo of caller input, or a client switching on it can never match and
         // an unvalidated string leaks into a field consumers treat as a closed enum.
         var (token, _, accountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(token);
         await DepositAsync(token, accountId, 1000m);
 
@@ -332,9 +337,8 @@ public class TransferEndpointTests : IntegrationTestBase
         {
             FromAccountId = accountId,
             RecipientAzureTag = unknownHandle,
-            Amount = 100m,
-            Pin = TestPin
-        });
+            Amount = 100m
+        }, stepUpAuthorizationId: PresentedAuthorization());
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
 

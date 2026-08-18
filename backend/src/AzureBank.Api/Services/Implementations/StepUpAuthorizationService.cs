@@ -51,11 +51,12 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
         CancellationToken cancellationToken = default)
     {
         /*
-          The same three checks, in the same order, with the same exceptions as
-          TransferService.VerifyPinOrThrowAsync. Kept as a deliberate mirror rather than shared: the
-          two differ in what they do NEXT, and collapsing them would put a transfer's control flow
-          inside an auth service. The pairing is pinned by tests on both sides — change one and the
-          other's test goes red.
+          THE ONLY PLACE A TRANSFER'S PIN IS PROVED, since ADR-0042's second half deleted
+          TransferService.VerifyPinOrThrowAsync along with TransferRequest.Pin. These three checks
+          were written as its deliberate mirror — same order, same exceptions — so that the two
+          endpoints answered a bad PIN identically; the mirror now has one side and these are simply
+          the checks. TransactionService.WithdrawAsync still carries its own copy, and withdraw is
+          the task that should converge here next.
         */
         var user = await _context.Users.FindAsync([userId], cancellationToken);
         if (user == null)
@@ -70,7 +71,9 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
         }
 
         // Throws 429 PIN_LOCKED when locked; false is a wrong PIN. A wrong PIN costs an attempt
-        // here exactly as it does on the transfer itself — minting IS the authentication event.
+        // here, and here is now the ONLY place a transfer can spend one — minting IS the
+        // authentication event, so the ADR-0010 lockout lives on this endpoint rather than on the
+        // transfer that used to verify in-band.
         if (!await _pinVerifier.VerifyPinAsync(userId, pin))
         {
             throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);

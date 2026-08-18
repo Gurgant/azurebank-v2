@@ -10,9 +10,6 @@ namespace AzureBank.Tests.Unit.Validators;
 /// </summary>
 public class InternalTransferRequestValidatorTests
 {
-    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
-    private const string TestPin = "123456";
-
     private readonly InternalTransferRequestValidator _validator = new();
 
     private static InternalTransferRequest CreateValidRequest()
@@ -23,8 +20,7 @@ public class InternalTransferRequestValidatorTests
             FromAccountId = fromId,
             ToAccountId = Guid.NewGuid(), // Different from FromAccountId
             Amount = 100m,
-            Description = "Test internal transfer",
-            Pin = TestPin
+            Description = "Test internal transfer"
         };
     }
 
@@ -71,8 +67,7 @@ public class InternalTransferRequestValidatorTests
         {
             FromAccountId = sameId,
             ToAccountId = sameId, // Same as source
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
         var result = _validator.TestValidate(request);
         result.ShouldHaveValidationErrorFor(x => x.ToAccountId)

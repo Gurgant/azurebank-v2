@@ -24,7 +24,7 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 public class IdempotencyEndpointTests : IntegrationTestBase
 {
-    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    /// <summary>The PIN these tests enrol and then spend at the mint endpoint (ADR-0042).</summary>
     private const string TestPin = "123456";
 
     public IdempotencyEndpointTests(CustomWebApplicationFactory factory) : base(factory) { }
@@ -119,8 +119,8 @@ public class IdempotencyEndpointTests : IntegrationTestBase
     public async Task Transfer_RetrySameKeySameBody_DoesNotExecuteTwice()
     {
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(senderToken);
         var recipient = await RegisterRecipientAsync();
         await DepositAsync(senderToken, senderAccountId, 1000m);
@@ -132,13 +132,23 @@ public class IdempotencyEndpointTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Idempotent transfer",
-            Pin = TestPin
+            Description = "Idempotent transfer"
         };
 
-        var first = await PostMonetaryAsync("/api/transfers", body, key);
+        var authorization = await AuthoriseTransferAsync(senderAccountId, recipient.AzureTag, 100m);
+        var first = await PostMonetaryAsync("/api/transfers", body, key, authorization);
         first.StatusCode.Should().Be(HttpStatusCode.Created);
 
+        /*
+          THE RETRY CARRIES NO AUTHORISATION AT ALL, and that is the assertion, not an oversight.
+
+          The one presented above was spent by the first call, so a second attempt to validate it
+          would be refused. `IdempotencyMiddleware` writes the stored response and returns BEFORE
+          `_next`, so a replay never reaches model binding, the controller or the service — and
+          therefore never reaches the authorisation check either. That ordering is what lets the one
+          client who provably cannot know whether its money moved find out (ADR-0042), and making
+          the header required is exactly the change that could have broken it.
+        */
         var second = await PostMonetaryAsync("/api/transfers", body, key);
         second.StatusCode.Should().Be(HttpStatusCode.Created);
         second.Headers.Contains(IdempotencyConstants.ReplayedHeaderName).Should().BeTrue();

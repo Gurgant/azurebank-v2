@@ -244,8 +244,7 @@ public sealed class StepUpConcurrencySqlServerTests : IDisposable
                 FromAccountId = accountId,
                 RecipientAzureTag = recipientTag,
                 Amount = Amount,
-                Description = "concurrency proof",
-                Pin = Pin
+                Description = "concurrency proof"
             }, options: Json)
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

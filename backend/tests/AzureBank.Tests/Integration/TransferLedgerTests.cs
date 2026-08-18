@@ -42,7 +42,7 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 public class TransferLedgerTests : IntegrationTestBase
 {
-    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    /// <summary>The PIN these tests enrol and then spend at the mint endpoint (ADR-0042).</summary>
     private const string TestPin = "123456";
 
     public TransferLedgerTests(CustomWebApplicationFactory factory) : base(factory) { }
@@ -51,8 +51,8 @@ public class TransferLedgerTests : IntegrationTestBase
     public async Task ExternalTransfer_WritesAMutuallyLinkedPairWithOppositeTypes()
     {
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(senderToken);
         var recipient = await RegisterRecipientAsync();
         await DepositAsync(senderToken, senderAccountId, 1000m);
@@ -63,10 +63,8 @@ public class TransferLedgerTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Ledger shape",
-        
-            Pin = TestPin
-        });
+            Description = "Ledger shape"
+        }, stepUpAuthorizationId: await AuthoriseTransferAsync(senderAccountId, recipient.AzureTag, 100m));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         using var scope = Factory.Services.CreateScope();
@@ -101,8 +99,8 @@ public class TransferLedgerTests : IntegrationTestBase
           that catches a swap, and nothing asserted them before.
         */
         var (token, _, primaryAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(token);
         SetAuthHeader(token);
 
@@ -117,10 +115,8 @@ public class TransferLedgerTests : IntegrationTestBase
             FromAccountId = primaryAccountId,
             ToAccountId = savings.Id,
             Amount = 300m,
-            Description = "Ledger shape",
-        
-            Pin = TestPin
-        });
+            Description = "Ledger shape"
+        }, stepUpAuthorizationId: await AuthoriseInternalTransferAsync(primaryAccountId, savings.Id, 300m));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         using var scope = Factory.Services.CreateScope();
@@ -159,8 +155,8 @@ public class TransferLedgerTests : IntegrationTestBase
             which is why the two are asserted differently.
         */
         var (senderToken, _, senderAccountId) = await RegisterTestUserAsync();
-        // ADR-0041: a transfer now carries the PIN in-band and the API verifies it,
-        // so an un-enrolled user is refused 422 PIN_REQUIRED before any rule below.
+        // ADR-0042: the PIN is spent at the mint endpoint, so an un-enrolled user is refused
+        // 422 PIN_REQUIRED there and never obtains the authorisation this transfer requires.
         await SetPinAsync(senderToken);
         var recipient = await RegisterRecipientAsync();
         await DepositAsync(senderToken, senderAccountId, 1000m);
@@ -171,10 +167,8 @@ public class TransferLedgerTests : IntegrationTestBase
             FromAccountId = senderAccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Receipt",
-        
-            Pin = TestPin
-        });
+            Description = "Receipt"
+        }, stepUpAuthorizationId: await AuthoriseTransferAsync(senderAccountId, recipient.AzureTag, 100m));
         var body = (await response.Content.ReadFromJsonAsync<ApiResponse<TransferResponse>>(JsonOptions))!.Data!;
 
         body.RecipientName.Should().MatchRegex(@"^\S+ \S\.$",

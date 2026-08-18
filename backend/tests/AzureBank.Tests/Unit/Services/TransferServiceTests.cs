@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Services;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
@@ -21,7 +22,7 @@ namespace AzureBank.Tests.Unit.Services;
 /// </summary>
 public class TransferServiceTests : IDisposable
 {
-    /// <summary>The PIN these tests enrol and then send in-band (ADR-0041).</summary>
+    /// <summary>The PIN these tests enrol and then spend at the mint endpoint (ADR-0042).</summary>
     private const string TestPin = "123456";
 
     private readonly AzureBankDbContext _context;
@@ -29,6 +30,7 @@ public class TransferServiceTests : IDisposable
     private readonly UserMapper _userMapper;
     private readonly Mock<IPinVerifier> _pinVerifierMock;
     private readonly Mock<ILogger<TransferService>> _loggerMock;
+    private readonly StepUpAuthorizationService _stepUp;
     private readonly TransferService _sut;
 
     public TransferServiceTests()
@@ -47,18 +49,40 @@ public class TransferServiceTests : IDisposable
             .ReturnsAsync(true);
         _loggerMock = new Mock<ILogger<TransferService>>();
 
-        // A REAL step-up service over the same InMemory context, not a mock: every test here passes
-        // no authorisation, so it stays inert — and if one ever starts passing a reference, it will
-        // exercise the actual mint/validate/consume rather than a stub that always agrees.
-        var stepUp = new StepUpAuthorizationService(
+        // A REAL step-up service over the same InMemory context, not a mock — and now that the
+        // header is required (ADR-0042), every success path here actually mints and spends through
+        // it, so these tests exercise the true mint/validate/consume rather than a stub that always
+        // agrees. `AuthorisedAsync` below is the only way a transfer in this file can succeed.
+        _stepUp = new StepUpAuthorizationService(
             _context,
             _pinVerifierMock.Object,
             Options.Create(new StepUpOptions { BindingKey = new string('k', 32) }),
             new Mock<ILogger<StepUpAuthorizationService>>().Object);
 
         _sut = new TransferService(
-            _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, stepUp, _loggerMock.Object);
+            _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, _stepUp, _loggerMock.Object);
     }
+
+    /// <summary>
+    /// Mints a REAL authorisation for exactly this movement, the way the mint endpoint does.
+    /// A transfer that must reach its business rules needs one: nothing else gets past
+    /// <c>RequireAuthorization</c> and then past <c>ValidateAsync</c>'s binding comparison.
+    /// </summary>
+    private async Task<Guid> AuthorisedAsync(Guid userId, StepUpOperation operation, StepUpBinding binding)
+        => (await _stepUp.MintAsync(userId, operation, binding, TestPin)).Id;
+
+    /// <summary>
+    /// A reference that IS presented and is worth nothing: syntactically an authorisation, bound to
+    /// no movement, so it clears <c>RequireAuthorization</c> and would be refused
+    /// <c>AUTHORIZATION_INVALID</c> by <c>ValidateAsync</c>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not a real mint. These tests are about refusals that must happen BEFORE the
+    /// authorisation is validated — self-transfer, unknown recipient, an unreceivable payee — and
+    /// using a worthless reference is what makes them say so: if that ordering ever inverts, they
+    /// stop reporting their own refusal and start reporting AUTHORIZATION_INVALID.
+    /// </remarks>
+    private static Guid Presented() => Guid.CreateVersion7();
 
     public void Dispose()
     {
@@ -151,12 +175,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = sender.AzureTag, // Same as sender
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.TransferAsync(sender.Id, request);
+        var act = () => _sut.TransferAsync(sender.Id, request, Presented());
 
         // Assert
         await act.Should()
@@ -174,12 +197,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = sender.AzureTag.ToUpper(), // Different case
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.TransferAsync(sender.Id, request);
+        var act = () => _sut.TransferAsync(sender.Id, request, Presented());
 
         // Assert
         await act.Should()
@@ -201,12 +223,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = "nonexistent",
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.TransferAsync(sender.Id, request);
+        var act = () => _sut.TransferAsync(sender.Id, request, Presented());
 
         // Assert
         // Note: NotFoundException(string, string) constructor is called with
@@ -240,12 +261,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = recipient.AzureTag,
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.TransferAsync(sender.Id, request);
+        var act = () => _sut.TransferAsync(sender.Id, request, Presented());
 
         // Assert
         await act.Should()
@@ -267,12 +287,18 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = recipient.AzureTag,
-            Amount = 100m, // More than balance
-            Pin = TestPin
+            Amount = 100m // More than balance
         };
 
+        // A REAL authorisation, bound to exactly this movement: the funds check sits BELOW
+        // ValidateAsync, so a worthless reference would refuse here for the wrong reason and this
+        // test would pass while proving nothing about the balance.
+        var authorization = await AuthorisedAsync(
+            sender.Id, StepUpOperation.Transfer,
+            new StepUpBinding(senderAccount.Id, null, recipient.Id, 100m));
+
         // Act
-        var act = () => _sut.TransferAsync(sender.Id, request);
+        var act = () => _sut.TransferAsync(sender.Id, request, authorization);
 
         // Assert
         await act.Should().ThrowAsync<InsufficientFundsException>();
@@ -288,13 +314,16 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = senderAccount.Id,
             RecipientAzureTag = recipient.AzureTag,
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
+
+        var authorization = await AuthorisedAsync(
+            sender.Id, StepUpOperation.Transfer,
+            new StepUpBinding(senderAccount.Id, null, recipient.Id, 100m));
 
         // Act - Should not throw InsufficientFundsException
         // Note: May fail due to transaction handling in InMemory, but the funds check passes
-        var act = () => _sut.TransferAsync(sender.Id, request);
+        var act = () => _sut.TransferAsync(sender.Id, request, authorization);
 
         // Assert - Either succeeds or fails for transaction reasons, not insufficient funds
         try
@@ -333,12 +362,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fakeAccountId,
             RecipientAzureTag = "someone",
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.TransferAsync(nonExistentUserId, request);
+        var act = () => _sut.TransferAsync(nonExistentUserId, request, Presented());
 
         // Assert
         await act.Should()
@@ -362,8 +390,8 @@ public class TransferServiceTests : IDisposable
         var accountId = Guid.NewGuid();
         var account = CreateTestAccount(userId);
         account.Id = accountId;
-        // The user must exist in the context: the PIN check (ADR-0041) reads it before the
-        // account rules this test is actually about.
+        // The user must exist in the context: minting the authorisation reads it, and the account
+        // rules this test is actually about sit further down.
         var owner = CreateTestUser("owner");
         owner.Id = userId;
         _context.Users.Add(owner);
@@ -377,12 +405,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = accountId,
             ToAccountId = accountId, // Same account
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.InternalTransferAsync(userId, request);
+        var act = () => _sut.InternalTransferAsync(userId, request, Presented());
 
         // Assert
         await act.Should()
@@ -402,8 +429,8 @@ public class TransferServiceTests : IDisposable
         var fromAccount = CreateTestAccount(userId, balance: 50m);
         var toAccount = CreateTestAccount(userId, balance: 100m);
         toAccount.Id = Guid.NewGuid(); // Ensure different IDs
-        // The user must exist in the context: the PIN check (ADR-0041) reads it before the
-        // account rules this test is actually about.
+        // The user must exist in the context: minting the authorisation reads it, and the account
+        // rules this test is actually about sit further down.
         var owner = CreateTestUser("owner");
         owner.Id = userId;
         _context.Users.Add(owner);
@@ -420,12 +447,16 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fromAccount.Id,
             ToAccountId = toAccount.Id,
-            Amount = 100m, // More than balance
-            Pin = TestPin
+            Amount = 100m // More than balance
         };
 
+        // Real, and bound to this exact move: the funds check is below ValidateAsync.
+        var authorization = await AuthorisedAsync(
+            userId, StepUpOperation.InternalTransfer,
+            new StepUpBinding(fromAccount.Id, toAccount.Id, null, 100m));
+
         // Act
-        var act = () => _sut.InternalTransferAsync(userId, request);
+        var act = () => _sut.InternalTransferAsync(userId, request, authorization);
 
         // Assert
         await act.Should().ThrowAsync<InsufficientFundsException>();
@@ -451,12 +482,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fromAccountId,
             ToAccountId = toAccountId,
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.InternalTransferAsync(userId, request);
+        var act = () => _sut.InternalTransferAsync(userId, request, stepUpAuthorizationId: null);
 
         // Assert
         await act.Should().ThrowAsync<AuthorizationException>();
@@ -481,12 +511,11 @@ public class TransferServiceTests : IDisposable
         {
             FromAccountId = fromAccount.Id,
             ToAccountId = toAccountId,
-            Amount = 100m,
-            Pin = TestPin
+            Amount = 100m
         };
 
         // Act
-        var act = () => _sut.InternalTransferAsync(userId, request);
+        var act = () => _sut.InternalTransferAsync(userId, request, stepUpAuthorizationId: null);
 
         // Assert
         await act.Should().ThrowAsync<AuthorizationException>();
