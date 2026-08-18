@@ -23,10 +23,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       },
@@ -78,10 +92,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -116,16 +144,34 @@
             }
           },
           "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
-          },
-          "400": {
-            "description": "Bad Request - Invalid parameter format or validation failed."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       },
@@ -189,13 +235,34 @@
             }
           },
           "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       },
@@ -238,13 +305,34 @@
             }
           },
           "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "422": {
             "description": "Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance).",
@@ -324,13 +412,34 @@
             }
           },
           "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad Request - Validation failed. Check the errors property for details.",
@@ -403,16 +512,34 @@
             }
           },
           "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
-          },
-          "400": {
-            "description": "Bad Request - Invalid parameter format or validation failed."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -447,16 +574,34 @@
             }
           },
           "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
-          },
-          "400": {
-            "description": "Bad Request - Invalid parameter format or validation failed."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -681,10 +826,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -707,10 +866,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -765,7 +938,14 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "422": {
             "description": "Unprocessable Entity",
@@ -788,7 +968,14 @@
             }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -852,10 +1039,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -926,10 +1127,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad Request - Validation failed. Check the errors property for details.",
@@ -1027,10 +1242,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "422": {
             "description": "Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE).",
@@ -1101,16 +1330,34 @@
             }
           },
           "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
-          },
-          "400": {
-            "description": "Bad Request - Invalid parameter format or validation failed."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -1194,10 +1441,24 @@
             }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "409": {
             "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
@@ -1389,7 +1650,14 @@
             }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "429": {
             "description": "Too Many Requests",
@@ -1402,7 +1670,14 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "409": {
             "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
@@ -1563,10 +1838,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "404": {
             "description": "Not Found",
@@ -1649,10 +1938,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "404": {
             "description": "Not Found",
@@ -1776,10 +2079,24 @@
             }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "409": {
             "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
@@ -1981,10 +2298,24 @@
             }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "409": {
             "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
@@ -2139,13 +2470,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
-          },
-          "404": {
-            "description": "Not Found - The requested resource does not exist."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -2234,10 +2576,24 @@
             }
           },
           "401": {
-            "description": "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "403": {
-            "description": "Forbidden - You don't have permission to access this resource."
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "429": {
             "description": "Too Many Requests",
@@ -3061,6 +3417,14 @@
               "null",
               "string"
             ]
+          },
+          "errorCode": {
+            "type": "string",
+            "description": "Stable, machine-readable identifier for the failure — the value clients branch on. Absent only on validation failures, which carry an 'errors' dictionary instead."
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Correlates this response with the server-side log entry. Quote it in a bug report."
           }
         }
       },

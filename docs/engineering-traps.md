@@ -379,3 +379,46 @@ So every source-scanning guard in `tests/AzureBank.Tests/Architecture/` now carr
 
 Add both when adding a scanner. The coverage theory is the one that pays: writing it for the
 currency rule immediately exposed a second hole the scan could never have shown.
+
+## An OpenAPI transformer that ASSIGNS silently discards what the controller declared
+
+`AuthorizationResponseTransformer` set `operation.Responses["401"]` outright, with the comment
+"Always set 401/403 with no content (even if already defined)". `TransferController` had declared
+
+```csharp
+// AUTHORIZATION_REQUIRED, AUTHORIZATION_EXPIRED, AUTHORIZATION_INVALID (ADR-0042)
+[ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+```
+
+and the assignment replaced it with an empty body. **The published contract was therefore worse than
+what the source said, and the source looked right.** `NotFoundResponseTransformer` did the same for
+404. Two consequences worth recognising by sight:
+
+- **Fifteen responses elsewhere carried hand-written INLINE error schemas.** That duplication is what
+  an unusable shared route looks like from the outside — people work around it one endpoint at a
+  time rather than reporting it.
+- **Regenerating cannot reveal it.** The document and the generated artefacts both derive from the
+  transformer, so the drift gate compares two copies of the same wrong answer. Only an HTTP call to
+  the running API disagrees.
+
+`TryAdd`, or a helper that fills gaps, instead of `[...] =`. And when a transformer's comment
+justifies itself with framework behaviour ("ASP.NET Core returns empty 401s"), check whether THIS
+application still uses that default — here `OnChallenge` calls `context.HandleResponse()`, whose
+whole purpose is to replace it.
+
+## A `{id:guid}` route constraint 404s; it never produces a binding 400
+
+Four endpoints published a 400 for "invalid path parameter format". Measured, all four answer **404**
+with `application/problem+json` and a W3C trace-context `traceId` — a third envelope, from the
+framework rather than from `GlobalExceptionHandler`:
+
+```json
+{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,
+ "traceId":"00-c3755f5dd06635c9f80bd38f90d54f52-6e8251d2e9f65eb0-01"}
+```
+
+A route constraint participates in route MATCHING. A non-GUID segment matches no route, so MVC is
+never entered, so there is no model binding and nothing to produce a 400. An unconstrained path
+parameter cannot fail either, for the opposite reason: every byte sequence is a valid string. So
+"path parameters can fail validation" is wrong both ways round, and a documented response nobody can
+produce is as false as an undocumented body.

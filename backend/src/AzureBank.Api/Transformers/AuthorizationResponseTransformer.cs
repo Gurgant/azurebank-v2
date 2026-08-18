@@ -12,6 +12,8 @@ namespace AzureBank.Api.Transformers;
 /// - Ensures OpenAPI spec correctly documents authentication requirements
 /// - Fixes Schemathesis "Undocumented HTTP status code: 401" errors
 /// - Automatically detects [Authorize] attribute on controllers and actions
+/// - Declares the ProblemDetails body those responses actually carry, and yields to any endpoint
+///   that documents its own (see the note at the assignment)
 ///
 /// This transformer examines endpoint metadata to determine if authentication is required,
 /// then adds appropriate response documentation to the OpenAPI schema.
@@ -40,19 +42,36 @@ public sealed class AuthorizationResponseTransformer : IOpenApiOperationTransfor
             // Ensure Responses dictionary is initialized to avoid null reference warnings
             operation.Responses ??= new OpenApiResponses();
 
-            // Always set 401/403 with empty body (override any existing definitions)
-            // ASP.NET Core JWT Bearer middleware returns empty responses without Content-Type
-            operation.Responses["401"] = new OpenApiResponse
-            {
-                Description = "Unauthorized - Authentication required. Provide a valid JWT Bearer token."
-                // IMPORTANT: No Content property - JWT Bearer returns empty body
-            };
+            /*
+              FILL IN, NEVER OVERRIDE — and both halves of that were wrong here until now.
 
-            operation.Responses["403"] = new OpenApiResponse
-            {
-                Description = "Forbidden - You don't have permission to access this resource."
-                // IMPORTANT: No Content property - returns empty body
-            };
+              This used to ASSIGN both entries with no body, justified by "ASP.NET Core JWT Bearer
+              middleware returns empty responses without Content-Type". That is true of the DEFAULT
+              and this application does not use it: ServiceCollectionExtensions calls
+              context.HandleResponse() on OnChallenge — whose entire purpose is to suppress that
+              default — and then writes JSON carrying errorCode and traceId, and does the same on
+              OnForbidden. Measured against the running API, a 401 is 243 bytes of
+              application/json with seven keys, and a 403 is 260.
+
+              The assignment was the worse half. TransferController declares
+              [ProducesResponseType(typeof(ProblemDetails), 401)] with a comment explaining the
+              three step-up codes it can return, and this line threw that away — which is why
+              fifteen responses elsewhere carry hand-written INLINE schemas instead of pointing at
+              the shared component. Declare lets an endpoint that knows more say more.
+            */
+            ProblemDetailsResponses.Declare(
+                operation.Responses,
+                "401",
+                "Unauthorized",
+                "Unauthorized - authentication failed or is missing. The body is a ProblemDetails "
+                + "whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).");
+
+            ProblemDetailsResponses.Declare(
+                operation.Responses,
+                "403",
+                "Forbidden",
+                "Forbidden - authenticated, but not permitted to reach this resource "
+                + "(errorCode: ACCESS_DENIED).");
         }
 
         return Task.CompletedTask;

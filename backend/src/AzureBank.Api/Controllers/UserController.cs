@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using AzureBank.Api.Attributes;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.User;
@@ -35,6 +36,7 @@ public class UserController : ControllerBase
     /// <param name="azureTag">Full AzureTag to look up (3-20 chars, AzureTag charset).</param>
     [HttpGet("{azureTag}")]
     [EndpointSummary("Get user by AzureTag")]
+    [AlwaysFound] // An unknown handle is 200 with exists:false, never 404 (ADR-0014).
     [ProducesResponseType(typeof(ApiResponse<RecipientLookupResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<RecipientLookupResponse>>> GetUserByAzureTag(

@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Forty-one decisions is more than anyone reads cold. These four carry the architecture; the rest is
+Forty-three decisions is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -73,7 +73,8 @@ detail hanging off them.
 [0029](0029-contract-conformance-gate.md) one suite, two backends ·
 [0030](0030-real-backend-integration-layer.md) the app's data layer against the real backend ·
 [0031](0031-e2e-playwright.md) the app in a real browser ·
-[0032](0032-real-stack-layers-in-ci.md) the real-stack layers in CI
+[0032](0032-real-stack-layers-in-ci.md) the real-stack layers in CI ·
+[0043](0043-the-document-declares-the-error-body.md) the document declares the error body
 
 **Operations** — [0016](0016-observability-three-pillars.md) observability, three pillars ·
 [0017](0017-pii-redaction-codeql-barrier.md) PII-safe telemetry and the log-forging barrier
@@ -82,7 +83,7 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All forty-one **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+All forty-three **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
@@ -103,7 +104,10 @@ no live caller — recorded there rather than quietly left to rot. ADR-0008's ow
 corrections follow the same rule — eight inline notes, nothing deleted — and one of them records an
 open hole rather than a supersession: **account deletion is listed as level 2 and is gated nowhere
 at that level** (the endpoint is still `[Authorize]`; what is missing is the step-up).
-The next free number is **0042**.
+ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consume, and is filed
+as a correction rather than a new policy: the decisions were already made, the document simply
+did not say them.
+The next free number is **0044**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -152,6 +156,8 @@ The next free number is **0042**.
 | [ADR-0039](0039-bff-session-cache-is-a-fallback.md) | The BFF session cache is a fallback, never the answer | Accepted | 2026-08-10 |
 | [ADR-0040](0040-changing-a-credential-requires-the-current-one.md) | Changing a credential requires proving the current one | Accepted | 2026-08-12 |
 | [ADR-0041](0041-the-api-verifies-the-transfer-pin.md) | The API verifies the transfer PIN, not the BFF | Accepted | 2026-08-13 |
+| [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md) | A transfer authorisation is bound to its amount and payee, and spent once | Accepted | 2026-08-16 |
+| [ADR-0043](0043-the-document-declares-the-error-body.md) | The published document declares the error body the API actually sends | Accepted | 2026-08-18 |
 
 </details>
 ## Creating a New ADR

@@ -327,6 +327,8 @@ export const ProblemDetails = z
     status: z.number().int(),
     detail: z.string().nullable(),
     instance: z.string().nullable(),
+    errorCode: z.string(),
+    traceId: z.string(),
   })
   .partial();
 
