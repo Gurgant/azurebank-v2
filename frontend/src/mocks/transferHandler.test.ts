@@ -63,17 +63,35 @@ async function autoAuthorise(url: string, body: unknown): Promise<string> {
               fromAccountId: b.fromAccountId,
               toAccountId: b.toAccountId,
               amount: b.amount,
-              pin: '123456',
+              pin: MOCK_PIN,
             }
           : {
               fromAccountId: b.fromAccountId,
               recipientAzureTag: b.recipientAzureTag,
               amount: b.amount,
-              pin: '123456',
+              pin: MOCK_PIN,
             },
       ),
     },
   );
+
+  /*
+    A PIN refusal is NOT a body the mint legitimately turned away, so it must not fall through to
+    the worthless-reference path below. If it did, every AUTO test would go on to answer
+    401 AUTHORIZATION_INVALID and point the reader at the authorisation check — a rung that is
+    working fine — instead of at the fixture that broke. The PIN comes from MOCK_PIN for the same
+    reason: hardcoding it here is a second source of truth that only diverges silently.
+  */
+  if (minted.status === 401 || minted.status === 429) {
+    throw new Error(
+      `autoAuthorise could not mint: the mint answered ${minted.status}, which means the PIN ` +
+        `itself was refused. Check MOCK_PIN and the seeded session, not the transfer under test.`,
+    );
+  }
+
+  // Anything else non-201 is a body the mint refuses on binding grounds — an unknown recipient, a
+  // bad amount, a same-account move. Those tests assert a refusal that must land BEFORE the binding
+  // is checked, so a well-formed reference bound to nothing is exactly what proves the ordering.
   if (minted.status !== 201) return crypto.randomUUID();
   const payload = (await minted.json()) as { data: { authorizationId: string } };
   return payload.data.authorizationId;
