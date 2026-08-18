@@ -77,8 +77,44 @@ public class MoneyFormattingTests
         }
     }
 
-    /// <summary>`{something:C}` — the currency format specifier, in any interpolation or template.</summary>
-    private static readonly Regex CurrencyFormat = new(@"\{[^{}]*:C\d?\}", RegexOptions.Compiled);
+    /*
+      EVERY spelling of the currency specifier, not the one that happened to be in the tree.
+
+      The first version of this guard read `:C\d?`, which is what the sites it was written against
+      looked like. Measured against the runtime rather than assumed, four of eight legal spellings
+      slipped past it and all four still render culture-dependent currency:
+
+        {v:C}     -> $100,000.00          caught
+        {v:C2}    -> $100,000.00          caught
+        {v:c}     -> $100,000.00          MISSED
+        {v:c2}    -> $100,000.00          MISSED
+        {v:C10}   -> $100,000.0000000000  MISSED   (precision is 0-99, not one digit)
+        {v:C0}    -> $100,000             caught
+        {v,12:C}  -> $100,000.00          caught
+        {v,12:c4} -> $100,000.0000        MISSED
+
+      Standard numeric specifiers are case-insensitive for currency — unlike X/x, where case changes
+      the output — so `c` is not a typo the compiler would reject. Raised by CodeRabbit on #118 and
+      confirmed by running the eight above through decimal.ToString before believing it.
+    */
+    private static readonly Regex CurrencyFormat = new(@"\{[^{}]*:[cC]\d*\}", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The same defect spelled as a method call. Neither regex above can see `amount.ToString("C")`,
+    /// because there is no brace for them to match — none exists in the tree today, and this is here
+    /// so that stays true.
+    /// </summary>
+    private static readonly Regex CurrencyToString =
+        new(@"ToString\(\s*""[cC]\d*""", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The ONE predicate. The scan below and the coverage theory further down must ask the same
+    /// question, or the theory pins the regexes while the scan quietly stops using one of them —
+    /// which is exactly what happened: dropping CurrencyToString from the scan left all sixteen
+    /// tests green, because the theory was calling the regexes directly instead of this.
+    /// </summary>
+    private static bool RendersCurrency(string line) =>
+        CurrencyFormat.IsMatch(line) || CurrencyToString.IsMatch(line);
 
     [Fact]
     public void NoSourceFormatsMoneyWithTheProcessCulture()
@@ -91,7 +127,7 @@ public class MoneyFormattingTests
             var lines = File.ReadAllLines(file);
             for (var i = 0; i < lines.Length; i++)
             {
-                if (CurrencyFormat.IsMatch(lines[i]))
+                if (RendersCurrency(lines[i]))
                 {
                     offenders.Add($"{Path.GetRelativePath(root.FullName, file)}:{i + 1}  {lines[i].Trim()}");
                 }
@@ -118,7 +154,10 @@ public class MoneyFormattingTests
         // defect being hunted never looks like that — it is a symbol opening an amount, as in
         // "between ${Min}" — so requiring that the symbol not follow a closing hole separates them
         // without exempting a file, which would go stale the moment the file moved.
-        var symbolBeforeAmount = new Regex(@"(?<!\})[$€£¥](\{|\d)", RegexOptions.Compiled);
+        // `\s*` because "costs $ 100" is the same defect with a space in it, and the first version
+        // of this guard missed it — found by sweeping my own regex the way the currency one was swept,
+        // not by anyone reporting it.
+        var symbolBeforeAmount = new Regex(@"(?<!\})[$€£¥]\s*(\{|\d)", RegexOptions.Compiled);
         var root = RepoBackendRoot();
         var offenders = new List<string>();
 
@@ -146,6 +185,45 @@ public class MoneyFormattingTests
         offenders.Should().BeEmpty(
             "a currency symbol written into a server message hard-codes the denomination into text "
             + "the client shows verbatim, and into the OpenAPI descriptions the transformer publishes");
+    }
+
+    /*
+      THE GUARD'S OWN COVERAGE, pinned.
+
+      The scans above answer "is the tree clean today". They cannot answer "would they notice", and
+      that is the question that actually failed: the first `:C\d?` looked complete against the
+      eighteen sites it was written for, and was blind to four legal spellings of the same thing.
+      A prohibition nobody has watched refuse anything is a wish.
+
+      So the detectors are driven directly here, against spellings that are NOT in the tree. This
+      goes red if someone narrows a regex to make a new offender pass — the cheapest possible way to
+      defeat the two scans above, and one that would otherwise leave them green forever.
+    */
+    [Theory]
+    [InlineData("{amount:C}")]
+    [InlineData("{amount:C2}")]
+    [InlineData("{amount:c}")]           // case-insensitive specifier, not a typo
+    [InlineData("{amount:c2}")]
+    [InlineData("{amount:C10}")]         // precision is 0-99, so one digit is not enough
+    [InlineData("{amount,12:C}")]        // alignment before the specifier
+    [InlineData("{amount,12:c4}")]
+    [InlineData("value.ToString(\"C\")")]   // no braces at all — invisible to the format regex
+    [InlineData("value.ToString(\"c2\")")]
+    public void TheCurrencyDetectorCatchesEverySpelling(string line)
+    {
+        RendersCurrency(line).Should().BeTrue(
+            $"'{line}' renders currency against the process culture and must not slip past the scan");
+    }
+
+    [Theory]
+    [InlineData("{count:D}")]            // a different specifier entirely
+    [InlineData("{amount:F2}")]          // fixed-point is culture-dependent but NOT currency
+    [InlineData("var c = 'C';")]
+    [InlineData("// the :C specifier is what this file forbids")]  // prose about it, in braces-free text
+    public void TheCurrencyDetectorLeavesEverythingElseAlone(string line)
+    {
+        RendersCurrency(line).Should().BeFalse(
+            $"'{line}' is not a currency render, and a guard that fires on it would be turned off");
     }
 
     [Fact]
