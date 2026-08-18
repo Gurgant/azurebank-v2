@@ -94,8 +94,16 @@ export interface IdempotentArg<TBody> {
    * endpoint. Keeping it out here is what lets the same transfer be resent byte-identically while
    * the authorisation differs, expires, or is absent.
    *
-   * Optional while PR 2 ships without enforcement: the in-band PIN is still the proof the server
-   * acts on, so a request without this is refused by nothing new.
+   * Optional in the TYPE even though the two transfers now require it on the wire (ADR-0042), and
+   * that is a deliberate limit rather than an oversight. Making it required here needs the whole
+   * hook chain to be generic over the argument, which was tried and measured: `TBody` then has no
+   * inference site left, degrades to `unknown`, and every money body silently stops being
+   * type-checked — a transfer still carrying the deleted `pin` compiled clean. Losing real body
+   * safety to gain a weaker one is a bad trade.
+   *
+   * So the requirement is held where it is checkable: `required: true` on the published parameter
+   * (StepUpAuthorizationOperationTransformer), and a mock that refuses a headerless transfer with
+   * 401 AUTHORIZATION_REQUIRED exactly as the API does — so dropping it turns tests red.
    */
   stepUpAuthorizationId?: string;
 }
@@ -425,9 +433,17 @@ export const apiSlice = createApi({
         body,
         headers: {
           'Idempotency-Key': idempotencyKey,
-          // Spread rather than a `?? undefined` value: an explicit `undefined` still serialises
-          // as a header with an empty value on some transports, and an empty
-          // Step-Up-Authorization is a malformed GUID (400) rather than an absent one.
+          /*
+            Spread rather than a `?? undefined` value: an explicit `undefined` still serialises as a
+            header with an empty VALUE on some transports.
+
+            An earlier version of this comment said such an empty header is "a malformed GUID (400)".
+            MEASURED, and it is not: `[FromHeader] Guid?` binds an empty value to NULL, so the API
+            answered as though no header had been sent at all. Verified on the wire with `curl -v`
+            against the running API. It matters more now than it did then — after ADR-0042's flip an
+            absent authorisation is `401 AUTHORIZATION_REQUIRED`, so an accidentally-empty header
+            would fail the transfer rather than be caught as a client bug.
+          */
           ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
         },
       }),
@@ -540,9 +556,17 @@ export const apiSlice = createApi({
         body,
         headers: {
           'Idempotency-Key': idempotencyKey,
-          // Spread rather than a `?? undefined` value: an explicit `undefined` still serialises
-          // as a header with an empty value on some transports, and an empty
-          // Step-Up-Authorization is a malformed GUID (400) rather than an absent one.
+          /*
+            Spread rather than a `?? undefined` value: an explicit `undefined` still serialises as a
+            header with an empty VALUE on some transports.
+
+            An earlier version of this comment said such an empty header is "a malformed GUID (400)".
+            MEASURED, and it is not: `[FromHeader] Guid?` binds an empty value to NULL, so the API
+            answered as though no header had been sent at all. Verified on the wire with `curl -v`
+            against the running API. It matters more now than it did then — after ADR-0042's flip an
+            absent authorisation is `401 AUTHORIZATION_REQUIRED`, so an accidentally-empty header
+            would fail the transfer rather than be caught as a client bug.
+          */
           ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
         },
       }),

@@ -110,6 +110,7 @@ public class TransferController : ControllerBase
     [HttpPost]
     [EndpointSummary("Transfer to user")]
     [RequireIdempotency]
+    [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<TransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -146,6 +147,7 @@ public class TransferController : ControllerBase
     [HttpPost("internal")]
     [EndpointSummary("Internal transfer")]
     [RequireIdempotency]
+    [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<InternalTransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

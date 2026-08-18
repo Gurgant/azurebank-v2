@@ -844,15 +844,31 @@ describe('the internal transfer names a real ledger row', () => {
       body: JSON.stringify({ name: 'Transfer Target', type: 'Savings' }),
     }).then((r) => r.json());
 
+    // Mint first: since ADR-0042 the authorisation is the only proof an internal transfer takes,
+    // and it is bound to exactly this pair of accounts and this amount.
+    const minted = await fetch('/api/transfers/internal/authorizations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fromAccountId: MAIN_ACCOUNT_ID,
+        toAccountId: second.data.id,
+        amount: 10,
+        pin: MOCK_PIN,
+      }),
+    }).then((r) => r.json());
+
     const transfer = await fetch('/api/transfers/internal', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+        'Step-Up-Authorization': minted.data.authorizationId,
+      },
       body: JSON.stringify({
         fromAccountId: MAIN_ACCOUNT_ID,
         toAccountId: second.data.id,
         amount: 10,
         description: 'dereference me',
-        pin: MOCK_PIN,
       }),
     }).then((r) => r.json());
 

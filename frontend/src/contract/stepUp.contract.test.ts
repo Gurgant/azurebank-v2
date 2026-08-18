@@ -164,7 +164,6 @@ describe('contract: step-up authorisations', () => {
         fromAccountId: id,
         recipientAzureTag: FIXTURES.recipientAzureTag,
         amount: 1,
-        pin: FIXTURES.pin,
       }),
     });
 
@@ -195,12 +194,59 @@ describe('contract: step-up authorisations', () => {
         fromAccountId: id,
         recipientAzureTag: 'nosuchuser',
         amount: 1,
-        pin: FIXTURES.pin,
       }),
     });
 
     expect(status).toBe(404);
     expect(asProblem(body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+  });
+
+  it('refuses a transfer that presents NO authorisation, and names why', async () => {
+    /*
+      THE ROW THE FLIP EXISTS FOR (ADR-0042, second half). Until it, this exact request answered
+      201 on the strength of six digits in the body — one static credential authorising any amount
+      to any payee, which is requirement (b) of PSD2-RTS Art. 5 unmet.
+
+      It belongs in THIS suite rather than only in the API's own tests because it is the one row
+      where mock and backend could most easily drift apart in the direction that costs money: a
+      mock that still succeeded here would let a client ship a transfer path that the real server
+      refuses. Costs nothing to run — a refusal moves no money and spends no PIN attempt.
+
+      Measured on the real stack: 401 AUTHORIZATION_REQUIRED.
+    */
+    const id = await firstAccountId();
+
+    const { status, body } = await call('/api/transfers', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey() },
+      body: JSON.stringify({
+        fromAccountId: id,
+        recipientAzureTag: FIXTURES.recipientAzureTag,
+        amount: 1,
+      }),
+    });
+
+    expect(status).toBe(401);
+    expect(asProblem(body).errorCode).toBe('AUTHORIZATION_REQUIRED');
+  });
+
+  it('refuses an INTERNAL transfer that presents none either', async () => {
+    // A separate handler with its own ownership checks, so it gets its own row rather than an
+    // assumption that the two share a code path.
+    const id = await firstAccountId();
+
+    const { status, body } = await call('/api/transfers/internal', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey() },
+      body: JSON.stringify({
+        fromAccountId: id,
+        toAccountId: id,
+        amount: 1,
+      }),
+    });
+
+    expect(status).toBe(401);
+    expect(asProblem(body).errorCode).toBe('AUTHORIZATION_REQUIRED');
   });
 
   it('rejects a malformed header in MODEL BINDING — a fourth 400 shape, with no errorCode', async () => {
@@ -230,7 +276,6 @@ describe('contract: step-up authorisations', () => {
         fromAccountId: id,
         recipientAzureTag: FIXTURES.recipientAzureTag,
         amount: 1,
-        pin: FIXTURES.pin,
       }),
     });
     const problem = asProblem(body);
@@ -286,7 +331,6 @@ describe('contract: step-up authorisations', () => {
           fromAccountId: id,
           recipientAzureTag: FIXTURES.recipientAzureTag,
           amount: 1,
-          pin: FIXTURES.pin,
         }),
       });
 
@@ -327,15 +371,15 @@ describe('contract: step-up authorisations', () => {
 
   it('reports the header and the body in ONE 400, which places the refusal in binding', async () => {
     /*
-      Where, not just what. A junk header sent with a junk PIN comes back with BOTH keys in a single
-      dictionary — which only happens if neither was reached by the action. Had the header been
-      examined later, this request would answer 401 INVALID_PIN and cost a lockout attempt.
+      Where, not just what. A junk header sent with a junk account id comes back with BOTH keys in a
+      single dictionary — which only happens if neither was reached by the action. Had the header
+      been examined later, this request would answer 401 rather than 400.
 
-      Observed: 400 {"errors":{"Pin":["PIN must be exactly 6 digits."],
-                               "Step-Up-Authorization":["The value 'not-a-guid' is not valid."]}}
+      This paired the header with a junk PIN until ADR-0042's flip deleted `TransferRequest.Pin`.
+      A `pin` now reaches the endpoint as an unknown property and produces no key of its own, so the
+      body's half of the pair has to come from a field that still exists. The property under test is
+      unchanged: one dictionary, therefore one binding stage.
     */
-    const id = await firstAccountId();
-
     const { status, body } = await call('/api/transfers', {
       method: 'POST',
       headers: {
@@ -343,16 +387,16 @@ describe('contract: step-up authorisations', () => {
         'Step-Up-Authorization': 'not-a-guid',
       },
       body: JSON.stringify({
-        fromAccountId: id,
+        fromAccountId: '00000000-0000-0000-0000-000000000000',
         recipientAzureTag: FIXTURES.recipientAzureTag,
         amount: 1,
-        pin: '12',
       }),
     });
     const keys = Object.keys(asProblem(body).errors ?? {});
 
     expect(status).toBe(400);
     expect(keys).toContain('Step-Up-Authorization');
-    expect(keys).toContain('Pin');
+    expect(keys).toContain('FromAccountId');
+    expect(keys).not.toContain('Pin');
   });
 });

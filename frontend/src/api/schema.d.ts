@@ -1722,8 +1722,8 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
-                    /** @description Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof. */
-                    "Step-Up-Authorization"?: string;
+                    /** @description Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED: a transfer presenting none is refused 401 AUTHORIZATION_REQUIRED. */
+                    "Step-Up-Authorization": string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
                 };
@@ -1848,15 +1848,6 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Too Many Requests */
-                429: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ProblemDetails"];
-                    };
-                };
             };
         };
         delete?: never;
@@ -1879,8 +1870,8 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
-                    /** @description Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof. */
-                    "Step-Up-Authorization"?: string;
+                    /** @description Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED: a transfer presenting none is refused 401 AUTHORIZATION_REQUIRED. */
+                    "Step-Up-Authorization": string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
                 };
@@ -2003,15 +1994,6 @@ export interface paths {
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
                         };
-                    };
-                };
-                /** @description Too Many Requests */
-                429: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -2321,7 +2303,7 @@ export interface components {
              * @description Balance amount
              */
             balance: number;
-            /** @description Currency code (default: EUR) */
+            /** @description The product's denomination, from the single declaration rather than repeated here. */
             currency?: string;
             /**
              * Format: date-time
@@ -2400,8 +2382,6 @@ export interface components {
              * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
-            /** @description PIN must be exactly 6 digits. */
-            pin: string;
             description?: null | string;
         };
         /**
@@ -2705,8 +2685,6 @@ export interface components {
              * @description Amount must be between 0.01 EUR and 100000.00 EUR.
              */
             amount: number;
-            /** @description PIN must be exactly 6 digits. */
-            pin: string;
             description?: null | string;
         };
         TransferResponse: {

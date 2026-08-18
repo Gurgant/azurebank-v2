@@ -417,6 +417,12 @@ public static class ServiceCollectionExtensions
             // (ADR-0009). Keeps spec 1:1 with live and Schemathesis green.
             options.AddOperationTransformer<IdempotencyOperationTransformer>();
 
+            // Operation transformer: mark the Step-Up-Authorization header REQUIRED on
+            // [RequireStepUpAuthorization] endpoints (ADR-0042). The binding stays Guid? so a
+            // missing header still reaches the service and answers 401 AUTHORIZATION_REQUIRED —
+            // which is precisely why the generator would otherwise publish it as optional.
+            options.AddOperationTransformer<StepUpAuthorizationOperationTransformer>();
+
             // Operation transformer: the rename endpoint's 409 AZURE_TAG_TAKEN + 429
             // docs, formerly hand-enrichments a regen silently dropped
             options.AddOperationTransformer<AzureTagRenameResponsesTransformer>();

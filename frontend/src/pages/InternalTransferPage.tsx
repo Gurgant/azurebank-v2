@@ -328,7 +328,6 @@ export function InternalTransferPage() {
         fromAccountId: data.fromAccountId,
         toAccountId: data.toAccountId,
         amount: data.amount,
-        pin: enteredPin.current,
       },
       // A HEADER at the wire: the server fingerprints the body alone.
       { stepUpAuthorizationId: authorizationId },
