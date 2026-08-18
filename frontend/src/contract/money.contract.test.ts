@@ -114,17 +114,22 @@ describe('contract: money', () => {
                      "title":"One or more validation errors occurred.",
                      "errors":{"Pin":["PIN must be exactly 6 digits."]}}
       — note the absence of `detail` and `instance`, which the validator envelope carries.
+
+      SENT TO THE MINT, not to the transfer. ADR-0042's flip deleted `InternalTransferRequest.Pin`,
+      so the transfer can no longer produce a `Pin` key at all and this probe would have quietly
+      become a test of the same-account validator — the precise failure the comment above describes
+      it as having escaped once already. The mint is where the PIN is presented now, it carries the
+      same `[Pin]` DataAnnotation, and the same-account rule sits beside it on the same endpoint, so
+      the two envelopes still meet and can still be told apart.
     */
     const id = await firstAccountId();
 
-    const { status, body } = await call('/api/transfers/internal', {
+    const { status, body } = await call('/api/transfers/internal/authorizations', {
       method: 'POST',
-      headers: { 'Idempotency-Key': idempotencyKey() },
       body: JSON.stringify({
         fromAccountId: id,
         toAccountId: id,
         amount: 10,
-        description: 'contract probe',
         pin: '12',
       }),
     });

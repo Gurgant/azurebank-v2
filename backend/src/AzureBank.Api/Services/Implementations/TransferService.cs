@@ -41,45 +41,43 @@ public class TransferService : ITransferService
     }
 
     /// <summary>
-    /// The in-band step-up check, identical to TransactionService.WithdrawAsync's (ADR-0041).
-    ///
-    /// <para>
-    /// Placement is the load-bearing part: this runs BEFORE the funds check, before the execution
-    /// strategy, and before anything is written — so a wrong PIN costs nothing and moves nothing.
-    /// PinService keeps its own DbContext scope, so the failed-attempt bookkeeping it writes neither
-    /// rides this request's transaction nor finalizes its idempotency record (ADR-0009).
-    /// </para>
+    /// Refuses a transfer that presents no authorisation at all, at the rung the in-band PIN check
+    /// used to occupy (ADR-0042).
     /// </summary>
-    private async Task VerifyPinOrThrowAsync(Guid userId, string pin)
+    /// <remarks>
+    /// <para>
+    /// THE RUNG IS THE POINT, not the check. It runs after the source account's ownership 404 and
+    /// BEFORE the payee is resolved, which is exactly where <c>VerifyPinOrThrowAsync</c> ran. Keep
+    /// it there: below the payee resolution, a caller holding no second factor could ask this
+    /// endpoint which handles exist and which of them can receive money, one 404 or 422 at a time.
+    /// The PIN check was providing that property silently; deleting it without putting something in
+    /// its place would have removed it silently too.
+    /// </para>
+    /// <para>
+    /// Split from <see cref="IStepUpAuthorizationService.ValidateAsync"/> deliberately, because the
+    /// two questions become answerable at different moments: "you presented nothing" needs nothing
+    /// but the header, while "what you presented does not match" needs the payee that only exists
+    /// after the tag is resolved.
+    /// </para>
+    /// <para>
+    /// MEASURED, and the reason the parameter stays <c>Guid?</c> rather than becoming required at
+    /// the binding layer: an EMPTY <c>Step-Up-Authorization</c> header binds to <c>null</c>, exactly
+    /// like an absent one — both reach here and both get this 401. A header that is present but not
+    /// a UUID never reaches here at all; MVC model binding refuses it upstream with
+    /// <c>400 {"Step-Up-Authorization": ["The value '…' is not valid."]}</c>. Making the parameter
+    /// non-nullable would have replaced this 401 with a third shape — a model-state 400 carrying no
+    /// <c>errorCode</c> — which is not what ADR-0042's error table promises.
+    /// </para>
+    /// </remarks>
+    private static Guid RequireAuthorization(Guid? stepUpAuthorizationId)
     {
-        var user = await _context.Users.FindAsync(userId);
-
-        /*
-          "No such user" and "user has not enrolled a PIN" are separate states with separate answers,
-          and collapsing them is a real (if quiet) defect: a token whose subject has no row would be
-          told to go and set a PIN — advice that cannot be followed, for an account that is not
-          there. WithdrawAsync collapses them into PIN_REQUIRED; that is the older code, and it is
-          the one that should converge here rather than the reverse.
-
-          Caught by TransferAsync_SenderUserNotFound_ThrowsNotFoundException, which existed before
-          this change and would have started reporting PIN_REQUIRED for a missing user.
-        */
-        if (user == null)
+        if (stepUpAuthorizationId is not { } authorizationId)
         {
-            throw new NotFoundException("User", userId);
+            throw new AuthenticationException(
+                "This transfer has not been authorised.", ErrorCodes.AuthorizationRequired);
         }
 
-        if (string.IsNullOrEmpty(user.PinHash))
-        {
-            throw new BusinessRuleException(
-                "PIN must be set before making transfers.", ErrorCodes.PinRequired);
-        }
-
-        // Throws 429 PIN_LOCKED when the PIN is locked; false is a wrong PIN.
-        if (!await _pinVerifier.VerifyPinAsync(userId, pin))
-        {
-            throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
-        }
+        return authorizationId;
     }
 
     /*
@@ -98,10 +96,11 @@ public class TransferService : ITransferService
       cannot know whether its money moved unable to find out. The in-body PIN already has this
       property; the authorisation must keep it.
 
-      PR 1 IS BACKEND-ONLY, so the header is optional here: no client sends it yet, and its absence
-      falls through to the in-band PIN that A1 already verifies on every transfer. That is not a
-      bypass — the PIN is still proved either way — it is the additive half of a two-PR change. PR 2
-      makes the header required and removes TransferRequest.Pin.
+      THE HEADER IS NOW THE ONLY PROOF. It shipped optional for one PR — nothing sent it yet, and
+      its absence fell through to the in-band PIN of ADR-0041 — but while both proofs are accepted
+      the weaker one decides, and six static digits authorising any amount to any payee is the
+      finding ADR-0042 opens with. `TransferRequest.Pin` is gone and a transfer without an
+      authorisation is refused `401 AUTHORIZATION_REQUIRED`.
 
       Validation happens where the payee is known (an external transfer's binding names the
       RECIPIENT USER, which only exists after the tag is resolved) and before anything is written, so
@@ -211,12 +210,12 @@ public class TransferService : ITransferService
 
     /// <inheritdoc />
     public async Task<TransferResponse> TransferAsync(
-        Guid userId, TransferRequest request, Guid? stepUpAuthorizationId = null)
+        Guid userId, TransferRequest request, Guid? stepUpAuthorizationId)
     {
         // Get sender's account with ownership check
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
 
-        await VerifyPinOrThrowAsync(userId, request.Pin);
+        var authorizationId = RequireAuthorization(stepUpAuthorizationId);
 
         var (senderUser, recipient, recipientAccount) =
             await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag);
@@ -224,10 +223,7 @@ public class TransferService : ITransferService
         // Bound to recipient.Id, not the tag: a handle is renameable (ADR-0015), so an authorisation
         // naming @admin would survive @admin becoming someone else's handle.
         var binding = new StepUpBinding(request.FromAccountId, null, recipient.Id, request.Amount);
-        if (stepUpAuthorizationId is { } authorizationId)
-        {
-            await _stepUp.ValidateAsync(userId, authorizationId, StepUpOperation.Transfer, binding);
-        }
+        await _stepUp.ValidateAsync(userId, authorizationId, StepUpOperation.Transfer, binding);
 
         // Use transaction for atomicity; retry optimistic-concurrency
         // conflicts on the accounts (see ConcurrencyRetry).
@@ -406,13 +402,24 @@ public class TransferService : ITransferService
 
     /// <inheritdoc />
     public async Task<InternalTransferResponse> InternalTransferAsync(
-        Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId = null)
+        Guid userId, InternalTransferRequest request, Guid? stepUpAuthorizationId)
     {
         // Validate accounts belong to user
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
         var toAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.ToAccountId, userId);
 
-        await VerifyPinOrThrowAsync(userId, request.Pin);
+        /*
+          AFTER BOTH OWNERSHIP CHECKS here, where the external path refuses before resolving its
+          payee — and the asymmetry is deliberate rather than an oversight.
+
+          It is the rung `VerifyPinOrThrowAsync` occupied on this method, and the reason the two
+          differ is what the check upstream of it reveals. On the external path that is SOMEONE
+          ELSE's handle, so answering it to a caller holding no second factor would turn the
+          endpoint into a directory. Here both accounts are the caller's OWN: `GetAccountWithOwner-
+          shipCheckAsync` tells them only what `GET /api/accounts` already does, so there is nothing
+          to withhold and the more specific refusal is the more useful one.
+        */
+        var authorizationId = RequireAuthorization(stepUpAuthorizationId);
 
         // Same account check (should be caught by validator, but double-check)
         if (request.FromAccountId == request.ToAccountId)
@@ -422,14 +429,11 @@ public class TransferService : ITransferService
 
         // The payee is the payer, so the binding names the destination ACCOUNT instead of a
         // recipient user. Same hash definition, different populated fields.
-        if (stepUpAuthorizationId is { } authorizationId)
-        {
-            await _stepUp.ValidateAsync(
-                userId,
-                authorizationId,
-                StepUpOperation.InternalTransfer,
-                new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount));
-        }
+        await _stepUp.ValidateAsync(
+            userId,
+            authorizationId,
+            StepUpOperation.InternalTransfer,
+            new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount));
 
         // Use transaction for atomicity; retry optimistic-concurrency
         // conflicts on the accounts (see ConcurrencyRetry).

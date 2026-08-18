@@ -72,8 +72,7 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = sender.AccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Transient-retry proof (external, Case A)",
-            Pin = TestPin
+            Description = "Transient-retry proof (external, Case A)"
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.Created,
@@ -101,8 +100,7 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = user.AccountId,
             ToAccountId = savingsId,
             Amount = 300m,
-            Description = "Transient-retry proof (internal, Case A)",
-            Pin = TestPin
+            Description = "Transient-retry proof (internal, Case A)"
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -134,8 +132,7 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = sender.AccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = 100m,
-            Description = "Transient-retry proof (external, Case B)",
-            Pin = TestPin
+            Description = "Transient-retry proof (external, Case B)"
         });
 
         // The transfer committed on attempt 1; the retry must recognise the
@@ -165,8 +162,7 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             FromAccountId = user.AccountId,
             ToAccountId = savingsId,
             Amount = 300m,
-            Description = "Transient-retry proof (internal, Case B)",
-            Pin = TestPin
+            Description = "Transient-retry proof (internal, Case B)"
         });
 
         await AssertResultUnknownAsync(response);
@@ -211,9 +207,9 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
         var user = new TestUser(
             result!.Data!.Token.AccessToken, result.Data.User.Id, result.Data.Account.Id, azureTag);
 
-        // ADR-0041: every user this file creates goes on to move money, and a transfer now carries
-        // its PIN in-band. Without enrolment each one is refused 422 PIN_REQUIRED and the transient
-        // retry these tests exist to prove would never be reached.
+        // ADR-0042: every user this file creates goes on to move money, and a transfer is now
+        // authorised by a minted reference. Without enrolment the mint is refused 422 PIN_REQUIRED
+        // and the transient retry these tests exist to prove would never be reached.
         using var setPin = new HttpRequestMessage(HttpMethod.Post, "/api/auth/pin")
         {
             Content = JsonContent.Create(new SetPinRequest { Pin = TestPin, Password = "TestPass123!" }, options: Json)
@@ -258,15 +254,47 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
         response.EnsureSuccessStatusCode();
     }
 
-    private static Task<HttpResponseMessage> TransferAsync(
-        HttpClient client, TestUser sender, TransferRequest body) =>
-        PostMonetaryAsync(client, sender.Token, "/api/transfers", body);
+    /*
+      Both helpers mint from the body they are about to send, so the binding cannot drift from the
+      transfer in four separate call sites — and so these tests stay about the transient retry.
 
-    private static Task<HttpResponseMessage> InternalTransferAsync(
-        HttpClient client, TestUser user, InternalTransferRequest body) =>
-        PostMonetaryAsync(client, user.Token, "/api/transfers/internal", body);
+      MINTING HAPPENS AFTER `fault.Arm()`, and that is safe rather than lucky: the injector latches
+      only on a command that is both an INSERT and names `[Transactions]`
+      (TransferTransientFault.IsTransferInsert). A mint writes `[StepUpAuthorizations]`, so it
+      cannot consume the one-shot fault the transfer under test needs.
+    */
+    private static async Task<HttpResponseMessage> TransferAsync(
+        HttpClient client, TestUser sender, TransferRequest body)
+    {
+        var authorization = await AuthoriseAsync(
+            client, sender.Token, "/api/transfers/authorizations",
+            new TransferAuthorizationRequest
+            {
+                FromAccountId = body.FromAccountId,
+                RecipientAzureTag = body.RecipientAzureTag,
+                Amount = body.Amount,
+                Pin = TestPin
+            });
+        return await PostMonetaryAsync(client, sender.Token, "/api/transfers", body, authorization);
+    }
 
-    private static async Task<HttpResponseMessage> PostMonetaryAsync<T>(
+    private static async Task<HttpResponseMessage> InternalTransferAsync(
+        HttpClient client, TestUser user, InternalTransferRequest body)
+    {
+        var authorization = await AuthoriseAsync(
+            client, user.Token, "/api/transfers/internal/authorizations",
+            new InternalTransferAuthorizationRequest
+            {
+                FromAccountId = body.FromAccountId,
+                ToAccountId = body.ToAccountId,
+                Amount = body.Amount,
+                Pin = TestPin
+            });
+        return await PostMonetaryAsync(
+            client, user.Token, "/api/transfers/internal", body, authorization);
+    }
+
+    private static async Task<Guid> AuthoriseAsync<T>(
         HttpClient client, string token, string url, T body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -274,7 +302,26 @@ public sealed class TransferTransientRetrySqlServerTests : IDisposable
             Content = JsonContent.Create(body, options: Json)
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var minted = await response.Content
+            .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(Json);
+        return minted!.Data!.AuthorizationId;
+    }
+
+    private static async Task<HttpResponseMessage> PostMonetaryAsync<T>(
+        HttpClient client, string token, string url, T body, Guid? stepUpAuthorizationId = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(body, options: Json)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+        if (stepUpAuthorizationId is { } authorizationId)
+        {
+            request.Headers.Add(StepUpConstants.HeaderName, authorizationId.ToString());
+        }
         return await client.SendAsync(request);
     }
 

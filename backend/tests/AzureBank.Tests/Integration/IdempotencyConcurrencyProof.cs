@@ -24,7 +24,7 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 internal static class IdempotencyConcurrencyProof
 {
-    /// <summary>The PIN this proof enrols and then sends in-band (ADR-0041).</summary>
+    /// <summary>The PIN this proof enrols and then spends at the mint endpoint (ADR-0042).</summary>
     private const string TestPin = "123456";
 
     private static readonly JsonSerializerOptions Json =
@@ -54,12 +54,20 @@ internal static class IdempotencyConcurrencyProof
             FromAccountId = sender.AccountId,
             RecipientAzureTag = recipient.AzureTag,
             Amount = amount,
-            Description = "Concurrency proof",
-            Pin = TestPin
+            Description = "Concurrency proof"
         }, Json);
 
+        /*
+          ONE authorisation, presented by all N parallel requests. It is spendable exactly once and
+          the idempotency claim is winnable exactly once, so this proof now exercises both
+          single-use mechanisms at the same time — and either failing would show up as more than one
+          debit, which is what the balance assertions below already measure.
+        */
+        var authorization = await AuthoriseTransferAsync(
+            client, sender, recipient.AzureTag, amount);
+
         var outcome = await FireIdenticalRequestsAsync(
-            client, sender.Token, "/api/transfers", body, parallelism, log);
+            client, sender.Token, "/api/transfers", body, parallelism, log, authorization);
 
         // Exactly one execution, mathematically:
         (await GetBalanceAsync(client, sender)).Should().Be(
@@ -103,8 +111,36 @@ internal static class IdempotencyConcurrencyProof
 
     private sealed record ProofOutcome(int Replays, int Conflicts);
 
+    /// <summary>
+    /// Mints the authorisation the transfer proof presents. Bound to exactly the movement the raw
+    /// body describes: a mismatch anywhere would be refused 401 and the proof would report zero
+    /// winners instead of the one it is testing for.
+    /// </summary>
+    private static async Task<Guid> AuthoriseTransferAsync(
+        HttpClient client, ProofUser sender, string recipientAzureTag, decimal amount)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers/authorizations")
+        {
+            Content = JsonContent.Create(new TransferAuthorizationRequest
+            {
+                FromAccountId = sender.AccountId,
+                RecipientAzureTag = recipientAzureTag,
+                Amount = amount,
+                Pin = TestPin
+            }, options: Json)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", sender.Token);
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content
+            .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(Json);
+        return body!.Data!.AuthorizationId;
+    }
+
     private static async Task<ProofOutcome> FireIdenticalRequestsAsync(
-        HttpClient client, string token, string url, string rawBody, int parallelism, Action<string> log)
+        HttpClient client, string token, string url, string rawBody, int parallelism, Action<string> log,
+        Guid? stepUpAuthorizationId = null)
     {
         var key = Guid.NewGuid();
         log($"firing {parallelism} identical parallel POST {url} with key {key}...");
@@ -118,6 +154,10 @@ internal static class IdempotencyConcurrencyProof
                 };
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 request.Headers.Add(IdempotencyConstants.HeaderName, key.ToString());
+                if (stepUpAuthorizationId is { } authorizationId)
+                {
+                    request.Headers.Add(StepUpConstants.HeaderName, authorizationId.ToString());
+                }
                 var response = await client.SendAsync(request);
                 return (Status: response.StatusCode,
                         Replayed: response.Headers.Contains(IdempotencyConstants.ReplayedHeaderName),

@@ -2,7 +2,17 @@ import { useCallback, useRef, useState } from 'react';
 import type { ApiProblem } from '../api/problemBaseQuery';
 import type { IdempotentArg } from '../features/api/apiSlice';
 
-/** Structural shape of an RTK Query mutation trigger taking an IdempotentArg. */
+/**
+ * Structural shape of an RTK Query mutation trigger taking an IdempotentArg.
+ *
+ * `TBody` must stay inside the PARAMETER type, which is its only inference site. Parameterising
+ * this over the whole argument instead — an attempt to carry "the transfers require an
+ * authorisation" out to the pages — left `TBody` mentioned only in a constraint, so it silently
+ * inferred as `unknown` and every money body stopped being type-checked. Measured: a transfer body
+ * still carrying the deleted `pin` compiled clean. The requirement it was meant to buy is enforced
+ * where it can actually be checked — `required: true` in the published contract, and a mock that
+ * refuses a headerless transfer exactly as the API does.
+ */
 export type IdempotentTrigger<TBody, TResult> = (arg: IdempotentArg<TBody>) => {
   unwrap(): Promise<TResult>;
 };

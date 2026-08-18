@@ -110,20 +110,25 @@ public class TransferController : ControllerBase
     [HttpPost]
     [EndpointSummary("Transfer to user")]
     [RequireIdempotency]
+    [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<TransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    // Declared because the in-band PIN (ADR-0041) makes all three reachable, and a client that
-    // does not handle them shows the user a generic failure for a mistyped PIN:
-    // 401 a wrong PIN, 422 no PIN enrolled, 429 the ADR-0010 lockout. Measured, not assumed.
+    /*
+      401 ONLY, where ADR-0041 also declared 422 and 429.
+
+      Those two were reachable because this endpoint verified the PIN: 422 for no PIN enrolled, 429
+      for the ADR-0010 lockout. It no longer does — the PIN is spent at the mint endpoint — so both
+      moved there with it, and leaving them declared here would promise refusals this action can no
+      longer produce. That is the same defect class the guards PR was about: a contract wider than
+      the code. The three step-up codes (AUTHORIZATION_REQUIRED, _EXPIRED, _INVALID) are all 401.
+    */
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<TransferResponse>>> Transfer(
         [Description("Transfer details")] [FromBody] TransferRequest request,
-        [Description("Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof.")]
+        [Description("Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.")]
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {
         await _transferValidator.ValidateAndThrowAsync(request);
@@ -142,20 +147,17 @@ public class TransferController : ControllerBase
     [HttpPost("internal")]
     [EndpointSummary("Internal transfer")]
     [RequireIdempotency]
+    [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<InternalTransferResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    // Declared because the in-band PIN (ADR-0041) makes all three reachable, and a client that
-    // does not handle them shows the user a generic failure for a mistyped PIN:
-    // 401 a wrong PIN, 422 no PIN enrolled, 429 the ADR-0010 lockout. Measured, not assumed.
+    // 401 only, and 422/429 gone with the PIN check — see the note on Transfer above.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<InternalTransferResponse>>> InternalTransfer(
         [Description("Internal transfer details")] [FromBody] InternalTransferRequest request,
-        [Description("Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). Optional while the in-band PIN remains the enforced proof.")]
+        [Description("Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.")]
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {
         await _internalTransferValidator.ValidateAndThrowAsync(request);

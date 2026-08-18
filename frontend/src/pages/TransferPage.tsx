@@ -449,7 +449,6 @@ export function TransferPage() {
         fromAccountId: data.fromAccountId,
         recipientAzureTag: confirmed.azureTag,
         amount: data.amount,
-        pin: enteredPin.current,
       },
       // A HEADER at the wire, never a body field: the server fingerprints the body alone.
       { stepUpAuthorizationId: authorizationId },

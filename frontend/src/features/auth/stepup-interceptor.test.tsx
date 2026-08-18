@@ -49,7 +49,6 @@ function Harness() {
               fromAccountId: 'a',
               recipientAzureTag: 'friend',
               amount: 25,
-              pin: '123456',
             });
             setOut(`ok:${result.transactionNumber}`);
           } catch (caught) {
@@ -169,13 +168,13 @@ describe('step-up interceptor (PR-11)', () => {
       `toEqual`, not `toMatchObject`: the query fn destructures `{ idempotencyKey, body }`, so the
       field most likely to leak into the payload by accident is the key itself — and a subset
       matcher would wave that through. `description` is absent rather than undefined because
-      JSON.stringify drops undefined values.
+      JSON.stringify drops undefined values. No `pin` either: ADR-0042 deleted it from the request,
+      and an exact matcher is what would catch it coming back.
     */
     expect(JSON.parse(bodies[0])).toEqual({
       fromAccountId: 'a',
       recipientAzureTag: 'friend',
       amount: 25,
-      pin: '123456',
     });
     // Content checked once; `===` carries it to the replay transitively. Keep BOTH assertions —
     // JSON.parse discards key order and whitespace, which is the byte-level property claimed above.

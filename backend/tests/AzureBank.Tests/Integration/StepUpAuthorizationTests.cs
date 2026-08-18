@@ -117,8 +117,7 @@ public class StepUpAuthorizationTests : IntegrationTestBase
                 FromAccountId = from,
                 RecipientAzureTag = recipientTag,
                 Amount = amount,
-                Description = "step-up test",
-                Pin = CorrectPin
+                Description = "step-up test"
             }, options: JsonOptions)
         };
         request.Headers.Add(IdempotencyConstants.HeaderName, idempotencyKey.ToString());
@@ -413,29 +412,6 @@ public class StepUpAuthorizationTests : IntegrationTestBase
         (await BalanceOfAsync(token, account)).Should().Be(afterFirst, "a replay must not move money twice");
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // The temporary PR-1 shape
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// PR 1 ships without a client, so a transfer with NO authorisation header still works on the
-    /// in-band PIN alone. Nothing is weaker than before this PR — the PIN is verified either way.
-    /// PR 2 makes the header required and deletes <c>TransferRequest.Pin</c>, at which point this
-    /// test is expected to be REPLACED by its opposite rather than deleted quietly.
-    /// </summary>
-    [Fact]
-    public async Task Transfer_WithNoAuthorisationHeader_StillWorksOnTheInBandPin()
-    {
-        var (token, _, account, recipient) = await ScenarioAsync();
-        var before = await BalanceOfAsync(token, account);
-
-        SetAuthHeader(token);
-        var response = await TransferAsync(account, recipient, authorizationId: null, Guid.NewGuid());
-
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        (await BalanceOfAsync(token, account)).Should().Be(before - Amount);
-    }
-
     [Fact]
     public async Task Transfer_WithAMalformedAuthorisationHeader_IsRejectedByModelBinding()
     {
@@ -447,8 +423,7 @@ public class StepUpAuthorizationTests : IntegrationTestBase
             {
                 FromAccountId = account,
                 RecipientAzureTag = recipient,
-                Amount = Amount,
-                Pin = CorrectPin
+                Amount = Amount
             }, options: JsonOptions)
         };
         request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
@@ -460,5 +435,158 @@ public class StepUpAuthorizationTests : IntegrationTestBase
         // OBSERVED: 400 BadRequest — model binding refuses a non-UUID before the action runs, which
         // is the same shape as IDEMPOTENCY_KEY_INVALID and needs no code of its own.
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    // The five properties the enforcement flip owes (ADR-0042, second half).
+
+    [Fact]
+    public async Task ATransferPresentingNoAuthorisationIsRefused_AndMovesNoMoney()
+    {
+        /*
+          THE POINT OF THE WHOLE CHANGE. Until the flip this exact request succeeded on the strength
+          of six digits in the body - one static credential authorising any amount to any payee,
+          which is requirement (b) of PSD2-RTS Art. 5 unmet and the finding ADR-0042 opens with.
+
+          MEASURED on main @ 2a98625 before the change: the identical request answered 201.
+
+          THIS IS THE REPLACEMENT for Transfer_WithNoAuthorisationHeader_StillWorksOnTheInBandPin,
+          which asserted that same 201 and whose own docstring asked to be "REPLACED by its opposite
+          rather than deleted quietly" when the header became required. Same scenario, same call,
+          inverted expectation.
+        */
+        var (token, _, account, recipient) = await ScenarioAsync();
+        var before = await BalanceOfAsync(token, account);
+
+        var response = await TransferAsync(account, recipient, null, Guid.NewGuid());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AuthorizationRequired);
+        (await BalanceOfAsync(token, account)).Should().Be(before, "a refusal must not move money");
+    }
+
+    [Fact]
+    public async Task AnEmptyHeaderIsAnAbsentOne_NotAMalformedOne()
+    {
+        /*
+          MEASURED, and the row that would have been guessed wrong. [FromHeader] Guid? binds an
+          EMPTY value to null, so an empty header is indistinguishable from no header at all and
+          lands on AUTHORIZATION_REQUIRED - NOT on the 400 that a non-UUID gets from model binding.
+
+          Verified on the wire before the flip with curl -v (the request line read
+          "> Step-Up-Authorization:" with no value): the API answered 201, i.e. it took the in-band
+          PIN path reserved for "no header". A comment in apiSlice.ts asserted the opposite and is
+          corrected in this change.
+        */
+        var (token, _, account, recipient) = await ScenarioAsync();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
+        {
+            Content = JsonContent.Create(new TransferRequest
+            {
+                FromAccountId = account,
+                RecipientAzureTag = recipient,
+                Amount = Amount
+            }, options: JsonOptions)
+        };
+        request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+        request.Headers.TryAddWithoutValidation(StepUpConstants.HeaderName, string.Empty);
+
+        SetAuthHeader(token);
+        var response = await Client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "an empty header binds to null, exactly like an absent one");
+        (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AuthorizationRequired);
+    }
+
+    [Fact]
+    public async Task AnInternalTransferPresentingNoAuthorisationIsRefused()
+    {
+        // The internal path is a separate method with its own ownership checks, so it gets its own
+        // proof rather than an assumption that the two share a code path.
+        var (token, _, account, _) = await ScenarioAsync();
+        SetAuthHeader(token);
+
+        var created = await Client.PostAsJsonAsync("/api/accounts", new CreateAccountRequest
+        {
+            Name = "Savings",
+            Type = AccountType.Savings
+        }, JsonOptions);
+        created.EnsureSuccessStatusCode();
+        var second = (await created.Content
+            .ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!.Id;
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers/internal")
+        {
+            Content = JsonContent.Create(new InternalTransferRequest
+            {
+                FromAccountId = account,
+                ToAccountId = second,
+                Amount = Amount
+            }, options: JsonOptions)
+        };
+        request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+
+        var response = await Client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AuthorizationRequired);
+    }
+
+    [Fact]
+    public async Task ABodyStillCarryingAPinIsNotAWayThrough()
+    {
+        /*
+          The old client's exact request: a body carrying a pin and no header. Pin is gone from the
+          DTO, so System.Text.Json simply ignores the extra property - which means the refusal must
+          come from the MISSING SECOND FACTOR, not from a complaint about the body. Anything else
+          would leave a reader thinking the PIN still means something here.
+        */
+        var (token, _, account, recipient) = await ScenarioAsync();
+
+        var json =
+            $"{{\"fromAccountId\":\"{account}\",\"recipientAzureTag\":\"{recipient}\","
+            + $"\"amount\":{Amount},\"pin\":\"{CorrectPin}\"}}";
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+
+        SetAuthHeader(token);
+        var response = await Client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AuthorizationRequired,
+            "the PIN in the body is an unknown property now, so the refusal is about the header");
+    }
+
+    [Fact]
+    public async Task AReplayNeedsNoAuthorisationAtAll()
+    {
+        /*
+          The property the flip could most easily have broken, and the reason the check lives inside
+          TransferService rather than in front of the pipeline. IdempotencyMiddleware writes the
+          stored response and returns BEFORE _next, so a retry of a COMPLETED transfer runs no model
+          binding, no controller and no service - and therefore no authorisation check.
+
+          Without that, the one client who provably cannot know whether its money moved - the one
+          whose response was lost - could no longer find out, because its authorisation was spent by
+          the very call it never saw the answer to.
+        */
+        var (token, _, account, recipient) = await ScenarioAsync();
+        var authorization = await MintOkAsync(account, recipient);
+        var key = Guid.NewGuid();
+
+        var first = await TransferAsync(account, recipient, authorization.AuthorizationId, key);
+        first.StatusCode.Should().Be(HttpStatusCode.Created);
+        var balanceAfterFirst = await BalanceOfAsync(token, account);
+
+        var replay = await TransferAsync(account, recipient, null, key);
+
+        replay.StatusCode.Should().Be(HttpStatusCode.Created, "the stored response is handed back");
+        replay.Headers.Contains(IdempotencyConstants.ReplayedHeaderName).Should().BeTrue();
+        (await BalanceOfAsync(token, account)).Should().Be(
+            balanceAfterFirst, "a replay moves no additional money");
     }
 }

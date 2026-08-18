@@ -12,22 +12,24 @@ using FluentAssertions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// ADR-0041: a transfer carries its PIN in-band and the API verifies it ITSELF.
+/// Where a transfer's PIN is proved, and what happens when it is not.
 ///
 /// <para>
-/// Every case below goes STRAIGHT TO THE API — no BFF in the pipeline, no session cookie, nothing
-/// but a bearer token, which is exactly the shape of request the old design could not refuse. Before
-/// this change the only PIN check for a transfer lived in <c>AuthLevelMiddleware</c> in the BFF
-/// process, so anything that reached the API directly moved money with no PIN at all. That is not a
-/// hypothetical: it was measured on the running stack and is written up in
-/// <c>BearerTokenTransformProvider</c>.
+/// ADR-0041 put the PIN in the transfer body so the API could refuse on its own, closing a measured
+/// hole: before it, the only step-up check lived in the BFF's <c>AuthLevelMiddleware</c>, so anything
+/// reaching the API directly moved money with no PIN at all. ADR-0042's second half moved the proof
+/// one endpoint upstream — the PIN is now spent at <c>POST /api/transfers/authorizations</c>, which
+/// mints a reference bound to one amount and one payee, and the transfer accepts nothing else. Every
+/// case in this file therefore targets THE MINT, not the transfer; the properties are unchanged, the
+/// address is not.
 /// </para>
 ///
 /// <para>
-/// Status codes and error codes here were MEASURED against this pipeline, not copied from the
-/// withdraw path they were modelled on — the observed value is quoted beside each assertion.
-/// <c>CustomWebApplicationFactory</c> runs <c>Program.cs</c> verbatim, so the envelope, the
-/// exception handler and the validators are the real ones.
+/// Every case still goes STRAIGHT TO THE API — no BFF, no session cookie, nothing but a bearer
+/// token, the exact shape the old design could not refuse. Status codes and error codes here were
+/// MEASURED against this pipeline and the observed value is quoted beside each assertion.
+/// <c>CustomWebApplicationFactory</c> runs <c>Program.cs</c> verbatim, so the envelope, the exception
+/// handler and the validators are the real ones.
 /// </para>
 /// </summary>
 public class TransferPinVerificationTests : IntegrationTestBase
@@ -36,13 +38,13 @@ public class TransferPinVerificationTests : IntegrationTestBase
 
     private const string CorrectPin = "123456";
     private const string WrongPin = "999999";
+    private const string MintUrl = "/api/transfers/authorizations";
 
-    private static TransferRequest Transfer(Guid from, string recipient, string pin) => new()
+    private static TransferAuthorizationRequest Authorisation(Guid from, string recipient, string pin) => new()
     {
         FromAccountId = from,
         RecipientAzureTag = recipient,
         Amount = 25m,
-        Description = "PIN verification test",
         Pin = pin
     };
 
@@ -62,6 +64,10 @@ public class TransferPinVerificationTests : IntegrationTestBase
         using var doc = System.Text.Json.JsonDocument.Parse(body);
         return doc.RootElement.TryGetProperty("errorCode", out var code) ? code.GetString() : null;
     }
+
+    /// <summary>Posts a raw JSON body to the mint, so bodies C# cannot express are still testable.</summary>
+    private Task<HttpResponseMessage> PostRawAsync(string json) =>
+        Client.PostAsync(MintUrl, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
 
     /// <summary>
     /// Registers a funded sender plus a recipient, and returns the recipient's handle. The sender
@@ -95,14 +101,14 @@ public class TransferPinVerificationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Transfer_WithNoPinEnrolled_IsRefused_AndMovesNoMoney()
+    public async Task Authorising_WithNoPinEnrolled_IsRefused_AndMovesNoMoney()
     {
         var (token, account, recipient) = await ScenarioAsync(enrolPin: false);
         var before = await BalanceOfAsync(token, account);
 
         SetAuthHeader(token);
-        var response = await PostMonetaryAsync(
-            "/api/transfers", Transfer(account, recipient, CorrectPin));
+        var response = await Client.PostAsJsonAsync(
+            MintUrl, Authorisation(account, recipient, CorrectPin), JsonOptions);
 
         // OBSERVED: 422 UnprocessableEntity / errorCode PIN_REQUIRED
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
@@ -111,14 +117,14 @@ public class TransferPinVerificationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Transfer_WithTheWrongPin_IsRefused_AndMovesNoMoney()
+    public async Task Authorising_WithTheWrongPin_IsRefused_AndMovesNoMoney()
     {
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
         var before = await BalanceOfAsync(token, account);
 
         SetAuthHeader(token);
-        var response = await PostMonetaryAsync(
-            "/api/transfers", Transfer(account, recipient, WrongPin));
+        var response = await Client.PostAsJsonAsync(
+            MintUrl, Authorisation(account, recipient, WrongPin), JsonOptions);
 
         // OBSERVED: 401 Unauthorized / errorCode INVALID_PIN
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -127,44 +133,35 @@ public class TransferPinVerificationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Transfer_WithNoPinField_IsRejectedByValidation()
+    public async Task Authorising_WithNoPinField_IsRejectedByValidation()
     {
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
 
         SetAuthHeader(token);
         // Deliberately hand-rolled JSON: the DTO's `required string Pin` makes the omission
-        // unrepresentable in C#, and that is the whole point — an OLD CLIENT that predates ADR-0041
-        // sends exactly this body, and it must be refused rather than defaulted.
-        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
-        {
-            Content = new StringContent(
-                $$"""
-                {"fromAccountId":"{{account}}","recipientAzureTag":"{{recipient}}","amount":25}
-                """,
-                System.Text.Encoding.UTF8, "application/json")
-        };
-        request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
-        var response = await Client.SendAsync(request);
+        // unrepresentable in C#, and that is the whole point — a client that thinks the PIN is
+        // optional must be refused rather than defaulted.
+        var response = await PostRawAsync(
+            $$"""
+            {"fromAccountId":"{{account}}","recipientAzureTag":"{{recipient}}","amount":25}
+            """);
 
         /*
-          OBSERVED against THIS endpoint — an earlier revision pasted the internal DTO's message
-          here, which is the same defect in miniature as the ones this PR is about: evidence
-          attributed to a request that was never made. The ENVELOPE is the point, not just the
-          status:
+          THE ENVELOPE IS THE POINT, not just the status. `required string Pin` is refused by
+          System.Text.Json during DESERIALISATION, so the request never reaches FluentValidation —
+          which means it gets the FRAMEWORK envelope (rfc9110 type, default title, `$`/`request`
+          keys) rather than the hand-written "Validation Failed" one:
 
             400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
                  "title":"One or more validation errors occurred.",
                  "errors":{"$":["JSON deserialization for type
-                                 'AzureBank.Shared.DTOs.Transfer.TransferRequest' was missing
-                                 required properties including: 'pin'."],
+                                 'AzureBank.Shared.DTOs.Transfer.TransferAuthorizationRequest' was
+                                 missing required properties including: 'pin'."],
                            "request":["The request field is required."]}}
 
-          `required string Pin` is refused by System.Text.Json during DESERIALISATION, so the request
-          never reaches FluentValidation — which means it gets the FRAMEWORK envelope (rfc9110 type,
-          default title, `$`/`request` keys) rather than the hand-written "Validation Failed" one.
           A status-only assertion cannot tell those apart, and the difference is what broke the
-          contract suite: a same-account probe with no pin stopped testing the same-account rule and
-          started testing the deserialiser.
+          contract suite once: a probe with no pin stopped testing the rule it named and started
+          testing the deserialiser.
         */
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await response.Content.ReadAsStringAsync();
@@ -188,15 +185,15 @@ public class TransferPinVerificationTests : IntegrationTestBase
 
           OBSERVED: 400 {"errors":{"Pin":["PIN must be exactly 6 digits."]}} — PascalCase key,
           because DataAnnotations report against the bound PROPERTY, unlike FluentValidation's
-          camelCase `toAccountId` on the very same endpoint.
+          camelCase keys on the very same endpoint.
         */
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
         SetAuthHeader(token);
 
         for (var attempt = 1; attempt <= 3; attempt++)
         {
-            var junk = await PostMonetaryAsync(
-                "/api/transfers", Transfer(account, recipient, "abcdef"));
+            var junk = await Client.PostAsJsonAsync(
+                MintUrl, Authorisation(account, recipient, "abcdef"), JsonOptions);
             junk.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
             using var doc = System.Text.Json.JsonDocument.Parse(
@@ -207,8 +204,8 @@ public class TransferPinVerificationTests : IntegrationTestBase
                 .Should().Contain("PIN must be exactly 6 digits.");
         }
 
-        var wrong = await PostMonetaryAsync(
-            "/api/transfers", Transfer(account, recipient, WrongPin));
+        var wrong = await Client.PostAsJsonAsync(
+            MintUrl, Authorisation(account, recipient, WrongPin), JsonOptions);
         wrong.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
             "three MALFORMED pins must not have consumed the three real attempts");
         (await ErrorCodeOf(wrong)).Should().Be(ErrorCodes.InvalidPin);
@@ -218,14 +215,13 @@ public class TransferPinVerificationTests : IntegrationTestBase
     public async Task NonStringPin_FailsDeserialisation_AndIsKeyedByJsonPath()
     {
         /*
-          The mock coerced this with String(pin) until review round 2, and String(123456) is
+          The mock coerced this with String(pin) until an earlier review round, and String(123456) is
           "123456" — which matches the six-digit rule. So the mock ACCEPTED a payload the API
           refuses outright. Pinning the real answer here is what stops that drifting back.
 
           OBSERVED, for a JSON number and for a boolean alike:
             400 {"request":["The request field is required."],
-                 "$.pin":["The JSON value could not be converted to System.String.
-                           Path: $.pin | LineNumber: 0 | BytePositionInLine: 111."]}
+                 "$.pin":["The JSON value could not be converted to System.String. …"]}
 
           Keyed by JSON PATH, not by property name: System.Text.Json fails the conversion before
           DataAnnotations ever run. NULL is different and is covered below — it converts fine and is
@@ -236,15 +232,9 @@ public class TransferPinVerificationTests : IntegrationTestBase
 
         foreach (var literal in new[] { "123456", "true" })
         {
-            var json =
+            var response = await PostRawAsync(
                 $"{{\"fromAccountId\":\"{account}\",\"recipientAzureTag\":\"{recipient}\","
-                + $"\"amount\":25,\"pin\":{literal}}}";
-            var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
-            {
-                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
-            };
-            request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
-            var response = await Client.SendAsync(request);
+                + $"\"amount\":25,\"pin\":{literal}}}");
 
             response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
             using var doc = System.Text.Json.JsonDocument.Parse(
@@ -264,15 +254,9 @@ public class TransferPinVerificationTests : IntegrationTestBase
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
         SetAuthHeader(token);
 
-        var json =
+        var response = await PostRawAsync(
             $"{{\"fromAccountId\":\"{account}\",\"recipientAzureTag\":\"{recipient}\","
-            + "\"amount\":25,\"pin\":null}";
-        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
-        {
-            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
-        };
-        request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
-        var response = await Client.SendAsync(request);
+            + "\"amount\":25,\"pin\":null}");
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         using var doc = System.Text.Json.JsonDocument.Parse(
@@ -290,20 +274,18 @@ public class TransferPinVerificationTests : IntegrationTestBase
           doubly-invalid body names BOTH. The mock returned early from its amount check before the
           pin gate ran, so a form could highlight one field where the API highlights two.
 
-          OBSERVED: amount -5, pin "12" ->
-            400 {"Pin":["PIN must be exactly 6 digits."],
-                 "Amount":["Amount must be between $0.01 and $100,000.00"]}
+          OBSERVED: amount -5, pin "12" -> 400 with BOTH `Pin` and `Amount` keys.
         */
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
         SetAuthHeader(token);
 
-        var response = await PostMonetaryAsync("/api/transfers", new TransferRequest
+        var response = await Client.PostAsJsonAsync(MintUrl, new TransferAuthorizationRequest
         {
             FromAccountId = account,
             RecipientAzureTag = recipient,
             Amount = -5m,
             Pin = "12"
-        });
+        }, JsonOptions);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         using var doc = System.Text.Json.JsonDocument.Parse(
@@ -317,8 +299,9 @@ public class TransferPinVerificationTests : IntegrationTestBase
     public async Task UnknownSourceAccount_IsRefusedBeforeThePin()
     {
         /*
-          Ownership precedes the PIN in TransferAsync, so a probe against a foreign account id is a
-          404 whatever pin it carries — it cannot be used to test PINs, and it costs no attempt.
+          Ownership precedes the PIN in AuthoriseTransferAsync — deliberately, and it is the same
+          ordering the transfer applies — so a probe against a foreign account id is a 404 whatever
+          pin it carries. It cannot be used to test PINs, and it costs no attempt.
 
           OBSERVED, same unknown id, two pins:
             correct pin -> 404 ACCOUNT_NOT_FOUND
@@ -330,31 +313,44 @@ public class TransferPinVerificationTests : IntegrationTestBase
 
         foreach (var pin in new[] { CorrectPin, WrongPin })
         {
-            var response = await PostMonetaryAsync(
-                "/api/transfers", Transfer(stranger, recipient, pin));
+            var response = await Client.PostAsJsonAsync(
+                MintUrl, Authorisation(stranger, recipient, pin), JsonOptions);
             response.StatusCode.Should().Be(HttpStatusCode.NotFound);
             (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AccountNotFound);
         }
     }
 
     [Fact]
-    public async Task Transfer_WithTheCorrectPin_Succeeds()
+    public async Task TheCorrectPin_MintsAnAuthorisation_ThatMovesTheMoney()
     {
-        // The non-vacuity guard for every refusal above: same pipeline, same shape, right PIN.
+        // The non-vacuity guard for every refusal above: same pipeline, right PIN, and the minted
+        // reference actually spends. A file of refusals proves nothing without one success.
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
         var before = await BalanceOfAsync(token, account);
 
         SetAuthHeader(token);
-        var response = await PostMonetaryAsync(
-            "/api/transfers", Transfer(account, recipient, CorrectPin));
+        var minted = await Client.PostAsJsonAsync(
+            MintUrl, Authorisation(account, recipient, CorrectPin), JsonOptions);
 
         // OBSERVED: 201 Created
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        minted.StatusCode.Should().Be(HttpStatusCode.Created);
+        var authorization = (await minted.Content
+            .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(JsonOptions))!.Data!;
+
+        var transfer = await PostMonetaryAsync("/api/transfers", new TransferRequest
+        {
+            FromAccountId = account,
+            RecipientAzureTag = recipient,
+            Amount = 25m,
+            Description = "PIN verification test"
+        }, stepUpAuthorizationId: authorization.AuthorizationId);
+
+        transfer.StatusCode.Should().Be(HttpStatusCode.Created);
         (await BalanceOfAsync(token, account)).Should().Be(before - 25m);
     }
 
     [Fact]
-    public async Task InternalTransfer_WithTheWrongPin_IsRefused_AndMovesNoMoney()
+    public async Task AuthorisingAnInternalTransfer_WithTheWrongPin_IsRefused_AndMovesNoMoney()
     {
         // The internal path is a separate method with its own ownership checks, so it gets its own
         // proof rather than an assumption that the two share a code path.
@@ -375,14 +371,16 @@ public class TransferPinVerificationTests : IntegrationTestBase
         var before = await BalanceOfAsync(token, primaryAccount);
 
         SetAuthHeader(token);
-        var response = await PostMonetaryAsync("/api/transfers/internal", new InternalTransferRequest
-        {
-            FromAccountId = primaryAccount,
-            ToAccountId = second,
-            Amount = 25m,
-            Description = "PIN verification test",
-            Pin = WrongPin
-        });
+        var response = await Client.PostAsJsonAsync(
+            "/api/transfers/internal/authorizations",
+            new InternalTransferAuthorizationRequest
+            {
+                FromAccountId = primaryAccount,
+                ToAccountId = second,
+                Amount = 25m,
+                Pin = WrongPin
+            },
+            JsonOptions);
 
         // OBSERVED: 401 Unauthorized / errorCode INVALID_PIN
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -391,25 +389,36 @@ public class TransferPinVerificationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task IdempotencyKeyIsCheckedBeforeThePin()
+    public async Task IdempotencyKeyIsCheckedBeforeTheAuthorisation()
     {
         /*
-          ORDER, not just outcomes. Idempotency is MIDDLEWARE (`app.UseIdempotency()`,
-          Program.cs:139), not an action filter — this comment said "action filter" until ADR-0042
-          had to reason about the ordering and found the claim wrong. The distinction matters: a
-          filter would run INSIDE MVC after model binding, whereas this runs before MVC is entered
-          at all, which is why a replay skips validation, the controller and the service entirely.
-          The outcome pinned here is the same either way — a request with a CORRECT PIN and no key
-          is refused for the key, not waved through.
+          ORDER, not just outcomes — and this one stays on the TRANSFER, because that is where both
+          checks meet. Idempotency is MIDDLEWARE (`app.UseIdempotency()`, Program.cs:139), not an
+          action filter: it runs before MVC is entered at all, which is why a replay skips model
+          binding, the controller and the service entirely — and therefore skips the authorisation
+          check too, the property ADR-0042 depends on.
 
-          Worth pinning because the mock has to reproduce the same order, and an order asserted only
-          in the mock is an order nobody measured.
+          What is pinned here is that a request holding a PERFECTLY GOOD authorisation and no
+          idempotency key is refused for the key, not waved through. Worth pinning because the mock
+          has to reproduce the same order, and an order asserted only in the mock is an order nobody
+          measured.
         */
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
-
         SetAuthHeader(token);
-        var response = await Client.PostAsJsonAsync(
-            "/api/transfers", Transfer(account, recipient, CorrectPin), JsonOptions);
+        var authorization = await AuthoriseTransferAsync(account, recipient, 25m);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transfers")
+        {
+            Content = JsonContent.Create(new TransferRequest
+            {
+                FromAccountId = account,
+                RecipientAzureTag = recipient,
+                Amount = 25m,
+                Description = "PIN verification test"
+            }, options: JsonOptions)
+        };
+        request.Headers.Add(StepUpConstants.HeaderName, authorization.ToString());
+        var response = await Client.SendAsync(request);
 
         // OBSERVED: 400 BadRequest / errorCode IDEMPOTENCY_KEY_MISSING
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -417,12 +426,14 @@ public class TransferPinVerificationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Transfer_AfterRepeatedWrongPins_IsLockedOut()
+    public async Task Authorising_AfterRepeatedWrongPins_IsLockedOut()
     {
         /*
           The attempt limiter is shared with withdraw (ADR-0011), so what is proved here is that the
-          transfer path GOES THROUGH it rather than around it — a service that verified the hash
-          directly would let an attacker enumerate a six-digit PIN without ever tripping a lock.
+          MINT goes THROUGH it rather than around it — a service that verified the hash directly
+          would let an attacker enumerate a six-digit PIN without ever tripping a lock. Since
+          ADR-0042 this is the only endpoint on the transfer path that can spend an attempt, so if
+          the lockout is not here it is nowhere.
         */
         var (token, account, recipient) = await ScenarioAsync(enrolPin: true);
         SetAuthHeader(token);
@@ -432,13 +443,13 @@ public class TransferPinVerificationTests : IntegrationTestBase
         var outcomes = new List<(HttpStatusCode Status, string? Code)>();
         for (var attempt = 1; attempt <= 4; attempt++)
         {
-            var response = await PostMonetaryAsync(
-                "/api/transfers", Transfer(account, recipient, WrongPin));
+            var response = await Client.PostAsJsonAsync(
+                MintUrl, Authorisation(account, recipient, WrongPin), JsonOptions);
             outcomes.Add((response.StatusCode, await ErrorCodeOf(response)));
         }
 
         outcomes.Should().Contain(
             o => o.Status == HttpStatusCode.TooManyRequests && o.Code == ErrorCodes.PinLocked,
-            "repeated wrong PINs on the TRANSFER path must trip the same lockout withdraw uses");
+            "repeated wrong PINs at the mint must trip the same lockout withdraw uses");
     }
 }

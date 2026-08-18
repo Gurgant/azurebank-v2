@@ -2063,7 +2063,22 @@ const STEP_UP_HEADER = 'Step-Up-Authorization';
  */
 function readStepUpHeader(request: Request): { id: string | null; errors: string[] } {
   const raw = request.headers.get(STEP_UP_HEADER);
-  if (raw === null) return { id: null, errors: [] };
+  /*
+    ABSENT, EMPTY and WHITESPACE-ONLY are one case, and that is measured rather than tidy.
+
+    MVC binds `[FromHeader] Guid?` by trimming first, so all three arrive at the action as `null`
+    and land on the same refusal. Observed on the real API with curl, one request per variant:
+
+      Step-Up-Authorization: <empty>  -> 401 AUTHORIZATION_REQUIRED
+      Step-Up-Authorization: "  "     -> 401 AUTHORIZATION_REQUIRED
+      Step-Up-Authorization: "	"     -> 401 AUTHORIZATION_REQUIRED
+
+    This read the raw value and handed '' straight to parseGuid, which reported a binding error —
+    so the mock answered 400 where the API answers 401. The two are not interchangeable: a 400 says
+    "your header is malformed, fix the value", a 401 says "you presented no second factor", and a
+    client branches differently on each.
+  */
+  if (raw === null || raw.trim() === '') return { id: null, errors: [] };
   const canonical = parseGuid(raw);
   if (canonical === null) return { id: null, errors: [`The value '${raw}' is not valid.`] };
   return { id: canonical, errors: [] };
@@ -2240,6 +2255,23 @@ function mintAuthorization(record: Omit<StoredStepUpAuthorization, 'consumed' | 
  *
  * Returns the refusal to send, or the held record (or null when no header was presented at all).
  */
+/**
+ * `401 AUTHORIZATION_REQUIRED` — the transfer presented no authorisation at all (ADR-0042).
+ *
+ * MEASURED on the real API after the flip. Distinct from AUTHORIZATION_INVALID, which means one WAS
+ * presented and does not match: the two drive different recoveries, a fresh PIN entry versus a
+ * "that confirmation cannot be used" message. An EMPTY header lands here too, not on the 400 that a
+ * non-UUID gets, because `[FromHeader] Guid?` binds an empty value to null — verified on the wire.
+ */
+function authorizationRequired(request: Request): Response {
+  return problem({
+    instance: pathOf(request),
+    status: 401,
+    errorCode: 'AUTHORIZATION_REQUIRED',
+    detail: 'This transfer has not been authorised.',
+  });
+}
+
 function validateAuthorization(
   id: string | null,
   request: Request,
@@ -2256,9 +2288,19 @@ function validateAuthorization(
     amount?: number;
   },
 ): { refusal: Response | null; held: StoredStepUpAuthorization | null } {
-  // MEASURED: no header at all -> 201. PR 2 is backward compatible; the in-band PIN is still the
-  // proof the server acts on, so an absent authorisation refuses nothing.
-  if (!id) return { refusal: null, held: null };
+  /*
+    Absence is refused by the CALLERS, at the rung the PIN check used to hold, so that a headerless
+    request cannot probe the payee first. By the time this runs the header is known to be present,
+    and everything below is about whether what was presented matches. Kept as an assertion rather
+    than a silent pass: a future caller that forgets the earlier rung would otherwise reintroduce
+    the fall-through this change exists to remove.
+  */
+  if (!id) {
+    throw new Error(
+      'validateAuthorization reached with no authorisation id: the caller must answer ' +
+        'AUTHORIZATION_REQUIRED at the ownership rung before resolving a payee.',
+    );
+  }
 
   const invalid = () =>
     problem({
@@ -2620,33 +2662,25 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     transfer from an unknown account to yourself answered SELF_TRANSFER_NOT_ALLOWED where the API
     answers ACCOUNT_NOT_FOUND, and a client branching on the code took the wrong path.
   */
-  // Model binding runs before the action, so a malformed pin never reaches the service. The
-  // bind-failure half first: it aborts, so nothing else is validated after it.
+  // Model binding runs before the action. No pin bind-failure here any more: `TransferRequest` has
+  // no Pin since ADR-0042's flip, so a `pin` in the body is an unknown property that
+  // System.Text.Json ignores — it cannot produce a 400 of its own.
   const idBind = bindAccountIds(body as Record<string, unknown>, ['fromAccountId']);
   if (idBind) return response.untyped(idBind);
-  const pinBind = transferPinBindFailure(body, 'AzureBank.Shared.DTOs.Transfer.TransferRequest');
-  if (pinBind) return response.untyped(pinBind);
 
   /*
-    ONE model-state pass, not two early exits.
+    ONE model-state pass, not two early exits: every DataAnnotation on the body is evaluated
+    together, so a doubly-invalid request gets ONE errors map naming each bad field.
 
-    `[MoneyRange]` on Amount and `[Pin]` on Pin are both DataAnnotations, evaluated together, so a
-    doubly-invalid body gets ONE errors map naming both. Measured on the real API:
-
-      amount -5, pin "12" -> 400 {"Pin":["PIN must be exactly 6 digits."],
-                                  "Amount":["Amount must be between $0.01 and $100,000.00"]}
-
-    A deserialisation failure is different in kind and is handled above: it aborts the bind, so it
-    can never appear beside Amount.
+    The `Pin` key is gone with the property (ADR-0042). It remains on the two MINT endpoints, which
+    is where a malformed PIN is now refused — and refused by model binding there too, so it still
+    costs no lockout attempt.
   */
   const bindingErrors: Record<string, string[]> = {};
   const badAmount = amountErrors(body.amount);
   if (badAmount.length > 0) bindingErrors.Amount = badAmount;
-  const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
-  if (badPin.length > 0) bindingErrors.Pin = badPin;
   // The header binds in the same stage as the body's annotations, so a request wrong in both ways
-  // reports every key at once — measured: a junk header AND a junk PIN come back as ONE 400
-  // carrying both `Pin` and `Step-Up-Authorization`. See `readStepUpHeader`.
+  // reports every key at once. See `readStepUpHeader`.
   const stepUp = readStepUpHeader(request);
   if (stepUp.errors.length > 0) bindingErrors[STEP_UP_HEADER] = stepUp.errors;
   const badFrom = accountIdErrors(body.fromAccountId);
@@ -2672,12 +2706,14 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   }
 
   /*
-    PIN, after ownership and before every business rule — the position
-    `TransferService.TransferAsync` puts `VerifyPinOrThrowAsync` in, so a wrong PIN costs nothing
-    and reveals nothing about the recipient.
+    NO AUTHORISATION PRESENTED, at the rung the in-band PIN check used to occupy (ADR-0042).
+
+    `TransferService.RequireAuthorization` sits after the ownership 404 and BEFORE the payee is
+    resolved, exactly where `VerifyPinOrThrowAsync` sat, and the placement carries the same
+    property: a caller with no second factor cannot use this endpoint to ask which handles exist.
+    Answering here rather than at `validateAuthorization` below is what reproduces that.
   */
-  const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
-  if (pinRefusal) return response.untyped(pinRefusal);
+  if (stepUp.id === null) return response.untyped(authorizationRequired(request));
 
   if (mockState.session?.azureTag === tag) {
     return response.untyped(
@@ -2711,7 +2747,8 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     invalid. Still after the PIN and before any money moves: a refusal costs nothing and moves
     nothing.
 
-    A request with no header falls through — MEASURED 201, PR 2 is backward compatible.
+    A request with no header never reaches here: the rung above answers AUTHORIZATION_REQUIRED,
+    which is what ADR-0042's flip made of the fall-through this line used to describe.
   */
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'Transfer',
@@ -2875,35 +2912,23 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
     description?: string;
     pin?: string;
   };
-  // Model binding first: a malformed pin is 400, never a counted attempt.
+  // Model binding first. No pin bind-failure: `InternalTransferRequest` has no Pin since ADR-0042.
   const idBind = bindAccountIds(body as Record<string, unknown>, ['fromAccountId', 'toAccountId']);
   if (idBind) return response.untyped(idBind);
-  const pinBind = transferPinBindFailure(
-    body,
-    'AzureBank.Shared.DTOs.Transfer.InternalTransferRequest',
-  );
-  if (pinBind) return response.untyped(pinBind);
 
   /*
-    ONE model-state pass, not two early exits.
+    ONE model-state pass, not two early exits: every DataAnnotation on the body is evaluated
+    together, so a doubly-invalid request gets ONE errors map naming each bad field.
 
-    `[MoneyRange]` on Amount and `[Pin]` on Pin are both DataAnnotations, evaluated together, so a
-    doubly-invalid body gets ONE errors map naming both. Measured on the real API:
-
-      amount -5, pin "12" -> 400 {"Pin":["PIN must be exactly 6 digits."],
-                                  "Amount":["Amount must be between $0.01 and $100,000.00"]}
-
-    A deserialisation failure is different in kind and is handled above: it aborts the bind, so it
-    can never appear beside Amount.
+    The `Pin` key is gone with the property (ADR-0042). It remains on the two MINT endpoints, which
+    is where a malformed PIN is now refused — and refused by model binding there too, so it still
+    costs no lockout attempt.
   */
   const bindingErrors: Record<string, string[]> = {};
   const badAmount = amountErrors(body.amount);
   if (badAmount.length > 0) bindingErrors.Amount = badAmount;
-  const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
-  if (badPin.length > 0) bindingErrors.Pin = badPin;
   // The header binds in the same stage as the body's annotations, so a request wrong in both ways
-  // reports every key at once — measured: a junk header AND a junk PIN come back as ONE 400
-  // carrying both `Pin` and `Step-Up-Authorization`. See `readStepUpHeader`.
+  // reports every key at once. See `readStepUpHeader`.
   const stepUp = readStepUpHeader(request);
   if (stepUp.errors.length > 0) bindingErrors[STEP_UP_HEADER] = stepUp.errors;
   const badFrom = accountIdErrors(body.fromAccountId);
@@ -2958,14 +2983,13 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   }
 
   /*
-    PIN last of the gates, first of the service's own work. FluentValidation (same-account) and both
-    ownership checks precede `VerifyPinOrThrowAsync` in `InternalTransferAsync`, so none of them can
-    be answered INVALID_PIN. Measured on the real API: a same-account request with a well-formed pin
-    answers 400 {"toAccountId":["Cannot transfer to the same account."]} — the validator envelope —
-    without the PIN ever being verified.
+    No authorisation presented. Last of the gates, first of the service's own work: FluentValidation
+    (same-account) and both ownership checks precede `RequireAuthorization` in
+    `InternalTransferAsync`, so none of them can be answered AUTHORIZATION_REQUIRED. Measured on the
+    real API: a same-account request answers 400 {"toAccountId":["Cannot transfer to the same
+    account."]} — the validator envelope — without the header being consulted at all.
   */
-  const pinRefusal = checkPinInBand(body.pin, request, 'PIN must be set before making transfers.');
-  if (pinRefusal) return response.untyped(pinRefusal);
+  if (stepUp.id === null) return response.untyped(authorizationRequired(request));
 
   /*
     Spend the authorisation (ADR-0042). `InternalTransferAsync` calls `ValidateAsync` after the PIN

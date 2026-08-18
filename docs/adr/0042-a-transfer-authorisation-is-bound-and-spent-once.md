@@ -95,7 +95,7 @@ security information may be asked for again.
 
 | Code | Status | Means |
 | --- | --- | --- |
-| `AUTHORIZATION_REQUIRED` | 401 | none presented (PR 2 enforces this) |
+| `AUTHORIZATION_REQUIRED` | 401 | none presented |
 | `AUTHORIZATION_EXPIRED` | 401 | valid, window passed — re-prompt the PIN, keep the form |
 | `AUTHORIZATION_INVALID` | 401 | **uniform** across unknown, not-yours, already-spent, wrong binding |
 
@@ -111,12 +111,31 @@ header, validation and consumption in both transfer paths, and fourteen tests in
 concurrency proof that eight simultaneous transfers presenting one authorisation move money exactly
 once.
 
-**Deliberately additive.** The in-band PIN of ADR-0041 is still verified on every transfer, header or
-no header. Nothing is weaker than before this PR whether or not a client sends one. PR 2 flips it:
-the header becomes required and `TransferRequest.Pin` is removed.
+**Additive at first, then flipped.** The mechanism shipped with the header OPTIONAL: the in-band PIN
+of ADR-0041 was still verified on every transfer, so nothing was weaker whether or not a client sent
+one. That was right for one PR and wrong as an end state — while both proofs are accepted the weaker
+one decides, and six static digits authorising any amount to any payee is the finding this ADR opens
+with. The flip removed `TransferRequest.Pin` and `InternalTransferRequest.Pin`, made the header
+required, and refuses a transfer presenting none with `401 AUTHORIZATION_REQUIRED`.
+
+Three things about the flip are worth keeping, because each was measured rather than reasoned:
+
+- The refusal sits at the rung the PIN check occupied — after the source account's ownership 404 and
+  BEFORE the payee is resolved. That placement is not tidiness: it is what stops a caller holding no
+  second factor from asking the endpoint which handles exist, one 404 at a time. The deleted check
+  was providing that property silently.
+- The parameter stays `Guid?`. An EMPTY header binds to `null` exactly like an absent one, so both
+  reach the same 401, while a value that is not a UUID is still refused `400` by model binding
+  upstream. Making it non-nullable would have bought a `required: true` in the document at the price
+  of replacing the promised 401 with a model-state 400 carrying no `errorCode`.
+- Because the parameter is nullable, the generator published the header as OPTIONAL — a contract
+  narrower than the code, which regenerating could not detect since the spec and the generated
+  artefacts agreed with each other. `StepUpAuthorizationOperationTransformer` marks it required,
+  following the mechanism `[RequireIdempotency]` already used.
+
+`422 PIN_REQUIRED` and `429 PIN_LOCKED` left both transfer endpoints with the PIN. They live on the
+mint now, which is the only place on this path that can spend an attempt.
 
 **Not done, and not pretended otherwise.** Withdraw keeps its in-body PIN with the same weakness and
 should follow this route as its own task. Nothing sweeps the table — rows are the Art. 72 evidence B3
-assembles, so a retention policy is a later decision that brings its own index. And the client work,
-including the one state with no path through it today (an authorisation lapsing while an idempotency
-key is retained), is PR 2.
+assembles, so a retention policy is a later decision that brings its own index.

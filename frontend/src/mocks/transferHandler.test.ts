@@ -25,10 +25,76 @@ function lookup(tag: string) {
   return fetch(`/api/users/${tag}`);
 }
 
-function transfer(key: string | null, body: unknown) {
+/**
+ * A transfer.
+ *
+ * `auth` defaults to AUTO: mint an authorisation for exactly this body first, so that the many
+ * tests below about something else — idempotency, the ledger, the balance, the refusal order —
+ * keep being about that rather than about the header ADR-0042 now requires. Pass `null` to send
+ * none, which is its own test.
+ *
+ * When the body is one the mint would itself refuse (an unknown recipient, a bad amount), AUTO
+ * falls back to a well-formed reference bound to nothing. That is deliberate: those tests assert a
+ * refusal that must happen BEFORE the binding is checked, so a worthless-but-present reference is
+ * exactly what proves the ordering held.
+ */
+async function transfer(key: string | null, body: unknown, auth: string | null = AUTO) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (key) headers['Idempotency-Key'] = key;
+  const presented = auth === AUTO ? await autoAuthorise(T_URL, body) : auth;
+  if (presented) headers['Step-Up-Authorization'] = presented;
   return fetch(T_URL, { method: 'POST', headers, body: JSON.stringify(body) });
+}
+
+/** Sentinel distinct from `null`, which means "deliberately send no header". */
+const AUTO = '\u0000auto';
+
+async function autoAuthorise(url: string, body: unknown): Promise<string> {
+  const b = body as Record<string, unknown>;
+  const isInternal = url === I_URL;
+  const minted = await fetch(
+    isInternal ? '/api/transfers/internal/authorizations' : '/api/transfers/authorizations',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        isInternal
+          ? {
+              fromAccountId: b.fromAccountId,
+              toAccountId: b.toAccountId,
+              amount: b.amount,
+              pin: MOCK_PIN,
+            }
+          : {
+              fromAccountId: b.fromAccountId,
+              recipientAzureTag: b.recipientAzureTag,
+              amount: b.amount,
+              pin: MOCK_PIN,
+            },
+      ),
+    },
+  );
+
+  /*
+    A PIN refusal is NOT a body the mint legitimately turned away, so it must not fall through to
+    the worthless-reference path below. If it did, every AUTO test would go on to answer
+    401 AUTHORIZATION_INVALID and point the reader at the authorisation check — a rung that is
+    working fine — instead of at the fixture that broke. The PIN comes from MOCK_PIN for the same
+    reason: hardcoding it here is a second source of truth that only diverges silently.
+  */
+  if (minted.status === 401 || minted.status === 429) {
+    throw new Error(
+      `autoAuthorise could not mint: the mint answered ${minted.status}, which means the PIN ` +
+        `itself was refused. Check MOCK_PIN and the seeded session, not the transfer under test.`,
+    );
+  }
+
+  // Anything else non-201 is a body the mint refuses on binding grounds — an unknown recipient, a
+  // bad amount, a same-account move. Those tests assert a refusal that must land BEFORE the binding
+  // is checked, so a well-formed reference bound to nothing is exactly what proves the ordering.
+  if (minted.status !== 201) return crypto.randomUUID();
+  const payload = (await minted.json()) as { data: { authorizationId: string } };
+  return payload.data.authorizationId;
 }
 
 function elevate() {
@@ -83,7 +149,15 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
     expect(res.headers.get('X-Auth-Level-Required')).toBeNull();
   });
 
-  it('401 INVALID_PIN for a wrong PIN, whatever the auth level', async () => {
+  it('ignores a pin in the body: it is an unknown property now, not a second factor', async () => {
+    /*
+      The old client's exact request. `TransferRequest.Pin` is gone (ADR-0042), so System.Text.Json
+      drops the extra property and the transfer is decided by its authorisation alone — a WRONG pin
+      beside a valid authorisation still succeeds, because nothing reads it.
+
+      Asserting the success rather than a refusal is deliberate: it is the only way to show the
+      field is inert. A test that sent no authorisation would pass for the other reason.
+    */
     seedMockSession();
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
@@ -91,8 +165,7 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
       amount: 10,
       pin: '000000',
     });
-    expect(res.status).toBe(401);
-    expect((await res.json()).errorCode).toBe('INVALID_PIN');
+    expect(res.status).toBe(201);
   });
 
   it('idempotency is checked BEFORE the PIN (no key → 400, even with the right PIN)', async () => {
@@ -218,9 +291,12 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
 
 const I_URL = '/api/transfers/internal';
 
-function internal(key: string | null, body: unknown) {
+/** The internal transfer, with the same AUTO-mint default as {@link transfer}. */
+async function internal(key: string | null, body: unknown, auth: string | null = AUTO) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (key) headers['Idempotency-Key'] = key;
+  const presented = auth === AUTO ? await autoAuthorise(I_URL, body) : auth;
+  if (presented) headers['Step-Up-Authorization'] = presented;
   return fetch(I_URL, { method: 'POST', headers, body: JSON.stringify(body) });
 }
 
@@ -389,19 +465,32 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
   });
 });
 
-describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
+/** The mint: the only endpoint on the transfer path that still takes a PIN (ADR-0042). */
+function authorise(body: unknown) {
+  return fetch('/api/transfers/authorizations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+describe('the PIN gates at the MINT, in the order the API applies them (ADR-0042)', () => {
   /*
     Every expectation below was MEASURED on the real API and pasted beside its assertion.
 
-    The mock had all three wrong and nothing here caught it — not because the assertions were weak
-    (they were, separately) but because every transfer test drove a request that PASSES every gate.
-    Order is only observable when something fails, so these are the first tests in the file that
-    deliberately fail one.
+    These moved endpoint rather than changing: ADR-0042's flip deleted the transfer's in-band PIN,
+    so `POST /api/transfers/authorizations` is now the only place on this path where a PIN is
+    presented — and therefore the only place these gates can be observed. The properties are
+    unchanged, and so is why they matter: order is only visible when something fails, so these are
+    the tests that deliberately fail one.
+
+    The mint takes NO Idempotency-Key (it moves no money and is meant to be easy to call again
+    after a wrong PIN), which is why `authorise` sends none.
   */
 
   it('a MALFORMED pin is 400 from model binding, with the PascalCase Pin key', async () => {
     seedMockSession();
-    const res = await transfer(crypto.randomUUID(), {
+    const res = await authorise({
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 10,
@@ -418,7 +507,7 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
 
   it('an ABSENT pin is the missing-required-properties envelope, not a PIN error', async () => {
     seedMockSession();
-    const res = await transfer(crypto.randomUUID(), {
+    const res = await authorise({
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 10,
@@ -437,7 +526,7 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
     */
     seedMockSession();
     for (let i = 0; i < 3; i += 1) {
-      const junk = await transfer(crypto.randomUUID(), {
+      const junk = await authorise({
         fromAccountId: acct(),
         recipientAzureTag: 'friend',
         amount: 10,
@@ -446,7 +535,7 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
       expect(junk.status).toBe(400);
     }
 
-    const wrong = await transfer(crypto.randomUUID(), {
+    const wrong = await authorise({
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 10,
@@ -471,7 +560,7 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
     */
     seedMockSession();
     for (const junk of [123456, true]) {
-      const res = await transfer(crypto.randomUUID(), {
+      const res = await authorise({
         fromAccountId: acct(),
         recipientAzureTag: 'friend',
         amount: 10,
@@ -488,7 +577,7 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
     // OBSERVED: {"pin":null} -> {"Pin":["The Pin field is required."]} — one message, not two.
     // DataAnnotations skip non-Required validators on null but run them all on "".
     seedMockSession();
-    const res = await transfer(crypto.randomUUID(), {
+    const res = await authorise({
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 10,
@@ -508,7 +597,7 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
       field where the API highlights two.
     */
     seedMockSession();
-    const res = await transfer(crypto.randomUUID(), {
+    const res = await authorise({
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: -5,
@@ -520,7 +609,7 @@ describe('the PIN gates, in the order the API applies them (ADR-0041)', () => {
 
   it('an unknown SOURCE account is 404 even with a wrong PIN (ownership precedes the PIN)', async () => {
     seedMockSession();
-    const res = await transfer(crypto.randomUUID(), {
+    const res = await authorise({
       fromAccountId: UNOWNED_ACCOUNT,
       recipientAzureTag: 'friend',
       amount: 10,
@@ -715,31 +804,75 @@ describe('step-up authorisations (ADR-0042)', () => {
     expect(Object.keys(body.errors)).toContain('Step-Up-Authorization');
   });
 
-  it('reports that 400 in MODEL BINDING — beside a bad PIN, and before one is ever verified', async () => {
+  it('reports that 400 in MODEL BINDING, upstream of the authorisation check', async () => {
     /*
-      Where the refusal happens, not merely what it says. A junk header sent with a junk PIN must
-      answer 400 with BOTH keys: model binding runs before the action, so the PIN is never verified
-      and no lockout attempt is charged. The first draft of the mock checked the header inside the
-      consumption step — after `checkPinInBand` — which answered 401 INVALID_PIN and cost an attempt
-      the real server does not take.
+      Where the refusal happens, not merely what it says. A header that is not a UUID is refused by
+      MVC before the action runs, so it is a 400 model-state answer and NOT the 401 that a
+      well-formed but unusable reference gets. Those two are easy to conflate and drive different
+      client recoveries.
+
+      This used to assert a `Pin` key beside it, from a junk PIN in the same body. That key is gone
+      with the property (ADR-0042) — a `pin` now reaches the endpoint as an unknown field and
+      produces no error of its own. The mint is where a malformed PIN is refused today, and it is
+      still model binding that does it, so it still costs no lockout attempt.
     */
     seedMockSession();
     const res = await transferWithAuth('not-a-guid', {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
       amount: 10,
-      pin: '12',
     });
 
     expect(res.status).toBe(400);
     const keys = Object.keys((await res.json()).errors);
     expect(keys).toContain('Step-Up-Authorization');
-    expect(keys).toContain('Pin');
+    expect(keys).not.toContain('Pin');
   });
 
-  it('still succeeds with NO header — PR 2 does not yet require one', async () => {
-    // Backward compatibility, asserted so that flipping enforcement in PR 4 is a deliberate edit to
-    // a failing test rather than a silent change of meaning. The in-band PIN is still the proof.
+  it.each([
+    ['empty', ''],
+    ['a single space', ' '],
+    ['a tab', '	'],
+  ])('treats a header that is %s as ABSENT, not as malformed', async (_label, value) => {
+    /*
+      MEASURED on the real API (https://localhost:7215, all three variants sent with curl):
+        Step-Up-Authorization: <empty|space|tab>  ->  401 AUTHORIZATION_REQUIRED
+
+      MVC's `Guid?` binder trims and treats a whitespace-only value as null, so it lands on the
+      same refusal as no header at all — NOT on the 400 a non-UUID gets. The mock read the raw value
+      and handed '' to parseGuid, which reported a binding error, so it answered 400 where the API
+      answers 401. Those two drive different client recoveries, and this is the exact row the
+      enforcement flip is about.
+    */
+    seedMockSession();
+    const res = await fetch(T_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+        'Step-Up-Authorization': value,
+      },
+      body: JSON.stringify({
+        fromAccountId: acct(),
+        recipientAzureTag: 'friend',
+        amount: 10,
+      }),
+    });
+
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('AUTHORIZATION_REQUIRED');
+  });
+
+  it('is refused with NO header: the authorisation is the only proof now', async () => {
+    /*
+      THE FLIP. This test asserted the opposite until ADR-0042's second half, precisely so that
+      requiring the header would be a deliberate edit to a failing test rather than a silent change
+      of meaning. It is that edit.
+
+      A pin in the body does not rescue it — that is the point: while both proofs were accepted the
+      weaker one decided, and six static digits authorising any amount to any payee is the finding
+      the ADR opens with.
+    */
     seedMockSession();
     const res = await transferWithAuth(null, {
       fromAccountId: acct(),
@@ -747,7 +880,8 @@ describe('step-up authorisations (ADR-0042)', () => {
       amount: 10,
       pin: MOCK_PIN,
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('AUTHORIZATION_REQUIRED');
   });
 
   it('will not spend an INTERNAL authorisation on an EXTERNAL transfer', async () => {
@@ -1177,11 +1311,15 @@ describe('the internal transfer spends its own authorisations', () => {
     expect(keys).not.toContain('toAccountId');
   });
 
-  it('still moves the money with no header at all', async () => {
+  it('moves no money with no header at all', async () => {
+    // The internal path is a separate handler with its own ownership checks, so it gets its own
+    // proof rather than an assumption that the two share a code path.
     seedMockSession();
     const before = mockState.accounts[1].balance;
-    expect((await internalWithAuth(null)).status).toBe(201);
-    expect(mockState.accounts[1].balance).toBe(before + 10);
+    const res = await internalWithAuth(null);
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('AUTHORIZATION_REQUIRED');
+    expect(mockState.accounts[1].balance).toBe(before);
   });
 });
 
