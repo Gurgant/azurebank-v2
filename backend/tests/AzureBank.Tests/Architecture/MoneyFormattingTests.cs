@@ -113,6 +113,22 @@ public class MoneyFormattingTests
     /// which is exactly what happened: dropping CurrencyToString from the scan left all sixteen
     /// tests green, because the theory was calling the regexes directly instead of this.
     /// </summary>
+    /// <summary>
+    /// A member called Currency assigned a string literal. Built by concatenation rather than one
+    /// verbatim literal on purpose: the first version of this line reached disk with a raw 0x08
+    /// BACKSPACE (U+0008) where a literal backslash-b was meant, so the pattern demanded a control character no source line
+    /// contains and the guard silently matched nothing. It compiled, it read every file, and it
+    /// reported clean — visible only in `od -c`.
+    ///
+    /// <para>
+    /// The optional brace group is not decoration either: without it the pattern misses
+    /// <c>public string Currency { get; set; } = "EUR";</c>, which is the exact shape one of the two
+    /// real offenders had. The coverage theory below found that, not the scan.
+    /// </para>
+    /// </summary>
+    private static readonly Regex CurrencyLiteral =
+        new("Currency" + @"\s*(\{[^}]*\})?\s*(=>|=)\s*""", RegexOptions.Compiled);
+
     private static bool RendersCurrency(string line) =>
         CurrencyFormat.IsMatch(line) || CurrencyToString.IsMatch(line);
 
@@ -120,6 +136,9 @@ public class MoneyFormattingTests
     public void NoSourceFormatsMoneyWithTheProcessCulture()
     {
         var root = RepoBackendRoot();
+        SourceFiles(root).Should().HaveCountGreaterThan(100,
+            "a scan that reads nothing reports clean forever; this is the liveness check that "
+            + "separates a working guard from one whose path filter quietly ate every file");
         var offenders = new List<string>();
 
         foreach (var file in SourceFiles(root))
@@ -159,6 +178,9 @@ public class MoneyFormattingTests
         // not by anyone reporting it.
         var symbolBeforeAmount = new Regex(@"(?<!\})[$€£¥]\s*(\{|\d)", RegexOptions.Compiled);
         var root = RepoBackendRoot();
+        SourceFiles(root).Should().HaveCountGreaterThan(100,
+            "a scan that reads nothing reports clean forever; this is the liveness check that "
+            + "separates a working guard from one whose path filter quietly ate every file");
         var offenders = new List<string>();
 
         foreach (var file in SourceFiles(root))
@@ -224,6 +246,91 @@ public class MoneyFormattingTests
     {
         RendersCurrency(line).Should().BeFalse(
             $"'{line}' is not a currency render, and a guard that fires on it would be turned off");
+    }
+
+    [Fact]
+    public void OnlyValidationRulesMayNameTheCurrency()
+    {
+        /*
+          "Say once what the currency is" was the claim, and it was not true when it was made.
+          AccountMapper stated "EUR" twice and BalanceResponse defaulted to it a third time, so the
+          declaration was the fourth statement of a fact three other places already made — and the
+          value assertion below could not see any of them, because it only reads the constant.
+
+          Raised by CodeRabbit on #118. The two mapper assignments were deleted outright rather than
+          repointed: the DTO's own default already supplies the value, so the mapper had no business
+          naming it at all.
+
+          The rule is deliberately about ASSIGNMENT to a member called Currency rather than about the
+          literal "EUR". A denylist of currency codes would be the same mistake as the first version
+          of the format regex — shaped by what is in the tree today, blind to "USD" tomorrow.
+
+          What this does NOT catch, stated rather than implied: a currency code appended inside some
+          free-form message, as in "{amount:0.00} USD". The bound messages go through DescribeAmount
+          and the symbol scan covers the symbols; a bare ISO code inside arbitrary prose is not
+          distinguishable from ordinary text by a regex, and pretending otherwise would buy a guard
+          that fires on comments and gets switched off.
+        */
+        var root = RepoBackendRoot();
+        SourceFiles(root).Should().HaveCountGreaterThan(100,
+            "a scan that reads nothing reports clean forever; this is the liveness check that "
+            + "separates a working guard from one whose path filter quietly ate every file");
+        var offenders = new List<string>();
+
+        foreach (var file in SourceFiles(root))
+        {
+            // The one file allowed to say it. This is the declaration itself.
+            if (Path.GetFileName(file) == "ValidationRules.cs")
+            {
+                continue;
+            }
+
+            var lines = File.ReadAllLines(file);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (CurrencyLiteral.IsMatch(lines[i]))
+                {
+                    offenders.Add($"{Path.GetRelativePath(root.FullName, file)}:{i + 1}  {lines[i].Trim()}");
+                }
+            }
+        }
+
+        offenders.Should().BeEmpty(
+            "the currency is declared once, in ValidationRules.Currency. A second place that names it "
+            + "is a second thing to change when it moves, and the two will disagree");
+    }
+
+    /*
+      COVERAGE FOR THE DECLARATION DETECTOR, and the reason it exists.
+
+      The format detectors above already had a theory like this; this one did not, and that is
+      precisely where an invisible byte survived. The pattern reached disk with a raw 0x08 in it,
+      so it could never match, and the scan reported clean while a hard-coded currency sat three
+      lines into a mapper. Nothing failed, which is the worst possible outcome for a prohibition.
+
+      Driving the detector against strings that are NOT in the tree is what turns "the tree is
+      clean" into "and the rule can still refuse".
+    */
+    [Theory]
+    [InlineData("            Currency = \"EUR\",")]
+    [InlineData("            Currency = \"USD\",")]          // not an EUR denylist
+    [InlineData("    public string Currency { get; set; } = \"EUR\";")]
+    [InlineData("    public string Currency => \"GBP\";")]   // expression-bodied
+    [InlineData("Currency=\"CHF\"")]                        // no spaces
+    public void TheDeclarationDetectorCatchesAHardCodedCurrency(string line)
+    {
+        CurrencyLiteral.IsMatch(line).Should().BeTrue(
+            $"'{line}' names a currency outside ValidationRules and must not slip past the scan");
+    }
+
+    [Theory]
+    [InlineData("    public string Currency { get; set; } = ValidationRules.Currency;")]
+    [InlineData("        var currency = account.Currency;")]
+    [InlineData("    /// The product's denomination, from the single declaration.")]
+    public void TheDeclarationDetectorLeavesTheCorrectFormsAlone(string line)
+    {
+        CurrencyLiteral.IsMatch(line).Should().BeFalse(
+            $"'{line}' does not hard-code a currency, and a guard that fires on it would be turned off");
     }
 
     [Fact]

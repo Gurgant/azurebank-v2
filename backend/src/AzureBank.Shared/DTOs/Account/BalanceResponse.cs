@@ -1,3 +1,5 @@
+using AzureBank.Shared.Constants;
+
 namespace AzureBank.Shared.DTOs.Account;
 
 /// <summary>
@@ -17,9 +19,9 @@ public class BalanceResponse
     public decimal Balance { get; set; }
 
     /// <summary>
-    /// Currency code (default: EUR)
+    /// The product's denomination, from the single declaration rather than repeated here.
     /// </summary>
-    public string Currency { get; set; } = "EUR";
+    public string Currency { get; set; } = ValidationRules.Currency;
 
     /// <summary>
     /// Timestamp of the balance (current time or requested historical time)
