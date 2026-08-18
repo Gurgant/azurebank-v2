@@ -437,6 +437,59 @@ public class ApplicationUser : IdentityUser<Guid>
 > Recorded rather than edited in place, per this file's own rule at the top. The lesson is worth
 > keeping: a correction table is a snapshot of the code, and it decays exactly as fast as the code
 > moves — this one lasted 24 hours.
+>
+> ---
+>
+> **Correction (2026-08-18): point 2's REASONING was wrong, and half of the hole is now closed.**
+>
+> Re-measured live against `main` @ `c146fe9`, a fresh user, token only — no PIN and no
+> `Step-Up-Authorization` header sent anywhere:
+>
+> ```
+> DELETE /api/accounts/{spare}    -> 200  "Account deleted successfully"
+> DELETE /api/accounts/{primary}  -> 422  PRIMARY_ACCOUNT_DELETE
+> DELETE /api/accounts/{funded}   -> 422  NON_ZERO_BALANCE
+> GET    /api/accounts/{deleted}  -> 404  ACCOUNT_NOT_FOUND     ← asked by the OWNER
+> ```
+>
+> The gate is still absent, exactly as recorded. What was wrong is the argument attached to it. The
+> 2026-08-12 note said *"the operation is recoverable — an argument about how heavy the gate should
+> be"*, and used that to soften the finding. Recoverable **by whom** is the question it skipped:
+> `AzureBankDbContext` applies `HasQueryFilter(a => !a.IsDeleted)` globally, no endpoint lists or
+> restores a deleted account, and the last row above is the owner asking for their own account by id
+> and being told it does not exist. So it is recoverable by an operator with database access and by
+> nobody else. From the account holder's side it is irreversible, and the softening does not hold.
+>
+> **And the loss is larger than one empty account.** `TransactionService` scopes the history to
+> `Accounts.Where(a => a.UserId == userId && !a.IsDeleted)`, so the deleted account's transactions
+> leave the owner's history with it. An account must be EMPTY to delete, but empty is not the same
+> as historyless — a deposit and a matching withdrawal net to zero and leave two rows. Measured, same
+> run: enrol a PIN, deposit 40, withdraw 40, then delete.
+>
+> ```
+> GET /api/transactions  before the delete -> 2 rows
+> DELETE /api/accounts/{spare}             -> 200
+> GET /api/transactions  after  the delete -> 0 rows
+> ```
+>
+> So "a nuisance: an empty account disappears from a list" understates it. What disappears is the
+> account AND its record of what happened on it, from the only view its owner has.
+>
+> **What this PR changes: the detection half only.** The closure now emits
+> `SecurityEvents.AccountDeleted` naming the acting user, where it was a plain
+> `LogInformation("Soft deleted account {AccountId}")` that never reached the stream an operator
+> alerts on — while `AccountNumberRevealed`, reading your own account number back, always did. That
+> asymmetry is indefensible on its own terms and needed no decision to fix.
+>
+> **What it deliberately does NOT change: the level-2 gate.** Whether deletion should cost a PIN is a
+> product call, and the case is genuinely two-sided. Against: the two 422 guards make the money case
+> unreachable, so nothing here can lose funds — which is what A2/ADR-0042 exists to protect, and
+> "add a PIN because withdraw has one" is cargo-culting when the risk differs. For: this table says
+> Level 2, the owner cannot undo it, and closing an account at a real bank is not a level-1 act.
+> Recorded as still open rather than decided in passing, and the mechanism is now cheap either way —
+> `StepUpAuthorization` binds its fields inside an HMAC rather than in columns, and
+> `ToAccountId`/`RecipientUserId`/`ConsumedByTransactionId` are already nullable, so a third
+> `StepUpOperation` needs no migration.
 
 ## Validation
 

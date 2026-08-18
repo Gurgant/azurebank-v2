@@ -150,7 +150,54 @@ public class AccountService : IAccountService
 
         await _context.SaveChangesAsync();
 
-        _logger.LogInformation("Soft deleted account {AccountId}", accountId);
+        /*
+          A SecurityEvent, not a plain LogInformation, and the asymmetry it corrects is the argument:
+          AccountNumberRevealed — reading your own account number back — was on the operator's alert
+          stream, and closing an account was not. The acting user is named because the event is
+          useless for audit without it, and because a deleted account cannot be queried afterwards
+          to find out whose it was: the global query filter hides it from every read path, so this
+          line is the only record that survives in the log.
+
+          THE TWO IDENTIFIERS STAY IN CLEAR, for the reasons spelled out at
+          GetFullAccountNumberAsync below — this note exists so the next reader does not re-derive
+          them. CodeQL raised cs/cleartext-storage on this exact line as alert #34 (high) the first
+          time it shipped, and the automated suggestion was again to log a SHA-256 of the accountId.
+          It was refused again, and the ninth time is not a new judgement: alerts #16-#20, #23, #25
+          and #31 are the same rule dismissed as a false positive on this same file, and #25 and #31
+          record the hashing suggestion being rejected by name.
+
+          The rule's heuristic keys on the identifier NAME containing "account"; the value is a
+          UUIDv7 surrogate key, returned to its owner by GET /api/accounts and present in this very
+          request's URL. Not a credential, not PII. The sensitive value here would be the account
+          NUMBER, which AccountMapper masks server-side and which never reaches this logger.
+
+          Hashing protects nothing, and an earlier version of this note gave the wrong reason for
+          that — it claimed a hash "could not be joined back" because the row is soft-deleted behind
+          the global query filter. FALSE, and worth keeping as a correction: nothing purges these
+          rows, so anyone holding the database hashes every account id once and has a complete
+          reverse-lookup table. The search space is the ROW COUNT, not 2^122 — the attacker never
+          inverts the digest (WP29 WP216; EDPB 01/2025 on hashing as pseudonymisation, not
+          anonymisation). The EF filter is an application-correctness convenience, not a boundary
+          on SQL.
+
+          The true reason is simpler. A hash would only help a reader holding the LOGS but not the
+          DATABASE, and this system has no such reader: the only always-on sink is the console, and
+          the optional collector is a loopback Grafana on the same host as the database. Serilog
+          also logs the request path unconditionally in both the API and the BFF, so the raw id is
+          already in this request's own log output — hashing this one field would remove one copy
+          of three and change nothing.
+
+          Positively, this is also what the standards ask for: NIST SP 800-53 AU-3(f) requires the
+          audit record to identify the objects associated with the event, PCI DSS v4 10.2.2 the
+          identity of the affected resource, and OWASP's Logging Cheat Sheet gives "user database
+          table primary key-value" as its first example of a correct identity field. Masking is
+          scoped to secrets, PAN and descriptive PII. See ADR-0017 ("log the opaque id, not PII");
+          pseudonymising one site while twenty others log ids in clear is task #206, and it is
+          decided: no, for the reason above — there is no trust boundary to buy anything with.
+        */
+        _logger.LogInformation(
+            "SecurityEvent {SecurityEvent}: user {UserId} deleted account {AccountId}",
+            SecurityEvents.AccountDeleted, userId, accountId);
     }
 
     /// <inheritdoc />

@@ -2,6 +2,7 @@ using AzureBank.Api.Mappers;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
@@ -431,6 +432,78 @@ public class AccountServiceTests : IDisposable
         await act.Should()
             .ThrowAsync<BusinessRuleException>()
             .WithMessage("*non-zero balance*");
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_AuditsTheClosure_AsASecurityEvent()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        account.Id = accountId;
+        account.Balance = 0;
+
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        // Act
+        await _sut.DeleteAccountAsync(accountId, userId);
+
+        /*
+          Assert — this was a plain LogInformation("Soft deleted account {AccountId}") until now, so
+          it never reached the stream an operator alerts on while AccountNumberRevealed, a strictly
+          smaller act, did. The ACTING USER is asserted as well as the account, because a deleted
+          account is invisible to every read path afterwards (global query filter; measured, the
+          owner's own GET by id answers 404 ACCOUNT_NOT_FOUND) — this line is the only surviving
+          record of whose it was.
+        */
+        _loggerMock.Verify(l => l.Log(
+            LogLevel.Information,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) =>
+                state.ToString()!.Contains(SecurityEvents.AccountDeleted) &&
+                state.ToString()!.Contains(userId.ToString()) &&
+                state.ToString()!.Contains(accountId.ToString())),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true, 0)]      // primary account   -> PRIMARY_ACCOUNT_DELETE
+    [InlineData(false, 50)]    // non-zero balance  -> NON_ZERO_BALANCE
+    public async Task DeleteAccountAsync_WhenRefused_AuditsNoClosure(bool isPrimary, decimal balance)
+    {
+        /*
+          The negative control, and the reason the pair is worth more than the positive alone: an
+          event named "AccountDeleted" that also fired on a REFUSED attempt would make the audit
+          stream lie in the direction that matters — an operator reading it would see closures that
+          never happened. Same posture as GetFullAccountNumberAsync's denied-attempt test above.
+        */
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: isPrimary);
+        account.Id = accountId;
+        account.Balance = balance;
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ReturnsAsync(account);
+
+        await _sut.Invoking(sut => sut.DeleteAccountAsync(accountId, userId))
+            .Should().ThrowAsync<BusinessRuleException>();
+
+        _loggerMock.Verify(l => l.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) =>
+                state.ToString()!.Contains(SecurityEvents.AccountDeleted)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
     }
 
     #endregion

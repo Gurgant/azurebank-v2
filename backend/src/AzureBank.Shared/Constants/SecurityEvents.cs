@@ -103,6 +103,31 @@ public static class SecurityEvents
     /// </remarks>
     public const string AccountNumberRevealed = "AccountNumberRevealed";
 
+    /// <summary>An account was closed by its owner — the soft delete of ADR-0008's level table.</summary>
+    /// <remarks>
+    /// <para>
+    /// OWASP: <c>sensitive_delete:[userid,file|object]</c> — the same family as
+    /// <see cref="AccountNumberRevealed"/>'s <c>sensitive_read</c>, which is why it is used here
+    /// rather than <c>user_deleted</c>: that one names the deletion of a USER IDENTITY, and an alert
+    /// written for it firing on a closed bank account would be describing the wrong event.
+    /// </para>
+    /// <para>
+    /// It is a SOFT delete — <c>Account.IsDeleted</c> behind a global query filter — so "deleted"
+    /// here means withdrawn from the owner's view, not erased. That distinction matters less than it
+    /// sounds: measured, the owner cannot see it, list it, or fetch it by id afterwards
+    /// (<c>404 ACCOUNT_NOT_FOUND</c>), and no endpoint restores it. Only an operator with database
+    /// access can undo it, so treat this as irreversible from the account holder's side.
+    /// </para>
+    /// <para>
+    /// Why it exists at all: until now this was a plain
+    /// <c>LogInformation("Soft deleted account {AccountId}")</c>, so it never reached the stream an
+    /// operator alerts on — while revealing your own account number, a strictly less consequential
+    /// act, did. Two guards make the money case unreachable (non-zero balance and primary account
+    /// both refuse with 422), so this is a detective control over integrity, not over funds.
+    /// </para>
+    /// </remarks>
+    public const string AccountDeleted = "AccountDeleted";
+
     /// <summary>A user changed their own public handle (ADR-0015).</summary>
     /// <remarks>OWASP: <c>user_updated:[userid,onuserid,attributes[…]]</c>.</remarks>
     public const string AzureTagRenamed = "AzureTagRenamed";
