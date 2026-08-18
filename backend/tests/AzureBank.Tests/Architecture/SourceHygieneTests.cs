@@ -59,11 +59,19 @@ public class SourceHygieneTests
     private static readonly string[] ScannedExtensions = [".cs", ".ts", ".tsx", ".mjs", ".js"];
 
     /// <summary>
-    /// Tab, carriage return and line feed are the three that legitimately appear in source. Anything
-    /// else below U+0020 is a control character no editor puts there on purpose.
+    /// Tab, carriage return and line feed are the three that legitimately appear in source. Every
+    /// other Unicode control character is one no editor puts there on purpose.
     /// </summary>
+    /// <remarks>
+    /// <c>char.IsControl</c> rather than a comparison against U+0020, which is what this said
+    /// first and which silently stopped at U+001F: it accepted U+007F DELETE and the whole
+    /// U+0080-U+009F C1 block, while the trap doc claimed the rule covered any control
+    /// character. Raised by CodeRabbit on PR #119, and it is the same defect this PR exists to
+    /// make impossible - a stated rule wider than the one enforced. Measured before widening:
+    /// the repo contains no character in U+007F-U+009F today, so nothing legitimate is caught.
+    /// </remarks>
     private static bool IsForbiddenControlCharacter(char c) =>
-        c < ' ' && c != '\t' && c != '\r' && c != '\n';
+        char.IsControl(c) && c != (char)0x09 && c != (char)0x0D && c != (char)0x0A;
 
     [Fact]
     public void NoSourceFileCarriesAnInvisibleControlCharacter()
@@ -116,6 +124,9 @@ public class SourceHygieneTests
     [InlineData((char)0x00, true)]   // NUL
     [InlineData((char)0x1B, true)]   // ESC, i.e. a pasted terminal colour sequence
     [InlineData((char)0x0C, true)]   // FORM FEED
+    [InlineData((char)0x7F, true)]   // DELETE - outside C0, missed by the first version
+    [InlineData((char)0x85, true)]   // NEXT LINE, a C1 control that ReadLine does NOT split on
+    [InlineData((char)0x9F, true)]   // the far end of the C1 block
     [InlineData((char)0x09, false)]  // TAB
     [InlineData((char)0x0D, false)]  // CR
     [InlineData((char)0x0A, false)]  // LF

@@ -316,7 +316,7 @@ cheapest form of this checklist, and it finds all five.
 Hit twice. On 2026-08-15 the first live PIN-mint answered `500 Invalid object name`; on 2026-08-17
 deposit, withdraw and both transfers all answered
 
-```
+```text
 String or binary data would be truncated in table 'AzureBankDev.dbo.Transactions',
 column 'TransactionNumber'. Truncated value: 'TXN-20260817-AJKNG5F'.
 ```
@@ -355,7 +355,7 @@ legal and means "match a backspace". `grep` rendered it as nothing. Reading the 
 intended text. **Only `od -c` revealed it**, because there the byte prints as ONE token where real
 backslashes print as two:
 
-```
+```text
 new  R e g e x ( @ "  \b  C u r r e n c y  \ s * ...
                      ^^ one token: this is 0x08, not backslash-b
 ```
