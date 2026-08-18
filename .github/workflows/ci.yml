@@ -22,6 +22,7 @@ jobs:
   backend:
     name: Backend build + tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,6 +83,7 @@ jobs:
   backend-sql:
     name: Backend concurrency proofs (SQL Server)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     services:
       sqlserver:
@@ -155,6 +157,7 @@ jobs:
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -235,6 +238,7 @@ jobs:
   real-stack:
     name: Real-stack layers (contract + integration + e2e)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     services:
       sqlserver:
