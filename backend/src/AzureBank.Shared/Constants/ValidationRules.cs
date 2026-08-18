@@ -82,9 +82,28 @@ public static class ValidationRules
     // ═══════════════════════════════════════════════════════════════
     // MONEY / TRANSACTIONS
     // ═══════════════════════════════════════════════════════════════
+    /*
+      THE PRODUCT'S DENOMINATION, declared once and here.
+
+      Until now it existed only in the comments below, which named the euro while every message the
+      server produced printed a dollar sign, because the code formatted with `:C` against the SERVER
+      PROCESS culture and one site wrote a literal `$`. Nothing the server could read said what the
+      currency was, so nothing could be wrong about it in a way a compiler or a test would notice.
+
+      This constant is the answer to "which currency", not a licence to render one. The server
+      states amounts as bare numbers and lets the client format them in the USER's locale, which is
+      the only place that knows it. Where a message genuinely has to name a figure — a validation
+      bound the user must be told — format with InvariantCulture and append this code, never a
+      symbol and never CurrentCulture.
+
+      A currency COLUMN on Account is a different and bigger decision, and is deliberately not made
+      here: this records what the product is denominated in today, nothing more.
+    */
+    public const string Currency = "EUR";
+
     public const decimal TransactionMinAmount = 0.01m;
-    public const decimal TransactionMaxAmount = 100_000.00m;  // €100k per transaction
-    public const decimal DailyTransferLimit = 1_000.00m;      // €1k daily limit (standard user)
+    public const decimal TransactionMaxAmount = 100_000.00m;  // 100k per transaction, in Currency
+    public const decimal DailyTransferLimit = 1_000.00m;      // 1k daily limit (standard user)
     public const int MoneyDecimalPlaces = 2;
 
     // Database precision for DECIMAL type - DECIMAL(19,4)
@@ -115,4 +134,23 @@ public static class ValidationRules
     public const int UserAgentMaxLength = 500;
     public const int TokenHashLength = 44;       // Base64 of SHA256
     public const int PinHashMaxLength = 200;     // Argon2id hash storage
+
+    /// <summary>
+    /// The ONE way the server is allowed to put an amount into a sentence: an invariant number and
+    /// the ISO code, never a symbol and never the process culture.
+    /// </summary>
+    /// <remarks>
+    /// Reach for this only where a message must state a BOUND the user has to know — a validation
+    /// limit. Never for an amount the user already has: the client holds those and formats them in
+    /// the user's own locale.
+    ///
+    /// <para>
+    /// Invariant rather than a fixed locale on purpose. `:C` renders against whatever culture the
+    /// process happens to start with, so the same build printed a dollar-prefixed figure on one
+    /// machine and a euro-suffixed one on another, and any test asserting on it was brittle or
+    /// accidentally pinned to the machine that wrote it.
+    /// </para>
+    /// </remarks>
+    public static string DescribeAmount(decimal amount) =>
+        $"{amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} {Currency}";
 }

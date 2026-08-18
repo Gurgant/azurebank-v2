@@ -128,8 +128,10 @@ public class AccountService : IAccountService
         // Business rules: cannot delete if balance is non-zero
         if (account.Balance != 0)
         {
+            // The balance is the caller's OWN account and they already have it from /api/accounts,
+            // so naming it here adds nothing and used to render it in the server process culture.
             throw new BusinessRuleException(
-                $"Cannot delete account with non-zero balance. Current balance: {account.Balance:C}",
+                "Cannot delete an account with a non-zero balance.",
                 ErrorCodes.NonZeroBalance);
         }
 

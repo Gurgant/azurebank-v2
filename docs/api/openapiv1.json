@@ -2786,7 +2786,7 @@
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
-            "description": "Amount must be between $0.01 and $100,000.00.",
+            "description": "Amount must be between 0.01 EUR and 100000.00 EUR.",
             "format": "double"
           },
           "description": {
@@ -2841,7 +2841,7 @@
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
-            "description": "Amount must be between $0.01 and $100,000.00.",
+            "description": "Amount must be between 0.01 EUR and 100000.00 EUR.",
             "format": "double"
           },
           "pin": {
@@ -2878,7 +2878,7 @@
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
-            "description": "Amount must be between $0.01 and $100,000.00.",
+            "description": "Amount must be between 0.01 EUR and 100000.00 EUR.",
             "format": "double"
           },
           "pin": {
@@ -3452,7 +3452,7 @@
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
-            "description": "Amount must be between $0.01 and $100,000.00.",
+            "description": "Amount must be between 0.01 EUR and 100000.00 EUR.",
             "format": "double"
           },
           "pin": {
@@ -3491,7 +3491,7 @@
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
-            "description": "Amount must be between $0.01 and $100,000.00.",
+            "description": "Amount must be between 0.01 EUR and 100000.00 EUR.",
             "format": "double"
           },
           "pin": {
@@ -3680,7 +3680,7 @@
             "maximum": 100000.00,
             "minimum": 0.01,
             "type": "number",
-            "description": "Amount must be between $0.01 and $100,000.00.",
+            "description": "Amount must be between 0.01 EUR and 100000.00 EUR.",
             "format": "double"
           },
           "pin": {

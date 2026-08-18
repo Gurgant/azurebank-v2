@@ -182,7 +182,14 @@ public sealed class DataAnnotationSchemaTransformer : IOpenApiSchemaTransformer
                     schema.Maximum = ValidationRules.TransactionMaxAmount.ToString(
                         System.Globalization.CultureInfo.InvariantCulture);
                     schema.MultipleOf = 0.01m;
-                    schema.Description = $"Amount must be between ${ValidationRules.TransactionMinAmount} and ${ValidationRules.TransactionMaxAmount:N2}.";
+                    // A LITERAL dollar sign used to stand here, and this line publishes: it lands on
+                    // DepositRequest.amount, WithdrawRequest.amount, TransferRequest.amount and
+                    // InternalTransferRequest.amount in the committed spec, so the contract told
+                    // every consumer the product was denominated in dollars. The bounds are already
+                    // on the schema as minimum and maximum; this sentence only has to name them.
+                    schema.Description =
+                        $"Amount must be between {ValidationRules.DescribeAmount(ValidationRules.TransactionMinAmount)} "
+                        + $"and {ValidationRules.DescribeAmount(ValidationRules.TransactionMaxAmount)}.";
                     break;
             }
         }
