@@ -230,24 +230,21 @@ describe('contract: step-up authorisations', () => {
     expect(asProblem(body).errorCode).toBe('AUTHORIZATION_REQUIRED');
   });
 
-  it('refuses an INTERNAL transfer that presents none either', async () => {
-    // A separate handler with its own ownership checks, so it gets its own row rather than an
-    // assumption that the two share a code path.
-    const id = await firstAccountId();
+  /*
+    THE INTERNAL TWIN IS NOT HERE, and the reason is worth writing down rather than leaving as a
+    gap someone later fills badly.
 
-    const { status, body } = await call('/api/transfers/internal', {
-      method: 'POST',
-      headers: { 'Idempotency-Key': idempotencyKey() },
-      body: JSON.stringify({
-        fromAccountId: id,
-        toAccountId: id,
-        amount: 1,
-      }),
-    });
+    Reaching `401 AUTHORIZATION_REQUIRED` on `/api/transfers/internal` needs two DIFFERENT accounts
+    that the caller owns. This suite has `firstAccountId()` and no second, deliberately: it runs
+    against a database that persists between runs, so creating one per pass would drift the fixture.
+    Sending the same id twice does not work either — the same-account rule is FluentValidation in
+    the controller, so it answers 400 before the header is ever consulted, which is itself an
+    ordering worth knowing and is exactly what the first draft of this test measured.
 
-    expect(status).toBe(401);
-    expect(asProblem(body).errorCode).toBe('AUTHORIZATION_REQUIRED');
-  });
+    The property is covered where a test can make its own accounts:
+    `StepUpAuthorizationTests.AnInternalTransferPresentingNoAuthorisationIsRefused` (API integration)
+    and `transferHandler.test.ts > moves no money with no header at all` (mock).
+  */
 
   it('rejects a malformed header in MODEL BINDING — a fourth 400 shape, with no errorCode', async () => {
     /*
