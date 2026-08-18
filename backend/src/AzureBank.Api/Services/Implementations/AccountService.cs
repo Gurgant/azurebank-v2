@@ -157,6 +157,25 @@ public class AccountService : IAccountService
           useless for audit without it, and because a deleted account cannot be queried afterwards
           to find out whose it was: the global query filter hides it from every read path, so this
           line is the only record that survives in the log.
+
+          THE TWO IDENTIFIERS STAY IN CLEAR, for the reasons spelled out at
+          GetFullAccountNumberAsync below — this note exists so the next reader does not re-derive
+          them. CodeQL raised cs/cleartext-storage on this exact line as alert #34 (high) the first
+          time it shipped, and the automated suggestion was again to log a SHA-256 of the accountId.
+          It was refused again, and the ninth time is not a new judgement: alerts #16-#20, #23, #25
+          and #31 are the same rule dismissed as a false positive on this same file, and #25 and #31
+          record the hashing suggestion being rejected by name.
+
+          The rule's heuristic keys on the identifier NAME containing "account"; the value is a
+          UUIDv7 surrogate key, returned to its owner by GET /api/accounts and present in this very
+          request's URL. Not a credential, not PII. The sensitive value here would be the account
+          NUMBER, which AccountMapper masks server-side and which never reaches this logger.
+
+          Hashing would be worse than useless HERE specifically: this row is soft-deleted and hidden
+          by the global query filter, so nothing can join a hash back to it afterwards — the log is
+          the last surviving copy of which account was closed. See ADR-0017: the policy is "log the
+          opaque id, not PII", and pseudonymising one site while twenty others log ids in clear is
+          the decision task #206 exists to take once, everywhere or nowhere.
         */
         _logger.LogInformation(
             "SecurityEvent {SecurityEvent}: user {UserId} deleted account {AccountId}",
