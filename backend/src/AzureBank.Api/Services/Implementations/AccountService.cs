@@ -150,7 +150,17 @@ public class AccountService : IAccountService
 
         await _context.SaveChangesAsync();
 
-        _logger.LogInformation("Soft deleted account {AccountId}", accountId);
+        /*
+          A SecurityEvent, not a plain LogInformation, and the asymmetry it corrects is the argument:
+          AccountNumberRevealed — reading your own account number back — was on the operator's alert
+          stream, and closing an account was not. The acting user is named because the event is
+          useless for audit without it, and because a deleted account cannot be queried afterwards
+          to find out whose it was: the global query filter hides it from every read path, so this
+          line is the only record that survives in the log.
+        */
+        _logger.LogInformation(
+            "SecurityEvent {SecurityEvent}: user {UserId} deleted account {AccountId}",
+            SecurityEvents.AccountDeleted, userId, accountId);
     }
 
     /// <inheritdoc />
