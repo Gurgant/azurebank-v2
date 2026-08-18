@@ -42,54 +42,46 @@ public sealed class ValidationResponseTransformer : IOpenApiOperationTransformer
             }
         }
 
-        // Also add 400 to GET endpoints with query or path parameters
-        // These can fail validation (e.g., invalid format, missing required params)
+        /*
+          A QUERY parameter can fail binding, so a GET that has one can genuinely answer 400.
+
+          A PATH parameter cannot, and the two branches that used to say so are deleted rather than
+          corrected. Their reasoning was "path-only endpoints may return empty 400 (framework-level
+          validation)" and "path parameter validation may return empty 400 for invalid UTF-8".
+          Measured on the running API, all four such routes answer 404 instead:
+
+            GET   /api/accounts/not-a-guid              404 application/problem+json
+            GET   /api/accounts/not-a-guid/full-number  404 application/problem+json
+            GET   /api/transactions/not-a-guid          404 application/problem+json
+            PATCH /api/accounts/not-a-guid/set-primary  404 application/problem+json
+
+          The cause is that every one of them is declared [HttpGet("{id:guid}")] and a route
+          constraint participates in route MATCHING, not in binding: a non-GUID segment matches no
+          route at all, so the framework answers before MVC is entered and no model binding — hence
+          no binding 400 — ever happens. A path parameter with no constraint cannot fail either, for
+          the opposite reason: every byte sequence is a valid string.
+
+          So those four declarations described a response the API cannot produce, which is the same
+          defect as an undeclared body pointed the other way.
+        */
         if (httpMethod?.Equals("GET", StringComparison.OrdinalIgnoreCase) == true)
         {
-            var parameters = operation.Parameters;
-            var hasPathParameters = parameters?.Any(p => p.In == ParameterLocation.Path) ?? false;
-            var hasQueryParameters = parameters?.Any(p => p.In == ParameterLocation.Query) ?? false;
+            var hasQueryParameters =
+                operation.Parameters?.Any(p => p.In == ParameterLocation.Query) ?? false;
 
-            if ((hasPathParameters || hasQueryParameters) && !responses.ContainsKey("400"))
+            if (hasQueryParameters && !responses.ContainsKey("400"))
             {
-                // Path-only endpoints may return empty 400 (framework-level validation)
-                // Query endpoints typically return JSON validation errors
-                Add400Response(responses, emptyBodyAllowed: hasPathParameters && !hasQueryParameters);
-            }
-        }
-
-        // Add 400 to DELETE and PATCH endpoints with path parameters but no request body
-        // These can fail when path contains invalid UTF-8 or malformed data
-        if (httpMethod?.Equals("DELETE", StringComparison.OrdinalIgnoreCase) == true ||
-            (httpMethod?.Equals("PATCH", StringComparison.OrdinalIgnoreCase) == true && operation.RequestBody == null))
-        {
-            var parameters = operation.Parameters;
-            var hasPathParameters = parameters?.Any(p => p.In == ParameterLocation.Path) ?? false;
-
-            if (hasPathParameters && !responses.ContainsKey("400"))
-            {
-                // Path parameter validation may return empty 400 for invalid UTF-8
-                Add400Response(responses, emptyBodyAllowed: true);
+                Add400Response(responses);
             }
         }
 
         return Task.CompletedTask;
     }
 
-    private static void Add400Response(OpenApiResponses responses, bool emptyBodyAllowed = false)
+    // The emptyBodyAllowed branch went with the two path-only callers above: nothing reaches this
+    // without a body any more, so the parameter is gone rather than left defaulting to a dead path.
+    private static void Add400Response(OpenApiResponses responses)
     {
-        // If empty body is allowed (path parameter validation), don't specify content
-        // This allows both empty and JSON responses to be valid
-        if (emptyBodyAllowed)
-        {
-            responses["400"] = new OpenApiResponse
-            {
-                Description = "Bad Request - Invalid parameter format or validation failed."
-                // No Content - framework may return empty body for invalid path parameters
-            };
-            return;
-        }
-
         responses["400"] = new OpenApiResponse
         {
             Description = "Bad Request - Validation failed. Check the errors property for details.",

@@ -30,19 +30,23 @@ export interface paths {
                         "application/json": components["schemas"]["ApiResponseOfListOfAccountResponse"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -82,19 +86,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -133,33 +141,32 @@ export interface paths {
                         "application/json": components["schemas"]["ApiResponseOfAccountResponse"];
                     };
                 };
-                /** @description Bad Request - Invalid parameter format or validation failed. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Not Found - The requested resource does not exist. */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -199,26 +206,32 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Not Found - The requested resource does not exist. */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance). */
                 422: {
@@ -284,26 +297,32 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Not Found - The requested resource does not exist. */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -363,26 +382,32 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Not Found - The requested resource does not exist. */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -427,33 +452,32 @@ export interface paths {
                         "application/json": components["schemas"]["ApiResponseOfAccountNumberResponse"];
                     };
                 };
-                /** @description Bad Request - Invalid parameter format or validation failed. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Not Found - The requested resource does not exist. */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -500,33 +524,32 @@ export interface paths {
                         "application/json": components["schemas"]["ApiResponse"];
                     };
                 };
-                /** @description Bad Request - Invalid parameter format or validation failed. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Not Found - The requested resource does not exist. */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -750,19 +773,23 @@ export interface paths {
                         "application/json": components["schemas"]["ApiResponseOfUserResponse"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -802,19 +829,23 @@ export interface paths {
                         "application/json": components["schemas"]["ApiResponse"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -871,19 +902,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Unprocessable Entity */
                 422: {
@@ -955,19 +990,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Too Many Requests */
                 429: {
@@ -1040,19 +1079,23 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -1107,19 +1150,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE). */
                 422: {
@@ -1182,33 +1229,32 @@ export interface paths {
                         "application/json": components["schemas"]["ApiResponseOfTransactionResponse"];
                     };
                 };
-                /** @description Bad Request - Invalid parameter format or validation failed. */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Not Found - The requested resource does not exist. */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -1269,19 +1315,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -1418,19 +1468,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -1567,19 +1621,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -1659,19 +1717,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -1759,19 +1821,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -1907,19 +1973,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Not Found */
                 404: {
@@ -2048,26 +2118,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
-                };
-                /** @description Not Found - The requested resource does not exist. */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
-                    content?: never;
                 };
             };
         };
@@ -2131,19 +2198,23 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unauthorized - Authentication required. Provide a valid JWT Bearer token. */
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
                 401: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
-                /** @description Forbidden - You don't have permission to access this resource. */
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
                 };
                 /** @description Conflict - the requested AzureTag is already taken (errorCode AZURE_TAG_TAKEN). */
                 409: {
@@ -2474,6 +2545,10 @@ export interface components {
             status?: number;
             detail?: null | string;
             instance?: null | string;
+            /** @description Stable, machine-readable identifier for the failure — the value clients branch on. Absent only on validation failures, which carry an 'errors' dictionary instead. */
+            errorCode?: string;
+            /** @description Correlates this response with the server-side log entry. Quote it in a bug report. */
+            traceId?: string;
         };
         /**
          * @description Response for recipient lookup by AzureTag.

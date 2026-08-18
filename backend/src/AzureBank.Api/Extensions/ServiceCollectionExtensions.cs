@@ -379,21 +379,28 @@ public static class ServiceCollectionExtensions
             // so the contract marks them required (kills `id?: string` for Guids etc.)
             options.AddSchemaTransformer<RequiredValueTypeMembersTransformer>();
 
-            // Operation transformer: Add 401/403 responses to authenticated endpoints
-            // This fixes Schemathesis "Undocumented HTTP status code: 401" errors
+            // Operation transformer: Add 401/403 responses, WITH their ProblemDetails body, to
+            // authenticated endpoints that have not declared their own
             options.AddOperationTransformer<AuthorizationResponseTransformer>();
 
             // Operation transformer: Add 400 Bad Request to endpoints with request bodies
             // This documents validation error responses for Schemathesis compliance
             options.AddOperationTransformer<ValidationResponseTransformer>();
 
-            // Operation transformer: Add 404 Not Found to endpoints with path parameters
-            // This documents resource lookup failures for Schemathesis compliance
+            // Operation transformer: Add 404 Not Found, WITH its ProblemDetails body, to endpoints
+            // with path parameters — except those marked [AlwaysFound], which cannot miss
             options.AddOperationTransformer<NotFoundResponseTransformer>();
 
             // Operation transformer: Mark [AllowAnonymous] endpoints as not requiring auth
             // This fixes Schemathesis "Missing header not rejected" false positives
             options.AddOperationTransformer<AnonymousEndpointTransformer>();
+
+            // Document transformer: put errorCode and traceId on the shared ProblemDetails
+            // component. Every error this API produces carries both — measured, seven keys on a
+            // 401, a 403 and a 404 alike — but they live in ProblemDetails.Extensions, which
+            // reflection cannot see, so the published component omitted them. Patching the one
+            // component is what lets the three response transformers above simply point at it.
+            options.AddDocumentTransformer<ProblemDetailsExtensionsTransformer>();
 
             // Document transformer: Add JWT Bearer authentication scheme
             options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
