@@ -811,6 +811,40 @@ describe('step-up authorisations (ADR-0042)', () => {
     expect(keys).not.toContain('Pin');
   });
 
+  it.each([
+    ['empty', ''],
+    ['a single space', ' '],
+    ['a tab', '	'],
+  ])('treats a header that is %s as ABSENT, not as malformed', async (_label, value) => {
+    /*
+      MEASURED on the real API (https://localhost:7215, all three variants sent with curl):
+        Step-Up-Authorization: <empty|space|tab>  ->  401 AUTHORIZATION_REQUIRED
+
+      MVC's `Guid?` binder trims and treats a whitespace-only value as null, so it lands on the
+      same refusal as no header at all — NOT on the 400 a non-UUID gets. The mock read the raw value
+      and handed '' to parseGuid, which reported a binding error, so it answered 400 where the API
+      answers 401. Those two drive different client recoveries, and this is the exact row the
+      enforcement flip is about.
+    */
+    seedMockSession();
+    const res = await fetch(T_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+        'Step-Up-Authorization': value,
+      },
+      body: JSON.stringify({
+        fromAccountId: acct(),
+        recipientAzureTag: 'friend',
+        amount: 10,
+      }),
+    });
+
+    expect(res.status).toBe(401);
+    expect((await res.json()).errorCode).toBe('AUTHORIZATION_REQUIRED');
+  });
+
   it('is refused with NO header: the authorisation is the only proof now', async () => {
     /*
       THE FLIP. This test asserted the opposite until ADR-0042's second half, precisely so that

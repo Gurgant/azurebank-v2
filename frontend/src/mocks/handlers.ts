@@ -2063,7 +2063,22 @@ const STEP_UP_HEADER = 'Step-Up-Authorization';
  */
 function readStepUpHeader(request: Request): { id: string | null; errors: string[] } {
   const raw = request.headers.get(STEP_UP_HEADER);
-  if (raw === null) return { id: null, errors: [] };
+  /*
+    ABSENT, EMPTY and WHITESPACE-ONLY are one case, and that is measured rather than tidy.
+
+    MVC binds `[FromHeader] Guid?` by trimming first, so all three arrive at the action as `null`
+    and land on the same refusal. Observed on the real API with curl, one request per variant:
+
+      Step-Up-Authorization: <empty>  -> 401 AUTHORIZATION_REQUIRED
+      Step-Up-Authorization: "  "     -> 401 AUTHORIZATION_REQUIRED
+      Step-Up-Authorization: "	"     -> 401 AUTHORIZATION_REQUIRED
+
+    This read the raw value and handed '' straight to parseGuid, which reported a binding error —
+    so the mock answered 400 where the API answers 401. The two are not interchangeable: a 400 says
+    "your header is malformed, fix the value", a 401 says "you presented no second factor", and a
+    client branches differently on each.
+  */
+  if (raw === null || raw.trim() === '') return { id: null, errors: [] };
   const canonical = parseGuid(raw);
   if (canonical === null) return { id: null, errors: [`The value '${raw}' is not valid.`] };
   return { id: canonical, errors: [] };
@@ -2732,7 +2747,8 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     invalid. Still after the PIN and before any money moves: a refusal costs nothing and moves
     nothing.
 
-    A request with no header falls through — MEASURED 201, PR 2 is backward compatible.
+    A request with no header never reaches here: the rung above answers AUTHORIZATION_REQUIRED,
+    which is what ADR-0042's flip made of the fall-through this line used to describe.
   */
   const authorization = validateAuthorization(stepUp.id, request, {
     operation: 'Transfer',

@@ -1722,7 +1722,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
-                    /** @description Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED: a transfer presenting none is refused 401 AUTHORIZATION_REQUIRED. */
+                    /** @description Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header. */
                     "Step-Up-Authorization": string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
@@ -1870,7 +1870,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
-                    /** @description Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED: a transfer presenting none is refused 401 AUTHORIZATION_REQUIRED. */
+                    /** @description Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header. */
                     "Step-Up-Authorization": string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;

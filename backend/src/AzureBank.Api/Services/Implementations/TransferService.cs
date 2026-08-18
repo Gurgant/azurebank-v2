@@ -408,6 +408,17 @@ public class TransferService : ITransferService
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
         var toAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.ToAccountId, userId);
 
+        /*
+          AFTER BOTH OWNERSHIP CHECKS here, where the external path refuses before resolving its
+          payee — and the asymmetry is deliberate rather than an oversight.
+
+          It is the rung `VerifyPinOrThrowAsync` occupied on this method, and the reason the two
+          differ is what the check upstream of it reveals. On the external path that is SOMEONE
+          ELSE's handle, so answering it to a caller holding no second factor would turn the
+          endpoint into a directory. Here both accounts are the caller's OWN: `GetAccountWithOwner-
+          shipCheckAsync` tells them only what `GET /api/accounts` already does, so there is nothing
+          to withhold and the more specific refusal is the more useful one.
+        */
         var authorizationId = RequireAuthorization(stepUpAuthorizationId);
 
         // Same account check (should be caught by validator, but double-check)

@@ -1697,7 +1697,7 @@
           {
             "name": "Step-Up-Authorization",
             "in": "header",
-            "description": "Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED: a transfer presenting none is refused 401 AUTHORIZATION_REQUIRED.",
+            "description": "Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.",
             "required": true,
             "schema": {
               "type": "string",
@@ -1902,7 +1902,7 @@
           {
             "name": "Step-Up-Authorization",
             "in": "header",
-            "description": "Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED: a transfer presenting none is refused 401 AUTHORIZATION_REQUIRED.",
+            "description": "Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.",
             "required": true,
             "schema": {
               "type": "string",
