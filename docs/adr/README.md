@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Forty-one decisions is more than anyone reads cold. These four carry the architecture; the rest is
+Forty-three decisions is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -83,7 +83,7 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All forty-one **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+All forty-three **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an

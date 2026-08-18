@@ -17,9 +17,10 @@ namespace AzureBank.Tests.Architecture;
 /// <c>contract-tests.yml</c> ends with <c>|| true # report, don't gate</c>.
 /// </para>
 /// <para>
-/// So for a year the document said 58 refusals carried no body at all, while every one of them
-/// answered <c>application/json</c> with seven keys. A client generated from it would have had no
-/// type for the field it must branch on.
+/// So the document said 58 refusals carried no body at all. Measured, 53 of them answer
+/// <c>application/json</c> with seven keys, and the other five describe a response the code cannot
+/// produce at all. A client generated from it would have had no type for the field it must branch
+/// on, and five branches for answers that never arrive.
 /// </para>
 /// <para>
 /// These read the COMMITTED file rather than a live server on purpose: the committed file is what
@@ -32,8 +33,15 @@ public class PublishedErrorContractTests
 {
     /// <summary>
     /// A response that cannot occur is as false as a body that is not declared, so both are refused.
-    /// Statuses an endpoint can only reach through the shared refusal path — the JWT events and
-    /// <c>GlobalExceptionHandler</c> — all of which write ProblemDetails.
+    /// These three are the statuses an endpoint reaches through the paths that NAME a reason: the JWT
+    /// <c>OnChallenge</c>/<c>OnForbidden</c> events for 401 and 403, and <c>AppExceptionHandler</c>
+    /// for 404 (a <c>NotFoundException</c> is an <c>AppException</c>). All three write both
+    /// <c>errorCode</c> and <c>traceId</c>.
+    ///
+    /// Deliberately NOT here: 400 and 500. <c>ValidationExceptionHandler</c> writes an
+    /// <c>errors</c> dictionary and no <c>errorCode</c>, and <c>GlobalExceptionHandler</c> writes
+    /// neither — so a guard demanding a ProblemDetails body on those would be the same over-claim
+    /// this file exists to catch, pointed at ourselves.
     /// </summary>
     private static readonly string[] RefusalStatuses = ["401", "403", "404"];
 
@@ -72,7 +80,8 @@ public class PublishedErrorContractTests
             .GetProperty("ProblemDetails").GetProperty("properties");
 
         properties.TryGetProperty("errorCode", out _).Should().BeTrue(
-            because: "every refusal the API produces carries one, and it is the field clients branch on");
+            because: "the refusals this guard scans — 401, 403, 404 — all carry one, and it is the "
+                     + "field clients branch on. Not EVERY error does, which is what the next test pins");
         properties.TryGetProperty("traceId", out _).Should().BeTrue(
             because: "it is what turns a user's screenshot into a log lookup");
     }

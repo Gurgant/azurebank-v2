@@ -5,7 +5,8 @@ namespace AzureBank.Api.Transformers;
 
 /// <summary>
 /// Adds <c>errorCode</c> and <c>traceId</c> to the shared <c>ProblemDetails</c> component, because
-/// the API puts both on every error it produces and the published contract did not say so.
+/// the API puts <c>traceId</c> on every error and <c>errorCode</c> on every error that names a
+/// reason, and the published contract declared neither.
 /// </summary>
 /// <remarks>
 /// <para>

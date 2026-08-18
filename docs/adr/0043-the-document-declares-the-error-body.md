@@ -17,11 +17,11 @@ Measured on `main` @ `6c3b24e`, one HTTP call per row against the running API:
 | --- | --- |
 | 23 × `401`, no body | `application/json`, 243 bytes, seven keys |
 | 23 × `403`, no body | `application/json`, 260 bytes, seven keys |
-| 8 × `404`, no body | seven keys, `errorCode` naming the resource |
+| 7 × `404`, no body | seven keys, `errorCode` naming the resource |
 | 4 × `400` on `{id:guid}` routes | the route never matches — the framework answers **404** |
 | 1 × `404` on `/api/users/{azureTag}` | **200**, `{"exists": false}` |
 
-```json
+```
 {"type":"https://httpstatuses.com/403","title":"Forbidden","status":403,
  "detail":"You do not have access to this account.","instance":"/api/accounts/01a015bb-…",
  "errorCode":"ACCESS_DENIED","traceId":"ce10bb069afcbbb8fbf051eef6fe4bd0"}

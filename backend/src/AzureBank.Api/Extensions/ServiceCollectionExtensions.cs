@@ -396,9 +396,12 @@ public static class ServiceCollectionExtensions
             options.AddOperationTransformer<AnonymousEndpointTransformer>();
 
             // Document transformer: put errorCode and traceId on the shared ProblemDetails
-            // component. Every error this API produces carries both — measured, seven keys on a
-            // 401, a 403 and a 404 alike — but they live in ProblemDetails.Extensions, which
-            // reflection cannot see, so the published component omitted them. Patching the one
+            // component. traceId is on every error; errorCode is on the errors that NAME a reason —
+            // AppExceptionHandler and the two JWT events above write it, ValidationExceptionHandler
+            // writes an `errors` dictionary instead, and GlobalExceptionHandler's 500 writes
+            // neither. Measured, that is seven keys on a 401, a 403 and a 404 alike. Both live in
+            // ProblemDetails.Extensions, which reflection cannot see, so the published component
+            // omitted them — and both are declared OPTIONAL for the reason above. Patching the one
             // component is what lets the three response transformers above simply point at it.
             options.AddDocumentTransformer<ProblemDetailsExtensionsTransformer>();
 
