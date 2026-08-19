@@ -34,32 +34,39 @@ public class AuthLevelMiddleware
     */
 
     /// <summary>
-    /// The ONLY proxied POST paths a caller may reach without a live session. Every other POST under
-    /// /api/ is refused here rather than delegated downstream.
+    /// The proxied auth entry points that are answered as if they did not exist. Not an allowlist
+    /// and not gated on anything: no caller in this deployment has a reason to reach them.
     /// </summary>
     /*
-      DENY BY DEFAULT, because the allowlist this replaces was silently incomplete.
-
-      It named "/api/transfers" and "/api/transfers/internal" and nothing else, so every money
-      endpoint added afterwards fell straight through: both authorisation mint endpoints (ADR-0042),
-      deposit, withdraw, and the PIN-binding endpoint too. Nothing caught it, because a list of paths
-      cannot notice a path that was never added to it.
-
-      Inverting fixes the failure MODE, not just today's omissions. Forgetting to allowlist a
-      genuinely public endpoint fails closed and the first call reveals it; forgetting to list a money
-      endpoint failed open and revealed nothing to anyone. Only login and register are public: they
-      are how a caller obtains the session everything else requires. /api/auth/refresh never reaches
-      here at all — it is answered 404 above, since the browser must never drive token rotation.
-
-      This is defence in depth, not a bypass fix. Measured on the running stack before the change,
-      every one of those paths already answered 401, because BearerTokenTransformProvider clears the
-      inbound Authorization header unconditionally and injects nothing without a session. The BFF's
-      401 and the API's are byte-identical apart from traceId, so no client can observe this change.
-      What changes is that the refusal no longer depends on that transform staying correct — and its
-      absence was once a live, measured bypass.
+      THE YARP ROUTES FOR THESE TWO ARE DELIBERATELY KEPT in appsettings.json, and deleting them
+      would be the tempting mistake. They carry RateLimiterPolicy "auth"; the route table also holds
+      a catch-all "/api/{**catch-all}" with NO policy at all. Remove the dedicated pair and the path
+      falls to that catch-all — so if this middleware were ever weakened, login would be proxied
+      UNRATE-LIMITED, which is worse than the state this change replaces. Keeping them costs nothing
+      while this branch stands in front, and keeps the fallback no worse than today.
     */
-    private static readonly HashSet<string> SessionlessPostPaths =
+    private static readonly HashSet<string> BlockedProxiedAuthPaths =
         new(StringComparer.OrdinalIgnoreCase) { "/api/auth/login", "/api/auth/register" };
+
+    /*
+      THERE IS NO LONGER AN EXCEPTION LIST, and the set that used to live here is deleted rather than
+      emptied — an empty allowlist is an invitation to add one entry back "just for this".
+
+      Its history is worth keeping. It began as an allowlist naming "/api/transfers" and
+      "/api/transfers/internal" and nothing else, so every money endpoint added afterwards fell
+      straight through: both authorisation mint endpoints (ADR-0042), deposit, withdraw, and the
+      PIN-binding endpoint. Nothing caught it, because a list of paths cannot notice a path that was
+      never added to it. Inverting it to a deny-by-default gate fixed the failure MODE: forgetting to
+      exempt a genuinely public endpoint fails closed and the first call reveals it, while forgetting
+      to list a money endpoint failed open and revealed nothing to anyone.
+
+      That left exactly two exemptions — login and register — on the argument that they are how a
+      caller obtains the session everything else requires. That argument was wrong about THIS
+      deployment: the SPA never calls them. It signs in through the BFF's own /bff/auth/* controller,
+      which talks to the API server-side and keeps the token there. The proxied pair had no
+      legitimate caller at all, and both are now answered 404 above, so the gate below is
+      unconditional for every POST under /api/.
+    */
 
     /*
       Routes gated on the BFF session flag at level 2. EMPTY since ADR-0041 — see above. The set and
@@ -120,6 +127,41 @@ public class AuthLevelMiddleware
         {
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: blocked raw proxied {Path}", SecurityEvents.RawRefreshBlocked, safePath);
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        /*
+          THE SAME TREATMENT FOR THE OTHER TWO PROXIED AUTH ENTRY POINTS, and this one closes a live
+          bypass rather than adding depth to an existing refusal.
+
+          MEASURED on the running stack before the change, with no session cookie at all:
+            POST http://localhost:5000/bff/auth/register  -> 201   (the legitimate door)
+            POST http://localhost:5000/api/auth/login     -> 200, body carries data.token,
+                                                             a 392-character API JWT, plus a
+                                                             refreshToken
+            that token, sent straight to the API:
+            GET  https://localhost:7215/api/accounts      -> 200   full account access
+            the same token replayed through the BFF:
+            GET  http://localhost:5000/api/accounts       -> 401   the transform strips it
+
+          So the BFF was handing out the very credential it exists to withhold. Only the last line
+          kept it contained, and that is one unconditional header-clear in
+          BearerTokenTransformProvider — a defence that lives on a different path from the one
+          issuing the token. /api/auth/register answered 201 to the same sessionless caller.
+
+          The SPA loses nothing: it never calls either path. Sign-in goes through the BFF's own
+          /bff/auth/login, which reaches the API with IHttpClientFactory server-side and keeps the
+          token there — so this middleware never sees it.
+
+          404 rather than 401, matching the refresh branch above: a caller with no legitimate reason
+          to know the route exists is told nothing about it.
+        */
+        if (BlockedProxiedAuthPaths.Contains(path.TrimEnd('/')))
+        {
+            _logger.LogWarning(
+                "SecurityEvent {SecurityEvent}: blocked raw proxied {Path}",
+                SecurityEvents.RawAuthEntryBlocked, safePath);
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
@@ -241,7 +283,9 @@ public class AuthLevelMiddleware
             return false;
         }
 
-        return !SessionlessPostPaths.Contains(path.TrimEnd('/'));
+        // Unconditional since the proxied auth pair is 404'd above: every POST under /api/ needs a
+        // session, with no exception list left to fall out of date.
+        return true;
     }
 
     private static bool RequiresPinVerification(string path, string method)

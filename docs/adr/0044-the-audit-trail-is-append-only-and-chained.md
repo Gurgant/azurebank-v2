@@ -96,10 +96,14 @@ would stay 0 and the chain would have no order to be verified against. Ordering 
 tried first and was wrong: `Guid` ordering in .NET is not creation order even for a UUIDv7, and SQL
 Server collates `uniqueidentifier` on a different byte order again.
 
-### D4 — the six BFF events stay log-only, and this says so
+### D4 — the seven BFF events stay log-only, and this says so
 
 `RateLimitExceeded`, `CrossSiteRequestBlocked`, `StepUpRequired`, `StepUpWithoutSession`,
-`RawRefreshBlocked` and `RefreshRejected` are raised in the BFF, which has no database. Giving it one
+`RawRefreshBlocked`, `RawAuthEntryBlocked` and `RefreshRejected` are raised in the BFF, which has
+no database. The list is the count: naming them is what makes this checkable, and
+`SecurityEventConstantTests.TheEventInventoryThisAdrStatesIsStillTheOneInTheSource` fails when a
+new one appears without this section moving with it — which is how `RawAuthEntryBlocked` came to
+be missing from it for one commit. Giving it one
 means a second writer against the audit table, which is a larger decision than this one. They are
 listed here so the next reader knows they were considered rather than missed.
 
@@ -127,8 +131,17 @@ The remaining ten are deliberately log-only, with reasons that were measured rat
 - **Registration refusals** (`DuplicateRegistration`, `RegistrationRejected`) — `/api/auth/register`
   is unauthenticated, and the API carries **no rate limiter of its own** (checked: zero
   `RequireRateLimiting` in `AzureBank.Api`; the limit lives in the BFF). An audit row per attempt is
-  therefore an unauthenticated, unbounded write into the one table that is never pruned. Revisit
-  together with #231, which puts these endpoints behind the BFF.
+  therefore an unauthenticated, unbounded write into the one table that is never pruned. ~~Revisit
+  together with #231, which puts these endpoints behind the BFF.~~ *(that revisit has happened —
+  see below; the instruction is struck rather than deleted so the original entry stays whole)*
+
+  **Revisited 2026-08-19, as this ADR said to.** #231 has landed: the proxied `/api/auth/register` is
+  now answered 404, so the only route to the API's registration is the BFF's own
+  `/bff/auth/register`, which carries the `auth` rate-limiter policy. The unbounded half of the
+  argument is therefore weaker than when it was written. It is NOT gone — a rate limit is per IP, and
+  the events stay log-only for now — but the reason has changed and is recorded rather than left
+  standing on a premise that no longer holds. Wiring them is a change with its own tests; it belongs
+  to B1/B3, not to a footnote here.
 - **Retry collisions** (`TransactionNumberCollision` ×2, `AccountNumberCollision`) — these are health
   signals about a random-id generator, not acts by a principal, and they are raised inside a `catch`
   that `continue`s a retry loop. An enlisted row would die with the attempt that failed; a
