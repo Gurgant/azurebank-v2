@@ -32,25 +32,47 @@ intended trade — better a blocked bank than an emptied one. Ratified by Vlad.
 
 Refusals are the exception and need the opposite treatment: the refused operation's own rollback
 would take the record of the refusal with it. `RecordRefusalAsync` therefore writes on its own scope
-and commits immediately. The two names are deliberately hard to confuse, and `Record` **throws** if
-handed a `Refused` or `MitigationFailed` outcome rather than silently doing the wrong thing.
+and commits immediately. The two names are deliberately hard to confuse, and each **throws** on the
+outcomes that belong to the other: `Record` on `Refused` and `MitigationFailed`, `RecordRefusalAsync`
+on `Succeeded` and `RetryCollision`. The second guard was missing until the first review round —
+which meant a success could be committed out-of-band, D1 inverted.
 
 Measured, not assumed —
 `AuditChainSqlServerTests.WhenTheAuditRowCannotBeWritten_TheBusinessChangeIsRolledBackToo`: an audit
 row too long for its column is refused by SQL Server, and the account rename that shared the save is
 gone when re-read from a fresh connection.
 
+**D1 HAS EXACTLY ONE EXCEPTION, and it is the refresh-token reuse path.** Everywhere else "no
+evidence, no action" is the right trade. There, the action is CONTAINMENT of a token already proven
+stolen, and refusing to contain it because the logging failed hands the attacker the family. The
+first wiring awaited the refusal write *before* the try that guards `RevokeAllForUserAsync`, so an
+unwritable audit table meant the revoke never ran, no `MitigationFailed` row was written either, and
+the caller got the 500 that the comment inside that very catch calls out as inviting a retry of the
+stolen token. Containment now runs first and the row is written after it. The row can still fail
+loudly — the 5xx just no longer buys the attacker anything, because the family is already dead.
+Pinned by `WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked`, which was verified to
+go red when the order is put back.
+
 ### D2 — the chain now, the SQL Server ledger later
 
-Each row carries an HMAC-SHA256 over its own fields **and its predecessor's hash**, so removing or
-altering a row breaks every link after it. Keyed rather than a bare digest, for the reason
-`StepUpOptions.BindingKey` gives: every field of an audit row is enumerable, so an unkeyed hash could
-be recomputed by anyone holding the table.
+Each row carries an HMAC-SHA256 over its own fields **and its predecessor's hash**. Keyed rather than
+a bare digest, for the reason `StepUpOptions.BindingKey` gives: every field of an audit row is
+enumerable, so an unkeyed hash could be recomputed by anyone holding the table. `Sequence` — the
+column verification orders by — is inside the payload, which is why the marker reads `v2`.
 
-What this does **not** defend against, stated so the record does not overclaim: an attacker holding
-both the database and the application's secrets can rewrite a row and recompute the chain. Closing
-that needs a digest anchored outside the system — SQL Server's ledger feature — which is deferred,
-not rejected.
+**A CORRECTION, because the first version of this section was too strong.** It said removing a row
+"breaks every link after it". That is true of an INTERIOR row and false of the TAIL. Deleting the
+last row, or the last thousand, leaves every surviving row hashing correctly and linking correctly,
+because `VerifyAsync` only ever looks backwards and has nothing to compare the end of the chain
+against. Truncation is therefore undetected — and, unlike the rewrite case below, it needs **no key
+at all**, only write access to the table. Confirmed by walking the loop, and stated here rather than
+left for a reader to discover.
+
+What this also does not defend against: an attacker holding both the database and the application's
+secrets can rewrite a row and recompute the chain. Both gaps close the same way — a digest anchored
+outside the system, which is SQL Server's ledger, deferred rather than rejected. Until then the
+honest claim is narrow: **this chain detects tampering by someone who holds the database but not the
+key, except at the end of the table.**
 
 **A withdrawn argument, left visible.** The first version of this decision claimed the ledger was
 impractical because its digests require an Azure storage destination. That is false, and measuring it
@@ -123,10 +145,12 @@ only by tests**, so nothing verifies the chain on a schedule.
 - Two secrets exist where one did: `Audit:ChainKey` joins `StepUp:BindingKey`, `Idempotency:HashKey`
   and `Security:PinPepper`. All four are `ValidateOnStart`, and none is ever stored in the database.
 
-## Three defects this work found, none of them visible to a green suite
+## Six defects this work found, none of them visible to a green suite
 
 Recorded here because each was live in a version whose whole suite was green, and each needed a
-different oracle to find: two needed real SQL Server, the third needed the running API.
+different oracle: two needed real SQL Server, one needed the running API, two came from a review that
+read the code, and one from an adversarial sweep of the write path. The pattern is the point — "779
+tests pass" said nothing about any of them.
 
 **The hash did not survive a round trip.** `OccurredAt` was hashed with `ToString("O")`, which emits
 a trailing `Z` when `DateTime.Kind` is `Utc` and omits it when the kind is `Unspecified`.
@@ -169,6 +193,33 @@ Verified afterwards on the running API rather than only in tests: the same call 
 four rows sit in `AzureBankDev` — three `RefreshTokenUnknown` refusals written on their own
 connections, then an `AzureTagRenamed` success that rode a business transaction, each linked to the
 hash before it, `Detail` empty on all four (D5).
+
+### The three the review round added
+
+**`PinEnrolled` was never written at all.** `Record` only calls `Add`; the caller's save persists it.
+The call sat AFTER `UserManager.UpdateAsync`, which had already saved, and nothing saved again — so
+the row was discarded when the scope disposed. Measured on the running API: `POST /api/auth/pin`
+answered **200**, the security log line was emitted once, and `AuditEvents` held **zero** rows. The
+unit test was green throughout, because it held a `Mock<IAuditService>` and asserted that `Record` was
+CALLED. That is the lesson worth keeping: *the writer was invoked* and *the evidence exists* are
+different claims, and only the second one is the feature. `AuditTrailPersistenceTests` now reads the
+table for every wired success path.
+
+**`AzureTagRenamed` rode a second save.** The rename committed, then the row was added and saved
+separately, so the two could part company — D1 broken on the path this ADR is the reason for. Every
+row-exists assertion still passed, because the row WAS written; only an injected failure separates
+the shapes, which is what `WhenTheAuditRowCannotBeWritten_TheHandleRenameIsRolledBackToo` does.
+
+Fixing it moved a second thing: with the audit row now sharing that save, `IX_AuditEvents_Sequence`
+can raise the same 2601/2627 a duplicate handle does, so `UserService`'s number-only match would have
+reported a hash-chain collision to the caller as "that handle is already taken". The narrowing moved
+to `ConcurrencyRetry.IsAzureTagCollision`, matching by INDEX NAME like its three siblings.
+
+### And one the sweep added, which no bot and no test had seen
+
+**The reuse path was made fail-open by its own audit row** — see D1's exception above. Found by
+fanning out over the audit write path with instructions to classify every call site and then refute
+each finding, rather than by re-reading the diff.
 
 ## References
 

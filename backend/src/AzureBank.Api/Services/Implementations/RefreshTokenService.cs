@@ -123,13 +123,23 @@ public class RefreshTokenService : IRefreshTokenService
                     "SecurityEvent {SecurityEvent}: reuse of revoked refresh token {TokenId} (user {UserId}); revoking all active tokens",
                     SecurityEvents.RefreshTokenReuse, existing.Id, existing.UserId);
 
-                // The theft signal of ADR-0021, and the one event here an operator is most likely to
-                // be woken by. Out-of-band for the same reason: this path ends in a 401.
-                await _audit.RecordRefusalAsync(
-                    SecurityEvents.RefreshTokenReuse, AuditOutcome.Refused,
-                    actorUserId: existing.UserId, subjectType: "RefreshToken", subjectId: existing.Id,
-                    cancellationToken: cancellationToken);
+                /*
+                  CONTAIN FIRST, RECORD SECOND, and the order is not cosmetic — it was the other way
+                  round when the audit row was first wired in, which quietly made this path
+                  fail-open. RecordRefusalAsync is deliberately allowed to throw (ADR-0044: a
+                  swallowed audit failure is the silent gap this work exists to close) and it runs on
+                  its own connection, so a command timeout or an unwritable audit table raises from
+                  it. Placed ahead of the try below, that exception escaped RotateAsync BEFORE the
+                  family revoke ran: a token confirmed STOLEN kept its whole family alive, the catch
+                  never ran so no MitigationFailed row was written either, and the caller got a 500 —
+                  the exact outcome the comment inside that catch calls out as inviting a retry of
+                  the stolen token.
 
+                  Containment is the urgent half and must not be reachable only when logging works.
+                  Recording afterwards keeps the loud-failure posture: if THAT write fails the
+                  exception still surfaces, but by then the family is already dead, so the 5xx no
+                  longer hands the attacker a usable retry.
+                */
                 try
                 {
                     await RevokeAllForUserAsync(existing.UserId, cancellationToken);
@@ -181,6 +191,15 @@ public class RefreshTokenService : IRefreshTokenService
                         actorUserId: existing.UserId, subjectType: "RefreshToken", subjectId: existing.Id,
                         cancellationToken: cancellationToken);
                 }
+
+                // The theft signal of ADR-0021, and the one event here an operator is most likely
+                // to be woken by. Out-of-band because this path ends in a 401 whose rollback would
+                // otherwise take the record with it; AFTER the containment above, for the reason
+                // spelled out where that try begins.
+                await _audit.RecordRefusalAsync(
+                    SecurityEvents.RefreshTokenReuse, AuditOutcome.Refused,
+                    actorUserId: existing.UserId, subjectType: "RefreshToken", subjectId: existing.Id,
+                    cancellationToken: cancellationToken);
             }
             throw InvalidRefreshToken();
         }

@@ -69,6 +69,22 @@ public class AuditService : IAuditService
         CancellationToken cancellationToken = default)
     {
         /*
+          THE COMPLEMENT of Record's guard, so the pair cannot be swapped by accident in EITHER
+          direction. Record throws on Refused and MitigationFailed because those must not be tied to
+          a transaction that is about to roll back; this one throws on the rest, because a Succeeded
+          row committed on its own connection would assert that something happened while the
+          business transaction carrying it may still abandon it — D1 inverted, and a worse lie than
+          a missing row. The guard existed on one side only until CodeRabbit pointed at the gap.
+        */
+        if (outcome is not (AuditOutcome.Refused or AuditOutcome.MitigationFailed))
+        {
+            throw new ArgumentException(
+                $"{outcome} must be written with Record, so it stays atomic with the business "
+                    + "transaction it describes (ADR-0044 D1).",
+                nameof(outcome));
+        }
+
+        /*
           A SEPARATE scope, and therefore a separate DbContext and connection. The whole point is to
           be outside the caller's transaction: this row must survive the rollback of whatever was
           refused. Using the request-scoped context would enlist it in exactly the transaction we are

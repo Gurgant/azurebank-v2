@@ -6,7 +6,6 @@ using AzureBank.Shared.Enums;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace AzureBank.Api.Services.Implementations;
@@ -97,18 +96,35 @@ public class UserService : IUserService
         user.AzureTag = normalized;
         user.UpdatedAt = DateTime.UtcNow;
 
+        /*
+          BEFORE the save, so the rename and its evidence are ONE unit of work (ADR-0044 D1). The
+          first version recorded AFTER the save and then saved a SECOND time, which meant the rename
+          could commit while the row that proves it failed to — the exact split D1 exists to prevent,
+          and invisible to a test that only checks Record was called.
+
+          NEITHER HANDLE goes in the row, and that is the D5 rule rather than an oversight: a handle
+          is user-chosen and public, which makes it exactly the descriptive personal data this table
+          must not hold, on a store designed never to be purged. The subject is the USER, and both
+          handles stay in the log line below, which does expire.
+        */
+        _audit.Record(
+            SecurityEvents.AzureTagRenamed, AuditOutcome.Succeeded,
+            actorUserId: userId, subjectType: "User", subjectId: userId);
+
         try
         {
             // A plain column update — UserName is the immutable id, so no Identity username
-            // change is involved (ADR-0015).
+            // change is involved (ADR-0015). The audit row added above rides THIS save.
             await _context.SaveChangesAsync();
         }
-        catch (DbUpdateException ex) when (IsAzureTagUniqueViolation(ex))
+        catch (DbUpdateException ex) when (ConcurrencyRetry.IsAzureTagCollision(ex))
         {
             // Lost the AzureTag unique-index race to a concurrent claim of the same handle.
-            // Only the unique-index violation maps to 409 — every other DbUpdateException
-            // (deadlock, timeout, connectivity, an unrelated constraint) must propagate,
-            // not be misreported as "handle taken".
+            // Narrowed by INDEX NAME rather than by error number, and that is load-bearing now that
+            // the audit row shares this save: IX_AuditEvents_Sequence raises the same 2601/2627, so
+            // matching the number alone would report a hash-chain collision as "handle taken".
+            // Every other DbUpdateException (deadlock, timeout, connectivity, an unrelated
+            // constraint) still propagates rather than being misreported.
             throw new ConflictException("That handle is already taken.", ErrorCodes.AzureTagTaken);
         }
 
@@ -129,41 +145,7 @@ public class UserService : IUserService
             LogSanitizer.Sanitize(previous),
             LogSanitizer.Sanitize(normalized));
 
-        /*
-          NEITHER HANDLE goes in the audit row, and that is the D5 rule rather than an oversight: a
-          handle is user-chosen and public, which makes it exactly the descriptive personal data this
-          table must not hold, on a store designed never to be purged. The subject is the USER, and
-          the two handles stay in the log line above, which does expire.
-        */
-        _audit.Record(
-            SecurityEvents.AzureTagRenamed, AuditOutcome.Succeeded,
-            actorUserId: userId, subjectType: "User", subjectId: userId);
-        await _context.SaveChangesAsync();
-
         return normalized;
-    }
-
-    // SQL Server unique-violation error numbers (2627 = PK/UNIQUE constraint, 2601 = duplicate
-    // row in a unique index) — mirrors IdempotencyService's narrowing so a concurrent AzureTag
-    // claim maps to 409 while every other write error (deadlock, timeout, …) propagates.
-    private const int SqlPrimaryKeyViolation = 2627;
-    private const int SqlUniqueIndexViolation = 2601;
-
-    private static bool IsAzureTagUniqueViolation(DbUpdateException ex)
-    {
-        // The SqlException can sit several levels down the InnerException chain.
-        for (var current = ex.InnerException; current is not null; current = current.InnerException)
-        {
-            if (current is SqlException sql
-                && (sql.Number is SqlPrimaryKeyViolation or SqlUniqueIndexViolation
-                    || sql.Errors.Cast<SqlError>().Any(
-                        e => e.Number is SqlPrimaryKeyViolation or SqlUniqueIndexViolation)))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     // "Vladislav A." — enough to confirm the right payee, not the full surname (ADR-0014).

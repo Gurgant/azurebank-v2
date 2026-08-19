@@ -108,7 +108,7 @@ at that level** (the endpoint is still `[Authorize]`; what is missing is the ste
 ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consume, and is filed
 as a correction rather than a new policy: the decisions were already made, the document simply
 did not say them.
-The next free number is **0044**.
+The next free number is **0045**.
 
 <details>
 <summary>Full list in numeric order</summary>

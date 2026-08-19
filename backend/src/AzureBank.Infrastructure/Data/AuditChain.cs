@@ -246,12 +246,26 @@ public sealed class AuditChain : IAuditChain
     /// what makes it a chain rather than a set of independent checksums.
     /// </summary>
     /// <remarks>
-    /// The <c>v1</c> prefix is the same device <c>StepUpAuthorizationService</c> uses: adding a field
+    /// The version prefix is the same device <c>StepUpAuthorizationService</c> uses: adding a field
     /// later must invalidate every previously computed value rather than silently leaving the new
-    /// field unprotected. <c>|</c> is a safe delimiter because every part is a Guid, an enum name, an
-    /// integer or hex — except <c>Detail</c>, which is caller-supplied, and is therefore placed LAST
-    /// where an embedded delimiter cannot shift the meaning of a field after it.
+    /// field unprotected. It reads <c>v2</c> because <see cref="AuditEvent.Sequence"/> was added to
+    /// the payload after the first round of review — see the block below. <c>|</c> is a safe
+    /// delimiter because every part is a Guid, an enum name, an integer or hex — except
+    /// <c>Detail</c>, which is caller-supplied, and is therefore placed LAST where an embedded
+    /// delimiter cannot shift the meaning of a field after it.
     /// </remarks>
+    /*
+      SEQUENCE IS HASHED, and it was not in v1. Sequence is the column VerifyAsync orders by, so
+      leaving it outside the payload meant the one field that defines the chain's order was the one
+      field the chain did not protect. Be precise about what that did and did not allow, because the
+      review that raised it overstated the consequence: REORDERING an interior row is already caught
+      without this, since the PreviousHash links stop lining up. What was genuinely unprotected was
+      the tail — renumbering the last row to an unused higher value changed nothing verifiable.
+
+      No exploit was constructed from that, and none is claimed here. It is hashed because it costs
+      one field and removes the question entirely, which is a better resting place than an argument
+      about how narrow the hole is.
+    */
     /*
       OccurredAt IS HASHED AS TICKS AND NOT AS ISO-8601, and this is a correction, not a preference.
       The first version used ToString("O"), which renders a trailing "Z" for a DateTime whose Kind is
@@ -270,8 +284,9 @@ public sealed class AuditChain : IAuditChain
     private string ComputeRowHash(AuditEvent row)
     {
         var payload = string.Join('|',
-            "v1",
+            "v2",
             row.Id.ToString("N"),
+            row.Sequence.ToString(CultureInfo.InvariantCulture),
             row.OccurredAt.Ticks.ToString(CultureInfo.InvariantCulture),
             row.Event,
             row.Outcome.ToString(),

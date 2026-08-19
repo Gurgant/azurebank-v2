@@ -1,3 +1,7 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using AzureBank.Shared.Constants;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
@@ -128,6 +132,46 @@ public sealed class AuditChainSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
+    public async Task RenumberingTheTailRow_BreaksTheChain()
+    {
+        var services = CreateSqlServices();
+        await ClearAuditEventsAsync(services);
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        foreach (var name in new[] { "First", "Second", "Third" })
+        {
+            context.AuditEvents.Add(NewEvent(name));
+            await context.SaveChangesAsync();
+        }
+
+        (await chain.VerifyAsync(context)).IsIntact.Should()
+            .BeTrue("the control: the chain is intact before the renumbering");
+
+        /*
+          THE ONE TAMPERING THE v1 PAYLOAD DID NOT COVER. Sequence is the column VerifyAsync orders
+          by, and it was not hashed. Reordering an INTERIOR row was always caught — the PreviousHash
+          links stop lining up — but renumbering the LAST row to an unused higher value left the
+          order unchanged and every hash matching. Nothing verifiable moved.
+
+          No exploit was built on that and none is claimed; it is closed because it cost one field.
+          This test is what makes the claim falsifiable rather than a comment.
+        */
+        var affected = await context.Database.ExecuteSqlRawAsync(
+            "UPDATE [AuditEvents] SET [Sequence] = 99 WHERE [Sequence] = 3");
+        affected.Should().Be(1, "the renumbering itself must have happened, or the test proves nothing");
+
+        var verification = await chain.VerifyAsync(context);
+
+        verification.IsIntact.Should().BeFalse("Sequence is inside the v2 payload");
+        verification.FirstBrokenSequence.Should().Be(99, "and the verifier must name the row it read");
+        verification.Verified.Should().Be(2, "the two rows before it still verify");
+        _output.WriteLine($"renumbered tail -> {verification.Reason}");
+    }
+
+    [SqlServerFact]
     public async Task WhenTheAuditRowCannotBeWritten_TheBusinessChangeIsRolledBackToo()
     {
         var services = CreateSqlServices();
@@ -242,6 +286,158 @@ public sealed class AuditChainSqlServerTests : IDisposable
         var verification = await chain.VerifyAsync(context);
         verification.IsIntact.Should().BeTrue(because: verification.Reason);
         verification.Verified.Should().Be(1, "a verification that read nothing also reports intact");
+    }
+
+    [SqlServerFact]
+    public async Task WhenTheAuditRowCannotBeWritten_TheHandleRenameIsRolledBackToo()
+    {
+        /*
+          D1 THROUGH THE REAL ENDPOINT, and the only test in this repository that can tell the two
+          shapes apart. WhenTheAuditRowCannotBeWritten_TheBusinessChangeIsRolledBackToo above proves
+          the property at the DbContext level, where the test itself chooses to make one save. This
+          one proves it for a request the API actually serves.
+
+          It matters because the first version of UserService recorded the row AFTER saving the
+          rename and then saved a SECOND time. Every row-exists assertion still passed — the row WAS
+          written — so nothing in the suite could tell that the rename and its evidence had stopped
+          being atomic. Only a failure injected into the audit insert separates them: with two saves
+          the handle stays renamed and the evidence is gone, which is precisely the state D1 forbids.
+
+          Cannot live on InMemory: that provider has no transactions, so nothing would roll back
+          there whichever way the code was written, and a green result would mean nothing.
+        */
+        _factory = new CustomWebApplicationFactory();
+        _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+        var client = _factory.CreateClient();
+
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var register = await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            azureTag = $"audit_{unique}",
+            email = $"audit{unique}@example.com",
+            password = "TestPass123!",
+            firstName = "Audit",
+            lastName = "Atomicity",
+        });
+        register.EnsureSuccessStatusCode();
+
+        var token = (await register.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("token").GetProperty("accessToken").GetString();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var fault = new OverlongAuditEventInterceptor(SecurityEvents.AzureTagRenamed);
+        _factory.AddInterceptor(fault);
+
+        var response = await client.PatchAsJsonAsync(
+            "/api/users/me/azuretag", new { azureTag = $"renamed_{unique}" });
+
+        fault.Fired.Should().BeTrue("the test proves nothing if the audit insert never actually failed");
+        response.IsSuccessStatusCode.Should().BeFalse(
+            "an action that cannot be audited must not be reported as done");
+
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        var stored = await context.Users.AsNoTracking().SingleAsync(u => u.Email == $"audit{unique}@example.com");
+        stored.AzureTag.Should().Be(
+            $"audit_{unique}",
+            "the rename shared the failed save, so it must be gone with the row that would have proved it");
+
+        (await context.AuditEvents.AsNoTracking()
+            .CountAsync(e => e.ActorUserId == stored.Id && e.Event == SecurityEvents.AzureTagRenamed))
+            .Should().Be(0, "and no half-written evidence survives either");
+
+        _output.WriteLine($"audit insert refused -> {(int)response.StatusCode}, handle still {stored.AzureTag}");
+    }
+
+    [SqlServerFact]
+    public async Task WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked()
+    {
+        /*
+          THE ONE PLACE WHERE D1 MUST NOT APPLY, and the reason the audit wiring in this branch had
+          to be reordered. Everywhere else "no evidence, no action" is the right trade. Here the
+          action is CONTAINMENT of a token already proven stolen, and refusing to contain it because
+          the logging failed hands the attacker the family.
+
+          The first wiring awaited RecordRefusalAsync BEFORE the try that guards the family revoke.
+          RecordRefusalAsync is deliberately allowed to throw and runs on its own connection, so a
+          command timeout or an unwritable audit table escaped RotateAsync with the revoke never
+          attempted, no MitigationFailed row either, and a 500 instead of the uniform 401 — the exact
+          outcome the comment inside that catch calls out as inviting a retry of the stolen token.
+
+          Found by an adversarial sweep of the audit write path, not by a bot and not by the suite.
+        */
+        var services = CreateSqlServices();
+        var client = _factory!.CreateClient();
+
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var register = await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            azureTag = $"reuse_{unique}",
+            email = $"reuse{unique}@example.com",
+            password = "TestPass123!",
+            firstName = "Reuse",
+            lastName = "Containment",
+        });
+        register.EnsureSuccessStatusCode();
+
+        var registered = await register.Content.ReadFromJsonAsync<JsonElement>();
+        var stolen = registered.GetProperty("data").GetProperty("token")
+            .GetProperty("refreshToken").GetString();
+        stolen.Should().NotBeNullOrEmpty("the reuse branch needs a real token to replay");
+
+        /*
+          LOG OUT, THEN LOG BACK IN, and both halves are load-bearing — the first two attempts at
+          this setup each proved nothing, which is why the reasoning is written down.
+
+          Logging out rather than ROTATING: RotateAsync treats a token that HAS a successor and was
+          revoked inside RotationGraceWindow (10 s) as a benign lost-response retry and writes no
+          audit row at all, so a rotate-then-replay never reaches the reuse branch. Logout calls
+          RevokeAllForUserAsync, which revokes WITHOUT a successor — the shape the code itself names
+          as genuine reuse ("explicit logout / theft response").
+
+          Logging back IN afterwards: logout revokes everything, so replaying against that state
+          leaves the family revoke with nothing to do and "zero active tokens" holds whether or not
+          containment ran. The fresh session is what gives the mitigation a victim, and it is what
+          makes this test able to fail — verified by putting the audit write back ahead of the
+          containment and watching it go red.
+        */
+        var accessToken = registered.GetProperty("data").GetProperty("token")
+            .GetProperty("accessToken").GetString();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        (await client.PostAsync("/api/auth/logout", content: null)).EnsureSuccessStatusCode();
+        client.DefaultRequestHeaders.Authorization = null;
+
+        var login = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            email = $"reuse{unique}@example.com",
+            password = "TestPass123!",
+        });
+        login.EnsureSuccessStatusCode();
+
+        var fault = new OverlongAuditEventInterceptor(SecurityEvents.RefreshTokenReuse);
+        _factory.AddInterceptor(fault);
+
+        var replay = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = stolen });
+
+        fault.Fired.Should().BeTrue("the test proves nothing if the reuse audit insert never failed");
+        replay.IsSuccessStatusCode.Should().BeFalse("a replayed token is always rejected");
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var user = await context.Users.AsNoTracking()
+            .SingleAsync(u => u.Email == $"reuse{unique}@example.com");
+
+        var active = await context.RefreshTokens.AsNoTracking()
+            .Where(t => t.UserId == user.Id && t.RevokedAt == null)
+            .CountAsync();
+
+        active.Should().Be(
+            0,
+            "the session opened after the logout must die with the rest: containment cannot be "
+            + "reachable only when logging works");
+
+        _output.WriteLine($"reuse audit insert refused -> {(int)replay.StatusCode}, active tokens left {active}");
     }
 
     private static AuditEvent NewEvent(string name, string? detail = null) => new()

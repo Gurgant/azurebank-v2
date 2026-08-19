@@ -502,3 +502,40 @@ configuration is exercised by nothing at all.
 More generally: the factory removes `DbContextOptions` and `IDbContextOptionsConfiguration` and
 rebuilds them, so **anything attached to the production registration is absent under test** — which
 is also why the audit chain lives in the `DbContext` class rather than in a `SaveChangesInterceptor`.
+
+## "The writer was called" is not evidence that a row exists
+
+The most expensive one in this batch, because every layer of the suite agreed it was fine.
+
+`IAuditService.Record` deliberately only calls `Add` — the caller's `SaveChanges` is what persists
+the row (ADR-0044 D1). A unit test holding a `Mock<IAuditService>` and asserting
+
+```csharp
+_auditMock.Verify(a => a.Record(SecurityEvents.PinEnrolled, ...), Times.Once);
+```
+
+therefore passes whether or not anything is ever written. On this branch `AuthService.SetPinAsync`
+called `Record` *after* `UserManager.UpdateAsync` had already saved and nothing saved again:
+`POST /api/auth/pin` answered **200**, the security log line was emitted, and `AuditEvents` held
+**zero** rows — with the mock assertion green and the whole suite green.
+
+Two rules. Any writer whose contract is "add, never save" needs at least one test that reads the
+STORE after driving the real endpoint, not one that watches the writer. And when such a writer is
+placed, check what actually performs the save — `UserManager.UpdateAsync`, `SignInManager`, a
+repository and `ExecuteUpdate` are all saves that a reader scanning for `_context.SaveChangesAsync`
+will miss (`ExecuteUpdate` is worse: it commits without flushing tracked entities at all).
+
+## A rotated-then-replayed refresh token is a benign retry, not reuse
+
+Cost two rewrites of a test that looked obviously right.
+
+`RefreshTokenService` treats a token that HAS a successor and was revoked inside
+`RotationGraceWindow` (10 s) as a lost-response retry: rejected, but with no security event at all.
+So "rotate, then replay the old token" never reaches the reuse branch, and a fault injected there
+never fires. Genuine reuse needs a token revoked WITHOUT a successor — log out, which calls
+`RevokeAllForUserAsync`.
+
+Then the second trap: logging out revokes *everything*, so an assertion that the family ends up with
+zero active tokens holds whether or not containment ran. Log back in first, so the mitigation has a
+victim — and confirm by breaking the code on purpose and watching the test go red. A test whose
+setup already satisfies its postcondition proves nothing, and it will not tell you so.
