@@ -201,9 +201,33 @@ public class AuthLevelMiddleware
 
             if (authLevel == 0)
             {
-                _logger.LogWarning(
-                    "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {Path}",
-                    SecurityEvents.StepUpWithoutSession, safeMethod, safePath);
+                /*
+                  TWO EVENTS, BECAUSE THE GATE NOW ADMITS TWO DIFFERENT FAILURES. Until the method
+                  condition came off, everything arriving here without a session was either a money
+                  POST or a PIN-protected path, so one name covered it. Now an ordinary GET with an
+                  expired cookie lands here too, and calling that StepUpWithoutSession would assert
+                  something untrue — that someone probed a step-up path — while burying the case
+                  actually worth waking a human for under the routine one.
+
+                  TWO STATEMENTS RATHER THAN A TERNARY, and that is not only taste. The first version
+                  put both message templates and both event names inside one LogWarning, and
+                  SecurityEventConstantTests reads the name from the lines following each template —
+                  so it found StepUpWithoutSession twice and never saw SessionRequired at all. The
+                  counts still moved to 8, so only the SET comparison caught it. Keeping one template
+                  beside one name per statement is what makes that scan able to see this site.
+                */
+                if (requiresPin)
+                {
+                    _logger.LogWarning(
+                        "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {Path}",
+                        SecurityEvents.StepUpWithoutSession, safeMethod, safePath);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "SecurityEvent {SecurityEvent}: no session on proxied {Method} {Path}",
+                        SecurityEvents.SessionRequired, safeMethod, safePath);
+                }
 
                 /*
                   Byte-for-byte the 401 the API emits for a missing token — measured against the

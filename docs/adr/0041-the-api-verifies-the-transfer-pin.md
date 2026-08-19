@@ -134,7 +134,7 @@ locally, at the BFF, with the API's own 401 shape, trailing slash normalised the
 > `/bff/auth/reauthenticate` all carry `[EnableRateLimiting(RateLimitPolicies.Auth)]` — the same
 > policy the proxied routes had.
 
-> **Amended 2026-08-20.** The method condition is gone: the gate now requires a session for EVERY
+> **Amended 2026-08-19.** The method condition is gone: the gate now requires a session for EVERY
 > proxied request under `/api/`, not only POSTs.
 >
 > The 2026-08-17 amendment above deferred exactly this, and gave a concrete reason —
@@ -152,8 +152,11 @@ locally, at the BFF, with the API's own 401 shape, trailing slash normalised the
 > itself calls unacceptable: a gate whose correctness depends on a different file getting something
 > right. Measured after the change, sessionless: `GET /api/accounts`, `PATCH /api/users/me/azuretag`
 > and `DELETE /api/accounts/{id}` all answer **401** at the BFF with the API's own
-> `AUTH_TOKEN_MISSING` body, so no client can observe the move; register, login and both reads still
-> answer 201, 200, 200, 200 with a session.
+> `AUTH_TOKEN_MISSING` body, so no client can observe the move. With a session, `/bff/auth/register`
+> and `/bff/auth/login` answer 201 and 200 and the proxied `GET /api/accounts` and
+> `GET /api/transactions` answer 200 — naming the two prefixes apart deliberately, because the
+> proxied `/api/auth/login` and `/api/auth/register` answer 404 **even with a valid session**:
+> `BlockedProxiedAuthPaths` is matched before the session is ever read.
 >
 > Reads are swallowed too, and that was the other half of the deferral. It is fine: `/full-number`
 > keeps its own PIN rule at a different level, and needing a session first is strictly weaker than

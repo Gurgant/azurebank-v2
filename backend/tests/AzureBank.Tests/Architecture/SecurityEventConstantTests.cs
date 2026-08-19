@@ -49,7 +49,7 @@ public class SecurityEventConstantTests
 
     /// <summary>
     /// Both projects, whole. Unlike the error-code rule this is not scoped to a Services folder:
-    /// seven of the twenty-four sites live in the BFF's middleware and its Program, and scoping is what
+    /// eight of the twenty-five sites live in the BFF's middleware and its Program, and scoping is what
     /// let a third of the vocabulary sit outside anybody's rule in the first place.
     /// </summary>
     private static readonly string[] ScannedFolders =
@@ -399,12 +399,13 @@ public class SecurityEventConstantTests
             "RawAuthEntryBlocked",
             "RawRefreshBlocked",
             "RefreshRejected",
+            "SessionRequired",
             "StepUpRequired",
             "StepUpWithoutSession",
         ];
 
         const int apiSites = 17;
-        const int bffSites = 7;
+        const int bffSites = 8;
 
         var perProject = SourceFiles(RepoBackendRoot())
             .GroupBy(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)
@@ -437,13 +438,13 @@ public class SecurityEventConstantTests
 
         perProject["Bff"].Should().Be(
             bffSites,
-            "ADR-0044 D4 names the BFF events one by one and calls them \"the seven BFF events\". If "
+            "ADR-0044 D4 names the BFF events one by one and calls them \"the eight BFF events\". If "
             + "this moved, add or remove the name there too — the list is the count");
 
         (perProject["Api"] + perProject["Bff"]).Should().Be(
-            24,
-            "AuditOutcome's remarks derive the four outcomes from \"the 24 existing security-event log "
-            + "sites\" and tally \"14 of the 24\" as Refused; both have to move with this");
+            25,
+            "AuditOutcome's remarks derive the four outcomes from \"the 25 existing security-event log "
+            + "sites\" and tally \"15 of the 25\" as Refused; both have to move with this");
     }
 
     /// <summary>
