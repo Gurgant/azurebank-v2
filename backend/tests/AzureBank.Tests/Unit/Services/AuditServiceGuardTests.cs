@@ -65,8 +65,24 @@ public class AuditServiceGuardTests
 
         var act = () => sut.RecordRefusalAsync(SecurityEvents.AccountDeleted, outcome);
 
-        (await act.Should().ThrowAsync<ArgumentException>())
-            .WithMessage("*Record*", "the message has to name the method to use instead");
+        var thrown = await act.Should().ThrowAsync<ArgumentException>();
+
+        /*
+          THE ABSENCE IS THE ASSERTION, and asserting only the presence would have been theatre:
+          "Record" is a substring of "RecordRefusalAsync", so a bare "*Record*" also matches the
+          SIBLING guard's message ("must be written with RecordRefusalAsync: ..."). This method
+          throwing THAT message would tell the caller to switch to the very method they just
+          called — and the naive pattern would have passed. Naming what must NOT be there is what
+          turns "mentions something Record-ish" into "names Record".
+
+          The mirror assertion above needs no such pairing: "RecordRefusalAsync" is not a substring
+          of anything in this method's message, so it discriminates on its own. The asymmetry is
+          the substring relationship, not an inconsistency.
+        */
+        thrown.Which.Message.Should()
+            .Contain("Record", "the message has to name the method to use instead")
+            .And.NotContain(
+                "RecordRefusalAsync", "which is the method that just refused the call");
     }
 
     [Fact]
