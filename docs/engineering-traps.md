@@ -422,3 +422,83 @@ never entered, so there is no model binding and nothing to produce a 400. An unc
 parameter cannot fail either, for the opposite reason: every byte sequence is a valid string. So
 "path parameters can fail validation" is wrong both ways round, and a documented response nobody can
 produce is as false as an undocumented body.
+
+---
+
+## `dotnet ef` reads the compiled assembly, not your source files
+
+Found in B2 (ADR-0044), and it cost two rounds of confusion in a row.
+
+`dotnet ef migrations add … --no-build` scaffolds from the **dll**. Adding an entity and scaffolding
+without rebuilding first produces a migration with an **empty `Up()`** — no error, no warning, just a
+migration that does nothing. Deleting that migration and regenerating it under the same name then
+fails with *"the name is used by an existing migration"*, because the deleted `.cs` is still inside
+the assembly. Rebuild between every EF operation and both symptoms disappear.
+
+Two neighbours of the same trap:
+
+- `dotnet ef migrations remove` dies with *"The ConnectionString property has not been initialized"*
+  — user-secrets are not picked up there, the same failure this file already records for
+  `database update`. Deleting the migration files by hand and rebuilding is the way out.
+- `--connection` is **not** a valid option for `migrations add`; it exists only on `database update`.
+
+## `datetime2` stores no `DateTimeKind`, so a hash over a formatted timestamp changes on read
+
+Also from B2, and the more dangerous of the two because everything was green while it was wrong.
+
+`DateTime.ToString("O")` emits a trailing `Z` when `Kind` is `Utc` and omits it when `Kind` is
+`Unspecified`. SQL Server's `datetime2` has no kind column, so a value written from `DateTime.UtcNow`
+comes back as `Unspecified` and formats differently than it did on the way in. Anything derived from
+that string — a hash, a signature, a cache key — therefore does not survive a round trip:
+
+```
+"2026-08-19T10:39:24.7403300Z" -> HMAC 6a7028…143903   (as written)
+"2026-08-19T10:39:24.7403300"  -> HMAC a98d42…c3dbd9   (as read back)
+```
+
+The EF InMemory provider hides this completely: its identity map hands back the object that was
+written, so nothing is ever re-materialised and the test passes. Hash `Ticks` instead — an integer,
+exact through `datetime2(7)`, with nothing kind-dependent in it — or store a `DateTimeOffset`.
+
+## `UPDLOCK, HOLDLOCK` outside a transaction is decoration
+
+EF opens its implicit transaction **inside** `SaveChanges`. Code that runs in a `SaveChanges`
+override, before `base.SaveChanges`, is therefore **not** in that transaction: a locking read issued
+there auto-commits and drops its lock immediately, and the write that was meant to be protected
+happens afterwards on its own.
+
+Symptom, from 24 concurrent writers against a table whose sequence column carries a unique index:
+`Cannot insert duplicate key row in object 'dbo.AuditEvents' with unique index
+'IX_AuditEvents_Sequence'. The duplicate key value is (2)`. Without that unique index it would not
+have raised at all — it would have silently produced two rows claiming the same predecessor.
+
+Open the transaction explicitly around the read and the write, and skip it when the caller already
+has one (`Database.CurrentTransaction is not null`) or the provider is not relational.
+
+## The test host is not the production host: the retrying strategy is opt-in
+
+The one in this batch that no test could have found, because the tests were the blind spot.
+
+`ServiceCollectionExtensions` configures the API with `EnableRetryOnFailure`, and EF **refuses a
+user-initiated transaction** under a retrying strategy. `CustomWebApplicationFactory` rebuilds the
+`DbContext` registration and leaves that strategy **off** unless a test calls
+`EnableSqlRetryOnFailure()` — deliberately, so an injected transient fault surfaces instead of being
+retried. The consequence is that `Database.BeginTransaction()` in shared infrastructure passes every
+test and throws on the real API:
+
+```
+System.InvalidOperationException: The configured execution strategy
+'SqlServerRetryingExecutionStrategy' does not support user-initiated transactions. Use the execution
+strategy returned by 'DbContext.Database.CreateExecutionStrategy()' …
+```
+
+Measured as a **500** on `POST /api/auth/refresh` with the whole 766-test suite green.
+
+Two rules follow. Any code that opens its own transaction goes through
+`Database.CreateExecutionStrategy()` — `AuthService.RegisterAsync` is the worked example. And when
+such code is added, one SQL Server test must opt into `EnableSqlRetryOnFailure()`, or the production
+configuration is exercised by nothing at all.
+
+More generally: the factory removes `DbContextOptions` and `IDbContextOptionsConfiguration` and
+rebuilds them, so **anything attached to the production registration is absent under test** — which
+is also why the audit chain lives in the `DbContext` class rather than in a `SaveChangesInterceptor`.

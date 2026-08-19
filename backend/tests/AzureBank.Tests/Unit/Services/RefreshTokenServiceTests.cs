@@ -1,3 +1,4 @@
+using AzureBank.Api.Services.Interfaces;
 using System.Security.Cryptography;
 using System.Text;
 using AzureBank.Api.Services.Implementations;
@@ -71,7 +72,8 @@ public class RefreshTokenServiceTests : IDisposable
             _context,
             httpContextAccessor,
             Options.Create(jwtOptions),
-            new Mock<ILogger<RefreshTokenService>>().Object);
+            new Mock<ILogger<RefreshTokenService>>().Object,
+            new Mock<IAuditService>().Object);
     }
 
     private ApplicationUser SeedUser()
@@ -224,7 +226,8 @@ public class RefreshTokenServiceTests : IDisposable
             faultyContext,
             accessor,
             Options.Create(new JwtOptions { RefreshTokenExpirationDays = 7 }),
-            logger.Object);
+            logger.Object,
+            new Mock<IAuditService>().Object);
 
         // The injected failure must not reach the caller: still the uniform rejection the exception
         // handler renders as 401, never the 500 the raw exception would have produced.
@@ -292,7 +295,8 @@ public class RefreshTokenServiceTests : IDisposable
                 new AzureBankDbContext(options),
                 accessor,
                 Options.Create(new JwtOptions { RefreshTokenExpirationDays = 7 }),
-                logger.Object),
+                logger.Object,
+                new Mock<IAuditService>().Object),
             logger);
     }
 

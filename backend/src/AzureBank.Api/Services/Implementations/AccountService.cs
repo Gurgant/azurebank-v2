@@ -7,6 +7,7 @@ using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
 using Microsoft.EntityFrameworkCore;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Enums;
 
 namespace AzureBank.Api.Services.Implementations;
 
@@ -18,18 +19,21 @@ public class AccountService : IAccountService
     private readonly AzureBankDbContext _context;
     private readonly IAccountAccessService _accountAccess;
     private readonly AccountMapper _mapper;
+    private readonly IAuditService _audit;
     private readonly ILogger<AccountService> _logger;
 
     public AccountService(
         AzureBankDbContext context,
         IAccountAccessService accountAccess,
         AccountMapper mapper,
-        ILogger<AccountService> logger)
+        ILogger<AccountService> logger,
+        IAuditService audit)
     {
         _context = context;
         _accountAccess = accountAccess;
         _mapper = mapper;
         _logger = logger;
+        _audit = audit;
     }
 
     /// <inheritdoc />
@@ -148,6 +152,12 @@ public class AccountService : IAccountService
         account.DeletedAt = DateTime.UtcNow;
         account.UpdatedAt = DateTime.UtcNow;
 
+        // Enlisted BEFORE the save, so the audit row and the soft delete are one unit: if the audit
+        // insert fails, the account is not closed either (ADR-0044 D1).
+        _audit.Record(
+            SecurityEvents.AccountDeleted, AuditOutcome.Succeeded,
+            actorUserId: userId, subjectType: "Account", subjectId: accountId);
+
         await _context.SaveChangesAsync();
 
         /*
@@ -194,6 +204,11 @@ public class AccountService : IAccountService
           scoped to secrets, PAN and descriptive PII. See ADR-0017 ("log the opaque id, not PII");
           pseudonymising one site while twenty others log ids in clear is task #206, and it is
           decided: no, for the reason above — there is no trust boundary to buy anything with.
+        */
+        /*
+          The row rides THIS SaveChanges (ADR-0044). Record only adds; the SaveChangesAsync above
+          would already have flushed it — so the call goes before it, not after. Ordering matters
+          here in a way it does not for the log line.
         */
         _logger.LogInformation(
             "SecurityEvent {SecurityEvent}: user {UserId} deleted account {AccountId}",
@@ -242,6 +257,16 @@ public class AccountService : IAccountService
         _logger.LogInformation(
             "SecurityEvent {SecurityEvent}: user {UserId} revealed the full account number of account {AccountId}",
             SecurityEvents.AccountNumberRevealed, userId, accountId);
+
+        /*
+          A read has no SaveChanges of its own to ride, so this one is saved here explicitly. It is
+          still Succeeded rather than a refusal: the number WAS returned, and that is the fact the
+          detective control of ADR-0020 exists to record.
+        */
+        _audit.Record(
+            SecurityEvents.AccountNumberRevealed, AuditOutcome.Succeeded,
+            actorUserId: userId, subjectType: "Account", subjectId: accountId);
+        await _context.SaveChangesAsync();
 
         // Deliberately NOT via AccountMapper: the mapper's contract is "account numbers
         // leave masked". Constructing the one unmasked shape by hand keeps that invariant

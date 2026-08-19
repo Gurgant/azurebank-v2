@@ -3,6 +3,7 @@ using System.Text;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Enums;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Options;
@@ -41,17 +42,20 @@ public class RefreshTokenService : IRefreshTokenService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly JwtOptions _jwtOptions;
     private readonly ILogger<RefreshTokenService> _logger;
+    private readonly IAuditService _audit;
 
     public RefreshTokenService(
         AzureBankDbContext context,
         IHttpContextAccessor httpContextAccessor,
         IOptions<JwtOptions> jwtOptions,
-        ILogger<RefreshTokenService> logger)
+        ILogger<RefreshTokenService> logger,
+        IAuditService audit)
     {
         _context = context;
         _httpContextAccessor = httpContextAccessor;
         _jwtOptions = jwtOptions.Value;
         _logger = logger;
+        _audit = audit;
     }
 
     /// <inheritdoc />
@@ -83,6 +87,14 @@ public class RefreshTokenService : IRefreshTokenService
             // Never existed, or already reaped by cleanup. Uniform 401 (no oracle).
             _logger.LogWarning(
                 "SecurityEvent {SecurityEvent}: refresh presented an unknown token", SecurityEvents.RefreshTokenUnknown);
+
+            /*
+              RecordRefusalAsync, not Record: this path throws, so anything enlisted in the caller's
+              unit of work would be rolled back with the 401 — the refusal would erase its own
+              record. No actor: the whole point is that nobody could be identified (ADR-0044).
+            */
+            await _audit.RecordRefusalAsync(
+                SecurityEvents.RefreshTokenUnknown, AuditOutcome.Refused, cancellationToken: cancellationToken);
             throw InvalidRefreshToken();
         }
 
@@ -110,6 +122,13 @@ public class RefreshTokenService : IRefreshTokenService
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: reuse of revoked refresh token {TokenId} (user {UserId}); revoking all active tokens",
                     SecurityEvents.RefreshTokenReuse, existing.Id, existing.UserId);
+
+                // The theft signal of ADR-0021, and the one event here an operator is most likely to
+                // be woken by. Out-of-band for the same reason: this path ends in a 401.
+                await _audit.RecordRefusalAsync(
+                    SecurityEvents.RefreshTokenReuse, AuditOutcome.Refused,
+                    actorUserId: existing.UserId, subjectType: "RefreshToken", subjectId: existing.Id,
+                    cancellationToken: cancellationToken);
 
                 try
                 {
@@ -150,6 +169,17 @@ public class RefreshTokenService : IRefreshTokenService
                         "SecurityEvent {SecurityEvent}: family revoke FAILED after reuse detection for user {UserId}; "
                             + "the 401 stands and the next replay re-runs the revoke",
                         SecurityEvents.RefreshTokenReuseRevokeFailed, existing.UserId);
+
+                    /*
+                      MitigationFailed, the only outcome of its kind: a compromise was detected and
+                      NOT contained. Written on its own connection precisely because everything
+                      around it is failing — if this one is lost, the single case where a human has
+                      to act leaves no trace at all.
+                    */
+                    await _audit.RecordRefusalAsync(
+                        SecurityEvents.RefreshTokenReuseRevokeFailed, AuditOutcome.MitigationFailed,
+                        actorUserId: existing.UserId, subjectType: "RefreshToken", subjectId: existing.Id,
+                        cancellationToken: cancellationToken);
                 }
             }
             throw InvalidRefreshToken();

@@ -2,6 +2,7 @@ using AzureBank.Api.Mappers;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Enums;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
@@ -18,12 +19,14 @@ public class UserService : IUserService
     private readonly AzureBankDbContext _context;
     private readonly UserMapper _mapper;
     private readonly ILogger<UserService> _logger;
+    private readonly IAuditService _audit;
 
-    public UserService(AzureBankDbContext context, ILogger<UserService> logger)
+    public UserService(AzureBankDbContext context, ILogger<UserService> logger, IAuditService audit)
     {
         _context = context;
         _mapper = new UserMapper();
         _logger = logger;
+        _audit = audit;
     }
 
     /// <inheritdoc />
@@ -125,6 +128,17 @@ public class UserService : IUserService
             userId,
             LogSanitizer.Sanitize(previous),
             LogSanitizer.Sanitize(normalized));
+
+        /*
+          NEITHER HANDLE goes in the audit row, and that is the D5 rule rather than an oversight: a
+          handle is user-chosen and public, which makes it exactly the descriptive personal data this
+          table must not hold, on a store designed never to be purged. The subject is the USER, and
+          the two handles stay in the log line above, which does expire.
+        */
+        _audit.Record(
+            SecurityEvents.AzureTagRenamed, AuditOutcome.Succeeded,
+            actorUserId: userId, subjectType: "User", subjectId: userId);
+        await _context.SaveChangesAsync();
 
         return normalized;
     }

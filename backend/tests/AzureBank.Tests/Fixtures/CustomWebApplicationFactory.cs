@@ -49,6 +49,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
     /// PasswordHasher when recomputing hashes directly. NOT a real secret.
     /// </summary>
+    /// <summary>Test-only audit chain key. Never a production value; see AuditOptions.ChainKey.</summary>
+    public const string AuditChainKey =
+        "test-only-audit-chain-key-do-not-use-in-production-0123456789";
+
     public const string PinPepper =
         "integration-tests-only-pin-pepper-0123456789abcdef0123456789";
 
@@ -117,6 +121,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         // PIN-hash pepper (ADR-0011). Test-only value.
         builder.UseSetting("Security:PinPepper", PinPepper);
+
+        // Audit chain key (ADR-0044). Test-only, and present for the same reason the three above
+        // are: Audit:ChainKey is ValidateOnStart, so without it every test host fails to build.
+        builder.UseSetting("Audit:ChainKey", AuditChainKey);
 
         builder.ConfigureServices(services =>
         {

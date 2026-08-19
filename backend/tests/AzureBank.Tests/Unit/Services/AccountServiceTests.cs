@@ -27,6 +27,7 @@ public class AccountServiceTests : IDisposable
     private readonly Mock<IAccountAccessService> _accountAccessMock;
     private readonly AccountMapper _mapper;
     private readonly Mock<ILogger<AccountService>> _loggerMock;
+    private readonly Mock<IAuditService> _auditMock;
     private readonly AccountService _sut; // System Under Test
 
     private readonly string _databaseName = Guid.NewGuid().ToString();
@@ -54,12 +55,14 @@ public class AccountServiceTests : IDisposable
         _accountAccessMock = new Mock<IAccountAccessService>();
         _mapper = new AccountMapper();
         _loggerMock = new Mock<ILogger<AccountService>>();
+        _auditMock = new Mock<IAuditService>();
 
         _sut = new AccountService(
             _context,
             _accountAccessMock.Object,
             _mapper,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            _auditMock.Object);
     }
 
     public void Dispose()
@@ -471,6 +474,20 @@ public class AccountServiceTests : IDisposable
                 state.ToString()!.Contains(accountId.ToString())),
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+
+        /*
+          And the durable half. The log line above goes to a stream that rotates; this row goes to a
+          table designed never to be purged, hash-chained to the one before it (ADR-0044). Asserted
+          separately because the two can drift — an earlier version of this method logged and did not
+          record, and nothing would have said so.
+        */
+        _auditMock.Verify(a => a.Record(
+            SecurityEvents.AccountDeleted,
+            AuditOutcome.Succeeded,
+            userId,
+            "Account",
+            accountId,
+            It.IsAny<string?>()), Times.Once);
     }
 
     [Theory]
@@ -504,6 +521,14 @@ public class AccountServiceTests : IDisposable
                 state.ToString()!.Contains(SecurityEvents.AccountDeleted)),
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
+
+        _auditMock.Verify(a => a.Record(
+            SecurityEvents.AccountDeleted,
+            It.IsAny<AuditOutcome>(),
+            It.IsAny<Guid?>(),
+            It.IsAny<string?>(),
+            It.IsAny<Guid?>(),
+            It.IsAny<string?>()), Times.Never);
     }
 
     #endregion

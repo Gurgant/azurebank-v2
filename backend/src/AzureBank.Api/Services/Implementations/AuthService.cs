@@ -34,6 +34,7 @@ public class AuthService : IAuthService
     private readonly AccountMapper _accountMapper;
     private readonly ILoginTimingEqualizer _timingEqualizer;
     private readonly ILogger<AuthService> _logger;
+    private readonly IAuditService _audit;
     private readonly Redactor _piiRedactor;
 
     public AuthService(
@@ -47,8 +48,10 @@ public class AuthService : IAuthService
         AccountMapper accountMapper,
         ILoginTimingEqualizer timingEqualizer,
         ILogger<AuthService> logger,
-        IRedactorProvider redactorProvider)
+        IRedactorProvider redactorProvider,
+        IAuditService audit)
     {
+        _audit = audit;
         _userManager = userManager;
         _context = context;
         _jwtService = jwtService;
@@ -661,6 +664,16 @@ public class AuthService : IAuthService
             _logger.LogInformation(
                 "SecurityEvent {SecurityEvent}: user {UserId} enrolled a PIN after proving their password",
                 SecurityEvents.PinEnrolled, userId);
+
+            /*
+              Detail records that the password was proved, because that is the fact B3's evidence
+              pack needs and the fact the log line above will not outlive. Nothing about the PIN
+              itself is recorded — not its hash, not its length.
+            */
+            _audit.Record(
+                SecurityEvents.PinEnrolled, AuditOutcome.Succeeded,
+                actorUserId: userId, subjectType: "User", subjectId: userId,
+                detail: "{\"passwordProved\":true}");
         }
 
         _logger.LogInformation("User {UserId} set their PIN", userId);
