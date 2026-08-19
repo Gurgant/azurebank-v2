@@ -2,12 +2,14 @@ using AzureBank.Shared.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace AzureBank.Infrastructure.Data;
 
 public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>
 {
     private readonly TimeProvider _clock;
+    private readonly IAuditChain? _auditChain;
 
     /// <param name="options">Standard EF Core options.</param>
     /// <param name="timeProvider">
@@ -23,11 +25,20 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// needs it.
     /// </para>
     /// </param>
+    /// <param name="auditChain">
+    /// Fills the tamper-evident chain on any <see cref="AuditEvent"/> saved through this context
+    /// (ADR-0044). Optional in the SIGNATURE only, so the fourteen existing direct construction sites
+    /// keep compiling — but NOT optional in effect: saving an audit row without it throws below,
+    /// rather than writing a row with an empty hash that would look audited and prove nothing.
+    /// </param>
     public AzureBankDbContext(
-        DbContextOptions<AzureBankDbContext> options, TimeProvider? timeProvider = null)
+        DbContextOptions<AzureBankDbContext> options,
+        TimeProvider? timeProvider = null,
+        IAuditChain? auditChain = null)
         : base(options)
     {
         _clock = timeProvider ?? TimeProvider.System;
+        _auditChain = auditChain;
     }
 
     // Note: Users are accessed via Set<ApplicationUser>()
@@ -37,6 +48,7 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<StepUpAuthorization> StepUpAuthorizations => Set<StepUpAuthorization>();
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -58,7 +70,22 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     {
         EnforceTransactionImmutability();
         UpdateTimestamps();
-        return base.SaveChanges(acceptAllChangesOnSuccess);
+
+        var chain = RequireAuditChain();
+        if (!NeedsOwnChainTransaction())
+        {
+            chain.Apply(this);
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        return Database.CreateExecutionStrategy().Execute(() =>
+        {
+            using var owned = Database.BeginTransaction();
+            chain.Apply(this);
+            var written = base.SaveChanges(acceptAllChangesOnSuccess);
+            owned.Commit();
+            return written;
+        });
     }
 
     public override async Task<int> SaveChangesAsync(
@@ -66,7 +93,96 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     {
         EnforceTransactionImmutability();
         UpdateTimestamps();
-        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+        var chain = RequireAuditChain();
+        if (!NeedsOwnChainTransaction())
+        {
+            await chain.ApplyAsync(this, cancellationToken);
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
+        return await Database.CreateExecutionStrategy().ExecuteAsync(async ct =>
+        {
+            await using var owned = await Database.BeginTransactionAsync(ct);
+            await chain.ApplyAsync(this, ct);
+            var written = await base.SaveChangesAsync(acceptAllChangesOnSuccess, ct);
+            await owned.CommitAsync(ct);
+            return written;
+        }, cancellationToken);
+    }
+
+    /*
+      THE LOCK NEEDS A TRANSACTION TO BE HELD BY, and this is a CORRECTION of what the first version
+      of this class claimed. That version asserted the funnel was already "inside the transaction EF
+      is using" and applied the chain immediately before base.SaveChanges. It is not: EF opens its
+      implicit transaction INSIDE SaveChanges, so the tail read ran in its own auto-committed
+      statement and released UPDLOCK/HOLDLOCK before the INSERT was ever sent. Measured on SQL Server
+      with 24 concurrent writers: "Cannot insert duplicate key row in object 'dbo.AuditEvents' with
+      unique index 'IX_AuditEvents_Sequence'. The duplicate key value is (2)" — the fork the lock
+      exists to prevent, caught only because the unique index made it loud instead of silent.
+
+      So the transaction is opened here, before the tail is read, and committed after the insert.
+
+      AND IT GOES THROUGH THE EXECUTION STRATEGY, which is a SECOND correction and one that only the
+      running API could produce. EnableRetryOnFailure is on in production, and EF refuses a
+      user-initiated transaction under a retrying strategy: every audited request answered 500 with
+      "The configured execution strategy 'SqlServerRetryingExecutionStrategy' does not support
+      user-initiated transactions", while the whole suite stayed green — because
+      CustomWebApplicationFactory rebuilds the DbContext registration WITHOUT the retrying strategy.
+      AuthService.RegisterAsync already had to solve exactly this; the idiom here is deliberately
+      the same one. AuditChainRetryingStrategySqlServerTests is what stops it coming back.
+
+      No transaction is opened at all — and the ordinary write path is untouched — when:
+        - the save carries no audit row;
+        - a caller already has an explicit transaction: it is the one holding the lock, and
+          committing it here would end the caller's unit of work early;
+        - the provider is not relational (the InMemory provider, where ~585 tests run): it has no
+          transactions and no locks, and IsRelational() rather than IsInMemory() keeps the InMemory
+          package out of the production API, the same choice IdempotencyCleanupService made.
+    */
+    private bool NeedsOwnChainTransaction() =>
+        Database.CurrentTransaction is null
+        && Database.IsRelational()
+        && ChangeTracker.Entries<AuditEvent>().Any(e => e.State == EntityState.Added);
+
+    /*
+      The chain runs HERE, in the same funnel as the immutability guard and the timestamps, and for
+      the same stated reason: no call path can bypass it. It also has to be here rather than in
+      IAuditService — the tail must be read under a lock inside the transaction SaveChanges is already
+      using, and AccountService.DeleteAccountAsync has no explicit transaction for the writer to
+      borrow. See AuditChain's remarks for why a SaveChangesInterceptor was rejected (the test host
+      rebuilds the DbContext registration and would silently drop it).
+    */
+    private IAuditChain RequireAuditChain()
+    {
+        if (_auditChain is not null)
+        {
+            return _auditChain;
+        }
+
+        var writingAudit = ChangeTracker.Entries<AuditEvent>().Any(e => e.State == EntityState.Added);
+        if (!writingAudit)
+        {
+            // Nothing to chain. The fourteen contexts constructed by hand in tests that never touch
+            // AuditEvents stay valid, which is why the parameter is optional at all.
+            return NoAuditRows.Instance;
+        }
+
+        throw new InvalidOperationException(
+            "An AuditEvent was added to a DbContext constructed without an IAuditChain, so its hash "
+            + "chain cannot be computed. Resolve AzureBankDbContext from DI, or pass an IAuditChain. "
+            + "Writing the row unchained is refused deliberately: a row with an empty RowHash reads "
+            + "as audited and proves nothing.");
+    }
+
+    /// <summary>No-op used only when there are no audit rows to chain.</summary>
+    private sealed class NoAuditRows : IAuditChain
+    {
+        internal static readonly NoAuditRows Instance = new();
+        public Task ApplyAsync(DbContext context, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public void Apply(DbContext context) { }
+        public Task<AuditChainVerification> VerifyAsync(DbContext context, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new AuditChainVerification(0, null, null));
     }
 
     /// <summary>

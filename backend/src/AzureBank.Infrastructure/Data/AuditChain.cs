@@ -1,0 +1,303 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using AzureBank.Shared.Entities;
+using AzureBank.Shared.Options;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace AzureBank.Infrastructure.Data;
+
+/// <summary>
+/// Chains each <see cref="AuditEvent"/> to the one before it, at the moment it is written
+/// (ADR-0044). Called from <see cref="AzureBankDbContext"/>'s SaveChanges funnels.
+/// </summary>
+public interface IAuditChain
+{
+    /// <summary>Fills the chain fields of every audit row added in this unit of work.</summary>
+    Task ApplyAsync(DbContext context, CancellationToken cancellationToken = default);
+
+    /// <inheritdoc cref="ApplyAsync"/>
+    void Apply(DbContext context);
+
+    /// <summary>
+    /// Recomputes every row's hash in <c>Sequence</c> order and checks that each links to the one
+    /// before it. This is what makes the chain a control rather than a decoration — a hash nobody
+    /// ever verifies proves nothing.
+    /// </summary>
+    Task<AuditChainVerification> VerifyAsync(DbContext context, CancellationToken cancellationToken = default);
+}
+
+/// <summary>The result of walking the chain. A count as well as a verdict, deliberately.</summary>
+/// <param name="Verified">Rows read and checked.</param>
+/// <param name="FirstBrokenSequence">
+/// The <c>Sequence</c> of the first row that failed, or null if none did.
+/// </param>
+/// <param name="Reason">Why it failed, in words an operator can act on. Null when intact.</param>
+/// <remarks>
+/// <see cref="Verified"/> exists so a caller can enforce a LIVENESS FLOOR. A verification that read
+/// zero rows returns "intact", and that answer is worthless — the same failure mode
+/// <c>SourceHygieneTests</c> was given a floor for after #119. Assert the count, not just the verdict.
+/// </remarks>
+public readonly record struct AuditChainVerification(long Verified, long? FirstBrokenSequence, string? Reason)
+{
+    /// <summary>True when every row read hashed and linked correctly.</summary>
+    public bool IsIntact => FirstBrokenSequence is null;
+}
+
+/// <inheritdoc cref="IAuditChain"/>
+/// <remarks>
+/// <para>
+/// WHY THIS RUNS INSIDE SaveChanges AND NOT INSIDE THE WRITER. The chain needs the tail of the table
+/// read under a lock and the new row inserted with nobody slipping in between — one transaction.
+/// <c>IAuditService.Record</c> cannot do that: it deliberately only calls <c>Add</c>, and
+/// <c>AccountService.DeleteAccountAsync</c> has no explicit transaction at all, so a lock taken there
+/// would be released before the insert and two concurrent writers would chain off the same tail. The
+/// SaveChanges funnel is the only place a transaction can be guaranteed for EVERY call site, so
+/// <c>AzureBankDbContext</c> opens one there when a save carries audit rows and the caller has not
+/// opened one already.
+/// </para>
+/// <para>
+/// CORRECTION, kept visible because the wrong version was written down first. This remark used to
+/// claim the funnel was ALREADY inside "the transaction EF is using". It is not — EF opens its
+/// implicit transaction inside <c>SaveChanges</c>, after this class has run, so the tail read
+/// auto-committed and dropped its lock before the insert. Twenty-four concurrent writers on SQL
+/// Server produced "Cannot insert duplicate key row ... IX_AuditEvents_Sequence. The duplicate key
+/// value is (2)". The explicit transaction in the funnel is what actually makes the lock hold, and
+/// <c>AuditChainSqlServerTests.ConcurrentWriters_DoNotForkTheChain</c> is what keeps it honest.
+/// </para>
+/// <para>
+/// AND WHY NOT A SaveChangesInterceptor, which is the textbook answer. Measured on this repository:
+/// <c>CustomWebApplicationFactory</c> removes <c>DbContextOptions</c> and
+/// <c>IDbContextOptionsConfiguration</c> and rebuilds the registration itself, so an interceptor
+/// attached in production wiring is simply absent under test. Every audit row would then be written
+/// with an empty <see cref="AuditEvent.RowHash"/> — a required column — and the guarantee would exist
+/// only where nobody looks. Living in the context class means every host gets it, because every host
+/// constructs the same class.
+/// </para>
+/// <para>
+/// SERIALISING COSTS NOTHING HERE, measured before it was chosen: eight concurrent writers × 100
+/// inserts on LocalDB, timing only the SQL, gave 0.62 ms per insert unchained against 0.56 ms
+/// chained — zero errors, zero deadlocks, and zero forks across 1,000 rows. The lock is held for
+/// microseconds, so the queue never forms. That is a claim about eight writers on one machine, which
+/// is what this application is; it is not a claim about a loaded server. Re-measured after the
+/// transaction correction above, 24 concurrent writers on LocalDB: 24 rows, sequences 1..24, no
+/// fork, no deadlock.
+/// </para>
+/// </remarks>
+public sealed class AuditChain : IAuditChain
+{
+    private readonly IOptions<AuditOptions> _options;
+
+    public AuditChain(IOptions<AuditOptions> options) => _options = options;
+
+    public async Task ApplyAsync(DbContext context, CancellationToken cancellationToken = default)
+    {
+        var pending = Pending(context);
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        Link(pending, await ReadTailAsync(context, cancellationToken));
+    }
+
+    public void Apply(DbContext context)
+    {
+        var pending = Pending(context);
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        Link(pending, ReadTail(context));
+    }
+
+    /// <summary>
+    /// The audit rows added in this unit of work. Ordered by <c>OccurredAt</c> and NOT by <c>Id</c>:
+    /// Guid ordering in .NET is not creation order even for a UUIDv7, and SQL Server collates
+    /// <c>uniqueidentifier</c> on a different byte order again — a trap this repository already
+    /// records. Ties are resolved by the number this method's caller then assigns, so the order is
+    /// recorded in the row rather than inferred from it.
+    /// </summary>
+    private static List<AuditEvent> Pending(DbContext context) =>
+        context.ChangeTracker.Entries<AuditEvent>()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity)
+            .OrderBy(e => e.OccurredAt)
+            .ToList();
+
+    private void Link(List<AuditEvent> pending, (long Sequence, string Hash)? tail)
+    {
+        var previous = tail?.Hash;
+        var sequence = tail?.Sequence ?? 0;
+
+        foreach (var row in pending)
+        {
+            row.Sequence = ++sequence;
+            row.PreviousHash = previous;
+            row.RowHash = ComputeRowHash(row);
+            previous = row.RowHash;
+        }
+    }
+
+    /*
+      UPDLOCK + HOLDLOCK, not a plain read, and both are load-bearing. UPDLOCK takes the update lock
+      at read time so two writers cannot both read the same tail and then both append — the
+      read-then-write race that produces a fork. HOLDLOCK keeps it to the end of the transaction, so
+      nothing is inserted between our read and our insert. Drop either and the fork returns.
+    */
+    private const string TailSql =
+        "SELECT TOP 1 [Sequence], [RowHash] FROM [AuditEvents] WITH (UPDLOCK, HOLDLOCK) ORDER BY [Sequence] DESC";
+
+    private static async Task<(long Sequence, string Hash)?> ReadTailAsync(
+        DbContext context, CancellationToken cancellationToken)
+    {
+        if (context.Database.IsRelational())
+        {
+            var row = await context.Set<AuditEvent>()
+                .FromSqlRaw(TailSql)
+                .AsNoTracking()
+                .Select(e => new { e.Sequence, e.RowHash })
+                .FirstOrDefaultAsync(cancellationToken);
+            return row is null ? null : (row.Sequence, row.RowHash);
+        }
+
+        var inMemory = await NonRelationalTail(context).FirstOrDefaultAsync(cancellationToken);
+        return inMemory is null ? null : (inMemory.Sequence, inMemory.RowHash);
+    }
+
+    private static (long Sequence, string Hash)? ReadTail(DbContext context)
+    {
+        if (context.Database.IsRelational())
+        {
+            var row = context.Set<AuditEvent>()
+                .FromSqlRaw(TailSql)
+                .AsNoTracking()
+                .Select(e => new { e.Sequence, e.RowHash })
+                .FirstOrDefault();
+            return row is null ? null : (row.Sequence, row.RowHash);
+        }
+
+        var inMemory = NonRelationalTail(context).FirstOrDefault();
+        return inMemory is null ? null : (inMemory.Sequence, inMemory.RowHash);
+    }
+
+    /*
+      The InMemory provider has no locks and no IDENTITY, so Sequence stays 0 on every row and cannot
+      order anything; Id — a UUIDv7 — can. Guarded on IsRelational() rather than IsInMemory() for the
+      reason IdempotencyCleanupService gives for the same choice: it keeps the InMemory provider
+      package out of the production API.
+
+      Be precise about what the ~585 InMemory tests can therefore prove: that the chain LINKS, and
+      that tampering breaks it. NOT that concurrent writers do not fork, because nothing there
+      serialises. That property belongs to the SQL Server proofs, and claiming it from an InMemory
+      test would be the "green and false" state this project refuses.
+    */
+    private static IQueryable<AuditEvent> NonRelationalTail(DbContext context) =>
+        context.Set<AuditEvent>()
+            .AsNoTracking()
+            .OrderByDescending(e => e.Sequence);
+
+    public async Task<AuditChainVerification> VerifyAsync(
+        DbContext context, CancellationToken cancellationToken = default)
+    {
+        /*
+          Read in Sequence order — the same order Link() wrote them in. Ordering by OccurredAt would
+          be wrong twice over: two rows can share a millisecond, and a clock can move backwards.
+          AsNoTracking because a verifier must never be able to write back what it read.
+        */
+        var rows = await context.Set<AuditEvent>()
+            .AsNoTracking()
+            .OrderBy(e => e.Sequence)
+            .ToListAsync(cancellationToken);
+
+        string? previous = null;
+        long verified = 0;
+
+        foreach (var row in rows)
+        {
+            if (row.PreviousHash != previous)
+            {
+                return new AuditChainVerification(
+                    verified,
+                    row.Sequence,
+                    $"Row {row.Id} expected to follow '{previous ?? "(start of chain)"}' but records "
+                    + $"'{row.PreviousHash ?? "(start of chain)"}'. A row was deleted, reordered, or inserted.");
+            }
+
+            var expected = ComputeRowHash(row);
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
+            {
+                return new AuditChainVerification(
+                    verified, row.Sequence, $"Row {row.Id} does not match its own hash: it was altered after it was written.");
+            }
+
+            previous = row.RowHash;
+            verified++;
+        }
+
+        return new AuditChainVerification(verified, null, null);
+    }
+
+    /// <summary>
+    /// HMAC-SHA256 over a versioned, delimited rendering of the row AND the hash before it — which is
+    /// what makes it a chain rather than a set of independent checksums.
+    /// </summary>
+    /// <remarks>
+    /// The version prefix is the same device <c>StepUpAuthorizationService</c> uses: adding a field
+    /// later must invalidate every previously computed value rather than silently leaving the new
+    /// field unprotected. It reads <c>v2</c> because <see cref="AuditEvent.Sequence"/> was added to
+    /// the payload after the first round of review — see the block below. <c>|</c> is a safe
+    /// delimiter because every part is a Guid, an enum name, an integer or hex — except
+    /// <c>Detail</c>, which is caller-supplied, and is therefore placed LAST where an embedded
+    /// delimiter cannot shift the meaning of a field after it.
+    /// </remarks>
+    /*
+      SEQUENCE IS HASHED, and it was not in v1. Sequence is the column VerifyAsync orders by, so
+      leaving it outside the payload meant the one field that defines the chain's order was the one
+      field the chain did not protect. Be precise about what that did and did not allow, because the
+      review that raised it overstated the consequence: REORDERING an interior row is already caught
+      without this, since the PreviousHash links stop lining up. What was genuinely unprotected was
+      the tail — renumbering the last row to an unused higher value changed nothing verifiable.
+
+      No exploit was constructed from that, and none is claimed here. It is hashed because it costs
+      one field and removes the question entirely, which is a better resting place than an argument
+      about how narrow the hole is.
+    */
+    /*
+      OccurredAt IS HASHED AS TICKS AND NOT AS ISO-8601, and this is a correction, not a preference.
+      The first version used ToString("O"), which renders a trailing "Z" for a DateTime whose Kind is
+      Utc and no "Z" for one whose Kind is Unspecified. SQL Server's datetime2 stores no kind, so a
+      row written from DateTime.UtcNow hashed WITH the Z and, read back, hashed WITHOUT it: every
+      audit row would have failed verification the moment it came from the database — which is to
+      say always, in production. It was invisible on the InMemory provider, where the identity map
+      hands back the very object that was written.
+
+      MEASURED before the fix, on LocalDB, recomputing a stored row's HMAC outside .NET:
+        payload with    "2026-08-19T10:39:24.7403300Z" -> 6a7028...143903  == the stored RowHash
+        payload with    "2026-08-19T10:39:24.7403300"  -> a98d42...c3dbd9  != the stored RowHash
+      Ticks is a plain integer and round-trips exactly through datetime2(7): same 100-ns resolution,
+      nothing kind-dependent to lose. AuditEvent.OccurredAt is UTC by convention, stated there.
+    */
+    private string ComputeRowHash(AuditEvent row)
+    {
+        var payload = string.Join('|',
+            "v2",
+            row.Id.ToString("N"),
+            row.Sequence.ToString(CultureInfo.InvariantCulture),
+            row.OccurredAt.Ticks.ToString(CultureInfo.InvariantCulture),
+            row.Event,
+            row.Outcome.ToString(),
+            row.ActorUserId?.ToString("N") ?? string.Empty,
+            row.SubjectType ?? string.Empty,
+            row.SubjectId?.ToString("N") ?? string.Empty,
+            row.TraceId ?? string.Empty,
+            row.PreviousHash ?? string.Empty,
+            row.Detail ?? string.Empty);
+
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.Value.ChainKey));
+        return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+    }
+}

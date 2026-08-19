@@ -125,6 +125,19 @@ public static class ServiceCollectionExtensions
                 "StepUp:Window must be positive")
             .ValidateOnStart();
 
+        // Audit trail chain key (ADR-0044). A secret, with the same fail-fast treatment as
+        // StepUp:BindingKey and Idempotency:HashKey, and SEPARATE from both: one leaked key must not
+        // let an attacker forge another mechanism's answer. Without it the row hash is computable by
+        // anyone holding the table — the fields are two Guids, a timestamp and an event name from a
+        // list of 17, so an unkeyed digest is recomputed, not inverted.
+        services.AddOptions<AuditOptions>()
+            .Bind(configuration.GetSection(AuditOptions.SectionName))
+            .Validate(
+                o => !string.IsNullOrWhiteSpace(o.ChainKey) && o.ChainKey.Length >= 32,
+                "Audit:ChainKey must be configured with at least 32 characters " +
+                "(dotnet user-secrets in development; see README)")
+            .ValidateOnStart();
+
         // PIN-hash pepper keyring (ADR-0011). The pepper is a server-side secret kept
         // OUT of the DB (user-secrets/env/Key Vault): fail fast at startup rather than
         // silently hashing PINs without it. The validation rules live in ONE shared
@@ -171,6 +184,12 @@ public static class ServiceCollectionExtensions
         // authorisation must ride the transfer's transaction, unlike PinService's bookkeeping,
         // which must survive a rollback.
         services.AddScoped<IStepUpAuthorizationService, StepUpAuthorizationService>();
+
+        // The audit trail (ADR-0044). IAuditChain is resolved by AzureBankDbContext's constructor,
+        // so it must be registered for any host that saves an AuditEvent — the context refuses to
+        // write an unchained row rather than writing one with an empty hash.
+        services.AddScoped<IAuditChain, AuditChain>();
+        services.AddScoped<IAuditService, AuditService>();
 
         // Background sweep of expired idempotency records
         services.AddHostedService<Services.IdempotencyCleanupService>();

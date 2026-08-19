@@ -74,7 +74,8 @@ detail hanging off them.
 [0030](0030-real-backend-integration-layer.md) the app's data layer against the real backend ·
 [0031](0031-e2e-playwright.md) the app in a real browser ·
 [0032](0032-real-stack-layers-in-ci.md) the real-stack layers in CI ·
-[0043](0043-the-document-declares-the-error-body.md) the document declares the error body
+[0043](0043-the-document-declares-the-error-body.md) the document declares the error body ·
+[0044](0044-the-audit-trail-is-append-only-and-chained.md) the audit trail is append-only and chained
 
 **Operations** — [0016](0016-observability-three-pillars.md) observability, three pillars ·
 [0017](0017-pii-redaction-codeql-barrier.md) PII-safe telemetry and the log-forging barrier
@@ -107,7 +108,7 @@ at that level** (the endpoint is still `[Authorize]`; what is missing is the ste
 ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consume, and is filed
 as a correction rather than a new policy: the decisions were already made, the document simply
 did not say them.
-The next free number is **0044**.
+The next free number is **0045**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -158,6 +159,7 @@ The next free number is **0044**.
 | [ADR-0041](0041-the-api-verifies-the-transfer-pin.md) | The API verifies the transfer PIN, not the BFF | Accepted | 2026-08-13 |
 | [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md) | A transfer authorisation is bound to its amount and payee, and spent once | Accepted | 2026-08-16 |
 | [ADR-0043](0043-the-document-declares-the-error-body.md) | The published document declares the error body the API actually sends | Accepted | 2026-08-18 |
+| [ADR-0044](0044-the-audit-trail-is-append-only-and-chained.md) | Security events go to an append-only, hash-chained table | Accepted | 2026-08-19 |
 
 </details>
 ## Creating a New ADR

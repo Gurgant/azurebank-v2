@@ -34,6 +34,7 @@ public class AuthService : IAuthService
     private readonly AccountMapper _accountMapper;
     private readonly ILoginTimingEqualizer _timingEqualizer;
     private readonly ILogger<AuthService> _logger;
+    private readonly IAuditService _audit;
     private readonly Redactor _piiRedactor;
 
     public AuthService(
@@ -47,8 +48,10 @@ public class AuthService : IAuthService
         AccountMapper accountMapper,
         ILoginTimingEqualizer timingEqualizer,
         ILogger<AuthService> logger,
-        IRedactorProvider redactorProvider)
+        IRedactorProvider redactorProvider,
+        IAuditService audit)
     {
+        _audit = audit;
         _userManager = userManager;
         _context = context;
         _jwtService = jwtService;
@@ -644,6 +647,34 @@ public class AuthService : IAuthService
         }
 
         user.PinHash = _passwordHasher.HashPin(request.Pin);
+
+        if (enrolling)
+        {
+            /*
+              BEFORE UpdateAsync, NOT AFTER, and the ordering IS the control. Record only calls Add;
+              the caller's save is what persists the row (ADR-0044 D1). Identity is registered with
+              AddEntityFrameworkStores<AzureBankDbContext>, so UserManager.UpdateAsync saves through
+              THIS context — which makes its SaveChanges the one this row has to ride.
+
+              The first version added the row AFTER UpdateAsync had already saved, and nothing saved
+              again, so it was discarded when the scope disposed. Measured on the running API:
+              POST /api/auth/pin answered 200, the log line below was emitted once, and AuditEvents
+              held ZERO rows. RequireAuditChain cannot catch that — it only fires on a save, and
+              there was no save. Nor could the unit test, which verified that Record was CALLED.
+
+              A failed UpdateAsync now discards this row together with the PIN change, which is
+              exactly D1: no enrolment, and no evidence claiming one.
+
+              Detail records that the password was proved, because that is the fact B3's evidence
+              pack needs and the fact the log line will not outlive. Nothing about the PIN itself is
+              recorded — not its hash, not its length.
+            */
+            _audit.Record(
+                SecurityEvents.PinEnrolled, AuditOutcome.Succeeded,
+                actorUserId: userId, subjectType: "User", subjectId: userId,
+                detail: "{\"passwordProved\":true}");
+        }
+
         var result = await _userManager.UpdateAsync(user);
 
         if (!result.Succeeded)
@@ -654,10 +685,17 @@ public class AuthService : IAuthService
 
         if (enrolling)
         {
-            // Detective control, in the OPERATOR's log — see SecurityEvents.PinEnrolled: this is
-            // deliberately NOT the independent notification to the account owner that NIST
-            // SP 800-63-4B §4.1.2 also requires, because there is no mail transport in this system
-            // to send one with. Saying so here rather than letting the line read as compliance.
+            /*
+              Detective control, in the OPERATOR's log — see SecurityEvents.PinEnrolled: this is
+              deliberately NOT the independent notification to the account owner that NIST
+              SP 800-63-4B §4.1.2 also requires, because there is no mail transport in this system
+              to send one with. Saying so here rather than letting the line read as compliance.
+
+              AFTER the update, unlike the audit row above, and the asymmetry is deliberate rather
+              than an oversight: the row lives inside the transaction and cancels itself when the
+              save fails, while a log line has no transaction to cancel it and would stand as a
+              record of an enrolment that never happened.
+            */
             _logger.LogInformation(
                 "SecurityEvent {SecurityEvent}: user {UserId} enrolled a PIN after proving their password",
                 SecurityEvents.PinEnrolled, userId);

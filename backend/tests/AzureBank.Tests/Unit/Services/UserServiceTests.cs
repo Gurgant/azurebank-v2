@@ -1,3 +1,4 @@
+using AzureBank.Api.Services.Interfaces;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
@@ -18,6 +19,7 @@ public class UserServiceTests : IDisposable
 {
     private readonly AzureBankDbContext _context;
     private readonly Mock<ILogger<UserService>> _loggerMock;
+    private readonly Mock<IAuditService> _auditMock;
     private readonly UserService _sut;
 
     public UserServiceTests()
@@ -29,7 +31,8 @@ public class UserServiceTests : IDisposable
         _context = new AzureBankDbContext(options);
         _loggerMock = new Mock<ILogger<UserService>>();
 
-        _sut = new UserService(_context, _loggerMock.Object);
+        _auditMock = new Mock<IAuditService>();
+        _sut = new UserService(_context, _loggerMock.Object, _auditMock.Object);
     }
 
     public void Dispose()

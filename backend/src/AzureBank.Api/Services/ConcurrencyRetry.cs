@@ -127,6 +127,23 @@ internal static class ConcurrencyRetry
         IsUniqueViolationOn(ex, AzureTagIndex) || IsUniqueViolationOn(ex, NormalizedEmailIndex);
 
     /// <summary>
+    /// True when a write lost the AzureTag unique-index race specifically — the rename path's
+    /// narrowing, as opposed to <see cref="IsRegistrationDuplicate"/> which also accepts the email
+    /// index because a registration can lose either.
+    ///
+    /// <para>
+    /// <b>The index name stopped being cosmetic here when the audit trail landed.</b>
+    /// <c>UserService</c> used to match 2601/2627 by NUMBER alone, which was defensible while the
+    /// only unique index that save could violate was the handle's. Since ADR-0044 the audit row
+    /// rides that same <c>SaveChanges</c>, and <c>AuditEvents</c> carries its own unique index
+    /// (<c>IX_AuditEvents_Sequence</c>) that raises the very same numbers — so a hash-chain
+    /// collision would have been reported to the caller as "that handle is already taken", a 409
+    /// for a fault that has nothing to do with them.
+    /// </para>
+    /// </summary>
+    public static bool IsAzureTagCollision(Exception ex) => IsUniqueViolationOn(ex, AzureTagIndex);
+
+    /// <summary>
     /// Saves a newly-added <see cref="Account"/>, minting a fresh number and retrying if the
     /// generated one was already taken.
     ///

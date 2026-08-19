@@ -422,3 +422,120 @@ never entered, so there is no model binding and nothing to produce a 400. An unc
 parameter cannot fail either, for the opposite reason: every byte sequence is a valid string. So
 "path parameters can fail validation" is wrong both ways round, and a documented response nobody can
 produce is as false as an undocumented body.
+
+---
+
+## `dotnet ef` reads the compiled assembly, not your source files
+
+Found in B2 (ADR-0044), and it cost two rounds of confusion in a row.
+
+`dotnet ef migrations add … --no-build` scaffolds from the **dll**. Adding an entity and scaffolding
+without rebuilding first produces a migration with an **empty `Up()`** — no error, no warning, just a
+migration that does nothing. Deleting that migration and regenerating it under the same name then
+fails with *"the name is used by an existing migration"*, because the deleted `.cs` is still inside
+the assembly. Rebuild between every EF operation and both symptoms disappear.
+
+Two neighbours of the same trap:
+
+- `dotnet ef migrations remove` dies with *"The ConnectionString property has not been initialized"*
+  — user-secrets are not picked up there, the same failure this file already records for
+  `database update`. Deleting the migration files by hand and rebuilding is the way out.
+- `--connection` is **not** a valid option for `migrations add`; it exists only on `database update`.
+
+## `datetime2` stores no `DateTimeKind`, so a hash over a formatted timestamp changes on read
+
+Also from B2, and the more dangerous of the two because everything was green while it was wrong.
+
+`DateTime.ToString("O")` emits a trailing `Z` when `Kind` is `Utc` and omits it when `Kind` is
+`Unspecified`. SQL Server's `datetime2` has no kind column, so a value written from `DateTime.UtcNow`
+comes back as `Unspecified` and formats differently than it did on the way in. Anything derived from
+that string — a hash, a signature, a cache key — therefore does not survive a round trip:
+
+```
+"2026-08-19T10:39:24.7403300Z" -> HMAC 6a7028…143903   (as written)
+"2026-08-19T10:39:24.7403300"  -> HMAC a98d42…c3dbd9   (as read back)
+```
+
+The EF InMemory provider hides this completely: its identity map hands back the object that was
+written, so nothing is ever re-materialised and the test passes. Hash `Ticks` instead — an integer,
+exact through `datetime2(7)`, with nothing kind-dependent in it — or store a `DateTimeOffset`.
+
+## `UPDLOCK, HOLDLOCK` outside a transaction is decoration
+
+EF opens its implicit transaction **inside** `SaveChanges`. Code that runs in a `SaveChanges`
+override, before `base.SaveChanges`, is therefore **not** in that transaction: a locking read issued
+there auto-commits and drops its lock immediately, and the write that was meant to be protected
+happens afterwards on its own.
+
+Symptom, from 24 concurrent writers against a table whose sequence column carries a unique index:
+`Cannot insert duplicate key row in object 'dbo.AuditEvents' with unique index
+'IX_AuditEvents_Sequence'. The duplicate key value is (2)`. Without that unique index it would not
+have raised at all — it would have silently produced two rows claiming the same predecessor.
+
+Open the transaction explicitly around the read and the write, and skip it when the caller already
+has one (`Database.CurrentTransaction is not null`) or the provider is not relational.
+
+## The test host is not the production host: the retrying strategy is opt-in
+
+The one in this batch that no test could have found, because the tests were the blind spot.
+
+`ServiceCollectionExtensions` configures the API with `EnableRetryOnFailure`, and EF **refuses a
+user-initiated transaction** under a retrying strategy. `CustomWebApplicationFactory` rebuilds the
+`DbContext` registration and leaves that strategy **off** unless a test calls
+`EnableSqlRetryOnFailure()` — deliberately, so an injected transient fault surfaces instead of being
+retried. The consequence is that `Database.BeginTransaction()` in shared infrastructure passes every
+test and throws on the real API:
+
+```
+System.InvalidOperationException: The configured execution strategy
+'SqlServerRetryingExecutionStrategy' does not support user-initiated transactions. Use the execution
+strategy returned by 'DbContext.Database.CreateExecutionStrategy()' …
+```
+
+Measured as a **500** on `POST /api/auth/refresh` with the whole 766-test suite green.
+
+Two rules follow. Any code that opens its own transaction goes through
+`Database.CreateExecutionStrategy()` — `AuthService.RegisterAsync` is the worked example. And when
+such code is added, one SQL Server test must opt into `EnableSqlRetryOnFailure()`, or the production
+configuration is exercised by nothing at all.
+
+More generally: the factory removes `DbContextOptions` and `IDbContextOptionsConfiguration` and
+rebuilds them, so **anything attached to the production registration is absent under test** — which
+is also why the audit chain lives in the `DbContext` class rather than in a `SaveChangesInterceptor`.
+
+## "The writer was called" is not evidence that a row exists
+
+The most expensive one in this batch, because every layer of the suite agreed it was fine.
+
+`IAuditService.Record` deliberately only calls `Add` — the caller's `SaveChanges` is what persists
+the row (ADR-0044 D1). A unit test holding a `Mock<IAuditService>` and asserting
+
+```csharp
+_auditMock.Verify(a => a.Record(SecurityEvents.PinEnrolled, ...), Times.Once);
+```
+
+therefore passes whether or not anything is ever written. On this branch `AuthService.SetPinAsync`
+called `Record` *after* `UserManager.UpdateAsync` had already saved and nothing saved again:
+`POST /api/auth/pin` answered **200**, the security log line was emitted, and `AuditEvents` held
+**zero** rows — with the mock assertion green and the whole suite green.
+
+Two rules. Any writer whose contract is "add, never save" needs at least one test that reads the
+STORE after driving the real endpoint, not one that watches the writer. And when such a writer is
+placed, check what actually performs the save — `UserManager.UpdateAsync`, `SignInManager`, a
+repository and `ExecuteUpdate` are all saves that a reader scanning for `_context.SaveChangesAsync`
+will miss (`ExecuteUpdate` is worse: it commits without flushing tracked entities at all).
+
+## A rotated-then-replayed refresh token is a benign retry, not reuse
+
+Cost two rewrites of a test that looked obviously right.
+
+`RefreshTokenService` treats a token that HAS a successor and was revoked inside
+`RotationGraceWindow` (10 s) as a lost-response retry: rejected, but with no security event at all.
+So "rotate, then replay the old token" never reaches the reuse branch, and a fault injected there
+never fires. Genuine reuse needs a token revoked WITHOUT a successor — log out, which calls
+`RevokeAllForUserAsync`.
+
+Then the second trap: logging out revokes *everything*, so an assertion that the family ends up with
+zero active tokens holds whether or not containment ran. Log back in first, so the mitigation has a
+victim — and confirm by breaking the code on purpose and watching the test go red. A test whose
+setup already satisfies its postcondition proves nothing, and it will not tell you so.

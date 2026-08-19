@@ -114,7 +114,8 @@ public class AuthServiceTests : IDisposable
             _accountMapper,
             _timingEqualizerMock.Object,
             _loggerMock.Object,
-            redactorProviderMock.Object);
+            redactorProviderMock.Object,
+            new Mock<IAuditService>().Object);
     }
 
     public void Dispose()
