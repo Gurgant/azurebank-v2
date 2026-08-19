@@ -49,7 +49,7 @@ public class SecurityEventConstantTests
 
     /// <summary>
     /// Both projects, whole. Unlike the error-code rule this is not scoped to a Services folder:
-    /// six of the twenty-one sites live in the BFF's middleware and its Program, and scoping is what
+    /// seven of the twenty-four sites live in the BFF's middleware and its Program, and scoping is what
     /// let a third of the vocabulary sit outside anybody's rule in the first place.
     /// </summary>
     private static readonly string[] ScannedFolders =
@@ -363,6 +363,75 @@ public class SecurityEventConstantTests
 
         offenders.Should().BeEmpty(
             because: "a site the scanner cannot find is a site where a bare literal passes unnoticed");
+    }
+
+    [Fact]
+    public void TheEventInventoryThisAdrStatesIsStillTheOneInTheSource()
+    {
+        /*
+          THE NUMBERS IN THE PROSE ARE NOW LOAD-BEARING, because they went stale in FOUR places at
+          once and nothing said a word.
+
+          ADR-0044 decides which security events are audited and which stay log-only, and it decides
+          it by NAMING them and counting them. Adding one event to the BFF left behind: D4's "the six
+          BFF events", AuditOutcome's "23 existing sites" and "13 of the 23", and this very file's
+          own summary comment. A reviewer caught one of the four. That is the failure this test
+          exists to make impossible — not a wrong number, but a wrong number nobody can see.
+
+          Counting the CANONICAL TEMPLATE rather than the constants is deliberate: one constant can
+          be raised at several sites, and it is the sites the ADR counts. The same template is what
+          every other scan in this file anchors on, so the two cannot drift apart either.
+
+          WHEN THIS GOES RED, do not just move the number here. The whole point is that it names the
+          documents that must move with it.
+        */
+        const int apiSites = 17;
+        const int bffSites = 7;
+
+        var perProject = SourceFiles(RepoBackendRoot())
+            .GroupBy(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)
+                ? "Bff"
+                : "Api")
+            .ToDictionary(
+                g => g.Key,
+                g => g.Sum(f => CountOccurrences(File.ReadAllText(f), Template)));
+
+        // ContainKeys takes params, so a because-string here would be read as a THIRD key — caught by
+        // running it. Two explicit assertions instead, each able to say why it matters.
+        perProject.Should().ContainKey(
+            "Api", "a project scanning to nothing would make every count below vacuously wrong");
+        perProject.Should().ContainKey(
+            "Bff", "a project scanning to nothing would make every count below vacuously wrong");
+
+        perProject["Api"].Should().Be(
+            apiSites,
+            "ADR-0044 says \"Seventeen security events are logged\" and \"Seven of the seventeen API "
+            + "events write a row today\". If the API's count moved, update that ADR's Context and its "
+            + "\"What is wired\" section, and AuditOutcome's per-outcome tallies, in the same commit");
+
+        perProject["Bff"].Should().Be(
+            bffSites,
+            "ADR-0044 D4 names the BFF events one by one and calls them \"the seven BFF events\". If "
+            + "this moved, add or remove the name there too — the list is the count");
+
+        (perProject["Api"] + perProject["Bff"]).Should().Be(
+            24,
+            "AuditOutcome's remarks derive the four outcomes from \"the 24 existing security-event log "
+            + "sites\" and tally \"14 of the 24\" as Refused; both have to move with this");
+    }
+
+    /// <summary>Non-overlapping occurrences of <paramref name="needle"/>, counted plainly.</summary>
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal);
+             i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     [Fact]

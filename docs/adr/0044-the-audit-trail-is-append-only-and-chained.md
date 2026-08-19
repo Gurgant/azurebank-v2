@@ -96,10 +96,14 @@ would stay 0 and the chain would have no order to be verified against. Ordering 
 tried first and was wrong: `Guid` ordering in .NET is not creation order even for a UUIDv7, and SQL
 Server collates `uniqueidentifier` on a different byte order again.
 
-### D4 — the six BFF events stay log-only, and this says so
+### D4 — the seven BFF events stay log-only, and this says so
 
 `RateLimitExceeded`, `CrossSiteRequestBlocked`, `StepUpRequired`, `StepUpWithoutSession`,
-`RawRefreshBlocked` and `RefreshRejected` are raised in the BFF, which has no database. Giving it one
+`RawRefreshBlocked`, `RawAuthEntryBlocked` and `RefreshRejected` are raised in the BFF, which has
+no database. The list is the count: naming them is what makes this checkable, and
+`SecurityEventConstantTests.TheEventInventoryThisAdrStatesIsStillTheOneInTheSource` fails when a
+new one appears without this section moving with it — which is how `RawAuthEntryBlocked` came to
+be missing from it for one commit. Giving it one
 means a second writer against the audit table, which is a larger decision than this one. They are
 listed here so the next reader knows they were considered rather than missed.
 

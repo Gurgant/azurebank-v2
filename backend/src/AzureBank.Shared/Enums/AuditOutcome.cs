@@ -1,7 +1,7 @@
 namespace AzureBank.Shared.Enums;
 
 /// <summary>
-/// What happened, for one audit event. Derived from the 23 existing security-event log sites rather
+/// What happened, for one audit event. Derived from the 24 existing security-event log sites rather
 /// than invented: every one of them falls into exactly one of these four.
 /// </summary>
 /// <remarks>
@@ -15,7 +15,7 @@ namespace AzureBank.Shared.Enums;
 public enum AuditOutcome
 {
     /// <summary>
-    /// The caller was refused; nothing was written to the business tables. 13 of the 23 sites,
+    /// The caller was refused; nothing was written to the business tables. 14 of the 24 sites,
     /// including every event the BFF raises.
     /// </summary>
     Refused = 0,
