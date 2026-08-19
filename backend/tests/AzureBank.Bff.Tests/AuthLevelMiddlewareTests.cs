@@ -499,17 +499,58 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
         backend.ForwardedPaths.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task LoginWithATrailingSlash_IsStillReachableWithoutASession()
+    [Theory]
+    [InlineData("/api/auth/login")]
+    [InlineData("/api/auth/register")]
+    public async Task TheProxiedAuthPair_NeverReachesTheApi_AndHandsOutNothing(string path)
     {
         /*
-          The trailing-slash normalisation now matters in the OTHER direction, and this is the test
-          that proves it — the mint one above cannot, because under deny-by-default a slash-suffixed
-          money path is refused whether it normalises or not.
+          THE PROPERTY THIS CHANGE EXISTS FOR, named rather than left implicit in the drift sweep.
 
-          "/api/auth/login/" reaches login, so if the allowlist were matched on the raw path the
-          slash alone would demand a session to obtain a session. Found by falsifying: removing
-          TrimEnd('/') left every other guard here green.
+          MEASURED on the running stack before the change, with no session cookie at all:
+            POST /bff/auth/register            -> 201   (the legitimate door)
+            POST /api/auth/login               -> 200, body carried data.token — a 392-character
+                                                  API JWT — and a refreshToken
+            that token, straight to the API:
+            GET  https://localhost:7215/api/accounts -> 200   full account access
+            POST /api/auth/register            -> 201   a sessionless caller could create accounts
+
+          The BFF was issuing the credential it exists to withhold. The only thing containing it was
+          BearerTokenTransformProvider clearing the inbound header on the replay path — a defence on
+          a different path from the one handing the token out.
+
+          Asserting the BODY as well as the status is the point: a 404 whose body still carried a
+          token would satisfy a status-only assertion and leak everything that matters.
+        */
+        var (factory, backend) = WithRecorder();
+        var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = JsonContent.Create(new { email = "someone@example.com", password = "whatever" })
+        };
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "as if the route did not exist — the caller is told nothing about why");
+        backend.ForwardedPaths.Should().BeEmpty("the request must never reach the API at all");
+        body.Should().NotContain("token", "no credential may leave the BFF on this path");
+    }
+
+    [Fact]
+    public async Task LoginWithATrailingSlash_IsBlockedLikeTheBarePath()
+    {
+        /*
+          The trailing-slash normalisation still matters, and it has flipped direction along with the
+          rule it serves. It used to keep "/api/auth/login/" REACHABLE, because a slash alone must
+          not demand a session in order to obtain one. Now that the proxied pair has no legitimate
+          caller at all, the same normalisation has to keep the slashed form BLOCKED — endpoint
+          routing tolerates the trailing slash, so raw matching would leave a one-character bypass of
+          the block.
+
+          Falsified by removing TrimEnd('/') from the new branch: this goes red while every other
+          guard in the file stays green.
         */
         var (factory, backend) = WithRecorder();
         var client = factory.CreateClient();
@@ -518,10 +559,12 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
         {
             Content = JsonContent.Create(new { })
         };
-        await client.SendAsync(request);
+        var response = await client.SendAsync(request);
 
-        backend.ForwardedPaths.Should().Contain("/api/auth/login/",
-            "a trailing slash must not lock the front door");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "the slashed form is answered as if the route did not exist, exactly like the bare one");
+        backend.ForwardedPaths.Should().BeEmpty(
+            "a trailing slash must not be a way around the block");
     }
 
     [Fact]
@@ -547,7 +590,7 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
     }
 
     [Fact]
-    public async Task NoPostInTheSpecReachesTheBackendWithoutASession_ExceptLoginAndRegister()
+    public async Task NoPostInTheSpecReachesTheBackendWithoutASession()
     {
         /*
           THE DRIFT SWEEP, and the reason it is written this way.
@@ -564,10 +607,15 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
           collapsing both refusals into one property keeps the sweep about the invariant that matters
           — nothing gets through — instead of the shape each refusal happens to take.
 
-          Falsified by deleting the negation in RequiresSession: every path but login and register
-          flips to forwarded.
+          NO EXCEPTIONS LEFT. The sweep used to exempt /api/auth/login and /api/auth/register on the
+          argument that they are how a caller obtains a session. Measured on the running stack, that
+          argument was false for this deployment: the SPA signs in through the BFF's own
+          /bff/auth/login, and the proxied pair only ever served callers who wanted the raw API token
+          — which is exactly what it handed them. Both are 404'd now, so every POST in the spec is
+          expected to be refused, and the loop below no longer branches.
+
+          Falsified by making RequiresSession return false: every path flips to forwarded.
         */
-        var sessionless = new[] { "/api/auth/login", "/api/auth/register" };
         var paths = SpecPostPaths().ToList();
 
         paths.Should().HaveCountGreaterThan(10, "the spec is the source of cases; an empty or "
@@ -589,17 +637,9 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
             };
             await client.SendAsync(request);
 
-            if (sessionless.Contains(path, StringComparer.OrdinalIgnoreCase))
-            {
-                backend.ForwardedPaths.Should().Contain(path,
-                    $"{path} must stay reachable with no session, or nobody can ever get one");
-            }
-            else
-            {
-                backend.ForwardedPaths.Should().BeEmpty(
-                    $"{path} is a POST that changes state; with no session the BFF must refuse it "
-                    + "itself rather than let an unauthenticated caller reach the API");
-            }
+            backend.ForwardedPaths.Should().BeEmpty(
+                $"{path} is a POST under /api/; with no session the BFF must refuse it itself "
+                + "rather than let an unauthenticated caller reach the API");
         }
     }
 }

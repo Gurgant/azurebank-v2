@@ -127,8 +127,15 @@ The remaining ten are deliberately log-only, with reasons that were measured rat
 - **Registration refusals** (`DuplicateRegistration`, `RegistrationRejected`) — `/api/auth/register`
   is unauthenticated, and the API carries **no rate limiter of its own** (checked: zero
   `RequireRateLimiting` in `AzureBank.Api`; the limit lives in the BFF). An audit row per attempt is
-  therefore an unauthenticated, unbounded write into the one table that is never pruned. Revisit
-  together with #231, which puts these endpoints behind the BFF.
+  therefore an unauthenticated, unbounded write into the one table that is never pruned.
+
+  **Revisited 2026-08-19, as this ADR said to.** #231 has landed: the proxied `/api/auth/register` is
+  now answered 404, so the only route to the API's registration is the BFF's own
+  `/bff/auth/register`, which carries the `auth` rate-limiter policy. The unbounded half of the
+  argument is therefore weaker than when it was written. It is NOT gone — a rate limit is per IP, and
+  the events stay log-only for now — but the reason has changed and is recorded rather than left
+  standing on a premise that no longer holds. Wiring them is a change with its own tests; it belongs
+  to B1/B3, not to a footnote here.
 - **Retry collisions** (`TransactionNumberCollision` ×2, `AccountNumberCollision`) — these are health
   signals about a random-id generator, not acts by a principal, and they are raised inside a `catch`
   that `continue`s a retry loop. An enlisted row would die with the attempt that failed; a

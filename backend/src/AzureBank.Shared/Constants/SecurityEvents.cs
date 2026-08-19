@@ -90,6 +90,15 @@ public static class SecurityEvents
     /// <remarks>OWASP: <c>malicious_direct_reference:[userid|IP, useragent]</c>.</remarks>
     public const string RawRefreshBlocked = "RawRefreshBlocked";
 
+    /// <summary>
+    /// A caller reached the proxied <c>/api/auth/login</c> or <c>/api/auth/register</c> directly.
+    /// The SPA never does: it signs in through the BFF's own <c>/bff/auth/*</c> controller, which
+    /// keeps the API token server-side. Reaching the proxied pair means asking the BFF for the
+    /// credential the BFF exists to withhold.
+    /// </summary>
+    /// <remarks>OWASP: <c>malicious_direct_reference:[userid|IP, useragent]</c>.</remarks>
+    public const string RawAuthEntryBlocked = "RawAuthEntryBlocked";
+
     /// <summary>A request was refused by a rate-limiter partition.</summary>
     /// <remarks>OWASP: <c>excess_rate_limit_exceeded[userid,max]</c>. An exact match.</remarks>
     public const string RateLimitExceeded = "RateLimitExceeded";

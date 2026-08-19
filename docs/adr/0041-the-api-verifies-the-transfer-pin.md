@@ -106,6 +106,34 @@ locally, at the BFF, with the API's own 401 shape, trailing slash normalised the
 > where `/full-number` already has its own rule at a different level. So it is one decision with two
 > halves, and only the POST half is made here.
 
+> **Amended 2026-08-19.** `SessionlessPostPaths` is gone too, and the gate is now unconditional for
+> every POST under `/api/`. The two paths it exempted — `/api/auth/login` and `/api/auth/register` —
+> are answered **404** by the same branch that already handles `/api/auth/refresh`, as if the routes
+> did not exist.
+>
+> The exemption rested on "they are how a caller obtains the session everything else requires". That
+> was true of the shape and false of this deployment: the SPA never calls either. It signs in through
+> the BFF's own `/bff/auth/login`, which reaches the API with `IHttpClientFactory` server-side and
+> keeps the token there. The proxied pair had no legitimate caller at all.
+>
+> And unlike the 2026-08-17 amendment, this one was not defence in depth. Measured end to end with no
+> session cookie: `POST /bff/auth/register` → 201, then `POST /api/auth/login` → **200 carrying a
+> 392-character API JWT and a refresh token**, and that token sent straight to the API answered
+> `GET /api/accounts` → **200**. The BFF was issuing the credential it exists to withhold. Only
+> `BearerTokenTransformProvider` clearing the inbound header kept the same token from working back
+> THROUGH the BFF — a defence sitting on a different path from the one handing it out.
+> `POST /api/auth/register` answered 201 to the same sessionless caller.
+>
+> The two YARP routes stay in `appsettings.json` deliberately. They carry `RateLimiterPolicy "auth"`,
+> and the table also holds a catch-all `/api/{**catch-all}` with no policy: deleting the dedicated
+> pair would drop the path onto that catch-all, so a future weakening of this middleware would proxy
+> login **unrate-limited**. Keeping them costs nothing behind the 404 and keeps the fallback no worse
+> than today.
+>
+> The credential-guessing surface is unaffected: `/bff/auth/login`, `/bff/auth/register` and
+> `/bff/auth/reauthenticate` all carry `[EnableRateLimiting(RateLimitPolicies.Auth)]` — the same
+> policy the proxied routes had.
+
 `/full-number` keeps the session model (decision D3a). It is a GET with no body, no amount and no
 payee — there is nothing for an in-band credential to be **bound to**. Two questions, two mechanisms,
 on purpose.
