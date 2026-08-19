@@ -385,6 +385,24 @@ public class SecurityEventConstantTests
           WHEN THIS GOES RED, do not just move the number here. The whole point is that it names the
           documents that must move with it.
         */
+        /*
+          THE NAMES, NOT ONLY THE COUNT — and this is a correction to the first version of this test,
+          which counted sites and stopped there. Swapping one event for another keeps the count at
+          seven and would have sailed through, which is the same weakness as asserting a substring
+          instead of an identity. The set is what ADR-0044 D4 actually writes down, so the set is
+          what gets compared; the totals stay below as a cheaper second signal.
+        */
+        string[] bffInventory =
+        [
+            "CrossSiteRequestBlocked",
+            "RateLimitExceeded",
+            "RawAuthEntryBlocked",
+            "RawRefreshBlocked",
+            "RefreshRejected",
+            "StepUpRequired",
+            "StepUpWithoutSession",
+        ];
+
         const int apiSites = 17;
         const int bffSites = 7;
 
@@ -403,6 +421,14 @@ public class SecurityEventConstantTests
         perProject.Should().ContainKey(
             "Bff", "a project scanning to nothing would make every count below vacuously wrong");
 
+        EventsNamedOnTemplateLines(SourceFiles(RepoBackendRoot())
+                .Where(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)))
+            .Should().BeEquivalentTo(
+                bffInventory,
+                "ADR-0044 D4 lists the BFF's log-only events by name. A set comparison catches a "
+                + "SUBSTITUTION that the totals below cannot see — one event removed and another "
+                + "added leaves every count untouched");
+
         perProject["Api"].Should().Be(
             apiSites,
             "ADR-0044 says \"Seventeen security events are logged\" and \"Seven of the seventeen API "
@@ -418,6 +444,44 @@ public class SecurityEventConstantTests
             24,
             "AuditOutcome's remarks derive the four outcomes from \"the 24 existing security-event log "
             + "sites\" and tally \"14 of the 24\" as Refused; both have to move with this");
+    }
+
+    /// <summary>
+    /// The distinct <c>SecurityEvents.X</c> names mentioned on lines that carry the canonical
+    /// template — i.e. the events a project actually raises, as opposed to every constant it can see.
+    /// </summary>
+    private static IEnumerable<string> EventsNamedOnTemplateLines(IEnumerable<string> files) =>
+        files
+            .SelectMany(f => NamesNearTemplate(File.ReadAllLines(f)))
+            .Distinct()
+            .Order()
+            .ToArray();
+
+    /*
+      The name is often on the NEXT line, because the template sits in the message string and the
+      constant is passed as an argument below it. Two lines of lookahead covers every site in this
+      repository; a site that drifts further apart shows up as a missing name rather than silently
+      passing, which is the failure direction to prefer.
+    */
+    private static IEnumerable<string> NamesNearTemplate(string[] lines)
+    {
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (!lines[i].Contains(Template, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            for (var j = i; j < Math.Min(i + 3, lines.Length); j++)
+            {
+                var match = Regex.Match(lines[j], @"SecurityEvents\.([A-Za-z]+)");
+                if (match.Success)
+                {
+                    yield return match.Groups[1].Value;
+                    break;
+                }
+            }
+        }
     }
 
     /// <summary>Non-overlapping occurrences of <paramref name="needle"/>, counted plainly.</summary>

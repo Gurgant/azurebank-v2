@@ -131,7 +131,9 @@ The remaining ten are deliberately log-only, with reasons that were measured rat
 - **Registration refusals** (`DuplicateRegistration`, `RegistrationRejected`) — `/api/auth/register`
   is unauthenticated, and the API carries **no rate limiter of its own** (checked: zero
   `RequireRateLimiting` in `AzureBank.Api`; the limit lives in the BFF). An audit row per attempt is
-  therefore an unauthenticated, unbounded write into the one table that is never pruned.
+  therefore an unauthenticated, unbounded write into the one table that is never pruned. ~~Revisit
+  together with #231, which puts these endpoints behind the BFF.~~ *(that revisit has happened —
+  see below; the instruction is struck rather than deleted so the original entry stays whole)*
 
   **Revisited 2026-08-19, as this ADR said to.** #231 has landed: the proxied `/api/auth/register` is
   now answered 404, so the only route to the API's registration is the BFF's own
