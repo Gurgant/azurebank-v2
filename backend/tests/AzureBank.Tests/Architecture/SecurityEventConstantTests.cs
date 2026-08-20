@@ -49,13 +49,19 @@ public class SecurityEventConstantTests
 
     /// <summary>
     /// Both projects, whole. Unlike the error-code rule this is not scoped to a Services folder:
-    /// eight of the twenty-five sites live in the BFF's middleware and its Program, and scoping is what
+    /// eight of the twenty-six sites live in the BFF's middleware and its Program, and scoping is what
     /// let a third of the vocabulary sit outside anybody's rule in the first place.
     /// </summary>
     private static readonly string[] ScannedFolders =
     [
         Path.Combine("src", "AzureBank.Api"),
         Path.Combine("src", "AzureBank.Bff"),
+
+        // Infrastructure joined the scan on 2026-08-20, when AuditChain became the first thing
+        // OUTSIDE the two hosts to raise a security event. A re-audit had already named the gap:
+        // an event raised here was invisible to every guard in this file — the bare-literal scan,
+        // the canonical-placeholder scan and the inventory count alike.
+        Path.Combine("src", "AzureBank.Infrastructure"),
     ];
 
     private static IEnumerable<string> SourceFiles(DirectoryInfo root)
@@ -407,10 +413,20 @@ public class SecurityEventConstantTests
         const int apiSites = 17;
         const int bffSites = 8;
 
+        /*
+          THREE BUCKETS, NOT TWO. The first version asked only "is it the Bff?" and swept everything
+          else into "Api" — so the moment Infrastructure joined the scan, its one site was counted as
+          an API site and the guard failed against the ADR for the wrong reason. A default bucket that
+          silently absorbs whatever it is not expecting is the same shape of defect this whole test
+          exists to catch.
+        */
+        static string ProjectOf(string file) =>
+            file.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal) ? "Bff"
+            : file.Contains(Path.Combine("src", "AzureBank.Infrastructure"), StringComparison.Ordinal) ? "Infrastructure"
+            : "Api";
+
         var perProject = SourceFiles(RepoBackendRoot())
-            .GroupBy(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)
-                ? "Bff"
-                : "Api")
+            .GroupBy(ProjectOf)
             .ToDictionary(
                 g => g.Key,
                 g => g.Sum(f => CountOccurrences(File.ReadAllText(f), Template)));
@@ -421,6 +437,8 @@ public class SecurityEventConstantTests
             "Api", "a project scanning to nothing would make every count below vacuously wrong");
         perProject.Should().ContainKey(
             "Bff", "a project scanning to nothing would make every count below vacuously wrong");
+        perProject.Should().ContainKey(
+            "Infrastructure", "a project scanning to nothing would make every count below vacuously wrong");
 
         EventsNamedOnTemplateLines(SourceFiles(RepoBackendRoot())
                 .Where(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)))
@@ -469,10 +487,16 @@ public class SecurityEventConstantTests
             "the out-of-band half is counted separately because it answers a different question — "
             + "which refusals survive their own rollback");
 
-        (perProject["Api"] + perProject["Bff"]).Should().Be(
-            25,
-            "AuditOutcome's remarks derive the four outcomes from \"the 25 existing security-event log "
-            + "sites\" and tally \"15 of the 25\" as Refused; both have to move with this");
+        perProject["Infrastructure"].Should().Be(
+            1,
+            "AuditChain is the first thing outside the two hosts to raise a security event, and its "
+            + "AuditChainUnavailable is log-only by NECESSITY rather than by choice — RecordRefusalAsync "
+            + "would take the very lock that just failed. ADR-0044 says so; keep them together");
+
+        (perProject["Api"] + perProject["Bff"] + perProject["Infrastructure"]).Should().Be(
+            26,
+            "AuditOutcome's remarks derive the four outcomes from \"the 26 existing security-event log "
+            + "sites\" and tally \"16 of the 26\" as Refused; both have to move with this");
     }
 
     /// <summary>

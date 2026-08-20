@@ -1,9 +1,12 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Infrastructure.Data;
@@ -89,7 +92,13 @@ public sealed class AuditChain : IAuditChain
 {
     private readonly IOptions<AuditOptions> _options;
 
-    public AuditChain(IOptions<AuditOptions> options) => _options = options;
+    private readonly ILogger<AuditChain> _logger;
+
+    public AuditChain(IOptions<AuditOptions> options, ILogger<AuditChain> logger)
+    {
+        _options = options;
+        _logger = logger;
+    }
 
     public async Task ApplyAsync(DbContext context, CancellationToken cancellationToken = default)
     {
@@ -99,7 +108,7 @@ public sealed class AuditChain : IAuditChain
             return;
         }
 
-        Link(pending, await ReadTailAsync(context, cancellationToken));
+        Link(pending, await ReadTailOrReportAsync(context, pending.Count, cancellationToken));
     }
 
     public void Apply(DbContext context)
@@ -150,22 +159,92 @@ public sealed class AuditChain : IAuditChain
     private const string TailSql =
         "SELECT TOP 1 [Sequence], [RowHash] FROM [AuditEvents] WITH (UPDLOCK, HOLDLOCK) ORDER BY [Sequence] DESC";
 
+    /*
+      THE WAIT IS BOUNDED HERE, AND ONLY HERE, and the reason is measured rather than assumed.
+
+      The tail is read under UPDLOCK, HOLDLOCK, so the lock is global to AuditEvents and every
+      audited save in the system queues on it. Stalling ONE tail read for three seconds delayed a
+      deposit on a DIFFERENT account, by a DIFFERENT user, by 2,820 ms — proven by
+      AuditChainContentionSqlServerTests. So a merely SLOW audit store degrades the whole bank, and
+      until now the only bound was the global 30-second CommandTimeout, which covers the entire
+      statement rather than the wait.
+
+      Shortening it turns a long queue into a fast, loud refusal. That is not a softening of D1: a
+      movement that cannot take the lock is still refused, still writes no money, and now fails in
+      seconds instead of holding a connection and every other movement behind it for half a minute.
+
+      RESTORED IN A finally, because the timeout lives on the DbContext and the DbContext is shared
+      by everything else in the request. Leaving it set would quietly impose an audit-shaped deadline
+      on every unrelated query the request makes afterwards.
+    */
     private static async Task<(long Sequence, string Hash)?> ReadTailAsync(
         DbContext context, CancellationToken cancellationToken)
     {
         if (context.Database.IsRelational())
         {
-            var row = await context.Set<AuditEvent>()
-                .FromSqlRaw(TailSql)
-                .AsNoTracking()
-                .Select(e => new { e.Sequence, e.RowHash })
-                .FirstOrDefaultAsync(cancellationToken);
-            return row is null ? null : (row.Sequence, row.RowHash);
+            var restore = context.Database.GetCommandTimeout();
+            context.Database.SetCommandTimeout(TailTimeoutSeconds(context));
+            try
+            {
+                var row = await context.Set<AuditEvent>()
+                    .FromSqlRaw(TailSql)
+                    .AsNoTracking()
+                    .Select(e => new { e.Sequence, e.RowHash })
+                    .FirstOrDefaultAsync(cancellationToken);
+                return row is null ? null : (row.Sequence, row.RowHash);
+            }
+            finally
+            {
+                context.Database.SetCommandTimeout(restore);
+            }
         }
 
         var inMemory = await NonRelationalTail(context).FirstOrDefaultAsync(cancellationToken);
         return inMemory is null ? null : (inMemory.Sequence, inMemory.RowHash);
     }
+
+    /*
+      SAY IT OUT LOUD, THEN LET IT FAIL. D1 is unchanged — the exception goes on and the movement does
+      not happen — but an operator now learns that the audit chain is what stopped it, instead of
+      reading an anonymous 500 and guessing.
+
+      A LOG LINE AND NOT AN AUDIT ROW, which is the whole point and is worth stating where a reader
+      will hit it: RecordRefusalAsync writes to AuditEvents, so it takes the very lock that just
+      failed. For a chain failure there is no in-band way to report a chain failure.
+    */
+    private async Task<(long Sequence, string Hash)?> ReadTailOrReportAsync(
+        DbContext context, int pendingRows, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ReadTailAsync(context, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "SecurityEvent {SecurityEvent}: the audit chain tail could not be read within "
+                    + "{TimeoutSeconds}s, so {PendingRows} pending audit row(s) and the action they "
+                    + "describe are refused",
+                SecurityEvents.AuditChainUnavailable,
+                TailTimeoutSeconds(context),
+                pendingRows);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The configured bound, read from the context's own service provider so the static read path
+    /// does not need the options injected through every caller.
+    /// </summary>
+    /// <remarks>
+    /// Falls back to the <see cref="AuditOptions"/> default when options are unavailable — which is
+    /// the case for the hand-built contexts in tests. Falling back rather than throwing is
+    /// deliberate: a missing bound must not be the thing that stops a money movement.
+    /// </remarks>
+    private static int TailTimeoutSeconds(DbContext context) =>
+        context.GetService<IOptions<AuditOptions>>()?.Value.TailTimeoutSeconds
+        ?? new AuditOptions().TailTimeoutSeconds;
 
     private static (long Sequence, string Hash)? ReadTail(DbContext context)
     {

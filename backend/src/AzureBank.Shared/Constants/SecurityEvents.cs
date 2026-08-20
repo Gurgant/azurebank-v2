@@ -252,4 +252,21 @@ public static class SecurityEvents
     /// <summary>Money moved between two accounts the actor already owns.</summary>
     /// <remarks>OWASP: <c>sensitive_change:[userid]</c>.</remarks>
     public const string MoneyTransferredInternally = "MoneyTransferredInternally";
+
+    /// <summary>
+    /// The audit chain could not be taken, so the action it was about was refused (ADR-0044 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THIS ONE WRITES NO AUDIT ROW, AND CANNOT. Every other refusal in this vocabulary reaches
+    /// <c>RecordRefusalAsync</c>, which opens its own connection precisely so a rollback cannot erase
+    /// it. That is not an alternate path here: it writes to <c>AuditEvents</c> and therefore takes the
+    /// same tail lock that just failed. For a chain failure the chain cannot be where you report it,
+    /// so this is the one security event that is deliberately log-only by NECESSITY rather than by
+    /// choice — and the health check is the other half of saying it.
+    /// </para>
+    /// <para>OWASP: <c>malicious_excess_dos</c> is the nearest, though the cause is usually a sick
+    /// database rather than an attacker.</para>
+    /// </remarks>
+    public const string AuditChainUnavailable = "AuditChainUnavailable";
 }

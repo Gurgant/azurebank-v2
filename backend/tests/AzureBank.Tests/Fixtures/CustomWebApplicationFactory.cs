@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using System.Globalization;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 
@@ -76,6 +77,22 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _connectionString = connectionString;
     }
 
+    private int? _auditTailTimeoutSeconds;
+
+    /// <summary>
+    /// Overrides <c>Audit:TailTimeoutSeconds</c> — how long the chain's tail read may wait for the
+    /// lock before the movement is refused. Call before <c>CreateClient()</c>.
+    /// </summary>
+    /// <remarks>
+    /// Exists so the contention proofs can hit the bound in a second rather than the five the
+    /// production default allows. A test that had to wait out the real value would either be slow or
+    /// be skipped, and a skipped proof of a refusal is no proof at all.
+    /// </remarks>
+    public void SetAuditTailTimeoutSeconds(int seconds)
+    {
+        _auditTailTimeoutSeconds = seconds;
+    }
+
     /// <summary>
     /// Enables EF's SQL Server retrying execution strategy (EnableRetryOnFailure),
     /// mirroring the production wiring. Opt-in: only the transient-retry proof
@@ -125,6 +142,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         // Audit chain key (ADR-0044). Test-only, and present for the same reason the three above
         // are: Audit:ChainKey is ValidateOnStart, so without it every test host fails to build.
         builder.UseSetting("Audit:ChainKey", AuditChainKey);
+
+        if (_auditTailTimeoutSeconds is { } tailTimeout)
+        {
+            builder.UseSetting(
+                "Audit:TailTimeoutSeconds", tailTimeout.ToString(CultureInfo.InvariantCulture));
+        }
 
         builder.ConfigureServices(services =>
         {

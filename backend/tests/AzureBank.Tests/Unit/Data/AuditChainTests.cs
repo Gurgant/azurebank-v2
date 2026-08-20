@@ -4,6 +4,7 @@ using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -35,7 +36,7 @@ public class AuditChainTests : IDisposable
 
     public AuditChainTests()
     {
-        _chain = new AuditChain(Options.Create(new AuditOptions { ChainKey = TestKey }));
+        _chain = new AuditChain(Options.Create(new AuditOptions { ChainKey = TestKey }), NullLogger<AuditChain>.Instance);
         _context = new AzureBankDbContext(
             new DbContextOptionsBuilder<AzureBankDbContext>()
                 .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -151,7 +152,8 @@ public class AuditChainTests : IDisposable
           same thing as saying a forger without the key cannot produce one.
         */
         var wrongKey = new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = "a-different-key-entirely-0123456789abcdef" }));
+            Options.Create(new AuditOptions { ChainKey = "a-different-key-entirely-0123456789abcdef" }),
+            NullLogger<AuditChain>.Instance);
 
         var verification = await wrongKey.VerifyAsync(_context);
 

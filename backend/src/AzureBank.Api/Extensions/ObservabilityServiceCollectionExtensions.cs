@@ -1,4 +1,5 @@
 using AzureBank.Api.Observability;
+using AzureBank.Api.HealthChecks;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Observability;
 using Microsoft.Extensions.Compliance.Classification;
@@ -105,7 +106,12 @@ public static class ObservabilityServiceCollectionExtensions
 
         // Liveness = process up (no dependency probe); readiness = DB reachable (tagged "ready").
         services.AddHealthChecks()
-            .AddDbContextCheck<AzureBankDbContext>(name: "database", tags: ["ready"]);
+            .AddDbContextCheck<AzureBankDbContext>(name: "database", tags: ["ready"])
+
+            // Tagged "ready" alongside the database, because since ADR-0044 D1 an unreachable audit
+            // store does not degrade this instance — it stops it moving money, which is the thing it
+            // exists to do. Readiness is exactly the right signal for "do not send me traffic".
+            .AddCheck<AuditChainHealthCheck>(name: "audit-chain", tags: ["ready"]);
 
         return services;
     }

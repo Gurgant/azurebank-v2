@@ -34,4 +34,32 @@ public class AuditOptions
     /// </para>
     /// </remarks>
     public string ChainKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// How long the chain's tail read may wait, in seconds, before the movement it belongs to is
+    /// refused. Bounds the queue every money movement stands in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED, which is why this exists at all. The tail is read under <c>UPDLOCK, HOLDLOCK</c>,
+    /// so the lock is global to the table and every audited save queues on it. Stalling one tail read
+    /// for three seconds delayed a deposit on a DIFFERENT account, by a DIFFERENT user, by
+    /// <b>2,820 ms</b> — one slow audit store degrades the whole bank, not just the movement that
+    /// touched it. Only the 30-second <c>CommandTimeout</c> bounded that, and it bounds the whole
+    /// statement rather than the wait.
+    /// </para>
+    /// <para>
+    /// FIVE SECONDS, and the number is a floor argument rather than a guess: the lock is held for the
+    /// few statements between the tail read and the commit, which B2 measured at well under a
+    /// millisecond per chained insert, so hundreds of concurrent movements drain inside it. It is six
+    /// times shorter than the command timeout it replaces on this path, which is the improvement.
+    /// Configurable because the test that proves the refusal fires needs a value it can hit quickly.
+    /// </para>
+    /// <para>
+    /// A COMMAND timeout, deliberately, not <c>SET LOCK_TIMEOUT</c>. The latter is SESSION-scoped and
+    /// would ride a pooled connection into every unrelated statement that borrows it afterwards; the
+    /// command timeout lives on the <c>DbContext</c>, which is scoped to one request.
+    /// </para>
+    /// </remarks>
+    public int TailTimeoutSeconds { get; set; } = 5;
 }
