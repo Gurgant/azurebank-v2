@@ -26,6 +26,7 @@ public class TransactionServiceTests : IDisposable
     private readonly Mock<IPinVerifier> _pinVerifierMock;
     private readonly TransactionMapper _mapper;
     private readonly Mock<ILogger<TransactionService>> _loggerMock;
+    private readonly Mock<IAuditService> _auditMock;
     private readonly TransactionService _sut;
     private readonly FakeTimeProvider _clock;
 
@@ -46,12 +47,14 @@ public class TransactionServiceTests : IDisposable
         _mapper = new TransactionMapper();
         _loggerMock = new Mock<ILogger<TransactionService>>();
 
+        _auditMock = new Mock<IAuditService>();
         _sut = new TransactionService(
             _context,
             _accountAccessMock.Object,
             _pinVerifierMock.Object,
             _mapper,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            _auditMock.Object);
     }
 
     public void Dispose()

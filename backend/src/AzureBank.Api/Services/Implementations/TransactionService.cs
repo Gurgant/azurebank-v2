@@ -22,14 +22,17 @@ public class TransactionService : ITransactionService
     private readonly IPinVerifier _pinVerifier;
     private readonly TransactionMapper _mapper;
     private readonly ILogger<TransactionService> _logger;
+    private readonly IAuditService _audit;
 
     public TransactionService(
         AzureBankDbContext context,
         IAccountAccessService accountAccess,
         IPinVerifier pinVerifier,
         TransactionMapper mapper,
-        ILogger<TransactionService> logger)
+        ILogger<TransactionService> logger,
+        IAuditService audit)
     {
+        _audit = audit;
         _context = context;
         _accountAccess = accountAccess;
         _pinVerifier = pinVerifier;
@@ -70,6 +73,24 @@ public class TransactionService : ITransactionService
             account.UpdatedAt = DateTime.UtcNow;
 
             _context.Transactions.Add(transaction);
+
+            /*
+              THE AUDIT ROW RIDES THIS SAVE (ADR-0044 D1), and it sits INSIDE the retry loop because
+              the transaction Id is minted inside it too — the row's subject is that id, so it cannot
+              be written before one exists. A failed attempt's row is detached by
+              ConcurrencyRetry.ResetToStoreAsync alongside the ledger rows it describes, so a deposit
+              that takes three attempts still commits exactly ONE row rather than three claiming
+              three deposits.
+
+              Detail stays null on every money event. The amount, the description and the account are
+              already on the ledger row SubjectId reaches; copying them into a table designed never to
+              be purged is precisely how D5 gets broken, and an amount tied to an actor id is
+              financial data about an identifiable person.
+            */
+            _audit.Record(
+                SecurityEvents.MoneyDeposited, AuditOutcome.Succeeded,
+                actorUserId: userId, subjectType: "Transaction", subjectId: transaction.Id);
+
             try
             {
                 await _context.SaveChangesAsync();
@@ -160,6 +181,13 @@ public class TransactionService : ITransactionService
             account.UpdatedAt = DateTime.UtcNow;
 
             _context.Transactions.Add(transaction);
+
+            // Same placement and the same reasoning as the deposit above: inside the loop because
+            // the id is minted there, detached with the attempt if the attempt fails.
+            _audit.Record(
+                SecurityEvents.MoneyWithdrawn, AuditOutcome.Succeeded,
+                actorUserId: userId, subjectType: "Transaction", subjectId: transaction.Id);
+
             try
             {
                 await _context.SaveChangesAsync();

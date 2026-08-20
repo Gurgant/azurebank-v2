@@ -23,6 +23,7 @@ public class TransferService : ITransferService
     private readonly IPinVerifier _pinVerifier;
     private readonly IStepUpAuthorizationService _stepUp;
     private readonly ILogger<TransferService> _logger;
+    private readonly IAuditService _audit;
 
     public TransferService(
         AzureBankDbContext context,
@@ -30,8 +31,10 @@ public class TransferService : ITransferService
         UserMapper userMapper,
         IPinVerifier pinVerifier,
         IStepUpAuthorizationService stepUp,
-        ILogger<TransferService> logger)
+        ILogger<TransferService> logger,
+        IAuditService audit)
     {
+        _audit = audit;
         _context = context;
         _accountAccess = accountAccess;
         _userMapper = userMapper;
@@ -322,6 +325,28 @@ public class TransferService : ITransferService
                         // Save (one-directional link only)
                         _context.Transactions.Add(outgoingTransaction);
                         _context.Transactions.Add(incomingTransaction);
+
+                        /*
+                          ONE ROW FOR ONE ACT. A transfer writes two ledger rows — a debit and a
+                          credit — but they are the bookkeeping of a single thing the actor did, so
+                          the audit trail records it once. The subject is the OUTGOING row: the one
+                          whose owner IS the actor, and the one the step-up authorisation is consumed
+                          against a few lines below.
+
+                          That choice matters more here than anywhere else in this file. The incoming
+                          row lands on the PAYEE's account, and its Account.UserId is provably not the
+                          acting principal — the payee is resolved by handle with no ownership check,
+                          and the self-transfer guard plus the unique AzureTag index make the two ids
+                          different by construction. Subjecting the audit row to that row would name
+                          the wrong person.
+
+                          Detail stays null, as on every money event: amount, counterparty and
+                          description are on the ledger rows SubjectId reaches (ADR-0044 D5).
+                        */
+                        _audit.Record(
+                            SecurityEvents.MoneyTransferred, AuditOutcome.Succeeded,
+                            actorUserId: userId, subjectType: "Transaction",
+                            subjectId: outgoingTransaction.Id);
                         await _context.SaveChangesAsync();
 
                         // Write-once back-link (permitted by the immutability
@@ -517,6 +542,15 @@ public class TransferService : ITransferService
                         // Save (one-directional link only)
                         _context.Transactions.Add(outgoingTransaction);
                         _context.Transactions.Add(incomingTransaction);
+
+                        // Same shape as the external transfer above, and a DIFFERENT event on
+                        // purpose: a move between the actor's own accounts and a payment to a third
+                        // party do not carry the same weight, and an evidence pack should not have
+                        // to re-derive which one this was from the ledger.
+                        _audit.Record(
+                            SecurityEvents.MoneyTransferredInternally, AuditOutcome.Succeeded,
+                            actorUserId: userId, subjectType: "Transaction",
+                            subjectId: outgoingTransaction.Id);
                         await _context.SaveChangesAsync();
 
                         // Write-once back-link (see immutability guard)

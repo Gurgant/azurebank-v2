@@ -440,6 +440,108 @@ public sealed class AuditChainSqlServerTests : IDisposable
         _output.WriteLine($"reuse audit insert refused -> {(int)replay.StatusCode}, active tokens left {active}");
     }
 
+    [SqlServerFact]
+    public async Task ATransferOnSqlServer_IsChained_InsideTheCallerOwnTransaction()
+    {
+        /*
+          THE BRANCH EVERY TRANSFER TAKES IN PRODUCTION, and until now nothing exercised it.
+
+          AzureBankDbContext opens its OWN transaction for the chain only when the caller has none
+          (NeedsOwnChainTransaction). Deposits and withdrawals take that branch; both transfer paths
+          open an explicit transaction first, so they take the SHORT one — the chain is applied
+          inside the caller's transaction instead. Every existing proof misses that combination: the
+          SQL Server chain tests here save with no caller transaction, and the transfer tests in
+          AuditTrailPersistenceTests run on the InMemory provider, where NeedsOwnChainTransaction is
+          false for every save because the provider is not relational. So "chained on SQL Server,
+          inside someone else's transaction" was asserted nowhere.
+        */
+        var services = CreateSqlServices();
+        var client = _factory!.CreateClient();
+        await ClearAuditEventsAsync(services);
+
+        var unique = Guid.NewGuid().ToString("N")[..8];
+        var payeeTag = "payee_" + unique;
+        (await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            azureTag = payeeTag,
+            email = "payee" + unique + "@example.com",
+            password = "TestPass123!",
+            firstName = "Chain",
+            lastName = "Payee",
+        })).EnsureSuccessStatusCode();
+
+        var register = await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            azureTag = "payer_" + unique,
+            email = "payer" + unique + "@example.com",
+            password = "TestPass123!",
+            firstName = "Chain",
+            lastName = "Payer",
+        });
+        register.EnsureSuccessStatusCode();
+        var registered = await register.Content.ReadFromJsonAsync<JsonElement>();
+        var data = registered.GetProperty("data");
+        var token = data.GetProperty("token").GetProperty("accessToken").GetString();
+        var accountId = data.GetProperty("account").GetProperty("id").GetGuid();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        (await client.PostAsJsonAsync("/api/auth/pin", new { pin = "123456", password = "TestPass123!" }))
+            .EnsureSuccessStatusCode();
+        await PostMoneyAsync(client, "/api/transactions/deposit", new { accountId, amount = 500m }, null);
+
+        var mint = await client.PostAsJsonAsync("/api/transfers/authorizations", new
+        {
+            fromAccountId = accountId,
+            recipientAzureTag = payeeTag,
+            amount = 75m,
+            pin = "123456",
+        });
+        mint.EnsureSuccessStatusCode();
+        var authorization = (await mint.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("authorizationId").GetGuid();
+
+        var transfer = await PostMoneyAsync(
+            client, "/api/transfers",
+            new { fromAccountId = accountId, recipientAzureTag = payeeTag, amount = 75m },
+            authorization);
+        transfer.IsSuccessStatusCode.Should().BeTrue(await transfer.Content.ReadAsStringAsync());
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        var row = await context.AuditEvents.AsNoTracking()
+            .SingleAsync(e => e.Event == SecurityEvents.MoneyTransferred);
+
+        /*
+          Matched against a hex pattern rather than measured for length. RowHash is nchar(64), so an
+          UNCHAINED row — AuditService writes string.Empty — reads back from SQL Server as sixty-four
+          spaces and would satisfy any length check. That is the shape this assertion exists to
+          catch, and it is only catchable here, on the provider that has the column type.
+        */
+        row.RowHash.Should().MatchRegex("^[0-9a-f]{64}$", "the short branch must still hash the row");
+        row.Sequence.Should().BeGreaterThan(0, "and still take its place in the chain");
+
+        var verification = await chain.VerifyAsync(context);
+        verification.IsIntact.Should().BeTrue(because: verification.Reason);
+        verification.Verified.Should().BeGreaterThan(0, "an empty read also reports intact");
+
+        _output.WriteLine($"transfer chained inside the caller's transaction: seq {row.Sequence}, {row.RowHash[..12]}…");
+    }
+
+    private static Task<HttpResponseMessage> PostMoneyAsync(
+        HttpClient client, string url, object payload, Guid? authorization)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(payload) };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        if (authorization is { } id)
+        {
+            request.Headers.Add("Step-Up-Authorization", id.ToString());
+        }
+
+        return client.SendAsync(request);
+    }
+
     private static AuditEvent NewEvent(string name, string? detail = null) => new()
     {
         Id = Guid.CreateVersion7(),

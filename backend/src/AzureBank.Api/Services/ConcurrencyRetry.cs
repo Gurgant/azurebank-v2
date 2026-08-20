@@ -243,16 +243,44 @@ internal static class ConcurrencyRetry
     /// transactions + already-mutated balances would otherwise be re-applied,
     /// producing duplicate transactions and a double debit/credit.
     ///
+    /// ALSO detaches every tracked <see cref="AuditEvent"/>, unconditionally (ADR-0044, B1). A row
+    /// added inside an attempt describes THAT attempt, so it dies with the ledger rows it was
+    /// written about; leaving it attached let a deposit that took three attempts commit three rows
+    /// claiming three deposits. Safe for the same reason the transaction detach is: no AuditEvent
+    /// other than the attempt's own is ever tracked on these paths, because the four other writers
+    /// never share a request scope with a money movement.
+    ///
     /// Deliberately does NOT touch the tracked IdempotencyRecord: its pending
     /// Executed flip must survive to ride the next SaveChanges (a
     /// ChangeTracker.Clear would drop it). No transactions other than the
     /// pair(s) created inside the delegate are ever tracked here, so detaching
     /// all of them is safe.
+    ///
+    /// The summary said only "Transaction" until 2026-08-20, because the edit that added the
+    /// AuditEvent behaviour matched an anchor that did not exist and silently changed nothing —
+    /// leaving the new rule in a body comment that IntelliSense does not show. That is the same
+    /// shape of stale contract doc ADR-0044 blames for the overcount going unasked in the first
+    /// place.
     /// </summary>
     public static async Task ResetToStoreAsync(
         AzureBankDbContext context, params Account[] accounts)
     {
         foreach (var entry in context.ChangeTracker.Entries<Transaction>().ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
+
+        /*
+          AND THE ATTEMPT'S AUDIT ROW WITH THEM (ADR-0044, B1). An AuditEvent added inside an attempt
+          describes THAT attempt — a movement that did not happen — so it has to die with the ledger
+          rows it was written about, for the same reason and by the same rule. Leaving it attached
+          would let a deposit that took three attempts commit three rows claiming three deposits.
+
+          This is the exact opposite treatment from the IdempotencyRecord noted in the summary
+          ABOVE, and the distinction is worth holding: the idempotency flip is about the REQUEST, which survives
+          every attempt, while an audit row is about the ATTEMPT, which does not.
+        */
+        foreach (var entry in context.ChangeTracker.Entries<AuditEvent>().ToList())
         {
             entry.State = EntityState.Detached;
         }
