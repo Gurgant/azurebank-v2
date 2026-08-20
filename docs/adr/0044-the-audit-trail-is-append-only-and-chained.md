@@ -53,6 +53,43 @@ loudly — the 5xx just no longer buys the attacker anything, because the family
 Pinned by `WhenTheReuseAuditRowCannotBeWritten_TheStolenFamilyIsStillRevoked`, which was verified to
 go red when the order is put back.
 
+### D1 re-examined against industry practice, 2026-08-20 — and kept
+
+D1 was ratified before anyone had checked whether it is what real systems do. It has now been
+checked, and the honest answer is **no standard requires it**:
+
+- **NIST SP 800-53 AU-5** mandates *alerting* defined personnel plus organisation-defined actions.
+  Its discussion offers shutting down as one of three examples, beside overwriting the oldest records
+  and simply stopping audit generation.
+- **AU-5(4) "Shutdown on Failure" is selected in no SP 800-53B baseline** — not Low, not Moderate,
+  not High. It also permits degraded mode instead of shutdown, and waives itself entirely where an
+  alternate logging path exists.
+- **PCI DSS v4** requires failures be detected, alerted and responded to. Never that a payment be
+  refused. No financial-services supervisory source requiring refusal could be found at all.
+
+Two things nonetheless support the choice. The argument usually raised against it does not survive:
+**a transactional outbox does not buy back availability**, because AWS's own guidance is fail-closed
+on the write — *"if the outbox table update fails, the entire transaction is rolled back"*. The outbox
+decouples delivery, not durability. And fail-closed auditing is deployed, not theoretical:
+**HashiCorp Vault** refuses API requests it cannot audit, and **SQL Server Audit** ships
+`FAIL_OPERATION` framed as *"use this option when maintaining a complete audit is more important than
+full access to the Database Engine."*
+
+**Vlad reaffirmed D1 after reading the above, and the reason he gave is not a compliance one.** It is
+accountability: a movement that was never recorded is one the bank cannot afterwards account for to
+the customer whose money moved — least of all a malicious one. No regulator compels that stance; it
+is a claim about what this bank owes the person on the other side of the transaction, and it is made
+deliberately in the knowledge that the standards stop short of it.
+
+**What that obligates.** Every source that endorses fail-closed pairs it with things this system does
+not yet have — an alternate path and a recovery runbook — and Vault's documented failure mode is the
+one to fear: not a clean write error but a **hang**. A firewalled sink froze every Vault operation
+even with a healthy second audit device configured. Our chain awaits SQL Server while holding
+`UPDLOCK, HOLDLOCK` on the tail, so a hung connection stops every money movement with nothing thrown
+and nothing alerting. Bounding that wait, emitting a refusal on the out-of-band path that can still
+work when the enlisted one cannot, and writing the runbook, is the next change — not because D1 is in
+doubt, but because a decision this deliberate deserves to fail loudly rather than silently.
+
 ### D2 — the chain now, the SQL Server ledger later
 
 Each row carries an HMAC-SHA256 over its own fields **and its predecessor's hash**. Keyed rather than
@@ -114,11 +151,49 @@ precisely so nobody puts a stack trace — and the PII inside it — into a tabl
 purged. The AzureTag rename event records **neither** the old handle nor the new one, only that a
 rename happened.
 
-That cap is also what makes the GDPR position coherent: every regime binding this system states a
-**minimum** retention — PCI DSS v4 10.5.1 twelve months, AMLD Art. 40 and PSD2 Art. 21 five years —
-and a minimum cannot be violated by keeping more. Erasure is answered upstream: there is nothing
-personal in the table to erase. (NIST SP 800-53 AU-11 requires an organisation-defined period and
-names no number; quoting one from it would be an invention.)
+**CORRECTED 2026-08-20 after reading the primary texts.** The paragraph that stood here said: *"every
+regime binding this system states a minimum retention — PCI DSS v4 10.5.1 twelve months, AMLD Art. 40
+and PSD2 Art. 21 five years — and a minimum cannot be violated by keeping more. Erasure is answered
+upstream: there is nothing personal in the table to erase."* The numbers were right and the reasoning
+was wrong, in three separate ways. It is left quoted rather than deleted, because a record of what a
+decision used to rest on is the point of this file.
+
+- **PCI DSS v4.0.1 10.5.1 is twelve months, but the sentence has a second half** that was dropped:
+  *"with at least the most recent three months immediately available for analysis"*. And more
+  importantly, PCI DSS binds entities that *"store, process, or transmit cardholder data"* — this
+  system never touches a PAN, so citing 10.5.1 as a governing rule here is probably a category
+  error. It is kept as a design reference, not as an obligation.
+- **AMLD Art. 40's five years is real, but the clock does not start at the event** — it runs *"five
+  years after the end of the business relationship … or after the date of an occasional
+  transaction"*. For a live customer that is open-ended. It also governs customer due-diligence
+  documents and transaction records, not a security audit trail, so applying it to `AuditEvents` is a
+  stretch even with the right number.
+- **And it carries a DELETION duty, which is the part that breaks the old reasoning outright**:
+  *"Upon expiry of the retention periods … obliged entities delete personal data"*. "A minimum cannot
+  be violated by keeping more" is therefore false where a maximum also exists. An append-only chain
+  cannot delete a row without breaking the HMAC linkage of every row after it — so **retention is an
+  unsolved problem for this design, not a solved one**, and B3 inherits it.
+- **PSD2 Art. 21's five years is confirmed**, and narrower than a general audit rule: it binds Member
+  States to require *payment institutions* to keep records *"for the purpose of this Title"*.
+- **AMLD Art. 40 is superseded by Regulation (EU) 2024/1624 (AMLR) Art. 77 from 10 July 2027.** The
+  period stays five years, and the clock explicitly also starts *"on the date of refusal to enter
+  into a business relationship"* — which is directly about the refusal rows this design commits
+  separately. A system being designed in 2026 should target Art. 77.
+- **AMLR Art. 77(2) blesses the pointer design of D5 outright**: a reference may be retained instead
+  of a copy *"provided that … the obliged entities can provide immediately to competent authorities
+  the information and that the information cannot be modified or altered."* That is exactly the
+  audit row pointing at an immutable ledger row — with a condition attached, which is that the
+  pointed-at row must stay immediately producible and unalterable. `EnforceTransactionImmutability`
+  is what makes that true today.
+- **NIST SP 800-53 AU-11 still names no number** — *"[Assignment: organization-defined time period]"*
+  — so the original parenthetical was correct and stands.
+- **And the EDPS says the unbounded chain is itself the exposure**: where security monitoring
+  produces logs, *"the purpose and the retention period need to be well defined"*. "Designed never to
+  be purged" is not a retention policy; it is the absence of one.
+
+What survives unchanged: this table holds pseudonymous ids and no personal data in `Detail`, which is
+why the problem above is a records-management one rather than a live GDPR breach. What does not
+survive is the claim that retention was settled.
 
 ## What is wired, and what is not
 

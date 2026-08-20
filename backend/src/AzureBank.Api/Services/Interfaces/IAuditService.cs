@@ -45,8 +45,10 @@ public interface IAuditService
     /// commit". Nothing here opens a transaction: at <c>TransferService</c> the row joins the
     /// explicit one, and at <c>AccountService.DeleteAccountAsync</c> — which has none — it joins the
     /// implicit multi-statement transaction EF opens for <c>SaveChanges</c>. The chain fields are
-    /// filled later, by <c>AuditChainInterceptor</c>, because they can only be computed inside that
-    /// transaction.
+    /// filled later, inside <c>AzureBankDbContext.SaveChanges</c>, because they can only be computed
+    /// within that transaction — NOT by an interceptor, which ADR-0044 D3 rejected because the test
+    /// host rebuilds the <c>DbContext</c> registration and would silently drop it. An earlier draft
+    /// of this sentence named <c>AuditChainInterceptor</c>, a type that was never written.
     /// </remarks>
     /// <param name="securityEvent">One of the <c>SecurityEvents</c> constants. Never a literal.</param>
     /// <param name="outcome">Must be <see cref="AuditOutcome.Succeeded"/> or <see cref="AuditOutcome.RetryCollision"/>.</param>

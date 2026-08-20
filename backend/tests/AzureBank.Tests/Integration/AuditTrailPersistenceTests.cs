@@ -59,7 +59,16 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         row.Detail.Should().Be(
             "{\"passwordProved\":true}",
             "B3's evidence pack needs the fact the password was proved, and the log line will not outlive it");
-        row.RowHash.Should().HaveLength(64, "an unchained row would read as audited and prove nothing");
+        /*
+          MATCHED, NOT MEASURED, and the difference is the whole assertion. RowHash is nchar(64) —
+          fixed length — so an unchained row (AuditService sets RowHash to string.Empty) reads back
+          from SQL Server as SIXTY-FOUR SPACES and satisfies HaveLength(64). The length check had
+          teeth only on the InMemory provider, which is the half of the suite that cannot see the
+          column type at all. A hex pattern fails on spaces and on empty alike.
+        */
+        row.RowHash.Should().MatchRegex(
+            "^[0-9a-f]{64}$",
+            "an unchained row reads back as blank padding and would otherwise pass a length check");
     }
 
     [Fact]
@@ -185,6 +194,10 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
         var ledger = await db.Transactions.AsNoTracking().SingleAsync(t => t.Id == row.SubjectId);
+        ledger.Type.Should().Be(
+            TransactionType.Deposit,
+            "the subject must be the movement this event NAMES — account and amount alone would also "
+            + "fit a withdrawal of the same size on the same account");
         ledger.AccountId.Should().Be(accountId, "SubjectId must reach the real movement, not any row");
         ledger.Amount.Should().Be(250m);
     }
@@ -208,6 +221,28 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         row.Outcome.Should().Be(AuditOutcome.Succeeded);
         row.SubjectType.Should().Be("Transaction");
         row.Detail.Should().BeNull();
+
+        /*
+          RESOLVE THE SUBJECT, because SubjectType is a hard-coded literal and proves nothing on its
+          own. Measured: with this block absent, changing the withdrawal's subjectId from the
+          transaction to the ACCOUNT left the whole suite green at 111 + 786 — the row would have
+          claimed SubjectType "Transaction" while naming something that is not one, and nothing
+          anywhere could tell. SubjectId is a nullable Guid with an index and no foreign key, so
+          neither a wrong id nor a missing one is caught by the database either.
+        */
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var ledger = await db.Transactions.AsNoTracking()
+            .SingleOrDefaultAsync(t => t.Id == row.SubjectId);
+
+        // SingleOrDefault, not Single: a subject pointing at something that is not a Transaction is
+        // the exact defect being guarded, and it should fail with a sentence rather than with
+        // "Sequence contains no elements".
+        ledger.Should().NotBeNull(
+            "SubjectType says \"Transaction\", so SubjectId must resolve to one — it is a nullable "
+            + "Guid with no foreign key, so nothing else would catch it naming an account");
+        ledger!.Type.Should().Be(TransactionType.Withdrawal);
+        ledger.AccountId.Should().Be(accountId, "the subject must reach the movement, not its account");
     }
 
     [Fact]
@@ -264,6 +299,12 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             .SingleAsync(t => t.Id == row.SubjectId);
 
         subject.Type.Should().Be(TransactionType.TransferOut, "the outgoing leg is the act; the incoming one is its consequence");
+
+        // The transfers are the only paths that take the funnel's SHORT branch — a caller
+        // transaction already exists, so the chain is applied inside it rather than opening one.
+        // Nothing else asserts that the row still comes out chained on that branch.
+        row.RowHash.Should().MatchRegex("^[0-9a-f]{64}$", "the short branch must still hash the row");
+        row.Sequence.Should().BeGreaterThan(0, "and still take its place in the chain");
         subject.Account.UserId.Should().Be(
             payerId,
             "the subject must be the leg the ACTOR owns — the payee's leg would name someone who "
@@ -316,6 +357,11 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
 
         var subject = await context.Transactions.AsNoTracking()
             .SingleAsync(t => t.Id == row.SubjectId);
+        subject.Type.Should().Be(
+            TransactionType.TransferOut,
+            "an internal transfer picks the outgoing leg for the same reason an external one does — "
+            + "that leg is the act. Asserting the type says so directly, where the account id only "
+            + "says it by elimination and would stop meaning anything if the fixture changed");
         subject.AccountId.Should().Be(firstAccountId, "the subject is the leg money left");
 
         (await context.AuditEvents.AsNoTracking()
