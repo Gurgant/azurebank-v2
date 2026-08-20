@@ -148,10 +148,21 @@ tied to an actor id is financial data about an identifiable person, in a table d
 purged. The audit row answers *who did what to which movement*; the ledger row answers *what moved*.
 
 **A transfer writes ONE row, and its subject is the OUTGOING ledger row.** Two ledger rows are the
-bookkeeping of a single act. The subject has to be the outgoing one because the incoming row lands on
-the PAYEE's account, whose `Account.UserId` is provably not the actor: the payee is resolved by
-handle with no ownership check, and the self-transfer guard plus the unique `AzureTag` index make the
-two ids different by construction. Subjecting the row to the payee's leg would name the wrong person.
+bookkeeping of a single act, and the outgoing leg is the act itself — money leaving, under the
+authorisation the actor minted and which is consumed against that very row.
+
+For an EXTERNAL transfer there is a second, sharper reason, and it is worth stating separately
+because it does NOT apply to the internal case: the incoming leg lands on the payee's account, whose
+`Account.UserId` is provably not the actor. The payee is resolved by handle with no ownership check,
+and the self-transfer guard plus the unique `AzureTag` index make the two ids differ by construction.
+Subjecting the row to that leg would name someone who authorised nothing.
+
+An INTERNAL transfer moves between two accounts the actor already owns — `InternalTransferAsync`
+ownership-checks BOTH against the same user — so there the incoming leg's owner *is* the actor and
+nothing would be misattributed. The subject is still the outgoing leg, for the first reason alone.
+Saying so is not pedantry: an earlier draft of this paragraph gave the external reason for both, and
+a reader checking it against `InternalTransferAsync` would have found the ADR asserting something
+the code contradicts.
 
 **And one thing the retry loop forced.** A money row must be written INSIDE the concurrency-retry
 loop, because the transaction id it takes as its subject is minted inside that loop. That left a
