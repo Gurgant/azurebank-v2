@@ -3,6 +3,7 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
@@ -207,6 +208,119 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         row.Outcome.Should().Be(AuditOutcome.Succeeded);
         row.SubjectType.Should().Be("Transaction");
         row.Detail.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AnExternalTransfer_WritesOneRow_SubjectedToTheLegTheActorOwns()
+    {
+        /*
+          THE ASSERTION AT THE BOTTOM IS THE POINT, and it was a comment in ADR-0044 and a live SQL
+          query before it was a test — which is not the same thing, because a live query does not
+          survive a refactor.
+
+          A transfer writes TWO ledger rows and ONE audit row. The subject has to be the OUTGOING
+          leg, because the incoming one lands on the PAYEE's account, whose owner is provably not the
+          actor: the payee is resolved by handle with no ownership check, and the self-transfer guard
+          plus the unique AzureTag index make the two ids differ by construction. Point the row at
+          the incoming leg and the audit trail names the wrong person for every transfer ever made —
+          silently, and with a green suite.
+        */
+        var (_, payeeId, _) = await RegisterTestUserAsync();
+        string payeeTag;
+        using (var lookup = Factory.Services.CreateScope())
+        {
+            var db = lookup.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            payeeTag = (await db.Users.AsNoTracking().SingleAsync(u => u.Id == payeeId)).AzureTag;
+        }
+
+        var (payerToken, payerId, payerAccountId) = await RegisterTestUserAsync();
+        SetAuthHeader(payerToken);
+        await SetPinAsync(payerToken);
+        await DepositAsync(payerToken, payerAccountId, 500m);
+
+        var authorization = await AuthoriseTransferAsync(payerAccountId, payeeTag, 75m);
+        var response = await PostMonetaryAsync(
+            "/api/transfers",
+            new TransferRequest
+            {
+                FromAccountId = payerAccountId,
+                RecipientAzureTag = payeeTag,
+                Amount = 75m,
+                Description = "audited",
+            },
+            stepUpAuthorizationId: authorization);
+        response.IsSuccessStatusCode.Should().BeTrue(await response.Content.ReadAsStringAsync());
+
+        var row = await SingleRowForActorAsync(payerId, SecurityEvents.MoneyTransferred);
+        row.Outcome.Should().Be(AuditOutcome.Succeeded);
+        row.SubjectType.Should().Be("Transaction");
+        row.Detail.Should().BeNull("the ledger rows hold amount and counterparty; this table does not");
+
+        using var scope = Factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        var subject = await context.Transactions.AsNoTracking()
+            .Include(t => t.Account)
+            .SingleAsync(t => t.Id == row.SubjectId);
+
+        subject.Type.Should().Be(TransactionType.TransferOut, "the outgoing leg is the act; the incoming one is its consequence");
+        subject.Account.UserId.Should().Be(
+            payerId,
+            "the subject must be the leg the ACTOR owns — the payee's leg would name someone who "
+            + "authorised nothing, verified no PIN and minted no authorisation");
+
+        // And exactly one row for two ledger rows: a transfer is one act.
+        (await context.AuditEvents.AsNoTracking()
+            .CountAsync(e => e.ActorUserId == payerId && e.Event == SecurityEvents.MoneyTransferred))
+            .Should().Be(1, "two ledger rows are the bookkeeping of a single act");
+        payeeId.Should().NotBe(payerId, "the control: these really are two different users");
+    }
+
+    [Fact]
+    public async Task AnInternalTransfer_WritesItsOwnEvent_NotTheExternalOne()
+    {
+        // Distinguishing the two is a regulatory difference, not a cosmetic one: a payment to a
+        // third party and a move between one's own accounts do not carry the same weight, and an
+        // evidence pack should not have to re-derive which happened from the ledger.
+        var (token, userId, firstAccountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        await DepositAsync(token, firstAccountId, 500m);
+
+        var created = await Client.PostAsJsonAsync(
+            "/api/accounts",
+            new CreateAccountRequest { Name = "Second", Type = AccountType.Savings },
+            JsonOptions);
+        created.EnsureSuccessStatusCode();
+        var secondAccountId = (await created.Content
+            .ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!.Id;
+
+        var authorization = await AuthoriseInternalTransferAsync(firstAccountId, secondAccountId, 60m);
+        var response = await PostMonetaryAsync(
+            "/api/transfers/internal",
+            new InternalTransferRequest
+            {
+                FromAccountId = firstAccountId,
+                ToAccountId = secondAccountId,
+                Amount = 60m,
+                Description = "audited",
+            },
+            stepUpAuthorizationId: authorization);
+        response.IsSuccessStatusCode.Should().BeTrue(await response.Content.ReadAsStringAsync());
+
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyTransferredInternally);
+        row.Detail.Should().BeNull();
+
+        using var scope = Factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        var subject = await context.Transactions.AsNoTracking()
+            .SingleAsync(t => t.Id == row.SubjectId);
+        subject.AccountId.Should().Be(firstAccountId, "the subject is the leg money left");
+
+        (await context.AuditEvents.AsNoTracking()
+            .CountAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.MoneyTransferred))
+            .Should().Be(0, "an internal move must not be recorded as a payment to a third party");
     }
 
     private async Task<AuditEvent> SingleRowForActorAsync(Guid actorUserId, string securityEvent)
