@@ -212,4 +212,44 @@ public static class SecurityEvents
     /// <summary>A generated transaction number collided and was retried.</summary>
     /// <remarks>No OWASP counterpart; same reasoning as <see cref="AccountNumberCollision"/>.</remarks>
     public const string TransactionNumberCollision = "TransactionNumberCollision";
+
+    /*
+      MONEY MOVED, and until now not one of these existed. B2 gave the seventeen security events a
+      durable home; every one of them was administrative or authentication. A bank whose audit trail
+      records a renamed handle and not a transfer is not audited, so this is the gap B1 closes.
+
+      WHAT THESE ROWS DO NOT CARRY, and why the Detail column stays null on all four: the amount, the
+      counterparty handle, the description and the account are already on the Transaction row, and
+      SubjectId reaches it. Copying them into a table designed never to be purged is exactly how
+      personal data arrives there — ADR-0044 D5 — and an amount tied to an actor id is financial data
+      about an identifiable person. The audit row answers WHO DID WHAT TO WHICH transaction; the
+      ledger row answers what moved.
+
+      A transfer writes ONE row, not two. Two ledger rows are the bookkeeping of a single act, and
+      the subject is the OUTGOING one — the row whose owner is the actor, and the one the step-up
+      authorisation is consumed against.
+    */
+
+    /// <summary>Money was paid into an account by its owner.</summary>
+    /// <remarks>OWASP: <c>sensitive_change:[userid]</c>.</remarks>
+    public const string MoneyDeposited = "MoneyDeposited";
+
+    /// <summary>Money was taken out of an account by its owner.</summary>
+    /// <remarks>OWASP: <c>sensitive_change:[userid]</c>.</remarks>
+    public const string MoneyWithdrawn = "MoneyWithdrawn";
+
+    /// <summary>
+    /// Money left the actor's account for ANOTHER user's account, under a step-up authorisation.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="MoneyTransferredInternally"/> on purpose: a payment to a third party
+    /// and a move between one's own accounts carry different regulatory weight, and an evidence pack
+    /// that could not tell them apart would have to re-derive the difference from the ledger.
+    /// <para>OWASP: <c>sensitive_change:[userid]</c>.</para>
+    /// </remarks>
+    public const string MoneyTransferred = "MoneyTransferred";
+
+    /// <summary>Money moved between two accounts the actor already owns.</summary>
+    /// <remarks>OWASP: <c>sensitive_change:[userid]</c>.</remarks>
+    public const string MoneyTransferredInternally = "MoneyTransferredInternally";
 }

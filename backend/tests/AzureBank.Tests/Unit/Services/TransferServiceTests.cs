@@ -30,6 +30,7 @@ public class TransferServiceTests : IDisposable
     private readonly UserMapper _userMapper;
     private readonly Mock<IPinVerifier> _pinVerifierMock;
     private readonly Mock<ILogger<TransferService>> _loggerMock;
+    private readonly Mock<IAuditService> _auditMock = new();
     private readonly StepUpAuthorizationService _stepUp;
     private readonly TransferService _sut;
 
@@ -60,7 +61,8 @@ public class TransferServiceTests : IDisposable
             new Mock<ILogger<StepUpAuthorizationService>>().Object);
 
         _sut = new TransferService(
-            _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, _stepUp, _loggerMock.Object);
+            _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, _stepUp,
+            _loggerMock.Object, _auditMock.Object);
     }
 
     /// <summary>

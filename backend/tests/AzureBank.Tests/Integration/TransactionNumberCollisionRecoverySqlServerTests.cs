@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Shared.Constants;
+using AzureBank.Shared.Entities;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
@@ -138,6 +140,65 @@ public sealed class TransactionNumberCollisionRecoverySqlServerTests : IDisposab
         ConcurrencyRetry.IsTransactionNumberCollision(thrown.Which, attempt: 1).Should().BeFalse(
             "a unique violation on any OTHER index must propagate — retrying the idempotency "
                 + "claim race would double-execute the operation it protects");
+    }
+
+    [SqlServerFact]
+    public async Task ADepositThatRetries_WritesExactlyOneAuditRow()
+    {
+        /*
+          THE ONE PROPERTY B1 CANNOT GET FOR FREE FROM B2's MACHINERY.
+
+          A money audit row has to be written INSIDE the retry loop, because the transaction Id it
+          takes as its subject is minted inside that loop. So a failed attempt leaves an AuditEvent
+          tracked as Added, and the next attempt adds another. Nothing detached it:
+          ConcurrencyRetry.ResetToStoreAsync only ever detached Transaction, and its own comment
+          says the IdempotencyRecord is deliberately left attached — so "the retry cleans up" was an
+          assumption about a method that had never been asked this question.
+
+          Unfixed, a deposit that collides once commits TWO rows claiming two deposits, against ONE
+          ledger row and one balance change. An audit trail that overcounts money movements is worse
+          than one that misses them: it manufactures evidence of transfers that never happened.
+
+          The collision is injected rather than waited for, exactly as in the test above — a real
+          2601 against the real index, so the production predicate runs for real.
+        */
+        var (client, accountId, existingNumber) = await SeedFirstDepositAsync();
+
+        using (var seedScope = _factory!.Services.CreateScope())
+        {
+            // The seeding deposit above wrote its own row; clear so the count below is unambiguous.
+            var seedDb = seedScope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            await seedDb.Database.ExecuteSqlRawAsync("DELETE FROM [AuditEvents]");
+        }
+
+        var collision = new DuplicateTransactionNumberInterceptor(existingNumber);
+        _factory.AddInterceptor(collision);
+
+        var response = await DepositAsync(client, accountId, 250m);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created, "the collision must be recovered");
+        collision.Fired.Should().BeTrue("the test proves nothing if the collision was never injected");
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        var rows = await db.AuditEvents.AsNoTracking()
+            .Where(e => e.Event == SecurityEvents.MoneyDeposited)
+            .ToListAsync();
+
+        rows.Should().HaveCount(
+            1,
+            "one deposit happened, however many attempts it took — two rows here would be evidence "
+            + "of a second deposit that never occurred");
+
+        // And it must name the transaction that actually COMMITTED, not the discarded attempt's id.
+        var committed = await db.Transactions.AsNoTracking()
+            .Where(t => t.AccountId == accountId && t.TransactionNumber != existingNumber)
+            .SingleAsync();
+        rows[0].SubjectId.Should().Be(
+            committed.Id,
+            "the subject must be the surviving ledger row; the first attempt's id was detached with it");
+        rows[0].SubjectType.Should().Be("Transaction");
     }
 
     private async Task<(HttpClient Client, Guid AccountId, string Number)> SeedFirstDepositAsync()

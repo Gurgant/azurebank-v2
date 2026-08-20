@@ -122,11 +122,58 @@ names no number; quoting one from it would be an invention.)
 
 ## What is wired, and what is not
 
-Seven of the seventeen API events write a row today: `AccountDeleted`, `AccountNumberRevealed`,
-`AzureTagRenamed`, `PinEnrolled`, `RefreshTokenUnknown`, `RefreshTokenReuse` and
-`RefreshTokenReuseRevokeFailed`. The log line is kept alongside the row — two destinations, two jobs.
+**Eleven events write a row today.** Seven are administrative: `AccountDeleted`,
+`AccountNumberRevealed`, `AzureTagRenamed`, `PinEnrolled`, `RefreshTokenUnknown`,
+`RefreshTokenReuse` and `RefreshTokenReuseRevokeFailed`. For those the log line is kept alongside the
+row — two destinations, two jobs.
 
-The remaining ten are deliberately log-only, with reasons that were measured rather than assumed:
+**Four are money movements, added by B1** (2026-08-20): `MoneyDeposited`, `MoneyWithdrawn`,
+`MoneyTransferred` and `MoneyTransferredInternally`. Until then this table recorded a renamed handle
+and not one movement of money, which is the single thing a bank is audited for.
+
+Three things about those four are decisions rather than details.
+
+**They emit NO `SecurityEvent` log line, and that is the first event class to do so.** The
+administrative seven are worth waking an operator for; a deposit is not, and the money paths already
+carry their own operational log lines. So a movement gets durable evidence without flooding the
+alert stream. It also means the two inventories — logged sites, and rows written — moved
+independently for the first time, which is why
+`SecurityEventConstantTests.TheEventInventoryThisAdrStatesIsStillTheOneInTheSource` now counts
+`_audit.Record` and `_audit.RecordRefusalAsync` sites as well as log templates. A guard that only
+counted templates would have let this very paragraph go stale in silence, exactly as D4 did.
+
+**`Detail` is null on all four.** The amount, the counterparty, the description and the account are
+already on the ledger row that `SubjectId` reaches, and copying them here would break D5 — an amount
+tied to an actor id is financial data about an identifiable person, in a table designed never to be
+purged. The audit row answers *who did what to which movement*; the ledger row answers *what moved*.
+
+**A transfer writes ONE row, and its subject is the OUTGOING ledger row.** Two ledger rows are the
+bookkeeping of a single act. The subject has to be the outgoing one because the incoming row lands on
+the PAYEE's account, whose `Account.UserId` is provably not the actor: the payee is resolved by
+handle with no ownership check, and the self-transfer guard plus the unique `AzureTag` index make the
+two ids different by construction. Subjecting the row to the payee's leg would name the wrong person.
+
+**And one thing the retry loop forced.** A money row must be written INSIDE the concurrency-retry
+loop, because the transaction id it takes as its subject is minted inside that loop. That left a
+failed attempt's row tracked as Added while the next attempt added another —
+`ConcurrencyRetry.ResetToStoreAsync` detached only `Transaction`, and its own comment records that
+the `IdempotencyRecord` is deliberately left attached, so nothing had ever been asked this question.
+Measured with an injected collision: one deposit, **two** rows. It now detaches `AuditEvent` too,
+because a row written about an attempt must die with the attempt — the opposite of the idempotency
+flip, which is about the request and survives every attempt. An audit trail that overcounts
+movements is worse than one that misses them: it manufactures evidence of transfers that never
+happened. Pinned by `ADepositThatRetries_WritesExactlyOneAuditRow`.
+
+**Money REFUSALS are not wired here**, and the reason is measured rather than assumed. There are 19
+throw sites across `TransactionService` and `TransferService`, and most are business validation —
+insufficient funds, a self-transfer, a same-account transfer. Those are routine user outcomes, and a
+row per attempt is the same unbounded write into a never-purged table that keeps registration
+refusals out. The ones that ARE security signals — a transfer presented without a step-up
+authorisation, a wrong PIN at the mint — belong with the step-up path, where ADR-0010's lockout
+already lives, and that is its own change with its own tests.
+
+The remaining ten logged events are deliberately log-only, with reasons that were measured rather
+than assumed:
 
 - **Registration refusals** (`DuplicateRegistration`, `RegistrationRejected`) — `/api/auth/register`
   is unauthenticated, and the API carries **no rate limiter of its own** (checked: zero

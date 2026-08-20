@@ -257,6 +257,21 @@ internal static class ConcurrencyRetry
             entry.State = EntityState.Detached;
         }
 
+        /*
+          AND THE ATTEMPT'S AUDIT ROW WITH THEM (ADR-0044, B1). An AuditEvent added inside an attempt
+          describes THAT attempt — a movement that did not happen — so it has to die with the ledger
+          rows it was written about, for the same reason and by the same rule. Leaving it attached
+          would let a deposit that took three attempts commit three rows claiming three deposits.
+
+          This is the exact opposite treatment from the IdempotencyRecord noted below, and the
+          distinction is worth holding: the idempotency flip is about the REQUEST, which survives
+          every attempt, while an audit row is about the ATTEMPT, which does not.
+        */
+        foreach (var entry in context.ChangeTracker.Entries<AuditEvent>().ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
+
         foreach (var account in accounts)
         {
             await context.Entry(account).ReloadAsync();

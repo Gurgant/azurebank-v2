@@ -441,6 +441,34 @@ public class SecurityEventConstantTests
             "ADR-0044 D4 names the BFF events one by one and calls them \"the eight BFF events\". If "
             + "this moved, add or remove the name there too — the list is the count");
 
+        /*
+          AND HOW MANY EVENTS ARE AUDITED, which the template counts above cannot see. B1's money
+          events write an AuditEvents row and deliberately emit NO "SecurityEvent {SecurityEvent}"
+          log line — a deposit is worth durable evidence and not worth waking anyone, and the money
+          paths already carry their own operational log lines. So the two numbers moved
+          independently for the first time, and a guard that only counted templates would have let
+          ADR-0044's "Seven of the seventeen API events write a row today" go stale in silence,
+          exactly as "the six BFF events" did.
+        */
+        var sources = SourceFiles(RepoBackendRoot()).Select(File.ReadAllText).ToList();
+
+        // The two needles are disjoint even though one looks like a prefix of the other: after
+        // "_audit.Record" the enlisting call has "(" while the refusal call has "R". Worth stating,
+        // because a substring that quietly matched its sibling is exactly what the message-assertion
+        // round of PR #123 had to fix.
+        var enlisted = sources.Sum(t => CountOccurrences(t, "_audit.Record("));
+        var refusals = sources.Sum(t => CountOccurrences(t, "_audit.RecordRefusalAsync("));
+
+        enlisted.Should().Be(
+            8,
+            "ADR-0044's \"What is wired\" section counts the events that write a row: four were "
+            + "administrative and B1 added four money movements. Moving this means moving that "
+            + "section in the same commit");
+        refusals.Should().Be(
+            3,
+            "the out-of-band half is counted separately because it answers a different question — "
+            + "which refusals survive their own rollback");
+
         (perProject["Api"] + perProject["Bff"]).Should().Be(
             25,
             "AuditOutcome's remarks derive the four outcomes from \"the 25 existing security-event log "
