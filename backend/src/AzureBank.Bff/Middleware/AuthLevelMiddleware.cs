@@ -168,7 +168,7 @@ public class AuthLevelMiddleware
 
         // Either gate brings the request in here; only the PIN one can answer 403 below.
         var requiresPin = RequiresPinVerification(path, method);
-        if (requiresPin || RequiresSession(path, method))
+        if (requiresPin || RequiresSession(path))
         {
             var cookieName = sessionOptions.Value.CookieName;
 
@@ -201,9 +201,33 @@ public class AuthLevelMiddleware
 
             if (authLevel == 0)
             {
-                _logger.LogWarning(
-                    "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {Path}",
-                    SecurityEvents.StepUpWithoutSession, safeMethod, safePath);
+                /*
+                  TWO EVENTS, BECAUSE THE GATE NOW ADMITS TWO DIFFERENT FAILURES. Until the method
+                  condition came off, everything arriving here without a session was either a money
+                  POST or a PIN-protected path, so one name covered it. Now an ordinary GET with an
+                  expired cookie lands here too, and calling that StepUpWithoutSession would assert
+                  something untrue — that someone probed a step-up path — while burying the case
+                  actually worth waking a human for under the routine one.
+
+                  TWO STATEMENTS RATHER THAN A TERNARY, and that is not only taste. The first version
+                  put both message templates and both event names inside one LogWarning, and
+                  SecurityEventConstantTests reads the name from the lines following each template —
+                  so it found StepUpWithoutSession twice and never saw SessionRequired at all. The
+                  counts still moved to 8, so only the SET comparison caught it. Keeping one template
+                  beside one name per statement is what makes that scan able to see this site.
+                */
+                if (requiresPin)
+                {
+                    _logger.LogWarning(
+                        "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {Path}",
+                        SecurityEvents.StepUpWithoutSession, safeMethod, safePath);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "SecurityEvent {SecurityEvent}: no session on proxied {Method} {Path}",
+                        SecurityEvents.SessionRequired, safeMethod, safePath);
+                }
 
                 /*
                   Byte-for-byte the 401 the API emits for a missing token — measured against the
@@ -263,30 +287,41 @@ public class AuthLevelMiddleware
     }
 
     /// <summary>
-    /// Every proxied POST must have a live session before the request leaves the BFF, except the two
-    /// paths that exist to create one.
+    /// EVERY proxied request must have a live session before it leaves the BFF — no method
+    /// condition, no exception list.
     /// </summary>
     /// <remarks>
-    /// The prefix test uses the RAW path so that "/api/" itself cannot slip through a trim, while the
-    /// allowlist is matched on the NORMALIZED one — same trailing-slash handling as the PIN gate, and
-    /// for the same reason it was needed there (PR #64): endpoint routing tolerates "/api/transfers/",
-    /// so raw exact matching would let a slash-suffixed POST past the check. It has to normalise in
-    /// both directions now: "/api/auth/login/" reaches login and must stay reachable.
-    /// Scoped to /api/ deliberately — the BFF's own controllers live under /bff/ and are mapped after
-    /// this middleware, so a wider prefix would lock the front door.
+    /// <para>
+    /// Scoped to /api/ deliberately: the BFF's own controllers live under /bff/ and are mapped after
+    /// this middleware, so a wider prefix would lock the front door. The prefix test uses the RAW
+    /// path so "/api/" itself cannot slip through a trim; there is no longer anything matched on the
+    /// normalized one, because there is nothing left to exempt.
+    /// </para>
     /// </remarks>
-    private static bool RequiresSession(string path, string method)
-    {
-        if (!method.Equals("POST", StringComparison.OrdinalIgnoreCase)
-            || !path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
+    /*
+      WHY THE METHOD CONDITION IS GONE, and why it could not go earlier.
 
-        // Unconditional since the proxied auth pair is 404'd above: every POST under /api/ needs a
-        // session, with no exception list left to fall out of date.
-        return true;
-    }
+      This gate was POST-only, so every GET, PATCH and DELETE under /api/ was forwarded to the API
+      with no session and refused only by the API's own [Authorize] — reachable because no YARP route
+      in appsettings.json carries a Methods clause, and because FetchMetadataMiddleware returns false
+      for GET/HEAD and false again for any request with no Sec-Fetch-Site, so a non-browser caller
+      met nothing on the way. Not a data leak: BearerTokenTransformProvider clears the inbound
+      Authorization unconditionally, so the API answered 401. But that is the shape this file's own
+      comment above calls unacceptable — "a gate whose correctness depends on a different file
+      getting something right is not a gate". The POST half stopped depending on it; the rest had not.
+
+      ADR-0041 deferred the widening for a concrete reason: the exemption set was POST-shaped, so
+      widening the gate would have forced it to become per-method, or the first sessionless GET
+      anyone added would be refused by a list that could not express it. THAT REASON NO LONGER
+      EXISTS — the set was deleted outright when the proxied auth pair started answering 404, so
+      there is nothing left to make per-method. The blocker dissolved rather than being argued away.
+
+      Reads are swallowed too, and that is intended rather than incidental: /api/accounts/{id}/full-number
+      keeps its own PIN rule at a different level, and requiring a session first is strictly weaker
+      than requiring a verified PIN — a caller who cannot pass this could never have passed that.
+    */
+    private static bool RequiresSession(string path) =>
+        path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
 
     private static bool RequiresPinVerification(string path, string method)
     {

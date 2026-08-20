@@ -99,6 +99,22 @@ public static class SecurityEvents
     /// <remarks>OWASP: <c>malicious_direct_reference:[userid|IP, useragent]</c>.</remarks>
     public const string RawAuthEntryBlocked = "RawAuthEntryBlocked";
 
+    /// <summary>
+    /// A proxied request arrived with no live BFF session, on a path that is NOT step-up protected —
+    /// which, since the gate stopped being POST-only, is most of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// SEPARATE FROM <see cref="StepUpWithoutSession"/> ON PURPOSE. That name asserts something
+    /// specific: a caller reached a path guarded by the PIN without even holding a session, which is
+    /// the shape worth waking someone for. Reusing it for an ordinary expired-cookie <c>GET</c> would
+    /// bury the interesting case under the routine one and make the count meaningless — the failure
+    /// this vocabulary exists to prevent.
+    /// </para>
+    /// <para>OWASP: <c>authn_token_missing</c>.</para>
+    /// </remarks>
+    public const string SessionRequired = "SessionRequired";
+
     /// <summary>A request was refused by a rate-limiter partition.</summary>
     /// <remarks>OWASP: <c>excess_rate_limit_exceeded[userid,max]</c>. An exact match.</remarks>
     public const string RateLimitExceeded = "RateLimitExceeded";

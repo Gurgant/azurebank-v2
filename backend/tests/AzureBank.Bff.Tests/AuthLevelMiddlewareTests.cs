@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
@@ -23,7 +24,7 @@ namespace AzureBank.Bff.Tests;
 /// concept; the JWT carries no level claim). YARP's forwarder is replaced with a
 /// recording fake, so "the backend was never called" is asserted, never assumed.
 /// </summary>
-public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
+public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
     private readonly WebApplicationFactory<Program> _factory;
     private readonly List<WebApplicationFactory<Program>> _derivedFactories = [];
@@ -370,21 +371,41 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
                 "the session's stored token, never the one the caller sent");
     }
 
-    [Fact]
-    public async Task AClientBearerIsStrippedOnUngatedRoutesToo()
+    [Theory]
+    [InlineData("GET", "/api/accounts")]
+    [InlineData("PATCH", "/api/users/me/azuretag")]
+    [InlineData("DELETE", "/api/accounts/01a01234-0000-7000-8000-000000000000")]
+    public async Task ASessionlessNonPostIsRefusedHere_AndNeverForwarded(string method, string path)
     {
-        // /api/accounts is not PIN-gated, so the middleware never looks at it — which is exactly why
-        // the transform has to be the one that strips. Without this, every un-gated endpoint stays
-        // reachable with a self-obtained token and the server-side session model is decorative.
+        /*
+          THIS TEST USED TO ASSERT THE OPPOSITE, and the inversion is the whole change.
+
+          It read: "/api/accounts is not PIN-gated, so the middleware never looks at it — which is
+          exactly why the transform has to be the one that strips." True at the time, and it was the
+          honest description of a gate that only covered POST. Every GET, PATCH and DELETE under
+          /api/ was forwarded sessionless and refused by the API, so the refusal rested on
+          BearerTokenTransformProvider clearing the inbound header — one line in another file.
+
+          Now the gate has no method condition, so the request never leaves the BFF at all. That is
+          strictly stronger, and it is what the old comment said was missing. The transform still
+          matters and is still pinned: the test above it drives the WITH-session case and asserts the
+          forwarded Authorization is the session's token and not the caller's.
+
+          A Theory across three verbs rather than one Fact, because "POST-only" was exactly the kind
+          of gap a single case cannot show.
+        */
         var (factory, backend) = WithRecorder();
         var client = factory.CreateClient();
 
-        await client.SendAsync(BearerOnly(HttpMethod.Get, "/api/accounts"));
+        var response = await client.SendAsync(BearerOnly(new HttpMethod(method), path));
 
-        backend.ForwardedPaths.Should().ContainSingle(p => p == "/api/accounts");
-        backend.ForwardedAuthorization.Should().ContainSingle()
-            .Which.Should().BeNull("with no session there is no token to inject, and the client's "
-                + "must not stand in for one — the API then answers 401 for real");
+        response.StatusCode.Should().Be(
+            HttpStatusCode.Unauthorized,
+            "no session means not signed in, which the SPA routes to login — 401, not the 403 that "
+            + "would put a PIN prompt in front of someone with no session at all");
+        backend.ForwardedPaths.Should().BeEmpty(
+            "the refusal is decided HERE; a caller with no session must not reach the API even to "
+            + "be turned away by it");
     }
 
     /*
@@ -414,17 +435,33 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
     */
 
     /// <summary>Every POST path the committed OpenAPI spec declares, in file order.</summary>
-    private static IEnumerable<string> SpecPostPaths()
+    /*
+      EVERY VERB, NOT ONLY POST — and the narrowing this replaces is exactly how the gap it was meant
+      to catch survived. While the gate was POST-only, filtering the spec on `post` was consistent
+      with it, and that consistency is the trap: the sweep could not see the GET/PATCH/DELETE surface
+      that had no gate at all, so it reported green about the half that was covered and said nothing
+      about the half that was not. A drift sweep shaped like the rule it checks can only ever confirm
+      the rule's own blind spots.
+
+      HEAD and OPTIONS are not in the spec and are not synthesised here: the gate matches on the /api/
+      prefix regardless of method, so they are covered by construction — but this sweep sends real
+      requests, and inventing verbs the API does not declare would test the test rather than the API.
+    */
+    private static readonly string[] SpecVerbs =
+        ["get", "post", "put", "patch", "delete"];
+
+    private static IEnumerable<(string Path, HttpMethod Method)> SpecOperations()
     {
         var spec = Path.Combine(RepoRoot(), "docs", "api", "openapiv1.json");
         using var document = JsonDocument.Parse(File.ReadAllText(spec));
         foreach (var path in document.RootElement.GetProperty("paths").EnumerateObject())
         {
-            var hasPost = path.Value.EnumerateObject()
-                .Any(verb => verb.Name.Equals("post", StringComparison.OrdinalIgnoreCase));
-            if (hasPost)
+            foreach (var verb in path.Value.EnumerateObject())
             {
-                yield return path.Name;
+                if (SpecVerbs.Contains(verb.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    yield return (path.Name, new HttpMethod(verb.Name.ToUpperInvariant()));
+                }
             }
         }
     }
@@ -590,7 +627,7 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
     }
 
     [Fact]
-    public async Task NoPostInTheSpecReachesTheBackendWithoutASession()
+    public async Task NothingInTheSpecReachesTheBackendWithoutASession()
     {
         /*
           THE DRIFT SWEEP, and the reason it is written this way.
@@ -607,39 +644,48 @@ public class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Prog
           collapsing both refusals into one property keeps the sweep about the invariant that matters
           — nothing gets through — instead of the shape each refusal happens to take.
 
-          NO EXCEPTIONS LEFT. The sweep used to exempt /api/auth/login and /api/auth/register on the
-          argument that they are how a caller obtains a session. Measured on the running stack, that
-          argument was false for this deployment: the SPA signs in through the BFF's own
-          /bff/auth/login, and the proxied pair only ever served callers who wanted the raw API token
-          — which is exactly what it handed them. Both are 404'd now, so every POST in the spec is
-          expected to be refused, and the loop below no longer branches.
+          NO EXCEPTIONS LEFT, AND NO VERB LEFT OUT. The sweep used to exempt /api/auth/login and
+          /api/auth/register, and to enumerate POST paths only. Both narrowings are gone: the pair is
+          404'd, and the gate no longer has a method condition. The verb half mattered most — while
+          the sweep filtered on `post` it was shaped like the rule it checked, so it could not see
+          the GET/PATCH/DELETE surface that had no gate at all.
 
-          Falsified by making RequiresSession return false: every path flips to forwarded.
+          TEMPLATED PATHS ARE SUBSTITUTED, not skipped. The previous version asserted there were none,
+          which held only because no POST path carried an {id}; half the reads do. Sending
+          "/api/accounts/{id}" literally would probe a route nobody can call and report green about
+          it, so each placeholder gets a real GUID and the request reaches a real endpoint.
+
+          Falsified by making RequiresSession return false: every operation flips to forwarded.
         */
-        var paths = SpecPostPaths().ToList();
+        var operations = SpecOperations().ToList();
 
-        paths.Should().HaveCountGreaterThan(10, "the spec is the source of cases; an empty or "
+        operations.Should().HaveCountGreaterThan(20, "the spec is the source of cases; an empty or "
             + "truncated read must fail loudly rather than sweep nothing");
-        paths.Should().NotContain(p => p.Contains('{'),
-            "the sweep sends each path as a literal request, so a templated one would probe "
-            + "\"/api/things/{id}\" itself rather than a real route — reporting green about a path "
-            + "nobody can call. The gate would still cover it (it matches on the /api/ prefix); it "
-            + "is this test that cannot, so it must fail loudly instead of quietly testing nothing");
+        operations.Select(o => o.Method.Method).Distinct().Should().Contain(
+            ["GET", "POST"],
+            "a sweep that lost its non-POST cases would be back to checking only the half that was "
+            + "already covered — the exact blind spot this widening exists to remove");
 
-        foreach (var path in paths)
+        foreach (var (template, method) in operations)
         {
+            var path = TemplatePlaceholder().Replace(template, "01a01234-0000-7000-8000-000000000000");
             var (factory, backend) = WithRecorder();
             var client = factory.CreateClient();
 
-            var request = new HttpRequestMessage(HttpMethod.Post, path)
+            var request = new HttpRequestMessage(method, path);
+            if (method != HttpMethod.Get && method != HttpMethod.Delete)
             {
-                Content = JsonContent.Create(new { })
-            };
+                request.Content = JsonContent.Create(new { });
+            }
+
             await client.SendAsync(request);
 
             backend.ForwardedPaths.Should().BeEmpty(
-                $"{path} is a POST under /api/; with no session the BFF must refuse it itself "
+                $"{method} {path} is under /api/; with no session the BFF must refuse it itself "
                 + "rather than let an unauthenticated caller reach the API");
         }
     }
+
+    [GeneratedRegex(@"\{[^}]+\}")]
+    private static partial Regex TemplatePlaceholder();
 }

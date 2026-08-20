@@ -134,6 +134,39 @@ locally, at the BFF, with the API's own 401 shape, trailing slash normalised the
 > `/bff/auth/reauthenticate` all carry `[EnableRateLimiting(RateLimitPolicies.Auth)]` — the same
 > policy the proxied routes had.
 
+> **Amended 2026-08-19.** The method condition is gone: the gate now requires a session for EVERY
+> proxied request under `/api/`, not only POSTs.
+>
+> The 2026-08-17 amendment above deferred exactly this, and gave a concrete reason —
+> `SessionlessPostPaths` was a POST-shaped set, so widening the gate would have forced it to become
+> per-method, or the first sessionless GET anyone added would be refused by a list that could not
+> express it. **That reason stopped existing on 2026-08-19**, when the set was deleted outright
+> rather than emptied. There is nothing left to make per-method, so the blocker dissolved instead of
+> being argued away.
+>
+> What it closes: no YARP route carries a `Methods` clause, so every GET, PATCH and DELETE under
+> `/api/` was forwarded sessionless and refused only by the API's own `[Authorize]` — with
+> `FetchMetadataMiddleware` returning false for GET/HEAD and false again for a request with no
+> `Sec-Fetch-Site`, a non-browser caller met nothing on the way. Never a data leak, because
+> `BearerTokenTransformProvider` clears the inbound header, but it is the shape `AuthLevelMiddleware`
+> itself calls unacceptable: a gate whose correctness depends on a different file getting something
+> right. Measured after the change, sessionless: `GET /api/accounts`, `PATCH /api/users/me/azuretag`
+> and `DELETE /api/accounts/{id}` all answer **401** at the BFF with the API's own
+> `AUTH_TOKEN_MISSING` body, so no client can observe the move. With a session, `/bff/auth/register`
+> and `/bff/auth/login` answer 201 and 200 and the proxied `GET /api/accounts` and
+> `GET /api/transactions` answer 200 — naming the two prefixes apart deliberately, because the
+> proxied `/api/auth/login` and `/api/auth/register` answer 404 **even with a valid session**:
+> `BlockedProxiedAuthPaths` is matched before the session is ever read.
+>
+> Reads are swallowed too, and that was the other half of the deferral. It is fine: `/full-number`
+> keeps its own PIN rule at a different level, and needing a session first is strictly weaker than
+> needing a verified PIN.
+>
+> The drift sweep moved with it. It filtered the spec on `post`, which made it shaped like the rule
+> it checked — so it was blind to precisely the surface that had no gate. It now enumerates every
+> verb and substitutes templated paths, and was falsified by disabling the gate: eleven tests fail,
+> naming `GET /api/accounts` among them.
+
 `/full-number` keeps the session model (decision D3a). It is a GET with no body, no amount and no
 payee — there is nothing for an in-band credential to be **bound to**. Two questions, two mechanisms,
 on purpose.
