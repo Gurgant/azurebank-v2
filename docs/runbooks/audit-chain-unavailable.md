@@ -82,7 +82,33 @@ JOIN sys.dm_tran_session_transactions st ON st.transaction_id = dt.transaction_i
 ORDER BY database_transaction_begin_time;
 ```
 
-The oldest open transaction is the usual culprit. Killing it releases the tail and the queue drains.
+The oldest open transaction is the usual culprit. **`KILL` does not release the tail when you press
+enter** — it starts a rollback, and the locks are held until that rollback FINISHES. Undoing the work
+can take as long as doing it took, or longer. This runbook used to say "killing it releases the tail
+and the queue drains", which would have had you standing over a queue that looked stuck after you had
+already fixed it.
+
+Watch the rollback rather than guessing at it:
+
+```sql
+KILL <session_id> WITH STATUSONLY;
+```
+
+That reports estimated completion and seconds remaining. It performs no action of its own — it only
+reports on a rollback already under way. **Measured**, so the error does not surprise you mid-incident:
+
+```
+Msg 6120, Level 16, State 1
+Status report cannot be obtained. Rollback operation for Process ID 56 is not in progress.
+```
+
+That is not a failure. It means the rollback is not running — either it already finished (the tail is
+free, and the queue is draining now) or it never started, which points at the wrong `session_id`.
+
+**Do not kill more sessions because the first kill "did nothing".** A rollback in progress cannot be
+cancelled, so a second kill buys nothing and a third takes out sessions that were only ever queued
+behind the first. Money movements stay refused until the tail is free; that is D1 working, not a
+second fault appearing.
 
 **4. Is the table itself intact?** A missing table, a broken index on `IX_AuditEvents_Sequence`, or a
 failed migration all present as an unreadable store:
