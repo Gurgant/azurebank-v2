@@ -144,7 +144,15 @@ try
     app.MapHealthChecks("/health/live",
         new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/ready",
-        new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = h => h.Tags.Contains("ready") });
+        new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+        {
+            Predicate = h => h.Tags.Contains("ready"),
+
+            // Names the failing check instead of only reporting that one failed. The audit-chain
+            // runbook's first triage step is "is `database` unhealthy too?", which the default
+            // one-word body cannot answer. See HealthCheckResponse.
+            ResponseWriter = AzureBank.Api.HealthChecks.HealthCheckResponse.WriteAsync,
+        });
 
     // ═══════════════════════════════════════════════════════════════════════════
     // DATABASE SEEDING (Development only)

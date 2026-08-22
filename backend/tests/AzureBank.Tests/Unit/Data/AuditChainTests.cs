@@ -4,6 +4,7 @@ using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;

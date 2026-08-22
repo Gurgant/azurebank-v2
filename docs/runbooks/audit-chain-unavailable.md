@@ -12,11 +12,28 @@ whose money moved. Every source that endorses fail-closed pairs it with a runboo
 ## Confirm it in one call
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://<host>/health/ready
+curl -s -w "\n%{http_code}\n" https://<host>/health/ready
 ```
 
-`503` with `audit-chain` reporting **unhealthy** means the audit store is unreachable from this
-instance. `200` means it is readable, and the cause is one of the narrower ones below.
+Measured on the running API, with the `AuditEvents` table renamed away underneath it:
+
+```json
+{"status":"Unhealthy","checks":[
+  {"name":"database","status":"Healthy","description":null},
+  {"name":"audit-chain","status":"Unhealthy",
+   "description":"audit store unreadable — money movements will be refused (ADR-0044 D1)"}]}
+```
+
+**The body is the point, and it is why the `curl` above does not discard it.** It names WHICH check
+failed — exactly the distinction step 1 asks you to make. Note what that observation shows: the
+database was perfectly healthy while the audit store was not, so a bare `503` would have sent you
+hunting a database outage that was not happening.
+
+`503` with `audit-chain` reporting **unhealthy** means the audit store is **unreadable** from this
+instance. Unreadable, not unreachable: the probe fails the same way for a database that is down, an
+`AuditEvents` table that was never migrated, a disabled or corrupt index, and credentials that can no
+longer read it. Which of those it is, is step 4. `200` means the probe read the table, and the cause
+is one of the narrower ones below.
 
 ## What you will see in the log
 
@@ -35,8 +52,8 @@ whole signal.
 
 ## Triage, in order
 
-**1. Is the database reachable at all?** If `/health/ready` also reports `database` unhealthy, this
-is not an audit problem — it is the database, and the audit chain is simply the first thing to
+**1. Is the database reachable at all?** If the body you just printed also reports `database`
+unhealthy, this is not an audit problem — it is the database, and the audit chain is simply the first thing to
 notice. Treat it as a database outage.
 
 **2. Is the table locked rather than unreachable?** The health check reads with `READUNCOMMITTED`, so
@@ -96,9 +113,20 @@ verification of every row after it, permanently.
 
 ## After recovery
 
-- Run the chain verification and check that it reads a non-zero count as well as reporting intact —
-  a verification that read nothing also says "intact", which is why the count is asserted everywhere
-  in the suite.
+- **Verifying the chain is NOT something you can do from here, and pretending otherwise was worse
+  than leaving it out.** `AuditChain.VerifyAsync` exists and the test suite calls it, but nothing
+  exposes it — no endpoint, no CLI, no job. An operator following the old wording would have gone
+  looking for a command that does not exist, during an incident. What you CAN check is that the
+  chain is being written again, which is a weaker claim and is written as one:
+
+  ```sql
+  SELECT TOP 5 [Sequence], [Event], [OccurredAt] FROM [AuditEvents] ORDER BY [Sequence] DESC;
+  ```
+
+  A `Sequence` past its value from before the outage means movements are being recorded again. It
+  says nothing about whether the hashes still link. **That gap is open and tracked** — until an
+  operator-runnable verification exists, this runbook cannot close it, and no line here should
+  suggest otherwise.
 - The refused movements were refused, not lost: no money moved, and no audit row claims it did.
   Customers can simply retry.
 - If the cause was contention rather than an outage, the number worth capturing is how long the tail

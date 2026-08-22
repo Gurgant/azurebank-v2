@@ -81,12 +81,25 @@ the customer whose money moved — least of all a malicious one. No regulator co
 is a claim about what this bank owes the person on the other side of the transaction, and it is made
 deliberately in the knowledge that the standards stop short of it.
 
-**What that obligated, and what has now been done about it — 2026-08-20.** Every source that endorses
-fail-closed pairs it with things this system did not have: an alternate path, a bounded wait and a
-recovery runbook. All three were addressed, and the first two turned out differently than expected.
+**What that obligates.** Every source that endorses fail-closed pairs it with things this system does
+not yet have — an alternate path and a recovery runbook — and Vault's documented failure mode is the
+one to fear: not a clean write error but a **hang**. A firewalled sink froze every Vault operation
+even with a healthy second audit device configured. Our chain awaits SQL Server while holding
+`UPDLOCK, HOLDLOCK` on the tail, so a hung connection stops every money movement with nothing thrown
+and nothing alerting. Bounding that wait, emitting a refusal on the out-of-band path that can still
+work when the enlisted one cannot, and writing the runbook, is the next change — not because D1 is in
+doubt, but because a decision this deliberate deserves to fail loudly rather than silently.
 
-**The cost was measured, and it is larger than "the movement fails".** The chain's tail is read under
-`UPDLOCK, HOLDLOCK`, so the lock is global to `AuditEvents` and every audited save queues on it.
+**UPDATED 2026-08-20 — the three obligations above are discharged, and two of them resolved
+differently than that paragraph expected.** The paragraph stands as written because it is the record
+of what was decided and why; this is what happened when it was carried out. (An earlier edit replaced
+it outright, which is the wrong thing to do to an ADR: it left the file describing an obligation as
+though it had never been outstanding, and it discarded the Vault hang — the failure mode that
+motivated the bound in the first place.)
+
+**The cost was measured first, and it is larger than "the movement fails".** The chain's tail is
+read under `UPDLOCK, HOLDLOCK`, so the lock is global to `AuditEvents` and every audited save queues
+on it.
 Stalling one tail read for three seconds delayed a deposit **on a different account, by a different
 user**, by **2,820 ms** — `AuditChainContentionSqlServerTests` measures exactly this. A merely SLOW
 audit store degrades the entire bank, not just the movement that touched it. Until now the only bound
@@ -116,9 +129,17 @@ neither pretending to answer the other's.
 The recovery procedure is `docs/runbooks/audit-chain-unavailable.md`, including the two things not to
 do under pressure: disable the chain, or raise the bound to push the failures away.
 
-**What remains open.** The tail is a single global row, so the chain serialises every money movement
-in the system by construction. Nothing here changes that — it bounds the damage rather than removing
-the choke point. Whether the chain should be partitioned is a real question this ADR does not answer.
+**What remains open.** Two things, named rather than left to be discovered.
+
+The tail is a single global row, so the chain serialises every money movement in the system by
+construction. Nothing here changes that — it bounds the damage rather than removing the choke point.
+Whether the chain should be partitioned is a real question this ADR does not answer.
+
+**And there is still no way for an operator to VERIFY the chain.** `AuditChain.VerifyAsync` exists
+and the suite calls it, but nothing exposes it — no endpoint, no CLI, no job. So the runbook can tell
+an operator that movements are being recorded again, and cannot tell them the hashes still link. For
+a design whose whole claim is tamper-evidence, that is the gap worth closing next: the property is
+only as good as someone's ability to check it outside a test run.
 
 ### D2 — the chain now, the SQL Server ledger later
 

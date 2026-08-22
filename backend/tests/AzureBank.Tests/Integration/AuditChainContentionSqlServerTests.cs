@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -133,12 +134,32 @@ public sealed class AuditChainContentionSqlServerTests : IDisposable
             $"bound 1s, tail stalled 8s -> unrelated deposit answered {(int)second.StatusCode} "
             + $"in {refused.ElapsedMilliseconds}ms");
 
-        second.IsSuccessStatusCode.Should().BeFalse(
-            "D1 is unchanged: a movement whose audit row cannot be written does not happen");
+        second.StatusCode.Should().Be(
+            HttpStatusCode.InternalServerError,
+            "measured: the bounded tail read surfaces as a command timeout through "
+            + "GlobalExceptionHandler. Pinned rather than left as 'not a success' so that a DIFFERENT "
+            + "failure — a validation error, a rate limit — cannot quietly satisfy this test");
+
         refused.ElapsedMilliseconds.Should().BeLessThan(
             5_000,
             "the point of the bound is that it fails FAST — unbounded, this waited on the 30-second "
             + "command timeout while holding a connection and the rest of the money path behind it");
+
+        /*
+          AND THE INVARIANT THE COMMENT ABOVE CLAIMS, actually checked. "No money moves without
+          evidence" was asserted only by the response not being a success — which a server fault
+          unrelated to the audit chain would also satisfy. The balance is the claim; read it.
+        */
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var balance = (await db.Accounts.AsNoTracking().SingleAsync(a => a.Id == secondAccount)).Balance;
+
+            balance.Should().Be(
+                0m,
+                "the refused deposit must have moved nothing — a bounded audit failure that still "
+                + "credited the account would be the exact state D1 exists to prevent");
+        }
 
         await held; // let the stalled one finish so the fixture tears down cleanly
     }

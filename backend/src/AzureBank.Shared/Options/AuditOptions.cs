@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace AzureBank.Shared.Options;
 
 /// <summary>
@@ -61,5 +63,17 @@ public class AuditOptions
     /// command timeout lives on the <c>DbContext</c>, which is scoped to one request.
     /// </para>
     /// </remarks>
+    /*
+      RANGE-VALIDATED, because the two invalid values fail in opposite and equally bad ways.
+      ZERO is the dangerous one: ADO.NET reads CommandTimeout = 0 as NO LIMIT, so a plausible typo
+      in configuration silently restores the unbounded thirty-second-plus queue this setting exists
+      to remove — and nothing would say so, because the code would look like it was working.
+      NEGATIVE fails loudly instead, throwing from SetCommandTimeout at the worst possible moment:
+      mid-save, on the money path. Three hundred is an upper bound rather than a considered maximum;
+      anything near it has already defeated the purpose.
+    */
+    [Range(1, 300, ErrorMessage =
+        "Audit:TailTimeoutSeconds must be between 1 and 300. Zero means NO timeout in ADO.NET, "
+        + "which would silently remove the bound; a negative value throws mid-save.")]
     public int TailTimeoutSeconds { get; set; } = 5;
 }

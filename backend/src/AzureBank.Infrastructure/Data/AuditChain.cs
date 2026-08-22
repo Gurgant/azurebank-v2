@@ -108,7 +108,11 @@ public sealed class AuditChain : IAuditChain
             return;
         }
 
-        Link(pending, await ReadTailOrReportAsync(context, pending.Count, cancellationToken));
+        // Resolved BEFORE the read, so the same number bounds the statement and names itself in the
+        // log line if it expires. Resolving it inside the catch would risk a second failure while
+        // reporting the first.
+        var timeoutSeconds = ResolveTailTimeoutSeconds(context);
+        Link(pending, await ReadTailOrReportAsync(context, timeoutSeconds, pending.Count, cancellationToken));
     }
 
     public void Apply(DbContext context)
@@ -119,7 +123,38 @@ public sealed class AuditChain : IAuditChain
             return;
         }
 
-        Link(pending, ReadTail(context));
+        /*
+          THE SYNCHRONOUS FUNNEL GETS THE SAME TREATMENT, and it did not until a review asked why.
+          Every money service saves asynchronously today, so this path is not on the money path in
+          practice — but "not used today" is not a bound, and AzureBankDbContext.SaveChanges(bool)
+          remains a public entry point that any audited unit of work can reach. An unbounded tail
+          read here would hold the same global lock for the same thirty seconds, and be invisible
+          because nothing logs it.
+        */
+        var timeoutSeconds = ResolveTailTimeoutSeconds(context);
+        Link(pending, ReadTailOrReport(context, timeoutSeconds, pending.Count));
+    }
+
+    /// <inheritdoc cref="ReadTailOrReportAsync"/>
+    private (long Sequence, string Hash)? ReadTailOrReport(
+        DbContext context, int timeoutSeconds, int pendingRows)
+    {
+        try
+        {
+            return ReadTail(context, timeoutSeconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "SecurityEvent {SecurityEvent}: the audit chain tail could not be read within "
+                    + "{TimeoutSeconds}s, so {PendingRows} pending audit row(s) and the action they "
+                    + "describe are refused",
+                SecurityEvents.AuditChainUnavailable,
+                timeoutSeconds,
+                pendingRows);
+            throw;
+        }
     }
 
     /// <summary>
@@ -178,12 +213,12 @@ public sealed class AuditChain : IAuditChain
       on every unrelated query the request makes afterwards.
     */
     private static async Task<(long Sequence, string Hash)?> ReadTailAsync(
-        DbContext context, CancellationToken cancellationToken)
+        DbContext context, int timeoutSeconds, CancellationToken cancellationToken)
     {
         if (context.Database.IsRelational())
         {
             var restore = context.Database.GetCommandTimeout();
-            context.Database.SetCommandTimeout(TailTimeoutSeconds(context));
+            context.Database.SetCommandTimeout(timeoutSeconds);
             try
             {
                 var row = await context.Set<AuditEvent>()
@@ -213,11 +248,22 @@ public sealed class AuditChain : IAuditChain
       failed. For a chain failure there is no in-band way to report a chain failure.
     */
     private async Task<(long Sequence, string Hash)?> ReadTailOrReportAsync(
-        DbContext context, int pendingRows, CancellationToken cancellationToken)
+        DbContext context, int timeoutSeconds, int pendingRows, CancellationToken cancellationToken)
     {
         try
         {
-            return await ReadTailAsync(context, cancellationToken);
+            return await ReadTailAsync(context, timeoutSeconds, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            /*
+              A CLIENT HANGING UP IS NOT AN AUDIT FAILURE. Without this branch, a browser that
+              navigates away mid-request produces an Error-level AuditChainUnavailable naming a
+              timeout that never happened — and since this event is what an operator alerts on, the
+              alert would count disconnects alongside the thing it exists for. Rethrown unlogged:
+              the movement still does not happen, because nobody is waiting for it.
+            */
+            throw;
         }
         catch (Exception ex)
         {
@@ -227,35 +273,78 @@ public sealed class AuditChain : IAuditChain
                     + "{TimeoutSeconds}s, so {PendingRows} pending audit row(s) and the action they "
                     + "describe are refused",
                 SecurityEvents.AuditChainUnavailable,
-                TailTimeoutSeconds(context),
+                timeoutSeconds,
                 pendingRows);
             throw;
         }
     }
 
     /// <summary>
-    /// The configured bound, read from the context's own service provider so the static read path
-    /// does not need the options injected through every caller.
+    /// The configured bound, resolved from whichever service provider actually holds the options, so
+    /// the read path does not need them injected through every caller.
     /// </summary>
     /// <remarks>
-    /// Falls back to the <see cref="AuditOptions"/> default when options are unavailable — which is
-    /// the case for the hand-built contexts in tests. Falling back rather than throwing is
-    /// deliberate: a missing bound must not be the thing that stops a money movement.
+    /// <para>
+    /// NON-THROWING ON PURPOSE, and the first version was not. It called
+    /// <c>DbContext.GetService&lt;T&gt;()</c> with a <c>?? default</c> fallback, believing the
+    /// extension returns null for an unregistered service. It does not — it throws — which made the
+    /// fallback unreachable dead code and would have turned a hand-built context into an unhelpful
+    /// <c>InvalidOperationException</c> instead of a working default. Verified by probing the
+    /// framework rather than by reading about it.
+    /// </para>
+    /// <para>
+    /// BOTH PROVIDERS ARE TRIED. EF keeps its own internal provider, while application services
+    /// registered through <c>AddDbContext</c> hang off
+    /// <c>CoreOptionsExtension.ApplicationServiceProvider</c>. Looking in only one of them finds the
+    /// options in some hosts and silently misses them in others — which would look exactly like the
+    /// default being chosen deliberately.
+    /// </para>
+    /// <para>
+    /// Falling back to the default rather than throwing is the point: a missing bound must never be
+    /// the thing that stops a money movement.
+    /// </para>
     /// </remarks>
-    private static int TailTimeoutSeconds(DbContext context) =>
-        context.GetService<IOptions<AuditOptions>>()?.Value.TailTimeoutSeconds
-        ?? new AuditOptions().TailTimeoutSeconds;
+    private static int ResolveTailTimeoutSeconds(DbContext context)
+    {
+        var infrastructure = ((IInfrastructure<IServiceProvider>)context).Instance;
 
-    private static (long Sequence, string Hash)? ReadTail(DbContext context)
+        if (FromProvider(infrastructure) is { } internalValue)
+        {
+            return internalValue;
+        }
+
+        var applicationProvider = (infrastructure.GetService(typeof(IDbContextOptions)) as IDbContextOptions)
+            ?.FindExtension<CoreOptionsExtension>()
+            ?.ApplicationServiceProvider;
+
+        return FromProvider(applicationProvider) ?? new AuditOptions().TailTimeoutSeconds;
+
+        // Raw IServiceProvider.GetService, which returns null for an unregistered service, rather
+        // than the EF accessor extension, which throws.
+        static int? FromProvider(IServiceProvider? provider) =>
+            (provider?.GetService(typeof(IOptions<AuditOptions>)) as IOptions<AuditOptions>)
+                ?.Value.TailTimeoutSeconds;
+    }
+
+    private static (long Sequence, string Hash)? ReadTail(DbContext context, int timeoutSeconds)
     {
         if (context.Database.IsRelational())
         {
-            var row = context.Set<AuditEvent>()
-                .FromSqlRaw(TailSql)
-                .AsNoTracking()
-                .Select(e => new { e.Sequence, e.RowHash })
-                .FirstOrDefault();
-            return row is null ? null : (row.Sequence, row.RowHash);
+            var restore = context.Database.GetCommandTimeout();
+            context.Database.SetCommandTimeout(timeoutSeconds);
+            try
+            {
+                var row = context.Set<AuditEvent>()
+                    .FromSqlRaw(TailSql)
+                    .AsNoTracking()
+                    .Select(e => new { e.Sequence, e.RowHash })
+                    .FirstOrDefault();
+                return row is null ? null : (row.Sequence, row.RowHash);
+            }
+            finally
+            {
+                context.Database.SetCommandTimeout(restore);
+            }
         }
 
         var inMemory = NonRelationalTail(context).FirstOrDefault();
