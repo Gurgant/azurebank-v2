@@ -154,9 +154,13 @@ public sealed class AuditChainContentionSqlServerTests : IDisposable
             + "failure — a validation error, a rate limit — cannot quietly satisfy this test");
 
         refused.ElapsedMilliseconds.Should().BeLessThan(
-            5_000,
+            3_000,
             "the point of the bound is that it fails FAST — unbounded, this waited on the 30-second "
-            + "command timeout while holding a connection and the rest of the money path behind it");
+            + "command timeout while holding a connection and the rest of the money path behind it. "
+            + "THREE seconds, not five, because five does not prove the ONE-second override above "
+            + "was honoured: measured, this test answers in ~1,150 ms with the override and 5,135 ms "
+            + "when the five-second default is used instead — a ceiling of 5,000 separated those by "
+            + "135 ms, which is not a margin, it is a coincidence");
 
         /*
           AND THE INVARIANT THE COMMENT ABOVE CLAIMS, actually checked. "No money moves without

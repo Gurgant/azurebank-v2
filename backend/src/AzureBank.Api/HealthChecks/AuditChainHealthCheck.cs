@@ -1,3 +1,4 @@
+using System.Globalization;
 using AzureBank.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -33,8 +34,32 @@ namespace AzureBank.Api.HealthChecks;
 /// </remarks>
 public sealed class AuditChainHealthCheck : IHealthCheck
 {
-    private const string ProbeSql =
-        "SELECT TOP 1 [Sequence] FROM [AuditEvents] WITH (READUNCOMMITTED) ORDER BY [Sequence] DESC";
+    /*
+      READS THE TAIL **AND** ASKS WHETHER THIS PRINCIPAL COULD WRITE ONE, because reading was never
+      the capability that matters. D1 refuses a money movement when the audit row cannot be WRITTEN;
+      a login with SELECT but no INSERT passes a read-only probe while every deposit, withdrawal and
+      transfer fails. Measured on SQL Server with a user granted SELECT and denied INSERT: the read
+      probe succeeded — the check would have reported Healthy — while the write came back "The INSERT
+      permission was denied on the object 'AuditEvents'". Readiness would have kept an instance in
+      rotation that could not move a penny.
+
+      HAS_PERMS_BY_NAME answers for the CURRENT security context, honouring role membership and DENY,
+      and it neither writes nor locks. The alternative — insert a row and roll it back — would put a
+      write into the audit table on every probe cycle and take the tail lock to do it.
+
+      The object name is resolved rather than hardcoded so a non-dbo schema cannot silently make the
+      permission question ask about a table that does not exist.
+    */
+    private const string ProbeSql = """
+        DECLARE @tail bigint;
+        SELECT TOP 1 @tail = [Sequence] FROM [AuditEvents] WITH (READUNCOMMITTED) ORDER BY [Sequence] DESC;
+
+        DECLARE @object sysname =
+            QUOTENAME(OBJECT_SCHEMA_NAME(OBJECT_ID('AuditEvents'))) + N'.' +
+            QUOTENAME(OBJECT_NAME(OBJECT_ID('AuditEvents')));
+
+        SELECT CAST(ISNULL(HAS_PERMS_BY_NAME(@object, 'OBJECT', 'INSERT'), 0) AS int);
+        """;
 
     private readonly AzureBankDbContext _context;
 
@@ -52,8 +77,20 @@ public sealed class AuditChainHealthCheck : IHealthCheck
 
         try
         {
-            await _context.Database.ExecuteSqlRawAsync(ProbeSql, cancellationToken);
-            return HealthCheckResult.Healthy("audit store readable");
+            if (!await CanWriteAuditRowsAsync(cancellationToken))
+            {
+                /*
+                  Readable and useless. The store answered, so nothing throws and nothing looks
+                  broken — but D1 refuses every money movement, because the row it must write
+                  alongside them cannot be written. Unhealthy for the same reason as an outage: this
+                  instance cannot do the thing it exists to do.
+                */
+                return HealthCheckResult.Unhealthy(
+                    "audit store readable but NOT writable — money movements will be refused "
+                    + "(ADR-0044 D1). Check INSERT permission on AuditEvents for this login");
+            }
+
+            return HealthCheckResult.Healthy("audit store readable and writable");
         }
         catch (Exception ex)
         {
@@ -65,6 +102,41 @@ public sealed class AuditChainHealthCheck : IHealthCheck
             */
             return HealthCheckResult.Unhealthy(
                 "audit store unreadable — money movements will be refused (ADR-0044 D1)", ex);
+        }
+    }
+
+    /// <summary>
+    /// One round trip: reads the tail, and returns whether this principal may INSERT into it.
+    /// </summary>
+    /// <remarks>
+    /// Raw ADO rather than <c>SqlQueryRaw</c> because this is a multi-statement batch, and EF would
+    /// compose a scalar query into <c>SELECT ... FROM (batch)</c>, which is not valid around one.
+    /// <c>ExecuteScalar</c> returns the first column of the first ROW-RETURNING statement, and the
+    /// tail read assigns into a variable rather than returning rows — so the permission answer is
+    /// what comes back, while the read still proves the table is there and legible.
+    /// </remarks>
+    private async Task<bool> CanWriteAuditRowsAsync(CancellationToken cancellationToken)
+    {
+        var opened = false;
+        try
+        {
+            await _context.Database.OpenConnectionAsync(cancellationToken);
+            opened = true;
+
+            await using var command = _context.Database.GetDbConnection().CreateCommand();
+            command.CommandText = ProbeSql;
+
+            var permitted = await command.ExecuteScalarAsync(cancellationToken);
+            return Convert.ToInt32(permitted, CultureInfo.InvariantCulture) == 1;
+        }
+        finally
+        {
+            // Only if WE opened it — closing a connection this check never opened would take it out
+            // from under whoever did.
+            if (opened)
+            {
+                await _context.Database.CloseConnectionAsync();
+            }
         }
     }
 }

@@ -37,7 +37,7 @@ hunting a database outage that was not happening.
 `503` with `audit-chain` reporting **unhealthy** means the audit store is **unreadable** from this
 instance. Unreadable, not unreachable: the probe fails the same way for a database that is down, an
 `AuditEvents` table that was never migrated, a disabled or corrupt index, and credentials that can no
-longer read it. Which of those it is, is step 4. `200` means the probe read the table, and the cause
+longer read it. Which of those it is: step 2 if it is a permission, step 5 if it is the table. `200` means the probe read the table, and the cause
 is one of the narrower ones below.
 
 ## What you will see in the log
@@ -61,7 +61,26 @@ whole signal.
 unhealthy, this is not an audit problem — it is the database, and the audit chain is simply the first thing to
 notice. Treat it as a database outage.
 
-**2. Is the table locked rather than unreachable?** The health check reads with `READUNCOMMITTED`, so
+**2. Does it say `readable but NOT writable`?** Then this is a PERMISSION problem, not an outage,
+and it has nothing in common with the rest of this runbook. The store answers every read and refuses
+every audit row, so D1 refuses every money movement while the database looks perfectly healthy. The
+probe asks `HAS_PERMS_BY_NAME` on `AuditEvents`, which honours role membership and `DENY`:
+
+```sql
+SELECT HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'INSERT') AS can_insert,   -- as the API's login
+       HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'SELECT') AS can_select;   -- 0 here reads as 'unreadable' above
+SELECT dp.name, dp.type_desc, p.permission_name, p.state_desc
+FROM sys.database_permissions p
+JOIN sys.database_principals dp ON dp.principal_id = p.grantee_principal_id
+WHERE p.major_id = OBJECT_ID('AuditEvents');
+```
+
+A `DENY` beats any `GRANT`, including one inherited from `db_datawriter` — that is the usual cause,
+and it is invisible from the grant side alone. **Do not fix this by granting the API more than
+INSERT on `AuditEvents`**: the chain is append-only by design, and a login holding UPDATE or DELETE
+there is a larger problem than the outage you are ending.
+
+**3. Is the table locked rather than unreachable?** The health check reads with `READUNCOMMITTED`, so
 it stays healthy while the tail is merely locked by a slow writer. That is the case where readiness
 says `200` and money movements still fail.
 
@@ -78,7 +97,7 @@ delayed a deposit on an unrelated account, by an unrelated user, by 3,073–3,08
 The unrelated movement waits out essentially the entire hold, so the number to find below is how long
 the blocker has held it, not how many sessions are queued.
 
-**3. Is a long-running transaction holding it?**
+**4. Is a long-running transaction holding it?**
 
 ```sql
 SELECT session_id, transaction_id, database_transaction_begin_time
@@ -93,10 +112,12 @@ can take as long as doing it took, or longer. This runbook used to say "killing 
 and the queue drains", which would have had you standing over a queue that looked stuck after you had
 already fixed it.
 
-Watch the rollback rather than guessing at it:
+End it, then watch the rollback rather than guessing at it — two commands, and only the first one
+does anything:
 
 ```sql
-KILL <session_id> WITH STATUSONLY;
+KILL <session_id>;                   -- starts the rollback; returns at once, releases nothing yet
+KILL <session_id> WITH STATUSONLY;   -- reports on that rollback; performs no action of its own
 ```
 
 That reports estimated completion and seconds remaining. It performs no action of its own — it only
@@ -115,7 +136,7 @@ cancelled, so a second kill buys nothing and a third takes out sessions that wer
 behind the first. Money movements stay refused until the tail is free; that is D1 working, not a
 second fault appearing.
 
-**4. Is the table itself intact?** A missing table, a broken index on `IX_AuditEvents_Sequence`, or a
+**5. Is the table itself intact?** A missing table, a broken index on `IX_AuditEvents_Sequence`, or a
 failed migration all present as an unreadable store:
 
 ```sql
