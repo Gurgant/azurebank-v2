@@ -2,6 +2,8 @@ using AzureBank.Api.Observability;
 using AzureBank.Api.HealthChecks;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Observability;
+using AzureBank.Shared.Options;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Compliance.Classification;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
@@ -24,7 +26,7 @@ public static class ObservabilityServiceCollectionExtensions
     internal const string ServiceName = "azurebank-api";
 
     public static IServiceCollection AddObservability(
-        this IServiceCollection services, IHostEnvironment environment)
+        this IServiceCollection services, IHostEnvironment environment, IConfiguration configuration)
     {
         // Gate on the PROCESS environment variable. This is a deliberate CONTRACT, not an
         // oversight: the process env var is the only supported way to enable export. The Serilog
@@ -112,6 +114,46 @@ public static class ObservabilityServiceCollectionExtensions
             // store does not degrade this instance — it stops it moving money, which is the thing it
             // exists to do. Readiness is exactly the right signal for "do not send me traffic".
             .AddCheck<AuditChainHealthCheck>(name: "audit-chain", tags: ["ready"]);
+
+        /*
+          NO READINESS CHECK MAY RUN LONGER THAN THE BANK'S OWN WAIT TOLERANCE — and until this,
+          neither of them had any bound at all. AddCheck and AddDbContextCheck both leave
+          HealthCheckRegistration.Timeout at Timeout.InfiniteTimeSpan.
+
+          MEASURED, because "unbounded" sounds theoretical until it has a number: the audit probe
+          pointed at an unroutable address (RFC 5737 TEST-NET-1) took 36,800 ms to answer — SqlClient's
+          15s connect timeout, then a retry after ConnectRetryInterval, then 15s again. Anything asking
+          gave up long before; Kubernetes' default probe timeout is ONE second. A probe that does not
+          answer is strictly worse than one that answers "unhealthy", because the first tells an
+          orchestrator nothing while still consuming a connection.
+
+          THE FRAMEWORK DOES ENFORCE THIS VALUE, which was worth measuring rather than assuming — the
+          finding that prompted this cited a source claiming DefaultHealthCheckService ignores it. It
+          does not: a five-second check registered with a 300 ms timeout came back in 307 ms as
+          Unhealthy, "A timeout occurred while running check."
+
+          APPLIED HERE RATHER THAN PER-REGISTRATION for two reasons. AddDbContextCheck takes no timeout
+          parameter at all, so the database check could not be bounded at its call site — and leaving it
+          unbounded would leave /health/ready able to hang for 37 seconds anyway, which is the thing
+          being fixed. Doing it by tag also means a readiness check added later inherits the bound
+          instead of quietly reintroducing the hang.
+
+          BOUND TO Audit:TailTimeoutSeconds rather than to a constant of its own, so the two cannot
+          drift apart. A fixed 5s probe under a 20s configured tail bound would pull this instance out
+          of rotation while money movements were still succeeding — a false alarm that takes the bank
+          offline for a wait it had been told to tolerate.
+        */
+        var readinessBudget = TimeSpan.FromSeconds(
+            configuration.GetValue<int?>("Audit:TailTimeoutSeconds")
+            ?? new AuditOptions().TailTimeoutSeconds);
+
+        services.Configure<HealthCheckServiceOptions>(options =>
+        {
+            foreach (var registration in options.Registrations.Where(r => r.Tags.Contains("ready")))
+            {
+                registration.Timeout = readinessBudget;
+            }
+        });
 
         return services;
     }

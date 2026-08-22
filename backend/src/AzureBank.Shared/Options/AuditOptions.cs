@@ -47,7 +47,13 @@ public class AuditOptions
     /// so the lock is global to the table and every audited save queues on it. Stalling one tail read
     /// for three seconds delayed a deposit on a DIFFERENT account, by a DIFFERENT user, by
     /// <b>3,073-3,089 ms across three runs</b> — essentially the whole hold. One slow audit store
-    /// degrades the whole bank, not just the movement that touched it. Only the 30-second <c>CommandTimeout</c> bounded that, and it bounds the whole
+    /// degrades the whole bank, not just the movement that touched it.
+    /// </para>
+    /// <para>
+    /// <b>THIS VALUE ALSO BOUNDS READINESS.</b> Every check tagged <c>ready</c> is registered with
+    /// this as its timeout, because a probe stricter than the money path would report an instance
+    /// unhealthy — taking it out of rotation — over a wait that instance had been told to tolerate.
+    /// Raising this therefore makes <c>/health/ready</c> patient by the same amount. Only the 30-second <c>CommandTimeout</c> bounded that, and it bounds the whole
     /// statement rather than the wait.
     /// </para>
     /// <para>

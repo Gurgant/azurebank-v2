@@ -76,7 +76,7 @@ try
         .AddApplicationServices(builder.Configuration)
         .AddApiControllers()
         .AddApiDocumentation()
-        .AddObservability(builder.Environment);
+        .AddObservability(builder.Environment, builder.Configuration);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BUILD APPLICATION

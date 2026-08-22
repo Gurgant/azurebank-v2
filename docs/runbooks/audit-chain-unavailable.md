@@ -24,7 +24,12 @@ Measured on the running API, with the `AuditEvents` table renamed away underneat
    "description":"audit store unreadable — money movements will be refused (ADR-0044 D1)"}]}
 ```
 
-**The body is the point, and it is why the `curl` above does not discard it.** It names WHICH check
+**It answers rather than hanging, which is not free: every readiness check is registered with
+`Audit:TailTimeoutSeconds` as its timeout. Unbounded, this probe took **36,800 ms** against an
+unreachable store — long past the point where anything asking had given up. If `/health/ready` ever
+does hang, that bound has been removed, and the endpoint is no longer evidence of anything.
+
+**The body is the point, and it is why the `curl` above does not discard it.**** It names WHICH check
 failed — exactly the distinction step 1 asks you to make. Note what that observation shows: the
 database was perfectly healthy while the audit store was not, so a bare `503` would have sent you
 hunting a database outage that was not happening.

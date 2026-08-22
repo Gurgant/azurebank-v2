@@ -46,6 +46,51 @@ public class AuditChainHealthCheckTests
             "ready",
             "readiness is the signal that takes an instance out of rotation — since ADR-0044 D1 an "
             + "instance that cannot reach the audit store cannot move money, so it should be taken out");
+
+        /*
+          AND IT HAS TO ANSWER. AddCheck leaves Timeout at Timeout.InfiniteTimeSpan, and measured,
+          this probe against an unroutable address took 36,800 ms to come back. A readiness endpoint
+          nobody waits that long for tells an orchestrator nothing at all, which is worse than
+          telling it "unhealthy".
+        */
+        audit.Timeout.Should().NotBe(
+            Timeout.InfiniteTimeSpan,
+            "an unbounded readiness probe cannot report on a hang — it joins it");
+
+        var database = options.Registrations.Single(r => r.Name == "database");
+
+        database.Timeout.Should().NotBe(
+            Timeout.InfiniteTimeSpan,
+            "/health/ready is only as fast as its SLOWEST check, so bounding one and not the other "
+            + "leaves the endpoint able to hang exactly as before. AddDbContextCheck takes no timeout "
+            + "argument, which is why the bound is applied by tag rather than at the call site");
+    }
+
+    [Fact]
+    public void TheReadinessBudgetFOLLOWSTheConfiguredAuditBound_RatherThanBeingItsOwnNumber()
+    {
+        /*
+          THE COUPLING IS THE POINT, not the number. A readiness probe fixed at five seconds under a
+          twenty-second configured tail bound would report this instance unhealthy — pulling it out of
+          rotation — while money movements were still succeeding inside the wait the operator had
+          deliberately allowed. A false alarm that takes the bank offline.
+
+          Seven is chosen only because nothing else in the system is seven: a hardcoded default would
+          satisfy an assertion of five and hide exactly the drift this exists to catch.
+        */
+        using var factory = new CustomWebApplicationFactory();
+        factory.SetAuditTailTimeoutSeconds(7);
+        using var scope = factory.Services.CreateScope();
+
+        var registrations = scope.ServiceProvider
+            .GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations;
+
+        registrations.Single(r => r.Name == "audit-chain").Timeout.Should().Be(
+            TimeSpan.FromSeconds(7),
+            "the probe's patience must track what the money path was told to tolerate");
+        registrations.Single(r => r.Name == "database").Timeout.Should().Be(
+            TimeSpan.FromSeconds(7),
+            "the budget belongs to readiness as a whole, not to one check inside it");
     }
 
     private static AuditChainHealthCheck ForConnection(string connectionString) =>
