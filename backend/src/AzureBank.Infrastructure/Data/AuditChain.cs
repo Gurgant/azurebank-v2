@@ -5,7 +5,6 @@ using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -111,7 +110,7 @@ public sealed class AuditChain : IAuditChain
         // Resolved BEFORE the read, so the same number bounds the statement and names itself in the
         // log line if it expires. Resolving it inside the catch would risk a second failure while
         // reporting the first.
-        var timeoutSeconds = ResolveTailTimeoutSeconds(context);
+        var timeoutSeconds = TailTimeoutSeconds;
         Link(pending, await ReadTailOrReportAsync(context, timeoutSeconds, pending.Count, cancellationToken));
     }
 
@@ -131,7 +130,7 @@ public sealed class AuditChain : IAuditChain
           read here would hold the same global lock for the same thirty seconds, and be invisible
           because nothing logs it.
         */
-        var timeoutSeconds = ResolveTailTimeoutSeconds(context);
+        var timeoutSeconds = TailTimeoutSeconds;
         Link(pending, ReadTailOrReport(context, timeoutSeconds, pending.Count));
     }
 
@@ -280,51 +279,27 @@ public sealed class AuditChain : IAuditChain
     }
 
     /// <summary>
-    /// The configured bound, resolved from whichever service provider actually holds the options, so
-    /// the read path does not need them injected through every caller.
+    /// How long the tail read may wait for its lock before the money movement it belongs to is
+    /// refused. Validated at startup as 1–300 seconds; see <see cref="AuditOptions"/>.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// NON-THROWING ON PURPOSE, and the first version was not. It called
-    /// <c>DbContext.GetService&lt;T&gt;()</c> with a <c>?? default</c> fallback, believing the
-    /// extension returns null for an unregistered service. It does not — it throws — which made the
-    /// fallback unreachable dead code and would have turned a hand-built context into an unhelpful
-    /// <c>InvalidOperationException</c> instead of a working default. Verified by probing the
-    /// framework rather than by reading about it.
-    /// </para>
-    /// <para>
-    /// BOTH PROVIDERS ARE TRIED. EF keeps its own internal provider, while application services
-    /// registered through <c>AddDbContext</c> hang off
-    /// <c>CoreOptionsExtension.ApplicationServiceProvider</c>. Looking in only one of them finds the
-    /// options in some hosts and silently misses them in others — which would look exactly like the
-    /// default being chosen deliberately.
-    /// </para>
-    /// <para>
-    /// Falling back to the default rather than throwing is the point: a missing bound must never be
-    /// the thing that stops a money movement.
-    /// </para>
-    /// </remarks>
-    private static int ResolveTailTimeoutSeconds(DbContext context)
-    {
-        var infrastructure = ((IInfrastructure<IServiceProvider>)context).Instance;
+    /*
+      THE BOUND COMES FROM THE OPTIONS THIS CHAIN WAS CONSTRUCTED WITH, and from nothing else.
 
-        if (FromProvider(infrastructure) is { } internalValue)
-        {
-            return internalValue;
-        }
+      An earlier version walked the DbContext's internal service provider and then its application
+      service provider looking for IOptions<AuditOptions>, on the assumption that the chain could not
+      otherwise see the host's configuration. It can. AuditChain is registered AddScoped and receives
+      the same IOptions the host binds — which is how ChainKey has always been read a few lines
+      below. The walk was answering a question that was never open.
 
-        var applicationProvider = (infrastructure.GetService(typeof(IDbContextOptions)) as IDbContextOptions)
-            ?.FindExtension<CoreOptionsExtension>()
-            ?.ApplicationServiceProvider;
+      Measured after deleting it: the SQL contention test sets the bound to one second through
+      UseSetting, and the refusal still came back in 1,136 ms. The configured value arrives here
+      either way.
 
-        return FromProvider(applicationProvider) ?? new AuditOptions().TailTimeoutSeconds;
-
-        // Raw IServiceProvider.GetService, which returns null for an unregistered service, rather
-        // than the EF accessor extension, which throws.
-        static int? FromProvider(IServiceProvider? provider) =>
-            (provider?.GetService(typeof(IOptions<AuditOptions>)) as IOptions<AuditOptions>)
-                ?.Value.TailTimeoutSeconds;
-    }
+      Deleting it also removed a trap worth recording. DbContext.GetService<T>() THROWS for an
+      unregistered service rather than returning null, so that path needed the raw IServiceProvider
+      and careful casts to stay safe in a manually constructed context. It was buying nothing.
+    */
+    private int TailTimeoutSeconds => _options.Value.TailTimeoutSeconds;
 
     private static (long Sequence, string Hash)? ReadTail(DbContext context, int timeoutSeconds)
     {

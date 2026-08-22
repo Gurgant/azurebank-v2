@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
@@ -28,26 +29,35 @@ public class ReadinessBodyTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        body.Should().Contain(
-            "audit-chain",
-            "the runbook tells an operator to read this body and identify the failing check by name");
-        body.Should().Contain(
-            "database",
-            "and to tell it apart from the database check, which needs a different runbook entirely");
-
         /*
-          Measured against the running API with the AuditEvents table renamed away: the unhealthy
-          body carries description "audit store unreadable — money movements will be refused
-          (ADR-0044 D1)" while database stayed Healthy. That direction is pinned by
-          AuditChainHealthCheckTests; what is pinned HERE is that the endpoint publishes the
-          per-check detail at all, which is the part the writer supplies.
+          PARSED, not substring-matched. The first version of this test asserted that the body
+          CONTAINED "audit-chain" and "database", which would have passed on malformed JSON, or if
+          the names moved out of the checks array into some other part of the document — and a
+          monitoring tool reading this endpoint parses it, so the shape IS the contract.
         */
-        body.Should().Contain(
-            "\"description\":\"audit store",
-            "the per-check description is what carries the meaning — a name with no description "
-            + "would tell an operator which check failed but not what it means for the bank. "
-            + "Matched on the prefix rather than the whole sentence because this factory runs the "
-            + "InMemory provider, where the check reports 'not applicable' rather than 'readable' — "
-            + "the wording is the provider's, the PUBLISHING of it is what this pins");
+        using var document = JsonDocument.Parse(body);
+
+        document.RootElement.GetProperty("status").GetString().Should().Be(
+            "Healthy",
+            "the aggregate is what a load balancer acts on, and it must survive alongside the detail");
+
+        var checks = document.RootElement.GetProperty("checks").EnumerateArray().ToList();
+
+        checks.Select(c => c.GetProperty("name").GetString()).Should().Contain(
+            new[] { "audit-chain", "database" },
+            "the runbook tells an operator to read this body, identify the failing check by name, and "
+            + "tell audit-chain apart from database — the second needs a different runbook entirely");
+
+        var audit = checks.Single(c => c.GetProperty("name").GetString() == "audit-chain");
+
+        audit.GetProperty("status").GetString().Should().Be("Healthy");
+        audit.GetProperty("description").GetString().Should().StartWith(
+            "audit store",
+            "the per-check description carries the meaning — a name with no description tells an "
+            + "operator which check failed but not what it means for the bank. Matched on the prefix "
+            + "because this factory runs the InMemory provider, where the check reports 'not "
+            + "applicable' rather than 'readable': the wording is the provider's, the PUBLISHING of "
+            + "it is what this pins. Measured on the real stack with AuditEvents renamed away, the "
+            + "same field read 'audit store unreadable — money movements will be refused (ADR-0044 D1)'");
     }
 }
