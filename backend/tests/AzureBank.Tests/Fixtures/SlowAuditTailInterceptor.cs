@@ -22,6 +22,15 @@ namespace AzureBank.Tests.Fixtures;
 /// matched — the difference between a measurement and a green square.
 /// </para>
 /// <para>
+/// <b><see cref="LockHeld"/> IS THE PART THAT MAKES THE MEASUREMENT HONEST.</b> Being one-shot, the
+/// stall belongs to whichever tail read arrives FIRST. The tests used to give the first request a
+/// fixed 500 ms head start and assume it won — and when it did not (a cold start, a pool that has to
+/// open a connection, a loaded CI box), the SECOND request stalled ITSELF, and the assertion "an
+/// unrelated deposit waited" stayed green while measuring nothing of the kind. Awaiting this task
+/// before sending the second request removes the race by construction: the second request has not
+/// been sent yet, so it cannot be the one holding the lock.
+/// </para>
+/// <para>
 /// Matched on the WITH (UPDLOCK hint rather than on the table name alone, because ordinary reads of
 /// AuditEvents — the assertions in every test — must not be slowed. The hint is what makes this
 /// statement the one that matters.
@@ -30,12 +39,26 @@ namespace AzureBank.Tests.Fixtures;
 public sealed class SlowAuditTailInterceptor : DbCommandInterceptor
 {
     private readonly TimeSpan _delay;
+    private readonly TaskCompletionSource _lockHeld =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private int _fired;
 
     public SlowAuditTailInterceptor(TimeSpan delay) => _delay = delay;
 
     /// <summary>True once the delay has actually been applied to a tail read.</summary>
     public bool Fired => Volatile.Read(ref _fired) == 1;
+
+    /// <summary>
+    /// Completes the moment a tail read is caught WITH THE LOCK ALREADY HELD and the stall about to
+    /// begin. Await it to know that the contention is real before adding a second request to it.
+    /// </summary>
+    /// <remarks>
+    /// <c>RunContinuationsAsynchronously</c> deliberately: without it the awaiting test would resume
+    /// inline on the thread that is holding the audit tail lock, which is the one thread that must
+    /// be left alone to hold it.
+    /// </remarks>
+    public Task LockHeld => _lockHeld.Task;
 
     /*
       AFTER the read, not before it, and the distinction is the entire measurement. Delaying
@@ -65,6 +88,10 @@ public sealed class SlowAuditTailInterceptor : DbCommandInterceptor
         {
             return;
         }
+
+        // Signalled BEFORE the delay, not after: the point of the signal is "the lock is held now",
+        // and a waiter that only learned about it once the stall was over would have missed it.
+        _lockHeld.TrySetResult();
 
         await Task.Delay(_delay, cancellationToken);
     }

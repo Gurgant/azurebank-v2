@@ -62,9 +62,19 @@ public sealed class AuditChainContentionSqlServerTests : IDisposable
         var blocked = Stopwatch.StartNew();
         var slow = DepositAsync(client, firstAccount, 10m);
 
-        // Give the first deposit a head start so it is provably inside the lock before the second
-        // asks for it — otherwise a fast second deposit could win the race and measure nothing.
-        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        /*
+          WAIT FOR THE LOCK, DO NOT GUESS AT IT. This was a fixed 500 ms head start, on the
+          assumption that the first deposit would reach its tail read within it. The interceptor is
+          one-shot, so when that assumption failed — a cold start, a connection the pool still has to
+          open, a loaded CI box — the SECOND deposit became the one that stalled ITSELF, and the
+          assertion below stayed green while measuring a request waiting on its own delay rather than
+          on another request's lock. Green for the wrong reason, which is the failure mode this
+          suite exists to avoid.
+
+          LockHeld completes only once a tail read has been caught with the lock already taken. The
+          second deposit has not been sent at that point, so it cannot be the request holding it.
+        */
+        await stall.LockHeld.WaitAsync(TimeSpan.FromSeconds(10));
 
         var innocent = Stopwatch.StartNew();
         var second = await DepositAsync(other, secondAccount, 10m);
@@ -123,7 +133,10 @@ public sealed class AuditChainContentionSqlServerTests : IDisposable
         _factory.AddInterceptor(stall);
 
         var held = DepositAsync(client, firstAccount, 10m);
-        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        // Same reason as the test above: wait until the lock is provably held by the only request in
+        // flight, rather than assuming a fixed head start won the race.
+        await stall.LockHeld.WaitAsync(TimeSpan.FromSeconds(10));
 
         var refused = Stopwatch.StartNew();
         var second = await DepositAsync(other, secondAccount, 10m);

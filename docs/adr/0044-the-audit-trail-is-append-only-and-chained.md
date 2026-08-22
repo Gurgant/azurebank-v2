@@ -101,7 +101,10 @@ motivated the bound in the first place.)
 read under `UPDLOCK, HOLDLOCK`, so the lock is global to `AuditEvents` and every audited save queues
 on it.
 Stalling one tail read for three seconds delayed a deposit **on a different account, by a different
-user**, by **2,820 ms** — `AuditChainContentionSqlServerTests` measures exactly this. A merely SLOW
+user**, by **3,073–3,089 ms across three runs** — `AuditChainContentionSqlServerTests` measures
+exactly this. The unrelated deposit waits essentially the WHOLE hold, not part of it. (An earlier
+figure of 2,820 ms appeared here; it understated the wait, because that version of the test gave the
+first request a fixed 500 ms head start and so started measuring 500 ms into the stall.) A merely SLOW
 audit store degrades the entire bank, not just the movement that touched it. Until now the only bound
 was the global 30-second `CommandTimeout`, which covers the whole statement rather than the wait.
 

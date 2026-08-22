@@ -198,8 +198,8 @@ public sealed class AuditChain : IAuditChain
 
       The tail is read under UPDLOCK, HOLDLOCK, so the lock is global to AuditEvents and every
       audited save in the system queues on it. Stalling ONE tail read for three seconds delayed a
-      deposit on a DIFFERENT account, by a DIFFERENT user, by 2,820 ms — proven by
-      AuditChainContentionSqlServerTests. So a merely SLOW audit store degrades the whole bank, and
+      deposit on a DIFFERENT account, by a DIFFERENT user, by 3,073-3,089 ms over three runs — the
+      whole hold, proven by AuditChainContentionSqlServerTests. So a merely SLOW audit store degrades the whole bank, and
       until now the only bound was the global 30-second CommandTimeout, which covers the entire
       statement rather than the wait.
 

@@ -69,7 +69,9 @@ WHERE r.blocking_session_id <> 0;
 
 Look for sessions blocked on `AuditEvents`. The chain reads its tail with `UPDLOCK, HOLDLOCK`, so
 **one** stuck transaction blocks every money movement in the system — measured: a three-second stall
-delayed a deposit on an unrelated account, by an unrelated user, by 2,820 ms.
+delayed a deposit on an unrelated account, by an unrelated user, by 3,073–3,089 ms across three runs.
+The unrelated movement waits out essentially the entire hold, so the number to find below is how long
+the blocker has held it, not how many sessions are queued.
 
 **3. Is a long-running transaction holding it?**
 

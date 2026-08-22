@@ -46,8 +46,8 @@ public class AuditOptions
     /// MEASURED, which is why this exists at all. The tail is read under <c>UPDLOCK, HOLDLOCK</c>,
     /// so the lock is global to the table and every audited save queues on it. Stalling one tail read
     /// for three seconds delayed a deposit on a DIFFERENT account, by a DIFFERENT user, by
-    /// <b>2,820 ms</b> — one slow audit store degrades the whole bank, not just the movement that
-    /// touched it. Only the 30-second <c>CommandTimeout</c> bounded that, and it bounds the whole
+    /// <b>3,073-3,089 ms across three runs</b> — essentially the whole hold. One slow audit store
+    /// degrades the whole bank, not just the movement that touched it. Only the 30-second <c>CommandTimeout</c> bounded that, and it bounds the whole
     /// statement rather than the wait.
     /// </para>
     /// <para>
