@@ -3,6 +3,7 @@ using AzureBank.Api.Observability;
 using FluentAssertions;
 using Microsoft.Extensions.Compliance.Classification;
 using Microsoft.Extensions.Compliance.Redaction;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -25,7 +26,7 @@ public class RedactionRegistrationTests
         environment.SetupGet(e => e.EnvironmentName).Returns(Environments.Development);
 
         var services = new ServiceCollection();
-        services.AddObservability(environment.Object);
+        services.AddObservability(environment.Object, new ConfigurationBuilder().Build());
         return services.BuildServiceProvider();
     }
 

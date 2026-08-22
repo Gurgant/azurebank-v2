@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Options;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AzureBank.Infrastructure.Data;
@@ -89,7 +91,13 @@ public sealed class AuditChain : IAuditChain
 {
     private readonly IOptions<AuditOptions> _options;
 
-    public AuditChain(IOptions<AuditOptions> options) => _options = options;
+    private readonly ILogger<AuditChain> _logger;
+
+    public AuditChain(IOptions<AuditOptions> options, ILogger<AuditChain> logger)
+    {
+        _options = options;
+        _logger = logger;
+    }
 
     public async Task ApplyAsync(DbContext context, CancellationToken cancellationToken = default)
     {
@@ -99,7 +107,11 @@ public sealed class AuditChain : IAuditChain
             return;
         }
 
-        Link(pending, await ReadTailAsync(context, cancellationToken));
+        // Resolved BEFORE the read, so the same number bounds the statement and names itself in the
+        // log line if it expires. Resolving it inside the catch would risk a second failure while
+        // reporting the first.
+        var timeoutSeconds = TailTimeoutSeconds;
+        Link(pending, await ReadTailOrReportAsync(context, timeoutSeconds, pending.Count, cancellationToken));
     }
 
     public void Apply(DbContext context)
@@ -110,7 +122,40 @@ public sealed class AuditChain : IAuditChain
             return;
         }
 
-        Link(pending, ReadTail(context));
+        /*
+          THE SYNCHRONOUS FUNNEL GETS THE SAME TREATMENT, and it did not until a review asked why.
+          Every money service saves asynchronously today, so this path is not on the money path in
+          practice — but "not used today" is not a bound, and AzureBankDbContext.SaveChanges(bool)
+          remains a public entry point that any audited unit of work can reach. An unbounded tail
+          read here would hold the same global lock for the same thirty seconds, and be invisible
+          because nothing logs it.
+        */
+        var timeoutSeconds = TailTimeoutSeconds;
+        Link(pending, ReadTailOrReport(context, timeoutSeconds, pending.Count));
+    }
+
+    /// <inheritdoc cref="ReadTailOrReportAsync"/>
+    private (long Sequence, string Hash)? ReadTailOrReport(
+        DbContext context, int timeoutSeconds, int pendingRows)
+    {
+        try
+        {
+            return ReadTail(context, timeoutSeconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "SecurityEvent {SecurityEvent}: the audit chain tail could not be read within "
+                    + "{TimeoutSeconds}s, so {PendingRows} pending audit row(s) and the action they "
+                    + "describe are refused ON THIS ATTEMPT. A transient fault may be retried by the "
+                    + "execution strategy and then succeed, so a single line is a blip and repetition "
+                    + "is an outage",
+                SecurityEvents.AuditChainUnavailable,
+                timeoutSeconds,
+                pendingRows);
+            throw;
+        }
     }
 
     /// <summary>
@@ -150,33 +195,150 @@ public sealed class AuditChain : IAuditChain
     private const string TailSql =
         "SELECT TOP 1 [Sequence], [RowHash] FROM [AuditEvents] WITH (UPDLOCK, HOLDLOCK) ORDER BY [Sequence] DESC";
 
+    /*
+      THE WAIT IS BOUNDED HERE, AND ONLY HERE, and the reason is measured rather than assumed.
+
+      The tail is read under UPDLOCK, HOLDLOCK, so the lock is global to AuditEvents and every
+      audited save in the system queues on it. Stalling ONE tail read for three seconds delayed a
+      deposit on a DIFFERENT account, by a DIFFERENT user, by 3,073-3,089 ms over three runs — the
+      whole hold, proven by AuditChainContentionSqlServerTests. So a merely SLOW audit store degrades the whole bank, and
+      until now the only bound was the global 30-second CommandTimeout, which covers the entire
+      statement rather than the wait.
+
+      Shortening it turns a long queue into a fast, loud refusal. That is not a softening of D1: a
+      movement that cannot take the lock is still refused, still writes no money, and now fails in
+      seconds instead of holding a connection and every other movement behind it for half a minute.
+
+      RESTORED IN A finally, because the timeout lives on the DbContext and the DbContext is shared
+      by everything else in the request. Leaving it set would quietly impose an audit-shaped deadline
+      on every unrelated query the request makes afterwards.
+    */
     private static async Task<(long Sequence, string Hash)?> ReadTailAsync(
-        DbContext context, CancellationToken cancellationToken)
+        DbContext context, int timeoutSeconds, CancellationToken cancellationToken)
     {
         if (context.Database.IsRelational())
         {
-            var row = await context.Set<AuditEvent>()
-                .FromSqlRaw(TailSql)
-                .AsNoTracking()
-                .Select(e => new { e.Sequence, e.RowHash })
-                .FirstOrDefaultAsync(cancellationToken);
-            return row is null ? null : (row.Sequence, row.RowHash);
+            var restore = context.Database.GetCommandTimeout();
+            context.Database.SetCommandTimeout(timeoutSeconds);
+            try
+            {
+                var row = await context.Set<AuditEvent>()
+                    .FromSqlRaw(TailSql)
+                    .AsNoTracking()
+                    .Select(e => new { e.Sequence, e.RowHash })
+                    .FirstOrDefaultAsync(cancellationToken);
+                return row is null ? null : (row.Sequence, row.RowHash);
+            }
+            finally
+            {
+                context.Database.SetCommandTimeout(restore);
+            }
         }
 
         var inMemory = await NonRelationalTail(context).FirstOrDefaultAsync(cancellationToken);
         return inMemory is null ? null : (inMemory.Sequence, inMemory.RowHash);
     }
 
-    private static (long Sequence, string Hash)? ReadTail(DbContext context)
+    /*
+      SAY IT OUT LOUD, THEN LET IT FAIL. D1 is unchanged — the exception goes on and the movement does
+      not happen — but an operator now learns that the audit chain is what stopped it, instead of
+      reading an anonymous 500 and guessing.
+
+      A LOG LINE AND NOT AN AUDIT ROW, which is the whole point and is worth stating where a reader
+      will hit it: RecordRefusalAsync writes to AuditEvents, so it takes the very lock that just
+      failed. For a chain failure there is no in-band way to report a chain failure.
+    */
+    private async Task<(long Sequence, string Hash)?> ReadTailOrReportAsync(
+        DbContext context, int timeoutSeconds, int pendingRows, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ReadTailAsync(context, timeoutSeconds, cancellationToken);
+        }
+        /*
+          WHY THE MESSAGE BELOW SAYS "ON THIS ATTEMPT". ApplyAsync runs INSIDE
+          Database.CreateExecutionStrategy().ExecuteAsync (see AzureBankDbContext.SaveChangesAsync),
+          and production enables EnableRetryOnFailure. A transient SqlException on the tail read —
+          1205, 233, 10053/10054/10060, 40197, 40613 — is logged HERE, then retried by the strategy,
+          and the retry can succeed and answer 200. Worded as a completed refusal, the event an
+          operator alerts on fired for money that moved.
+
+          The tempting fix — log only once the strategy has given up — is WORSE. Carrying that fact
+          upward means wrapping the exception in our own type, and a wrapped SqlException is no
+          longer visible to SqlServerRetryingExecutionStrategy.ShouldRetryOn, so transient tail-read
+          failures would stop being retried at all. Trading a false alarm for real lost retries is
+          the wrong trade; the message tells the truth instead, and the runbook says to alert on
+          repetition rather than on a single line.
+        */
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            /*
+              A CLIENT HANGING UP IS NOT AN AUDIT FAILURE. Without this branch, a browser that
+              navigates away mid-request produces an Error-level AuditChainUnavailable naming a
+              timeout that never happened — and since this event is what an operator alerts on, the
+              alert would count disconnects alongside the thing it exists for. Rethrown unlogged:
+              the movement still does not happen, because nobody is waiting for it.
+            */
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "SecurityEvent {SecurityEvent}: the audit chain tail could not be read within "
+                    + "{TimeoutSeconds}s, so {PendingRows} pending audit row(s) and the action they "
+                    + "describe are refused ON THIS ATTEMPT. A transient fault may be retried by the "
+                    + "execution strategy and then succeed, so a single line is a blip and repetition "
+                    + "is an outage",
+                SecurityEvents.AuditChainUnavailable,
+                timeoutSeconds,
+                pendingRows);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// How long the tail read may wait for its lock before the money movement it belongs to is
+    /// refused. Validated at startup as 1–300 seconds; see <see cref="AuditOptions"/>.
+    /// </summary>
+    /*
+      THE BOUND COMES FROM THE OPTIONS THIS CHAIN WAS CONSTRUCTED WITH, and from nothing else.
+
+      An earlier version walked the DbContext's internal service provider and then its application
+      service provider looking for IOptions<AuditOptions>, on the assumption that the chain could not
+      otherwise see the host's configuration. It can. AuditChain is registered AddScoped and receives
+      the same IOptions the host binds — which is how ChainKey has always been read a few lines
+      below. The walk was answering a question that was never open.
+
+      Measured after deleting it: the SQL contention test sets the bound to one second through
+      UseSetting, and the refusal still came back in 1,136 ms. The configured value arrives here
+      either way.
+
+      Deleting it also removed a trap worth recording. DbContext.GetService<T>() THROWS for an
+      unregistered service rather than returning null, so that path needed the raw IServiceProvider
+      and careful casts to stay safe in a manually constructed context. It was buying nothing.
+    */
+    private int TailTimeoutSeconds => _options.Value.TailTimeoutSeconds;
+
+    private static (long Sequence, string Hash)? ReadTail(DbContext context, int timeoutSeconds)
     {
         if (context.Database.IsRelational())
         {
-            var row = context.Set<AuditEvent>()
-                .FromSqlRaw(TailSql)
-                .AsNoTracking()
-                .Select(e => new { e.Sequence, e.RowHash })
-                .FirstOrDefault();
-            return row is null ? null : (row.Sequence, row.RowHash);
+            var restore = context.Database.GetCommandTimeout();
+            context.Database.SetCommandTimeout(timeoutSeconds);
+            try
+            {
+                var row = context.Set<AuditEvent>()
+                    .FromSqlRaw(TailSql)
+                    .AsNoTracking()
+                    .Select(e => new { e.Sequence, e.RowHash })
+                    .FirstOrDefault();
+                return row is null ? null : (row.Sequence, row.RowHash);
+            }
+            finally
+            {
+                context.Database.SetCommandTimeout(restore);
+            }
         }
 
         var inMemory = NonRelationalTail(context).FirstOrDefault();

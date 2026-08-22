@@ -90,6 +90,60 @@ and nothing alerting. Bounding that wait, emitting a refusal on the out-of-band 
 work when the enlisted one cannot, and writing the runbook, is the next change — not because D1 is in
 doubt, but because a decision this deliberate deserves to fail loudly rather than silently.
 
+**UPDATED 2026-08-20 — the three obligations above are discharged, and two of them resolved
+differently than that paragraph expected.** The paragraph stands as written because it is the record
+of what was decided and why; this is what happened when it was carried out. (An earlier edit replaced
+it outright, which is the wrong thing to do to an ADR: it left the file describing an obligation as
+though it had never been outstanding, and it discarded the Vault hang — the failure mode that
+motivated the bound in the first place.)
+
+**The cost was measured first, and it is larger than "the movement fails".** The chain's tail is
+read under `UPDLOCK, HOLDLOCK`, so the lock is global to `AuditEvents` and every audited save queues
+on it.
+Stalling one tail read for three seconds delayed a deposit **on a different account, by a different
+user**, by **3,073–3,089 ms across three runs** — `AuditChainContentionSqlServerTests` measures
+exactly this. The unrelated deposit waits essentially the WHOLE hold, not part of it. (An earlier
+figure of 2,820 ms appeared here; it understated the wait, because that version of the test gave the
+first request a fixed 500 ms head start and so started measuring 500 ms into the stall.) A merely SLOW
+audit store degrades the entire bank, not just the movement that touched it. Until now the only bound
+was the global 30-second `CommandTimeout`, which covers the whole statement rather than the wait.
+
+**So the wait is now bounded on that one statement** — `Audit:TailTimeoutSeconds`, five seconds by
+default. D1 is untouched: a movement that cannot take the lock is still refused and still moves no
+money. What changes is that it is refused in about a second instead of holding a connection and the
+rest of the money path behind it for half a minute. Measured with the bound at one second and the
+tail stalled for eight: **500 in 1,122 ms**. A command timeout rather than `SET LOCK_TIMEOUT`,
+because the latter is SESSION-scoped and would ride a pooled connection into unrelated statements.
+
+**The "alternate path" turned out not to exist, and that is the interesting finding.** The plan was
+to report the refusal through `RecordRefusalAsync`, which opens its own connection — the shape
+AU-5(4) calls an alternate logging path. It is not one here: it writes to `AuditEvents` and therefore
+takes the very lock that just failed. **For a chain failure the chain cannot be where you report it.**
+`SecurityEvents.AuditChainUnavailable` is therefore the one event in this vocabulary that is log-only
+by NECESSITY rather than by choice, and `AuditChain` logs it before letting the exception go.
+
+**And readiness now says it out loud.** `AuditChainHealthCheck` probes the store with
+`READUNCOMMITTED` — deliberately lock-free, because a readiness probe that took the tail lock would
+contend with the money path forever in order to report on contention. It therefore detects the case
+that matters most and is least visible (store unreachable, table gone, database down) and NOT a tail
+that is merely locked; that one surfaces through the log event above. Two instruments, two questions,
+neither pretending to answer the other's.
+
+The recovery procedure is `docs/runbooks/audit-chain-unavailable.md`, including the two things not to
+do under pressure: disable the chain, or raise the bound to push the failures away.
+
+**What remains open.** Two things, named rather than left to be discovered.
+
+The tail is a single global row, so the chain serialises every money movement in the system by
+construction. Nothing here changes that — it bounds the damage rather than removing the choke point.
+Whether the chain should be partitioned is a real question this ADR does not answer.
+
+**And there is still no way for an operator to VERIFY the chain.** `AuditChain.VerifyAsync` exists
+and the suite calls it, but nothing exposes it — no endpoint, no CLI, no job. So the runbook can tell
+an operator that movements are being recorded again, and cannot tell them the hashes still link. For
+a design whose whole claim is tamper-evidence, that is the gap worth closing next: the property is
+only as good as someone's ability to check it outside a test run.
+
 ### D2 — the chain now, the SQL Server ledger later
 
 Each row carries an HMAC-SHA256 over its own fields **and its predecessor's hash**. Keyed rather than
