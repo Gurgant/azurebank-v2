@@ -44,8 +44,15 @@ is one of the narrower ones below.
 
 ```
 SecurityEvent AuditChainUnavailable: the audit chain tail could not be read within 5s,
-so 1 pending audit row(s) and the action they describe are refused
+so 1 pending audit row(s) and the action they describe are refused ON THIS ATTEMPT.
+A transient fault may be retried by the execution strategy and then succeed, so a
+single line is a blip and repetition is an outage
 ```
+
+**Read the count before you read the line.** The audit chain runs inside EF's retrying execution
+strategy, which re-runs the whole save on a transient fault. So ONE of these, followed by the
+customer's movement succeeding, is a retried blip and not an incident — the alert belongs on
+repetition. A steady stream of them, with movements failing, is this runbook.
 
 That line is logged and writes **no audit row**, which is not an oversight. Every other refusal in
 this system reaches `RecordRefusalAsync`, which opens its own connection so a rollback cannot erase
@@ -100,10 +107,10 @@ the blocker has held it, not how many sessions are queued.
 **4. Is a long-running transaction holding it?**
 
 ```sql
-SELECT session_id, transaction_id, database_transaction_begin_time
+SELECT st.session_id, dt.transaction_id, dt.database_transaction_begin_time
 FROM sys.dm_tran_database_transactions dt
 JOIN sys.dm_tran_session_transactions st ON st.transaction_id = dt.transaction_id
-ORDER BY database_transaction_begin_time;
+ORDER BY dt.database_transaction_begin_time;
 ```
 
 The oldest open transaction is the usual culprit. **`KILL` does not release the tail when you press

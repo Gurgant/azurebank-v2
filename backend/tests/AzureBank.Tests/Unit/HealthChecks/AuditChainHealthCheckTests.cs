@@ -128,6 +128,34 @@ public class AuditChainHealthCheckTests
     }
 
     [Fact]
+    public async Task ACancelledProbe_DoesNotMasqueradeAsAnUnreadableStore()
+    {
+        /*
+          A CANCELLED PROBE IS NOT AN OUTAGE, and reporting it as one sends an operator to a runbook
+          about missing tables and broken indexes for something that never happened. Two real causes:
+          the caller gives up first — Kubernetes' default probe timeout is ONE second against the
+          budget this app installs — and the registration budget itself expiring.
+
+          The chain has carried this escape since the bound was added; the health check was written
+          without it. Asserting the THROW rather than a returned status is the point: propagating is
+          what lets the framework classify it, which it does as "A timeout occurred while running
+          check." — a sentence that names the real cause.
+        */
+        var check = ForConnection(
+            "Server=localhost,1;Database=NoSuchDatabase;User Id=nobody;Password=nothing;"
+            + "TrustServerCertificate=True;Connect Timeout=1");
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var act = async () => await check.CheckHealthAsync(new HealthCheckContext(), cancelled.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "swallowing this would report 'audit store unreadable — money movements will be refused' "
+            + "for a probe nobody was waiting for any more");
+    }
+
+    [Fact]
     public async Task OnANonRelationalProvider_ItReportsHealthyRatherThanPretendingToProbe()
     {
         // The negative control. The InMemory provider has no SQL to send and no store to be

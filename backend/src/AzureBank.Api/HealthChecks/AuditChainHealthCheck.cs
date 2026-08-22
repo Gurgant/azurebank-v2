@@ -58,8 +58,17 @@ public sealed class AuditChainHealthCheck : IHealthCheck
             QUOTENAME(OBJECT_SCHEMA_NAME(OBJECT_ID('AuditEvents'))) + N'.' +
             QUOTENAME(OBJECT_NAME(OBJECT_ID('AuditEvents')));
 
-        SELECT CAST(ISNULL(HAS_PERMS_BY_NAME(@object, 'OBJECT', 'INSERT'), 0) AS int);
+        SELECT CAST(CASE
+            WHEN DATABASEPROPERTYEX(DB_NAME(), 'Updateability') <> 'READ_WRITE' THEN 2
+            WHEN ISNULL(HAS_PERMS_BY_NAME(@object, 'OBJECT', 'INSERT'), 0) = 1 THEN 1
+            ELSE 0
+        END AS int);
         """;
+
+    /// <summary>What the probe found: 1 permitted, 0 permission refused, 2 database is read-only.</summary>
+    private const int AppendPermitted = 1;
+    private const int AppendRefused = 0;
+    private const int DatabaseReadOnly = 2;
 
     private readonly AzureBankDbContext _context;
 
@@ -77,20 +86,52 @@ public sealed class AuditChainHealthCheck : IHealthCheck
 
         try
         {
-            if (!await CanWriteAuditRowsAsync(cancellationToken))
+            /*
+              Readable and useless is the state to catch here. The store answers, so nothing throws
+              and nothing looks broken — but D1 refuses every money movement, because the row it must
+              write alongside them cannot be written. Unhealthy for the same reason as an outage:
+              this instance cannot do the thing it exists to do.
+            */
+            return await AppendabilityAsync(cancellationToken) switch
             {
                 /*
-                  Readable and useless. The store answered, so nothing throws and nothing looks
-                  broken — but D1 refuses every money movement, because the row it must write
-                  alongside them cannot be written. Unhealthy for the same reason as an outage: this
-                  instance cannot do the thing it exists to do.
+                  "PERMITTED", not "writable", and the distinction is measured rather than pedantic.
+                  HAS_PERMS_BY_NAME answers a question about permission METADATA, not about whether
+                  an INSERT would succeed: on this instance it returns 1 for [sys].[objects], where
+                  an insert is categorically impossible ("Ad hoc updates to system catalogs are not
+                  allowed"). So a Healthy verdict here means the two things actually checked — the
+                  table is legible, and nothing in the permission graph forbids appending to it.
+                  Claiming "writable" would assert a capability no lock-free probe can establish.
                 */
-                return HealthCheckResult.Unhealthy(
-                    "audit store readable but NOT writable — money movements will be refused "
-                    + "(ADR-0044 D1). Check INSERT permission on AuditEvents for this login");
-            }
+                AppendPermitted => HealthCheckResult.Healthy(
+                    "audit store readable, and appending to it is permitted for this login"),
 
-            return HealthCheckResult.Healthy("audit store readable and writable");
+                // Reported separately because the fix has nothing to do with permissions, and a
+                // message about GRANTs would send an operator to the wrong runbook step entirely.
+                DatabaseReadOnly => HealthCheckResult.Unhealthy(
+                    "audit store readable but NOT writable — the database is not READ_WRITE, so "
+                    + "money movements will be refused (ADR-0044 D1)"),
+
+                _ => HealthCheckResult.Unhealthy(
+                    "audit store readable but NOT writable — money movements will be refused "
+                    + "(ADR-0044 D1). Check INSERT permission on AuditEvents for this login"),
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            /*
+              THE SAME ESCAPE AuditChain HAS, which this check was missing. The token here carries
+              two things that are not an unreadable store: the caller giving up (Kubernetes' default
+              probe timeout is one second, well under the budget installed for this registration),
+              and the registration budget itself expiring.
+
+              Swallowing either would report "audit store unreadable — money movements will be
+              refused", which sends an operator to a runbook that enumerates outages, missing tables
+              and broken indexes — none of which is what happened. Letting it propagate lets the
+              framework classify it: measured, DefaultHealthCheckService reports Unhealthy with "A
+              timeout occurred while running check.", which names the real cause.
+            */
+            throw;
         }
         catch (Exception ex)
         {
@@ -115,7 +156,7 @@ public sealed class AuditChainHealthCheck : IHealthCheck
     /// tail read assigns into a variable rather than returning rows — so the permission answer is
     /// what comes back, while the read still proves the table is there and legible.
     /// </remarks>
-    private async Task<bool> CanWriteAuditRowsAsync(CancellationToken cancellationToken)
+    private async Task<int> AppendabilityAsync(CancellationToken cancellationToken)
     {
         var opened = false;
         try
@@ -126,8 +167,8 @@ public sealed class AuditChainHealthCheck : IHealthCheck
             await using var command = _context.Database.GetDbConnection().CreateCommand();
             command.CommandText = ProbeSql;
 
-            var permitted = await command.ExecuteScalarAsync(cancellationToken);
-            return Convert.ToInt32(permitted, CultureInfo.InvariantCulture) == 1;
+            var verdict = await command.ExecuteScalarAsync(cancellationToken);
+            return Convert.ToInt32(verdict, CultureInfo.InvariantCulture);
         }
         finally
         {

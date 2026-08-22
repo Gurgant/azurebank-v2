@@ -148,7 +148,9 @@ public sealed class AuditChain : IAuditChain
                 ex,
                 "SecurityEvent {SecurityEvent}: the audit chain tail could not be read within "
                     + "{TimeoutSeconds}s, so {PendingRows} pending audit row(s) and the action they "
-                    + "describe are refused",
+                    + "describe are refused ON THIS ATTEMPT. A transient fault may be retried by the "
+                    + "execution strategy and then succeed, so a single line is a blip and repetition "
+                    + "is an outage",
                 SecurityEvents.AuditChainUnavailable,
                 timeoutSeconds,
                 pendingRows);
@@ -253,6 +255,21 @@ public sealed class AuditChain : IAuditChain
         {
             return await ReadTailAsync(context, timeoutSeconds, cancellationToken);
         }
+        /*
+          WHY THE MESSAGE BELOW SAYS "ON THIS ATTEMPT". ApplyAsync runs INSIDE
+          Database.CreateExecutionStrategy().ExecuteAsync (see AzureBankDbContext.SaveChangesAsync),
+          and production enables EnableRetryOnFailure. A transient SqlException on the tail read —
+          1205, 233, 10053/10054/10060, 40197, 40613 — is logged HERE, then retried by the strategy,
+          and the retry can succeed and answer 200. Worded as a completed refusal, the event an
+          operator alerts on fired for money that moved.
+
+          The tempting fix — log only once the strategy has given up — is WORSE. Carrying that fact
+          upward means wrapping the exception in our own type, and a wrapped SqlException is no
+          longer visible to SqlServerRetryingExecutionStrategy.ShouldRetryOn, so transient tail-read
+          failures would stop being retried at all. Trading a false alarm for real lost retries is
+          the wrong trade; the message tells the truth instead, and the runbook says to alert on
+          repetition rather than on a single line.
+        */
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             /*
@@ -270,7 +287,9 @@ public sealed class AuditChain : IAuditChain
                 ex,
                 "SecurityEvent {SecurityEvent}: the audit chain tail could not be read within "
                     + "{TimeoutSeconds}s, so {PendingRows} pending audit row(s) and the action they "
-                    + "describe are refused",
+                    + "describe are refused ON THIS ATTEMPT. A transient fault may be retried by the "
+                    + "execution strategy and then succeed, so a single line is a blip and repetition "
+                    + "is an outage",
                 SecurityEvents.AuditChainUnavailable,
                 timeoutSeconds,
                 pendingRows);

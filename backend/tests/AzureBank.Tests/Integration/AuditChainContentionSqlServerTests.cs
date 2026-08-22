@@ -38,9 +38,17 @@ public sealed class AuditChainContentionSqlServerTests : IDisposable
 {
     /// <summary>
     /// Long enough to dominate the measurement and be unmistakable in the numbers, short enough that
-    /// the suite stays quick. Well under the 30-second CommandTimeout, so nothing here is testing the
-    /// timeout — only the queueing.
+    /// the suite stays quick.
     /// </summary>
+    /// <remarks>
+    /// THE COMMENT HERE USED TO SAY "well under the 30-second CommandTimeout" — and this PR is the
+    /// change that replaced that ceiling on this exact statement. The tail read now runs under
+    /// Audit:TailTimeoutSeconds, five seconds by default, so a three-second hold left the unrelated
+    /// deposit ~1.9s of slack (measured at 3,073-3,089 ms against a 5,000 ms bound) rather than the
+    /// 27 seconds the comment implied. A loaded CI box would have turned that into a red test with a
+    /// timeout that has nothing to do with what is being measured. <see cref="CreateFactory"/> now
+    /// sets the bound explicitly and generously, so this test measures QUEUEING and nothing else.
+    /// </remarks>
     private static readonly TimeSpan HeldFor = TimeSpan.FromSeconds(3);
 
     private readonly ITestOutputHelper _output;
@@ -209,6 +217,11 @@ public sealed class AuditChainContentionSqlServerTests : IDisposable
     {
         var factory = new CustomWebApplicationFactory();
         factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
+
+        // Explicit and generous: this test is about the QUEUE, not the bound. Left at the five-second
+        // default, a three-second hold sits only ~1.9s from the ceiling, and the first test's own
+        // EnsureSuccessStatusCode would fail on a slow box for a reason it is not testing.
+        factory.SetAuditTailTimeoutSeconds(60);
         _ = factory.CreateClient();
         return factory;
     }

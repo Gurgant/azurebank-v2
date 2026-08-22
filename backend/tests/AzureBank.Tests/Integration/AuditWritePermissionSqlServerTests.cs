@@ -71,6 +71,8 @@ public sealed class AuditWritePermissionSqlServerTests : IDisposable
 
             var asReader = await check.CheckHealthAsync(new HealthCheckContext());
 
+            // Back to the test's own principal. The finally REVERTs as well — that one is the safety
+            // net for a throw above; this one is part of what the test is asserting.
             await ExecAsync(context, "REVERT;");
 
             _output.WriteLine($"read-only principal -> {asReader.Status}: {asReader.Description}");
@@ -93,6 +95,13 @@ public sealed class AuditWritePermissionSqlServerTests : IDisposable
         }
         finally
         {
+            /*
+              REVERT FIRST, AND IN THE FINALLY. If anything above threw while impersonating, the
+              DROP USER below would run AS the user it is trying to drop, fail, and MASK the original
+              failure with a confusing one. Measured on SQL Server: REVERT outside an impersonation
+              context is a silent no-op, not an error, so it is safe unconditionally.
+            */
+            await ExecAsync(context, "REVERT;");
             await ExecAsync(context, $"""
                 IF DATABASE_PRINCIPAL_ID('{ReadOnlyUser}') IS NOT NULL DROP USER [{ReadOnlyUser}];
                 """);
