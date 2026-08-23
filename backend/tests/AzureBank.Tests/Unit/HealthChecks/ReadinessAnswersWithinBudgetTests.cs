@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
 using Xunit.Abstractions;
@@ -36,6 +37,48 @@ public class ReadinessAnswersWithinBudgetTests
     private readonly ITestOutputHelper _output;
 
     public ReadinessAnswersWithinBudgetTests(ITestOutputHelper output) => _output = output;
+
+    [Fact]
+    public void AReadinessCheckRegisteredAFTERAddObservability_StillInheritsTheBudget()
+    {
+        /*
+          THIS TEST EXISTS BECAUSE THE CODE PROMISED IT. The comment beside the budget says applying
+          it by tag "means a readiness check added later inherits the bound instead of quietly
+          reintroducing the hang" — and with services.Configure that was FALSE. AddCheck appends its
+          registration through its own Configure callback, callbacks run in registration order, so a
+          check added after AddObservability was configured after the loop had already run and kept
+          Timeout.InfiniteTimeSpan. PostConfigure runs after every Configure, which is what makes the
+          sentence true.
+
+          Seven seconds because nothing else in the system is seven: a default would satisfy the
+          assertion without proving the budget reached this registration.
+        */
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(e => e.EnvironmentName).Returns("Development");
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Audit:TailTimeoutSeconds"] = "7" })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AzureBankDbContext>(options =>
+            options.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        services.AddObservability(environment.Object, configuration);
+
+        // AFTER — the ordering the comment claims to survive.
+        services.AddHealthChecks()
+            .AddCheck("late-arrival", () => HealthCheckResult.Healthy(), tags: ["ready"]);
+
+        var provider = services.BuildServiceProvider();
+        var registrations = provider
+            .GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations;
+
+        registrations.Single(r => r.Name == "late-arrival").Timeout.Should().Be(
+            TimeSpan.FromSeconds(7),
+            "a readiness check that misses the budget can hang the endpoint for 37 seconds, and it "
+            + "would do so silently — nothing about its registration looks different");
+    }
 
     [Fact]
     public async Task WhenTheStoreCannotBeReachedAtAll_ReadinessStillComesBackInsideTheBudget()

@@ -138,6 +138,15 @@ public static class ObservabilityServiceCollectionExtensions
           being fixed. Doing it by tag also means a readiness check added later inherits the bound
           instead of quietly reintroducing the hang.
 
+          POSTConfigure, NOT Configure, AND THAT WORD IS THE WHOLE SENTENCE ABOVE. AddCheck appends
+          its registration through a Configure callback of its own, and callbacks run in registration
+          order — so with Configure, a check added after this method had already been called was
+          configured AFTER the loop ran, and kept Timeout.InfiniteTimeSpan. The claim "added later
+          inherits the bound" was simply false, and measured: the regression test read -1ms, which is
+          InfiniteTimeSpan. PostConfigure runs after every Configure, which makes it true.
+          Pinned by ReadinessAnswersWithinBudgetTests.AReadinessCheckRegisteredAFTERAddObservability_
+          StillInheritsTheBudget.
+
           BOUND TO Audit:TailTimeoutSeconds rather than to a constant of its own, so the two cannot
           drift apart. A fixed 5s probe under a 20s configured tail bound would pull this instance out
           of rotation while money movements were still succeeding — a false alarm that takes the bank
@@ -147,7 +156,7 @@ public static class ObservabilityServiceCollectionExtensions
             configuration.GetValue<int?>("Audit:TailTimeoutSeconds")
             ?? new AuditOptions().TailTimeoutSeconds);
 
-        services.Configure<HealthCheckServiceOptions>(options =>
+        services.PostConfigure<HealthCheckServiceOptions>(options =>
         {
             foreach (var registration in options.Registrations.Where(r => r.Tags.Contains("ready")))
             {
