@@ -1,5 +1,10 @@
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
+using AzureBank.Shared.Options;
 using FluentAssertions;
 using Xunit;
 
@@ -16,6 +21,46 @@ namespace AzureBank.Tests.Unit.Tools;
 /// </remarks>
 public class AuditVerifierReportTests
 {
+    [Fact]
+    public async Task AnUnreachableDatabase_IsNoVerdict_AndMustNotLookLikeABrokenChain()
+    {
+        /*
+          THE DANGEROUS COLLISION, MEASURED BEFORE IT WAS FIXED. System.CommandLine turns any
+          exception escaping a handler into exit 1 -- which in this tool means CHAIN BROKEN. So an
+          unreachable server, a malformed connection string and a missing one all reported the same
+          code as a tampered audit trail, in the one tool whose whole purpose is telling those apart.
+          An automated check would have paged somebody about a possible attack over a typo in an
+          environment variable.
+
+          localhost,1 with a two-second connect timeout: refused fast, and nothing about the failure
+          depends on which machine runs the test.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AzureBankDbContext>(o => o.UseSqlServer(
+            "Server=localhost,1;Database=Nope;User Id=u;Password=p;TrustServerCertificate=True;Connect Timeout=2"));
+        services.AddSingleton<IAuditChain>(new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = new string('k', 32) }),
+            NullLogger<AuditChain>.Instance));
+
+        using var provider = services.BuildServiceProvider();
+
+        var (exitCode, lines) = await VerifyCommand.RunAsync(provider);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(
+            VerifyCommand.Misconfigured,
+            "a database this tool cannot reach is a fact about the invocation, not about the bank");
+        exitCode.Should().NotBe(
+            VerifyCommand.Broken,
+            "this is THE collision that mattered: automation reading 1 would treat an unreachable "
+            + "server as a tampered audit trail");
+        text.Should().Contain("CANNOT VERIFY");
+        text.Should().Contain(
+            "NOT a statement about the chain",
+            "the operator has to be told what the result does not mean, not only what it is");
+    }
+
     [Fact]
     public void AnEmptyTableIsNOTReportedAsIntact()
     {

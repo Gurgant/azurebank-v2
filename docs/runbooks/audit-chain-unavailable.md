@@ -214,9 +214,14 @@ somebody who wrote the number down.
   exactly what a fresh one does. Compare the count against what you expected: a chain that verifies
   40 rows where yesterday it had 40,000 is intact and catastrophic, and only the numbers say so.
 
-  Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** the tool
-  itself could not start. The last two exist so an automated check cannot mistake a typo in an
-  environment variable, or an empty table, for a clean bill of health.
+  Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** no verdict
+  — the tool could not read the store at all. Only 0, 1 and 2 are statements about the CHAIN.
+
+  **`3` is the one to wire an alert on separately from `1`.** It covers a missing or wrong
+  `Audit:ChainKey`, an unreachable server, and a connection string that is malformed or absent. All
+  of those used to exit **1**, because the CLI framework turns any unhandled failure into that code
+  — so a typo in an environment variable reported the same thing as a tampered audit trail. Paging
+  somebody about an attack that did not happen is the failure mode this separation removes.
 
   **If it reports a break at sequence 1, suspect the key before you suspect an attacker.** The row
   hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it, and it

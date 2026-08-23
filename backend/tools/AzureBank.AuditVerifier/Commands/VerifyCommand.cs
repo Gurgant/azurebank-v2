@@ -110,13 +110,34 @@ public static class VerifyCommand
         });
     }
 
-    public static Command Create(IServiceProvider services)
+    /// <summary>
+    /// Does the whole job and returns what to print and what to exit with. Never throws.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// SEPARATED FROM THE COMMAND so the failure paths can be asserted, and because the exit code
+    /// is the part automation reads. Only 0, 1 and 2 are verdicts about the CHAIN; anything that
+    /// prevented the walk is 3, "no verdict".
+    /// </para>
+    /// <para>
+    /// <b>THE CATCH IS DELIBERATELY BROAD, and measured rather than guessed.</b> Left uncaught,
+    /// System.CommandLine turns any handler exception into exit <b>1</b> -- which in this tool means
+    /// CHAIN BROKEN. Measured, all three of these produced it: an unreachable server
+    /// (<c>SqlException</c>), a malformed connection string, and no connection string at all
+    /// (<c>InvalidOperationException</c>). So a wrong environment variable reported the same thing
+    /// as a tampered audit trail, in the one tool whose entire purpose is telling those apart.
+    /// Enumerating exception types would have left the next unlisted one colliding again.
+    /// </para>
+    /// <para>
+    /// A genuine bug here also lands on 3, which is the price. It is paid back by printing the
+    /// exception TYPE: an operator sees a SqlException and checks their connection string, and a
+    /// developer seeing NullReferenceException in that line knows immediately it is ours.
+    /// </para>
+    /// </remarks>
+    public static async Task<(int ExitCode, IReadOnlyList<string> Lines)> RunAsync(
+        IServiceProvider services, CancellationToken cancellationToken = default)
     {
-        var command = new Command(
-            "verify",
-            "Walk the audit chain and report whether every row still hashes and links.");
-
-        command.SetHandler(async () =>
+        try
         {
             using var scope = services.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
@@ -126,10 +147,39 @@ public static class VerifyCommand
             // they expected. A chain that verifies 40 rows when yesterday it had 40,000 is intact
             // and catastrophic, and only the numbers say so.
             var rows = context.Set<Shared.Entities.AuditEvent>().AsNoTracking();
-            var lowest = await rows.MinAsync(e => (long?)e.Sequence);
-            var highest = await rows.MaxAsync(e => (long?)e.Sequence);
+            var lowest = await rows.MinAsync(e => (long?)e.Sequence, cancellationToken);
+            var highest = await rows.MaxAsync(e => (long?)e.Sequence, cancellationToken);
 
-            var (exitCode, lines) = Report(await chain.VerifyAsync(context), lowest, highest);
+            return Report(await chain.VerifyAsync(context, cancellationToken), lowest, highest);
+        }
+        catch (Exception failure)
+        {
+            /*
+              THE OUTER EXCEPTION, NOT GetBaseException(). Measured against an unreachable server:
+              the outer SqlException says "A network-related or instance-specific error occurred
+              while establishing a connection to SQL Server", and the innermost is a Win32Exception
+              saying only "The wait operation timed out". Drilling to the base gave the operator the
+              less useful of the two.
+            */
+            return (Misconfigured, new[]
+            {
+                "CANNOT VERIFY: the audit store could not be read, so there is no verdict.",
+                $"  {failure.GetType().Name}: {failure.Message}",
+                "  This is NOT a statement about the chain. Check the connection string and the",
+                "  key before reading anything into it.",
+            });
+        }
+    }
+
+    public static Command Create(IServiceProvider services)
+    {
+        var command = new Command(
+            "verify",
+            "Walk the audit chain and report whether every row still hashes and links.");
+
+        command.SetHandler(async () =>
+        {
+            var (exitCode, lines) = await RunAsync(services);
 
             foreach (var line in lines)
             {

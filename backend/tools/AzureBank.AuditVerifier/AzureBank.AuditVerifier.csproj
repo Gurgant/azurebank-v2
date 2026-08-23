@@ -33,7 +33,10 @@
   <!--
     Quiet by default. This tool's whole output is a verdict an operator reads under pressure, so
     EF's SQL echo would bury it: the first run printed the SELECT that reads the chain above the
-    answer. Warning-level default, overridden nowhere upward.
+    answer. EF is silenced entirely rather than merely lowered, because it also logs FAILURES at
+    Error with a full stack trace, twice. Measured against an unreachable server, that was eighty
+    lines above the one sentence that mattered. This tool catches those failures and reports them
+    itself, so EF's copy is duplication that buries the report.
   -->
   <ItemGroup>
     <None Update="appsettings.json">
