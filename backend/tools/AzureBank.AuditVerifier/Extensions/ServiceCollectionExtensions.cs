@@ -17,7 +17,24 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         IHostEnvironment environment)
     {
-        services.AddInfrastructure(configuration, environment);
+        /*
+          RETRY OFF, AND THIS IS THE LINE THAT MAKES THE WALK STREAM.
+
+          EF does not let a retrying execution strategy coexist with streaming: a stream cannot be
+          replayed from the middle, so QueryCompilationContext.IsBuffering is set from
+          ExecutionStrategy.RetriesOnFailure and every query the context compiles PRE-BUFFERS its
+          whole resultset. AsAsyncEnumerable() then streams in name only.
+
+          Measured on this repo, 40,006 audit rows, identical table, only the composition differing:
+          retry off 3 MB of managed heap, retry on 34 MB — and the 34 MB is already there before the
+          first row is looked at. Left on, this tool would carry the entire audit table in memory,
+          which is the exact cost the streaming change was made to remove.
+
+          Losing the retry costs little here and nothing that matters: this is a READ-ONLY walk an
+          operator runs deliberately, so a transient fault means running it again, while the
+          alternative is an out-of-memory failure on the table it exists to read.
+        */
+        services.AddInfrastructure(configuration, environment, retryOnTransientFailures: false);
 
         /*
           THE SAME VALIDATION THE API APPLIES, and for a sharper reason here.
@@ -35,9 +52,10 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetSection(AuditOptions.SectionName))
             .Validate(
                 o => !string.IsNullOrWhiteSpace(o.ChainKey) && o.ChainKey.Length >= 32,
-                "Audit:ChainKey must be configured with at least 32 characters "
-                + "(dotnet user-secrets in development; see README). Without the key this tool "
-                + "would report an intact chain as broken.")
+                "Audit:ChainKey must be configured with at least 32 characters. Set the "
+                + "environment variable Audit__ChainKey — user-secrets are read only when "
+                + "DOTNET_ENVIRONMENT=Development, and this tool defaults to Production. Without "
+                + "the key it would report an intact chain as broken.")
             .ValidateDataAnnotations()
             .ValidateOnStart();
 

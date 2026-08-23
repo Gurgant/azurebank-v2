@@ -17,10 +17,23 @@ public static class ServiceCollectionExtensions
     /// - DbContext with SQL Server
     /// Note: DatabaseSeeder has moved to AzureBank.Seeder tool.
     /// </summary>
+    /// <param name="services">The service collection to register the DbContext into.</param>
+    /// <param name="configuration">Supplies <c>ConnectionStrings:DefaultConnection</c>.</param>
+    /// <param name="environment">Gates sensitive-data logging to Development.</param>
+    /// <param name="retryOnTransientFailures">
+    /// Leave true for anything that WRITES. Pass false only for a read-only consumer that walks a
+    /// large resultset, and read why before you do: a retrying execution strategy forces EF to
+    /// PRE-BUFFER every query this context compiles, because a stream cannot be replayed from the
+    /// middle. <c>QueryCompilationContext.IsBuffering</c> is set from
+    /// <c>ExecutionStrategy.RetriesOnFailure</c>, so <c>AsAsyncEnumerable()</c> silently stops
+    /// streaming. Measured on 40,006 audit rows: 3 MB of managed heap with retry off, 34 MB with it
+    /// on — and the 34 MB appears before the first row is examined, which is what a pre-buffer is.
+    /// </param>
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        bool retryOnTransientFailures = true)
     {
         // DbContext registration
         services.AddDbContext<AzureBankDbContext>(options =>
@@ -43,10 +56,13 @@ public static class ServiceCollectionExtensions
                     // to succeed; ADR-0034 works through where that matters (the refresh-reuse
                     // path, which an attacker can trigger on demand). Add -2 to errorNumbersToAdd
                     // only with that argument answered.
-                    sqlOptions.EnableRetryOnFailure(
-                        maxRetryCount: 3,
-                        maxRetryDelay: TimeSpan.FromSeconds(30),
-                        errorNumbersToAdd: null);
+                    if (retryOnTransientFailures)
+                    {
+                        sqlOptions.EnableRetryOnFailure(
+                            maxRetryCount: 3,
+                            maxRetryDelay: TimeSpan.FromSeconds(30),
+                            errorNumbersToAdd: null);
+                    }
 
                     sqlOptions.CommandTimeout(30);
 

@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using AzureBank.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,6 +38,19 @@ public static class VerifyCommand
     /// them apart will page somebody for a typo in an environment variable.
     /// </remarks>
     public const int Misconfigured = 3;
+
+    /// <summary>
+    /// The command line itself was wrong: no command, a mistyped one, an unknown option.
+    /// </summary>
+    /// <remarks>
+    /// EXISTS BECAUSE THE FRAMEWORK COLLIDES WITH THIS TOOL'S VOCABULARY. System.CommandLine's
+    /// default pipeline reports every parse failure as exit <b>1</b>, and 1 here means CHAIN BROKEN.
+    /// Measured on the pinned 2.0.0-beta4: running the tool with NO ARGUMENTS AT ALL printed
+    /// "Required command was not provided." and exited 1, as did a mistyped command and an unknown
+    /// option. The most likely mistake anyone can make with this tool reported a tampered audit
+    /// trail. Program.cs translates the framework's 1 into this.
+    /// </remarks>
+    public const int UsageError = 4;
 
     /// <summary>
     /// Turns a verification result into what the operator sees and what a script reads.
@@ -177,16 +191,35 @@ public static class VerifyCommand
             "verify",
             "Walk the audit chain and report whether every row still hashes and links.");
 
-        command.SetHandler(async () =>
+        command.SetHandler(async (InvocationContext invocation) =>
         {
-            var (exitCode, lines) = await RunAsync(services);
+            /*
+              THE REAL CANCELLATION TOKEN, not default. System.CommandLine's CancelOnProcessTermination
+              middleware only engages for a handler that ASKS for the token; passing default left
+              Ctrl+C during a long walk unprotected. Asking for it means an interrupted verification
+              unwinds through the catch in RunAsync and reports "no verdict", which is what it is.
+            */
+            var (exitCode, lines) = await RunAsync(services, invocation.GetCancellationToken());
 
-            foreach (var line in lines)
-            {
-                Console.WriteLine(line);
-            }
-
+            /*
+              THE VERDICT IS RECORDED BEFORE IT IS PRINTED. Writing to a closed stdout -- piping this
+              into `head -1`, say -- throws, and an exception escaping the handler is turned into
+              exit 1 by the framework, which in this tool means CHAIN BROKEN. Assigning first means a
+              broken pipe costs the operator the text and not the answer.
+            */
             Environment.ExitCode = exitCode;
+
+            try
+            {
+                foreach (var line in lines)
+                {
+                    Console.WriteLine(line);
+                }
+            }
+            catch (IOException)
+            {
+                // Nothing is reading. The exit code already carries the verdict.
+            }
         });
 
         return command;

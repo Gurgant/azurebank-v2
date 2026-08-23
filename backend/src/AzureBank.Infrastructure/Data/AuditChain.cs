@@ -385,6 +385,18 @@ public sealed class AuditChain : IAuditChain
           The cost of streaming is a data reader held open for the length of the walk. That is the
           right trade for a verifier run deliberately by an operator, and the wrong one for anything
           on the money path — which is why nothing on the money path calls this.
+
+          IT ONLY STREAMS IF THE CONTEXT HAS NO RETRYING EXECUTION STRATEGY, and that condition is
+          invisible from here. A stream cannot be replayed from the middle, so EF sets
+          QueryCompilationContext.IsBuffering from ExecutionStrategy.RetriesOnFailure and PRE-BUFFERS
+          the whole resultset — AsAsyncEnumerable() then streams in name only. Measured on 40,006
+          rows: 3 MB with retry off against 34 MB with it on, the 34 MB present before the first row
+          is examined.
+
+          So the caller decides whether this line means anything. AzureBank.AuditVerifier passes
+          retryOnTransientFailures: false to AddInfrastructure for exactly this reason, and a test
+          pins it; every writer keeps retry and buffers, which is correct for the small saves they
+          make. Changing that argument silently reverts this method to what it replaced.
         */
         var rows = context.Set<AuditEvent>()
             .AsNoTracking()

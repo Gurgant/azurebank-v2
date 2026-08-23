@@ -199,13 +199,20 @@ somebody who wrote the number down.
 
 ## After recovery
 
-- **Verify the chain.** Two environment variables and one command; the key and the connection
-  string are passed through the environment rather than as arguments, so neither lands in your
-  shell history.
+- **Verify the chain.** The key and the connection string travel through the environment rather
+  than as command arguments, because on Linux `/proc/<pid>/cmdline` is world-readable while
+  `/proc/<pid>/environ` is not.
+
+  **That does not make them private from your own shell**, and an earlier version of this runbook
+  claimed it did. An `export` line is a command, and your shell records it: bash writes it to
+  `HISTFILE`, and PowerShell's PSReadLine writes it to `ConsoleHost_history.txt` — its
+  sensitive-word filter matches `password|token|apikey|secret`, none of which is `ChainKey`. A
+  history file outlives the process, which makes it the WORSE exposure of the two. Read the key
+  instead of typing it:
 
   ```bash
+  read -rs Audit__ChainKey && export Audit__ChainKey
   export ConnectionStrings__DefaultConnection="..."
-  export Audit__ChainKey="..."
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
@@ -215,13 +222,21 @@ somebody who wrote the number down.
   40 rows where yesterday it had 40,000 is intact and catastrophic, and only the numbers say so.
 
   Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** no verdict
-  — the tool could not read the store at all. Only 0, 1 and 2 are statements about the CHAIN.
+  (the store could not be read), **4** the command line was wrong. Only 0, 1 and 2 are statements
+  about the CHAIN.
 
-  **`3` is the one to wire an alert on separately from `1`.** It covers a missing or wrong
-  `Audit:ChainKey`, an unreachable server, and a connection string that is malformed or absent. All
-  of those used to exit **1**, because the CLI framework turns any unhandled failure into that code
-  — so a typo in an environment variable reported the same thing as a tampered audit trail. Paging
-  somebody about an attack that did not happen is the failure mode this separation removes.
+  **`3` is the one to wire an alert on separately from `1`.** It covers a MISSING or too-short
+  `Audit:ChainKey`, an unreachable server, and a connection string that is malformed or absent —
+  everything that stopped the walk before it could reach a verdict.
+
+  **A WRONG key is not among them, and this runbook previously said it was.** A well-formed key that
+  is simply not the one the chain was written with passes every check the tool can make, so the walk
+  runs and the hashes mismatch: that exits **1**, the same as a tamper. There is no way around it —
+  the two are indistinguishable to any check — which is exactly why the next paragraph exists.
+
+  **`4` exists because the framework collided with this vocabulary.** System.CommandLine reports
+  every parse failure as exit 1, so running the tool with no arguments at all — the likeliest
+  mistake there is — used to report a tampered audit trail. Measured, and now translated.
 
   **If it reports a break at sequence 1, suspect the key before you suspect an attacker.** The row
   hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it, and it

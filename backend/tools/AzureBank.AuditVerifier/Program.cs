@@ -101,8 +101,23 @@ internal static class Program
 
         var parsed = await rootCommand.InvokeAsync(args);
 
-        // InvokeAsync returns the parser's own result; the command sets Environment.ExitCode to say what it
-        // FOUND. A parse failure must still win, or a typo would look like a verdict.
-        return parsed != 0 ? parsed : Environment.ExitCode;
+        /*
+          TRANSLATE THE FRAMEWORK'S CODE; DO NOT PASS IT THROUGH.
+
+          The previous version returned `parsed` unchanged, reasoning that "a parse failure must
+          still win, or a typo would look like a verdict". It had it backwards. The default pipeline
+          reports EVERY parse failure as exit 1 -- and 1 is this tool's word for CHAIN BROKEN, so a
+          typo did not look like a verdict, it looked like the WORST verdict.
+
+          Measured on the pinned 2.0.0-beta4, all three exited 1: no arguments at all ("Required
+          command was not provided."), a mistyped command, and an unknown option. Running this tool
+          with no arguments is the likeliest mistake there is, and it reported a tampered audit trail
+          to anything reading the exit code.
+
+          That pipeline only ever emits 0 or 1, so any non-zero here is a usage or framework failure
+          and becomes UsageError. The handler's own verdict travels separately in
+          Environment.ExitCode, read only when the command actually ran.
+        */
+        return parsed != 0 ? VerifyCommand.UsageError : Environment.ExitCode;
     }
 }

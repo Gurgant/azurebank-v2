@@ -62,6 +62,26 @@ public class AuditVerifierReportTests
     }
 
     [Fact]
+    public void TheExitCodesAreAllDistinct()
+    {
+        /*
+          THE REGRESSION THAT ACTUALLY HAPPENED WAS A REUSED VALUE, not a wrong branch. Parse
+          failures arrived as exit 1 from System.CommandLine, which this tool had already spent on
+          CHAIN BROKEN, so running it with no arguments reported a tampered audit trail. Whatever
+          else changes, no two of these may ever collapse onto one number.
+        */
+        var codes = new[]
+        {
+            VerifyCommand.Intact, VerifyCommand.Broken,
+            VerifyCommand.NothingToVerify, VerifyCommand.Misconfigured, VerifyCommand.UsageError,
+        };
+
+        codes.Should().OnlyHaveUniqueItems(
+            "an exit code shared by two meanings is a signal automation cannot read");
+        VerifyCommand.Intact.Should().Be(0, "every runner treats 0 and only 0 as success");
+    }
+
+    [Fact]
     public void AnEmptyTableIsNOTReportedAsIntact()
     {
         /*
@@ -118,16 +138,29 @@ public class AuditVerifierReportTests
     [Fact]
     public void AnIntactChainReportsTheCOUNT_AndDoesNotOverclaim()
     {
+        /*
+          THE COUNT AND THE RANGE MUST BE TELLABLE APART, which the first version of this test could
+          not do: it passed 40,006 as BOTH the verified count and the highest sequence, so asserting
+          the text contained "40,006" was satisfied by the range line alone. Deleting the count from
+          the report entirely would have left this green -- the exact regression its own rationale
+          says it exists to catch.
+
+          Distinct numbers now, and they are distinct in a way that also matters: a chain whose
+          sequences run 7..91,234 while only 40,006 rows verify is a chain with GAPS, and an
+          operator reading those two numbers together is the only one who can notice.
+        */
         var (exitCode, lines) = VerifyCommand.Report(
-            new AuditChainVerification(40_006, null, null), 1, 40_006);
+            new AuditChainVerification(40_006, null, null), 7, 91_234);
         var text = string.Join(" ", lines);
 
         exitCode.Should().Be(VerifyCommand.Intact);
-        text.Should().Contain(
-            "40,006",
-            "'intact' without a count is the assertion that has misled this project before -- a "
-            + "verification that read nothing also says intact");
-        text.Should().Contain("Sequence range", "a count means nothing without the range it covers");
+        lines.Should().Contain(
+            line => line.Contains("40,006") && !line.Contains("Sequence range"),
+            "the COUNT has to appear on its own line -- asserting only that the text contains it "
+            + "lets the range line satisfy the assertion while the count is gone");
+        lines.Should().Contain(
+            line => line.Contains("Sequence range") && line.Contains("7") && line.Contains("91,234"),
+            "and the range has to carry both ends, or it cannot be compared with anything");
         text.Should().Contain(
             "NOT prove",
             "tail truncation is undetectable by construction, and the tool must say so where the "
