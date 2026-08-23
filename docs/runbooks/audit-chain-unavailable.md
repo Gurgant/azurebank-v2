@@ -203,8 +203,8 @@ somebody who wrote the number down.
   than as command arguments, because on Linux `/proc/<pid>/cmdline` is world-readable while
   `/proc/<pid>/environ` is not.
 
-  **That does not make them private from your own shell**, and an earlier version of this runbook
-  claimed it did. An `export` line is a command, and your shell records it: bash writes it to
+  **That does not make them private from your own shell**, which is a distinction worth stating
+  because it is easy to assume otherwise. An `export` line is a command, and your shell records it: bash writes it to
   `HISTFILE`, and PowerShell's PSReadLine writes it to `ConsoleHost_history.txt` — its
   sensitive-word filter matches `password|token|apikey|secret`, none of which is `ChainKey`. A
   history file outlives the process, which makes it the WORSE exposure of the two. Read BOTH values
@@ -212,8 +212,16 @@ somebody who wrote the number down.
   printable than the key:
 
   ```bash
-  read -rs Audit__ChainKey && export Audit__ChainKey
-  read -rs ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection
+  read -rsp 'Audit:ChainKey: ' Audit__ChainKey && export Audit__ChainKey && echo
+  read -rsp 'Connection string: ' ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection && echo
+  dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
+  ```
+
+  PowerShell, since it is the history file this paragraph cites:
+
+  ```powershell
+  $env:Audit__ChainKey = (Read-Host 'Audit:ChainKey' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
+  $env:ConnectionStrings__DefaultConnection = (Read-Host 'Connection string' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 

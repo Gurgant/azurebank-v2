@@ -62,23 +62,37 @@ public class AuditVerifierReportTests
     }
 
     [Fact]
-    public void TheExitCodesAreAllDistinct()
+    public void AParseFailureIsNeverPassedThroughAsAVERDICT()
     {
         /*
-          THE REGRESSION THAT ACTUALLY HAPPENED WAS A REUSED VALUE, not a wrong branch. Parse
-          failures arrived as exit 1 from System.CommandLine, which this tool had already spent on
-          CHAIN BROKEN, so running it with no arguments reported a tampered audit trail. Whatever
-          else changes, no two of these may ever collapse onto one number.
-        */
-        var codes = new[]
-        {
-            VerifyCommand.Intact, VerifyCommand.Broken,
-            VerifyCommand.NothingToVerify, VerifyCommand.Misconfigured, VerifyCommand.UsageError,
-        };
+          THE ASSERTION THAT WAS MISSING, and the one before it looked like protection.
 
-        codes.Should().OnlyHaveUniqueItems(
-            "an exit code shared by two meanings is a signal automation cannot read");
-        VerifyCommand.Intact.Should().Be(0, "every runner treats 0 and only 0 as success");
+          That guard read five compile-time constants and asserted they were pairwise distinct.
+          They always were, and no edit could make them otherwise -- the reused value was
+          System.CommandLine's 1, which lives outside this assembly and arrives through the
+          translation below. Reverting that translation restored "no arguments = tampered audit
+          trail" with the whole suite green, which is the definition of a test that cannot see the
+          regression it names.
+        */
+        VerifyCommand.CombineExitCodes(1, VerifyCommand.Intact).Should().Be(
+            VerifyCommand.UsageError,
+            "the framework reports EVERY parse failure as 1, and passing it through makes a typo "
+            + "indistinguishable from a tampered chain -- which is what it did");
+
+        VerifyCommand.CombineExitCodes(1, VerifyCommand.Intact).Should().NotBe(
+            VerifyCommand.Broken, "that is the collision, stated as itself");
+
+        VerifyCommand.CombineExitCodes(0, VerifyCommand.Broken).Should().Be(
+            VerifyCommand.Broken, "when the command DID run, its verdict is the answer");
+        VerifyCommand.CombineExitCodes(0, VerifyCommand.Intact).Should().Be(VerifyCommand.Intact);
+        VerifyCommand.CombineExitCodes(0, VerifyCommand.Misconfigured).Should().Be(
+            VerifyCommand.Misconfigured, "and a no-verdict must not be flattened into success");
+
+        new[]
+        {
+            VerifyCommand.Intact, VerifyCommand.Broken, VerifyCommand.NothingToVerify,
+            VerifyCommand.Misconfigured, VerifyCommand.UsageError,
+        }.Should().OnlyHaveUniqueItems("two meanings on one number is a signal nothing can read");
     }
 
     [Fact]
@@ -109,13 +123,26 @@ public class AuditVerifierReportTests
           tamper breaks where it happened instead. Position is the only tell available, and without
           it an operator opens an incident about an attacker who does not exist.
         */
+        /*
+          THE FIXTURE IS A PURGED TABLE, deliberately, because a fixture starting at sequence 1
+          cannot tell the right rule from the wrong one. The hint used to key on
+          FirstBrokenSequence <= 1, which is the first row only until the first row is deleted --
+          and Sequence is assigned as tail + 1 and never restarts, so after any retention purge or
+          partial restore a live chain begins at 5,001 and the hint silently stopped firing on
+          exactly the tables old enough to need it. Verified == 0 is the numbering-independent tell.
+
+          Break on the first row READ, at sequence 5,001: the old rule is false here and the new one
+          is true, so this test can now see the difference between them.
+        */
         var (exitCode, lines) = VerifyCommand.Report(
-            new AuditChainVerification(0, 1, "Row ... does not match its own hash"), 1, 500);
+            new AuditChainVerification(0, 5_001, "Row ... does not match its own hash", 5_001, 5_005),
+            5_001, 5_005);
 
         exitCode.Should().Be(VerifyCommand.Broken);
         string.Join(" ", lines).Should().Contain(
             "Audit:ChainKey",
-            "breaking at sequence 1 is far more often the wrong key than tampering");
+            "breaking on the first row READ is far more often the wrong key than tampering, and "
+            + "that is true whatever number that row happens to carry");
     }
 
     [Fact]
@@ -145,9 +172,12 @@ public class AuditVerifierReportTests
           the report entirely would have left this green -- the exact regression its own rationale
           says it exists to catch.
 
-          Distinct numbers now, and they are distinct in a way that also matters: a chain whose
-          sequences run 7..91,234 while only 40,006 rows verify is a chain with GAPS, and an
-          operator reading those two numbers together is the only one who can notice.
+          Distinct numbers only so the two lines can be told apart. The earlier version of this
+          comment claimed they let an operator spot a chain with GAPS -- which an INTACT verdict
+          cannot have: a deleted prefix breaks the link, and Sequence is assigned as tail + 1 with
+          no holes, so an intact chain always reads 1 to <count>. The fixture is a state the walk
+          cannot produce; it is used here because this test is about the SHAPE of the report, and
+          the range's real value is on a broken verdict, which the sibling test covers.
         */
         var (exitCode, lines) = VerifyCommand.Report(
             new AuditChainVerification(40_006, null, null), 7, 91_234);

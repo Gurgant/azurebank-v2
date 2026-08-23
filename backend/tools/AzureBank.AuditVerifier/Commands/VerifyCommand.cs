@@ -1,8 +1,10 @@
 using System.CommandLine;
+using System.Data.Common;
 using System.CommandLine.Invocation;
 using AzureBank.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.AuditVerifier.Commands;
 
@@ -78,10 +80,19 @@ public static class VerifyCommand
                 $"CHAIN BROKEN at sequence {result.FirstBrokenSequence:N0}.",
                 $"  {result.Reason}",
                 $"  Rows verified before the break: {result.Verified:N0}",
+                $"  Sequences read: {lowest:N0} to {highest:N0}",
             };
 
             /*
-              SUSPECT THE KEY BEFORE SUSPECTING AN ATTACKER, when the break is at the very first row.
+              SUSPECT THE KEY BEFORE SUSPECTING AN ATTACKER, when the break is on the FIRST ROW READ.
+
+              KEYED ON THE COUNT, NOT ON THE NUMBER 1, and the difference is a live table's whole
+              life. This tested FirstBrokenSequence <= 1, which is the first row only while the
+              first row has never been removed. Sequence is assigned as tail + 1 and never restarts
+              (AuditChain.Link), so after any retention purge, archival or partial restore the chain
+              begins at 5,001 or 900,204 -- and the hint silently stopped firing, on precisely the
+              tables old enough to have been purged. Verified == 0 says "it broke before verifying
+              anything" whatever the numbering, and it is printed on the line above.
 
               The row hash is an HMAC over Audit:ChainKey. A WRONG key is not distinguishable from
               tampering by any check this tool can make -- and unlike a missing or short key, it
@@ -93,7 +104,7 @@ public static class VerifyCommand
               recomputes is already different. Saying so here costs nothing and saves an operator
               from opening an incident about an attacker who does not exist.
             */
-            if (result.FirstBrokenSequence <= 1)
+            if (result.Verified == 0)
             {
                 lines.Add("  Breaking at the FIRST row usually means the wrong Audit:ChainKey, not");
                 lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch it,");
@@ -151,6 +162,34 @@ public static class VerifyCommand
     public static async Task<(int ExitCode, IReadOnlyList<string> Lines)> RunAsync(
         IServiceProvider services, CancellationToken cancellationToken = default)
     {
+        /*
+          VALIDATE HERE, NOT AT STARTUP, and the difference is what an unconfigured operator sees.
+
+          This ran in Program.cs before the command line was even parsed, so on a machine where
+          nobody had exported a key yet, EVERY invocation died the same way. Measured on a3e31a7:
+          `--help`, `--version`, no arguments and a mistyped command all exited 3 with "CANNOT
+          VERIFY: this tool is not configured to read the chain" -- no help text, no version, no
+          usage message. The command that exists to explain the tool required you to already know
+          how to configure it, and the exit-4 usage code added one commit earlier was unreachable
+          on exactly the machine where a usage mistake is likeliest.
+
+          Validating at the point of USE keeps the guarantee that mattered -- no row is read with a
+          key that was never checked -- and costs nothing else.
+        */
+        try
+        {
+            services.GetService<IStartupValidator>()?.Validate();
+        }
+        catch (OptionsValidationException invalid)
+        {
+            var lines = new List<string>
+            {
+                "CANNOT VERIFY: this tool is not configured to read the chain.",
+            };
+            lines.AddRange(invalid.Failures.Select(failure => $"  {failure}"));
+            return (Misconfigured, lines);
+        }
+
         try
         {
             using var scope = services.CreateScope();
@@ -158,12 +197,21 @@ public static class VerifyCommand
             var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
 
             /*
-              THE RANGE COMES FROM THE WALK, not from two extra queries. It is reported beside the
-              count so the operator can compare them -- a chain that verifies 40 rows where yesterday
-              it had 40,000 is intact and catastrophic, and only the numbers say so. That comparison
-              is worthless if the two facts come from different instants: this asked the database for
-              MIN and MAX before walking, so a row committed in between was counted but fell outside
-              the range, and the tool could report 101 rows verified over a range ending at 100.
+              THE RANGE COMES FROM THE WALK, not from two extra queries, which mattered because the
+              count and the range used to be taken at different instants: MIN and MAX were asked
+              before walking, so a row committed in between was counted and fell outside the range --
+              101 rows verified over a range ending at 100.
+
+              WHAT IT IS GOOD FOR IS NARROWER THAN THIS COMMENT USED TO CLAIM. It said the two
+              numbers let an operator spot a chain with gaps. They cannot, on an INTACT verdict: a
+              deleted prefix leaves the new first row pointing at a predecessor that is gone, which
+              is a break, and Sequence is assigned as tail + 1 with no gaps -- so an intact chain
+              always reads 1 to <count>, and the range there only confirms what the count says.
+
+              Where it earns its place is a BROKEN verdict, and that is where it was missing: the
+              range then says which stretch was actually walked before the walk stopped, on a table
+              whose numbering may start anywhere after a purge. The number to compare against
+              yesterday is the COUNT.
             */
             var verification = await chain.VerifyAsync(context, cancellationToken);
 
@@ -172,21 +220,72 @@ public static class VerifyCommand
         catch (Exception failure)
         {
             /*
-              THE OUTER EXCEPTION, NOT GetBaseException(). Measured against an unreachable server:
-              the outer SqlException says "A network-related or instance-specific error occurred
-              while establishing a connection to SQL Server", and the innermost is a Win32Exception
-              saying only "The wait operation timed out". Drilling to the base gave the operator the
-              less useful of the two.
+              THE FIRST DATABASE EXCEPTION IN THE CHAIN, which is neither the outermost nor the
+              innermost, and all three of the measured cases explain why.
+
+              Unreachable server: the outer IS a SqlException with the useful sentence, while the
+              innermost is a Win32Exception saying only "The wait operation timed out". Taking the
+              base gave the operator the worse one.
+
+              Database that does not exist: the outer is EF's own wrapper -- "An exception has been
+              raised that is likely due to a transient failure. Consider enabling transient error
+              resiliency by adding 'EnableRetryOnFailure'" -- which names no cause AND advises
+              undoing the deliberate decision in this tool's composition root. EF only raises it
+              when retries are off, so turning them off to make the walk stream is what put it
+              there. The SqlException underneath says "Cannot open database ... The login failed",
+              which is the whole answer.
+
+              Preferring the DbException picks the right one in both, and cannot pick the
+              Win32Exception, which is not one.
             */
+            var cause = Unwrap(failure);
+
             return (Misconfigured, new[]
             {
                 "CANNOT VERIFY: the audit store could not be read, so there is no verdict.",
-                $"  {failure.GetType().Name}: {failure.Message}",
+                $"  {cause.GetType().Name}: {cause.Message}",
                 "  This is NOT a statement about the chain. Check the connection string and the",
                 "  key before reading anything into it.",
             });
         }
     }
+
+    /// <summary>
+    /// The first <see cref="DbException"/> in the chain, or the outermost exception if there is none.
+    /// </summary>
+    private static Exception Unwrap(Exception failure)
+    {
+        for (var current = failure; current is not null; current = current.InnerException)
+        {
+            if (current is DbException)
+            {
+                return current;
+            }
+        }
+
+        return failure;
+    }
+
+    /// <summary>
+    /// Combines what the command-line framework returned with what the handler found.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE REGRESSION THIS EXISTS TO PIN WAS HERE, not in the constants. System.CommandLine's
+    /// default pipeline reports every parse failure as <b>1</b>, and 1 is this tool's word for
+    /// CHAIN BROKEN, so returning it unchanged made "no arguments at all" report a tampered audit
+    /// trail. The first guard written for it asserted that five compile-time constants were
+    /// pairwise distinct -- which they always were, and which no edit to this translation could
+    /// ever change. It read like protection and was decoration.
+    /// </para>
+    /// <para>
+    /// The framework's pipeline only ever emits 0 or 1, so any non-zero is a usage or framework
+    /// failure and becomes <see cref="UsageError"/>. The handler's own verdict is passed separately
+    /// and is used only when the command actually ran.
+    /// </para>
+    /// </remarks>
+    public static int CombineExitCodes(int fromParser, int fromHandler) =>
+        fromParser != 0 ? UsageError : fromHandler;
 
     public static Command Create(IServiceProvider services)
     {

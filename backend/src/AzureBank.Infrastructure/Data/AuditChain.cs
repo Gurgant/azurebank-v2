@@ -449,7 +449,9 @@ public sealed class AuditChain : IAuditChain
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
-                    $"Row {row.Id} does not match its own hash: it was altered after it was written.",
+                    $"Row {row.Id} does not match its own hash. Either it was altered after it was "
+                    + "written, or this verification is using a different Audit:ChainKey from the "
+                    + "one it was written with.",
                     lowest,
                     highest);
             }

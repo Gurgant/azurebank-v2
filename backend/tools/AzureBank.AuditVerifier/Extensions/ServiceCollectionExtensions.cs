@@ -53,7 +53,7 @@ public static class ServiceCollectionExtensions
             .Validate(
                 o => !string.IsNullOrWhiteSpace(o.ChainKey) && o.ChainKey.Length >= 32,
                 "Audit:ChainKey must be configured with at least 32 characters. Set the "
-                + "environment variable Audit__ChainKey — user-secrets are read only when "
+                + "environment variable Audit__ChainKey. User-secrets are read only when "
                 + "DOTNET_ENVIRONMENT=Development, and this tool defaults to Production. Without "
                 + "the key it would report an intact chain as broken.")
             .ValidateDataAnnotations()

@@ -15,10 +15,12 @@ namespace AzureBank.AuditVerifier;
 // and the suite called it, but nothing exposed it, so the runbook could not tell an operator to
 // check that the hashes still link.
 //
-// Usage:
-//   dotnet run --project tools/AzureBank.AuditVerifier -- verify
+// Usage, from the repository root:
+//   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
 //
-// Exit codes: 0 intact, 1 broken, 2 nothing to verify.
+// Exit codes: 0 intact, 1 broken, 2 nothing to verify, 3 no verdict (the store could not be read),
+// 4 the command line was wrong. Only 0, 1 and 2 are statements about the chain. The list lives in
+// VerifyCommand's constants; this header repeats it, so changing one means changing both.
 // ============================================
 /*
   ANCHORED TO THE BINARY, NOT TO THE SHELL'S CURRENT DIRECTORY.
@@ -59,38 +61,15 @@ internal static class Program
         var host = builder.Build();
 
         /*
-          VALIDATE BEFORE READING A SINGLE ROW, and the reason is specific to this tool.
+          THE VALIDATOR MOVED INTO THE COMMAND, and this comment records why rather than vanishing.
 
-          A CLI never calls host.StartAsync(), so .ValidateOnStart() alone never fires — the same trap the
-          seeder documents. For a seeder that means a late failure; here it would mean a WRONG ANSWER: the
-          row hash is an HMAC over Audit:ChainKey, so a missing or mistyped key does not throw, it
-          recomputes every hash differently and reports the chain broken at sequence 1.
-
-          A tamper-evidence tool that accuses an intact chain is worse than no tool, because somebody will
-          act on it during the incident it was reached for. So the validator runs first, and a bad key stops
-          the process with a message about the key rather than a verdict about the bank.
+          It ran here, before the command line was parsed, so an unconfigured machine could not even
+          print --help: every invocation exited 3 with "this tool is not configured to read the
+          chain". Measured on a3e31a7, all four of --help, --version, no arguments and a mistyped
+          command. It now runs at the start of VerifyCommand.RunAsync, which is the first moment
+          anything actually needs the key -- so the guarantee is unchanged and the tool can still be
+          asked what it is.
         */
-        try
-        {
-            host.Services.GetService<IStartupValidator>()?.Validate();
-        }
-        catch (OptionsValidationException invalid)
-        {
-            /*
-              A CONFIGURATION PROBLEM IS AN OUTCOME, NOT A CRASH. Left unhandled this exited 127 --
-              which means nothing to a script -- under eleven lines of stack trace, with the one
-              sentence that matters as its first line. An operator reaching for this tool during an
-              incident should not have to read a .NET stack to learn they mistyped an environment
-              variable.
-            */
-            Console.Error.WriteLine("CANNOT VERIFY: this tool is not configured to read the chain.");
-            foreach (var failure in invalid.Failures)
-            {
-                Console.Error.WriteLine($"  {failure}");
-            }
-
-            return VerifyCommand.Misconfigured;
-        }
 
         var rootCommand = new RootCommand("AzureBank Audit Chain Verifier")
         {
@@ -118,6 +97,6 @@ internal static class Program
           and becomes UsageError. The handler's own verdict travels separately in
           Environment.ExitCode, read only when the command actually ran.
         */
-        return parsed != 0 ? VerifyCommand.UsageError : Environment.ExitCode;
+        return VerifyCommand.CombineExitCodes(parsed, Environment.ExitCode);
     }
 }

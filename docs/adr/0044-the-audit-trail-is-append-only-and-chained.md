@@ -351,6 +351,11 @@ than assumed:
   that `continue`s a retry loop. An enlisted row would die with the attempt that failed; a
   self-committing one would write one row per attempt. Both wrong, and the log is right.
 
+**The first half of the next sentence stopped being true on 2026-08-23** and is left standing
+because an ADR is a record: `tools/AzureBank.AuditVerifier` reads this table, and `VerifyAsync` is
+now called from production code rather than only from tests. The second half still holds — nothing
+verifies the chain on a schedule.
+
 Two further gaps, named rather than left implicit: **nothing reads this table yet** — there is no
 endpoint, no access control and no operator view, which is B3's work — and **`VerifyAsync` is called
 only by tests**, so nothing verifies the chain on a schedule.
