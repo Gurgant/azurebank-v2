@@ -37,8 +37,8 @@ hunting a database outage that was not happening.
 `503` with `audit-chain` reporting **unhealthy** means the audit store is **unreadable** from this
 instance. Unreadable, not unreachable: the probe fails the same way for a database that is down, an
 `AuditEvents` table that was never migrated, a disabled or corrupt index, and credentials that can no
-longer read it. Which of those it is: step 2 if it is a permission, step 5 if it is the table. `200` means the probe read the table, and the cause
-is one of the narrower ones below.
+longer read it. Which of those it is: step 2 if it is a permission, step 5 if it is the table.
+`200` means the probe read the table, and the cause is one of the narrower ones below.
 
 ## What you will see in the log
 
@@ -65,8 +65,8 @@ whole signal.
 ## Triage, in order
 
 **1. Is the database reachable at all?** If the body you just printed also reports `database`
-unhealthy, this is not an audit problem — it is the database, and the audit chain is simply the first thing to
-notice. Treat it as a database outage.
+unhealthy, this is not an audit problem — it is the database, and the audit chain is simply the
+first thing to notice. Treat it as a database outage.
 
 **2. Does it say `readable but NOT writable`?** Then this is a PERMISSION problem, not an outage,
 and it has nothing in common with the rest of this runbook. The store answers every read and refuses
@@ -167,8 +167,25 @@ thirty-second queue into a fast refusal; raising it makes every movement wait lo
 eventual failure, and holds a connection while it does. If the queue is legitimate rather than stuck
 — a genuine burst — the fix is capacity, not patience.
 
-**Do not delete rows to "unstick" the table.** The chain is hash-linked; removing a row breaks the
-verification of every row after it, permanently.
+**Do not delete rows to "unstick" the table.** Two different things happen, and the one that sounds
+safer is the dangerous one.
+
+Deleting an **interior** row is caught: the row after it records a predecessor that is no longer
+there, and `VerifyAsync` reports the break at that sequence number. Deleting from the **end** is not
+caught at all. The surviving prefix links perfectly and hashes perfectly, because verification only
+ever looks backwards and has nothing to compare the end of the table against.
+
+Measured, not argued — `AuditChainTests.TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit` writes
+three rows, deletes the last one, and the chain still reports itself intact; the only trace is that
+the count fell from three to two, which is evidence to somebody who wrote the old count down
+elsewhere and to nobody who did not.
+
+So truncation is the cheapest attack on this table — it needs **no key at all**, only write access —
+and it is also the easiest thing to do by accident while trying to clear a stuck table at three in
+the morning. ADR-0044 states the same limit and the honest claim it leaves: this chain detects
+tampering by someone holding the database but not the key, **except at the end of the table**. Until
+the head is anchored outside the system, the only witness to how many rows there should be is
+somebody who wrote the number down.
 
 ---
 

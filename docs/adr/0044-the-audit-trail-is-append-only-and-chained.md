@@ -159,6 +159,13 @@ against. Truncation is therefore undetected — and, unlike the rewrite case bel
 at all**, only write access to the table. Confirmed by walking the loop, and stated here rather than
 left for a reader to discover.
 
+**Now measured as well as reasoned (2026-08-22).** The test
+`AuditChainTests.TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit` writes three rows, removes
+the last, and asserts the chain still reports itself INTACT with the count down to two. It asserts
+the uncomfortable direction deliberately: if the head is ever anchored the test goes red, and the
+documents resting on this limit get corrected with it. It exists because the runbook had gone on
+repeating the too-strong claim this very section had already withdrawn.
+
 What this also does not defend against: an attacker holding both the database and the application's
 secrets can rewrite a row and recompute the chain. Both gaps close the same way — a digest anchored
 outside the system, which is SQL Server's ledger, deferred rather than rejected. Until then the

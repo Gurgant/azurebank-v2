@@ -141,6 +141,43 @@ public class AuditChainTests : IDisposable
     }
 
     [Fact]
+    public async Task TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit()
+    {
+        /*
+          THE LIMIT OF THE PROPERTY, ASSERTED SO IT CANNOT BE OVERSTATED AGAIN. The test above shows
+          an INTERIOR deletion is caught, and it is caught by the NEXT row pointing at a predecessor
+          that is gone. Delete from the END and there is no next row: the surviving prefix is
+          perfectly self-consistent, every link holds, every hash matches, and VerifyAsync reports
+          intact. Nothing in the chain records how many rows there should have been.
+
+          So a hash chain proves rows were not ALTERED or REMOVED FROM THE MIDDLE. It does not prove
+          none were removed from the end. That needs an external witness — an anchored head, a
+          counter someone else keeps — which this system does not have yet.
+
+          This test exists because the runbook claimed the stronger property in writing. It is
+          deliberately asserting the UNCOMFORTABLE direction: if someone later anchors the head, this
+          goes red, and the documentation it protects gets updated with it.
+        */
+        await WriteAsync("First", "Second", "Third");
+
+        (await _chain.VerifyAsync(_context)).Verified.Should().Be(3, "three rows were written");
+
+        var tail = await _context.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
+        _context.AuditEvents.Remove(tail);
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeTrue(
+            "MEASURED, and it is the honest answer rather than the comfortable one: a truncated "
+            + "prefix links perfectly, so the chain cannot tell that anything is missing");
+        verification.Verified.Should().Be(
+            2,
+            "the ONLY trace is that the count dropped — which is evidence to somebody who wrote the "
+            + "previous count down somewhere else, and to nobody who did not");
+    }
+
+    [Fact]
     public async Task AChainWrittenWithADifferentKey_DoesNotVerify()
     {
         await WriteAsync("First", "Second");
