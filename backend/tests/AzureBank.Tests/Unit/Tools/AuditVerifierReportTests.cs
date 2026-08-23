@@ -96,6 +96,38 @@ public class AuditVerifierReportTests
     }
 
     [Fact]
+    public async Task AnInterruptedWalkSaysSo_RatherThanBlamingTheStore()
+    {
+        /*
+          Ctrl+C cancels the token, VerifyAsync rethrows, and before this the message told the
+          operator to check the connection string and the key -- neither of which was the problem,
+          because they stopped it themselves. The code stays 3: a walk that was interrupted checked
+          part of the chain and proved nothing about the rest, which is what "no verdict" means.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AzureBankDbContext>(o => o.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        services.AddSingleton<IAuditChain>(new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = new string('k', 32) }),
+            NullLogger<AuditChain>.Instance));
+
+        using var provider = services.BuildServiceProvider();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var (exitCode, lines) = await VerifyCommand.RunAsync(provider, cancelled.Token);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(
+            VerifyCommand.Misconfigured, "an interrupted walk still produced no verdict");
+        text.Should().Contain("CANCELLED", "the operator has to know it was them");
+        text.Should().NotContain(
+            "could not be read",
+            "the store was fine -- reporting a store failure sends them to check a connection "
+            + "string that was never the problem");
+    }
+
+    [Fact]
     public void AnEmptyTableIsNOTReportedAsIntact()
     {
         /*

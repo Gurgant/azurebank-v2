@@ -481,7 +481,21 @@ public sealed class AuditChain : IAuditChain
           notice. So the enumeration is guarded here, where the walk knows how far it got, and the
           failure is reported as what it is.
         */
-        var enumerator = rows.WithCancellation(cancellationToken).GetAsyncEnumerator();
+        /*
+          await using, BECAUSE THE HAND-DRIVEN LOOP LOST WHAT await foreach GAVE FOR FREE.
+
+          This method used to be an await foreach, which the compiler lowers to a try/finally that
+          disposes the enumerator on every exit path. Driving the enumerator by hand -- needed so a
+          row that will not materialise can be caught and reported rather than escaping -- dropped
+          that finally, so every EARLY return, which is to say every BROKEN verdict, left EF's
+          DbDataReader open on this context's connection.
+
+          Measured on SQL Server: the caller's next query on the same context died with "There is
+          already an open DataReader associated with this Connection which must be closed first."
+          The InMemory tests could not see it -- there is no reader there -- which is why it took a
+          reviewer reading the rewrite, and why the regression test for it is SQL-gated.
+        */
+        await using var enumerator = rows.WithCancellation(cancellationToken).GetAsyncEnumerator();
 
         while (true)
         {
@@ -568,8 +582,6 @@ public sealed class AuditChain : IAuditChain
             previous = row.RowHash;
             verified++;
         }
-
-        await enumerator.DisposeAsync();
 
         return new AuditChainVerification(verified, null, null, lowest, highest);
     }

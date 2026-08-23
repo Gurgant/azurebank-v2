@@ -224,6 +224,26 @@ public static class VerifyCommand
 
             return Report(verification, verification.LowestSequence, verification.HighestSequence);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            /*
+              AN INTERRUPTION IS NOT A STORE FAILURE, and saying so sent the operator the wrong way.
+
+              Ctrl+C during a walk cancels the token, VerifyAsync rethrows, and this landed in the
+              catch below -- which reports "the audit store could not be read" and tells them to
+              check the connection string and the key. Both were fine; they stopped it themselves.
+
+              Still no verdict, so still the same exit code: a walk that was interrupted checked
+              part of the chain and proved nothing about the rest, which is exactly what code 3
+              means. What changes is that the reason is true.
+            */
+            return (Misconfigured, new[]
+            {
+                "CANCELLED: the walk was interrupted, so there is no verdict.",
+                "  Nothing is wrong with the store or the key -- part of the chain was checked and",
+                "  the rest was not. Run it again to get an answer.",
+            });
+        }
         catch (Exception failure)
         {
             /*
