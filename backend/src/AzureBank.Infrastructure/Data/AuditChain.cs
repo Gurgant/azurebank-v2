@@ -41,7 +41,23 @@ public interface IAuditChain
 /// zero rows returns "intact", and that answer is worthless — the same failure mode
 /// <c>SourceHygieneTests</c> was given a floor for after #119. Assert the count, not just the verdict.
 /// </remarks>
-public readonly record struct AuditChainVerification(long Verified, long? FirstBrokenSequence, string? Reason)
+/// <param name="LowestSequence">
+/// The first and last sequence THIS WALK actually read, or null if it read nothing.
+/// </param>
+/// <param name="HighestSequence">See <paramref name="LowestSequence"/>.</param>
+/// <remarks>
+/// THE RANGE COMES FROM THE WALK ITSELF, and it is here rather than left to the caller because the
+/// caller cannot get it right. Asking the database separately for MIN and MAX is two more statements
+/// at two more instants: a row committed between the MAX and the walk is counted but falls outside
+/// the range, so the tool could report 101 rows verified over a range ending at 100. The count and
+/// the range exist to be compared with each other, so they have to come from one read.
+/// </remarks>
+public readonly record struct AuditChainVerification(
+    long Verified,
+    long? FirstBrokenSequence,
+    string? Reason,
+    long? LowestSequence = null,
+    long? HighestSequence = null)
 {
     /// <summary>True when every row read hashed and linked correctly.</summary>
     public bool IsIntact => FirstBrokenSequence is null;
@@ -406,15 +422,24 @@ public sealed class AuditChain : IAuditChain
         string? previous = null;
         long verified = 0;
 
+        // Recorded as the walk goes, so the range and the count are two facts about ONE read.
+        long? lowest = null;
+        long? highest = null;
+
         await foreach (var row in rows.WithCancellation(cancellationToken))
         {
+            lowest ??= row.Sequence;
+            highest = row.Sequence;
+
             if (row.PreviousHash != previous)
             {
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
                     $"Row {row.Id} expected to follow '{previous ?? "(start of chain)"}' but records "
-                    + $"'{row.PreviousHash ?? "(start of chain)"}'. A row was deleted, reordered, or inserted.");
+                    + $"'{row.PreviousHash ?? "(start of chain)"}'. A row was deleted, reordered, or inserted.",
+                    lowest,
+                    highest);
             }
 
             var expected = ComputeRowHash(row);
@@ -422,14 +447,18 @@ public sealed class AuditChain : IAuditChain
                     Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
             {
                 return new AuditChainVerification(
-                    verified, row.Sequence, $"Row {row.Id} does not match its own hash: it was altered after it was written.");
+                    verified,
+                    row.Sequence,
+                    $"Row {row.Id} does not match its own hash: it was altered after it was written.",
+                    lowest,
+                    highest);
             }
 
             previous = row.RowHash;
             verified++;
         }
 
-        return new AuditChainVerification(verified, null, null);
+        return new AuditChainVerification(verified, null, null, lowest, highest);
     }
 
     /// <summary>

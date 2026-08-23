@@ -157,14 +157,17 @@ public static class VerifyCommand
             var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
             var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
 
-            // The RANGE is reported alongside the count so the operator can compare it with what
-            // they expected. A chain that verifies 40 rows when yesterday it had 40,000 is intact
-            // and catastrophic, and only the numbers say so.
-            var rows = context.Set<Shared.Entities.AuditEvent>().AsNoTracking();
-            var lowest = await rows.MinAsync(e => (long?)e.Sequence, cancellationToken);
-            var highest = await rows.MaxAsync(e => (long?)e.Sequence, cancellationToken);
+            /*
+              THE RANGE COMES FROM THE WALK, not from two extra queries. It is reported beside the
+              count so the operator can compare them -- a chain that verifies 40 rows where yesterday
+              it had 40,000 is intact and catastrophic, and only the numbers say so. That comparison
+              is worthless if the two facts come from different instants: this asked the database for
+              MIN and MAX before walking, so a row committed in between was counted but fell outside
+              the range, and the tool could report 101 rows verified over a range ending at 100.
+            */
+            var verification = await chain.VerifyAsync(context, cancellationToken);
 
-            return Report(await chain.VerifyAsync(context, cancellationToken), lowest, highest);
+            return Report(verification, verification.LowestSequence, verification.HighestSequence);
         }
         catch (Exception failure)
         {

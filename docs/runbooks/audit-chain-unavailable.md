@@ -207,12 +207,13 @@ somebody who wrote the number down.
   claimed it did. An `export` line is a command, and your shell records it: bash writes it to
   `HISTFILE`, and PowerShell's PSReadLine writes it to `ConsoleHost_history.txt` — its
   sensitive-word filter matches `password|token|apikey|secret`, none of which is `ChainKey`. A
-  history file outlives the process, which makes it the WORSE exposure of the two. Read the key
-  instead of typing it:
+  history file outlives the process, which makes it the WORSE exposure of the two. Read BOTH values
+  instead of typing them — the connection string carries database credentials, so it is no more
+  printable than the key:
 
   ```bash
   read -rs Audit__ChainKey && export Audit__ChainKey
-  export ConnectionStrings__DefaultConnection="..."
+  read -rs ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
