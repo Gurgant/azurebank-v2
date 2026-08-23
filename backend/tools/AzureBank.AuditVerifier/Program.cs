@@ -19,8 +19,9 @@ namespace AzureBank.AuditVerifier;
 //   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
 //
 // Exit codes: 0 intact, 1 broken, 2 nothing to verify, 3 no verdict (the store could not be read),
-// 4 the command line was wrong. Only 0, 1 and 2 are statements about the chain. The list lives in
-// VerifyCommand's constants; this header repeats it, so changing one means changing both.
+// 4 the command line was wrong, 5 interrupted. Only 0, 1 and 2 are statements about the chain. The
+// list lives in VerifyCommand's constants; this header repeats it, so changing one means changing
+// both.
 // ============================================
 /*
   ANCHORED TO THE BINARY, NOT TO THE SHELL'S CURRENT DIRECTORY.

@@ -119,12 +119,71 @@ public class AuditVerifierReportTests
         var text = string.Join(" ", lines);
 
         exitCode.Should().Be(
-            VerifyCommand.Misconfigured, "an interrupted walk still produced no verdict");
-        text.Should().Contain("CANCELLED", "the operator has to know it was them");
+            VerifyCommand.Interrupted,
+            "an interruption is its own outcome: e2fsck documents 32 for 'canceled by user request' "
+            + "separately from 8 'operational error', and AIDE 25 separately from its IO and database "
+            + "codes. Folding it into 3 had already misfired here -- the runbook tells an operator to "
+            + "alert on 3 with a triage list of environment failures, none of which applies to "
+            + "somebody pressing Ctrl+C");
+        exitCode.Should().NotBe(
+            VerifyCommand.Misconfigured, "which is what it used to be, and what the runbook glosses "
+            + "as 'the store could not be read'");
+        text.Should().Contain("INTERRUPTED", "the operator has to know it was them");
         text.Should().NotContain(
             "could not be read",
             "the store was fine -- reporting a store failure sends them to check a connection "
             + "string that was never the problem");
+    }
+
+    [Fact]
+    public async Task AnInterruptionIsRecognisedWHATEVERShapeItArrivesIn()
+    {
+        /*
+          THE CASE THE FIRST GUARD COULD NOT SEE, and the reason it could not.
+
+          That guard caught OperationCanceledException. On SQL Server that is only what Ctrl+C
+          produces when the token was ALREADY signalled when the call started -- which is precisely
+          what a test passing a pre-cancelled token manufactures. Cancel a walk that is genuinely in
+          flight and SqlClient sends an attention, the server aborts the batch, and the task faults
+          with a SqlException instead (dotnet/SqlClient#26, open since 2016). So the guard covered
+          the shape the test creates and the operator got the other one.
+
+          A SqlException cannot be constructed here -- it has no public constructor -- so this pins
+          the property that matters instead: the classification must not depend on the exception
+          TYPE at all. A chain that throws something entirely unrelated, with the token signalled,
+          must still be reported as an interruption.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AzureBankDbContext>(o => o.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        services.AddSingleton<IAuditChain>(new ThrowingChain(new InvalidOperationException("not an OCE")));
+
+        using var provider = services.BuildServiceProvider();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var (exitCode, lines) = await VerifyCommand.RunAsync(provider, cancelled.Token);
+
+        exitCode.Should().Be(
+            VerifyCommand.Interrupted,
+            "the token is signalled, so this is an interruption whatever the exception's type -- "
+            + "which is what EF itself does: SqlServerExceptionDetector.IsCancellation keys on "
+            + "IsCancellationRequested regardless of the exception");
+        string.Join(" ", lines).Should().NotContain(
+            "could not be read",
+            "blaming the store is the wrong message for somebody who stopped it themselves");
+    }
+
+    /// <summary>An <see cref="IAuditChain"/> that fails the way a cancelled SQL walk does.</summary>
+    private sealed class ThrowingChain(Exception failure) : IAuditChain
+    {
+        public Task ApplyAsync(DbContext context, CancellationToken cancellationToken = default) =>
+            throw failure;
+
+        public void Apply(DbContext context) => throw failure;
+
+        public Task<AuditChainVerification> VerifyAsync(
+            DbContext context, CancellationToken cancellationToken = default) => throw failure;
     }
 
     [Fact]

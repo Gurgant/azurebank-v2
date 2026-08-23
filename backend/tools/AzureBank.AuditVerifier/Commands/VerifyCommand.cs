@@ -54,6 +54,24 @@ public static class VerifyCommand
     /// </remarks>
     public const int UsageError = 4;
 
+    /// <summary>The walk was interrupted before it could reach a verdict.</summary>
+    /// <remarks>
+    /// <para>
+    /// SEPARATE FROM <see cref="Misconfigured"/> because the tools that do this for a living keep
+    /// them apart, and because folding them had already produced a defect here: the runbook glosses
+    /// 3 as "the store could not be read" and tells an operator to wire an alert on it with a triage
+    /// list of environment failures, none of which applies to somebody pressing Ctrl+C.
+    /// </para>
+    /// <para>
+    /// <c>e2fsck</c> documents <b>32</b> as "canceled by user request", distinct from 8 "operational
+    /// error"; AIDE documents <b>25</b> for SIGINT/SIGTERM/SIGHUP, distinct from 18 (IO) and 24
+    /// (database). Of the comparable verifiers only tripwire folds everything into one catch-all.
+    /// Five rather than 130: 128+signal is a SHELL-side encoding of a process killed BY a signal,
+    /// and this process catches the interruption and exits deliberately.
+    /// </para>
+    /// </remarks>
+    public const int Interrupted = 5;
+
     /// <summary>
     /// Turns a verification result into what the operator sees and what a script reads.
     /// </summary>
@@ -224,22 +242,39 @@ public static class VerifyCommand
 
             return Report(verification, verification.LowestSequence, verification.HighestSequence);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
             /*
-              AN INTERRUPTION IS NOT A STORE FAILURE, and saying so sent the operator the wrong way.
+              INTERRUPTION IS DECIDED BY THE TOKEN, NOT BY THE EXCEPTION TYPE, and the first version
+              of this guard got that exactly backwards.
 
-              Ctrl+C during a walk cancels the token, VerifyAsync rethrows, and this landed in the
-              catch below -- which reports "the audit store could not be read" and tells them to
-              check the connection string and the key. Both were fine; they stopped it themselves.
+              It caught OperationCanceledException. On SQL Server that is only what Ctrl+C produces
+              when the token was ALREADY signalled at the moment the call started -- which is what a
+              unit test passing a pre-cancelled token creates. Cancel a walk that is genuinely in
+              flight and Microsoft.Data.SqlClient sends an attention, the server aborts the batch,
+              and the task completes FAULTED with a SqlException carrying "A severe error occurred on
+              the current command." and "Operation cancelled by user."; dotnet/SqlClient#26 has been
+              open on this since 2016 and there is no faulted-to-cancelled conversion in
+              SqlCommand.Reader.cs. So which shape an interruption arrives in is a timing race, the
+              guard covered the shape the test manufactures, and the operator got the other one.
 
-              Still no verdict, so still the same exit code: a walk that was interrupted checked
-              part of the chain and proved nothing about the rest, which is exactly what code 3
-              means. What changes is that the reason is true.
+              Keying on the token is what EF itself does -- SqlServerExceptionDetector.IsCancellation
+              returns true on IsCancellationRequested regardless of the exception. It accepts one
+              trade knowingly: a genuine outage that coincides with a signalled token is reported as
+              an interruption. That is the better error to make, because the operator who pressed
+              Ctrl+C knows they did.
+
+              NOT ex.CancellationToken == cancellationToken, which looks more precise and is worse:
+              SqlClient completes its internal cancellations with TrySetCanceled() and no token, so
+              the exception carries default.
+
+              WATCH THIS IF A --timeout IS EVER ADDED. Implemented as a linked CancellationTokenSource,
+              the timeout leg would fire while this token stayed false, and the guard would go quiet
+              again. The whole path carries ONE token today, verified in source.
             */
-            return (Misconfigured, new[]
+            return (Interrupted, new[]
             {
-                "CANCELLED: the walk was interrupted, so there is no verdict.",
+                "INTERRUPTED: the walk was stopped before it reached a verdict.",
                 "  Nothing is wrong with the store or the key -- part of the chain was checked and",
                 "  the rest was not. Run it again to get an answer.",
             });

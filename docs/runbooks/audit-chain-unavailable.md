@@ -287,8 +287,8 @@ somebody who wrote the number down.
   40 rows where yesterday it had 40,000 is intact and catastrophic, and only the numbers say so.
 
   Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** no verdict
-  (the store could not be read), **4** the command line was wrong. Only 0, 1 and 2 are statements
-  about the CHAIN.
+  (the store could not be read), **4** the command line was wrong, **5** interrupted. Only 0, 1 and
+  2 are statements about the CHAIN.
 
   **`3` is the one to wire an alert on separately from `1`.** It covers everything that stopped the
   walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey`, an unreachable
@@ -301,6 +301,14 @@ somebody who wrote the number down.
   is simply not the one the chain was written with passes every check the tool can make, so the walk
   runs and the hashes mismatch: that exits **1**, the same as a tamper. There is no way around it —
   the two are indistinguishable to any check — which is exactly why the next paragraph exists.
+
+  **`5` is not an incident.** Somebody stopped the walk — Ctrl+C, a killed job, a shutdown. Part of
+  the chain was checked and the rest was not, so there is no verdict, but nothing is wrong with the
+  store or the key and the triage list above does not apply. It is separate from `3` for that
+  reason: an alert wired to `3` would otherwise hand whoever answers it a list of environment
+  failures to chase after a colleague pressed Ctrl+C. `e2fsck` keeps the same distinction (32
+  "canceled by user request" against 8 "operational error"), as does AIDE (25 for SIGINT against 18
+  and 24). Re-run it to get an answer.
 
   **`4` exists because the framework collided with this vocabulary.** System.CommandLine reports
   every parse failure as exit 1, so running the tool with no arguments at all — the likeliest
