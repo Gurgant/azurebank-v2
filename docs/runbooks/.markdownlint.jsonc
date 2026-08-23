@@ -1,0 +1,18 @@
+// markdownlint configuration for `docs/runbooks/` only. markdownlint-cli2 reads the config nearest
+// each linted file, so this applies to the runbooks and to nothing else in the repository.
+{
+  // MD040 (fenced-code-language) is OFF here for the same reason it is off in `docs/adr/`, and the
+  // reasoning there applies verbatim: these documents fence MEASURED OUTPUT far more often than
+  // source. Both bare fences in audit-chain-unavailable.md are transcripts — a log line the operator
+  // will actually see, and `Msg 6120 … Rollback operation for Process ID 56 is not in progress`
+  // copied from SQL Server. Neither is code, and neither has a language.
+  //
+  // Encoded rather than satisfied with `text` because the linter has now asked three times across
+  // three PRs and NOT in one direction: on #94 it asked to REMOVE the `text` info string from a
+  // measured block, on #96 to add it back, and on #127 to add it again. A rule that argues with
+  // itself is a rule nobody can follow, and the corpus already answers it — the ADR config counts
+  // 51 of 78 fence lines bare. Writing it down is what stops the next round re-settling it.
+  //
+  // See `docs/adr/.markdownlint.jsonc` for the original decision.
+  "MD040": false
+}

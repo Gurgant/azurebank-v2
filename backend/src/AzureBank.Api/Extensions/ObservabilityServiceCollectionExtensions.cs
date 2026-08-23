@@ -1,6 +1,9 @@
 using AzureBank.Api.Observability;
+using AzureBank.Api.HealthChecks;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Observability;
+using AzureBank.Shared.Options;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Compliance.Classification;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
@@ -23,7 +26,7 @@ public static class ObservabilityServiceCollectionExtensions
     internal const string ServiceName = "azurebank-api";
 
     public static IServiceCollection AddObservability(
-        this IServiceCollection services, IHostEnvironment environment)
+        this IServiceCollection services, IHostEnvironment environment, IConfiguration configuration)
     {
         // Gate on the PROCESS environment variable. This is a deliberate CONTRACT, not an
         // oversight: the process env var is the only supported way to enable export. The Serilog
@@ -105,7 +108,80 @@ public static class ObservabilityServiceCollectionExtensions
 
         // Liveness = process up (no dependency probe); readiness = DB reachable (tagged "ready").
         services.AddHealthChecks()
-            .AddDbContextCheck<AzureBankDbContext>(name: "database", tags: ["ready"]);
+            .AddDbContextCheck<AzureBankDbContext>(name: "database", tags: ["ready"])
+
+            // Tagged "ready" alongside the database, because since ADR-0044 D1 an unreachable audit
+            // store does not degrade this instance — it stops it moving money, which is the thing it
+            // exists to do. Readiness is exactly the right signal for "do not send me traffic".
+            .AddCheck<AuditChainHealthCheck>(name: "audit-chain", tags: ["ready"]);
+
+        /*
+          NO READINESS CHECK MAY RUN LONGER THAN THE BANK'S OWN WAIT TOLERANCE — and until this,
+          neither of them had any bound at all. AddCheck and AddDbContextCheck both leave
+          HealthCheckRegistration.Timeout at Timeout.InfiniteTimeSpan.
+
+          MEASURED, because "unbounded" sounds theoretical until it has a number: the audit probe
+          pointed at an unroutable address (RFC 5737 TEST-NET-1) took 36,800 ms to answer — SqlClient's
+          15s connect timeout, then a retry after ConnectRetryInterval, then 15s again. Anything asking
+          gave up long before; Kubernetes' default probe timeout is ONE second. A probe that does not
+          answer is strictly worse than one that answers "unhealthy", because the first tells an
+          orchestrator nothing while still consuming a connection.
+
+          THE FRAMEWORK DOES ENFORCE THIS VALUE, which was worth measuring rather than assuming — the
+          finding that prompted this cited a source claiming DefaultHealthCheckService ignores it. It
+          does not: a five-second check registered with a 300 ms timeout came back in 307 ms as
+          Unhealthy, "A timeout occurred while running check."
+
+          APPLIED HERE RATHER THAN PER-REGISTRATION for two reasons. AddDbContextCheck takes no timeout
+          parameter at all, so the database check could not be bounded at its call site — and leaving it
+          unbounded would leave /health/ready able to hang for 37 seconds anyway, which is the thing
+          being fixed. Doing it by tag also means a readiness check added later inherits the bound
+          instead of quietly reintroducing the hang.
+
+          POSTConfigure, NOT Configure, AND THAT WORD IS THE WHOLE SENTENCE ABOVE. AddCheck appends
+          its registration through a Configure callback of its own, and callbacks run in registration
+          order — so with Configure, a check added after this method had already been called was
+          configured AFTER the loop ran, and kept Timeout.InfiniteTimeSpan. The claim "added later
+          inherits the bound" was simply false, and measured: the regression test read -1ms, which is
+          InfiniteTimeSpan. PostConfigure runs after every Configure, which makes it true.
+          Pinned by ReadinessAnswersWithinBudgetTests.AReadinessCheckRegisteredAFTERAddObservability_
+          StillInheritsTheBudget.
+
+          THE BOUND IS COOPERATIVE, NOT ENFORCED, and that is the sentence to read before adding a
+          check here. Checked against DefaultHealthCheckService in dotnet/aspnetcore v10.0.0: the
+          timeout is a linked CancellationTokenSource plus CancelAfter, created only when the value is
+          strictly positive. CancelAfter merely SIGNALS a token — there is no Task.WhenAny race and no
+          abandonment of the running task, and RunCheckAsync unconditionally awaits the check. So a
+          readiness check that ignores the token it is handed is not bounded by anything, and it takes
+          /health/ready down with it while the registration still looks correctly configured. Both
+          checks here honour it: ours passes the token to ExecuteScalarAsync, and AddDbContextCheck
+          passes it to CanConnectAsync.
+
+          THE BUDGET ALSO HAS TO CLEAR THE PROBE'S OWN LATENCY UNDER LOAD, which is a constraint on
+          the number rather than on the mechanism. Measured on the running API: a single readiness
+          request answers in ~0.9s, but 30 issued CONCURRENTLY answered in 1.5-2.6s each (server-side
+          timings, all 200) — every probe opens a connection for this check and another for the
+          database check. Against the five-second default that leaves roughly 2x of headroom. Lower
+          the bound far enough and a HEALTHY instance under probe load starts reporting itself
+          unhealthy and is taken out of rotation, which is the failure this whole budget exists to
+          avoid, arriving from the other direction.
+
+          BOUND TO Audit:TailTimeoutSeconds rather than to a constant of its own, so the two cannot
+          drift apart. A fixed 5s probe under a 20s configured tail bound would pull this instance out
+          of rotation while money movements were still succeeding — a false alarm that takes the bank
+          offline for a wait it had been told to tolerate.
+        */
+        var readinessBudget = TimeSpan.FromSeconds(
+            configuration.GetValue<int?>("Audit:TailTimeoutSeconds")
+            ?? new AuditOptions().TailTimeoutSeconds);
+
+        services.PostConfigure<HealthCheckServiceOptions>(options =>
+        {
+            foreach (var registration in options.Registrations.Where(r => r.Tags.Contains("ready")))
+            {
+                registration.Timeout = readinessBudget;
+            }
+        });
 
         return services;
     }

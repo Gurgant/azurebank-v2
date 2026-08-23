@@ -136,6 +136,11 @@ public static class ServiceCollectionExtensions
                 o => !string.IsNullOrWhiteSpace(o.ChainKey) && o.ChainKey.Length >= 32,
                 "Audit:ChainKey must be configured with at least 32 characters " +
                 "(dotnet user-secrets in development; see README)")
+
+            // The [Range] on TailTimeoutSeconds is only enforced if something asks for it. Without
+            // this line the attribute is decoration: Audit:TailTimeoutSeconds=0 would bind happily
+            // and hand ADO.NET a command timeout meaning NO limit, removing the bound in silence.
+            .ValidateDataAnnotations()
             .ValidateOnStart();
 
         // PIN-hash pepper keyring (ADR-0011). The pepper is a server-side secret kept

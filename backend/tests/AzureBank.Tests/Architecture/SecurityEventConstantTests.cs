@@ -49,13 +49,19 @@ public class SecurityEventConstantTests
 
     /// <summary>
     /// Both projects, whole. Unlike the error-code rule this is not scoped to a Services folder:
-    /// eight of the twenty-five sites live in the BFF's middleware and its Program, and scoping is what
+    /// eight of the twenty-seven sites live in the BFF's middleware and its Program, and scoping is what
     /// let a third of the vocabulary sit outside anybody's rule in the first place.
     /// </summary>
     private static readonly string[] ScannedFolders =
     [
         Path.Combine("src", "AzureBank.Api"),
         Path.Combine("src", "AzureBank.Bff"),
+
+        // Infrastructure joined the scan on 2026-08-20, when AuditChain became the first thing
+        // OUTSIDE the two hosts to raise a security event. A re-audit had already named the gap:
+        // an event raised here was invisible to every guard in this file — the bare-literal scan,
+        // the canonical-placeholder scan and the inventory count alike.
+        Path.Combine("src", "AzureBank.Infrastructure"),
     ];
 
     private static IEnumerable<string> SourceFiles(DirectoryInfo root)
@@ -407,10 +413,30 @@ public class SecurityEventConstantTests
         const int apiSites = 17;
         const int bffSites = 8;
 
+        /*
+          THREE BUCKETS, NOT TWO. The first version asked only "is it the Bff?" and swept everything
+          else into "Api" — so the moment Infrastructure joined the scan, its one site was counted as
+          an API site and the guard failed against the ADR for the wrong reason. A default bucket that
+          silently absorbs whatever it is not expecting is the same shape of defect this whole test
+          exists to catch.
+        */
+        static string ProjectOf(string file) =>
+            file.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal) ? "Bff"
+            : file.Contains(Path.Combine("src", "AzureBank.Infrastructure"), StringComparison.Ordinal) ? "Infrastructure"
+            : file.Contains(Path.Combine("src", "AzureBank.Api"), StringComparison.Ordinal) ? "Api"
+
+            // NO DEFAULT BUCKET. Matching Api explicitly and refusing the rest is the whole lesson
+            // of the previous version: it swept everything unrecognised into "Api", so the moment
+            // Infrastructure joined ScannedFolders its sites were counted as API sites and the test
+            // failed against the ADR for entirely the wrong reason. A fallback that silently absorbs
+            // what it did not expect produces valid-LOOKING counts, which is worse than a crash.
+            : throw new InvalidOperationException(
+                $"{file} is in ScannedFolders but ProjectOf does not classify it. Add the project "
+                + "here and give it its own expected count below — do not let it fall into another "
+                + "project's bucket.");
+
         var perProject = SourceFiles(RepoBackendRoot())
-            .GroupBy(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)
-                ? "Bff"
-                : "Api")
+            .GroupBy(ProjectOf)
             .ToDictionary(
                 g => g.Key,
                 g => g.Sum(f => CountOccurrences(File.ReadAllText(f), Template)));
@@ -421,6 +447,8 @@ public class SecurityEventConstantTests
             "Api", "a project scanning to nothing would make every count below vacuously wrong");
         perProject.Should().ContainKey(
             "Bff", "a project scanning to nothing would make every count below vacuously wrong");
+        perProject.Should().ContainKey(
+            "Infrastructure", "a project scanning to nothing would make every count below vacuously wrong");
 
         EventsNamedOnTemplateLines(SourceFiles(RepoBackendRoot())
                 .Where(f => f.Contains(Path.Combine("src", "AzureBank.Bff"), StringComparison.Ordinal)))
@@ -469,10 +497,25 @@ public class SecurityEventConstantTests
             "the out-of-band half is counted separately because it answers a different question — "
             + "which refusals survive their own rollback");
 
-        (perProject["Api"] + perProject["Bff"]).Should().Be(
-            25,
-            "AuditOutcome's remarks derive the four outcomes from \"the 25 existing security-event log "
-            + "sites\" and tally \"15 of the 25\" as Refused; both have to move with this");
+        perProject["Infrastructure"].Should().Be(
+            2,
+            "AuditChain reports AuditChainUnavailable from BOTH save funnels, async and sync, and its "
+            + "event is log-only by NECESSITY rather than by choice — RecordRefusalAsync would take "
+            + "the very lock that just failed. ADR-0044 says so; keep them together");
+
+        // The NAME, not only the count — the same correction the BFF inventory needed. Swapping this
+        // event for a different Infrastructure one would leave every number here untouched.
+        EventsNamedOnTemplateLines(SourceFiles(RepoBackendRoot())
+                .Where(f => f.Contains(Path.Combine("src", "AzureBank.Infrastructure"), StringComparison.Ordinal)))
+            .Should().BeEquivalentTo(
+                new[] { "AuditChainUnavailable" },
+                "ADR-0044 names this as the one event that cannot write a row; a substitution here "
+                + "would make that sentence describe something else");
+
+        (perProject["Api"] + perProject["Bff"] + perProject["Infrastructure"]).Should().Be(
+            27,
+            "AuditOutcome's remarks derive the four outcomes from \"the 27 existing security-event log "
+            + "sites\" and tally \"17 of the 27\" as Refused; both have to move with this");
     }
 
     /// <summary>
@@ -487,10 +530,15 @@ public class SecurityEventConstantTests
             .ToArray();
 
     /*
-      The name is often on the NEXT line, because the template sits in the message string and the
-      constant is passed as an argument below it. Two lines of lookahead covers every site in this
-      repository; a site that drifts further apart shows up as a missing name rather than silently
-      passing, which is the failure direction to prefer.
+      SCANNED TO THE END OF THE STATEMENT, not for a fixed number of lines — and the fixed number is
+      why this had to change. The name is passed as an argument AFTER the message, so how far below
+      the template it lands depends entirely on how the message string happens to be wrapped. Two
+      lines of lookahead covered every site until AuditChain's message needed three continuation
+      lines, at which point the scan found the template, missed the name, and reported Infrastructure
+      as having no events at all.
+
+      A log call ends at the first line closing it with ");", so that is the real unit. Scanning it
+      makes the result independent of formatting, which is what a guard about naming should be.
     */
     private static IEnumerable<string> NamesNearTemplate(string[] lines)
     {
@@ -501,12 +549,19 @@ public class SecurityEventConstantTests
                 continue;
             }
 
-            for (var j = i; j < Math.Min(i + 3, lines.Length); j++)
+            for (var j = i; j < lines.Length; j++)
             {
                 var match = Regex.Match(lines[j], @"SecurityEvents\.([A-Za-z]+)");
                 if (match.Success)
                 {
                     yield return match.Groups[1].Value;
+                    break;
+                }
+
+                // End of this log statement without a constant: the site names its event some other
+                // way, which the bare-literal scan elsewhere in this file is responsible for.
+                if (lines[j].TrimEnd().EndsWith(");", StringComparison.Ordinal))
+                {
                     break;
                 }
             }
