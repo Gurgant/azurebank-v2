@@ -37,7 +37,7 @@ hunting a database outage that was not happening.
 `503` with `audit-chain` reporting **unhealthy** means the audit store is **unreadable** from this
 instance. Unreadable, not unreachable: the probe fails the same way for a database that is down, an
 `AuditEvents` table that was never migrated, a disabled or corrupt index, and credentials that can no
-longer read it. Which of those it is: step 2 if it is a permission, step 5 if it is the table.
+longer read it. Which of those it is: step 3 if it is a permission, step 6 if it is the table.
 `200` means the probe read the table, and the cause is one of the narrower ones below.
 
 ## What you will see in the log
@@ -68,7 +68,15 @@ whole signal.
 unhealthy, this is not an audit problem — it is the database, and the audit chain is simply the
 first thing to notice. Treat it as a database outage.
 
-**2. Does it say `readable but NOT writable`?** Then this is a PERMISSION problem, not an outage,
+**2. Does it say `A timeout occurred while running check.`?** That wording is the framework's, not
+ours, and it means the check was cancelled rather than that it found anything. Usually the readiness
+budget (`Audit:TailTimeoutSeconds`) elapsed — but **it does not prove that**: `DefaultHealthCheckService`
+reports that same description for ANY cancellation escaping a check, including on a registration with
+no timeout at all. Treat it as "the probe did not finish", then work down the steps below: a
+permission problem does not time out, so the causes worth chasing are an unreachable store, a locked
+table, or a stuck transaction.
+
+**3. Does it say `readable but NOT writable`?** Then this is a PERMISSION problem, not an outage,
 and it has nothing in common with the rest of this runbook. The store answers every read and refuses
 every audit row, so D1 refuses every money movement while the database looks perfectly healthy. The
 probe asks `HAS_PERMS_BY_NAME` on `AuditEvents`, which honours role membership and `DENY`:
@@ -87,7 +95,7 @@ and it is invisible from the grant side alone. **Do not fix this by granting the
 INSERT on `AuditEvents`**: the chain is append-only by design, and a login holding UPDATE or DELETE
 there is a larger problem than the outage you are ending.
 
-**3. Is the table locked rather than unreachable?** The health check reads with `READUNCOMMITTED`, so
+**4. Is the table locked rather than unreachable?** The health check reads with `READUNCOMMITTED`, so
 it stays healthy while the tail is merely locked by a slow writer. That is the case where readiness
 says `200` and money movements still fail.
 
@@ -104,7 +112,7 @@ delayed a deposit on an unrelated account, by an unrelated user, by 3,073–3,08
 The unrelated movement waits out essentially the entire hold, so the number to find below is how long
 the blocker has held it, not how many sessions are queued.
 
-**4. Is a long-running transaction holding it?**
+**5. Is a long-running transaction holding it?**
 
 ```sql
 SELECT st.session_id, dt.transaction_id, dt.database_transaction_begin_time
@@ -143,7 +151,7 @@ cancelled, so a second kill buys nothing and a third takes out sessions that wer
 behind the first. Money movements stay refused until the tail is free; that is D1 working, not a
 second fault appearing.
 
-**5. Is the table itself intact?** A missing table, a broken index on `IX_AuditEvents_Sequence`, or a
+**6. Is the table itself intact?** A missing table, a broken index on `IX_AuditEvents_Sequence`, or a
 failed migration all present as an unreadable store:
 
 ```sql

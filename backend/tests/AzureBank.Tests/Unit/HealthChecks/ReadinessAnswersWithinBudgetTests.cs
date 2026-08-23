@@ -70,7 +70,7 @@ public class ReadinessAnswersWithinBudgetTests
         services.AddHealthChecks()
             .AddCheck("late-arrival", () => HealthCheckResult.Healthy(), tags: ["ready"]);
 
-        var provider = services.BuildServiceProvider();
+        using var provider = services.BuildServiceProvider();
         var registrations = provider
             .GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations;
 
@@ -99,7 +99,7 @@ public class ReadinessAnswersWithinBudgetTests
             "Server=192.0.2.1;Database=X;User Id=u;Password=p;TrustServerCertificate=True"));
         services.AddObservability(environment.Object, configuration);
 
-        var provider = services.BuildServiceProvider();
+        using var provider = services.BuildServiceProvider();
         var health = provider.GetRequiredService<HealthCheckService>();
 
         var stopwatch = Stopwatch.StartNew();

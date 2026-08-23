@@ -147,6 +147,25 @@ public static class ObservabilityServiceCollectionExtensions
           Pinned by ReadinessAnswersWithinBudgetTests.AReadinessCheckRegisteredAFTERAddObservability_
           StillInheritsTheBudget.
 
+          THE BOUND IS COOPERATIVE, NOT ENFORCED, and that is the sentence to read before adding a
+          check here. Checked against DefaultHealthCheckService in dotnet/aspnetcore v10.0.0: the
+          timeout is a linked CancellationTokenSource plus CancelAfter, created only when the value is
+          strictly positive. CancelAfter merely SIGNALS a token — there is no Task.WhenAny race and no
+          abandonment of the running task, and RunCheckAsync unconditionally awaits the check. So a
+          readiness check that ignores the token it is handed is not bounded by anything, and it takes
+          /health/ready down with it while the registration still looks correctly configured. Both
+          checks here honour it: ours passes the token to ExecuteScalarAsync, and AddDbContextCheck
+          passes it to CanConnectAsync.
+
+          THE BUDGET ALSO HAS TO CLEAR THE PROBE'S OWN LATENCY UNDER LOAD, which is a constraint on
+          the number rather than on the mechanism. Measured on the running API: a single readiness
+          request answers in ~0.9s, but 30 issued CONCURRENTLY answered in 1.5-2.6s each (server-side
+          timings, all 200) — every probe opens a connection for this check and another for the
+          database check. Against the five-second default that leaves roughly 2x of headroom. Lower
+          the bound far enough and a HEALTHY instance under probe load starts reporting itself
+          unhealthy and is taken out of rotation, which is the failure this whole budget exists to
+          avoid, arriving from the other direction.
+
           BOUND TO Audit:TailTimeoutSeconds rather than to a constant of its own, so the two cannot
           drift apart. A fixed 5s probe under a 20s configured tail bound would pull this instance out
           of rotation while money movements were still succeeding — a false alarm that takes the bank
