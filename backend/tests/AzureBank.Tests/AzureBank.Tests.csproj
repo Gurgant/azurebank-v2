@@ -46,6 +46,7 @@
     <ProjectReference Include="..\..\src\AzureBank.Shared\AzureBank.Shared.csproj" />
     <ProjectReference Include="..\..\src\AzureBank.Api\AzureBank.Api.csproj" />
     <ProjectReference Include="..\..\src\AzureBank.Infrastructure\AzureBank.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\tools\AzureBank.AuditVerifier\AzureBank.AuditVerifier.csproj" />
     <!-- The seeder is dev tooling, but it writes the fixture CI's real-stack job runs
          against, so its behaviour is worth pinning like any other producer of data.
          Aliased because the seeder is an Exe with its own top-level Program, which would

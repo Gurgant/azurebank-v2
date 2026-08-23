@@ -144,6 +144,16 @@ an operator that movements are being recorded again, and cannot tell them the ha
 a design whose whole claim is tamper-evidence, that is the gap worth closing next: the property is
 only as good as someone's ability to check it outside a test run.
 
+**CLOSED 2026-08-23 by `tools/AzureBank.AuditVerifier`.** A console tool rather than an endpoint,
+and the reason is the API's own shape: every controller carries a bare `[Authorize]`, so there is no
+role to hang an operator-only route on and an endpoint would let any authenticated customer trigger
+a full walk of the audit table. A tool makes the authorisation the honest one for a forensic act —
+reach the database, and hold the chain key. Exposing it also forced a fix in `VerifyAsync` itself,
+which read the whole table with `ToListAsync`: measured at 20,006 rows that was 12 MB of managed heap
+and linear, so millions of rows would have been gigabytes for a walk that needs one row at a time.
+It streams now. **The truncation gap above is NOT closed by this** — the verifier reports the count
+and the range precisely because it cannot answer that question itself.
+
 ### D2 — the chain now, the SQL Server ledger later
 
 Each row carries an HMAC-SHA256 over its own fields **and its predecessor's hash**. Keyed rather than

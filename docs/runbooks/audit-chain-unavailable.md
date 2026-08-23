@@ -199,20 +199,32 @@ somebody who wrote the number down.
 
 ## After recovery
 
-- **Verifying the chain is NOT something you can do from here, and pretending otherwise was worse
-  than leaving it out.** `AuditChain.VerifyAsync` exists and the test suite calls it, but nothing
-  exposes it — no endpoint, no CLI, no job. An operator following the old wording would have gone
-  looking for a command that does not exist, during an incident. What you CAN check is that the
-  chain is being written again, which is a weaker claim and is written as one:
+- **Verify the chain.** Two environment variables and one command; the key and the connection
+  string are passed through the environment rather than as arguments, so neither lands in your
+  shell history.
 
-  ```sql
-  SELECT TOP 5 [Sequence], [Event], [OccurredAt] FROM [AuditEvents] ORDER BY [Sequence] DESC;
+  ```bash
+  export ConnectionStrings__DefaultConnection="..."
+  export Audit__ChainKey="..."
+  dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
-  A `Sequence` past its value from before the outage means movements are being recorded again. It
-  says nothing about whether the hashes still link. **That gap is open and tracked** — until an
-  operator-runnable verification exists, this runbook cannot close it, and no line here should
-  suggest otherwise.
+  It prints the verdict WITH the row count and the sequence range, because "intact" on its own is
+  not an answer — a chain of zero rows links perfectly, and a table truncated to nothing reports
+  exactly what a fresh one does. Compare the count against what you expected: a chain that verifies
+  40 rows where yesterday it had 40,000 is intact and catastrophic, and only the numbers say so.
+
+  Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** the tool
+  itself could not start. The last two exist so an automated check cannot mistake a typo in an
+  environment variable, or an empty table, for a clean bill of health.
+
+  **If it reports a break at sequence 1, suspect the key before you suspect an attacker.** The row
+  hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it, and it
+  mismatches from the very first row. A real tamper breaks where it happened, somewhere inside the
+  table. The tool says this too, at the moment it matters.
+
+  What it still cannot tell you is whether rows were removed from the END. That needs an anchor
+  outside the system and is tracked separately — see ADR-0044.
 - The refused movements were refused, not lost: no money moved, and no audit row claims it did.
   Customers can simply retry.
 - If the cause was contention rather than an outage, the number worth capturing is how long the tail
