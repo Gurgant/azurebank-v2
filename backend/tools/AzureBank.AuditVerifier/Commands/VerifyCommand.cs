@@ -80,7 +80,9 @@ public static class VerifyCommand
                 $"CHAIN BROKEN at sequence {result.FirstBrokenSequence:N0}.",
                 $"  {result.Reason}",
                 $"  Rows verified before the break: {result.Verified:N0}",
-                $"  Sequences read: {lowest:N0} to {highest:N0}",
+                lowest is null
+                    ? "  Sequences read: none -- the walk did not get past the first row"
+                    : $"  Sequences read: {lowest:N0} to {highest:N0}",
             };
 
             /*
@@ -94,6 +96,11 @@ public static class VerifyCommand
               tables old enough to have been purged. Verified == 0 says "it broke before verifying
               anything" whatever the numbering, and it is printed on the line above.
 
+              AND ONLY FOR A HASH MISMATCH, which is the only break a wrong key can cause. It cannot
+              make a row unreadable, and it cannot change what a row records as its predecessor -- so
+              on a deleted prefix or a poisoned column the hint was sending an operator to check a
+              key that was never the problem. Measured on both.
+
               The row hash is an HMAC over Audit:ChainKey. A WRONG key is not distinguishable from
               tampering by any check this tool can make -- and unlike a missing or short key, it
               passes the options validation, because it is a perfectly well-formed secret. What it
@@ -104,7 +111,7 @@ public static class VerifyCommand
               recomputes is already different. Saying so here costs nothing and saves an operator
               from opening an incident about an attacker who does not exist.
             */
-            if (result.Verified == 0)
+            if (result.Verified == 0 && result.Kind == AuditChainBreakKind.HashMismatch)
             {
                 lines.Add("  Breaking at the FIRST row usually means the wrong Audit:ChainKey, not");
                 lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch it,");

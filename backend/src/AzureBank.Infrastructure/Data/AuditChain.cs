@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,6 +31,28 @@ public interface IAuditChain
     Task<AuditChainVerification> VerifyAsync(DbContext context, CancellationToken cancellationToken = default);
 }
 
+/// <summary>What kind of break the walk found, when it found one.</summary>
+/// <remarks>
+/// The three are not interchangeable and an operator acts differently on each, which is why the
+/// verdict carries the kind instead of leaving callers to match on the wording of a sentence.
+/// A WRONG KEY can only ever produce <see cref="HashMismatch"/>: it cannot make a row unreadable,
+/// and it cannot change what a row records as its predecessor.
+/// </remarks>
+public enum AuditChainBreakKind
+{
+    /// <summary>No break: the walk reached the end.</summary>
+    None = 0,
+
+    /// <summary>A row does not hash to what is stored beside it. A wrong key looks like this too.</summary>
+    HashMismatch,
+
+    /// <summary>A row records a predecessor that is not the row before it. Deleted, reordered or inserted.</summary>
+    LinkBroken,
+
+    /// <summary>A row could not be materialised at all, so a stored value contradicts the schema.</summary>
+    Unreadable,
+}
+
 /// <summary>The result of walking the chain. A count as well as a verdict, deliberately.</summary>
 /// <param name="Verified">Rows read and checked.</param>
 /// <param name="FirstBrokenSequence">
@@ -45,6 +68,7 @@ public interface IAuditChain
 /// The first and last sequence THIS WALK actually read, or null if it read nothing.
 /// </param>
 /// <param name="HighestSequence">See <paramref name="LowestSequence"/>.</param>
+/// <param name="Kind">Which of the three breaks it was, when there was one.</param>
 /// <remarks>
 /// THE RANGE COMES FROM THE WALK ITSELF, and it is here rather than left to the caller because the
 /// caller cannot get it right. Asking the database separately for MIN and MAX is two more statements
@@ -57,7 +81,8 @@ public readonly record struct AuditChainVerification(
     long? FirstBrokenSequence,
     string? Reason,
     long? LowestSequence = null,
-    long? HighestSequence = null)
+    long? HighestSequence = null,
+    AuditChainBreakKind Kind = AuditChainBreakKind.None)
 {
     /// <summary>True when every row read hashed and linked correctly.</summary>
     public bool IsIntact => FirstBrokenSequence is null;
@@ -181,6 +206,20 @@ public sealed class AuditChain : IAuditChain
     /// records. Ties are resolved by the number this method's caller then assigns, so the order is
     /// recorded in the row rather than inferred from it.
     /// </summary>
+    /// <summary>True when the failure is about the STORE rather than about a stored value.</summary>
+    private static bool IsInfrastructureFailure(Exception failure)
+    {
+        for (var current = failure; current is not null; current = current.InnerException)
+        {
+            if (current is DbException)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static List<AuditEvent> Pending(DbContext context) =>
         context.ChangeTracker.Entries<AuditEvent>()
             .Where(e => e.State == EntityState.Added)
@@ -426,8 +465,76 @@ public sealed class AuditChain : IAuditChain
         long? lowest = null;
         long? highest = null;
 
-        await foreach (var row in rows.WithCancellation(cancellationToken))
+        /*
+          A ROW THAT CANNOT EVEN BE READ IS A CHAIN PROBLEM, NOT A CONNECTION PROBLEM.
+
+          Outcome is stored as a string and mapped to an enum, so a single UPDATE writing a value
+          that is not an enum member makes EF throw while MATERIALISING that row -- mid-stream,
+          after the walk has begun. Left to propagate, the verifier's outermost catch classified it
+          as "no verdict ... this is NOT a statement about the chain", which is exactly wrong: the
+          Outcome column is inside the hashed payload, so an unreadable value there IS a
+          modification of a row.
+
+          Demonstrated as an attack on the verifier itself: tamper with row 5's Detail, then write
+          one bogus Outcome on row 1, and the tool stops reporting BROKEN and reports a
+          configuration problem instead. One statement muzzles the thing whose whole purpose is to
+          notice. So the enumeration is guarded here, where the walk knows how far it got, and the
+          failure is reported as what it is.
+        */
+        var enumerator = rows.WithCancellation(cancellationToken).GetAsyncEnumerator();
+
+        while (true)
         {
+            AuditEvent row;
+            try
+            {
+                if (!await enumerator.MoveNextAsync())
+                {
+                    break;
+                }
+
+                row = enumerator.Current;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception unreadable) when (!IsInfrastructureFailure(unreadable))
+            {
+                /*
+                  ONLY A DATA FAILURE LANDS HERE. The first version of this guard caught everything
+                  the enumeration could throw, which turned an unreachable database into CHAIN
+                  BROKEN -- the exact collision this tool spent three rounds separating. The suite's
+                  own unreachable-database test caught it, going from 3 to 1.
+
+                  A DbException anywhere in the chain means the STORE failed and there is no verdict
+                  to give, so it propagates. Anything else -- an enum value that is not a member, a
+                  column that will not materialise -- is a stored value contradicting the schema,
+                  which is a modification of a row.
+                */
+                /*
+                  FirstBrokenSequence MUST BE NON-NULL HERE, because IsIntact is defined as its
+                  absence. The first version of this guard returned null when nothing had been read
+                  yet -- which is precisely the case where the FIRST row is the poisoned one -- so
+                  the verdict came back "intact with zero rows", i.e. NOTHING TO VERIFY, exit 2.
+                  That moved the muzzle rather than removing it. Measured before and after.
+
+                  When the walk got nowhere the position is genuinely unknown, so it is reported as
+                  the row after the last one read, falling back to the first. The NUMBER is
+                  best-effort; the reason text below carries what is actually known.
+                */
+                return new AuditChainVerification(
+                    verified,
+                    (highest ?? 0) + 1,
+                    $"The row after sequence {highest?.ToString() ?? "(start of chain)"} could not be "
+                    + $"read at all: {unreadable.Message} A stored value is not what the schema says "
+                    + "it must be, which is itself a modification -- the column it failed on is "
+                    + "inside the hashed payload.",
+                    lowest,
+                    highest,
+                    AuditChainBreakKind.Unreadable);
+            }
+
             lowest ??= row.Sequence;
             highest = row.Sequence;
 
@@ -439,7 +546,8 @@ public sealed class AuditChain : IAuditChain
                     $"Row {row.Id} expected to follow '{previous ?? "(start of chain)"}' but records "
                     + $"'{row.PreviousHash ?? "(start of chain)"}'. A row was deleted, reordered, or inserted.",
                     lowest,
-                    highest);
+                    highest,
+                    AuditChainBreakKind.LinkBroken);
             }
 
             var expected = ComputeRowHash(row);
@@ -453,12 +561,15 @@ public sealed class AuditChain : IAuditChain
                     + "written, or this verification is using a different Audit:ChainKey from the "
                     + "one it was written with.",
                     lowest,
-                    highest);
+                    highest,
+                    AuditChainBreakKind.HashMismatch);
             }
 
             previous = row.RowHash;
             verified++;
         }
+
+        await enumerator.DisposeAsync();
 
         return new AuditChainVerification(verified, null, null, lowest, highest);
     }

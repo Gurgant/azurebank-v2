@@ -135,7 +135,9 @@ public class AuditVerifierReportTests
           is true, so this test can now see the difference between them.
         */
         var (exitCode, lines) = VerifyCommand.Report(
-            new AuditChainVerification(0, 5_001, "Row ... does not match its own hash", 5_001, 5_005),
+            new AuditChainVerification(
+                0, 5_001, "Row ... does not match its own hash", 5_001, 5_005,
+                AuditChainBreakKind.HashMismatch),
             5_001, 5_005);
 
         exitCode.Should().Be(VerifyCommand.Broken);
@@ -145,13 +147,38 @@ public class AuditVerifierReportTests
             + "that is true whatever number that row happens to carry");
     }
 
+    [Theory]
+    [InlineData(AuditChainBreakKind.LinkBroken)]
+    [InlineData(AuditChainBreakKind.Unreadable)]
+    public void OnlyAHashMismatchEverBlamesTheKey(AuditChainBreakKind kind)
+    {
+        /*
+          A WRONG KEY CANNOT PRODUCE EITHER OF THESE, and the hint used to fire on both because it
+          keyed on "nothing verified" alone. A key cannot change what a row records as its
+          predecessor, and it cannot make a row unreadable -- so on a deleted prefix, and on a row
+          whose stored Outcome is not a member of the enum, the tool was telling an operator to go
+          and check a key that was never the problem. Both measured before this gate existed.
+        */
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(0, 5_001, "...", 5_001, 5_001, kind), 5_001, 5_001);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+        string.Join(" ", lines).Should().NotContain(
+            "Audit:ChainKey",
+            "a wrong key is well-formed and mismatches a HASH; it cannot break a link and it cannot "
+            + "make a row unreadable, so naming it here sends the operator away from the real cause");
+    }
+
     [Fact]
     public void ABreakInTheMIDDLE_DoesNotBlameTheKey()
     {
         // The negative control. If the hint appeared on every break it would be noise, and the one
         // case where it means something would be indistinguishable from the ones where it does not.
         var (exitCode, lines) = VerifyCommand.Report(
-            new AuditChainVerification(4_312, 4_313, "Row ... expected to follow ..."), 1, 9_000);
+            new AuditChainVerification(
+                4_312, 4_313, "Row ... expected to follow ...", 1, 4_313,
+                AuditChainBreakKind.LinkBroken),
+            1, 9_000);
 
         exitCode.Should().Be(VerifyCommand.Broken);
         string.Join(" ", lines).Should().NotContain(

@@ -83,7 +83,8 @@ probe asks `HAS_PERMS_BY_NAME` on `AuditEvents`, which honours role membership a
 
 ```sql
 SELECT HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'INSERT') AS can_insert,   -- as the API's login
-       HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'SELECT') AS can_select;   -- 0 here reads as 'unreadable' above
+       HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'SELECT') AS can_select;   -- 0 here reads as
+       'unreadable' above
 SELECT dp.name, dp.type_desc, p.permission_name, p.state_desc
 FROM sys.database_permissions p
 JOIN sys.database_principals dp ON dp.principal_id = p.grantee_principal_id
@@ -164,6 +165,39 @@ If the dev or test database is simply behind on migrations, see the note in
 
 ---
 
+## If the verifier reports CHAIN BROKEN
+
+**This section exists because the tool points here and, until now, this document had nothing for the
+one verdict that matters most.** A break means somebody with write access to the database changed or
+removed an audit row. Everything below assumes that until proved otherwise.
+
+**Do not repair anything, and do not re-run the verifier hoping for a different answer.** The table
+is the evidence. A repair destroys the only record of what was done to it, and the chain cannot be
+"fixed" — recomputing hashes requires the key, which is exactly what an attacker who reached the
+database is assumed not to have.
+
+**Read the KIND of break first; the three mean different things and only one of them can be a
+mistake of yours.**
+
+- `does not match its own hash` with **`Rows verified before the break: 0`** — suspect the key
+  before an attacker; see the note under *After recovery*. With a non-zero count it is a real
+  alteration at that row.
+- `expected to follow ... A row was deleted, reordered, or inserted` — a row is missing or out of
+  place at that sequence. A wrong key cannot cause this.
+- `could not be read at all` — a stored value contradicts the schema, which is itself a
+  modification. A wrong key cannot cause this either.
+
+**Capture, in this order, before anyone touches the database.** The verifier's full output including
+the exit code; the sequence it names and the rows on either side of it
+(`SELECT * FROM AuditEvents WHERE Sequence BETWEEN <n>-2 AND <n>+2`); the total row count; and the
+SQL Server default trace or audit for recent writes to `AuditEvents` if it is enabled.
+
+**Then escalate rather than continue.** Deciding whether to keep taking traffic on an instance whose
+audit trail is proven altered is not an operational call — it is the decision ADR-0044 D1 exists to
+make possible, and it belongs to whoever owns the incident. This runbook stops here on purpose.
+
+---
+
 ## What NOT to do
 
 **Do not disable the audit chain to restore service.** The bank would then move money it cannot
@@ -199,12 +233,18 @@ somebody who wrote the number down.
 
 ## After recovery
 
-- **Verify the chain.** The key and the connection string travel through the environment rather
+- **Verify the chain. Run this FROM THE REPOSITORY ROOT** — the `--project` path is relative to it,
+  and from anywhere else `dotnet run` fails to find the project and exits **1**, which this document
+  defines four paragraphs below as CHAIN BROKEN. That failure happens before the tool starts, so
+  nothing inside it can translate the code. Confirm with `pwd` if you are not sure.
+
+  The key and the connection string travel through the environment rather
   than as command arguments, because on Linux `/proc/<pid>/cmdline` is world-readable while
   `/proc/<pid>/environ` is not.
 
   **That does not make them private from your own shell**, which is a distinction worth stating
-  because it is easy to assume otherwise. An `export` line is a command, and your shell records it: bash writes it to
+  because it is easy to assume otherwise. An `export` line is a command, and your shell records it:
+  bash writes it to
   `HISTFILE`, and PowerShell's PSReadLine writes it to `ConsoleHost_history.txt` — its
   sensitive-word filter matches `password|token|apikey|secret`, none of which is `ChainKey`. A
   history file outlives the process, which makes it the WORSE exposure of the two. Read BOTH values
@@ -217,11 +257,27 @@ somebody who wrote the number down.
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
-  PowerShell, since it is the history file this paragraph cites:
+  PowerShell, since it is the history file this paragraph cites. **`-AsPlainText` on
+  `ConvertFrom-SecureString` is PowerShell 7 or later**; on Windows PowerShell 5.1 it does not exist
+  and both assignments end up EMPTY, which the verifier then reports as a missing key. Check with
+  `$PSVersionTable.PSVersion` first.
 
   ```powershell
+  # PowerShell 7+
   $env:Audit__ChainKey = (Read-Host 'Audit:ChainKey' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
-  $env:ConnectionStrings__DefaultConnection = (Read-Host 'Connection string' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
+  $env:ConnectionStrings__DefaultConnection = (Read-Host 'Connection string' -AsSecureString |
+  ConvertFrom-SecureString -AsPlainText)
+  dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
+  ```
+
+  ```powershell
+  # Windows PowerShell 5.1
+  $key = Read-Host 'Audit:ChainKey' -AsSecureString
+  $env:Audit__ChainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($key))
+  $cs = Read-Host 'Connection string' -AsSecureString
+  $env:ConnectionStrings__DefaultConnection = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($cs))
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
@@ -234,9 +290,12 @@ somebody who wrote the number down.
   (the store could not be read), **4** the command line was wrong. Only 0, 1 and 2 are statements
   about the CHAIN.
 
-  **`3` is the one to wire an alert on separately from `1`.** It covers a MISSING or too-short
-  `Audit:ChainKey`, an unreachable server, and a connection string that is malformed or absent —
-  everything that stopped the walk before it could reach a verdict.
+  **`3` is the one to wire an alert on separately from `1`.** It covers everything that stopped the
+  walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey`, an unreachable
+  server, a connection string that is malformed or absent, **and the states step 6 is about — the
+  `AuditEvents` table renamed, dropped or never migrated, or a login that cannot SELECT from it.**
+  That last group is why the tool's own closing advice ("check the connection string and the key")
+  is a starting point and not the list: read the exception line above it, which names the cause.
 
   **A WRONG key is not among them, and this runbook previously said it was.** A well-formed key that
   is simply not the one the chain was written with passes every check the tool can make, so the walk
@@ -247,10 +306,16 @@ somebody who wrote the number down.
   every parse failure as exit 1, so running the tool with no arguments at all — the likeliest
   mistake there is — used to report a tampered audit trail. Measured, and now translated.
 
-  **If it reports a break at sequence 1, suspect the key before you suspect an attacker.** The row
-  hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it, and it
-  mismatches from the very first row. A real tamper breaks where it happened, somewhere inside the
-  table. The tool says this too, at the moment it matters.
+  **If it reports a HASH MISMATCH before any row verifies, suspect the key before you suspect an
+  attacker.** Not "at sequence 1": `Sequence` is assigned as tail + 1 and never restarts, so after a
+  retention purge or a partial restore a live chain begins at 5,001 and its first row is not row 1.
+  The tell is `Rows verified before the break: 0`, which the tool prints and which does not depend on
+  the numbering.
+
+  The row hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it,
+  and it mismatches on the first row it reads. It is also the ONLY break a wrong key can produce — it
+  cannot make a row unreadable and it cannot change what a row records as its predecessor, so on
+  those two the tool deliberately stays silent about the key.
 
   What it still cannot tell you is whether rows were removed from the END. That needs an anchor
   outside the system and is tracked separately — see ADR-0044.
