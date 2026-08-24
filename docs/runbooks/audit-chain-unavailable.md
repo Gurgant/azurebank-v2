@@ -166,25 +166,42 @@ If the dev or test database is simply behind on migrations, see the note in
 
 ## If the verifier reports CHAIN BROKEN
 
-**This section exists because the tool points here and, until now, this document had nothing for the
-one verdict that matters most.** A break means somebody with write access to the database changed or
-removed an audit row. Everything below assumes that until proved otherwise.
+**A break has two families of cause and they need opposite responses, so classify before you act.**
+Either somebody with write access changed or removed an audit row, or something entirely ordinary
+produced the same verdict: an `Audit:ChainKey` that is not the one those rows were written with, or
+a retention purge, archival job or partial restore that removed the oldest rows. Both benign cases
+are measured below. Neither involves an attacker, and both are more likely on any given morning than
+one.
 
-**Do not repair anything, and do not re-run the verifier hoping for a different answer.** The table
-is the evidence. A repair destroys the only record of what was done to it, and the chain cannot be
-"fixed" — recomputing hashes requires the key, which is exactly what an attacker who reached the
-database is assumed not to have.
-
-**Read the KIND of break first; the three mean different things and only one of them can be a
-mistake of yours.**
+**Classify first — it costs one command, and the tool already prints the two things that decide
+it:** the KIND of break, and `Rows verified before the break`. The verifier only ever reads, so
+running it again destroys no evidence and moves nothing: three rows read with the right key, then a
+wrong one, then the right key again reported `CHAIN INTACT`, `CHAIN BROKEN`, `CHAIN INTACT`, and the
+row count never moved.
 
 - `does not match its own hash` with **`Rows verified before the break: 0`** — suspect the key
-  before an attacker; see the note under *After recovery*. With a non-zero count it is a real
-  alteration at that row.
-- `expected to follow ... A row was deleted, reordered, or inserted` — a row is missing or out of
-  place at that sequence. A wrong key cannot cause this.
+  before an attacker, and settle it by re-running with the key this deployment actually keeps. A
+  wrong key is well-formed, so nothing rejects it, and it mismatches on the first row it reads.
+  Measured: three unaltered rows read with a valid but wrong key reported `CHAIN BROKEN at sequence
+  1`. See the fuller note under *After recovery*.
+- `does not match its own hash` with a **non-zero** count — an alteration at that row, *unless more
+  than one key has written this table*. Nothing in the hashed payload records which key wrote a row,
+  so if the secret was rotated, or two hosts or deployment slots run with different values, the walk
+  verifies every row written under the key it holds and mismatches at the first row written under
+  the other. Rule that out before you escalate; it looks exactly like tampering at one row.
+- `expected to follow ... A row was deleted, reordered, or inserted` with **count 0** — the OLDEST
+  rows are gone, and the ordinary causes are a retention purge, an archival job or a restore of a
+  partial backup. Measured: deleting the single lowest row from an intact chain of three gives
+  `CHAIN BROKEN at sequence 2 ... expected to follow '(start of chain)'`. Ask whoever runs those
+  jobs before you escalate. With a NON-ZERO count a row is missing or out of place in the MIDDLE of
+  the chain, which no purge produces — that one is the real thing.
 - `could not be read at all` — a stored value contradicts the schema, which is itself a
-  modification. A wrong key cannot cause this either.
+  modification. Neither a wrong key nor a purge can cause this.
+
+**From the moment it is none of those, the table is evidence: do not repair it and do not write to
+it.** A repair destroys the only record of what was done to it, and the chain cannot be "fixed" —
+recomputing hashes requires the key, which is exactly what an attacker who reached the database is
+assumed not to have.
 
 **Capture, in this order, before anyone touches the database.** The verifier's full output including
 the exit code; the sequence it names and the rows on either side of it

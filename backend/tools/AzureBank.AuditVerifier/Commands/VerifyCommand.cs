@@ -154,9 +154,10 @@ public static class VerifyCommand
         {
             $"CHAIN INTACT: {result.Verified:N0} rows verified.",
             $"  Sequence range: {lowest:N0} to {highest:N0}",
-            "  This proves no row was altered and none was removed from the MIDDLE. It does",
-            "  NOT prove none was removed from the END -- truncation needs no key and leaves",
-            "  every surviving row linking correctly. Compare the count against your own.",
+            "  This proves no row was altered by anyone who does not hold Audit:ChainKey,",
+            "  and that none was removed from the MIDDLE. It does NOT prove none was removed",
+            "  from the END -- truncation needs no key and leaves every surviving row linking",
+            "  correctly. Compare the count against your own.",
         });
     }
 

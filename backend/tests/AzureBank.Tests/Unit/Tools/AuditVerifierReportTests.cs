@@ -313,5 +313,14 @@ public class AuditVerifierReportTests
             "NOT prove",
             "tail truncation is undetectable by construction, and the tool must say so where the "
             + "operator reads the good news rather than only in the ADR");
+        text.Should().Contain(
+            "Audit:ChainKey",
+            "THE OTHER HALF OF THE OVERCLAIM, which this test used to let through while carrying "
+            + "\"DoesNotOverclaim\" in its name. The hash is an HMAC, so an intact verdict says "
+            + "nothing at all about an attacker who took the key along with the database. ADR-0044 "
+            + "D2 states the narrow claim -- tampering by someone who holds the database but NOT "
+            + "the key, except at the end of the table -- and records that the runbook had already "
+            + "repeated the too-strong version once after that section withdrew it. This assertion "
+            + "is what stops the tool from being the third place it comes back");
     }
 }
