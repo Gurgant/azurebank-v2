@@ -141,6 +141,44 @@ public class AuditChainTests : IDisposable
     }
 
     [Fact]
+    public async Task TheReportedRangeIsWhatTheWALKSaw_NotWhatTheTableHolds()
+    {
+        /*
+          THE DISCRIMINATOR IS A BROKEN CHAIN. The verifier prints the sequence range beside the row
+          count so an operator can compare them; that comparison is worthless if the two come from
+          different reads. They used to: the tool asked the database for MIN and MAX before walking,
+          so a row committed in between was counted and fell outside the range -- 101 rows verified
+          over a range ending at 100.
+
+          Taking the range from the table would be indistinguishable from taking it from the walk on
+          an intact chain, because they agree. On a BROKEN one they do not: the walk stops at row 3
+          while the table still holds 5, so a reported high of 3 can only have come from the walk.
+        */
+        await WriteAsync("First", "Second", "Third", "Fourth", "Fifth");
+
+        // Mutate the TRACKED instance, as AlteringARow_BreaksItsOwnHash does; calling Update() on a
+        // second instance of an already-tracked row throws before the test can prove anything.
+        var third = await _context.AuditEvents.OrderBy(e => e.Sequence).Skip(2).FirstAsync();
+        var first = await _context.AuditEvents.OrderBy(e => e.Sequence).FirstAsync();
+        third.Event = "SomethingElseEntirely";
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse("row three was altered");
+        verification.Verified.Should().Be(2, "it checked two rows before reaching the altered one");
+        verification.HighestSequence.Should().Be(
+            third.Sequence,
+            "the range must end where the WALK stopped, not where the table ends -- the table still "
+            + "holds five rows, and reporting 5 here would be the stale-bounds defect returning");
+        verification.LowestSequence.Should().Be(
+            first.Sequence, "and start at the first row it actually read");
+
+        (await _context.AuditEvents.CountAsync()).Should().Be(
+            5, "the control: the table is longer than the walk, which is what makes this test bite");
+    }
+
+    [Fact]
     public async Task TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit()
     {
         /*

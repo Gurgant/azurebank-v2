@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AzureBank.AuditVerifier: the operator-runnable chain verification ADR-0044 said was missing.
+
+    AuditChain.VerifyAsync existed and the test suite called it, but nothing exposed it — no
+    endpoint, no CLI, no job — so a runbook could tell an operator that movements were being
+    recorded again and could not tell them the hashes still linked. For a design whose whole claim
+    is tamper-evidence, the property is only as good as somebody's ability to check it outside a
+    test run.
+
+    WHY A TOOL AND NOT AN ENDPOINT. The API has no role model: every controller carries a bare
+    [Authorize], which means "any authenticated customer". An endpoint there would let any customer
+    trigger a full walk of the audit table. Verification is a forensic act, so the right
+    authorisation is the one this tool already implies — reach the database, and hold the chain key.
+
+    Usage: run this project with the argument "verify" (see Program.cs, which spells out the
+    command line without the double dashes an XML comment cannot contain).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AzureBank.AuditVerifier</RootNamespace>
+    <AssemblyName>azurebank-audit-verifier</AssemblyName>
+    <UserSecretsId>324dc977-5ad3-4399-947b-ba677d1b0b0a</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AzureBank.Infrastructure\AzureBank.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\AzureBank.Shared\AzureBank.Shared.csproj" />
+  </ItemGroup>
+
+  <!--
+    Quiet by default. This tool's whole output is a verdict an operator reads under pressure, so
+    EF's SQL echo would bury it: the first run printed the SELECT that reads the chain above the
+    answer. EF is silenced entirely rather than merely lowered, because it also logs FAILURES at
+    Error with a full stack trace, twice. Measured against an unreachable server, that was eighty
+    lines above the one sentence that mattered. This tool catches those failures and reports them
+    itself, so EF's copy is duplication that buries the report.
+  -->
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+  </ItemGroup>
+
+</Project>

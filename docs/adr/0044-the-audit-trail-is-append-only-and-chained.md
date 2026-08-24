@@ -144,6 +144,16 @@ an operator that movements are being recorded again, and cannot tell them the ha
 a design whose whole claim is tamper-evidence, that is the gap worth closing next: the property is
 only as good as someone's ability to check it outside a test run.
 
+**CLOSED 2026-08-23 by `tools/AzureBank.AuditVerifier`.** A console tool rather than an endpoint,
+and the reason is the API's own shape: every controller carries a bare `[Authorize]`, so there is no
+role to hang an operator-only route on and an endpoint would let any authenticated customer trigger
+a full walk of the audit table. A tool makes the authorisation the honest one for a forensic act —
+reach the database, and hold the chain key. Exposing it also forced a fix in `VerifyAsync` itself,
+which read the whole table with `ToListAsync`: measured at 20,006 rows that was 12 MB of managed heap
+and linear, so millions of rows would have been gigabytes for a walk that needs one row at a time.
+It streams now. **The truncation gap above is NOT closed by this** — the verifier reports the count
+and the range precisely because it cannot answer that question itself.
+
 ### D2 — the chain now, the SQL Server ledger later
 
 Each row carries an HMAC-SHA256 over its own fields **and its predecessor's hash**. Keyed rather than
@@ -340,6 +350,11 @@ than assumed:
   signals about a random-id generator, not acts by a principal, and they are raised inside a `catch`
   that `continue`s a retry loop. An enlisted row would die with the attempt that failed; a
   self-committing one would write one row per attempt. Both wrong, and the log is right.
+
+**The first half of the next sentence stopped being true on 2026-08-23** and is left standing
+because an ADR is a record: `tools/AzureBank.AuditVerifier` reads this table, and `VerifyAsync` is
+now called from production code rather than only from tests. The second half still holds — nothing
+verifies the chain on a schedule.
 
 Two further gaps, named rather than left implicit: **nothing reads this table yet** — there is no
 endpoint, no access control and no operator view, which is B3's work — and **`VerifyAsync` is called

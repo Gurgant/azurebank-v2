@@ -26,19 +26,35 @@ Measured on the running API, with the `AuditEvents` table renamed away underneat
 
 It answers rather than hanging, which is not free: every readiness check is registered with
 `Audit:TailTimeoutSeconds` as its timeout. Unbounded, this probe took **36,800 ms** against an
-unreachable store — long past the point where anything asking had given up. If `/health/ready` ever
-does hang, that bound has been removed, and the endpoint is no longer evidence of anything.
+unreachable store — long past the point where anything asking had given up.
+
+**That bound is cooperative, not enforced, so a hang does not mean somebody removed it.** The
+framework links a `CancellationTokenSource` and calls `CancelAfter`, which only SIGNALS a token:
+nothing abandons the running check, and the service awaits it unconditionally. A check that ignores
+the token it was handed is bounded by nothing and takes `/health/ready` down with it, while the
+registration still reads as correctly configured. So on a hang look at both — that
+`Audit:TailTimeoutSeconds` still reaches every registration tagged `ready`, AND that each of those
+checks threads its `CancellationToken` into every await. The two registered today do; one added
+later inherits the bound and none of the obligation.
 
 **The body is the point, and it is why the `curl` above does not discard it.** It names WHICH check
 failed — exactly the distinction step 1 asks you to make. Note what that observation shows: the
 database was perfectly healthy while the audit store was not, so a bare `503` would have sent you
 hunting a database outage that was not happening.
 
-`503` with `audit-chain` reporting **unhealthy** means the audit store is **unreadable** from this
-instance. Unreadable, not unreachable: the probe fails the same way for a database that is down, an
-`AuditEvents` table that was never migrated, a disabled or corrupt index, and credentials that can no
-longer read it. Which of those it is: step 3 if it is a permission, step 6 if it is the table.
-`200` means the probe read the table, and the cause is one of the narrower ones below.
+`503` with `audit-chain` reporting **unhealthy** does NOT mean the store is unreadable. It means the
+probe could not certify that an audit row can be appended, and it reports on three axes of which
+reading is only one — **so read the description, which names the axis.**
+
+- `audit store unreadable` is the read failure, and unreadable is not unreachable: a database that
+  is down, an `AuditEvents` table that was never migrated, a disabled or corrupt index, or
+  credentials that can no longer read it. Step 6 if it is the table, step 3b if it is the login.
+- `audit store readable but NOT writable` is a store that answers every read and refuses every
+  append. Step 3, and not an outage at all.
+- `A timeout occurred while running check.` is the framework's wording, and is step 2.
+
+`200` means the probe read the table AND found an append permitted, so the cause is one of the
+narrower ones below.
 
 ## What you will see in the log
 
@@ -72,28 +88,119 @@ first thing to notice. Treat it as a database outage.
 ours, and it means the check was cancelled rather than that it found anything. Usually the readiness
 budget (`Audit:TailTimeoutSeconds`) elapsed — but **it does not prove that**: `DefaultHealthCheckService`
 reports that same description for ANY cancellation escaping a check, including on a registration with
-no timeout at all. Treat it as "the probe did not finish", then work down the steps below: a
-permission problem does not time out, so the causes worth chasing are an unreachable store, a locked
-table, or a stuck transaction.
+no timeout at all. Treat it as "the probe did not finish".
 
-**3. Does it say `readable but NOT writable`?** Then this is a PERMISSION problem, not an outage,
-and it has nothing in common with the rest of this runbook. The store answers every read and refuses
-every audit row, so D1 refuses every money movement while the database looks perfectly healthy. The
-probe asks `HAS_PERMS_BY_NAME` on `AuditEvents`, which honours role membership and `DENY`:
+**Steps 4 and 5 are not where to look, and this step has to say so.** The probe reads the tail
+`WITH (READUNCOMMITTED)`: it takes no lock and waits on none, so the writer's `UPDLOCK, HOLDLOCK` on
+the tail row is invisible to it. A locked tail and a stuck transaction report `200` — that is step
+4's case, the opposite of this one — so sending a timeout down there ends in a `KILL` on a session
+that cannot have caused it. What is left, in order: whatever polls this endpoint may carry a shorter
+deadline than the budget, which is not a store fault at all; then the store, unreachable or simply
+answering slower than `Audit:TailTimeoutSeconds` (step 1); then the table (step 6). A permission
+problem does not time out.
+
+**3. Does it say `readable but NOT writable`?** Then the store answers every read and refuses every
+audit row, so D1 refuses every money movement while the database looks perfectly healthy. **Those
+five words are the shared prefix of TWO verdicts that need opposite fixes, so read the rest of the
+sentence before you touch anything.** The probe tests
+`DATABASEPROPERTYEX(DB_NAME(), 'Updateability')` BEFORE it asks `HAS_PERMS_BY_NAME`, so on a
+read-only database the permission question is never asked at all — and a `GRANT` hunt there finds a
+clean permission graph while every movement stays refused.
+
+- `... — the database is not READ_WRITE, so money movements will be refused` → **3a**.
+- `... Check INSERT permission on AuditEvents for this login` → **3b**.
+
+**3a. The database is not READ_WRITE.** Run this through the API's OWN connection string, not from a
+window pointed at the listener with default intent: a default-intent session lands on the primary
+and reports `READ_WRITE`, which answers about a different replica than the probe asked.
 
 ```sql
-SELECT HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'INSERT') AS can_insert,   -- as the API's login
-       HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'SELECT') AS can_select;   -- 0 here reads as 'unreadable' above
+SELECT DB_NAME()                                      AS database_name,
+       @@SERVERNAME                                   AS answering_instance,
+       DATABASEPROPERTYEX(DB_NAME(), 'Updateability') AS updateability,
+       d.state_desc, d.is_read_only, d.is_in_standby, d.replica_id
+FROM sys.databases d
+WHERE d.database_id = DB_ID();
+```
+
+Three states, three remedies, none of them a `GRANT`:
+
+- **`is_read_only = 1`, `is_in_standby = 0`, `replica_id` NULL** — somebody ran
+  `ALTER DATABASE [db] SET READ_ONLY`: a release script, a maintenance job. `SET READ_WRITE`
+  reverses it and needs exclusive access. Find out who set it, or it is set again an hour later.
+- **`is_in_standby = 1`** — a restore finished `WITH STANDBY`: a log-shipping secondary, or one
+  nobody brought online. `RESTORE DATABASE [db] WITH RECOVERY` does make it writable and **ends the
+  restore sequence**, so no further log backup can ever be applied to it. If this is the DR copy,
+  that command spends the DR copy to end a short outage — and if the API is pointed at a DR copy at
+  all, the connection string is the fault. Confirm what it is first:
+  `SELECT TOP 5 restore_date, restore_type FROM msdb.dbo.restorehistory
+  WHERE destination_database_name = DB_NAME() ORDER BY restore_date DESC;`
+- **`replica_id` NOT NULL** — an availability-group replica. Ask which role it holds:
+
+```sql
+SELECT ars.role_desc, ar.replica_server_name
+FROM sys.databases d
+JOIN sys.dm_hadr_availability_replica_states ars ON ars.replica_id = d.replica_id
+JOIN sys.availability_replicas ar ON ar.replica_id = ars.replica_id
+WHERE d.database_id = DB_ID();
+```
+
+`SECONDARY` separates two different incidents. If the primary MOVED, point the API back at the
+listener. If it never moved, read-only routing sent the API here — its connection string carries
+`ApplicationIntent=ReadOnly`; drop it. **Do not force failover to make this node writable.** Those
+two DMVs need `VIEW SERVER STATE` and do not exist on Azure SQL Database, where the link state is
+`sys.dm_geo_replication_link_status` — and where this same verdict also appears when a database
+reaches its size limit, which is worth ruling out first: `AuditEvents` is the fastest-growing table
+here and nothing ever deletes from it.
+
+A restore left `WITH NORECOVERY` never reaches this description: that database is `RESTORING` and
+cannot be read, so the probe says `audit store unreadable` and you are in step 6.
+
+**Re-read `/health/ready` after the fix instead of assuming it is over.** Updateability is tested
+first, so it hides the permission answer completely: a denied INSERT can be queued behind it and
+appears only on the next probe.
+
+**3b. The login cannot INSERT.** `HAS_PERMS_BY_NAME` honours role membership and `DENY`, but it
+answers for the CURRENT security context — so an incident responder connected as `sysadmin` or
+`db_owner` is asking about the wrong principal and gets `can_insert = 1` for a login that is denied.
+Impersonate, and make the answer carry the principal it answered for:
+
+```sql
+EXECUTE AS USER = '<database_user>';   -- the user the API connects as
+
+DECLARE @object sysname =
+    QUOTENAME(OBJECT_SCHEMA_NAME(OBJECT_ID('AuditEvents'))) + N'.' +
+    QUOTENAME(OBJECT_NAME(OBJECT_ID('AuditEvents')));
+
+SELECT USER_NAME()                                    AS answered_for,
+       @object                                        AS object_asked_about,
+       HAS_PERMS_BY_NAME(@object, 'OBJECT', 'INSERT') AS can_insert,
+       HAS_PERMS_BY_NAME(@object, 'OBJECT', 'SELECT') AS can_select;  -- 0 reads as "unreadable"
+
+REVERT;
+```
+
+`EXECUTE AS USER` needs `IMPERSONATE` on that user, which an admin session has, and `REVERT` outside
+an impersonation context is a silent no-op, so it is safe to leave in. The object name is resolved
+rather than typed as `dbo.AuditEvents` for the same reason the probe resolves it: under a non-`dbo`
+schema the hardcoded form asks about a table that does not exist, returns NULL, and puts you and the
+health check in disagreement.
+
+Then find the `DENY` itself:
+
+```sql
 SELECT dp.name, dp.type_desc, p.permission_name, p.state_desc
 FROM sys.database_permissions p
 JOIN sys.database_principals dp ON dp.principal_id = p.grantee_principal_id
 WHERE p.major_id = OBJECT_ID('AuditEvents');
 ```
 
-A `DENY` beats any `GRANT`, including one inherited from `db_datawriter` — that is the usual cause,
-and it is invisible from the grant side alone. **Do not fix this by granting the API more than
-INSERT on `AuditEvents`**: the chain is append-only by design, and a login holding UPDATE or DELETE
-there is a larger problem than the outage you are ending.
+That lists only EXPLICIT object-level permissions, so a `DENY` inherited from a role —
+`db_denydatawriter` above all — does not appear in it at all; read the API user's role membership
+too. A `DENY` beats any `GRANT`, including one inherited from `db_datawriter`; that is the usual
+cause, and it is invisible from the grant side alone. **Do not fix this by granting the API more
+than INSERT on `AuditEvents`**: the chain is append-only by design, and a login holding UPDATE or
+DELETE there is a larger problem than the outage you are ending.
 
 **4. Is the table locked rather than unreachable?** The health check reads with `READUNCOMMITTED`, so
 it stays healthy while the tail is merely locked by a slow writer. That is the case where readiness
@@ -106,22 +213,50 @@ CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 WHERE r.blocking_session_id <> 0;
 ```
 
+**If that returns no rows, nothing is blocked right now: go back to step 2 rather than on to step
+5.** It only sees a blocker while a movement happens to be queued at the instant you ran it, and
+step 5 will hand you a session to kill whether or not one exists. If it does return rows, carry
+`blocking_session_id` forward — that is the session actually holding the tail.
+
 Look for sessions blocked on `AuditEvents`. The chain reads its tail with `UPDLOCK, HOLDLOCK`, so
 **one** stuck transaction blocks every money movement in the system — measured: a three-second stall
 delayed a deposit on an unrelated account, by an unrelated user, by 3,073–3,089 ms across three runs.
 The unrelated movement waits out essentially the entire hold, so the number to find below is how long
 the blocker has held it, not how many sessions are queued.
 
-**5. Is a long-running transaction holding it?**
+**5. Which session is holding it, and for how long?** Ask what holds a lock on `AuditEvents`
+first — unlike step 4 this answers whether or not anything is queued behind it:
 
 ```sql
-SELECT st.session_id, dt.transaction_id, dt.database_transaction_begin_time
+SELECT l.request_session_id, l.resource_type, l.request_mode, l.request_status
+FROM sys.dm_tran_locks l
+LEFT JOIN sys.partitions p ON p.hobt_id = l.resource_associated_entity_id
+WHERE l.resource_database_id = DB_ID()
+  AND ( (l.resource_type = 'OBJECT'
+         AND l.resource_associated_entity_id = OBJECT_ID('AuditEvents'))
+     OR (l.resource_type IN ('PAGE', 'KEY', 'RID', 'HOBT')
+         AND p.object_id = OBJECT_ID('AuditEvents')) );
+```
+
+Then how long those sessions have held their transaction:
+
+```sql
+SELECT st.session_id, dt.transaction_id, dt.database_transaction_begin_time,
+       DATEDIFF(second, dt.database_transaction_begin_time, GETDATE()) AS held_seconds
 FROM sys.dm_tran_database_transactions dt
 JOIN sys.dm_tran_session_transactions st ON st.transaction_id = dt.transaction_id
+WHERE dt.database_id = DB_ID()
 ORDER BY dt.database_transaction_begin_time;
 ```
 
-The oldest open transaction is the usual culprit. **`KILL` does not release the tail when you press
+**Age says how long a transaction has been open. It does not say what it is holding.** This runbook
+used to run the second query alone, unfiltered, and call the oldest row the usual culprit — but
+`sys.dm_tran_database_transactions` is instance-wide and returns a row per transaction PER DATABASE,
+`tempdb` included, so at three in the morning the top row is routinely a nightly job in another
+database that has nothing to do with this table. Kill only a session that appears in the FIRST query
+or as a `blocking_session_id` in step 4, and only then use the age to decide.
+
+**`KILL` does not release the tail when you press
 enter** — it starts a rollback, and the locks are held until that rollback FINISHES. Undoing the work
 can take as long as doing it took, or longer. This runbook used to say "killing it releases the tail
 and the queue drains", which would have had you standing over a queue that looked stuck after you had
@@ -162,6 +297,86 @@ SELECT name, is_disabled FROM sys.indexes WHERE object_id = OBJECT_ID('AuditEven
 If the dev or test database is simply behind on migrations, see the note in
 `docs/engineering-traps.md` — that failure has bitten twice and does not look like what it is.
 
+**On an environment that HAS been migrated, a missing `AuditEvents` is a fourth thing, and it is not
+an accident.** Dropping or renaming the table is the most complete tamper available to anyone
+holding write access: there is no chain left to verify, and the verifier reports it as exit 3 — no
+verdict — rather than CHAIN BROKEN, so nothing routes you to the evidence rules further down this
+page. **Do not re-run migrations to bring it back.** That recreates an empty table and erases the
+fact that it was ever gone, which is the one piece of evidence there is. Establish first whether this
+environment was ever migrated, which `__EFMigrationsHistory` answers directly:
+
+```sql
+SELECT COUNT(*) AS audit_table_present FROM sys.tables WHERE name = 'AuditEvents';
+SELECT TOP 3 MigrationId FROM __EFMigrationsHistory ORDER BY MigrationId DESC;
+```
+
+A migration history that includes the audit table's migration, with no `AuditEvents` to show for it,
+is not a deployment that failed halfway. Preserve the database and escalate.
+
+---
+
+## If the verifier reports CHAIN BROKEN
+
+**A break has two families of cause and they need opposite responses, so classify before you act.**
+Either somebody with write access changed or removed an audit row, or something entirely ordinary
+produced the same verdict: an `Audit:ChainKey` that is not the one those rows were written with, or
+a deletion of the OLDEST rows from outside the application — an archival job, a manual cleanup, a
+restore of a partial backup. Both are measured below and neither involves an attacker, but they are
+not equally likely. A wrong key happens on any deploy or rotation that exports the wrong value, and
+it is the first thing to rule out. The other is not routine here: this application never deletes an
+audit row, and ADR-0044 D5 leaves retention unsolved — so it is benign only if you can name the job
+or the restore that did it.
+
+**Classify first — it costs one command, and the tool already prints the two things that decide
+it:** the KIND of break, and `Rows verified before the break`. The verifier only ever reads, so
+running it again destroys no evidence and moves nothing: three rows read with the right key, then a
+wrong one, then the right key again reported `CHAIN INTACT`, `CHAIN BROKEN`, `CHAIN INTACT`, and the
+row count never moved.
+
+- `does not match its own hash` with **`Rows verified before the break: 0`** — suspect the key
+  before an attacker, and settle it by re-running with the key this deployment actually keeps. A
+  wrong key is well-formed, so nothing rejects it, and it mismatches on the first row it reads —
+  which is always sequence **1**, for the reason in the note under *After recovery*. Measured: three
+  unaltered rows read with a valid but wrong key reported `CHAIN BROKEN at sequence 1`.
+- the same verdict at **any sequence above 1** — NOT the key. A row numbered above 1 that records no
+  predecessor got there by a write, which is the cheapest way to hide a deleted prefix. Measured:
+  removing the oldest row and clearing the survivor's `PreviousHash` produces exactly this, with the
+  CORRECT key. Treat it as the real thing.
+- `does not match its own hash` with a **non-zero** count — an alteration at that row, *unless more
+  than one key has written this table*. Nothing in the hashed payload records which key wrote a row,
+  so if the secret was rotated, or two hosts or deployment slots run with different values, the walk
+  verifies every row written under the key it holds and mismatches at the first row written under
+  the other. Rule that out before you escalate; it looks exactly like tampering at one row.
+- `expected to follow ... A row was deleted, reordered, or inserted` with
+  **`Rows verified before the break: 0`** — the first row read names a predecessor that is not
+  there. **The sequence it broke at says which of two things happened, and they are not the same
+  incident.** At **sequence 1** nothing was removed: this row IS the start of the chain, so the
+  predecessor it records was WRITTEN onto it, and only an update does that. Above sequence 1 the
+  rows BELOW it are gone. Measured, on the same intact chain of three: writing a `PreviousHash` onto
+  row 1 gives `CHAIN BROKEN at sequence 1 ... Sequences read: 1 to 1` with all three rows still
+  present, while deleting row 1 gives `CHAIN BROKEN at sequence 2 ... Sequences read: 2 to 2`.
+  Preserve the table either way. Only the second one can be housekeeping, and only if you can name
+  the job — an archival job and an attacker print the identical line, so a WRONG key against that
+  same table prints it too: the link is checked before the hash, so on a chain with its head gone
+  the key never enters into it. With a NON-ZERO count a row is missing or out of place in the
+  MIDDLE, which removing the oldest rows cannot do — that one is the real thing.
+- `could not be read at all` — a stored value contradicts the schema, which is itself a
+  modification. Neither a wrong key nor a deletion can cause this.
+
+**From the moment it is none of those, the table is evidence: do not repair it and do not write to
+it.** A repair destroys the only record of what was done to it, and the chain cannot be "fixed" —
+recomputing hashes requires the key, which is exactly what an attacker who reached the database is
+assumed not to have.
+
+**Capture, in this order, before anyone touches the database.** The verifier's full output including
+the exit code; the sequence it names and the rows on either side of it
+(`SELECT * FROM AuditEvents WHERE Sequence BETWEEN <n>-2 AND <n>+2`); the total row count; and the
+SQL Server default trace or audit for recent writes to `AuditEvents` if it is enabled.
+
+**Then escalate rather than continue.** Deciding whether to keep taking traffic on an instance whose
+audit trail is proven altered is not an operational call — it is the decision ADR-0044 D1 exists to
+make possible, and it belongs to whoever owns the incident. This runbook stops here on purpose.
+
 ---
 
 ## What NOT to do
@@ -199,20 +414,120 @@ somebody who wrote the number down.
 
 ## After recovery
 
-- **Verifying the chain is NOT something you can do from here, and pretending otherwise was worse
-  than leaving it out.** `AuditChain.VerifyAsync` exists and the test suite calls it, but nothing
-  exposes it — no endpoint, no CLI, no job. An operator following the old wording would have gone
-  looking for a command that does not exist, during an incident. What you CAN check is that the
-  chain is being written again, which is a weaker claim and is written as one:
+- **Verify the chain. Run this FROM THE REPOSITORY ROOT** — the `--project` path is relative to it,
+  and from anywhere else `dotnet run` fails to find the project and exits **1**, which this document
+  defines four paragraphs below as CHAIN BROKEN. That failure happens before the tool starts, so
+  nothing inside it can translate the code. Confirm with `pwd` if you are not sure.
 
-  ```sql
-  SELECT TOP 5 [Sequence], [Event], [OccurredAt] FROM [AuditEvents] ORDER BY [Sequence] DESC;
+  The key and the connection string travel through the environment rather
+  than as command arguments, because on Linux `/proc/<pid>/cmdline` is world-readable while
+  `/proc/<pid>/environ` is not.
+
+  **That does not make them private from your own shell**, which is a distinction worth stating
+  because it is easy to assume otherwise. An `export` line is a command, and your shell records it:
+  bash writes it to
+  `HISTFILE`, and PowerShell's PSReadLine writes it to `ConsoleHost_history.txt` — its
+  sensitive-word filter matches `password|token|apikey|secret`, none of which is `ChainKey`. A
+  history file outlives the process, which makes it the WORSE exposure of the two. Read BOTH values
+  instead of typing them — the connection string carries database credentials, so it is no more
+  printable than the key:
+
+  ```bash
+  read -rsp 'Audit:ChainKey: ' Audit__ChainKey && export Audit__ChainKey && echo
+  read -rsp 'Connection string: ' ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection && echo
+  dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
-  A `Sequence` past its value from before the outage means movements are being recorded again. It
-  says nothing about whether the hashes still link. **That gap is open and tracked** — until an
-  operator-runnable verification exists, this runbook cannot close it, and no line here should
-  suggest otherwise.
+  PowerShell, since it is the history file this paragraph cites. **`-AsPlainText` on
+  `ConvertFrom-SecureString` is PowerShell 7 or later**; on Windows PowerShell 5.1 it does not exist
+  and both assignments end up EMPTY, which the verifier then reports as a missing key. Check with
+  `$PSVersionTable.PSVersion` first.
+
+  ```powershell
+  # PowerShell 7+
+  $env:Audit__ChainKey = (Read-Host 'Audit:ChainKey' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
+  $env:ConnectionStrings__DefaultConnection = (Read-Host 'Connection string' -AsSecureString |
+  ConvertFrom-SecureString -AsPlainText)
+  dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
+  ```
+
+  ```powershell
+  # Windows PowerShell 5.1
+  $key = Read-Host 'Audit:ChainKey' -AsSecureString
+  $env:Audit__ChainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($key))
+  $cs = Read-Host 'Connection string' -AsSecureString
+  $env:ConnectionStrings__DefaultConnection = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($cs))
+  dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
+  ```
+
+  It prints the verdict WITH the row count and the sequence range, because "intact" on its own is
+  not an answer — a chain of zero rows links perfectly, and a table truncated to nothing reports
+  exactly what a fresh one does. Compare the count against what you expected: a chain that verifies
+  40 rows where yesterday it had 40,000 is intact and catastrophic, and only the numbers say so.
+
+  Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** no verdict
+  (the store could not be read), **4** the command line was wrong, **5** interrupted. Only 0, 1 and
+  2 are statements about the CHAIN.
+
+  **`3` is the one to wire an alert on separately from `1`.** It covers everything that stopped the
+  walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey`, an unreachable
+  server, a connection string that is malformed or absent, **and the states step 6 is about — the
+  `AuditEvents` table renamed, dropped or never migrated, or a login that cannot SELECT from it.**
+  That last group is why the tool no longer stops at "check the connection string and the key": it
+  now says that a vanished `AuditEvents` exits the same way and is the most complete tamper there
+  is, and that the remedy step 6 points at — re-running migrations — would recreate the table and
+  erase the evidence it ever went. Read the exception line above the advice; it names the cause.
+
+  **A WRONG key is not among them, and this runbook previously said it was.** A well-formed key that
+  is simply not the one the chain was written with passes every check the tool can make, so the walk
+  runs and the hashes mismatch: that exits **1**, the same as a tamper. There is no way around it —
+  the two are indistinguishable to any check — which is exactly why the next paragraph exists.
+
+  **`5` usually is not an incident, and it is never evidence that nothing is wrong.** Somebody
+  stopped the walk — Ctrl+C, a killed job, a shutdown — so part of the chain was checked and the
+  rest was not, and there is no verdict. What it does NOT establish is that the store is healthy:
+  the branch is selected by the cancellation token, not by what threw, so a store that failed while
+  the token was already signalled is reported as an interruption too. **If it was stopped because it
+  appeared to hang, the hang is the finding**, and the triage list above is exactly what applies. A
+  walk stopped for any other reason can simply be re-run. It is separate from `3` for a different
+  reason: an alert wired to `3` would otherwise hand whoever answers it a list of environment
+  failures to chase after a colleague pressed Ctrl+C. `e2fsck` keeps the same distinction (32
+  "canceled by user request" against 8 "operational error"), as does AIDE (25 for SIGINT against 18
+  and 24). Re-run it to get an answer.
+
+  **`4` exists because the framework collided with this vocabulary.** System.CommandLine reports
+  every parse failure as exit 1, so running the tool with no arguments at all — the likeliest
+  mistake there is — used to report a tampered audit trail. Measured, and now translated.
+
+  **If it reports a HASH MISMATCH before any row verifies, suspect the key before you suspect an
+  attacker — and read the sequence as well as the count.** A wrong key mismatches on the first row
+  it reads, and that row is sequence **1**. It cannot be anything else: the walk checks the LINK
+  before the hash, so the only row that can reach the hash check first is one recording no
+  predecessor, and `AuditChain.Link` writes that only into an empty table, where the row it writes
+  is sequence 1. `Rows verified before the break: 0` says the key is worth checking, and `Sequences
+  read: 1 to ...` on the next line confirms it.
+
+  **The same verdict above sequence 1 rules the key OUT** — a row numbered above 1 recording no
+  predecessor got there by a write.
+
+  **A withdrawn argument, left visible.** This note used to say the tell was the count alone, "not
+  at sequence 1", because a purged chain begins at 5,001 and the hint would stop firing on the
+  oldest tables. That reasoning is unreachable, and the tool was gated on it. On a chain whose head
+  is gone the first row read records a predecessor that is missing, so the walk reports a LINK break
+  and never reaches the hash check at all: measured, a wrong key against a decapitated chain prints
+  output identical to the correct key. What the loosened gate did produce was the dangerous
+  direction — an attacker who removed the oldest rows and cleared the survivor's `PreviousHash` was
+  met with "usually means the wrong Audit:ChainKey ... Confirm the key before escalating".
+
+  The row hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it,
+  and it mismatches on the first row it reads. It is also the ONLY break a wrong key can produce — it
+  cannot make a row unreadable and it cannot change what a row records as its predecessor, so on
+  those two the tool deliberately stays silent about the key.
+
+  What it still cannot tell you is whether rows were removed from the END. That needs an anchor
+  outside the system and is tracked separately — see ADR-0044.
 - The refused movements were refused, not lost: no money moved, and no audit row claims it did.
   Customers can simply retry.
 - If the cause was contention rather than an outage, the number worth capturing is how long the tail

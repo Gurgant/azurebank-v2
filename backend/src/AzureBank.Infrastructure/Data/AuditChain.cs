@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,6 +31,28 @@ public interface IAuditChain
     Task<AuditChainVerification> VerifyAsync(DbContext context, CancellationToken cancellationToken = default);
 }
 
+/// <summary>What kind of break the walk found, when it found one.</summary>
+/// <remarks>
+/// The three are not interchangeable and an operator acts differently on each, which is why the
+/// verdict carries the kind instead of leaving callers to match on the wording of a sentence.
+/// A WRONG KEY can only ever produce <see cref="HashMismatch"/>: it cannot make a row unreadable,
+/// and it cannot change what a row records as its predecessor.
+/// </remarks>
+public enum AuditChainBreakKind
+{
+    /// <summary>No break: the walk reached the end.</summary>
+    None = 0,
+
+    /// <summary>A row does not hash to what is stored beside it. A wrong key looks like this too.</summary>
+    HashMismatch,
+
+    /// <summary>A row records a predecessor that is not the row before it. Deleted, reordered or inserted.</summary>
+    LinkBroken,
+
+    /// <summary>A row could not be materialised at all, so a stored value contradicts the schema.</summary>
+    Unreadable,
+}
+
 /// <summary>The result of walking the chain. A count as well as a verdict, deliberately.</summary>
 /// <param name="Verified">Rows read and checked.</param>
 /// <param name="FirstBrokenSequence">
@@ -41,7 +64,25 @@ public interface IAuditChain
 /// zero rows returns "intact", and that answer is worthless — the same failure mode
 /// <c>SourceHygieneTests</c> was given a floor for after #119. Assert the count, not just the verdict.
 /// </remarks>
-public readonly record struct AuditChainVerification(long Verified, long? FirstBrokenSequence, string? Reason)
+/// <param name="LowestSequence">
+/// The first and last sequence THIS WALK actually read, or null if it read nothing.
+/// </param>
+/// <param name="HighestSequence">See <paramref name="LowestSequence"/>.</param>
+/// <param name="Kind">Which of the three breaks it was, when there was one.</param>
+/// <remarks>
+/// THE RANGE COMES FROM THE WALK ITSELF, and it is here rather than left to the caller because the
+/// caller cannot get it right. Asking the database separately for MIN and MAX is two more statements
+/// at two more instants: a row committed between the MAX and the walk is counted but falls outside
+/// the range, so the tool could report 101 rows verified over a range ending at 100. The count and
+/// the range exist to be compared with each other, so they have to come from one read.
+/// </remarks>
+public readonly record struct AuditChainVerification(
+    long Verified,
+    long? FirstBrokenSequence,
+    string? Reason,
+    long? LowestSequence = null,
+    long? HighestSequence = null,
+    AuditChainBreakKind Kind = AuditChainBreakKind.None)
 {
     /// <summary>True when every row read hashed and linked correctly.</summary>
     public bool IsIntact => FirstBrokenSequence is null;
@@ -165,6 +206,20 @@ public sealed class AuditChain : IAuditChain
     /// records. Ties are resolved by the number this method's caller then assigns, so the order is
     /// recorded in the row rather than inferred from it.
     /// </summary>
+    /// <summary>True when the failure is about the STORE rather than about a stored value.</summary>
+    private static bool IsInfrastructureFailure(Exception failure)
+    {
+        for (var current = failure; current is not null; current = current.InnerException)
+        {
+            if (current is DbException)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static List<AuditEvent> Pending(DbContext context) =>
         context.ChangeTracker.Entries<AuditEvent>()
             .Where(e => e.State == EntityState.Added)
@@ -369,23 +424,144 @@ public sealed class AuditChain : IAuditChain
           be wrong twice over: two rows can share a millisecond, and a clock can move backwards.
           AsNoTracking because a verifier must never be able to write back what it read.
         */
-        var rows = await context.Set<AuditEvent>()
+        /*
+          STREAMED, NOT BUFFERED, and the difference only shows on a table that is not a test fixture.
+          This read the whole table with ToListAsync. Measured on SQL Server at 20,006 rows: 207 ms
+          and 12 MB of managed heap — roughly 0.6 KB per row, and LINEAR. A bank's audit trail reaches
+          millions of rows inside a year, which is ~600 MB at one million and gigabytes beyond, for a
+          walk that never needs more than one row at a time.
+
+          The fix is measured at two sizes rather than one, because "it dropped" does not establish
+          the shape and the shape is the whole claim: 5,006 rows -> 2,671 KB, and 40,006 rows ->
+          610 KB. Eight times the rows did not cost eight times the memory (linear would have been
+          ~21 MB); the absolute figures are GC noise around a flat line. Time is sub-linear too,
+          148 ms to 269 ms, since fixed cost dominates at these sizes.
+
+          The cost of streaming is a data reader held open for the length of the walk. That is the
+          right trade for a verifier run deliberately by an operator, and the wrong one for anything
+          on the money path — which is why nothing on the money path calls this.
+
+          IT ONLY STREAMS IF THE CONTEXT HAS NO RETRYING EXECUTION STRATEGY, and that condition is
+          invisible from here. A stream cannot be replayed from the middle, so EF sets
+          QueryCompilationContext.IsBuffering from ExecutionStrategy.RetriesOnFailure and PRE-BUFFERS
+          the whole resultset — AsAsyncEnumerable() then streams in name only. Measured on 40,006
+          rows: 3 MB with retry off against 34 MB with it on, the 34 MB present before the first row
+          is examined.
+
+          So the caller decides whether this line means anything. AzureBank.AuditVerifier passes
+          retryOnTransientFailures: false to AddInfrastructure for exactly this reason, and a test
+          pins it; every writer keeps retry and buffers, which is correct for the small saves they
+          make. Changing that argument silently reverts this method to what it replaced.
+        */
+        var rows = context.Set<AuditEvent>()
             .AsNoTracking()
             .OrderBy(e => e.Sequence)
-            .ToListAsync(cancellationToken);
+            .AsAsyncEnumerable();
 
         string? previous = null;
         long verified = 0;
 
-        foreach (var row in rows)
+        // Recorded as the walk goes, so the range and the count are two facts about ONE read.
+        long? lowest = null;
+        long? highest = null;
+
+        /*
+          A ROW THAT CANNOT EVEN BE READ IS A CHAIN PROBLEM, NOT A CONNECTION PROBLEM.
+
+          Outcome is stored as a string and mapped to an enum, so a single UPDATE writing a value
+          that is not an enum member makes EF throw while MATERIALISING that row -- mid-stream,
+          after the walk has begun. Left to propagate, the verifier's outermost catch classified it
+          as "no verdict ... this is NOT a statement about the chain", which is exactly wrong: the
+          Outcome column is inside the hashed payload, so an unreadable value there IS a
+          modification of a row.
+
+          Demonstrated as an attack on the verifier itself: tamper with row 5's Detail, then write
+          one bogus Outcome on row 1, and the tool stops reporting BROKEN and reports a
+          configuration problem instead. One statement muzzles the thing whose whole purpose is to
+          notice. So the enumeration is guarded here, where the walk knows how far it got, and the
+          failure is reported as what it is.
+        */
+        /*
+          await using, BECAUSE THE HAND-DRIVEN LOOP LOST WHAT await foreach GAVE FOR FREE.
+
+          This method used to be an await foreach, which the compiler lowers to a try/finally that
+          disposes the enumerator on every exit path. Driving the enumerator by hand -- needed so a
+          row that will not materialise can be caught and reported rather than escaping -- dropped
+          that finally, so every EARLY return, which is to say every BROKEN verdict, left EF's
+          DbDataReader open on this context's connection.
+
+          Measured on SQL Server: the caller's next query on the same context died with "There is
+          already an open DataReader associated with this Connection which must be closed first."
+          The InMemory tests could not see it -- there is no reader there -- which is why it took a
+          reviewer reading the rewrite, and why the regression test for it is SQL-gated.
+        */
+        await using var enumerator = rows.WithCancellation(cancellationToken).GetAsyncEnumerator();
+
+        while (true)
         {
+            AuditEvent row;
+            try
+            {
+                if (!await enumerator.MoveNextAsync())
+                {
+                    break;
+                }
+
+                row = enumerator.Current;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception unreadable) when (!IsInfrastructureFailure(unreadable))
+            {
+                /*
+                  ONLY A DATA FAILURE LANDS HERE. The first version of this guard caught everything
+                  the enumeration could throw, which turned an unreachable database into CHAIN
+                  BROKEN -- the exact collision this tool spent three rounds separating. The suite's
+                  own unreachable-database test caught it, going from 3 to 1.
+
+                  A DbException anywhere in the chain means the STORE failed and there is no verdict
+                  to give, so it propagates. Anything else -- an enum value that is not a member, a
+                  column that will not materialise -- is a stored value contradicting the schema,
+                  which is a modification of a row.
+                */
+                /*
+                  FirstBrokenSequence MUST BE NON-NULL HERE, because IsIntact is defined as its
+                  absence. The first version of this guard returned null when nothing had been read
+                  yet -- which is precisely the case where the FIRST row is the poisoned one -- so
+                  the verdict came back "intact with zero rows", i.e. NOTHING TO VERIFY, exit 2.
+                  That moved the muzzle rather than removing it. Measured before and after.
+
+                  When the walk got nowhere the position is genuinely unknown, so it is reported as
+                  the row after the last one read, falling back to the first. The NUMBER is
+                  best-effort; the reason text below carries what is actually known.
+                */
+                return new AuditChainVerification(
+                    verified,
+                    (highest ?? 0) + 1,
+                    $"The row after sequence {highest?.ToString() ?? "(start of chain)"} could not be "
+                    + $"read at all: {unreadable.Message} A stored value is not what the schema says "
+                    + "it must be, which is itself a modification -- the column it failed on is "
+                    + "inside the hashed payload.",
+                    lowest,
+                    highest,
+                    AuditChainBreakKind.Unreadable);
+            }
+
+            lowest ??= row.Sequence;
+            highest = row.Sequence;
+
             if (row.PreviousHash != previous)
             {
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
                     $"Row {row.Id} expected to follow '{previous ?? "(start of chain)"}' but records "
-                    + $"'{row.PreviousHash ?? "(start of chain)"}'. A row was deleted, reordered, or inserted.");
+                    + $"'{row.PreviousHash ?? "(start of chain)"}'. A row was deleted, reordered, or inserted.",
+                    lowest,
+                    highest,
+                    AuditChainBreakKind.LinkBroken);
             }
 
             var expected = ComputeRowHash(row);
@@ -393,14 +569,21 @@ public sealed class AuditChain : IAuditChain
                     Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
             {
                 return new AuditChainVerification(
-                    verified, row.Sequence, $"Row {row.Id} does not match its own hash: it was altered after it was written.");
+                    verified,
+                    row.Sequence,
+                    $"Row {row.Id} does not match its own hash. Either it was altered after it was "
+                    + "written, or this verification is using a different Audit:ChainKey from the "
+                    + "one it was written with.",
+                    lowest,
+                    highest,
+                    AuditChainBreakKind.HashMismatch);
             }
 
             previous = row.RowHash;
             verified++;
         }
 
-        return new AuditChainVerification(verified, null, null);
+        return new AuditChainVerification(verified, null, null, lowest, highest);
     }
 
     /// <summary>
