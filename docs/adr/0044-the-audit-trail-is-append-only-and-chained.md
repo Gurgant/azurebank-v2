@@ -122,12 +122,29 @@ takes the very lock that just failed. **For a chain failure the chain cannot be 
 `SecurityEvents.AuditChainUnavailable` is therefore the one event in this vocabulary that is log-only
 by NECESSITY rather than by choice, and `AuditChain` logs it before letting the exception go.
 
-**And readiness now says it out loud.** `AuditChainHealthCheck` probes the store with
+**And readiness now says it out loud.** `AuditChainHealthCheck` reads the tail with
 `READUNCOMMITTED` — deliberately lock-free, because a readiness probe that took the tail lock would
 contend with the money path forever in order to report on contention. It therefore detects the case
 that matters most and is least visible (store unreachable, table gone, database down) and NOT a tail
 that is merely locked; that one surfaces through the log event above. Two instruments, two questions,
 neither pretending to answer the other's.
+
+**It asks THREE questions, not one, and this paragraph described only the first until 2026-08-24.**
+Reading is the first; the probe also tests `DATABASEPROPERTYEX(DB_NAME(), 'Updateability')` and
+`HAS_PERMS_BY_NAME(..., 'INSERT')`, and reports the read-only database and the refused INSERT as
+SEPARATE verdicts because their fixes have nothing in common — a message about `GRANT`s would send
+an operator hunting permissions on a database that is simply not `READ_WRITE`. Updateability is
+tested BEFORE the permission question, so on a read-only database the `GRANT` question is never
+asked at all. The write axes exist because **D1 refuses on the WRITE**: a probe that certified only
+readability would be certifying the wrong capability. A fourth Unhealthy shape is not the probe's at
+all — the framework's "A timeout occurred while running check.", which is how the cooperative
+readiness budget surfaces to an operator.
+
+**Why this paragraph was stale, which is the part worth keeping.** The write axes were added in a
+later round of the same PR, after this text was written, and the squash hides that it went stale
+rather than being born wrong. The runbook was corrected then and this was not, so for a month the
+document read under pressure was right and the decision record was not. **When a probe's question
+changes, grep every document that describes it.**
 
 The recovery procedure is `docs/runbooks/audit-chain-unavailable.md`, including the two things not to
 do under pressure: disable the chain, or raise the bound to push the failures away.

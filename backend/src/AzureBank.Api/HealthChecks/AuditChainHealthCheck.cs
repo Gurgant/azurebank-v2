@@ -6,8 +6,8 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 namespace AzureBank.Api.HealthChecks;
 
 /// <summary>
-/// Reports whether the audit store can be read at all — which, since ADR-0044 D1, decides whether
-/// this instance can move money.
+/// Reports whether this instance could not certify that an audit row can be appended — which, since
+/// ADR-0044 D1, is the same question as whether it can move money.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,12 +24,23 @@ namespace AzureBank.Api.HealthChecks;
 /// <c>READUNCOMMITTED</c>: it takes no lock and waits on none.
 /// </para>
 /// <para>
-/// <b>What that means it does and does not detect.</b> It detects the case that matters most and is
-/// least visible — the audit store unreachable, the table gone, the database down — where every
-/// movement will fail. It does NOT detect a tail that is merely locked by a slow writer, because
-/// seeing that would require joining the queue it is reporting on. That case surfaces instead
-/// through <c>SecurityEvents.AuditChainUnavailable</c>, which <c>AuditChain</c> logs when its bounded
-/// wait expires. Two instruments, two questions; neither pretends to answer the other's.
+/// <b>THREE AXES, OF WHICH READING IS ONLY ONE — and the description says which.</b> The probe asks
+/// whether the table can be read, whether the database is <c>READ_WRITE</c>, and whether this login
+/// is permitted to INSERT; the read-only and permission answers are reported separately BECAUSE
+/// their fixes have nothing in common, and the runbook's step 3 splits on the second half of the
+/// sentence for exactly that reason. Saying "readable" alone would certify the wrong capability:
+/// D1 refuses on the WRITE.
+/// </para>
+/// <para>
+/// <b>What it does and does not detect.</b> It detects the case that matters most and is least
+/// visible — the audit store unreachable, the table gone, the database down — where every movement
+/// will fail. It does NOT detect a tail that is merely locked by a slow writer, because seeing that
+/// would require joining the queue it is reporting on. That case surfaces instead through
+/// <c>SecurityEvents.AuditChainUnavailable</c>, which <c>AuditChain</c> logs when its bounded wait
+/// expires. Nor does it detect a cancelled probe as anything of its own: the framework reports that
+/// as "A timeout occurred while running check.", which is how the cooperative readiness budget
+/// becomes visible to an operator. Two instruments, two questions; neither pretends to answer the
+/// other's.
 /// </para>
 /// </remarks>
 public sealed class AuditChainHealthCheck : IHealthCheck

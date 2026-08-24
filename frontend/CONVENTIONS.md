@@ -87,3 +87,15 @@ reintroduces a whole class of flake. Two consequences follow: after any async tr
 `findBy*` or wrap in `waitFor`, because tabster lifts background `aria-hidden` asynchronously; and
 since jsdom never evaluates media queries, elements hidden behind a mobile-first breakpoint are
 present but hidden, so they need `{ hidden: true }` to be found.
+
+## `vitest run` does not run the whole suite — it excludes `contract/**` and `integration/**`
+
+Five commands, not one. `vitest run` covers the unit and component tests; the `contract/` and
+`integration/` directories are excluded by configuration, so a green `vitest run` is not a green
+suite and has never been one.
+
+The last three need the real stack up: seed `AzureBankE2E`, the API on `:5068`, and the BFF on
+`:5000` started with **CLI args** rather than a profile, because the cluster id contains a hyphen.
+Authentication is rate-limited to 10 attempts per 60 seconds per IP, so leave ~70 seconds between
+suites or the second one fails on a limiter rather than on anything real.
+
