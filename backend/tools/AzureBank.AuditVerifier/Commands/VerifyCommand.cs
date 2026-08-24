@@ -155,6 +155,35 @@ public static class VerifyCommand
                 }
             }
 
+            /*
+              A LINK BREAK BEFORE ANYTHING VERIFIES MEANS TWO DIFFERENT THINGS, and the sequence
+              separates them. The walk starts from "(start of chain)", so it breaks here when the
+              first row read records a predecessor. If that row is sequence 1 it IS the start of the
+              chain -- Link writes null there -- so the value it carries was written onto it, and
+              nothing was removed. Above sequence 1 the rows beneath it are gone.
+
+              Measured on SQL Server, same intact chain of three: writing a PreviousHash onto row 1
+              gives "CHAIN BROKEN at sequence 1 ... Sequences read: 1 to 1" with all three rows still
+              present; deleting row 1 gives "CHAIN BROKEN at sequence 2 ... Sequences read: 2 to 2".
+              The runbook said this verdict meant the oldest rows were gone, which is false for the
+              first of those and was the reading an operator would have acted on.
+            */
+            if (result.Verified == 0 && result.Kind == AuditChainBreakKind.LinkBroken)
+            {
+                if (result.FirstBrokenSequence == 1)
+                {
+                    lines.Add("  NOTHING was removed from the head: this IS the start of the chain,");
+                    lines.Add("  so the predecessor it records was written onto it. Only an update");
+                    lines.Add("  does that. Preserve the table and escalate.");
+                }
+                else
+                {
+                    lines.Add("  The rows BELOW this sequence are gone. An archival job and an");
+                    lines.Add("  attacker print this same line, so establish which before you");
+                    lines.Add("  repair anything.");
+                }
+            }
+
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");
             return (Broken, lines);
         }

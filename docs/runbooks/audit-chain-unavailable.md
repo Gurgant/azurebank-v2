@@ -196,16 +196,19 @@ row count never moved.
   so if the secret was rotated, or two hosts or deployment slots run with different values, the walk
   verifies every row written under the key it holds and mismatches at the first row written under
   the other. Rule that out before you escalate; it looks exactly like tampering at one row.
-- `expected to follow ... A row was deleted, reordered, or inserted` with **count 0** — the first
-  row read names a predecessor that is not there, so the OLDEST rows are gone. An archival job and
-  an attacker produce identical output here, so compare `Sequences read:` against the low end of the
-  last run that came back INTACT. If it has moved up, ask whoever runs those jobs before you open an
-  incident; if it has not moved, rows ahead of it went without the numbering changing, and that is
-  not housekeeping. Measured: deleting the single lowest row from an intact chain of three gives
-  `CHAIN BROKEN at sequence 2 ... expected to follow '(start of chain)'`, and a WRONG key against
-  the same table prints the identical line — the link is checked before the hash, so on a chain with
-  its head gone the key never enters into it. With a NON-ZERO count a row is missing or out of place
-  in the MIDDLE, which removing the oldest rows cannot do — that one is the real thing.
+- `expected to follow ... A row was deleted, reordered, or inserted` with
+  **`Rows verified before the break: 0`** — the first row read names a predecessor that is not
+  there. **The sequence it broke at says which of two things happened, and they are not the same
+  incident.** At **sequence 1** nothing was removed: this row IS the start of the chain, so the
+  predecessor it records was WRITTEN onto it, and only an update does that. Above sequence 1 the
+  rows BELOW it are gone. Measured, on the same intact chain of three: writing a `PreviousHash` onto
+  row 1 gives `CHAIN BROKEN at sequence 1 ... Sequences read: 1 to 1` with all three rows still
+  present, while deleting row 1 gives `CHAIN BROKEN at sequence 2 ... Sequences read: 2 to 2`.
+  Preserve the table either way. Only the second one can be housekeeping, and only if you can name
+  the job — an archival job and an attacker print the identical line, so a WRONG key against that
+  same table prints it too: the link is checked before the hash, so on a chain with its head gone
+  the key never enters into it. With a NON-ZERO count a row is missing or out of place in the
+  MIDDLE, which removing the oldest rows cannot do — that one is the real thing.
 - `could not be read at all` — a stored value contradicts the schema, which is itself a
   modification. Neither a wrong key nor a deletion can cause this.
 

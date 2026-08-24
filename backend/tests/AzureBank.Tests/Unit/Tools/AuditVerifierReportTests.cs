@@ -297,6 +297,58 @@ public class AuditVerifierReportTests
     }
 
     [Fact]
+    public void ALinkBreakAtSequence1_IsAWRITE_NotARemoval()
+    {
+        /*
+          THE FIRST ROW OF THE CHAIN RECORDS NO PREDECESSOR -- Link writes null there, because there
+          was no tail. So a link break AT sequence 1 cannot mean rows were removed from the head:
+          the row is still the head. Something wrote a predecessor onto it.
+
+          Measured on SQL Server: UPDATE AuditEvents SET PreviousHash = REPLICATE('a',64) WHERE
+          Sequence = 1 gives "CHAIN BROKEN at sequence 1 ... Sequences read: 1 to 1" with all three
+          rows still present. The runbook read this verdict as "the OLDEST rows are gone", which is
+          the opposite of what happened, and it is what the operator would have acted on.
+        */
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(
+                0, 1, "Row ... expected to follow '(start of chain)' but records ...", 1, 1,
+                AuditChainBreakKind.LinkBroken),
+            1, 1);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+        text.Should().Contain(
+            "NOTHING was removed",
+            "the head is still here, so telling the operator to go and find the archival job that "
+            + "removed it sends them after something that did not happen");
+        text.Should().NotContain(
+            "rows BELOW",
+            "there are no rows below sequence 1, and saying otherwise invents a deletion");
+    }
+
+    [Fact]
+    public void ALinkBreakABOVESequence1_MeansTheRowsBeneathAreGone()
+    {
+        // The other half. Same kind, same count, different position, opposite reading -- which is
+        // the whole point of splitting on it.
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(
+                0, 5_001, "Row ... expected to follow '(start of chain)' but records ...",
+                5_001, 5_005, AuditChainBreakKind.LinkBroken),
+            5_001, 5_005);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+        text.Should().Contain(
+            "rows BELOW",
+            "a chain that starts above 1 is missing what came before it, and that is the fact the "
+            + "operator has to take away");
+        text.Should().NotContain(
+            "NOTHING was removed",
+            "which would be the exact inversion of the state");
+    }
+
+    [Fact]
     public void ABreakInTheMIDDLE_DoesNotBlameTheKey()
     {
         // The negative control. If the hint appeared on every break it would be noise, and the one
