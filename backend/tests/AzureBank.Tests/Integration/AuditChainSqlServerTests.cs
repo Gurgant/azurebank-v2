@@ -148,9 +148,12 @@ public sealed class AuditChainSqlServerTests : IDisposable
     /// possible because the column is nullable, and it is the one an attacker actually wants.
     /// </para>
     /// <para>
-    /// EVERY CASE IS VALUE-TO-VALUE, deliberately, and the seed below is what makes that true.
-    /// Tampering a column that was seeded NULL proves only that its NULL-NESS is hashed — measured,
-    /// four such cases stayed green while the four values stopped being hashed at all.
+    /// EIGHT OF THE NINE ARE VALUE-TO-VALUE, and the seed below is what makes that true for the four
+    /// columns <c>NewEvent</c> leaves null. Tampering a column that was seeded NULL proves only that
+    /// its NULL-NESS is hashed — measured, those four cases stayed green while their four values
+    /// stopped being hashed at all. The ninth, <c>ActorUserId</c> → <c>NULL</c>, is value-to-NULL on
+    /// purpose: erasing WHO acted is the tamper worth naming, and it is value-sensitive anyway,
+    /// because the seed's <c>ActorUserId</c> is a real Guid rather than a null.
     /// </para>
     /// <para>
     /// <c>PreviousHash</c> is deliberately NOT here, and not because it is uninteresting:
