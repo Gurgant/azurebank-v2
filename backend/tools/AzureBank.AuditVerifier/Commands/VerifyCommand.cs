@@ -106,13 +106,23 @@ public static class VerifyCommand
             /*
               SUSPECT THE KEY BEFORE SUSPECTING AN ATTACKER, when the break is on the FIRST ROW READ.
 
-              KEYED ON THE COUNT, NOT ON THE NUMBER 1, and the difference is a live table's whole
-              life. This tested FirstBrokenSequence <= 1, which is the first row only while the
-              first row has never been removed. Sequence is assigned as tail + 1 and never restarts
-              (AuditChain.Link), so after any retention purge, archival or partial restore the chain
-              begins at 5,001 or 900,204 -- and the hint silently stopped firing, on precisely the
-              tables old enough to have been purged. Verified == 0 says "it broke before verifying
-              anything" whatever the numbering, and it is printed on the line above.
+              THE COUNT AND THE POSITION, and an earlier round of this file got that wrong in the
+              dangerous direction. It dropped the position on the argument that Sequence is tail + 1
+              and never restarts, so a purged chain begins at 5,001 and a position test would stop
+              firing on the oldest tables. THAT SCENARIO CANNOT HAPPEN. VerifyAsync checks the LINK
+              before the hash, so the only row that can reach the hash check first is one recording
+              no predecessor -- and Link writes that only when tail is null, i.e. into an empty
+              table, where the row it writes is sequence 1. On a chain whose head is gone the first
+              row read records a predecessor that is missing, so the walk reports LinkBroken and the
+              hash check is never reached. Measured: a WRONG key against a decapitated chain prints
+              output identical to the correct key.
+
+              What the loosened gate did produce was an exoneration. Deleting the oldest rows and
+              clearing the survivor's PreviousHash -- the cheapest way to hide a deleted prefix --
+              gives HashMismatch with Verified == 0 above sequence 1, and the tool answered
+              "usually means the wrong Audit:ChainKey ... Confirm the key before escalating" WITH
+              THE CORRECT KEY IN USE, while printing "Sequences read: 2 to 2" on the line above it.
+              Measured on SQL Server before this branch existed.
 
               AND ONLY FOR A HASH MISMATCH, which is the only break a wrong key can cause. It cannot
               make a row unreadable, and it cannot change what a row records as its predecessor -- so
@@ -131,9 +141,18 @@ public static class VerifyCommand
             */
             if (result.Verified == 0 && result.Kind == AuditChainBreakKind.HashMismatch)
             {
-                lines.Add("  Breaking at the FIRST row usually means the wrong Audit:ChainKey, not");
-                lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch it,");
-                lines.Add("  and it mismatches from row one. Confirm the key before escalating.");
+                if (result.FirstBrokenSequence == 1)
+                {
+                    lines.Add("  Breaking at sequence 1 usually means the wrong Audit:ChainKey, not");
+                    lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch");
+                    lines.Add("  it. Confirm the key before escalating.");
+                }
+                else
+                {
+                    lines.Add("  This is NOT the key. A row above sequence 1 that records no");
+                    lines.Add("  predecessor was WRITTEN that way, which is how a deleted prefix is");
+                    lines.Add("  hidden. Preserve the table and escalate.");
+                }
             }
 
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");

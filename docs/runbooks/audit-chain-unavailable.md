@@ -169,9 +169,12 @@ If the dev or test database is simply behind on migrations, see the note in
 **A break has two families of cause and they need opposite responses, so classify before you act.**
 Either somebody with write access changed or removed an audit row, or something entirely ordinary
 produced the same verdict: an `Audit:ChainKey` that is not the one those rows were written with, or
-a retention purge, archival job or partial restore that removed the oldest rows. Both benign cases
-are measured below. Neither involves an attacker, and both are more likely on any given morning than
-one.
+a deletion of the OLDEST rows from outside the application — an archival job, a manual cleanup, a
+restore of a partial backup. Both are measured below and neither involves an attacker, but they are
+not equally likely. A wrong key happens on any deploy or rotation that exports the wrong value, and
+it is the first thing to rule out. The other is not routine here: this application never deletes an
+audit row, and ADR-0044 D5 leaves retention unsolved — so it is benign only if you can name the job
+or the restore that did it.
 
 **Classify first — it costs one command, and the tool already prints the two things that decide
 it:** the KIND of break, and `Rows verified before the break`. The verifier only ever reads, so
@@ -181,22 +184,30 @@ row count never moved.
 
 - `does not match its own hash` with **`Rows verified before the break: 0`** — suspect the key
   before an attacker, and settle it by re-running with the key this deployment actually keeps. A
-  wrong key is well-formed, so nothing rejects it, and it mismatches on the first row it reads.
-  Measured: three unaltered rows read with a valid but wrong key reported `CHAIN BROKEN at sequence
-  1`. See the fuller note under *After recovery*.
+  wrong key is well-formed, so nothing rejects it, and it mismatches on the first row it reads —
+  which is always sequence **1**, for the reason in the note under *After recovery*. Measured: three
+  unaltered rows read with a valid but wrong key reported `CHAIN BROKEN at sequence 1`.
+- the same verdict at **any sequence above 1** — NOT the key. A row numbered above 1 that records no
+  predecessor got there by a write, which is the cheapest way to hide a deleted prefix. Measured:
+  removing the oldest row and clearing the survivor's `PreviousHash` produces exactly this, with the
+  CORRECT key. Treat it as the real thing.
 - `does not match its own hash` with a **non-zero** count — an alteration at that row, *unless more
   than one key has written this table*. Nothing in the hashed payload records which key wrote a row,
   so if the secret was rotated, or two hosts or deployment slots run with different values, the walk
   verifies every row written under the key it holds and mismatches at the first row written under
   the other. Rule that out before you escalate; it looks exactly like tampering at one row.
-- `expected to follow ... A row was deleted, reordered, or inserted` with **count 0** — the OLDEST
-  rows are gone, and the ordinary causes are a retention purge, an archival job or a restore of a
-  partial backup. Measured: deleting the single lowest row from an intact chain of three gives
-  `CHAIN BROKEN at sequence 2 ... expected to follow '(start of chain)'`. Ask whoever runs those
-  jobs before you escalate. With a NON-ZERO count a row is missing or out of place in the MIDDLE of
-  the chain, which no purge produces — that one is the real thing.
+- `expected to follow ... A row was deleted, reordered, or inserted` with **count 0** — the first
+  row read names a predecessor that is not there, so the OLDEST rows are gone. An archival job and
+  an attacker produce identical output here, so compare `Sequences read:` against the low end of the
+  last run that came back INTACT. If it has moved up, ask whoever runs those jobs before you open an
+  incident; if it has not moved, rows ahead of it went without the numbering changing, and that is
+  not housekeeping. Measured: deleting the single lowest row from an intact chain of three gives
+  `CHAIN BROKEN at sequence 2 ... expected to follow '(start of chain)'`, and a WRONG key against
+  the same table prints the identical line — the link is checked before the hash, so on a chain with
+  its head gone the key never enters into it. With a NON-ZERO count a row is missing or out of place
+  in the MIDDLE, which removing the oldest rows cannot do — that one is the real thing.
 - `could not be read at all` — a stored value contradicts the schema, which is itself a
-  modification. Neither a wrong key nor a purge can cause this.
+  modification. Neither a wrong key nor a deletion can cause this.
 
 **From the moment it is none of those, the table is evidence: do not repair it and do not write to
 it.** A repair destroys the only record of what was done to it, and the chain cannot be "fixed" —
@@ -331,10 +342,24 @@ somebody who wrote the number down.
   mistake there is — used to report a tampered audit trail. Measured, and now translated.
 
   **If it reports a HASH MISMATCH before any row verifies, suspect the key before you suspect an
-  attacker.** Not "at sequence 1": `Sequence` is assigned as tail + 1 and never restarts, so after a
-  retention purge or a partial restore a live chain begins at 5,001 and its first row is not row 1.
-  The tell is `Rows verified before the break: 0`, which the tool prints and which does not depend on
-  the numbering.
+  attacker — and read the sequence as well as the count.** A wrong key mismatches on the first row
+  it reads, and that row is sequence **1**. It cannot be anything else: the walk checks the LINK
+  before the hash, so the only row that can reach the hash check first is one recording no
+  predecessor, and `AuditChain.Link` writes that only into an empty table, where the row it writes
+  is sequence 1. `Rows verified before the break: 0` says the key is worth checking, and `Sequences
+  read: 1 to ...` on the next line confirms it.
+
+  **The same verdict above sequence 1 rules the key OUT** — a row numbered above 1 recording no
+  predecessor got there by a write.
+
+  **A withdrawn argument, left visible.** This note used to say the tell was the count alone, "not
+  at sequence 1", because a purged chain begins at 5,001 and the hint would stop firing on the
+  oldest tables. That reasoning is unreachable, and the tool was gated on it. On a chain whose head
+  is gone the first row read records a predecessor that is missing, so the walk reports a LINK break
+  and never reaches the hash check at all: measured, a wrong key against a decapitated chain prints
+  output identical to the correct key. What the loosened gate did produce was the dangerous
+  direction — an attacker who removed the oldest rows and cleared the survivor's `PreviousHash` was
+  met with "usually means the wrong Audit:ChainKey ... Confirm the key before escalating".
 
   The row hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it,
   and it mismatches on the first row it reads. It is also the ONLY break a wrong key can produce — it

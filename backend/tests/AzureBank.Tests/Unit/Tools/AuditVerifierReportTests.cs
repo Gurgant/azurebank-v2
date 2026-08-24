@@ -215,27 +215,63 @@ public class AuditVerifierReportTests
           it an operator opens an incident about an attacker who does not exist.
         */
         /*
-          THE FIXTURE IS A PURGED TABLE, deliberately, because a fixture starting at sequence 1
-          cannot tell the right rule from the wrong one. The hint used to key on
-          FirstBrokenSequence <= 1, which is the first row only until the first row is deleted --
-          and Sequence is assigned as tail + 1 and never restarts, so after any retention purge or
-          partial restore a live chain begins at 5,001 and the hint silently stopped firing on
-          exactly the tables old enough to need it. Verified == 0 is the numbering-independent tell.
+          THE FIXTURE STARTS AT SEQUENCE 1, and the version of this test that used 5,001 was pinning
+          a state the system cannot reach. VerifyAsync checks the LINK before the hash, so the only
+          row that can reach the hash check first is one recording no predecessor, and Link writes
+          that only into an empty table -- where the row it writes is sequence 1. A chain whose head
+          was removed breaks on the LINK instead and never reaches the hash check: measured on SQL
+          Server, a wrong key against a decapitated chain prints output identical to the right key.
 
-          Break on the first row READ, at sequence 5,001: the old rule is false here and the new one
-          is true, so this test can now see the difference between them.
+          The old fixture therefore proved the hint fired in a case that cannot occur, and the gate
+          it justified let the hint fire in one that can -- see the sibling test below.
+        */
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(
+                0, 1, "Row ... does not match its own hash", 1, 5,
+                AuditChainBreakKind.HashMismatch),
+            1, 5);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+        string.Join(" ", lines).Should().Contain(
+            "Audit:ChainKey",
+            "a wrong key mismatches on the first row of the table, every time, because the first "
+            + "hash it recomputes is already different");
+    }
+
+    [Fact]
+    public void AHashMismatchABOVESequence1_IsAWriteAndMustNotBeBlamedOnTheKey()
+    {
+        /*
+          THE EXONERATION THIS TOOL SHIPPED WITH, until it was measured. Deleting the oldest rows and
+          then clearing the survivor's PreviousHash is the cheapest way to hide a deleted prefix: the
+          link check passes, because null is what the start of a chain looks like, and the hash check
+          fails, because the stored hash still covers the predecessor that was cleared. That is a
+          HashMismatch with nothing verified, above sequence 1.
+
+          The gate keyed on the count alone, so the tool answered "usually means the wrong
+          Audit:ChainKey ... Confirm the key before escalating" -- with the CORRECT key in use, and
+          while printing "Sequences read: 2 to 2" one line above the words "from row one". Measured
+          on SQL Server: rows written through the real stack, one DELETE, one UPDATE, correct key.
+
+          A wrong key cannot produce this: it would have to be sequence 1. So naming the key here is
+          never right, and it is wrong in the only direction that matters.
         */
         var (exitCode, lines) = VerifyCommand.Report(
             new AuditChainVerification(
                 0, 5_001, "Row ... does not match its own hash", 5_001, 5_005,
                 AuditChainBreakKind.HashMismatch),
             5_001, 5_005);
+        var text = string.Join(" ", lines);
 
         exitCode.Should().Be(VerifyCommand.Broken);
-        string.Join(" ", lines).Should().Contain(
+        text.Should().NotContain(
             "Audit:ChainKey",
-            "breaking on the first row READ is far more often the wrong key than tampering, and "
-            + "that is true whatever number that row happens to carry");
+            "a wrong key breaks at sequence 1 or not at all, so pointing at it here exonerates "
+            + "whoever wrote that row -- the one direction this tool must never get wrong");
+        text.Should().Contain(
+            "WRITTEN",
+            "and it has to say what the state actually means, or the operator is left with a "
+            + "mismatch and no reading of it");
     }
 
     [Theory]
