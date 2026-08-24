@@ -142,9 +142,12 @@ readiness budget surfaces to an operator.
 
 **Why this paragraph was stale, which is the part worth keeping.** The write axes were added in a
 later round of the same PR, after this text was written, and the squash hides that it went stale
-rather than being born wrong. The runbook was corrected then and this was not, so for a month the
-document read under pressure was right and the decision record was not. **When a probe's question
-changes, grep every document that describes it.**
+rather than being born wrong. The runbook was corrected then and this was not, so for **27 hours** —
+`1c1f941` on 2026-08-23 to the correction on 2026-08-24 — the document read under pressure was right
+and the decision record was not. (An earlier draft of this sentence said "for a month". Measured
+with `git log -S`: the runbook did not exist before `1c1f941`, and this whole file is five days old,
+so a month was impossible under any reading — an unmeasured number, in the change whose own subject
+is unmeasured numbers.) **When a probe's question changes, grep every document that describes it.**
 
 The recovery procedure is `docs/runbooks/audit-chain-unavailable.md`, including the two things not to
 do under pressure: disable the chain, or raise the bound to push the failures away.

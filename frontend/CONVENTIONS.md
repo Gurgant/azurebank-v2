@@ -95,8 +95,18 @@ Five commands, not one. `vitest run` covers the unit and component tests; the `c
 suite and has never been one.
 
 The last three need the real stack up: seed `AzureBankE2E`, the API on **`https://localhost:7215`**,
-and the BFF on `:5000` started with **CLI args** rather than a profile, because the cluster id
-contains a hyphen.
+and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
+
+⚠️ **The launch profile is not optional, and an earlier version of this note implied it was.** It is
+the only thing setting `ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev
+certificate is trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
+Development `Program.cs` prefixes it `__Host-`, which **cannot be set over `http://localhost:5000`**
+at all — so a run without the profile fails on TLS and then on login, and neither failure names the
+profile. No cluster override is needed locally: `appsettings.json` already points cluster
+`backend-api` at `https://localhost:7215`. The `--ReverseProxy:Clusters:backend-api:…` arguments you
+will see in `ci.yml` are CI-only, because CI moves the API to `:5068`; they are passed as
+command-line config rather than environment variables because the cluster id `backend-api` contains
+a hyphen and `ReverseProxy__Clusters__backend-api__…` is not a portable shell identifier.
 
 ⚠️ **`:5068` is a real port and still the wrong one to use.** The API's `http` launch profile listens
 there, and the `https` profile listens on **both** `https://localhost:7215` and

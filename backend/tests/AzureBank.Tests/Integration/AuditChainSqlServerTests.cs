@@ -148,6 +148,11 @@ public sealed class AuditChainSqlServerTests : IDisposable
     /// possible because the column is nullable, and it is the one an attacker actually wants.
     /// </para>
     /// <para>
+    /// EVERY CASE IS VALUE-TO-VALUE, deliberately, and the seed below is what makes that true.
+    /// Tampering a column that was seeded NULL proves only that its NULL-NESS is hashed — measured,
+    /// four such cases stayed green while the four values stopped being hashed at all.
+    /// </para>
+    /// <para>
     /// <c>PreviousHash</c> is deliberately NOT here, and not because it is uninteresting:
     /// <c>VerifyAsync</c> compares it and returns <c>LinkBroken</c> BEFORE <c>ComputeRowHash</c> is
     /// called, so a case built on it would stay green even with the field deleted from the payload.
@@ -194,9 +199,32 @@ public sealed class AuditChainSqlServerTests : IDisposable
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
         var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
 
+        /*
+          SEEDED NON-NULL, AND THIS IS LOAD-BEARING. `NewEvent` leaves SubjectType, SubjectId,
+          TraceId and Detail null, and against a null seed those four cases tamper NULL -> value,
+          which only ever proves the column's NULL-NESS is hashed -- not its value. MEASURED: with
+          those four lines of ComputeRowHash replaced by a presence flag, so the VALUES stop being
+          hashed altogether, all nine cases stayed GREEN and only the known-answer vector caught it.
+          Seeding here makes every case value -> different value, so the theory proves what its own
+          name says.
+
+          Every InlineData literal must therefore DIFFER from what is seeded here. That is not
+          tidiness: ExecuteSqlRawAsync returns rows MATCHED, not rows CHANGED, so a no-op UPDATE
+          still reports affected == 1 and the assertion below would pass while nothing moved.
+          Seeding SubjectType = "Account" against [InlineData("SubjectType", "'Account'")] is
+          exactly that trap.
+
+          Seeded locally rather than in NewEvent, which has six call sites and five of them outside
+          this theory.
+        */
         foreach (var name in new[] { "First", "Second", "Third" })
         {
-            context.AuditEvents.Add(NewEvent(name));
+            var row = NewEvent(name);
+            row.SubjectType = "User";
+            row.SubjectId = Guid.NewGuid();
+            row.TraceId = Guid.NewGuid().ToString("N");
+            row.Detail = "seeded-detail";
+            context.AuditEvents.Add(row);
             await context.SaveChangesAsync();
         }
 

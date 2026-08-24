@@ -25,9 +25,13 @@
   // was duly re-litigated in the third.
   //
   // WHAT THIS IS NOT. It is deliberately NOT a repository-wide exemption. Outside `adr/` and
-  // `runbooks/` the corpus runs the OTHER way — 32 MD040 hits under `docs/architecture/` and 121
-  // under `docs/design/`, against 647 fences that do carry a language. Nobody has read those 153 to
-  // establish whether they are measured output or untagged source, so they keep the rule until
-  // somebody does. The integers drift as documents are added; the direction is the durable part.
+  // `runbooks/` the corpus runs the OTHER way, and the two sibling configs this change adds are what
+  // keep the rule there. COUNTED RECURSIVELY, because that is the scope those configs actually
+  // govern: 41 MD040 hits under `docs/architecture/**` and 293 under `docs/design/**` — 334, not the
+  // 153 an earlier draft of this comment claimed. That number came from globbing each directory's
+  // ROOT only, `docs/design/*.md` rather than `**/*.md`, which left 181 hits in 20 files
+  // uncounted. Nobody has read any of them to establish whether they are measured output or untagged
+  // source, so they keep the rule until somebody does. The integers drift as documents are added;
+  // the direction is the durable part.
   "MD040": false
 }
