@@ -54,12 +54,29 @@ public sealed class RunbookSqlParsesSqlServerTests
         await using var connection = new SqlConnection(SqlServerFactAttribute.ConnectionString!);
         await connection.OpenAsync();
 
+        /*
+          PLACEHOLDERS ARE LISTED, NOT PATTERN-MATCHED, so a block cannot excuse itself from this
+          guard by accident -- `<` is also a comparison operator, and a regex over angle brackets
+          would quietly skip real SQL. Every token here is asserted to still be in use below, so a
+          block that loses its placeholder starts being parsed again instead of staying exempt.
+
+          <database_user> earns its place for a reason worth recording: SET PARSEONLY ON does NOT
+          stop EXECUTE AS USER from running. Measured -- that block came back Msg 15517, "Cannot
+          execute as the database principal", against a parse-only batch. So the impersonation
+          recipe in step 3b cannot be parse-checked here whatever name it carries.
+        */
+        var placeholders = new[] { "<session_id>", "<database_user>" };
+        var skipped = new List<string>();
+
         var checkedBlocks = 0;
         foreach (var block in blocks)
         {
             // An operator substitutes these before running; parsing them as written is not the test.
-            if (block.Contains("<session_id>", StringComparison.Ordinal))
+            var placeholder = placeholders.FirstOrDefault(
+                token => block.Contains(token, StringComparison.Ordinal));
+            if (placeholder is not null)
             {
+                skipped.Add(placeholder);
                 continue;
             }
 
@@ -75,7 +92,15 @@ public sealed class RunbookSqlParsesSqlServerTests
         }
 
         _output.WriteLine($"{checkedBlocks} of {blocks.Count} SQL blocks parsed; the rest carry placeholders");
-        checkedBlocks.Should().BeGreaterThan(0, "skipping every block would make this guard vacuous");
+        checkedBlocks.Should().BeGreaterThanOrEqualTo(
+            blocks.Count - placeholders.Length,
+            "at most one block may be exempt per placeholder token; more than that means blocks are "
+            + "excusing themselves from the guard, which is how an unparseable command reaches an "
+            + "operator");
+        placeholders.Should().OnlyContain(
+            token => skipped.Contains(token),
+            "a token nobody uses any more is a hole left open -- take it out of the list when the "
+            + "block that needed it goes");
     }
 
     /// <summary>Walks up from the test assembly to the repository root.</summary>

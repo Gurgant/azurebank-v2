@@ -26,19 +26,35 @@ Measured on the running API, with the `AuditEvents` table renamed away underneat
 
 It answers rather than hanging, which is not free: every readiness check is registered with
 `Audit:TailTimeoutSeconds` as its timeout. Unbounded, this probe took **36,800 ms** against an
-unreachable store — long past the point where anything asking had given up. If `/health/ready` ever
-does hang, that bound has been removed, and the endpoint is no longer evidence of anything.
+unreachable store — long past the point where anything asking had given up.
+
+**That bound is cooperative, not enforced, so a hang does not mean somebody removed it.** The
+framework links a `CancellationTokenSource` and calls `CancelAfter`, which only SIGNALS a token:
+nothing abandons the running check, and the service awaits it unconditionally. A check that ignores
+the token it was handed is bounded by nothing and takes `/health/ready` down with it, while the
+registration still reads as correctly configured. So on a hang look at both — that
+`Audit:TailTimeoutSeconds` still reaches every registration tagged `ready`, AND that each of those
+checks threads its `CancellationToken` into every await. The two registered today do; one added
+later inherits the bound and none of the obligation.
 
 **The body is the point, and it is why the `curl` above does not discard it.** It names WHICH check
 failed — exactly the distinction step 1 asks you to make. Note what that observation shows: the
 database was perfectly healthy while the audit store was not, so a bare `503` would have sent you
 hunting a database outage that was not happening.
 
-`503` with `audit-chain` reporting **unhealthy** means the audit store is **unreadable** from this
-instance. Unreadable, not unreachable: the probe fails the same way for a database that is down, an
-`AuditEvents` table that was never migrated, a disabled or corrupt index, and credentials that can no
-longer read it. Which of those it is: step 3 if it is a permission, step 6 if it is the table.
-`200` means the probe read the table, and the cause is one of the narrower ones below.
+`503` with `audit-chain` reporting **unhealthy** does NOT mean the store is unreadable. It means the
+probe could not certify that an audit row can be appended, and it reports on three axes of which
+reading is only one — **so read the description, which names the axis.**
+
+- `audit store unreadable` is the read failure, and unreadable is not unreachable: a database that
+  is down, an `AuditEvents` table that was never migrated, a disabled or corrupt index, or
+  credentials that can no longer read it. Step 6 if it is the table, step 3b if it is the login.
+- `audit store readable but NOT writable` is a store that answers every read and refuses every
+  append. Step 3, and not an outage at all.
+- `A timeout occurred while running check.` is the framework's wording, and is step 2.
+
+`200` means the probe read the table AND found an append permitted, so the cause is one of the
+narrower ones below.
 
 ## What you will see in the log
 
@@ -72,28 +88,119 @@ first thing to notice. Treat it as a database outage.
 ours, and it means the check was cancelled rather than that it found anything. Usually the readiness
 budget (`Audit:TailTimeoutSeconds`) elapsed — but **it does not prove that**: `DefaultHealthCheckService`
 reports that same description for ANY cancellation escaping a check, including on a registration with
-no timeout at all. Treat it as "the probe did not finish", then work down the steps below: a
-permission problem does not time out, so the causes worth chasing are an unreachable store, a locked
-table, or a stuck transaction.
+no timeout at all. Treat it as "the probe did not finish".
 
-**3. Does it say `readable but NOT writable`?** Then this is a PERMISSION problem, not an outage,
-and it has nothing in common with the rest of this runbook. The store answers every read and refuses
-every audit row, so D1 refuses every money movement while the database looks perfectly healthy. The
-probe asks `HAS_PERMS_BY_NAME` on `AuditEvents`, which honours role membership and `DENY`:
+**Steps 4 and 5 are not where to look, and this step has to say so.** The probe reads the tail
+`WITH (READUNCOMMITTED)`: it takes no lock and waits on none, so the writer's `UPDLOCK, HOLDLOCK` on
+the tail row is invisible to it. A locked tail and a stuck transaction report `200` — that is step
+4's case, the opposite of this one — so sending a timeout down there ends in a `KILL` on a session
+that cannot have caused it. What is left, in order: whatever polls this endpoint may carry a shorter
+deadline than the budget, which is not a store fault at all; then the store, unreachable or simply
+answering slower than `Audit:TailTimeoutSeconds` (step 1); then the table (step 6). A permission
+problem does not time out.
+
+**3. Does it say `readable but NOT writable`?** Then the store answers every read and refuses every
+audit row, so D1 refuses every money movement while the database looks perfectly healthy. **Those
+five words are the shared prefix of TWO verdicts that need opposite fixes, so read the rest of the
+sentence before you touch anything.** The probe tests
+`DATABASEPROPERTYEX(DB_NAME(), 'Updateability')` BEFORE it asks `HAS_PERMS_BY_NAME`, so on a
+read-only database the permission question is never asked at all — and a `GRANT` hunt there finds a
+clean permission graph while every movement stays refused.
+
+- `... — the database is not READ_WRITE, so money movements will be refused` → **3a**.
+- `... Check INSERT permission on AuditEvents for this login` → **3b**.
+
+**3a. The database is not READ_WRITE.** Run this through the API's OWN connection string, not from a
+window pointed at the listener with default intent: a default-intent session lands on the primary
+and reports `READ_WRITE`, which answers about a different replica than the probe asked.
 
 ```sql
-SELECT HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'INSERT') AS can_insert,   -- as the API's login
-       HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'SELECT') AS can_select;   -- 0 reads as "unreadable" above
+SELECT DB_NAME()                                      AS database_name,
+       @@SERVERNAME                                   AS answering_instance,
+       DATABASEPROPERTYEX(DB_NAME(), 'Updateability') AS updateability,
+       d.state_desc, d.is_read_only, d.is_in_standby, d.replica_id
+FROM sys.databases d
+WHERE d.database_id = DB_ID();
+```
+
+Three states, three remedies, none of them a `GRANT`:
+
+- **`is_read_only = 1`, `is_in_standby = 0`, `replica_id` NULL** — somebody ran
+  `ALTER DATABASE [db] SET READ_ONLY`: a release script, a maintenance job. `SET READ_WRITE`
+  reverses it and needs exclusive access. Find out who set it, or it is set again an hour later.
+- **`is_in_standby = 1`** — a restore finished `WITH STANDBY`: a log-shipping secondary, or one
+  nobody brought online. `RESTORE DATABASE [db] WITH RECOVERY` does make it writable and **ends the
+  restore sequence**, so no further log backup can ever be applied to it. If this is the DR copy,
+  that command spends the DR copy to end a short outage — and if the API is pointed at a DR copy at
+  all, the connection string is the fault. Confirm what it is first:
+  `SELECT TOP 5 restore_date, restore_type FROM msdb.dbo.restorehistory
+  WHERE destination_database_name = DB_NAME() ORDER BY restore_date DESC;`
+- **`replica_id` NOT NULL** — an availability-group replica. Ask which role it holds:
+
+```sql
+SELECT ars.role_desc, ar.replica_server_name
+FROM sys.databases d
+JOIN sys.dm_hadr_availability_replica_states ars ON ars.replica_id = d.replica_id
+JOIN sys.availability_replicas ar ON ar.replica_id = ars.replica_id
+WHERE d.database_id = DB_ID();
+```
+
+`SECONDARY` separates two different incidents. If the primary MOVED, point the API back at the
+listener. If it never moved, read-only routing sent the API here — its connection string carries
+`ApplicationIntent=ReadOnly`; drop it. **Do not force failover to make this node writable.** Those
+two DMVs need `VIEW SERVER STATE` and do not exist on Azure SQL Database, where the link state is
+`sys.dm_geo_replication_link_status` — and where this same verdict also appears when a database
+reaches its size limit, which is worth ruling out first: `AuditEvents` is the fastest-growing table
+here and nothing ever deletes from it.
+
+A restore left `WITH NORECOVERY` never reaches this description: that database is `RESTORING` and
+cannot be read, so the probe says `audit store unreadable` and you are in step 6.
+
+**Re-read `/health/ready` after the fix instead of assuming it is over.** Updateability is tested
+first, so it hides the permission answer completely: a denied INSERT can be queued behind it and
+appears only on the next probe.
+
+**3b. The login cannot INSERT.** `HAS_PERMS_BY_NAME` honours role membership and `DENY`, but it
+answers for the CURRENT security context — so an incident responder connected as `sysadmin` or
+`db_owner` is asking about the wrong principal and gets `can_insert = 1` for a login that is denied.
+Impersonate, and make the answer carry the principal it answered for:
+
+```sql
+EXECUTE AS USER = '<database_user>';   -- the user the API connects as
+
+DECLARE @object sysname =
+    QUOTENAME(OBJECT_SCHEMA_NAME(OBJECT_ID('AuditEvents'))) + N'.' +
+    QUOTENAME(OBJECT_NAME(OBJECT_ID('AuditEvents')));
+
+SELECT USER_NAME()                                    AS answered_for,
+       @object                                        AS object_asked_about,
+       HAS_PERMS_BY_NAME(@object, 'OBJECT', 'INSERT') AS can_insert,
+       HAS_PERMS_BY_NAME(@object, 'OBJECT', 'SELECT') AS can_select;  -- 0 reads as "unreadable"
+
+REVERT;
+```
+
+`EXECUTE AS USER` needs `IMPERSONATE` on that user, which an admin session has, and `REVERT` outside
+an impersonation context is a silent no-op, so it is safe to leave in. The object name is resolved
+rather than typed as `dbo.AuditEvents` for the same reason the probe resolves it: under a non-`dbo`
+schema the hardcoded form asks about a table that does not exist, returns NULL, and puts you and the
+health check in disagreement.
+
+Then find the `DENY` itself:
+
+```sql
 SELECT dp.name, dp.type_desc, p.permission_name, p.state_desc
 FROM sys.database_permissions p
 JOIN sys.database_principals dp ON dp.principal_id = p.grantee_principal_id
 WHERE p.major_id = OBJECT_ID('AuditEvents');
 ```
 
-A `DENY` beats any `GRANT`, including one inherited from `db_datawriter` — that is the usual cause,
-and it is invisible from the grant side alone. **Do not fix this by granting the API more than
-INSERT on `AuditEvents`**: the chain is append-only by design, and a login holding UPDATE or DELETE
-there is a larger problem than the outage you are ending.
+That lists only EXPLICIT object-level permissions, so a `DENY` inherited from a role —
+`db_denydatawriter` above all — does not appear in it at all; read the API user's role membership
+too. A `DENY` beats any `GRANT`, including one inherited from `db_datawriter`; that is the usual
+cause, and it is invisible from the grant side alone. **Do not fix this by granting the API more
+than INSERT on `AuditEvents`**: the chain is append-only by design, and a login holding UPDATE or
+DELETE there is a larger problem than the outage you are ending.
 
 **4. Is the table locked rather than unreachable?** The health check reads with `READUNCOMMITTED`, so
 it stays healthy while the tail is merely locked by a slow writer. That is the case where readiness
@@ -106,22 +213,50 @@ CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
 WHERE r.blocking_session_id <> 0;
 ```
 
+**If that returns no rows, nothing is blocked right now: go back to step 2 rather than on to step
+5.** It only sees a blocker while a movement happens to be queued at the instant you ran it, and
+step 5 will hand you a session to kill whether or not one exists. If it does return rows, carry
+`blocking_session_id` forward — that is the session actually holding the tail.
+
 Look for sessions blocked on `AuditEvents`. The chain reads its tail with `UPDLOCK, HOLDLOCK`, so
 **one** stuck transaction blocks every money movement in the system — measured: a three-second stall
 delayed a deposit on an unrelated account, by an unrelated user, by 3,073–3,089 ms across three runs.
 The unrelated movement waits out essentially the entire hold, so the number to find below is how long
 the blocker has held it, not how many sessions are queued.
 
-**5. Is a long-running transaction holding it?**
+**5. Which session is holding it, and for how long?** Ask what holds a lock on `AuditEvents`
+first — unlike step 4 this answers whether or not anything is queued behind it:
 
 ```sql
-SELECT st.session_id, dt.transaction_id, dt.database_transaction_begin_time
+SELECT l.request_session_id, l.resource_type, l.request_mode, l.request_status
+FROM sys.dm_tran_locks l
+LEFT JOIN sys.partitions p ON p.hobt_id = l.resource_associated_entity_id
+WHERE l.resource_database_id = DB_ID()
+  AND ( (l.resource_type = 'OBJECT'
+         AND l.resource_associated_entity_id = OBJECT_ID('AuditEvents'))
+     OR (l.resource_type IN ('PAGE', 'KEY', 'RID', 'HOBT')
+         AND p.object_id = OBJECT_ID('AuditEvents')) );
+```
+
+Then how long those sessions have held their transaction:
+
+```sql
+SELECT st.session_id, dt.transaction_id, dt.database_transaction_begin_time,
+       DATEDIFF(second, dt.database_transaction_begin_time, GETDATE()) AS held_seconds
 FROM sys.dm_tran_database_transactions dt
 JOIN sys.dm_tran_session_transactions st ON st.transaction_id = dt.transaction_id
+WHERE dt.database_id = DB_ID()
 ORDER BY dt.database_transaction_begin_time;
 ```
 
-The oldest open transaction is the usual culprit. **`KILL` does not release the tail when you press
+**Age says how long a transaction has been open. It does not say what it is holding.** This runbook
+used to run the second query alone, unfiltered, and call the oldest row the usual culprit — but
+`sys.dm_tran_database_transactions` is instance-wide and returns a row per transaction PER DATABASE,
+`tempdb` included, so at three in the morning the top row is routinely a nightly job in another
+database that has nothing to do with this table. Kill only a session that appears in the FIRST query
+or as a `blocking_session_id` in step 4, and only then use the age to decide.
+
+**`KILL` does not release the tail when you press
 enter** — it starts a rollback, and the locks are held until that rollback FINISHES. Undoing the work
 can take as long as doing it took, or longer. This runbook used to say "killing it releases the tail
 and the queue drains", which would have had you standing over a queue that looked stuck after you had
@@ -161,6 +296,22 @@ SELECT name, is_disabled FROM sys.indexes WHERE object_id = OBJECT_ID('AuditEven
 
 If the dev or test database is simply behind on migrations, see the note in
 `docs/engineering-traps.md` — that failure has bitten twice and does not look like what it is.
+
+**On an environment that HAS been migrated, a missing `AuditEvents` is a fourth thing, and it is not
+an accident.** Dropping or renaming the table is the most complete tamper available to anyone
+holding write access: there is no chain left to verify, and the verifier reports it as exit 3 — no
+verdict — rather than CHAIN BROKEN, so nothing routes you to the evidence rules further down this
+page. **Do not re-run migrations to bring it back.** That recreates an empty table and erases the
+fact that it was ever gone, which is the one piece of evidence there is. Establish first whether this
+environment was ever migrated, which `__EFMigrationsHistory` answers directly:
+
+```sql
+SELECT COUNT(*) AS audit_table_present FROM sys.tables WHERE name = 'AuditEvents';
+SELECT TOP 3 MigrationId FROM __EFMigrationsHistory ORDER BY MigrationId DESC;
+```
+
+A migration history that includes the audit table's migration, with no `AuditEvents` to show for it,
+is not a deployment that failed halfway. Preserve the database and escalate.
 
 ---
 
