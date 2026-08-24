@@ -1,0 +1,33 @@
+// markdownlint configuration for the documents at the ROOT of `docs/`. markdownlint-cli2 reads the
+// config nearest each linted file, so `docs/adr/` and `docs/runbooks/` keep their own — and
+// `docs/architecture/` and `docs/design/` carry one each for the sole purpose of NOT inheriting this
+// one. See the note at the bottom.
+{
+  // MD040 (fenced-code-language) is OFF here for the reason recorded in `docs/adr/.markdownlint.jsonc`
+  // and repeated in `docs/runbooks/`: these documents fence MEASURED OUTPUT, and measured output has
+  // no language.
+  //
+  // MEASURED, with the linter rather than with a grep, which matters because a grep for a bare fence
+  // also counts the CLOSING fence of every tagged block and roughly doubles the answer. The honest
+  // count: markdownlint reports exactly FOUR MD040 hits across the root of `docs/`, all four in
+  // `engineering-traps.md`, and `docs/api/` has none. All four are transcripts — an HMAC round-trip
+  // showing what `datetime2` does to a formatted timestamp, a `SqlServerRetryingExecutionStrategy`
+  // exception copied verbatim, a table of which GUID forms each parser accepts, and three sort
+  // orders for the same ten values. None of them is source and none of them has a language.
+  //
+  // WHY THIS FILE EXISTS. The convention was settled twice in writing and this document already
+  // followed it, but no config sat anywhere above it — so MD040 fired on all four, and a review on
+  // PR #129 asked for `text` on the two that happened to be in the diff. Adding it to those two
+  // would have made them the odd ones out among their own siblings and re-opened a question this
+  // repository has now answered across #94, #96, #127 and #129, with the linter itself asking in
+  // BOTH directions. That is the failure the ADR config named: "a rule a tool cannot read is a rule
+  // that gets re-litigated." It was encoded in two directories, the third was left uncovered, and it
+  // was duly re-litigated in the third.
+  //
+  // WHAT THIS IS NOT. It is deliberately NOT a repository-wide exemption. Outside `adr/` and
+  // `runbooks/` the corpus runs the OTHER way — 32 MD040 hits under `docs/architecture/` and 121
+  // under `docs/design/`, against 647 fences that do carry a language. Nobody has read those 153 to
+  // establish whether they are measured output or untagged source, so they keep the rule until
+  // somebody does. The integers drift as documents are added; the direction is the durable part.
+  "MD040": false
+}
