@@ -94,8 +94,15 @@ Five commands, not one. `vitest run` covers the unit and component tests; the `c
 `integration/` directories are excluded by configuration, so a green `vitest run` is not a green
 suite and has never been one.
 
-The last three need the real stack up: seed `AzureBankE2E`, the API on `:5068`, and the BFF on
-`:5000` started with **CLI args** rather than a profile, because the cluster id contains a hyphen.
+The last three need the real stack up: seed `AzureBankE2E`, the API on **`https://localhost:7215`**,
+and the BFF on `:5000` started with **CLI args** rather than a profile, because the cluster id
+contains a hyphen.
+
+⚠️ **`:5068` is a real port and still the wrong one to use.** The API's `http` launch profile listens
+there, and the `https` profile listens on **both** `https://localhost:7215` and
+`http://localhost:5068` — so `:5068` answers, which is what makes the mistake survive. Everything
+that names the API means 7215: `vitest.contract.real.config.ts`, `.claude/launch.json`, and the
+READMEs. This note said `:5068` for a month before anyone ran it.
 Authentication is rate-limited to 10 attempts per 60 seconds per IP, so leave ~70 seconds between
 suites or the second one fails on a limiter rather than on anything real.
 

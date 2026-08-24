@@ -6,10 +6,18 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 namespace AzureBank.Api.HealthChecks;
 
 /// <summary>
-/// Reports whether this instance could not certify that an audit row can be appended — which, since
-/// ADR-0044 D1, is the same question as whether it can move money.
+/// Reports what this instance can observe about the PREREQUISITES for appending an audit row — the
+/// table is readable, the database is <c>READ_WRITE</c>, and this login is permitted to INSERT —
+/// which, since ADR-0044 D1, is the nearest observable question to whether it can move money.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>Prerequisites, not a certification.</b> None of the three establishes that an INSERT would
+/// SUCCEED, and the probe deliberately does not try: <c>HAS_PERMS_BY_NAME</c> answers about
+/// permission metadata (see the measurement below — it returns 1 for <c>[sys].[objects]</c>), and
+/// nothing lock-free can rule out a full log, a full filegroup or a deadlock. Healthy means
+/// "nothing observable is in the way", never "the next write will land".
+/// </para>
 /// <para>
 /// D1 makes an audit row atomic with the movement it describes, so an unreadable or unwritable
 /// <c>AuditEvents</c> table does not degrade the bank, it stops it. That is the accepted trade. What

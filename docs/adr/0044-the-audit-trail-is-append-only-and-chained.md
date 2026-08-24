@@ -122,7 +122,7 @@ takes the very lock that just failed. **For a chain failure the chain cannot be 
 `SecurityEvents.AuditChainUnavailable` is therefore the one event in this vocabulary that is log-only
 by NECESSITY rather than by choice, and `AuditChain` logs it before letting the exception go.
 
-**And readiness now says it out loud.** `AuditChainHealthCheck` reads the tail with
+**And readiness now says it out loud.** `AuditChainHealthCheck` probes the store with
 `READUNCOMMITTED` — deliberately lock-free, because a readiness probe that took the tail lock would
 contend with the money path forever in order to report on contention. It therefore detects the case
 that matters most and is least visible (store unreachable, table gone, database down) and NOT a tail
