@@ -48,6 +48,11 @@ public sealed class AuditChainReaderLifetimeSqlServerTests : IDisposable
         var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
 
         var mine = new List<Guid>();
+
+        // Recorded so the cleanup can be CHECKED rather than assumed. This test tampers with a row
+        // in a database other tests share, and an append-only chain has no undo.
+        var before = await context.AuditEvents.CountAsync();
+
         try
         {
             for (var i = 0; i < 3; i++)
@@ -62,9 +67,18 @@ public sealed class AuditChainReaderLifetimeSqlServerTests : IDisposable
                 mine.Add(row.Id);
             }
 
-            // Break the chain on a row of my own, so the walk returns EARLY and the reader is left
-            // wherever the implementation leaves it.
-            var tampered = await context.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
+            /*
+              BY ID, NOT "the newest row in the table". Those coincide only while nothing else is
+              writing, and the difference is not a flaky test: the cleanup below removes only the
+              rows this test inserted, so tampering with somebody else's row would leave the shared
+              database's chain permanently broken, with no undo. What the test MEANS is "my last
+              row", so that is what it now says.
+
+              The id is hoisted into a local because an EF expression tree cannot contain a
+              from-end index: `e.Id == mine[^1]` is CS8790/CS8791 and does not build.
+            */
+            var lastOfMine = mine[^1];
+            var tampered = await context.AuditEvents.SingleAsync(e => e.Id == lastOfMine);
             tampered.Event = "ReaderLifetimeTampered";
             await context.SaveChangesAsync();
 
@@ -91,6 +105,11 @@ public sealed class AuditChainReaderLifetimeSqlServerTests : IDisposable
             var toRemove = await context.AuditEvents.Where(e => mine.Contains(e.Id)).ToListAsync();
             context.AuditEvents.RemoveRange(toRemove);
             await context.SaveChangesAsync();
+
+            // The cleanup either worked or it did not, and "did not" means the next test to verify
+            // this chain fails for a reason that has nothing to do with it.
+            (await context.AuditEvents.CountAsync()).Should().Be(
+                before, "this test must leave the shared audit table exactly as it found it");
         }
     }
 
