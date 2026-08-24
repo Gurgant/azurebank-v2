@@ -324,17 +324,23 @@ somebody who wrote the number down.
   walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey`, an unreachable
   server, a connection string that is malformed or absent, **and the states step 6 is about — the
   `AuditEvents` table renamed, dropped or never migrated, or a login that cannot SELECT from it.**
-  That last group is why the tool's own closing advice ("check the connection string and the key")
-  is a starting point and not the list: read the exception line above it, which names the cause.
+  That last group is why the tool no longer stops at "check the connection string and the key": it
+  now says that a vanished `AuditEvents` exits the same way and is the most complete tamper there
+  is, and that the remedy step 6 points at — re-running migrations — would recreate the table and
+  erase the evidence it ever went. Read the exception line above the advice; it names the cause.
 
   **A WRONG key is not among them, and this runbook previously said it was.** A well-formed key that
   is simply not the one the chain was written with passes every check the tool can make, so the walk
   runs and the hashes mismatch: that exits **1**, the same as a tamper. There is no way around it —
   the two are indistinguishable to any check — which is exactly why the next paragraph exists.
 
-  **`5` is not an incident.** Somebody stopped the walk — Ctrl+C, a killed job, a shutdown. Part of
-  the chain was checked and the rest was not, so there is no verdict, but nothing is wrong with the
-  store or the key and the triage list above does not apply. It is separate from `3` for that
+  **`5` usually is not an incident, and it is never evidence that nothing is wrong.** Somebody
+  stopped the walk — Ctrl+C, a killed job, a shutdown — so part of the chain was checked and the
+  rest was not, and there is no verdict. What it does NOT establish is that the store is healthy:
+  the branch is selected by the cancellation token, not by what threw, so a store that failed while
+  the token was already signalled is reported as an interruption too. **If it was stopped because it
+  appeared to hang, the hang is the finding**, and the triage list above is exactly what applies. A
+  walk stopped for any other reason can simply be re-run. It is separate from `3` for a different
   reason: an alert wired to `3` would otherwise hand whoever answers it a list of environment
   failures to chase after a colleague pressed Ctrl+C. `e2fsck` keeps the same distinction (32
   "canceled by user request" against 8 "operational error"), as does AIDE (25 for SIGINT against 18

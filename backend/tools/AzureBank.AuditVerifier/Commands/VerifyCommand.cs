@@ -324,8 +324,10 @@ public static class VerifyCommand
             return (Interrupted, new[]
             {
                 "INTERRUPTED: the walk was stopped before it reached a verdict.",
-                "  Nothing is wrong with the store or the key -- part of the chain was checked and",
-                "  the rest was not. Run it again to get an answer.",
+                "  This says nothing about the store or the key. The interruption is recognised by",
+                "  the cancellation token, not by what failed, so a store that died while the token",
+                "  was already signalled arrives here too. If you stopped it because it seemed to",
+                "  hang, the hang is the thing to look at. Otherwise run it again.",
             });
         }
         catch (Exception failure)
@@ -355,8 +357,12 @@ public static class VerifyCommand
             {
                 "CANNOT VERIFY: the audit store could not be read, so there is no verdict.",
                 $"  {cause.GetType().Name}: {cause.Message}",
-                "  This is NOT a statement about the chain. Check the connection string and the",
-                "  key before reading anything into it.",
+                "  This is NOT a statement about the chain -- but do not assume it is yours to",
+                "  fix. A wrong connection string and an AuditEvents that is no longer there exit",
+                "  the same way, and a table that has vanished from a database where it belongs is",
+                "  the most complete tamper anyone holding write access can manage. Check the",
+                "  connection string and the key FIRST. If they are right, preserve the database",
+                "  and escalate: re-running migrations recreates the table and erases the evidence.",
             });
         }
     }

@@ -174,6 +174,73 @@ public class AuditVerifierReportTests
             "blaming the store is the wrong message for somebody who stopped it themselves");
     }
 
+    [Fact]
+    public async Task AnInterruptionDoesNotCERTIFYTheStore()
+    {
+        /*
+          IT USED TO SAY "Nothing is wrong with the store or the key", which is more than this
+          verdict can see. The branch is chosen by cancellationToken.IsCancellationRequested and not
+          by what threw -- the code's own comment concedes the trade -- so a store that failed while
+          the token was already signalled lands here wearing the same words. And the likeliest way
+          to signal that token is an operator stopping a walk that appeared to hang, which is
+          precisely the case where something IS wrong with the store.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AzureBankDbContext>(o => o.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        services.AddSingleton<IAuditChain>(new ThrowingChain(new InvalidOperationException("store died")));
+
+        using var provider = services.BuildServiceProvider();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var (exitCode, lines) = await VerifyCommand.RunAsync(provider, cancelled.Token);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Interrupted);
+        text.Should().NotContain(
+            "Nothing is wrong",
+            "this verdict cannot establish that, and saying it retires the one hypothesis worth "
+            + "keeping when a walk was stopped for appearing to hang");
+        text.Should().Contain(
+            "hang",
+            "and it has to name the case, or an operator reads 'interrupted' and closes it");
+    }
+
+    [Fact]
+    public async Task AStoreThatCannotBeReadDoesNotWriteOffAVanishedTable()
+    {
+        /*
+          MEASURED ON SQL SERVER: rename AuditEvents away and the tool exits 3 with
+          "SqlException: Invalid object name 'AuditEvents'." -- and used to close with "Check the
+          connection string and the key before reading anything into it." A table that has vanished
+          from a database where it belongs is the most complete tamper available to anyone holding
+          write access, and it was being handed over as an environment problem. Worse, the remedy
+          the runbook's step 6 offers for a missing table is to re-run migrations, which recreates
+          it and destroys the evidence that it was ever gone.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AzureBankDbContext>(o => o.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        services.AddSingleton<IAuditChain>(
+            new ThrowingChain(new InvalidOperationException("Invalid object name 'AuditEvents'.")));
+
+        using var provider = services.BuildServiceProvider();
+
+        var (exitCode, lines) = await VerifyCommand.RunAsync(provider, CancellationToken.None);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Misconfigured);
+        text.Should().Contain(
+            "tamper",
+            "a missing audit table has to be named as one of the things this exit code covers, or "
+            + "the operator triages the worst case as a typo");
+        text.Should().Contain(
+            "migrations",
+            "and the remedy that would erase the evidence has to be called out where they are "
+            + "standing, not left in a runbook step they may never reach");
+    }
+
     /// <summary>An <see cref="IAuditChain"/> that fails the way a cancelled SQL walk does.</summary>
     private sealed class ThrowingChain(Exception failure) : IAuditChain
     {
