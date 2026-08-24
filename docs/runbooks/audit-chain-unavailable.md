@@ -83,8 +83,7 @@ probe asks `HAS_PERMS_BY_NAME` on `AuditEvents`, which honours role membership a
 
 ```sql
 SELECT HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'INSERT') AS can_insert,   -- as the API's login
-       HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'SELECT') AS can_select;   -- 0 here reads as
-       'unreadable' above
+       HAS_PERMS_BY_NAME('dbo.AuditEvents', 'OBJECT', 'SELECT') AS can_select;   -- 0 reads as "unreadable" above
 SELECT dp.name, dp.type_desc, p.permission_name, p.state_desc
 FROM sys.database_permissions p
 JOIN sys.database_principals dp ON dp.principal_id = p.grantee_principal_id
