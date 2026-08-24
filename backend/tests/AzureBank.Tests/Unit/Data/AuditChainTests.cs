@@ -100,6 +100,84 @@ public class AuditChainTests : IDisposable
         verification.Verified.Should().Be(3, "a verification that read nothing would also report intact");
     }
 
+    /// <summary>
+    /// Two rows whose hashes are written down, so the SHAPE of the payload cannot change quietly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The per-field theory on SQL Server proves each field is IN the payload. It is blind to two
+    /// things, and both are the kind of change a refactor makes without noticing: SWAPPING two
+    /// same-typed entries in the join, and DELETING the <c>"v2"</c> prefix. In each case the writer
+    /// and the verifier move together, every field is still hashed, and every field case stays
+    /// green. Frozen literals are what notice.
+    /// </para>
+    /// <para>
+    /// It is also the only guard on the <c>PreviousHash</c> line. A tamper case cannot reach it —
+    /// <c>VerifyAsync</c> returns <c>LinkBroken</c> before the hash is computed — but row two here
+    /// carries a non-empty <c>PreviousHash</c>, so deleting that line from the join moves this
+    /// literal. <b>Delete this test and two payload lines lose their only guard.</b>
+    /// </para>
+    /// <para>
+    /// EVERY FIELD IS FIXED, DISTINCT AND NON-EMPTY on purpose: a swap of two empty fields is
+    /// invisible, and a swap of two equal ones is too. Two separate <c>SaveChangesAsync</c> calls
+    /// with DISTINCT <c>OccurredAt</c> values, because the pending-rows query orders by
+    /// <c>OccurredAt</c> — equal values leave the order undefined and these literals would flake.
+    /// </para>
+    /// <para>
+    /// The literals pin the payload shape AND <see cref="TestKey"/>, since the hash is an HMAC over
+    /// it. Rule for whoever turns them red: <b>changing the key means re-deriving both literals;
+    /// changing the payload ON PURPOSE means bumping the prefix past <c>v2</c> and updating both in
+    /// the same commit.</b> That is what the prefix is for. Obtain them by RUNNING the test and
+    /// pasting what it printed — never by recomputing the payload inside the test, because then a
+    /// reorder gets "fixed" in both copies by one edit and the guard evaporates.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task TheHashedPayloadHasAKnownAnswer_SoItsShapeCannotChangeQuietly()
+    {
+        var first = new AuditEvent
+        {
+            Id = Guid.Parse("11111111-1111-4111-8111-111111111111"),
+            OccurredAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc),
+            Event = "FirstEvent",
+            Outcome = AuditOutcome.Succeeded,
+            ActorUserId = Guid.Parse("22222222-2222-4222-8222-222222222222"),
+            SubjectType = "AccountOne",
+            SubjectId = Guid.Parse("33333333-3333-4333-8333-333333333333"),
+            TraceId = "trace-for-the-first-row",
+            Detail = "detail-for-the-first-row",
+            RowHash = string.Empty,
+        };
+        _context.AuditEvents.Add(first);
+        await _context.SaveChangesAsync();
+
+        var second = new AuditEvent
+        {
+            Id = Guid.Parse("44444444-4444-4444-8444-444444444444"),
+            OccurredAt = new DateTime(2026, 6, 7, 8, 9, 10, DateTimeKind.Utc),
+            Event = "SecondEvent",
+            Outcome = AuditOutcome.Refused,
+            ActorUserId = Guid.Parse("55555555-5555-4555-8555-555555555555"),
+            SubjectType = "AccountTwo",
+            SubjectId = Guid.Parse("66666666-6666-4666-8666-666666666666"),
+            TraceId = "trace-for-the-second-row",
+            Detail = "detail-for-the-second-row",
+            RowHash = string.Empty,
+        };
+        _context.AuditEvents.Add(second);
+        await _context.SaveChangesAsync();
+
+        second.PreviousHash.Should().Be(
+            first.RowHash, "row two must carry row one's hash, or this test guards nothing");
+
+        first.RowHash.Should().Be(
+            "b2f91735f5846d4e078cad27fdf8d20b73c5a0f3f2bccaa00b5cd3d342c376f6",
+            "the payload's shape and the key together produce exactly this value");
+        second.RowHash.Should().Be(
+            "51625bb81b8d175f1ab88d928a398a9291a33a360eb16483be5a26f67d14048e",
+            "and this one, which also covers the PreviousHash line no tamper case can reach");
+    }
+
     [Fact]
     public async Task AlteringARow_BreaksItsOwnHash()
     {

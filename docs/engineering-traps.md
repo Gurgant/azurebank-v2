@@ -539,3 +539,54 @@ Then the second trap: logging out revokes *everything*, so an assertion that the
 zero active tokens holds whether or not containment ran. Log back in first, so the mitigation has a
 victim — and confirm by breaking the code on purpose and watching the test go red. A test whose
 setup already satisfies its postcondition proves nothing, and it will not tell you so.
+
+## Three binding kinds, two parsers — and a `Guid` does not mean the same thing in each
+
+A `Guid` arriving in a ROUTE or a HEADER is parsed by MVC's `TryParse`, which accepts the `D`, `N`,
+`B`, `P` and `X` forms, in any case, and trims surrounding whitespace. A `Guid` that is a MEMBER of a
+JSON body is parsed by `System.Text.Json`, which accepts the **`D` form only**, is case-insensitive,
+and does **not** trim. So the same value is accepted on one surface and rejected on another, and a
+helper written for one is wrong on the other: `parseGuid` for a route or a header, `parseBodyGuid`
+for a body member.
+
+**Measured**, on the two code paths themselves — the `TypeConverter` MVC uses for a simple type, and
+`System.Text.Json` with the Web defaults ASP.NET Core applies to a body:
+
+```
+form              route / header (TypeConverter)   JSON body member (System.Text.Json)
+D  canonical      ACCEPTED                         ACCEPTED
+N  no dashes      ACCEPTED                         REJECTED
+B  braces         ACCEPTED                         REJECTED
+P  parens         ACCEPTED                         REJECTED
+X  hex            ACCEPTED                         REJECTED
+D uppercase       ACCEPTED                         ACCEPTED
+D with spaces     ACCEPTED                         REJECTED
+```
+
+Related and load-bearing: `fingerprint(raw)` must stay ABOVE `bindAccountIds`, computed over the WIRE
+bytes. Fingerprinting after binding fingerprints a normalised value, which is not what the caller
+sent and therefore not what an idempotency key should key on.
+
+## `Guid.CreateVersion7()` is not monotonic within a millisecond, and SQL Server disagrees about order
+
+Version-7 GUIDs are time-ordered only to millisecond resolution; two created in the same millisecond
+have no defined order between them. Worse, SQL Server collates `uniqueidentifier` on a **different
+byte order** than .NET's `Guid.CompareTo`, so a sort that looks right in memory is not the sort the
+database performs.
+
+**Measured twice.** Within a burst, `Guid.CreateVersion7()` produced **44,712 out-of-order adjacent
+pairs out of 89,508** — essentially a coin flip, so there is no ordering inside a millisecond at all.
+And ten of them, created in sequence, sort three different ways:
+
+```
+creation order : 0,1,2,3,4,5,6,7,8,9
+.NET sort order: 1,7,8,0,2,6,3,9,5,4
+SQL sort order : 4,8,7,0,3,5,1,2,6,9
+```
+
+**Never order by `Id` and call it creation order.** This cost two separate bugs in one PR — one in
+production code, one in a test that agreed with it — which is the shape to watch for: when the code
+and its test share a wrong assumption, the test confirms the bug instead of catching it. Order by the
+column that means what you want (`Sequence`, `OccurredAt`, `CreatedAt`), and if there isn't one, that
+is the finding.
+

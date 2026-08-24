@@ -131,6 +131,142 @@ public sealed class AuditChainSqlServerTests : IDisposable
         _output.WriteLine($"tampered row 2 -> {verification.Reason}");
     }
 
+    /// <summary>
+    /// Every field inside the hashed payload is actually inside it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The test above proves ONE field is hashed. This proves the rest, and the gap it closes was
+    /// real: of the eleven row fields in <c>ComputeRowHash</c>, only <c>Event</c> (above) and
+    /// <c>Sequence</c> (below) had a test that mutated them. A field could have left the payload in
+    /// a refactor and nothing would have said so — which is the exact regression the <c>v2</c>
+    /// prefix exists to make impossible, guarded by nothing until now.
+    /// </para>
+    /// <para>
+    /// NINE CASES OVER EIGHT FIELDS. <c>ActorUserId</c> earns two: a changed value, and an erasure
+    /// to NULL, which is the tamper that removes WHO acted while leaving the record standing. It is
+    /// possible because the column is nullable, and it is the one an attacker actually wants.
+    /// </para>
+    /// <para>
+    /// EIGHT OF THE NINE ARE VALUE-TO-VALUE, and the seed below is what makes that true for the four
+    /// columns <c>NewEvent</c> leaves null. Tampering a column that was seeded NULL proves only that
+    /// its NULL-NESS is hashed — measured, those four cases stayed green while their four values
+    /// stopped being hashed at all. The ninth, <c>ActorUserId</c> → <c>NULL</c>, is value-to-NULL on
+    /// purpose: erasing WHO acted is the tamper worth naming, and it is value-sensitive anyway,
+    /// because the seed's <c>ActorUserId</c> is a real Guid rather than a null.
+    /// </para>
+    /// <para>
+    /// <c>PreviousHash</c> is deliberately NOT here, and not because it is uninteresting:
+    /// <c>VerifyAsync</c> compares it and returns <c>LinkBroken</c> BEFORE <c>ComputeRowHash</c> is
+    /// called, so a case built on it would stay green even with the field deleted from the payload.
+    /// It is covered by the known-answer vector in <c>AuditChainTests</c> instead — as is the
+    /// <c>v2</c> prefix, which no per-field case can reach either.
+    /// </para>
+    /// <para>
+    /// THE KIND IS ASSERTED, not merely IsIntact. Before this test nothing in the suite asserted
+    /// <c>AuditChainBreakKind</c> at all, so a case that broke for the WRONG reason passed just as
+    /// well as one that broke for the right one. <c>Outcome</c> is where that bites: the column is
+    /// <c>HasConversion&lt;string&gt;()</c>, so a value that is not a member of the enum throws while
+    /// the row materialises and comes back <c>Unreadable</c> — <c>IsIntact == false</c>, and proof
+    /// of nothing. The literal is therefore a different VALID member.
+    /// </para>
+    /// <para>
+    /// RED-PROOF: delete that field's line from the <c>string.Join</c> in <c>ComputeRowHash</c> and
+    /// this case, and only this case, must go red. Eight deletions, eight confirmations. Deleting
+    /// the <c>Event</c> or <c>Sequence</c> line reddens the EXISTING tests instead, and deleting
+    /// <c>PreviousHash</c> or <c>"v2"</c> reddens nothing here at all — see the vector.
+    /// </para>
+    /// </remarks>
+    [SqlServerTheory]
+    [InlineData("Id", "NEWID()")]
+    [InlineData("OccurredAt", "DATEADD(second, 1, [OccurredAt])")]
+    [InlineData("Outcome", "'Refused'")]
+    [InlineData("ActorUserId", "NEWID()")]
+    [InlineData("ActorUserId", "NULL")]
+    [InlineData("SubjectType", "'Account'")]
+    [InlineData("SubjectId", "NEWID()")]
+    [InlineData("TraceId", "REPLICATE('a', 32)")]
+    // NO BRACES IN ANY LITERAL HERE. ExecuteSqlRawAsync runs the SQL through a composite-format
+    // parse before it reaches the server, so a literal '{' throws FormatException ("Expected an
+    // ASCII digit") and the case dies before touching the database. Measured: the obvious JSON
+    // literal for Detail -- the shape Detail actually holds in production -- failed exactly that
+    // way. Doubling the braces would work; a brace-free literal proves the same thing and cannot
+    // be broken again by somebody who does not know this.
+    [InlineData("Detail", "'tampered'")]
+    public async Task EveryFieldInTheHashedPayload_IsActuallyHashed(string column, string tamperedTo)
+    {
+        var services = CreateSqlServices();
+        await ClearAuditEventsAsync(services);
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        /*
+          SEEDED NON-NULL, AND THIS IS LOAD-BEARING. `NewEvent` leaves SubjectType, SubjectId,
+          TraceId and Detail null, and against a null seed those four cases tamper NULL -> value,
+          which only ever proves the column's NULL-NESS is hashed -- not its value. MEASURED: with
+          those four lines of ComputeRowHash replaced by a presence flag, so the VALUES stop being
+          hashed altogether, all nine cases stayed GREEN and only the known-answer vector caught it.
+          Seeding here makes every case value -> different value, so the theory proves what its own
+          name says.
+
+          Every InlineData literal must therefore DIFFER from what is seeded here. That is not
+          tidiness: ExecuteSqlRawAsync returns rows MATCHED, not rows CHANGED, so a no-op UPDATE
+          still reports affected == 1 and the assertion below would pass while nothing moved.
+          Seeding SubjectType = "Account" against [InlineData("SubjectType", "'Account'")] is
+          exactly that trap.
+
+          Seeded locally rather than in NewEvent, which has six call sites and five of them outside
+          this theory.
+        */
+        foreach (var name in new[] { "First", "Second", "Third" })
+        {
+            var row = NewEvent(name);
+            row.SubjectType = "User";
+            row.SubjectId = Guid.NewGuid();
+            row.TraceId = Guid.NewGuid().ToString("N");
+            row.Detail = "seeded-detail";
+            context.AuditEvents.Add(row);
+            await context.SaveChangesAsync();
+        }
+
+        (await chain.VerifyAsync(context)).IsIntact.Should()
+            .BeTrue($"the control: the chain is intact before {column} is touched");
+
+        /*
+          Raw UPDATE, not the change tracker, for the same reason as the test above: the threat is
+          somebody holding a connection, not somebody using the application. The column name and the
+          expression are interpolated because they come from InlineData in this file and never from
+          input -- a parameter cannot carry a column name or NEWID() anyway.
+        */
+#pragma warning disable EF1002 // Interpolation is the point, and both halves are literals above.
+        /*
+          SUPPRESSED DELIBERATELY, with the reason the analyser asks for. A parameter cannot carry a
+          column name, and it cannot carry NEWID() or DATEADD either -- the tamper has to BE SQL. The
+          two interpolated values are the InlineData literals twenty lines above, in this file, and
+          nothing reaches them from configuration, the network or a database. Widening the pragma, or
+          moving the strings anywhere a caller could influence them, ends that argument.
+        */
+        var affected = await context.Database.ExecuteSqlRawAsync(
+            $"UPDATE [AuditEvents] SET [{column}] = {tamperedTo} WHERE [Sequence] = 2");
+#pragma warning restore EF1002
+        affected.Should().Be(
+            1, "the tampering itself must have happened, or this case proves nothing at all");
+
+        var verification = await chain.VerifyAsync(context);
+
+        verification.IsIntact.Should().BeFalse($"{column} is inside the hashed payload");
+        verification.Kind.Should().Be(
+            AuditChainBreakKind.HashMismatch,
+            "breaking for the RIGHT reason is the point -- an Unreadable or a LinkBroken here would "
+            + "satisfy IsIntact == false while saying nothing about whether the field is hashed");
+        verification.FirstBrokenSequence.Should().Be(
+            2, "and it must name WHICH row, not merely report that something is wrong");
+        verification.Verified.Should().Be(1, "one row was read and passed before the broken one");
+        _output.WriteLine($"{column} := {tamperedTo} -> {verification.Reason}");
+    }
+
     [SqlServerFact]
     public async Task RenumberingTheTailRow_BreaksTheChain()
     {

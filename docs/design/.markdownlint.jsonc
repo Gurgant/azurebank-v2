@@ -1,0 +1,12 @@
+// markdownlint configuration for `docs/design/`. It exists for ONE reason: to stop the MD040
+// exemption in `docs/.markdownlint.jsonc` from reaching this directory by inheritance.
+//
+// markdownlint-cli2 reads the config nearest each linted file and walks upwards, so without this
+// file every document here would silently pick up an exemption argued from a different corpus. The
+// root of `docs/` fences measured output; this directory does not, or at least nobody has checked:
+// the linter reports MD040 hits here against a large majority of fences that DO carry a language,
+// and none of them has been read to decide which they are.
+//
+// Delete this file only after reading them. An exemption that arrives by inheritance is exactly the
+// kind nobody notices was never argued.
+{}

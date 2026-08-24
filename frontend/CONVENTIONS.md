@@ -87,3 +87,32 @@ reintroduces a whole class of flake. Two consequences follow: after any async tr
 `findBy*` or wrap in `waitFor`, because tabster lifts background `aria-hidden` asynchronously; and
 since jsdom never evaluates media queries, elements hidden behind a mobile-first breakpoint are
 present but hidden, so they need `{ hidden: true }` to be found.
+
+## `vitest run` does not run the whole suite — it excludes `contract/**` and `integration/**`
+
+Five commands, not one. `vitest run` covers the unit and component tests; the `contract/` and
+`integration/` directories are excluded by configuration, so a green `vitest run` is not a green
+suite and has never been one.
+
+The last three need the real stack up: seed `AzureBankE2E`, the API on **`https://localhost:7215`**,
+and the BFF on `:5000` via `dotnet run --project backend/src/AzureBank.Bff --launch-profile http`.
+
+⚠️ **The launch profile is not optional, and an earlier version of this note implied it was.** It is
+the only thing setting `ASPNETCORE_ENVIRONMENT=Development`, and two things hang off that: the dev
+certificate is trusted on the BFF→API hop, and the session cookie keeps its plain name. Outside
+Development `Program.cs` prefixes it `__Host-`, which **cannot be set over `http://localhost:5000`**
+at all — so a run without the profile fails on TLS and then on login, and neither failure names the
+profile. No cluster override is needed locally: `appsettings.json` already points cluster
+`backend-api` at `https://localhost:7215`. The `--ReverseProxy:Clusters:backend-api:…` arguments you
+will see in `ci.yml` are CI-only, because CI moves the API to `:5068`; they are passed as
+command-line config rather than environment variables because the cluster id `backend-api` contains
+a hyphen and `ReverseProxy__Clusters__backend-api__…` is not a portable shell identifier.
+
+⚠️ **`:5068` is a real port and still the wrong one to use.** The API's `http` launch profile listens
+there, and the `https` profile listens on **both** `https://localhost:7215` and
+`http://localhost:5068` — so `:5068` answers, which is what makes the mistake survive. Everything
+that names the API means 7215: `vitest.contract.real.config.ts`, `.claude/launch.json`, and the
+READMEs. This note said `:5068` for a month before anyone ran it.
+Authentication is rate-limited to 10 attempts per 60 seconds per IP, so leave ~70 seconds between
+suites or the second one fails on a limiter rather than on anything real.
+
