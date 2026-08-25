@@ -202,6 +202,12 @@ outside the system, which is SQL Server's ledger, deferred rather than rejected.
 honest claim is narrow: **this chain detects tampering by someone who holds the database but not the
 key, except at the end of the table.**
 
+**Why that end is still open, written down rather than left to be inferred:**
+`docs/deferred/anchoring-the-audit-trail.md`. The short version is that an anchor is only as good as
+its freshness, freshness needs something running unattended, and nothing runs unattended here — so
+the control would be a demonstration rather than a constraint. That document also records the two
+one-way doors that would have to be decided before the first token is ever issued.
+
 **A withdrawn argument, left visible.** The first version of this decision claimed the ledger was
 impractical because its digests require an Azure storage destination. That is false, and measuring it
 is what showed so: `sp_generate_database_ledger_digest` takes no destination at all — automatic
