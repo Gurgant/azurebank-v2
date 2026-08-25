@@ -267,12 +267,30 @@ public class AuditChainTests : IDisposable
           intact. Nothing in the chain records how many rows there should have been.
 
           So a hash chain proves rows were not ALTERED or REMOVED FROM THE MIDDLE. It does not prove
-          none were removed from the end. That needs an external witness — an anchored head, a
+          none were removed from the end. That needs an external witness — an anchored TAIL, a
           counter someone else keeps — which this system does not have yet.
 
           This test exists because the runbook claimed the stronger property in writing. It is
-          deliberately asserting the UNCOMFORTABLE direction: if someone later anchors the head, this
-          goes red, and the documentation it protects gets updated with it.
+          deliberately asserting the UNCOMFORTABLE direction.
+
+          ⚠️ IT IS NOT A TRIPWIRE, though this comment used to promise it was — "if someone later
+          anchors the head, this goes red, and the documentation it protects gets updated with it".
+          Wrong twice. The word is TAIL: `head` is sequence 1, the row truncation spares. And this
+          asserts on what AuditChain.VerifyAsync returns, while an anchor check needs a token store
+          and a pinned trust root, so it lands in AzureBank.AuditVerifier instead — the tail gets
+          anchored and this stays green.
+
+          ⚠️ DO NOT DELETE IT THEN — the easier mistake to make from here. Green is the CORRECT
+          answer at this layer: the chain alone cannot see a truncated
+          tail, and that is precisely why an anchor is wanted. This is the test that objects if
+          somebody teaches VerifyAsync to consult anchors from behind IAuditChain. What changes is
+          SCOPE, not existence — "IsNotDetected" is a claim about the SYSTEM, and after anchoring the
+          system detects it one layer up FOR ROWS A TRUSTED ANCHOR COVERS. Not for the rest:
+          truncation of rows written since the last anchor is exactly as invisible as it is today,
+          which is why the interval is the guarantee. Rescope this to the chain, add a test at the
+          AzureBank.AuditVerifier layer for what the anchor catches, and move ADR-0044,
+          docs/runbooks/audit-chain-unavailable.md and docs/deferred/anchoring-the-audit-trail.md
+          with it. Nothing announces the day.
         */
         await WriteAsync("First", "Second", "Third");
 

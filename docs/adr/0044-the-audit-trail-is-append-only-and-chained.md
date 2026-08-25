@@ -192,15 +192,42 @@ left for a reader to discover.
 **Now measured as well as reasoned (2026-08-22).** The test
 `AuditChainTests.TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit` writes three rows, removes
 the last, and asserts the chain still reports itself INTACT with the count down to two. It asserts
-the uncomfortable direction deliberately: if the head is ever anchored the test goes red, and the
-documents resting on this limit get corrected with it. It exists because the runbook had gone on
-repeating the too-strong claim this very section had already withdrawn.
+the uncomfortable direction deliberately. It exists because the runbook had gone on repeating the
+too-strong claim this very section had already withdrawn.
+
+**Corrected 2026-08-25: that test is not a tripwire, and this paragraph used to say it was.** It read
+"if the head is ever anchored the test goes red, and the documents resting on this limit get
+corrected with it", which is wrong twice. The word is TAIL — `head` is sequence 1, the row a
+truncation spares, and this repository has a rule against exactly that slip. And the test asserts on
+what `AuditChain.VerifyAsync` returns, while an anchor check needs a token store and a pinned trust
+root, so it belongs in the operator-runnable verifier. The tail can be anchored with this test still
+green.
+
+**It is not retired then, either**, which is the easier mistake to make from here. The assertion
+stays true because anchoring does not touch the walk, and it stays useful because green is the right
+answer at that layer: the chain alone cannot see a truncated tail, which is the reason an anchor is
+wanted at all. It gets RESCOPED instead — the name claims truncation "is not detected", a statement
+about the system, and after anchoring the system detects it one layer up **for the rows a trusted
+anchor already covers**. Not for the rest, and that qualifier is the guarantee rather than a
+footnote to it: truncation of rows written since the last anchor stays exactly as invisible as it is
+today, which is what makes the interval the thing being promised rather than a scheduling detail.
+"Trusted" carries its own weight — an anchor checked against a root nobody pinned is not evidence of
+anything. A second test at the verifier layer asserts what the anchor catches. This ADR,
+`docs/runbooks/audit-chain-unavailable.md` and `docs/deferred/anchoring-the-audit-trail.md` are the
+checklist, and nothing announces the day.
 
 What this also does not defend against: an attacker holding both the database and the application's
 secrets can rewrite a row and recompute the chain. Both gaps close the same way — a digest anchored
 outside the system, which is SQL Server's ledger, deferred rather than rejected. Until then the
 honest claim is narrow: **this chain detects tampering by someone who holds the database but not the
 key, except at the end of the table.**
+
+**Why that end is still open, written down rather than left to be inferred:**
+`docs/deferred/anchoring-the-audit-trail.md`. The short version is that an anchor is only as good as
+its freshness, freshness needs something running unattended, and nothing runs unattended here — so
+the control would be a demonstration rather than a constraint. That document also records the four
+things that have to be settled before the first token is ever issued, three of which are one-way
+doors.
 
 **A withdrawn argument, left visible.** The first version of this decision claimed the ledger was
 impractical because its digests require an Azure storage destination. That is false, and measuring it
