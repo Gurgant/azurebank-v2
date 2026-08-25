@@ -56,18 +56,44 @@ publication, and publication needs a schedule, which brings us back to the first
 Deploying to Azure changes both reasons at once, which is why they are recorded together.
 
 **Something would be running.** A Container Apps job or a timer-triggered Function on a schedule
-gives the anchoring job somewhere to live, and it costs nothing extra because the application is
-already deployed.
+gives the anchoring job somewhere to live. It is not free just because the application is already
+deployed: a Container Apps job in the Consumption plan meters vCPU-seconds and GiB-seconds for the
+duration of each execution, and a Function on the Consumption plan meters executions and GB-seconds
+against a monthly free grant. Hourly, a job that runs for a second or two is small enough that the
+grant probably swallows it — but "probably" is the honest word until somebody prices the plan that
+is actually chosen, and there may be storage and TSA costs beside it.
 
-**The identities would separate.** The application's managed identity, the anchoring job's identity,
-and whatever holds the published copy stop being one Windows account. That separation is what turns
-the anchor from a demonstration into a constraint — no single compromise yields both the rows and
-the ability to rewrite the record of them.
+**The identities would separate — but separation of identity is not separation of authority, and
+that distinction is the whole thing.** The application's managed identity, the anchoring job's
+identity and whatever holds the published copy stop being one Windows account. That is necessary and
+it is not sufficient: anyone holding Owner or User Access Administrator at the subscription or
+resource group can re-grant themselves any of it, so three identities under one privileged principal
+are one principal wearing three hats.
+
+Making it a constraint rather than a diagram means naming the boundary: the scope each role
+assignment is made at, who is allowed to make role assignments at that scope, and — for the
+published copy — immutable storage with a **locked** retention policy, because an unlocked one is
+changed by the same principal. That is the work, and it is why this is filed under deferred rather
+than sketched as a to-do.
 
 **Publication gets a destination.** Append each anchor's payload and digest to a public, append-only
-repository, or to immutable storage with a locked retention policy. Nothing sensitive is published: a
-digest reveals nothing about the rows behind it. What it buys is that a copy exists where I cannot
-revise it, held by somebody whose clock I do not control.
+repository, or to immutable storage with a locked retention policy. What it buys is that a copy
+exists where I cannot revise it, held by somebody whose clock I do not control.
+
+**"Nothing sensitive is published" is the tempting sentence here, and it is too strong.** The digest
+reveals nothing about the content of any row. The sequence bounds and the row count are not a
+digest, and they do reveal activity metadata: published hourly, the difference between consecutive
+counts is the number of audited events in that hour, which tracks how busy the bank was and when it
+was quiet. That is traffic analysis rather than disclosure, and on this system it would be a
+non-issue — but it is a decision to take rather than a property to assume, and publishing the digest
+alone is the cheap way to take it.
+
+Two payloads are involved, and the difference between them matters enough to name. The **anchored
+value** is what a TSA signs: a digest over the chain's state, `(lowest sequence, highest sequence,
+row count, tail hash)`. The **anchor record** is what gets stored and published, and it carries the
+same four fields plus its own counter and the previous record's hash — so the anchors form a second
+chain, over the first. Writing and verification would have to agree on one canonical byte rendering
+of each, and neither exists yet.
 
 Three things would have to be decided at that point, and two of them are one-way doors:
 
@@ -77,11 +103,21 @@ Three things would have to be decided at that point, and two of them are one-way
   two hashes is recomputable by anyone holding the table — including a plausible run of "the TSA was
   unreachable" gap markers. Without a MAC under a key the database does not hold, the design
   manufactures its own alibi.
-- **What the payload is allowed to be, forever after the first token.** The row hash includes a
-  version prefix whose entire purpose is to invalidate old hashes when a field is added. An anchor's
-  purpose is the opposite: old hashes must stay checkable. After the first token, a version bump or a
-  key rotation makes every earlier anchor unsatisfiable — and it fails in exactly the way a tampered
-  row does. Anything that needs to be in the hashed payload has to be there first.
+- **What the payload is allowed to be, forever after the first token.** This one is already true
+  without any anchor, which is the part worth saying first. `ComputeRowHash` hardcodes the version
+  prefix `v2` and reads a single `Audit:ChainKey`, and `VerifyAsync` recomputes **every** row with
+  whatever those two are **now**. So a key rotation or a version bump today makes the verifier
+  reject rows that were written correctly, with `HashMismatch` — the same verdict a tampered row
+  gets. The message hedges usefully on one of the two: it says the row was either altered or checked
+  under a different key. It says nothing about a version bump, so that case reads as tampering with
+  no hint otherwise. Historical rows stay verifiable only if the verifier keeps the old versions and
+  keys and picks the right one per row, and nothing in a row says which.
+
+  Anchoring does not create that; it makes it permanent. Before the first token a re-hash is a
+  migration. After it, the anchored value is fixed in a signed token nobody can re-issue, so the
+  bump leaves every earlier anchor unsatisfiable with no way back. **Whatever needs to be in the
+  hashed payload has to be there first** — and whatever ships that should carry a test that verifies
+  a row written under an OLD scheme, because this is a regression that arrives silently otherwise.
 
 ## What is true today
 
