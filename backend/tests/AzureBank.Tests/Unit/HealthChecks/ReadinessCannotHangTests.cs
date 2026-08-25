@@ -77,6 +77,29 @@ public class ReadinessCannotHangTests
         registrations.Should().NotBeEmpty(
             "a guard over an empty set passes forever and proves nothing");
 
+        /*
+          THE FIRST ITERATION MEASURED THE PROCESS, NOT THE CHECK. Whichever registration ran first
+          paid for the one-time EF model build, and it dominated everything else.
+
+          MEASURED, and the experiment is what makes it a fact rather than a guess: the cost followed
+          the POSITION, not the check. Shipped order gave `database 626ms, audit-chain 26ms`; with the
+          iteration REVERSED it gave `audit-chain 636ms, database 28ms`. A cost that swaps with the
+          order is warm-up by definition. Building the model here first brings the same run to
+          `database 68ms, audit-chain 56ms` -- both under 70ms, which is the real cost of a check
+          handed an already-cancelled token.
+
+          It matters because of what the assertion means. At 626ms against a 2,000ms bound the guard
+          had roughly 3x of headroom over noise that has nothing to do with the property; on a loaded
+          agent it would go red for a reason that is not a token-ignoring check, and a guard that
+          cries wolf is one people learn to ignore. Warm, the headroom is ~29x.
+
+          Do not delete this as ceremony: without it the first check in the list is measured cold.
+        */
+        using (var warmup = provider.CreateScope())
+        {
+            _ = warmup.ServiceProvider.GetRequiredService<AzureBankDbContext>().Model;
+        }
+
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
 
