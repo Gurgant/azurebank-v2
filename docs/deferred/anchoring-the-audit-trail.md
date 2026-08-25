@@ -1,16 +1,19 @@
 # Anchoring the audit trail, and why this deployment cannot
 
 The audit trail is append-only and hash-chained: every row's HMAC covers the previous row's hash, so
-altering a row or removing one from the middle breaks the walk at a nameable sequence. ADR-0044 sets
-out the design and, deliberately, its limit.
+for anybody who does not hold `Audit:ChainKey`, altering a row or removing one from the middle
+breaks the walk at a nameable sequence. ADR-0044 sets out the design and, deliberately, its limit.
 
 **The limit is the end of the table.** Delete the newest rows and the surviving prefix links
 perfectly, every hash matches, and verification reports intact. Nothing in the chain records how
 many rows there should have been. Truncation needs no key at all — only write access — which makes
-it the cheapest attack on this table, and the only one the chain cannot see. Delete every row and
-the verifier does say something else — `NOTHING TO VERIFY`, on the stated grounds that an empty
-chain links perfectly and a table truncated to nothing reports exactly what a fresh one does — but
-that separates zero from non-zero and nothing more. It is a floor, not a defence.
+it the cheapest attack on this table, and the only one the chain misses against the attacker it is
+built for: somebody who holds the database but not the key. Somebody holding both rewrites a row and
+recomputes the chain, which is equally invisible — ADR-0044 records that as the other gap, and both
+close the same way. Delete every row and the verifier does say something else — `NOTHING TO VERIFY`,
+on the stated grounds that an empty chain links perfectly and a table truncated to nothing reports
+exactly what a fresh one does — but that separates zero from non-zero and nothing more. It is a
+floor, not a defence.
 
 This document is about the control that would close it, and why it is not here.
 
@@ -33,9 +36,10 @@ problem and belongs with the PSD2 Art. 72 evidence work.
 
 ### The decisive reason: nothing here runs unattended
 
-An anchor is only as good as its freshness. It bounds truncation to one anchoring interval — rows
-written since the last anchor are exactly as undetectable as they are today — so the control is the
-schedule, not the cryptography.
+An anchor is only as good as its freshness, and freshness runs from the last copy somebody else
+holds rather than from the moment a token was issued. At best it bounds truncation to one
+publication interval — rows written since that copy are exactly as undetectable as they are today —
+so the control is the schedule, not the cryptography.
 
 This runs on one machine, started by hand. There is no service up between sessions, so there is
 nothing for a periodic anchoring job to live in, and "anchor when I remember to" is not a schedule.
@@ -53,7 +57,7 @@ application's database login, the box, and the operator running any export are a
 that actually survives is narrower than it first appears:
 
 > For every anchor a third party has **seen**, the operator loses the ability to tell a different
-> story about the past.
+> story about the rows that anchor covers.
 
 Seen, not stored safely. Which means the control does not begin at the timestamp — it begins at
 publication, and publication needs a schedule, which brings us back to the first reason.
@@ -129,11 +133,15 @@ it re-measured against a real token before anybody leaned on it.
 Four things have to be settled before the first token, and three of them are one-way doors:
 
 - **The interval**, derived from how fast money actually moves rather than from the clock. It is the
-  size of the window in which truncation stays invisible, so it is the guarantee.
+  floor on how wide the window of invisible truncation gets, not its size: the window runs back to
+  the last anchor a third party has seen, so a run that leaves a gap marker instead of a token, or a
+  copy published late, widens it past one interval. The schedule is the guarantee.
 - **Whether the anchor record is authenticated.** A digest over a counter, two sequences, a count
   and two hashes is recomputable by anyone holding the table — including a plausible run of "the TSA
   was unreachable" gap markers. Without a MAC under a key the database does not hold, the design
-  manufactures its own alibi.
+  manufactures its own alibi. It is one-way because the alibi is the thing a MAC has to rule out:
+  records already published without one can be re-derived by the operator at any later date, so
+  MACing them afterwards dates nothing.
 - **Where the trust root comes from.** Pinning the TSA's root and its policy OID out of band is what
   turns a signature into a trust decision, and it has to sit somewhere the database under
   verification cannot reach. It is one-way for the same reason the payload is: once tokens exist
@@ -174,26 +182,27 @@ And a test asserts the uncomfortable direction on purpose.
 `TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit` deletes the last row, asserts the chain still
 reports intact, and exists so that the claim cannot quietly grow back.
 
-I had written that anchoring would turn that test red, and that this is how the documents resting on
-it would be corrected at the same time rather than a year later. That is not true, and why it is
-false is worth more than quietly deleting it. The test asserts on what `AuditChain.VerifyAsync`
-returns. An anchor check is a different layer — it needs a token store and a pinned trust root,
-neither of which belongs behind that interface — so it lands in the operator-runnable verifier, and
-this test goes on passing beside it. The tripwire I described is a comment, not a mechanism.
+It is tempting to call that a tripwire — to say anchoring will turn it red, and that this is how the
+documents resting on it get corrected at the same time rather than a year later. It will not. The
+test asserts on what `AuditChain.VerifyAsync` returns, and an anchor check is a different layer: it
+needs a token store and a pinned trust root, neither of which belongs behind that interface, so it
+lands in the operator-runnable verifier and this test goes on passing beside it. A tripwire made of
+a comment is not a tripwire.
 
-The first correction I wrote for that was wrong in the other direction: it said the test would have
-to be retired. It does not, and retiring it would throw away the thing worth keeping. Its assertion
-stays true after anchoring, because anchoring does not touch the walk — and it stays useful for the
+The opposite conclusion is just as wrong and easier to reach from there — that the test will have to
+be retired. It will not, and retiring it would throw away the thing worth keeping. Its assertion
+stays true after anchoring, because anchoring does not touch the walk, and it stays useful for the
 same reason, because green is the correct answer at that layer. The chain alone cannot see a
 truncated tail, which is the whole reason an anchor is wanted; this is the test that would object if
 somebody later taught `VerifyAsync` to consult anchors from behind that interface.
 
 What changes is its scope, not its existence. The name says truncation "is not detected", which is a
-claim about the system, and after anchoring the system does detect it — one layer up, within one
-interval. So the test gets rescoped to the chain, a second test at the verifier layer asserts what
-the anchor catches, and the documents resting on it — ADR-0044, the runbook, and this page — move
-from "this cannot be detected" to "the chain cannot detect it, and here is what does." None of that
-announces itself, which is the part worth writing down.
+claim about the system, and after anchoring the system does detect it — one layer up, for the rows a
+trusted anchor covers, and not for rows written since the last one. So the test gets rescoped to the
+chain, a second test at the verifier layer asserts what the anchor catches, and the documents
+resting on it — ADR-0044, the runbook, and this page — move from "this cannot be detected" to "the
+chain cannot detect it, and here is what does." None of that announces itself, which is the part
+worth writing down.
 
 Until then, the count is the only witness, and the operator's own records are what it has to be
 compared against.

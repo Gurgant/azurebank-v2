@@ -407,7 +407,7 @@ So truncation is the cheapest attack on this table — it needs **no key at all*
 and it is also the easiest thing to do by accident while trying to clear a stuck table at three in
 the morning. ADR-0044 states the same limit and the honest claim it leaves: this chain detects
 tampering by someone holding the database but not the key, **except at the end of the table**. Until
-the head is anchored outside the system, the only witness to how many rows there should be is
+the tail is anchored outside the system, the only witness to how many rows there should be is
 somebody who wrote the number down.
 
 ---

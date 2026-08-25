@@ -203,12 +203,16 @@ what `AuditChain.VerifyAsync` returns, while an anchor check needs a token store
 root, so it belongs in the operator-runnable verifier. The tail can be anchored with this test still
 green.
 
-**It is not retired then, either**, which a first pass at this correction claimed and which is the
-opposite error. The assertion stays true because anchoring does not touch the walk, and it stays
-useful because green is the right answer at that layer: the chain alone cannot see a truncated tail,
-which is the reason an anchor is wanted at all. It gets RESCOPED instead — the name claims
-truncation "is not detected", a statement about the system, and after anchoring the system detects
-it one layer up — with a second test at the verifier layer for what the anchor catches. This ADR,
+**It is not retired then, either**, which is the easier mistake to make from here. The assertion
+stays true because anchoring does not touch the walk, and it stays useful because green is the right
+answer at that layer: the chain alone cannot see a truncated tail, which is the reason an anchor is
+wanted at all. It gets RESCOPED instead — the name claims truncation "is not detected", a statement
+about the system, and after anchoring the system detects it one layer up **for the rows a trusted
+anchor already covers**. Not for the rest, and that qualifier is the guarantee rather than a
+footnote to it: truncation of rows written since the last anchor stays exactly as invisible as it is
+today, which is what makes the interval the thing being promised rather than a scheduling detail.
+"Trusted" carries its own weight — an anchor checked against a root nobody pinned is not evidence of
+anything. A second test at the verifier layer asserts what the anchor catches. This ADR,
 `docs/runbooks/audit-chain-unavailable.md` and `docs/deferred/anchoring-the-audit-trail.md` are the
 checklist, and nothing announces the day.
 
@@ -221,8 +225,9 @@ key, except at the end of the table.**
 **Why that end is still open, written down rather than left to be inferred:**
 `docs/deferred/anchoring-the-audit-trail.md`. The short version is that an anchor is only as good as
 its freshness, freshness needs something running unattended, and nothing runs unattended here — so
-the control would be a demonstration rather than a constraint. That document also records the four things that have to
-be settled before the first token is ever issued, three of which are one-way doors.
+the control would be a demonstration rather than a constraint. That document also records the four
+things that have to be settled before the first token is ever issued, three of which are one-way
+doors.
 
 **A withdrawn argument, left visible.** The first version of this decision claimed the ledger was
 impractical because its digests require an Azure storage destination. That is false, and measuring it
