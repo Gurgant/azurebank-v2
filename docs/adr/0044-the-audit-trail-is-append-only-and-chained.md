@@ -201,9 +201,16 @@ corrected with it", which is wrong twice. The word is TAIL — `head` is sequenc
 truncation spares, and this repository has a rule against exactly that slip. And the test asserts on
 what `AuditChain.VerifyAsync` returns, while an anchor check needs a token store and a pinned trust
 root, so it belongs in the operator-runnable verifier. The tail can be anchored with this test still
-green. Retiring it is a deliberate step in that change rather than a consequence of it, and the
-documents that rest on it — this ADR, `docs/runbooks/audit-chain-unavailable.md` and
-`docs/deferred/anchoring-the-audit-trail.md` — are the checklist for that step.
+green.
+
+**It is not retired then, either**, which a first pass at this correction claimed and which is the
+opposite error. The assertion stays true because anchoring does not touch the walk, and it stays
+useful because green is the right answer at that layer: the chain alone cannot see a truncated tail,
+which is the reason an anchor is wanted at all. It gets RESCOPED instead — the name claims
+truncation "is not detected", a statement about the system, and after anchoring the system detects
+it one layer up — with a second test at the verifier layer for what the anchor catches. This ADR,
+`docs/runbooks/audit-chain-unavailable.md` and `docs/deferred/anchoring-the-audit-trail.md` are the
+checklist, and nothing announces the day.
 
 What this also does not defend against: an attacker holding both the database and the application's
 secrets can rewrite a row and recompute the chain. Both gaps close the same way — a digest anchored

@@ -179,9 +179,21 @@ it would be corrected at the same time rather than a year later. That is not tru
 false is worth more than quietly deleting it. The test asserts on what `AuditChain.VerifyAsync`
 returns. An anchor check is a different layer — it needs a token store and a pinned trust root,
 neither of which belongs behind that interface — so it lands in the operator-runnable verifier, and
-this test goes on passing beside it. The tripwire I described is a comment, not a mechanism. Whoever
-builds the anchor has to retire the test deliberately, in the same change as the documents that rest
-on it: ADR-0044, the runbook, and this page. Nothing will announce the day it is needed.
+this test goes on passing beside it. The tripwire I described is a comment, not a mechanism.
+
+The first correction I wrote for that was wrong in the other direction: it said the test would have
+to be retired. It does not, and retiring it would throw away the thing worth keeping. Its assertion
+stays true after anchoring, because anchoring does not touch the walk — and it stays useful for the
+same reason, because green is the correct answer at that layer. The chain alone cannot see a
+truncated tail, which is the whole reason an anchor is wanted; this is the test that would object if
+somebody later taught `VerifyAsync` to consult anchors from behind that interface.
+
+What changes is its scope, not its existence. The name says truncation "is not detected", which is a
+claim about the system, and after anchoring the system does detect it — one layer up, within one
+interval. So the test gets rescoped to the chain, a second test at the verifier layer asserts what
+the anchor catches, and the documents resting on it — ADR-0044, the runbook, and this page — move
+from "this cannot be detected" to "the chain cannot detect it, and here is what does." None of that
+announces itself, which is the part worth writing down.
 
 Until then, the count is the only witness, and the operator's own records are what it has to be
 compared against.

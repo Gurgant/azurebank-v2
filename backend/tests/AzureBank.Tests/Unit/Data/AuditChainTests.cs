@@ -278,9 +278,17 @@ public class AuditChainTests : IDisposable
           Wrong twice. The word is TAIL: `head` is sequence 1, the row truncation spares. And this
           asserts on what AuditChain.VerifyAsync returns, while an anchor check needs a token store
           and a pinned trust root, so it lands in AzureBank.AuditVerifier instead — the tail gets
-          anchored and this stays green. WHOEVER BUILDS THE ANCHOR MUST RETIRE THIS TEST BY HAND,
-          in the same change as ADR-0044, docs/runbooks/audit-chain-unavailable.md and
-          docs/deferred/anchoring-the-audit-trail.md. Nothing will announce the day.
+          anchored and this stays green.
+
+          ⚠️ DO NOT DELETE IT THEN — an earlier draft of this comment said to, which is the opposite
+          error. Green is the CORRECT answer at this layer: the chain alone cannot see a truncated
+          tail, and that is precisely why an anchor is wanted. This is the test that objects if
+          somebody teaches VerifyAsync to consult anchors from behind IAuditChain. What changes is
+          SCOPE, not existence — "IsNotDetected" is a claim about the SYSTEM, and after anchoring the
+          system does detect it one layer up. Rescope this to the chain, add a test at the
+          AzureBank.AuditVerifier layer for what the anchor catches, and move ADR-0044,
+          docs/runbooks/audit-chain-unavailable.md and docs/deferred/anchoring-the-audit-trail.md
+          with it. Nothing announces the day.
         */
         await WriteAsync("First", "Second", "Third");
 
