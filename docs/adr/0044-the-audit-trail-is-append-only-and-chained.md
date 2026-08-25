@@ -192,9 +192,18 @@ left for a reader to discover.
 **Now measured as well as reasoned (2026-08-22).** The test
 `AuditChainTests.TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit` writes three rows, removes
 the last, and asserts the chain still reports itself INTACT with the count down to two. It asserts
-the uncomfortable direction deliberately: if the head is ever anchored the test goes red, and the
-documents resting on this limit get corrected with it. It exists because the runbook had gone on
-repeating the too-strong claim this very section had already withdrawn.
+the uncomfortable direction deliberately. It exists because the runbook had gone on repeating the
+too-strong claim this very section had already withdrawn.
+
+**Corrected 2026-08-25: that test is not a tripwire, and this paragraph used to say it was.** It read
+"if the head is ever anchored the test goes red, and the documents resting on this limit get
+corrected with it", which is wrong twice. The word is TAIL — `head` is sequence 1, the row a
+truncation spares, and this repository has a rule against exactly that slip. And the test asserts on
+what `AuditChain.VerifyAsync` returns, while an anchor check needs a token store and a pinned trust
+root, so it belongs in the operator-runnable verifier. The tail can be anchored with this test still
+green. Retiring it is a deliberate step in that change rather than a consequence of it, and the
+documents that rest on it — this ADR, `docs/runbooks/audit-chain-unavailable.md` and
+`docs/deferred/anchoring-the-audit-trail.md` — are the checklist for that step.
 
 What this also does not defend against: an attacker holding both the database and the application's
 secrets can rewrite a row and recompute the chain. Both gaps close the same way — a digest anchored
@@ -205,8 +214,8 @@ key, except at the end of the table.**
 **Why that end is still open, written down rather than left to be inferred:**
 `docs/deferred/anchoring-the-audit-trail.md`. The short version is that an anchor is only as good as
 its freshness, freshness needs something running unattended, and nothing runs unattended here — so
-the control would be a demonstration rather than a constraint. That document also records the two
-one-way doors that would have to be decided before the first token is ever issued.
+the control would be a demonstration rather than a constraint. That document also records the four things that have to
+be settled before the first token is ever issued, three of which are one-way doors.
 
 **A withdrawn argument, left visible.** The first version of this decision claimed the ledger was
 impractical because its digests require an Azure storage destination. That is false, and measuring it

@@ -267,12 +267,20 @@ public class AuditChainTests : IDisposable
           intact. Nothing in the chain records how many rows there should have been.
 
           So a hash chain proves rows were not ALTERED or REMOVED FROM THE MIDDLE. It does not prove
-          none were removed from the end. That needs an external witness — an anchored head, a
+          none were removed from the end. That needs an external witness — an anchored TAIL, a
           counter someone else keeps — which this system does not have yet.
 
           This test exists because the runbook claimed the stronger property in writing. It is
-          deliberately asserting the UNCOMFORTABLE direction: if someone later anchors the head, this
-          goes red, and the documentation it protects gets updated with it.
+          deliberately asserting the UNCOMFORTABLE direction.
+
+          ⚠️ IT IS NOT A TRIPWIRE, though this comment used to promise it was — "if someone later
+          anchors the head, this goes red, and the documentation it protects gets updated with it".
+          Wrong twice. The word is TAIL: `head` is sequence 1, the row truncation spares. And this
+          asserts on what AuditChain.VerifyAsync returns, while an anchor check needs a token store
+          and a pinned trust root, so it lands in AzureBank.AuditVerifier instead — the tail gets
+          anchored and this stays green. WHOEVER BUILDS THE ANCHOR MUST RETIRE THIS TEST BY HAND,
+          in the same change as ADR-0044, docs/runbooks/audit-chain-unavailable.md and
+          docs/deferred/anchoring-the-audit-trail.md. Nothing will announce the day.
         */
         await WriteAsync("First", "Second", "Third");
 
