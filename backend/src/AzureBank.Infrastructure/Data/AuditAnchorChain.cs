@@ -25,6 +25,65 @@ public interface IAuditAnchorChain
     /// Builds the next record in the chain from a completed walk, filling every derived field.
     /// </summary>
     AuditAnchor Build(AuditChainVerification verification, AuditAnchor? tail, DateTime createdAtUtc);
+
+    /// <summary>
+    /// Walks every record in order and reports the first one that is missing, mis-linked or not
+    /// authentic.
+    /// </summary>
+    /// <remarks>
+    /// THIS IS WHAT MAKES "DELETING RECORDS IS LOUD" TRUE, and without it that sentence was a claim
+    /// with no mechanism under it. Authenticating only the newest record leaves an interior deletion
+    /// invisible: the survivor still verifies, and a later run extends a chain with a hole in it. A
+    /// gapping counter and links that fail to meet are only signals if something looks, and this is
+    /// the thing that looks.
+    /// </remarks>
+    Task<AuditAnchorChainVerification> VerifyChainAsync(
+        DbContext context, CancellationToken cancellationToken = default);
+}
+
+/// <summary>What walking the whole anchor chain found.</summary>
+/// <param name="Verified">How many records verified before the walk stopped.</param>
+/// <param name="FirstBrokenSequence">Where it stopped, or null when it reached the end.</param>
+/// <param name="Reason">What went wrong there, in a sentence an operator can act on.</param>
+/// <param name="Kind">Which kind of break it was.</param>
+public readonly record struct AuditAnchorChainVerification(
+    long Verified,
+    long? FirstBrokenSequence,
+    string? Reason,
+    AuditAnchorChainBreakKind Kind = AuditAnchorChainBreakKind.None)
+{
+    /// <summary>True when every record read verified and none was missing.</summary>
+    public bool IsIntact => FirstBrokenSequence is null;
+}
+
+/// <summary>How an anchor chain walk failed.</summary>
+/// <remarks>
+/// Four kinds rather than one, for the reason the row chain's equivalent gives: an operator acts
+/// differently on each, and a caller that has to match on the wording of a sentence is a caller that
+/// breaks when the sentence is improved.
+/// </remarks>
+public enum AuditAnchorChainBreakKind
+{
+    /// <summary>No break: the walk reached the end.</summary>
+    None = 0,
+
+    /// <summary>
+    /// The counter skips, or does not begin at 1. A record was removed, or the chain was started
+    /// twice.
+    /// </summary>
+    MissingRecord,
+
+    /// <summary>A record names a predecessor that is not the record before it.</summary>
+    LinkBroken,
+
+    /// <summary>A record does not match what its own content produces. This is a write.</summary>
+    Unauthentic,
+
+    /// <summary>
+    /// A record names a scheme or a key this run cannot apply, so it was NOT checked - which is never
+    /// the same as checked and good.
+    /// </summary>
+    UnknownScheme,
 }
 
 /// <summary>What checking a single anchor record concluded.</summary>
@@ -45,7 +104,15 @@ public enum AuditAnchorCheck
     /// </summary>
     UnknownScheme,
 
-    /// <summary>Recomputed under the key it names, and the MAC does not match. This is a write.</summary>
+    /// <summary>
+    /// The record does not match what its own content produces, under the key it names. A write.
+    /// </summary>
+    /// <remarks>
+    /// COVERS BOTH DERIVED VALUES, not only the authentication code the name mentions. The stored
+    /// payload hash cannot live inside the payload it hashes, so the code does not cover it and it is
+    /// recomputed separately - a record whose stored hash disagrees with its own content has been
+    /// written to just as surely as one whose code does.
+    /// </remarks>
     MacMismatch,
 }
 
@@ -107,11 +174,110 @@ public class AuditAnchorChain : IAuditAnchorChain
             return AuditAnchorCheck.UnknownScheme;
         }
 
-        var expected = ComputeMac(RenderPayload(anchor));
+        var payload = RenderPayload(anchor);
+
+        /*
+          THE STORED PAYLOAD HASH IS CHECKED FIRST, and its absence here was a real hole rather than
+          untidiness. PayloadHash cannot be INSIDE the payload -- it is a hash of it, so that would be
+          circular -- which means the authentication code does not cover it, and somebody holding the
+          database can rewrite it freely with that code still verifying.
+
+          What that buys them is laundering. The NEXT record links to tail.PayloadHash, so a run that
+          accepted this one would genuinely authenticate a link to a value of their choosing. The same
+          reasoning already put AnchoredValue INSIDE the payload as a literal element; this is the one
+          derived value that cannot go there, so it is recomputed here instead.
+        */
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(anchor.PayloadHash), Encoding.ASCII.GetBytes(Sha256(payload))))
+        {
+            return AuditAnchorCheck.MacMismatch;
+        }
+
+        var expected = ComputeMac(payload);
         return CryptographicOperations.FixedTimeEquals(
                 Encoding.ASCII.GetBytes(anchor.Mac), Encoding.ASCII.GetBytes(expected))
             ? AuditAnchorCheck.Authentic
             : AuditAnchorCheck.MacMismatch;
+    }
+
+    public async Task<AuditAnchorChainVerification> VerifyChainAsync(
+        DbContext context, CancellationToken cancellationToken = default)
+    {
+        /*
+          ASCENDING, ALL OF IT, AND STREAMED. The table holds one record per operator run, so it is
+          small by construction -- but "small" is a fact about today rather than a guarantee, and the
+          row walk this mirrors reads its chain the same way for the same reason.
+
+          THE ORDER OF THE THREE CHECKS IS DELIBERATE. The counter first, because a missing record is
+          the move this chain exists to make loud and it must never be reported as something subtler.
+          Then authenticity, because a record that does not match itself cannot be trusted to say what
+          it follows. The link last, since it is only meaningful between two records that are both
+          what they claim to be.
+        */
+        long verified = 0;
+        string? previousPayloadHash = null;
+        var expectedSequence = 1L;
+
+        await foreach (var record in context.Set<AuditAnchor>()
+            .AsNoTracking()
+            .OrderBy(a => a.AnchorSequence)
+            .AsAsyncEnumerable()
+            .WithCancellation(cancellationToken))
+        {
+            if (record.AnchorSequence != expectedSequence)
+            {
+                return new AuditAnchorChainVerification(
+                    verified,
+                    expectedSequence,
+                    $"Anchor {expectedSequence} is missing: the next record read is "
+                    + $"{record.AnchorSequence}. The writer assigns this counter gaplessly, so a skip "
+                    + "means a record was removed -- and removing one is the single move this chain "
+                    + "is built to make loud.",
+                    AuditAnchorChainBreakKind.MissingRecord);
+            }
+
+            var check = Check(record);
+            if (check is AuditAnchorCheck.UnknownScheme)
+            {
+                return new AuditAnchorChainVerification(
+                    verified,
+                    record.AnchorSequence,
+                    $"Anchor {record.AnchorSequence} names a scheme or a key this run cannot apply, "
+                    + "so it was NOT checked -- which is never the same as checked and good. Either "
+                    + "you hold a different Audit:AnchorKey than the run that wrote it, this build "
+                    + "cannot render the version it declares, or the record was overwritten.",
+                    AuditAnchorChainBreakKind.UnknownScheme);
+            }
+
+            if (check is AuditAnchorCheck.MacMismatch)
+            {
+                return new AuditAnchorChainVerification(
+                    verified,
+                    record.AnchorSequence,
+                    $"Anchor {record.AnchorSequence} does not match what its own content produces, and "
+                    + "it names the key this run holds -- so the key is not in question. This is a "
+                    + "write. Preserve the table and escalate.",
+                    AuditAnchorChainBreakKind.Unauthentic);
+            }
+
+            if (record.PreviousAnchorPayloadHash != previousPayloadHash)
+            {
+                return new AuditAnchorChainVerification(
+                    verified,
+                    record.AnchorSequence,
+                    $"Anchor {record.AnchorSequence} expected to follow "
+                    + $"'{previousPayloadHash ?? "(start of chain)"}' but records "
+                    + $"'{record.PreviousAnchorPayloadHash ?? "(start of chain)"}'. The links do not "
+                    + "meet, which is what a substituted record looks like.",
+                    AuditAnchorChainBreakKind.LinkBroken);
+            }
+
+            previousPayloadHash = record.PayloadHash;
+            expectedSequence++;
+            verified++;
+        }
+
+        return new AuditAnchorChainVerification(verified, null, null);
     }
 
     public AuditAnchor Build(AuditChainVerification verification, AuditAnchor? tail, DateTime createdAtUtc)

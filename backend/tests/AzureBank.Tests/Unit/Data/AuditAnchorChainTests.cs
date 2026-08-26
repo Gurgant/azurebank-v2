@@ -274,6 +274,52 @@ public class AuditAnchorChainTests : IDisposable
     }
 
     [Fact]
+    public async Task RewritingAStoredPayloadHash_IsCaught_EvenThoughTheCodeStillVerifies()
+    {
+        /*
+          THE ONE DERIVED VALUE THE AUTHENTICATION CODE CANNOT COVER. PayloadHash is a hash OF the
+          payload, so it cannot be an element of it -- which means the code verifies with the stored
+          hash set to anything at all.
+
+          What that buys an attacker is laundering rather than forgery: the NEXT record links to this
+          one's PayloadHash, so a run that accepted it would genuinely authenticate a link to a value
+          of their choosing. Recomputing it here is the only place that can catch it.
+
+          FALSIFIED by removing the Sha256 comparison from Check: this reddens on its own, and the
+          authentication code alone still says the record is fine.
+        */
+        await WriteRowsAsync(2);
+        var record = await AnchorAsync();
+
+        record.PayloadHash = new string('a', 64);
+
+        _anchors.Check(record).Should().Be(
+            AuditAnchorCheck.MacMismatch,
+            "the code covers the payload and this value is not in it, so nothing else would notice");
+    }
+
+    /*
+      THE TWO ATTACKS ON THE ANCHOR CHAIN ITSELF LIVE ON SQL SERVER, not here, and the reason is the
+      same one that put the row chain's tamper proofs there: removing or rewriting a record is
+      something whoever holds a connection does, straight past the change tracker and the insert-only
+      guard. The InMemory provider supports neither ExecuteDelete nor ExecuteUpdate, so a test written
+      here could only perform the attack through the very funnel that refuses it -- which would prove
+      the funnel works and say nothing about the chain.
+
+      See AuditAnchorSqlServerTests: AnInteriorRecordRemoved_IsCaughtByWalkingTheWholeChain and
+      AnUnauthenticRecordStopsTheWalkWhereItIS_NotAtTheTail.
+    */
+
+    [Fact]
+    public async Task AnEmptyChainVerifies_BecauseNothingIsMissingFromNothing()
+    {
+        var state = await _anchors.VerifyChainAsync(_context);
+
+        state.IsIntact.Should().BeTrue();
+        state.Verified.Should().Be(0, "and the count says plainly that it proved nothing");
+    }
+
+    [Fact]
     public async Task DeletingAnAnchorThroughTheFunnelIsRefused_ThoughThatIsNotTheThreAT()
     {
         /*

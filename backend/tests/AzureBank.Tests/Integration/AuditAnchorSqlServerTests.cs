@@ -179,6 +179,111 @@ public sealed class AuditAnchorSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
+    public async Task AnInteriorRecordRemoved_IsCaughtByWalkingTheWholeChain()
+    {
+        /*
+          THE PROPERTY THE WHOLE TABLE EXISTS FOR, and until the walk was written the claim had no
+          mechanism under it. Authenticating only the newest record leaves an interior deletion
+          invisible, because the survivor verifies perfectly well on its own -- so a later run would
+          extend a chain with a hole in it, and its link would assert that everything beneath was
+          fine.
+
+          FALSIFIED by checking only the tail instead of walking: every surviving record still
+          authenticates, the run reports intact, and this reddens.
+        */
+        var services = CreateSqlServices();
+        await ClearAsync(services);
+
+        await WriteRowsAsync(services, 1);
+        await AnchorAsync(services);
+        await WriteRowsAsync(services, 1);
+        var second = await AnchorAsync(services);
+        await WriteRowsAsync(services, 1);
+        var third = await AnchorAsync(services);
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+
+        (await anchors.VerifyChainAsync(context)).IsIntact.Should().BeTrue("three, in order");
+
+        var affected = await context.Database.ExecuteSqlRawAsync(
+            "DELETE FROM [AuditAnchors] WHERE [AnchorSequence] = {0}", second.AnchorSequence);
+        affected.Should().Be(1);
+
+        var state = await anchors.VerifyChainAsync(context);
+
+        state.IsIntact.Should().BeFalse();
+        state.Kind.Should().Be(AuditAnchorChainBreakKind.MissingRecord);
+        state.FirstBrokenSequence.Should().Be(second.AnchorSequence);
+        state.Verified.Should().Be(1, "the record before the hole verified, and nothing after it did");
+
+        var survivor = await context.Set<AuditAnchor>().AsNoTracking()
+            .SingleAsync(a => a.AnchorSequence == third.AnchorSequence);
+        anchors.Check(survivor).Should().Be(
+            AuditAnchorCheck.Authentic,
+            "and the survivor is genuine -- which is exactly why checking it alone proves nothing");
+    }
+
+    [SqlServerFact]
+    public async Task AnUnauthenticRecordStopsTheWalkWhereItIS_NotAtTheTail()
+    {
+        var services = CreateSqlServices();
+        await ClearAsync(services);
+
+        await WriteRowsAsync(services, 1);
+        var first = await AnchorAsync(services);
+        await WriteRowsAsync(services, 1);
+        await AnchorAsync(services);
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+
+        await context.Database.ExecuteSqlRawAsync(
+            "UPDATE [AuditAnchors] SET [CoveredRowCount] = 99 WHERE [AnchorSequence] = {0}",
+            first.AnchorSequence);
+
+        var state = await anchors.VerifyChainAsync(context);
+
+        state.Kind.Should().Be(AuditAnchorChainBreakKind.Unauthentic);
+        state.FirstBrokenSequence.Should().Be(
+            first.AnchorSequence, "the walk reports where the break IS, not where it noticed");
+        state.Verified.Should().Be(0);
+    }
+
+    [SqlServerFact]
+    public async Task RewritingAStoredPayloadHashInTheDATABASE_IsCaught()
+    {
+        /*
+          The one derived value the authentication code cannot cover, attacked where it would really
+          be attacked. PayloadHash is a hash OF the payload, so it cannot be an element of it -- the
+          code verifies with this column set to anything at all, and the NEXT record links to it.
+
+          FALSIFIED by removing the Sha256 comparison from Check.
+        */
+        var services = CreateSqlServices();
+        await ClearAsync(services);
+        await WriteRowsAsync(services, 2);
+        var record = await AnchorAsync(services);
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+
+        await context.Database.ExecuteSqlRawAsync(
+            "UPDATE [AuditAnchors] SET [PayloadHash] = {0} WHERE [AnchorSequence] = {1}",
+            new string('a', 64), record.AnchorSequence);
+
+        var tampered = await context.Set<AuditAnchor>().AsNoTracking()
+            .SingleAsync(a => a.AnchorSequence == record.AnchorSequence);
+
+        anchors.Check(tampered).Should().Be(AuditAnchorCheck.MacMismatch);
+        (await anchors.VerifyChainAsync(context)).Kind.Should()
+            .Be(AuditAnchorChainBreakKind.Unauthentic);
+    }
+
+    [SqlServerFact]
     public async Task ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit()
     {
         /*

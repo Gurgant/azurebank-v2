@@ -102,25 +102,26 @@ public static class AnchorCommand
 
         try
         {
-            var tail = await anchors.ReadTailAsync(context, cancellationToken);
-
             /*
-              AUTHENTICATE WHAT YOU ARE ABOUT TO BUILD ON, BEFORE BUILDING ON IT. Extending a record
-              this run cannot vouch for would launder it: the new record's link would assert that the
-              previous one was there and fine, which is exactly the claim this run is not in a
-              position to make.
+              THE WHOLE CHAIN, NOT ONLY ITS NEWEST RECORD, and the difference is the whole property.
+
+              Authenticating the tail alone leaves an interior deletion invisible: the survivor still
+              verifies under the key, so a run would extend a chain with a hole in it and the new
+              record's link would assert that everything beneath it was there and fine. That is the
+              one claim this run is least entitled to make, and making it laundered the deletion.
+
+              "Deleting records is loud" is only true because something looks. This is that thing.
 
               Refusing is a denial the operator can be locked out by, and that is the accepted trade
               -- the same one the money path already makes when its audit row cannot be written.
             */
-            if (tail is not null)
+            var chainState = await anchors.VerifyChainAsync(context, cancellationToken);
+            if (!chainState.IsIntact)
             {
-                var check = anchors.Check(tail);
-                if (check is not AuditAnchorCheck.Authentic)
-                {
-                    return (NotRecorded, DescribeRefusal(tail.AnchorSequence, check));
-                }
+                return (NotRecorded, DescribeRefusal(chainState));
             }
+
+            var tail = await anchors.ReadTailAsync(context, cancellationToken);
 
             var verification = await chain.VerifyAsync(context, cancellationToken);
             var record = anchors.Build(verification, tail, DateTime.UtcNow);
@@ -159,23 +160,43 @@ public static class AnchorCommand
             ? verification.Verified > 0 ? VerifyCommand.Intact : VerifyCommand.NothingToVerify
             : VerifyCommand.Broken;
 
-    private static string[] DescribeRefusal(long sequence, AuditAnchorCheck check) => check switch
+    private static string[] DescribeRefusal(AuditAnchorChainVerification state)
     {
-        AuditAnchorCheck.UnknownScheme => new[]
+        var lines = new List<string>
         {
-            $"NOT RECORDED: anchor {sequence} names a scheme or a key this run cannot apply,",
-            "  so its authenticity was NOT checked -- which is never the same as checked and good.",
-            "  Either you hold a different Audit:AnchorKey than the run that wrote it, or this build",
-            "  cannot render the version it declares, or the record was overwritten. Nothing was",
-            "  written, because extending a record this run cannot vouch for would launder it.",
-        },
-        _ => new[]
+            "NOT RECORDED: the existing anchor chain did not verify, so nothing was appended.",
+            $"  Records verified before the break: {state.Verified:N0}",
+            $"  Broke at anchor: {state.FirstBrokenSequence:N0}",
+            string.Empty,
+            "  " + state.Reason,
+            string.Empty,
+        };
+
+        lines.AddRange(state.Kind switch
         {
-            $"NOT RECORDED: anchor {sequence} does not match its own authentication code,",
-            "  and it names the key this run holds -- so the key is not in question. This is a WRITE.",
-            "  Preserve the table and escalate. Nothing was written.",
-        },
-    };
+            AuditAnchorChainBreakKind.MissingRecord => new[]
+            {
+                "  A REMOVED RECORD IS THE ONE MOVE THIS CHAIN EXISTS TO MAKE LOUD, and this is it",
+                "  being loud. Somebody with database access can delete records; they cannot write",
+                "  replacements without Audit:AnchorKey, which is why the gap is still here.",
+                "  Preserve the table and escalate. Compare what survives against the numbers you",
+                "  wrote down off this machine -- those are the evidence, not the table.",
+            },
+            AuditAnchorChainBreakKind.UnknownScheme => new[]
+            {
+                "  The record was NOT checked, which is never the same as checked and good. If you",
+                "  are holding the wrong key, that is a configuration problem and re-running with",
+                "  the right one settles it. If you are not, it is a write.",
+            },
+            _ => new[]
+            {
+                "  Preserve the table and escalate. Nothing was written, because extending a chain",
+                "  this run cannot vouch for would assert that everything beneath it was fine.",
+            },
+        });
+
+        return [.. lines];
+    }
 
     private static string[] Describe(Shared.Entities.AuditAnchor record, AuditChainVerification verification)
     {
