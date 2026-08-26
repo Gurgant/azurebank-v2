@@ -54,6 +54,16 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string AuditChainKey =
         "test-only-audit-chain-key-do-not-use-in-production-0123456789";
 
+    /// <summary>Test-only anchor key. Never a production value; see AuditOptions.AnchorKey.</summary>
+    /// <remarks>
+    /// DIFFERENT FROM <see cref="AuditChainKey"/> BY MORE THAN A SUFFIX, deliberately. If the two
+    /// test values differed only cosmetically, a bug that MACed an anchor under the chain key would
+    /// still produce distinct outputs and nothing would notice; the point of the sixth secret is
+    /// that the anchor is authenticated under a key the row chain does not use.
+    /// </remarks>
+    public const string AuditAnchorKey =
+        "test-only-anchor-key-quite-unlike-the-chain-one-9876543210";
+
     public const string PinPepper =
         "integration-tests-only-pin-pepper-0123456789abcdef0123456789";
 
@@ -142,6 +152,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         // Audit chain key (ADR-0044). Test-only, and present for the same reason the three above
         // are: Audit:ChainKey is ValidateOnStart, so without it every test host fails to build.
         builder.UseSetting("Audit:ChainKey", AuditChainKey);
+        builder.UseSetting("Audit:AnchorKey", AuditAnchorKey);
 
         if (_auditTailTimeoutSeconds is { } tailTimeout)
         {

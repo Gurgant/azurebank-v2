@@ -272,6 +272,7 @@ jobs:
       # Also ValidateOnStart, so leaving it unset does not degrade the audit trail — it stops
       # the API from starting at all.
       AUDIT_CHAIN_KEY: "ci-only-throwaway-audit-chain-key-0123456789abcdef"
+      AUDIT_ANCHOR_KEY: "ci-only-throwaway-audit-anchor-key-fedcba9876543210"
       PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"
       # The suites expect the dev topology: API on 5068 (http — no dev cert in CI), BFF on 5000.
       API_URL: "http://localhost:5068"
@@ -312,6 +313,7 @@ jobs:
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
           StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
           Audit__ChainKey: ${{ env.AUDIT_CHAIN_KEY }}
+          Audit__AnchorKey: ${{ env.AUDIT_ANCHOR_KEY }}
           Security__PinPepper: ${{ env.PIN_PEPPER }}
           ASPNETCORE_ENVIRONMENT: Development
         run: |

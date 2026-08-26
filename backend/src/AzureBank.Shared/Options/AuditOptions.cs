@@ -38,6 +38,30 @@ public class AuditOptions
     public string ChainKey { get; set; } = string.Empty;
 
     /// <summary>
+    /// HMAC key authenticating each anchor RECORD, so a database-only attacker can delete anchors
+    /// but cannot mint them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// SEPARATE FROM <see cref="ChainKey"/> ON PURPOSE, and the reason is sharper than the general
+    /// "one leaked key must not forge the other's answer". The anchor exists to constrain somebody
+    /// who holds the database; the row chain already concedes that an attacker holding the database
+    /// AND the application's secrets can rewrite a row and recompute it. If the anchor were MACed
+    /// under the same key, the one adversary the anchor is built for would be the one adversary it
+    /// cannot see, and the whole record would be decoration.
+    /// </para>
+    /// <para>
+    /// WHAT IT DOES AND DOES NOT BUY, stated so no document has to overclaim later. It makes
+    /// DELETING an anchor loud — the chain's own counter gaps and its links stop meeting — while
+    /// MINTING one requires this key. It does NOT constrain the operator, who holds it: on a
+    /// single-machine deployment the person who can truncate the table is the person who can write
+    /// honest-looking anchors over the result. That is why the anchor's value is the number an
+    /// operator wrote down somewhere else, and why nothing here is called proof.
+    /// </para>
+    /// </remarks>
+    public string AnchorKey { get; set; } = string.Empty;
+
+    /// <summary>
     /// How long the chain's tail read may wait, in seconds, before the movement it belongs to is
     /// refused. Bounds the queue every money movement stands in.
     /// </summary>

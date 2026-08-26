@@ -61,6 +61,7 @@ public static class ServiceCollectionExtensions
 
         // Scoped, matching the API, so the chain reads through the same DbContext the verifier owns.
         services.AddScoped<IAuditChain, AuditChain>();
+        services.AddScoped<IAuditAnchorChain, AuditAnchorChain>();
 
         return services;
     }

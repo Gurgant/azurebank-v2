@@ -136,12 +136,15 @@ Four things have to be settled before the first token, and three of them are one
   floor on how wide the window of invisible truncation gets, not its size: the window runs back to
   the last anchor a third party has seen, so a run that leaves a gap marker instead of a token, or a
   copy published late, widens it past one interval. The schedule is the guarantee.
-- **Whether the anchor record is authenticated.** A digest over a counter, two sequences, a count
-  and two hashes is recomputable by anyone holding the table — including a plausible run of "the TSA
-  was unreachable" gap markers. Without a MAC under a key the database does not hold, the design
-  manufactures its own alibi. It is one-way because the alibi is the thing a MAC has to rule out:
-  records already published without one can be re-derived by the operator at any later date, so
-  MACing them afterwards dates nothing.
+- **Whether the anchor record is authenticated. ✅ Settled, and built.** A digest over a counter,
+  two sequences, a count and two hashes is recomputable by anyone holding the table — including a
+  plausible run of gap markers. So the record carries an HMAC under `Audit:AnchorKey`, a sixth
+  secret the row chain does not use, covering the marker kind as well: a database-only attacker can
+  delete records (loud) but not mint them (quiet), and cannot flip a real record into a marker to
+  collapse the operator's provable bound. ⚠️ It does not constrain the operator, who holds the key.
+  It is one-way because the alibi is the thing a MAC has to rule out: records already published
+  without one can be re-derived by the operator at any later date, so MACing them afterwards dates
+  nothing.
 - **Where the trust root comes from.** Pinning the TSA's root and its policy OID out of band is what
   turns a signature into a trust decision, and it has to sit somewhere the database under
   verification cannot reach. It is one-way for the same reason the payload is: once tokens exist

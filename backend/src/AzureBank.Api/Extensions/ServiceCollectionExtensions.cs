@@ -137,6 +137,18 @@ public static class ServiceCollectionExtensions
                 "Audit:ChainKey must be configured with at least 32 characters " +
                 "(dotnet user-secrets in development; see README)")
 
+            // The SIXTH secret, and separate from ChainKey for a reason sharper than the general
+            // rule. The anchor exists to constrain somebody who holds the database; the row chain
+            // already concedes an attacker holding the database AND the application's secrets can
+            // rewrite a row and recompute it. MAC the anchor under the same key and the one
+            // adversary it is built for is the one adversary it cannot see.
+            .Validate(
+                o => !string.IsNullOrWhiteSpace(o.AnchorKey) && o.AnchorKey.Length >= 32,
+                "Audit:AnchorKey must be configured with at least 32 characters " +
+                "(dotnet user-secrets in development; see README). It authenticates the anchor "
+                + "records that say what the chain looked like at an instant; without it an anchor "
+                + "is a row anybody holding the database can write.")
+
             // The [Range] on TailTimeoutSeconds is only enforced if something asks for it. Without
             // this line the attribute is decoration: Audit:TailTimeoutSeconds=0 would bind happily
             // and hand ADO.NET a command timeout meaning NO limit, removing the bound in silence.
@@ -194,6 +206,9 @@ public static class ServiceCollectionExtensions
         // so it must be registered for any host that saves an AuditEvent — the context refuses to
         // write an unchained row rather than writing one with an empty hash.
         services.AddScoped<IAuditChain, AuditChain>();
+        // The API never anchors -- anchoring is a mode of the operator tool -- but the chain
+        // type is registered here so a host that validates its options validates both keys.
+        services.AddScoped<IAuditAnchorChain, AuditAnchorChain>();
         services.AddScoped<IAuditService, AuditService>();
 
         // Background sweep of expired idempotency records

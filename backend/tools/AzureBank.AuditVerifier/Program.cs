@@ -17,11 +17,18 @@ namespace AzureBank.AuditVerifier;
 //
 // Usage, from the repository root:
 //   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
+//   dotnet run --project backend/tools/AzureBank.AuditVerifier -- anchor
+//
+// `verify` walks the chain and reports. `anchor` walks it once and RECORDS what it found, chained to
+// the record before it and authenticated under a key the database does not hold. It detects no
+// truncation on its own -- see AnchorCommand -- and it is a mode of this tool rather than a scheduled
+// job, because nothing in this deployment runs between sessions.
 //
 // Exit codes: 0 intact, 1 broken, 2 nothing to verify, 3 no verdict (the store could not be read),
-// 4 the command line was wrong, 5 interrupted. Only 0, 1 and 2 are statements about the chain. The
-// list lives in VerifyCommand's constants; this header repeats it, so changing one means changing
-// both.
+// 4 the command line was wrong, 5 interrupted, 6 there WAS a verdict but nothing could be recorded
+// from it. Only 0, 1 and 2 are statements about the chain. The list lives in the commands'
+// constants -- 0 to 5 in VerifyCommand, 6 in AnchorCommand -- and this header repeats it, so
+// changing one means changing both.
 // ============================================
 /*
   ANCHORED TO THE BINARY, NOT TO THE SHELL'S CURRENT DIRECTORY.
@@ -78,6 +85,7 @@ internal static class Program
         };
 
         rootCommand.AddCommand(VerifyCommand.Create(host.Services));
+        rootCommand.AddCommand(AnchorCommand.Create(host.Services));
 
         var parsed = await rootCommand.InvokeAsync(args);
 
