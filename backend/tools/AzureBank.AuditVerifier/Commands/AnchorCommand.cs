@@ -131,6 +131,35 @@ public static class AnchorCommand
 
             return (VerdictExitCode(verification), Describe(record, verification));
         }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            /*
+              INTERRUPTION IS DECIDED BY THE TOKEN, NOT BY THE EXCEPTION TYPE — and this command
+              shipped with that exactly backwards, in a file whose sibling had already written the
+              correction down at length. VerifyCommand's equivalent guard says it plainly: catching
+              OperationCanceledException covers only what a pre-cancelled token produces, which is
+              what a unit test manufactures. Cancel a walk that is genuinely in flight and
+              Microsoft.Data.SqlClient sends an attention, the server aborts the batch, and the task
+              completes FAULTED with a SqlException.
+
+              So this guard has to come FIRST, above every other catch, or the shape an operator
+              actually produces falls through to one of them. It did: the store-failure handler added
+              below caught it and reported Ctrl+C as "the audit store could not be read" — a database
+              outage, over a command the operator stopped on purpose. That is worse than the escaping
+              exception it replaced, because an escape is loud and a wrong sentence is not.
+
+              It accepts the same trade knowingly: a genuine outage that coincides with a signalled
+              token is reported as an interruption. That is the better error to make, because the
+              operator who pressed Ctrl+C knows they did.
+            */
+            return (VerifyCommand.Interrupted, new[]
+            {
+                "INTERRUPTED: the walk was stopped, so nothing was recorded.",
+                "  Part of the chain was read and the rest was not, which is not a verdict.",
+                "  Nothing was written and nothing was changed. Re-run it; the walk is read-only",
+                "  and costs only the time it takes.",
+            });
+        }
         catch (DbUpdateException)
         {
             /*
@@ -143,14 +172,6 @@ public static class AnchorCommand
                 "NOT RECORDED: another run wrote the next anchor first.",
                 "  Nothing is wrong with the chain and nothing was changed by this run. Re-run it;",
                 "  the walk is read-only and costs only the time it takes.",
-            });
-        }
-        catch (OperationCanceledException)
-        {
-            return (VerifyCommand.Interrupted, new[]
-            {
-                "INTERRUPTED: the walk was stopped, so nothing was recorded.",
-                "  Part of the chain was read and the rest was not, which is not a verdict.",
             });
         }
         catch (Exception failure)
