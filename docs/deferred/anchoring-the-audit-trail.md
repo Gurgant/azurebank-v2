@@ -147,27 +147,24 @@ Four things have to be settled before the first token, and three of them are one
   verification cannot reach. It is one-way for the same reason the payload is: once tokens exist
   under one root, dropping that root retires the anchors that depend on it. A verifier shipping
   green against an unpinned root has been proving nothing, and nothing about it looks wrong.
-- **What the payload is allowed to be, forever after the first token.** This one is already true
-  without any anchor, which is the part worth saying first. `ComputeRowHash` hardcodes the version
-  prefix `v2` and reads a single `Audit:ChainKey`, and `VerifyAsync` recomputes **every** row with
-  whatever those two are **now**. So a key rotation or a version bump today makes the verifier
-  reject rows that were written correctly, with `HashMismatch` — the same verdict a tampered row
-  gets. The message hedges usefully on one of the two: it says the row was either altered or checked
-  under a different key. It says nothing about a version bump — and the operator-runnable verifier
-  then makes that worse rather than leaving it unexplained. A bump breaks at the first row it
-  recomputes, so on a table starting at sequence 1 it lands in the branch that prints *"Breaking at
-  sequence 1 usually means the wrong `Audit:ChainKey`, not tampering ... Confirm the key before
-  escalating."* Sound advice for the case it was written for; here it sends the operator to confirm
-  a key that is fine. Historical rows stay verifiable only if the verifier keeps the old versions
-  and keys and picks the right one per row.
+- **What the payload is allowed to be, forever after the first token. ✅ This one has since been
+  closed, and it was closed BEFORE the anchor rather than after — which is the whole point of
+  listing it here.** As written, `ComputeRowHash` joined the literal `v2` and read a single
+  `Audit:ChainKey`, and `VerifyAsync` recomputed **every** row with whatever those two were at the
+  time it ran. So a key rotation or a version bump rejected rows that had been written correctly,
+  with `HashMismatch` — the same verdict a tampered row gets — and the operator-runnable verifier
+  made it worse rather than leaving it unexplained: a bump breaks at the first row recomputed, so on
+  a table starting at sequence 1 it landed in the branch printing *"Breaking at sequence 1 usually
+  means the wrong `Audit:ChainKey`, not tampering ... Confirm the key before escalating."* Sound
+  advice for the case it was written for, and in that one it sent the operator to confirm a key that
+  was fine.
 
-  **That last sentence used to end "and nothing in a row says which", and it is now false**, which
-  is the good kind of stale. Every row records the payload rendering that wrote it and the
-  non-secret identity of the key that signed it, both inside the hashed payload, and the walk
-  recomputes each row under the scheme it declares. A row this verifier cannot render, or that names
-  a key it does not hold, is reported as unchecked rather than as wrong — which is the distinction
-  the paragraph above was complaining about the absence of. What is still true is everything after
-  it: the anchor is what makes the choice permanent, so this had to land first.
+  Every row now records the payload rendering that wrote it and a non-secret identity of the key
+  that signed it, both inside the hashed payload, and the walk recomputes each row under the scheme
+  it declares. A row this verifier cannot render, or that names a key it does not hold, is reported
+  as UNCHECKED rather than as wrong, and that is a break rather than a note. The sentence that used
+  to close this bullet — *"and nothing in a row says which"* — is false now, which is the good kind
+  of stale.
 
   Anchoring does not create that; it makes it permanent. Before the first token a re-hash is a
   migration. After it, the anchored value is fixed in a signed token nobody can re-issue, so the

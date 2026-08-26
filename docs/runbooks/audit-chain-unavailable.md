@@ -333,11 +333,17 @@ running it again destroys no evidence and moves nothing: three rows read with th
 wrong one, then the right key again reported `CHAIN INTACT`, `CHAIN BROKEN`, `CHAIN INTACT`, and the
 row count never moved.
 
-- `does not match its own hash` with **`Rows verified before the break: 0`** — suspect the key
-  before an attacker, and settle it by re-running with the key this deployment actually keeps. A
-  wrong key is well-formed, so nothing rejects it, and it mismatches on the first row it reads —
-  which is always sequence **1**, for the reason in the note under *After recovery*. Measured: three
-  unaltered rows read with a valid but wrong key reported `CHAIN BROKEN at sequence 1`.
+- `does not match its own hash` with **`Rows verified before the break: 0`**, on a row that records
+  NO key identity (`PayloadVersion` = `v2`) — suspect the key before an attacker, and settle it by
+  re-running with the key this deployment actually keeps. A wrong key is well-formed, so nothing
+  rejects it, and it mismatches on the first row it reads — which is always sequence **1**, for the
+  reason in the note under *After recovery*. Measured: three unaltered rows read with a valid but
+  wrong key reported `CHAIN BROKEN at sequence 1`.
+- ⚠️ **the same verdict on a row that DOES name its key (`PayloadVersion` = `v3`) is a WRITE, and
+  the key is already ruled out.** Such a row is checked against the identity it records BEFORE its
+  hash is recomputed, so a wrong key cannot reach the hash there at all — it reports an unchecked row
+  instead. Preserve the table and escalate. Do not spend the incident re-testing a key the tool has
+  just proved correct; the verifier says so itself on the line beneath the verdict.
 - the same verdict at **any sequence above 1** — NOT the key. A row numbered above 1 that records no
   predecessor got there by a write, which is the cheapest way to hide a deleted prefix. Measured:
   removing the oldest row and clearing the survivor's `PreviousHash` produces exactly this, with the
@@ -510,8 +516,10 @@ somebody who wrote the number down.
   every parse failure as exit 1, so running the tool with no arguments at all — the likeliest
   mistake there is — used to report a tampered audit trail. Measured, and now translated.
 
-  **If it reports a HASH MISMATCH before any row verifies, suspect the key before you suspect an
-  attacker — and read the sequence as well as the count.** A wrong key mismatches on the first row
+  **If it reports a HASH MISMATCH before any row verifies ON A ROW RECORDING NO KEY IDENTITY,
+  suspect the key before you suspect an attacker — and read the sequence as well as the count.**
+  ⚠️ The scoping is not decoration: on a row that names its key the same verdict means the opposite,
+  because the identity was checked first and matched. A wrong key mismatches on the first row
   it reads, and that row is sequence **1**. It cannot be anything else: the walk checks the LINK
   before the hash, so the only row that can reach the hash check first is one recording no
   predecessor, and `AuditChain.Link` writes that only into an empty table, where the row it writes
@@ -531,9 +539,12 @@ somebody who wrote the number down.
   met with "usually means the wrong Audit:ChainKey ... Confirm the key before escalating".
 
   The row hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it,
-  and it mismatches on the first row it reads. It is also the ONLY break a wrong key can produce — it
-  cannot make a row unreadable and it cannot change what a row records as its predecessor, so on
-  those two the tool deliberately stays silent about the key.
+  and it mismatches on the first row it reads. It used to be the ONLY break a wrong key could
+  produce — it cannot make a row unreadable and it cannot change what a row records as its
+  predecessor, so on those two the tool deliberately stays silent about the key. ⚠️ **That sentence
+  is now true only of rows recording no key identity.** A row that names its key is refused by name
+  before any hash is recomputed, so there a wrong key produces an UNCHECKED row rather than a
+  mismatch — which is why a mismatch on such a row exonerates the key instead of implicating it.
 
   What it still cannot tell you is whether rows were removed from the END. That needs an anchor
   outside the system and is tracked separately — see ADR-0044.
