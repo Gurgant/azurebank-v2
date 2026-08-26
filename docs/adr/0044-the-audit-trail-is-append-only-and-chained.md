@@ -179,7 +179,35 @@ and the range precisely because it cannot answer that question itself.
 Each row carries an HMAC-SHA256 over its own fields **and its predecessor's hash**. Keyed rather than
 a bare digest, for the reason `StepUpOptions.BindingKey` gives: every field of an audit row is
 enumerable, so an unkeyed hash could be recomputed by anyone holding the table. `Sequence` — the
-column verification orders by — is inside the payload, which is why the marker reads `v2`.
+column verification orders by — is inside the payload, which is why the marker read `v2`.
+
+**Amended 2026-08-26: the marker is no longer a literal, and the version prefix's job has changed.**
+Every row now stores the payload rendering that wrote it and a non-secret identity of the key that
+signed it, both inside the hashed payload, and verification recomputes each row under the scheme it
+declares. Before this, the prefix existed to invalidate EVERY previously computed value when a field
+was added; now it says WHICH scheme wrote THIS row, so adding a field invalidates nothing already
+written. That inversion is what makes a payload change or a key rotation survivable at all — until
+now either one made the verifier reject correctly written rows and report them the way it reports
+tampering. It lands before any external anchor exists, because the first token would freeze the
+rendering and the key permanently.
+
+**A NULL key identity means no identity was recorded, not some particular key.** Such rows are
+verified under the FOUNDING key — today that is `Audit:ChainKey`, because it is the only one there
+has ever been. The word is deliberate: whatever adds a second key must add a ring entry for the
+founding key rather than silently re-point history at whatever is current. The migration writes no
+identity onto those rows, because none was ever recorded and inventing one would put an
+unfalsifiable claim outside their hashed payload.
+
+**A row the verifier cannot render, or that names a key it does not hold, is reported as UNCHECKED
+and it is a BREAK.** Not a configuration note — treating it as one would hand an attacker a muzzle,
+since overwriting a tampered row's key identity would soften the verdict from tampering to
+housekeeping. Both values are inside the row's own hashed payload, so a stored value that is not
+what the schema says it must be is itself a modification.
+
+**What this does NOT change:** the sentence above about an attacker holding both the database and
+the application's secrets. Publishing a 64-bit identity derived from the key gives a database-only
+attacker an offline oracle for confirming a guessed `Audit:ChainKey` — and they already have that
+oracle in every row's `RowHash`, so it is not a widening.
 
 **A CORRECTION, because the first version of this section was too strong.** It said removing a row
 "breaks every link after it". That is true of an INTERIOR row and false of the TAIL. Deleting the

@@ -44,4 +44,16 @@
     <ProjectReference Include="..\AzureBank.Shared\AzureBank.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      AuditChain.DeriveKeyId turns a chain key into the non-secret identity stored on every row. All
+      three of its inputs (algorithm, domain string, truncation length) are frozen the moment the
+      first row hashes one, so it needs a known-answer test, and that test has to call the real
+      derivation rather than a copy of it. Same reasoning as the equivalent declaration in
+      AzureBank.Api.csproj: expose it to the test project rather than widen its accessibility for
+      production callers, who have no business deriving key identities themselves.
+    -->
+    <InternalsVisibleTo Include="AzureBank.Tests" />
+  </ItemGroup>
+
 </Project>

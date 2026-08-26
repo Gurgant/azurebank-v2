@@ -342,11 +342,20 @@ row count never moved.
   predecessor got there by a write, which is the cheapest way to hide a deleted prefix. Measured:
   removing the oldest row and clearing the survivor's `PreviousHash` produces exactly this, with the
   CORRECT key. Treat it as the real thing.
-- `does not match its own hash` with a **non-zero** count — an alteration at that row, *unless more
-  than one key has written this table*. Nothing in the hashed payload records which key wrote a row,
-  so if the secret was rotated, or two hosts or deployment slots run with different values, the walk
-  verifies every row written under the key it holds and mismatches at the first row written under
-  the other. Rule that out before you escalate; it looks exactly like tampering at one row.
+- `does not match its own hash` with a **non-zero** count — an alteration at that row. ⚠️ **This
+  used to carry an "unless more than one key has written this table" escape, and that escape is
+  gone**: every row now records the non-secret identity of the key that wrote it, inside its hashed
+  payload, and a row naming a key this verification does not hold is refused BEFORE its hash is
+  recomputed. So a hash mismatch on such a row is not ambiguous any more — the key behind it has
+  already been confirmed. Rows written before key identity existed (`PayloadVersion` = `v2`) keep
+  the old reading, and only those.
+- `declares payload version ... which this build cannot render` or `was written under key id ...` —
+  the row was **NOT CHECKED**, which is never the same as checked and found good. Three readings:
+  you hold a different key than the one that wrote it, this build is older than the row, or the
+  column was overwritten — and that column is inside the hashed payload, so overwriting it is a
+  modification. **The discriminator is positional, not textual:** the first two fail at the LOWEST
+  row of that scheme and at every one after it, while a single row failing among verified siblings
+  is a write. Exit code is 1. ⚠️ **Never triage this as a configuration note.**
 - `expected to follow ... A row was deleted, reordered, or inserted` with
   **`Rows verified before the break: 0`** — the first row read names a predecessor that is not
   there. **The sequence it broke at says which of two things happened, and they are not the same

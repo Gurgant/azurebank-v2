@@ -193,6 +193,16 @@ public sealed class AuditChainSqlServerTests : IDisposable
     // way. Doubling the braces would work; a brace-free literal proves the same thing and cannot
     // be broken again by somebody who does not know this.
     [InlineData("Detail", "'tampered'")]
+    /*
+      NEITHER OF THE TWO SCHEME COLUMNS BELONGS IN THIS THEORY, and the reason is the assertion it
+      makes rather than squeamishness about coverage. Every case here asserts Kind == HashMismatch.
+      PayloadVersion and KeyId are both read by the SCHEME check, which runs BEFORE any hash is
+      recomputed, so poisoning either one yields UnknownScheme instead -- and adding a case would
+      force somebody to loosen the Kind assertion, which is the single thing this theory exists to
+      hold. Measured, not assumed: setting PayloadVersion to 'v2' on a current row leaves its KeyId
+      populated, and a legacy row carrying a key identity is refused by name. They are covered by
+      dedicated cases in AuditChainTests, each asserting the verdict it actually produces.
+    */
     public async Task EveryFieldInTheHashedPayload_IsActuallyHashed(string column, string tamperedTo)
     {
         var services = CreateSqlServices();

@@ -159,7 +159,15 @@ Four things have to be settled before the first token, and three of them are one
   sequence 1 usually means the wrong `Audit:ChainKey`, not tampering ... Confirm the key before
   escalating."* Sound advice for the case it was written for; here it sends the operator to confirm
   a key that is fine. Historical rows stay verifiable only if the verifier keeps the old versions
-  and keys and picks the right one per row, and nothing in a row says which.
+  and keys and picks the right one per row.
+
+  **That last sentence used to end "and nothing in a row says which", and it is now false**, which
+  is the good kind of stale. Every row records the payload rendering that wrote it and the
+  non-secret identity of the key that signed it, both inside the hashed payload, and the walk
+  recomputes each row under the scheme it declares. A row this verifier cannot render, or that names
+  a key it does not hold, is reported as unchecked rather than as wrong — which is the distinction
+  the paragraph above was complaining about the absence of. What is still true is everything after
+  it: the anchor is what makes the choice permanent, so this had to land first.
 
   Anchoring does not create that; it makes it permanent. Before the first token a re-hash is a
   migration. After it, the anchored value is fixed in a signed token nobody can re-issue, so the

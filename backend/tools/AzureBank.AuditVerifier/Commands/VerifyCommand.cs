@@ -129,6 +129,13 @@ public static class VerifyCommand
               on a deleted prefix or a poisoned column the hint was sending an operator to check a
               key that was never the problem. Measured on both.
 
+              AND ONLY ON A ROW THAT RECORDS NO KEY IDENTITY, which is what makes the paragraph below
+              a 'v2'-only statement now. A row that names its key is checked against that name BEFORE
+              its hash is recomputed, so a wrong key there never reaches the hash: it reports
+              UnknownScheme instead. Printing "confirm the key" on a hash mismatch over such a row
+              would be exoneration in reverse -- the tool would send an operator to re-check a key it
+              had just proved correct, while a genuine write went unescalated.
+
               The row hash is an HMAC over Audit:ChainKey. A WRONG key is not distinguishable from
               tampering by any check this tool can make -- and unlike a missing or short key, it
               passes the options validation, because it is a perfectly well-formed secret. What it
@@ -141,11 +148,20 @@ public static class VerifyCommand
             */
             if (result.Verified == 0 && result.Kind == AuditChainBreakKind.HashMismatch)
             {
-                if (result.FirstBrokenSequence == 1)
+                if (result.FirstBrokenSequence == 1 && result.PayloadVersion != "v3")
                 {
                     lines.Add("  Breaking at sequence 1 usually means the wrong Audit:ChainKey, not");
                     lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch");
                     lines.Add("  it. Confirm the key before escalating.");
+                }
+                else if (result.FirstBrokenSequence == 1)
+                {
+                    // The opposite conclusion, and the stronger statement this tool could never make
+                    // before: the key behind this row has already been confirmed by its own id.
+                    lines.Add("  The key is CONFIRMED for this row: it records the key id that the");
+                    lines.Add("  configured Audit:ChainKey derives, and a wrong key cannot reach a");
+                    lines.Add("  hash comparison on such a row. This is a WRITE, not a key problem.");
+                    lines.Add("  Preserve the table and escalate.");
                 }
                 else
                 {
@@ -182,6 +198,28 @@ public static class VerifyCommand
                     lines.Add("  attacker print this same line, so establish which before you");
                     lines.Add("  repair anything.");
                 }
+            }
+
+            /*
+              UnknownScheme GATES ON THE KIND ALONE, never on Verified == 0. A table holding both
+              renderings verifies its legacy prefix first, so a verifier holding the wrong key
+              surfaces here with Verified > 0 -- and a Verified == 0 gate would print nothing at all
+              in exactly the case an operator most needs the reading.
+            */
+            if (result.Kind == AuditChainBreakKind.UnknownScheme)
+            {
+                lines.Add($"  This row declares payload version '{result.PayloadVersion ?? "(none)"}' and key id");
+                lines.Add($"  '{result.RecordedKeyId ?? "(none)"}'; this verification holds the key whose id is");
+                lines.Add($"  '{result.ConfiguredKeyId ?? "(none)"}'. Its hash was NOT checked -- so this is a row");
+                lines.Add("  left UNVERIFIED, never a row proved good.");
+                lines.Add("  Three readings, and the discriminator is POSITIONAL, not textual:");
+                lines.Add("    - you hold a different key than the one that wrote this row;");
+                lines.Add("    - this build cannot render the version the row declares;");
+                lines.Add("    - the column was overwritten, which is a modification inside the");
+                lines.Add("      hashed payload.");
+                lines.Add("  The first two fail at the LOWEST row of that scheme and at every one");
+                lines.Add("  after it. A single row failing among verified siblings is a write.");
+                lines.Add("  This is NEVER a configuration note. Treat it as a break.");
             }
 
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");

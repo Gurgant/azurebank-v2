@@ -72,6 +72,23 @@ public class AuditEventConfiguration : IEntityTypeConfiguration<AuditEvent>
         builder.Property(e => e.Detail)
             .HasMaxLength(1024);
 
+        /*
+          NVARCHAR, NOT NCHAR, AND THE DIFFERENCE IS NOT COSMETIC. Every other fixed-length column
+          in this file is a 64-hex hash whose length is invariant, which is what makes IsFixedLength
+          correct there. A version string is not: it reads "v2" and "v3" today and "v10" one day, so
+          nchar would pad it and EF would read back "v2      " -- and the walk dispatches on this
+          exact string, so a padded read is an unknown scheme on every historical row.
+        */
+        builder.Property(e => e.PayloadVersion)
+            .IsRequired()
+            .HasMaxLength(8);
+
+        // The converse: 16 lowercase hex characters by construction, so it takes the same treatment
+        // as the hashes above. Nullable because rows written before key identity existed record none.
+        builder.Property(e => e.KeyId)
+            .HasMaxLength(16)
+            .IsFixedLength();
+
         // HMAC-SHA256 hex, always exactly 64 characters — same shape and reasoning as
         // StepUpAuthorization.BindingHash.
         builder.Property(e => e.RowHash)

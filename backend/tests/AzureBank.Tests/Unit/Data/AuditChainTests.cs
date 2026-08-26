@@ -170,12 +170,190 @@ public class AuditChainTests : IDisposable
         second.PreviousHash.Should().Be(
             first.RowHash, "row two must carry row one's hash, or this test guards nothing");
 
+        /*
+          THESE TWO LITERALS MOVED WHEN THE PAYLOAD GAINED ITS VERSION AND KEY-IDENTITY ELEMENTS, and
+          the movement IS the guard working: element one is now the row's stored version rather than
+          a literal, and element two is the key id. Both were re-derived by RUNNING this test and
+          pasting what it measured -- never by recomputing the payload here, because a test that
+          computes its own expectation agrees with any bug the production code has.
+        */
         first.RowHash.Should().Be(
-            "b2f91735f5846d4e078cad27fdf8d20b73c5a0f3f2bccaa00b5cd3d342c376f6",
+            "6bdc834571631f871ffa2a56b70b7d19c0dfcfb88a6df7045899bc438e303f43",
             "the payload's shape and the key together produce exactly this value");
         second.RowHash.Should().Be(
-            "51625bb81b8d175f1ab88d928a398a9291a33a360eb16483be5a26f67d14048e",
+            "9f1eff44cb788bdabe99cab84dee32b29ee67394c7967877bbb7f62cc19c8bac",
             "and this one, which also covers the PreviousHash line no tamper case can reach");
+    }
+
+    [Fact]
+    public void TheKeyIdIsDerivedFromTheKey_AndHasAKnownAnswer()
+    {
+        /*
+          THE ONLY GUARD ON THE DERIVATION, and it needs one because all three of its inputs are
+          frozen the moment the first v3 row is written: the algorithm, the domain string and the
+          truncation length are inside that row's hashed payload. Change any of them later and every
+          stored KeyId stops matching its key, which reports as a break on rows nobody touched.
+
+          Measured by RUNNING this, like the payload vector above -- not recomputed here, because a
+          test that derives its own expectation agrees with whatever the production code does.
+        */
+        AuditChain.DeriveKeyId(TestKey).Should().Be(
+            "b78e425e698034a4",
+            "the domain string, the algorithm and the truncation length together produce exactly this");
+
+        AuditChain.DeriveKeyId("a-different-key").Should().NotBe(
+            AuditChain.DeriveKeyId(TestKey),
+            "an identifier that does not change with the key identifies nothing");
+
+        AuditChain.DeriveKeyId(TestKey).Should().HaveLength(16, "the column is nchar(16)")
+            .And.MatchRegex("^[0-9a-f]+$", "lowercase hex, like every other digest this repo stores");
+    }
+
+    [Fact]
+    public async Task TheWriterAssignsTheVersionAndKeyId_NotTheCaller()
+    {
+        /*
+          THE COLUMN IS THE VERIFIER'S INSTRUCTION FOR HOW TO READ THE ROW, so it must come from the
+          component that renders the payload. A caller that could set it could ship a row declaring a
+          scheme it was not written under -- and the promise that the column and the prefix cannot
+          disagree is empty unless exactly one authority writes the string.
+
+          FALSIFIED by guarding either assignment in Link() with an "if it is already set" check:
+          this goes red, and nothing else does.
+        */
+        var row = NewEvent("CallerTriedToChooseTheScheme");
+        row.PayloadVersion = "v2";
+        row.KeyId = "0000000000000000";
+
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        row.PayloadVersion.Should().Be("v3", "the chain overwrites what the caller asked for");
+        row.KeyId.Should().Be(
+            AuditChain.DeriveKeyId(TestKey), "and it names the key that actually wrote the row");
+
+        (await _chain.VerifyAsync(_context)).IsIntact.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ALegacyRowWithNoKeyIdentity_StillVerifies_UnderTheFoundingKey()
+    {
+        /*
+          THE TEST THE DEFERRED DOCUMENT PROMISED WHOEVER SHIPPED THIS, and the whole point of storing
+          the version: a row written under the OLD scheme must keep verifying, unchanged, forever.
+          Without the dispatch it is recomputed as v3, mismatches, and reports as tampering -- which
+          is the defect this change removes.
+
+          The row is written normally and then demoted, because Pending() filters EntityState.Added,
+          so Link() never touches a Modified row and the demotion survives the save.
+
+          FALSIFIED by deleting the legacy arm of the dispatch: this reddens on its own.
+        */
+        // Every field is fixed, because the legacy hash below is a FROZEN literal and NewEvent's
+        // Guid.CreateVersion7 and DateTime.UtcNow would make one impossible.
+        var row = new AuditEvent
+        {
+            Id = Guid.Parse("77777777-7777-4777-8777-777777777777"),
+            OccurredAt = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc),
+            Event = "WrittenBeforeKeyIdentityExisted",
+            Outcome = AuditOutcome.Succeeded,
+            ActorUserId = Guid.Parse("88888888-8888-4888-8888-888888888888"),
+            RowHash = string.Empty,
+        };
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        /*
+          The demotion survives the save because Pending() filters EntityState.Added, so Link() never
+          touches a Modified row.
+
+          THE HASH IS COMPUTED OUTSIDE .NET, deliberately. Asking the production hasher for it would
+          make this test agree with whatever that hasher does, including a broken legacy arm -- which
+          is the one thing it exists to catch. This value came from an independent HMAC-SHA256 over
+          the legacy payload rendered by hand:
+            v2|7777...7777|1|639081975670000000|WrittenBeforeKeyIdentityExisted|Succeeded|8888...8888|||||
+          the same technique ADR-0044 used to find the ISO-8601-versus-ticks defect.
+        */
+        row.PayloadVersion = "v2";
+        row.KeyId = null;
+        row.RowHash = "ef26888dc4d7feb75d3ccf46097befc93f61dce7710c58491622d536e9ba1296";
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeTrue(
+            "a row that records no key identity is read under the founding key, which is what "
+            + "Audit:ChainKey still is");
+        verification.Verified.Should().Be(1, "and it was actually walked, not skipped");
+    }
+
+    [Fact]
+    public async Task ALegacyRowCarryingAKeyIdentity_IsABreak()
+    {
+        /*
+          Without this, the NULL rule is a hole the width of the column: the legacy payload has no
+          key-identity element, so an id sitting on such a row is unhashed, unexplained, and nothing
+          wrote it legitimately.
+
+          FALSIFIED by removing that arm of the scheme check.
+        */
+        var row = NewEvent("LegacyRowWithAnIdItCannotHave");
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        row.PayloadVersion = "v2";
+        row.KeyId = AuditChain.DeriveKeyId(TestKey);
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse();
+        verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+    }
+
+    [Fact]
+    public async Task ACurrentRowWithNoKeyIdentity_IsABreak()
+    {
+        var row = NewEvent("CurrentRowStrippedOfItsIdentity");
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        row.KeyId = null;
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse(
+            "the current payload hashes its key identity, so a row missing one was modified");
+        verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+    }
+
+    [Fact]
+    public async Task AnUnproducibleKeyIdentity_IsABreak_AndNotAConfigurationNote()
+    {
+        /*
+          THE ANTI-MUZZLE, and the reason UnknownScheme is a BREAK rather than a remark. Tamper a row
+          AND overwrite its key identity with something no key produces: if "I cannot check this"
+          were a note, the verdict would soften from tampering to housekeeping, and the column meant
+          to strengthen the chain would have weakened it.
+
+          FALSIFIED by making the scheme check skip the row, or by letting it report IsIntact.
+        */
+        var row = NewEvent("TamperedAndThenMasked");
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        row.Detail = "altered after the fact";
+        row.KeyId = "ffffffffffffffff";
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse("silence is not a verdict this walk is allowed to reach");
+        verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        verification.RecordedKeyId.Should().Be("ffffffffffffffff");
+        verification.ConfiguredKeyId.Should().Be(
+            AuditChain.DeriveKeyId(TestKey), "the verdict names both, so a caller never parses a sentence");
     }
 
     [Fact]
