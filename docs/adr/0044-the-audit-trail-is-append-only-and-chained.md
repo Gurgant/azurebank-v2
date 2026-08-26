@@ -182,14 +182,15 @@ enumerable, so an unkeyed hash could be recomputed by anyone holding the table. 
 column verification orders by — is inside the payload, which is why the marker read `v2`.
 
 **Amended 2026-08-26: the marker is no longer a literal, and the version prefix's job has changed.**
-Every row now stores the payload rendering that wrote it and a non-secret identity of the key that
-signed it, both inside the hashed payload, and verification recomputes each row under the scheme it
-declares. Before this, the prefix existed to invalidate EVERY previously computed value when a field
-was added; now it says WHICH scheme wrote THIS row, so adding a field invalidates nothing already
-written. That inversion is what makes a payload change or a key rotation survivable at all — until
-now either one made the verifier reject correctly written rows and report them the way it reports
-tampering. It lands before any external anchor exists, because the first token would freeze the
-rendering and the key permanently.
+Every row now stores the payload rendering that wrote it, and every row written from here on also
+stores a non-secret identity of the key that signed it, both inside the hashed payload. Rows written
+before the migration store no identity, because none was ever recorded, and they verify under the
+founding key. Verification recomputes each row under the scheme it declares. Before this, the prefix
+existed to invalidate EVERY previously computed value when a field was added; now it says WHICH
+scheme wrote THIS row, so adding a field invalidates nothing already written. That inversion is what
+makes a payload change or a key rotation survivable at all — until now either one made the verifier
+reject correctly written rows and report them the way it reports tampering. It lands before any
+external anchor exists, because the first token would freeze the rendering and the key permanently.
 
 **A NULL key identity means no identity was recorded, not some particular key.** Such rows are
 verified under the FOUNDING key — today that is `Audit:ChainKey`, because it is the only one there

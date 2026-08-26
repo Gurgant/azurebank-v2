@@ -159,12 +159,14 @@ Four things have to be settled before the first token, and three of them are one
   advice for the case it was written for, and in that one it sent the operator to confirm a key that
   was fine.
 
-  Every row now records the payload rendering that wrote it and a non-secret identity of the key
-  that signed it, both inside the hashed payload, and the walk recomputes each row under the scheme
-  it declares. A row this verifier cannot render, or that names a key it does not hold, is reported
-  as UNCHECKED rather than as wrong, and that is a break rather than a note. The sentence that used
-  to close this bullet — *"and nothing in a row says which"* — is false now, which is the good kind
-  of stale.
+  Every row now records the payload rendering that wrote it, and every row written from here on also
+  records a non-secret identity of the key that signed it, both inside the hashed payload. Rows
+  written before that migration record no identity — there was none to record, and inventing one
+  would have put an unfalsifiable claim outside their hashed payload — so they verify under the
+  founding key. The walk recomputes each row under the scheme it declares. A row this verifier
+  cannot render, or that names a key it does not hold, is reported as UNCHECKED rather than as
+  wrong, and that is a break rather than a note. The sentence that used to close this bullet — *"and
+  nothing in a row says which"* — is false now, which is the good kind of stale.
 
   Anchoring does not create that; it makes it permanent. Before the first token a re-hash is a
   migration. After it, the anchored value is fixed in a signed token nobody can re-issue, so the

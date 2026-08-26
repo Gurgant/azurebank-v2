@@ -334,49 +334,46 @@ wrong one, then the right key again reported `CHAIN INTACT`, `CHAIN BROKEN`, `CH
 row count never moved.
 
 - `does not match its own hash` with **`Rows verified before the break: 0`**, on a row that records
-  NO key identity (`PayloadVersion` = `v2`) — suspect the key before an attacker, and settle it by
-  re-running with the key this deployment actually keeps. A wrong key is well-formed, so nothing
-  rejects it, and it mismatches on the first row it reads — which is always sequence **1**, for the
-  reason in the note under *After recovery*. Measured: three unaltered rows read with a valid but
-  wrong key reported `CHAIN BROKEN at sequence 1`.
-- ⚠️ **the same verdict on a row that DOES name its key (`PayloadVersion` = `v3`) is a WRITE, and
-  the key is already ruled out.** Such a row is checked against the identity it records BEFORE its
-  hash is recomputed, so a wrong key cannot reach the hash there at all — it reports an unchecked row
-  instead. Preserve the table and escalate. Do not spend the incident re-testing a key the tool has
-  just proved correct; the verifier says so itself on the line beneath the verdict.
-- the same verdict at **any sequence above 1** — NOT the key. A row numbered above 1 that records no
-  predecessor got there by a write, which is the cheapest way to hide a deleted prefix. Measured:
-  removing the oldest row and clearing the survivor's `PreviousHash` produces exactly this, with the
-  CORRECT key. Treat it as the real thing.
-- `does not match its own hash` with a **non-zero** count — an alteration at that row. ⚠️ **This
-  used to carry an "unless more than one key has written this table" escape, and that escape is
-  gone**: every row now records the non-secret identity of the key that wrote it, inside its hashed
-  payload, and a row naming a key this verification does not hold is refused BEFORE its hash is
-  recomputed. So a hash mismatch on such a row is not ambiguous any more — the key behind it has
-  already been confirmed. Rows written before key identity existed (`PayloadVersion` = `v2`) keep
-  the old reading, and only those.
-- `declares payload version ... which this build cannot render` or `was written under key id ...` —
-  the row was **NOT CHECKED**, which is never the same as checked and found good. Three readings:
-  you hold a different key than the one that wrote it, this build is older than the row, or the
-  column was overwritten — and that column is inside the hashed payload, so overwriting it is a
-  modification. **The discriminator is positional, not textual:** the first two fail at the LOWEST
-  row of that scheme and at every one after it, while a single row failing among verified siblings
-  is a write. Exit code is 1. ⚠️ **Never triage this as a configuration note.**
-- `expected to follow ... A row was deleted, reordered, or inserted` with
-  **`Rows verified before the break: 0`** — the first row read names a predecessor that is not
-  there. **The sequence it broke at says which of two things happened, and they are not the same
-  incident.** At **sequence 1** nothing was removed: this row IS the start of the chain, so the
-  predecessor it records was WRITTEN onto it, and only an update does that. Above sequence 1 the
-  rows BELOW it are gone. Measured, on the same intact chain of three: writing a `PreviousHash` onto
-  row 1 gives `CHAIN BROKEN at sequence 1 ... Sequences read: 1 to 1` with all three rows still
-  present, while deleting row 1 gives `CHAIN BROKEN at sequence 2 ... Sequences read: 2 to 2`.
-  Preserve the table either way. Only the second one can be housekeeping, and only if you can name
-  the job — an archival job and an attacker print the identical line, so a WRONG key against that
-  same table prints it too: the link is checked before the hash, so on a chain with its head gone
-  the key never enters into it. With a NON-ZERO count a row is missing or out of place in the
-  MIDDLE, which removing the oldest rows cannot do — that one is the real thing.
-- `could not be read at all` — a stored value contradicts the schema, which is itself a
-  modification. Neither a wrong key nor a deletion can cause this.
+NO key identity (`PayloadVersion` = `v2`) — suspect the key before an attacker, and settle it by
+re-running with the key this deployment actually keeps. A wrong key is well-formed, so nothing
+rejects it, and it mismatches on the first row it reads — which is always sequence **1**, for the
+reason in the note under *After recovery*. Measured: three unaltered rows read with a valid but
+wrong key reported `CHAIN BROKEN at sequence 1`. - ⚠️ **the same verdict on a row that DOES name
+its key (`PayloadVersion` = `v3`) is a WRITE, and the key is already ruled out.** Such a row is
+checked against the identity it records BEFORE its hash is recomputed, so a wrong key cannot reach
+the hash there at all — it reports an unchecked row instead. Preserve the table and escalate. Do
+not spend the incident re-testing a key the tool has just proved correct; the verifier says so
+itself on the line beneath the verdict. - the same verdict at **any sequence above 1** — NOT the
+key. A row numbered above 1 that records no predecessor got there by a write, which is the cheapest
+way to hide a deleted prefix. Measured: removing the oldest row and clearing the survivor's
+`PreviousHash` produces exactly this, with the CORRECT key. Treat it as the real thing. - `does not
+match its own hash` with a **non-zero** count — an alteration at that row. ⚠️ **This used to carry
+an "unless more than one key has written this table" escape, and that escape is gone**: every row
+now records the non-secret identity of the key that wrote it, inside its hashed payload, and a row
+naming a key this verification does not hold is refused BEFORE its hash is recomputed. So a hash
+mismatch on such a row is not ambiguous any more — the key behind it has already been confirmed.
+Rows written before key identity existed (`PayloadVersion` = `v2`) keep the old reading, and only
+those. - `declares payload version ... which this build cannot render` or `was written under key id
+...` — the row was **NOT CHECKED**, which is never the same as checked and found good. Three
+readings: you hold a different key than the one that wrote it, this build is older than the row, or
+the column was overwritten — and that column is inside the hashed payload, so overwriting it is a
+modification. **The discriminator is positional, not textual:** the first two fail at the LOWEST
+row of that scheme and at every one after it, while a single row failing among verified siblings is
+a write. Exit code is 1. ⚠️ **Never triage this as a configuration note.** - `expected to follow
+... A row was deleted, reordered, or inserted` with **`Rows verified before the break: 0`** — the
+first row read names a predecessor that is not there. **The sequence it broke at says which of two
+things happened, and they are not the same incident.** At **sequence 1** nothing was removed: this
+row IS the start of the chain, so the predecessor it records was WRITTEN onto it, and only an
+update does that. Above sequence 1 the rows BELOW it are gone. Measured, on the same intact chain
+of three: writing a `PreviousHash` onto row 1 gives `CHAIN BROKEN at sequence 1 ... Sequences read:
+1 to 1` with all three rows still present, while deleting row 1 gives `CHAIN BROKEN at sequence 2
+... Sequences read: 2 to 2`. Preserve the table either way. Only the second one can be
+housekeeping, and only if you can name the job — an archival job and an attacker print the
+identical line, so a WRONG key against that same table prints it too: the link is checked before
+the hash, so on a chain with its head gone the key never enters into it. With a NON-ZERO count a
+row is missing or out of place in the MIDDLE, which removing the oldest rows cannot do — that one
+is the real thing. - `could not be read at all` — a stored value contradicts the schema, which is
+itself a modification. Neither a wrong key nor a deletion can cause this.
 
 **From the moment it is none of those, the table is evidence: do not repair it and do not write to
 it.** A repair destroys the only record of what was done to it, and the chain cannot be "fixed" —
@@ -497,8 +494,11 @@ somebody who wrote the number down.
 
   **A WRONG key is not among them, and this runbook previously said it was.** A well-formed key that
   is simply not the one the chain was written with passes every check the tool can make, so the walk
-  runs and the hashes mismatch: that exits **1**, the same as a tamper. There is no way around it —
-  the two are indistinguishable to any check — which is exactly why the next paragraph exists.
+  runs: that exits **1**. ⚠️ **What it exits 1 AS now depends on the row.** On a row recording no
+  key identity the hashes mismatch and it is indistinguishable from a tamper — no way around it,
+  which is why the next paragraph exists. On a row that names its key the tool refuses it BY NAME
+  before recomputing anything and reports an UNCHECKED row instead, so there the two ARE told apart,
+  and a mismatch rules the key out rather than implicating it.
 
   **`5` usually is not an incident, and it is never evidence that nothing is wrong.** Somebody
   stopped the walk — Ctrl+C, a killed job, a shutdown — so part of the chain was checked and the
@@ -529,14 +529,15 @@ somebody who wrote the number down.
   **The same verdict above sequence 1 rules the key OUT** — a row numbered above 1 recording no
   predecessor got there by a write.
 
-  **A withdrawn argument, left visible.** This note used to say the tell was the count alone, "not
-  at sequence 1", because a purged chain begins at 5,001 and the hint would stop firing on the
-  oldest tables. That reasoning is unreachable, and the tool was gated on it. On a chain whose head
-  is gone the first row read records a predecessor that is missing, so the walk reports a LINK break
-  and never reaches the hash check at all: measured, a wrong key against a decapitated chain prints
-  output identical to the correct key. What the loosened gate did produce was the dangerous
-  direction — an attacker who removed the oldest rows and cleared the survivor's `PreviousHash` was
-  met with "usually means the wrong Audit:ChainKey ... Confirm the key before escalating".
+  ⚠️ **DO NOT WIDEN THIS TO THE COUNT ALONE.** It was written that way once, and the wide version
+  is the one that helps an attacker. The argument for it reads well: a purged chain begins at
+  5,001, so gating on sequence 1 would stop the hint firing on the oldest tables. That case is
+  unreachable, and the tool was gated on it anyway. On a chain whose head is gone the first row
+  read records a predecessor that is missing, so the walk reports a LINK break and never reaches
+  the hash check at all: measured, a wrong key against a decapitated chain prints output identical
+  to the correct key. What the loosened gate did produce was the dangerous direction — an attacker
+  who removed the oldest rows and cleared the survivor's `PreviousHash` was met with "usually means
+  the wrong Audit:ChainKey ... Confirm the key before escalating".
 
   The row hash is an HMAC over `Audit:ChainKey`; a wrong key is well-formed, so nothing rejects it,
   and it mismatches on the first row it reads. It used to be the ONLY break a wrong key could

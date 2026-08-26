@@ -136,10 +136,16 @@ public static class VerifyCommand
               would be exoneration in reverse -- the tool would send an operator to re-check a key it
               had just proved correct, while a genuine write went unescalated.
 
-              The row hash is an HMAC over Audit:ChainKey. A WRONG key is not distinguishable from
-              tampering by any check this tool can make -- and unlike a missing or short key, it
-              passes the options validation, because it is a perfectly well-formed secret. What it
-              is not is the one this chain was written with.
+              DO NOT REMOVE THE SEQUENCE GATE ON THIS HINT. The row hash is an HMAC over
+              Audit:ChainKey, and unlike a missing or short key a wrong one passes the options
+              validation, because it is a perfectly well-formed secret. What it is not is the one
+              this chain was written with.
+
+              ON A ROW RECORDING NO KEY IDENTITY that is indistinguishable from tampering by any
+              check this tool can make, which is what the hint is for. It is no longer true in
+              general: a row that names its key is refused BY NAME before its hash is recomputed, so
+              a wrong key there yields an unchecked row rather than a mismatch -- and a mismatch on
+              such a row therefore rules the key OUT.
 
               The tell is the position: a real tamper breaks WHERE it happened, somewhere in the
               table. A wrong key breaks at the first row every time, because the first hash it
