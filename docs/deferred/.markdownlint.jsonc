@@ -1,0 +1,29 @@
+// markdownlint configuration for `docs/deferred/` only. markdownlint-cli2 reads the config nearest
+// each linted file and walks upwards, so without a file here this directory silently inherits
+// `docs/.markdownlint.jsonc` — an exemption argued for a corpus that did not include it, written
+// three commits before this folder existed. Inheriting an argument nobody made about your documents
+// is the thing all five of these configs exist to stop.
+{
+  // MD040 (fenced-code-language) is OFF here, and unlike `docs/architecture/` and `docs/design/` —
+  // which carry an EMPTY config precisely because nobody has read their fences — this corpus has
+  // been read. It is one block.
+  //
+  // COUNTED: `docs/deferred/` holds exactly TWO fence lines, both in `anchoring-the-audit-trail.md`,
+  // and they open and close a single block. That block is the verifier's intact verdict, copied
+  // verbatim from what the tool prints at an operator. It is measured output. It has no language,
+  // and 100% of the fences in this directory are the same kind — a higher proportion than the 55 of
+  // 82 that argued the exemption in `docs/adr/`, not a lower one.
+  //
+  // SO THE EMPTY CONFIG WAS THE WRONG SHAPE FOR THIS FOLDER, even though the folder needed a config.
+  // Turning MD040 on here would fire on that one block, and satisfying it with `text` would make the
+  // only tagged measured-output block in the repository, contradicting a convention settled across
+  // PRs #94, #96, #127 and #129 — with the linter itself having asked in BOTH directions. The root
+  // config already names that failure: adding a tag to the blocks that happen to be in a diff makes
+  // them "the odd ones out among their own siblings" and re-opens a question this repository has
+  // answered four times.
+  //
+  // The rule this file encodes is therefore the same one `docs/adr/` and `docs/runbooks/` encode,
+  // reached by counting this directory rather than by inheriting their count. See
+  // `docs/adr/.markdownlint.jsonc` for the original decision.
+  "MD040": false
+}

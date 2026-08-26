@@ -30,9 +30,15 @@ public class AuditOptions
     /// <para>
     /// WHAT THIS DOES NOT DEFEND AGAINST, stated so the ADR does not have to overclaim: an attacker
     /// holding both the database and the application's secrets can rewrite a row and recompute the
-    /// chain. Defeating that needs a digest anchored outside the system, which is the deferred SQL
-    /// Server ledger work — and which, measured, does NOT require Azure: automatic upload does, but
-    /// <c>sp_generate_database_ledger_digest</c> takes no destination at all.
+    /// chain. TWO deferred controls close that, at DIFFERENT layers, so neither of them is "the"
+    /// answer. SQL Server's ledger refuses the write at the engine — and, measured, does NOT require
+    /// Azure: automatic digest upload does, but <c>sp_generate_database_ledger_digest</c> takes no
+    /// destination at all. An RFC 3161 timestamp supplies time from outside, which is the only thing
+    /// that constrains whoever holds every key, and that is the operator rather than the attacker
+    /// this key is against. ⚠️ This paragraph used to name the ledger alone and call it "a digest
+    /// anchored outside the system". The ledger's DIGEST is that; its ENFORCEMENT is not, and needs
+    /// nothing outside this machine. Collapsing the two is what made one control read as the whole
+    /// remedy, here and in ADR-0044, which now carries the argument in full.
     /// </para>
     /// </remarks>
     public string ChainKey { get; set; } = string.Empty;

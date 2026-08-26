@@ -9,15 +9,24 @@ perfectly, every hash matches, and verification reports intact. Nothing in the c
 many rows there should have been. Truncation needs no key at all — only write access — which makes
 it the cheapest attack on this table, and the only one the chain misses against the attacker it is
 built for: somebody who holds the database but not the key. Somebody holding both rewrites a row and
-recomputes the chain, which is equally invisible — ADR-0044 records that as the other gap, and both
-close the same way. Delete every row and the verifier does say something else — `NOTHING TO VERIFY`,
-on the stated grounds that an empty chain links perfectly and a table truncated to nothing reports
-exactly what a fresh one does — but that separates zero from non-zero and nothing more. It is a
-floor, not a defence.
+recomputes the chain, which is equally invisible — ADR-0044 records that as the other gap. Two
+controls close them and they close different layers: SQL Server's ledger at the WRITE, an external
+timestamp at the ANCHOR. This document is about the second. Delete every row and the verifier does
+say something else — `NOTHING TO VERIFY`, on the stated grounds that an empty chain links perfectly
+and a table truncated to nothing reports exactly what a fresh one does — but that separates zero
+from non-zero and nothing more. It is a floor, not a defence.
 
 This document is about the control that would close it, and why it is not here.
 
 ## What would close it
+
+**The other half first, so this one is not read as the whole answer.** SQL Server's ledger refuses
+an UPDATE or a DELETE on a committed row at the engine, and leaves undroppable residue if the table
+is dropped. ADR-0044 records why it is deferred too, and what it does and does not buy. It closes a
+different layer than anything below: engine enforcement constrains somebody holding a connection. It
+does not constrain me, because dropping the whole database is permitted and I own the machine. Only
+time issued by somebody else does that, and the rest of this document is about the cost of getting
+it.
 
 A digest of the chain's tail, fixed at a point in time by somebody other than me. RFC 3161 timestamp
 tokens do exactly that: hand a Time-Stamping Authority a hash, get back a signed statement that this
@@ -64,7 +73,15 @@ publication, and publication needs a schedule, which brings us back to the first
 
 ## What would make it worth building
 
-Deploying to Azure changes both reasons at once, which is why they are recorded together.
+**The trigger is not Azure. It is anything that runs when nobody is here.** A €4/month VPS, AWS, GCP
+or a scheduled GitHub Actions workflow all satisfy it, and naming one vendor would make this read as
+a decision about a vendor rather than about a missing property. What is missing is a process alive
+between sessions that can fetch a timestamp on a cadence and publish it — and whatever supplies that
+changes both reasons below at once, which is why they are recorded together.
+
+Azure is worked through here rather than the others because it is the deployment this project would
+actually reach for, and because pricing an example is what keeps "it would be cheap" from staying an
+assumption.
 
 **Something would be running.** A Container Apps job or a timer-triggered Function on a schedule
 gives the anchoring job somewhere to live. It is not free just because the application is already

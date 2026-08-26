@@ -151,17 +151,30 @@ public class AuditEvent
 
     /// <summary>
     /// The previous row's <see cref="RowHash"/>, which is what turns independent rows into a chain
-    /// and makes a DELETED row detectable rather than merely a modified one.
+    /// and makes a row removed from the MIDDLE detectable rather than merely a modified one.
     /// </summary>
     /// <remarks>
-    /// NULLABLE ON PURPOSE, AND THE REASON IS A DECISION STILL OPEN. Chaining every row to its
-    /// predecessor at insert time requires the writer to read the current tail and append to it
-    /// atomically — which serialises audit inserts, and therefore serialises every business
-    /// operation that writes one. The alternative is to leave this null on the hot path and have a
-    /// verifier compute the chain over <see cref="Sequence"/> order at checkpoints, which keeps
-    /// writes concurrent but only detects a deletion at the next checkpoint. The column exists so
-    /// that either strategy fits without a migration; which one is chosen, and its cost, is ADR-0044
-    /// and F3 of this work — not something to infer from this type.
+    /// <para>
+    /// ⚠️ THE QUALIFIER IS THE CLAIM, AND THIS SENTENCE CARRIED THE WITHDRAWN VERSION OF IT. It read
+    /// "makes a DELETED row detectable", full stop. That is true of an interior row and false of the
+    /// TAIL: verification only ever looks backwards, so deleting the last row — or the last thousand
+    /// — leaves every surviving row hashing correctly and linking correctly, and needs no key at
+    /// all. ADR-0044 withdrew the unqualified wording in its own text; this summary is where it went
+    /// on living. What would close that end, and why neither control that would is built here, is in
+    /// that record and in <c>docs/deferred/anchoring-the-audit-trail.md</c>.
+    /// </para>
+    /// <para>
+    /// NULLABLE ON PURPOSE, AND THE DECISION IT WAS LEFT OPEN FOR HAS SINCE BEEN MADE — this
+    /// paragraph still said it was open. Chaining every row to its predecessor at insert time
+    /// requires the writer to read the current tail and append to it atomically, which serialises
+    /// audit inserts and therefore serialises every business operation that writes one. The
+    /// alternative was to leave this null on the hot path and have a verifier compute the chain over
+    /// <see cref="Sequence"/> order at checkpoints, keeping writes concurrent but detecting a
+    /// deletion only at the next checkpoint. ADR-0044 D3 took the first: the chain is applied in the
+    /// <c>SaveChanges</c> funnel, so <c>AuditChain</c> assigns this at insert, unconditionally. The
+    /// column stays nullable because the first row of a chain has no predecessor — not because the
+    /// strategy is undecided.
+    /// </para>
     /// </remarks>
     public string? PreviousHash { get; set; }
 }
