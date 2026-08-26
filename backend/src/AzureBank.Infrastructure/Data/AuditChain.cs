@@ -33,10 +33,17 @@ public interface IAuditChain
 
 /// <summary>What kind of break the walk found, when it found one.</summary>
 /// <remarks>
-/// The three are not interchangeable and an operator acts differently on each, which is why the
+/// They are not interchangeable and an operator acts differently on each, which is why the
 /// verdict carries the kind instead of leaving callers to match on the wording of a sentence.
-/// A WRONG KEY can only ever produce <see cref="HashMismatch"/>: it cannot make a row unreadable,
-/// and it cannot change what a row records as its predecessor.
+/// <para>
+/// A WRONG KEY USED TO PRODUCE ONLY <see cref="HashMismatch"/>, AND THAT IS NOW A v2-ONLY
+/// STATEMENT. It still holds for a row that records no key identity: a wrong key cannot make such a
+/// row unreadable and cannot change what it records as its predecessor, so the hash is the only
+/// thing left to break. A row that DOES name its key is checked against that name before its hash is
+/// recomputed, so a wrong key produces <see cref="UnknownScheme"/> there and never reaches the hash.
+/// The practical consequence is the useful one: on such a row a hash mismatch is no longer
+/// ambiguous, because the key behind it has already been confirmed.
+/// </para>
 /// </remarks>
 public enum AuditChainBreakKind
 {
@@ -51,6 +58,28 @@ public enum AuditChainBreakKind
 
     /// <summary>A row could not be materialised at all, so a stored value contradicts the schema.</summary>
     Unreadable,
+
+    /// <summary>
+    /// The row names a payload version or a key identity this verifier cannot apply, so its hash was
+    /// never recomputed.
+    /// </summary>
+    /// <remarks>
+    /// THIS IS A BREAK, NOT A NOTE, AND THE DISTINCTION IS THE WHOLE REASON IT EXISTS. It is
+    /// tempting to treat "I cannot check this row" as a configuration remark and let the walk
+    /// continue: that would hand an attacker a muzzle. Overwrite a tampered row's key identity with
+    /// something no key produces and the verdict would soften from tampering to housekeeping,
+    /// which is the opposite of what the column is for. Both values live inside the row's own hashed
+    /// payload, so a stored value that is not what the schema says it must be is itself a
+    /// modification — the same reasoning <see cref="Unreadable"/> already carries.
+    /// <para>
+    /// It says nothing about WHY. A verifier holding a different key, an older build that cannot
+    /// render this version, and an overwritten column all print this, and the discriminator is
+    /// positional rather than textual: the first two fail at the lowest-sequence row of that scheme
+    /// and at every one after it, while a single interior row failing among verified siblings is a
+    /// write.
+    /// </para>
+    /// </remarks>
+    UnknownScheme,
 }
 
 /// <summary>The result of walking the chain. A count as well as a verdict, deliberately.</summary>
@@ -68,7 +97,12 @@ public enum AuditChainBreakKind
 /// The first and last sequence THIS WALK actually read, or null if it read nothing.
 /// </param>
 /// <param name="HighestSequence">See <paramref name="LowestSequence"/>.</param>
-/// <param name="Kind">Which of the three breaks it was, when there was one.</param>
+/// <param name="Kind">Which break it was, when there was one.</param>
+/// <param name="PayloadVersion">
+/// The version the breaking row declared, when the break was an <see cref="AuditChainBreakKind.UnknownScheme"/>.
+/// </param>
+/// <param name="RecordedKeyId">The key identity that row carried, or null if it carried none.</param>
+/// <param name="ConfiguredKeyId">The identity of the key THIS verification holds.</param>
 /// <remarks>
 /// THE RANGE COMES FROM THE WALK ITSELF, and it is here rather than left to the caller because the
 /// caller cannot get it right. Asking the database separately for MIN and MAX is two more statements
@@ -76,13 +110,22 @@ public enum AuditChainBreakKind
 /// the range, so the tool could report 101 rows verified over a range ending at 100. The count and
 /// the range exist to be compared with each other, so they have to come from one read.
 /// </remarks>
+/// <remarks>
+/// The last three carry what a <see cref="AuditChainBreakKind.UnknownScheme"/> verdict could not
+/// apply, for the same reason <see cref="Kind"/> exists at all: a caller that has to parse them back
+/// out of <see cref="Reason"/> is matching on the wording of a sentence. They are optional so that
+/// every construction that predates them still compiles and still means what it did.
+/// </remarks>
 public readonly record struct AuditChainVerification(
     long Verified,
     long? FirstBrokenSequence,
     string? Reason,
     long? LowestSequence = null,
     long? HighestSequence = null,
-    AuditChainBreakKind Kind = AuditChainBreakKind.None)
+    AuditChainBreakKind Kind = AuditChainBreakKind.None,
+    string? PayloadVersion = null,
+    string? RecordedKeyId = null,
+    string? ConfiguredKeyId = null)
 {
     /// <summary>True when every row read hashed and linked correctly.</summary>
     public bool IsIntact => FirstBrokenSequence is null;
@@ -134,10 +177,56 @@ public sealed class AuditChain : IAuditChain
 
     private readonly ILogger<AuditChain> _logger;
 
+    /// <summary>The payload rendering new rows are written with.</summary>
+    internal const string CurrentPayloadVersion = "v3";
+
+    /// <summary>The rendering rows were written with before key identity was recorded.</summary>
+    internal const string LegacyPayloadVersion = "v2";
+
+    /*
+      THE DOMAIN STRING AND THE TRUNCATION LENGTH ARE ONE DECISION WITH THE COLUMN WIDTH, and all
+      three are frozen together the moment the first v3 row is written: the identity is inside that
+      row's hashed payload, so changing any of them changes stored hashes that cannot be recomputed.
+      Its own "v1" is the identity scheme's version and has nothing to do with the payload version --
+      they are separate ladders and bumping one must never bump the other.
+
+      Sixteen hex characters is 64 bits, which is a key IDENTIFIER rather than a secret: its job is
+      to tell one key from another and to let a verifier confirm the key it holds, not to resist
+      anything. Publishing it is not a widening -- a database-only attacker already has an offline
+      oracle for guessing the key in every row's RowHash.
+    */
+    private const string KeyIdDomain = "AzureBank.Audit.KeyId.v1";
+    private const int KeyIdHexLength = 16;
+
+    private readonly string _keyId;
+
     public AuditChain(IOptions<AuditOptions> options, ILogger<AuditChain> logger)
     {
         _options = options;
         _logger = logger;
+
+        // Once, here, and never inside the walk or inside the UPDLOCK/HOLDLOCK window that every
+        // business write waits behind.
+        _keyId = DeriveKeyId(options.Value.ChainKey);
+    }
+
+    /// <summary>
+    /// The non-secret identity of a chain key: HMAC-SHA256 over a fixed domain string, keyed by the
+    /// key itself, truncated to <see cref="KeyIdHexLength"/> lowercase hex characters.
+    /// </summary>
+    /// <remarks>
+    /// DERIVED RATHER THAN CONFIGURED so that it cannot be wrong. A configured identifier is a second
+    /// place to state the same fact, and the two drift with nothing detecting it; a derived one lets a
+    /// verifier recompute the identity from the key it actually holds and say plainly when that key is
+    /// not the one that wrote the row. This repository configures a key id elsewhere, for the password
+    /// hasher, and the difference is the drain path: a credential is re-hashed on next use, so a
+    /// drifted id there corrects itself. An audit row is evidence and is never rewritten, so nothing
+    /// would ever correct it.
+    /// </remarks>
+    internal static string DeriveKeyId(string chainKey)
+    {
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(chainKey));
+        return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(KeyIdDomain)))[..KeyIdHexLength];
     }
 
     public async Task ApplyAsync(DbContext context, CancellationToken cancellationToken = default)
@@ -236,6 +325,18 @@ public sealed class AuditChain : IAuditChain
         {
             row.Sequence = ++sequence;
             row.PreviousHash = previous;
+
+            /*
+              ASSIGNED UNCONDITIONALLY, exactly like RowHash below it and for the same reason. These
+              two columns are the verifier's instruction for how to read the row, so they come from
+              the component that renders the payload, never from the one that supplied the content.
+              Honouring a value a caller had already set would let a row ship declaring a scheme it
+              was not written under -- and the promise that the column and the prefix cannot disagree
+              is empty unless exactly one authority writes the string.
+            */
+            row.PayloadVersion = CurrentPayloadVersion;
+            row.KeyId = _keyId;
+
             row.RowHash = ComputeRowHash(row);
             previous = row.RowHash;
         }
@@ -564,19 +665,110 @@ public sealed class AuditChain : IAuditChain
                     AuditChainBreakKind.LinkBroken);
             }
 
-            var expected = ComputeRowHash(row);
-            if (!CryptographicOperations.FixedTimeEquals(
-                    Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
+            /*
+              SCHEME, AND IT SITS HERE ON PURPOSE -- AFTER THE LINK, BEFORE THE HASH.
+
+              After the link, because the link check needs neither key nor version: it is what makes
+              a decapitated chain report LinkBroken instead of reaching a hash it cannot recompute. A
+              scheme problem must never be able to mask a deleted prefix.
+
+              Before the hash, because recomputing a row under a scheme it was not written with
+              produces a mismatch that reads exactly like tampering -- which is the defect this
+              column exists to remove. A row this verifier cannot render is reported as unchecked,
+              never as wrong.
+
+              It is a BREAK either way. Letting the walk continue past a row it could not check would
+              let "intact" mean "intact except for the rows I skipped", and a verdict that quietly
+              excludes its own failures is the green-and-false state this project treats as the worst
+              one.
+            */
+            if (row.PayloadVersion is not (CurrentPayloadVersion or LegacyPayloadVersion))
             {
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
-                    $"Row {row.Id} does not match its own hash. Either it was altered after it was "
-                    + "written, or this verification is using a different Audit:ChainKey from the "
-                    + "one it was written with.",
+                    $"Row {row.Id} declares payload version '{row.PayloadVersion}', which this build "
+                    + "cannot render, so its hash was NOT checked. Either it was written by a newer "
+                    + "build, or the column was overwritten -- and that column is inside the hashed "
+                    + "payload. This is not a configuration note.",
                     lowest,
                     highest,
-                    AuditChainBreakKind.HashMismatch);
+                    AuditChainBreakKind.UnknownScheme,
+                    row.PayloadVersion,
+                    row.KeyId,
+                    _keyId);
+            }
+
+            // A v2 payload has no key-identity element, so an id sitting on such a row is unhashed
+            // and unexplained. Without this the NULL rule is a hole the width of the column.
+            if (row.PayloadVersion == LegacyPayloadVersion && row.KeyId is not null)
+            {
+                return new AuditChainVerification(
+                    verified,
+                    row.Sequence,
+                    $"Row {row.Id} is a '{LegacyPayloadVersion}' row carrying key id "
+                    + $"'{row.KeyId}'. That version records no key identity, so this value is "
+                    + "outside the hashed payload and nothing wrote it legitimately. Its hash was "
+                    + "NOT checked.",
+                    lowest,
+                    highest,
+                    AuditChainBreakKind.UnknownScheme,
+                    row.PayloadVersion,
+                    row.KeyId,
+                    _keyId);
+            }
+
+            if (row.PayloadVersion == CurrentPayloadVersion && row.KeyId != _keyId)
+            {
+                return new AuditChainVerification(
+                    verified,
+                    row.Sequence,
+                    $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and this "
+                    + $"verification holds the key whose id is '{_keyId}', so its hash was NOT "
+                    + "checked. Either this is the wrong key for this row, or the column was "
+                    + "overwritten. Which one is positional: a wrong key fails at the LOWEST "
+                    + $"'{CurrentPayloadVersion}' row and every one after it, while a single row "
+                    + "failing among verified siblings is a write.",
+                    lowest,
+                    highest,
+                    AuditChainBreakKind.UnknownScheme,
+                    row.PayloadVersion,
+                    row.KeyId,
+                    _keyId);
+            }
+
+            var expected = ComputeRowHash(row);
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
+            {
+                /*
+                  THE LAST THREE ARGUMENTS ARE NOT OPTIONAL HERE, whatever their defaults say. The
+                  tool decides what to tell an operator by reading them, so a verdict that omits
+                  them is a verdict that silently answers "no version, no key identity" -- and the
+                  branch meant to exonerate a confirmed key then never runs. Measured: it did not,
+                  and two tests were green over it, because both built the record by hand instead of
+                  taking one from this method.
+                */
+                var confirmed = row.KeyId is not null;
+                return new AuditChainVerification(
+                    verified,
+                    row.Sequence,
+                    $"Row {row.Id} does not match its own hash. "
+                    + (confirmed
+                        ? "It was altered after it was written. The key is not in question: this "
+                          + "row records the key identity that the configured Audit:ChainKey "
+                          + "derives, and a row naming a key this verification does not hold is "
+                          + "refused before its hash is ever recomputed."
+                        : "Either it was altered after it was written, or this verification is "
+                          + "using a different Audit:ChainKey from the one it was written with. "
+                          + "This row records no key identity, so the two cannot be told apart "
+                          + "here."),
+                    lowest,
+                    highest,
+                    AuditChainBreakKind.HashMismatch,
+                    row.PayloadVersion,
+                    row.KeyId,
+                    _keyId);
             }
 
             previous = row.RowHash;
@@ -626,10 +818,22 @@ public sealed class AuditChain : IAuditChain
       Ticks is a plain integer and round-trips exactly through datetime2(7): same 100-ns resolution,
       nothing kind-dependent to lose. AuditEvent.OccurredAt is UTC by convention, stated there.
     */
-    private string ComputeRowHash(AuditEvent row)
+    /*
+      DISPATCHED ON THE ROW'S OWN VERSION, which is the point of the column. Before this, the version
+      was a literal compiled in here, so bumping it re-rendered every historical row under the new
+      scheme and reported honest ones as tampering -- the failure this whole change removes. A
+      renderer added here is added forever: rows written under it can never be re-hashed once an
+      anchor certifies them, so an old arm is deleted only if no row anywhere still declares it.
+
+      Element ONE is row.PayloadVersion rather than the literal, in BOTH arms. That is what makes the
+      column and the prefix the same thing rather than two copies of it: overwrite the column and the
+      hash stops matching, so the declaration is protected by the very hash it selects.
+    */
+    private string ComputeRowHash(AuditEvent row) => row.PayloadVersion switch
     {
-        var payload = string.Join('|',
-            "v2",
+        CurrentPayloadVersion => Hmac(string.Join('|',
+            row.PayloadVersion,
+            row.KeyId ?? string.Empty,
             row.Id.ToString("N"),
             row.Sequence.ToString(CultureInfo.InvariantCulture),
             row.OccurredAt.Ticks.ToString(CultureInfo.InvariantCulture),
@@ -640,8 +844,34 @@ public sealed class AuditChain : IAuditChain
             row.SubjectId?.ToString("N") ?? string.Empty,
             row.TraceId ?? string.Empty,
             row.PreviousHash ?? string.Empty,
-            row.Detail ?? string.Empty);
+            row.Detail ?? string.Empty)),
 
+        // Byte-identical to what shipped, with the sole change that element one reads the column
+        // instead of a literal -- so historical rows keep the hashes they were written with.
+        LegacyPayloadVersion => Hmac(string.Join('|',
+            row.PayloadVersion,
+            row.Id.ToString("N"),
+            row.Sequence.ToString(CultureInfo.InvariantCulture),
+            row.OccurredAt.Ticks.ToString(CultureInfo.InvariantCulture),
+            row.Event,
+            row.Outcome.ToString(),
+            row.ActorUserId?.ToString("N") ?? string.Empty,
+            row.SubjectType ?? string.Empty,
+            row.SubjectId?.ToString("N") ?? string.Empty,
+            row.TraceId ?? string.Empty,
+            row.PreviousHash ?? string.Empty,
+            row.Detail ?? string.Empty)),
+
+        // Unreachable through the walk, which refuses an unknown version before it gets here. It
+        // throws rather than returning a hash nothing can match, because a caller that reaches this
+        // has skipped the check that exists to stop it.
+        _ => throw new InvalidOperationException(
+            $"No payload renderer for version '{row.PayloadVersion}'. The walk checks this before "
+            + "recomputing a hash; reaching here means that check was bypassed."),
+    };
+
+    private string Hmac(string payload)
+    {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.Value.ChainKey));
         return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
     }

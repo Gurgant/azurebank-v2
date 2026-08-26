@@ -306,6 +306,63 @@ public class AuditVerifierReportTests
     }
 
     [Fact]
+    public void AnUncheckedRow_ExitsBroken_AndNamesBothIdentities()
+    {
+        /*
+          THE MUZZLE TEST, AT THE LAYER AUTOMATION ACTUALLY READS. A row this verification cannot
+          check is not a row it proved good, and the exit code has to say so: anything that scripts
+          the verifier branches on the integer, not on the prose. Mapping this to Misconfigured or
+          NothingToVerify would let somebody hide a tampered row by overwriting its key identity --
+          the verdict would soften from evidence to housekeeping.
+
+          FALSIFIED by mapping the kind to any other exit code, or by gating the reading on
+          Verified == 0: a table holding both renderings verifies its legacy prefix first, so a
+          wrong key surfaces here with Verified > 0 and a zero-gate would print nothing at all.
+        */
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(
+                7, 8, "Row ... was written under key id ...", 1, 12,
+                AuditChainBreakKind.UnknownScheme, "v3", "ffffffffffffffff", "b78e425e698034a4"),
+            1, 12);
+
+        exitCode.Should().Be(
+            VerifyCommand.Broken,
+            "an unchecked row is a break -- silence is not a verdict this tool is allowed to reach");
+
+        var text = string.Join(" ", lines);
+        text.Should().Contain("ffffffffffffffff", "the operator needs the id the row carried");
+        text.Should().Contain("b78e425e698034a4", "and the id the key they are holding derives");
+        text.Should().Contain("NOT checked", "the distinction from 'checked and good' is the point");
+    }
+
+    [Fact]
+    public void AHashMismatchAtSequence1_OnARowThatNamesItsKey_ConfirmsTheKeyInsteadOfBlamingIt()
+    {
+        /*
+          THE EXONERATION, RE-ARMED FOR THE NEW ROUTE. The sibling above earns the "confirm the key"
+          hint because a row recording no key identity cannot rule the key out. A row that DOES name
+          its key has already had it confirmed -- the scheme check refuses a mismatched identity
+          before any hash is recomputed -- so printing the old hint here would send an operator to
+          re-check a key the tool just proved right, while a genuine write went unescalated.
+
+          FALSIFIED by removing the version gate on the hint: this reddens immediately.
+        */
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(
+                0, 1, "Row ... does not match its own hash", 1, 5,
+                AuditChainBreakKind.HashMismatch, "v3", "b78e425e698034a4", "b78e425e698034a4"),
+            1, 5);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+
+        var text = string.Join(" ", lines);
+        text.Should().NotContain(
+            "Confirm the key before escalating",
+            "the key is already confirmed for this row, so sending the operator back to it is wrong");
+        text.Should().Contain("WRITE", "which makes this an escalation, not a configuration check");
+    }
+
+    [Fact]
     public void AHashMismatchABOVESequence1_IsAWriteAndMustNotBeBlamedOnTheKey()
     {
         /*

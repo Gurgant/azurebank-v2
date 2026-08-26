@@ -590,3 +590,41 @@ and its test share a wrong assumption, the test confirms the bug instead of catc
 column that means what you want (`Sequence`, `OccurredAt`, `CreatedAt`), and if there isn't one, that
 is the finding.
 
+
+## A withdrawn argument is a guard, so it has to be framed as one
+
+This repository keeps the reasoning that was rejected, not only the decision that won. The reason is
+narrow and it is not sentiment: several of those arguments sound *better* than the rule that
+replaced them, so somebody eventually re-derives one and re-opens the hole. The text exists to stop
+that, and its whole value is being read at the moment of the edit.
+
+Which means the framing decides whether it works. **`A withdrawn argument, left visible.` is an
+archival label** — it tells a reader "here is what we used to think", which is an invitation to
+skip. The person it needs to reach is the one about to loosen the condition, and that person skips
+history by definition. Lead with the constraint and demote the history to evidence:
+
+```
+A withdrawn argument, left visible. This note used to say the tell was the count alone ...
+```
+
+```
+DO NOT WIDEN THIS TO THE COUNT ALONE. It was written that way once, and the wide version is the
+one that helps an attacker. The argument for it reads well: ... That case is unreachable, and the
+tool was gated on it anyway.
+```
+
+Same words, same length, different reader.
+
+**The rule is about WHERE the text lives, not about which framing is nicer.**
+
+- **In code and in runbooks: imperative.** A code comment is read by somebody with the file open and
+  a change in mind. A runbook is read under pressure. Neither reader is browsing.
+- **In an ADR: archival is correct, and should stay.** An ADR is read deliberately, by somebody
+  asking what was decided and why — there the history *is* the content, and an imperative aimed at
+  an editor would be the thing out of place. `docs/adr/0044-...md` keeps its
+  `A withdrawn argument, left visible.` for exactly this reason.
+
+**And the mechanical test for keeping one at all:** a withdrawn argument earns its place only while
+it constrains something that still exists. When the gate, flag or branch it protects is removed, the
+text goes in the same commit. Kept past that point it stops being a guard and becomes what it merely
+looked like all along.

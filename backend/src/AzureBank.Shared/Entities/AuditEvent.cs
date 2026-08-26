@@ -108,6 +108,42 @@ public class AuditEvent
     public string? Detail { get; set; }
 
     /// <summary>
+    /// Which rendering of the hashed payload wrote this row, and therefore which one a verifier
+    /// must use to re-derive <see cref="RowHash"/>.
+    /// </summary>
+    /// <remarks>
+    /// THIS COLUMN IS THE VERSION PREFIX, not a copy of it. The same string is stored here and
+    /// joined as the first element of the hashed payload, so the column and the prefix cannot
+    /// disagree: overwriting one changes the hash. Before this existed the prefix was the literal
+    /// <c>v2</c> compiled into the hasher, which meant a payload change re-rendered EVERY historical
+    /// row under the new scheme and reported the honest ones as tampering.
+    /// <para>
+    /// IT IS ASSIGNED BY THE CHAIN, NEVER BY THE CALLER — the value is the verifier's instruction
+    /// for how to read the row, so it comes from the component that renders the payload rather than
+    /// from the one that supplies the content.
+    /// </para>
+    /// </remarks>
+    public string PayloadVersion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Non-secret identifier of the <c>Audit:ChainKey</c> that wrote this row, derived from the key
+    /// itself. NULL on rows written before key identity existed.
+    /// </summary>
+    /// <remarks>
+    /// DERIVED, NOT CONFIGURED, and the difference is the whole point. A configured identifier can
+    /// name the wrong key and nothing detects it; a derived one lets a verifier confirm that the key
+    /// it holds is the key that wrote the row, and say so when it does not.
+    /// <para>
+    /// NULL MEANS "NO KEY IDENTITY WAS RECORDED", not "some particular key". Such a row is verified
+    /// under the FOUNDING key — today that is <c>Audit:ChainKey</c> because it is the only one there
+    /// has ever been. The word is deliberate: whatever adds a second key must add a ring entry for
+    /// the founding key rather than silently re-point every historical row at whatever is current.
+    /// NULL asserts nothing, hashes nothing, and is the absence of a claim rather than a claim.
+    /// </para>
+    /// </remarks>
+    public string? KeyId { get; set; }
+
+    /// <summary>
     /// Keyed HMAC-SHA256 over this row's content, lowercase hex. Alter any column afterwards and
     /// this stops matching.
     /// </summary>
