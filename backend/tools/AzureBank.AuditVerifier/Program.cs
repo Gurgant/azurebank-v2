@@ -26,9 +26,13 @@ namespace AzureBank.AuditVerifier;
 //
 // Exit codes: 0 intact, 1 broken, 2 nothing to verify, 3 no verdict (the store could not be read),
 // 4 the command line was wrong, 5 interrupted, 6 there WAS a verdict but nothing could be recorded
-// from it. Only 0, 1 and 2 are statements about the chain. The list lives in the commands'
-// constants -- 0 to 5 in VerifyCommand, 6 in AnchorCommand -- and this header repeats it, so
-// changing one means changing both.
+// from it. Only 0, 1 and 2 are statements about the chain.
+//
+// THE LIST LIVES IN THREE PLACES, not two, and this comment used to say "both" while naming three:
+// VerifyCommand's constants carry 0 to 5, AnchorCommand carries 6, and this header repeats them all.
+// A test asserts the constants are pairwise distinct, which is the only one of the three a compiler
+// or a run can check -- so the header and any prose elsewhere are held by nothing but this sentence.
+// Changing one means changing all three.
 // ============================================
 /*
   ANCHORED TO THE BINARY, NOT TO THE SHELL'S CURRENT DIRECTORY.

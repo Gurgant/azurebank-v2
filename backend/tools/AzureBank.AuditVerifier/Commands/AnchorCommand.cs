@@ -153,6 +153,34 @@ public static class AnchorCommand
                 "  Part of the chain was read and the rest was not, which is not a verdict.",
             });
         }
+        catch (Exception failure)
+        {
+            /*
+              A STORE THAT CANNOT BE READ IS NOT A USAGE ERROR, and without this catch it was
+              reported as one. MEASURED against an unreachable instance: `verify` exits 3 and prints
+              "CANNOT VERIFY: the audit store could not be read"; `anchor` exited **4** -- this
+              tool's word for "the command line was wrong" -- and dumped a raw .NET stack trace at
+              the operator. The two commands answered the same outage with different numbers, and
+              the wrong one was the number automation reads.
+
+              The mechanism: only DbUpdateException and OperationCanceledException were caught, so a
+              SqlException escaped RunAsync, System.CommandLine's exception handler turned it into 1,
+              and CombineExitCodes maps any non-zero parser result to UsageError. Nothing was wrong
+              with the command line.
+
+              Misconfigured, matching verify, because the honest statement is the same one: there is
+              no verdict, and it is not a statement about the chain.
+            */
+            return (VerifyCommand.Misconfigured, new[]
+            {
+                "NO VERDICT: the audit store could not be read, so nothing was recorded.",
+                $"  {failure.GetType().Name}: {failure.Message}",
+                "  This is NOT a statement about the chain, and nothing was written. Check the",
+                "  connection string and the keys first. If they are right, preserve the database",
+                "  and escalate -- a table that has vanished from a database where it belongs is",
+                "  the most complete tamper anyone holding write access can manage.",
+            });
+        }
     }
 
     private static int VerdictExitCode(AuditChainVerification verification)

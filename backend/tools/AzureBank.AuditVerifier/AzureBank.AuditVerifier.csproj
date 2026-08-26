@@ -51,4 +51,15 @@
     <PackageReference Include="Serilog.Sinks.Console" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      AnchorCommand.RunAsync is internal and the anchor mode shipped with NO test at all: the test
+      project could not reach it, so nothing held the command that writes to the audit store. Same
+      concession as AzureBank.Api.csproj and AzureBank.Infrastructure.csproj make, and for the same
+      reason: expose it to the tests rather than widen it for production callers, who have no
+      business invoking a command handler directly.
+    -->
+    <InternalsVisibleTo Include="AzureBank.Tests" />
+  </ItemGroup>
+
 </Project>

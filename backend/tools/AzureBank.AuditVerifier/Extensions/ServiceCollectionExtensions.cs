@@ -56,6 +56,24 @@ public static class ServiceCollectionExtensions
                 + "environment variable Audit__ChainKey. User-secrets are read only when "
                 + "DOTNET_ENVIRONMENT=Development, and this tool defaults to Production. Without "
                 + "the key it would report an intact chain as broken.")
+
+            /*
+              THE MIRROR ABOVE PREDICTED ITS OWN FAILURE AND THEN SUFFERED IT. Audit:AnchorKey was
+              added to the API's validation when the anchor record shipped and was never added here,
+              so for one release this tool started, read the chain, and would have refused to write
+              an anchor at the point of use -- with a message about configuration, at the end of a
+              walk, instead of before the first row.
+
+              The anchor mode checks the key itself as well (AnchorCommand validates at the point of
+              use, which is deliberate and stays). This is the earlier guard, and the two are not
+              redundant: this one stops the tool, that one stops the write.
+            */
+            .Validate(
+                o => !string.IsNullOrWhiteSpace(o.AnchorKey) && o.AnchorKey.Length >= 32,
+                "Audit:AnchorKey must be configured with at least 32 characters. Set the "
+                + "environment variable Audit__AnchorKey. It authenticates the anchor records this "
+                + "tool writes and reads; without it an anchor is a row anybody holding the database "
+                + "can write.")
             .ValidateDataAnnotations()
             .ValidateOnStart();
 

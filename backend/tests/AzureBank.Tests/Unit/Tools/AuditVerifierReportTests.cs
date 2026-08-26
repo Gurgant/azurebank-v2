@@ -88,10 +88,17 @@ public class AuditVerifierReportTests
         VerifyCommand.CombineExitCodes(0, VerifyCommand.Misconfigured).Should().Be(
             VerifyCommand.Misconfigured, "and a no-verdict must not be flattened into success");
 
+        /*
+          ALL SEVEN, and it listed five. Interrupted and NotRecorded were both absent -- the second
+          because it arrived with the anchor mode in a different file, which is exactly how a list
+          that lives in three places loses an entry. A uniqueness assertion over a subset cannot
+          catch the collision it exists to catch.
+        */
         new[]
         {
             VerifyCommand.Intact, VerifyCommand.Broken, VerifyCommand.NothingToVerify,
-            VerifyCommand.Misconfigured, VerifyCommand.UsageError,
+            VerifyCommand.Misconfigured, VerifyCommand.UsageError, VerifyCommand.Interrupted,
+            AnchorCommand.NotRecorded,
         }.Should().OnlyHaveUniqueItems("two meanings on one number is a signal nothing can read");
     }
 
