@@ -37,6 +37,10 @@ public class VerifierUsesAStreamingContextTests
         {
             ["ConnectionStrings:DefaultConnection"] = @"Server=(localdb)\MSSQLLocalDB;Database=X;Trusted_Connection=True",
             ["Audit:ChainKey"] = new string('k', 40),
+
+            // The tool validates BOTH audit keys at startup now, so a fixture supplying only one
+            // builds a host that refuses to start -- which has nothing to do with what this asserts.
+            ["Audit:AnchorKey"] = new string('a', 40),
         }).Build();
 
     private static IHostEnvironment Environment()

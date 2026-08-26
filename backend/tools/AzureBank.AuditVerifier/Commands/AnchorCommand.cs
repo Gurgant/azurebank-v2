@@ -131,6 +131,35 @@ public static class AnchorCommand
 
             return (VerdictExitCode(verification), Describe(record, verification));
         }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            /*
+              INTERRUPTION IS DECIDED BY THE TOKEN, NOT BY THE EXCEPTION TYPE — and this command
+              shipped with that exactly backwards, in a file whose sibling had already written the
+              correction down at length. VerifyCommand's equivalent guard says it plainly: catching
+              OperationCanceledException covers only what a pre-cancelled token produces, which is
+              what a unit test manufactures. Cancel a walk that is genuinely in flight and
+              Microsoft.Data.SqlClient sends an attention, the server aborts the batch, and the task
+              completes FAULTED with a SqlException.
+
+              So this guard has to come FIRST, above every other catch, or the shape an operator
+              actually produces falls through to one of them. It did: the store-failure handler added
+              below caught it and reported Ctrl+C as "the audit store could not be read" — a database
+              outage, over a command the operator stopped on purpose. That is worse than the escaping
+              exception it replaced, because an escape is loud and a wrong sentence is not.
+
+              It accepts the same trade knowingly: a genuine outage that coincides with a signalled
+              token is reported as an interruption. That is the better error to make, because the
+              operator who pressed Ctrl+C knows they did.
+            */
+            return (VerifyCommand.Interrupted, new[]
+            {
+                "INTERRUPTED: the walk was stopped, so nothing was recorded.",
+                "  Part of the chain was read and the rest was not, which is not a verdict.",
+                "  Nothing was written and nothing was changed. Re-run it; the walk is read-only",
+                "  and costs only the time it takes.",
+            });
+        }
         catch (DbUpdateException)
         {
             /*
@@ -145,12 +174,32 @@ public static class AnchorCommand
                 "  the walk is read-only and costs only the time it takes.",
             });
         }
-        catch (OperationCanceledException)
+        catch (Exception failure)
         {
-            return (VerifyCommand.Interrupted, new[]
+            /*
+              A STORE THAT CANNOT BE READ IS NOT A USAGE ERROR, and without this catch it was
+              reported as one. MEASURED against an unreachable instance: `verify` exits 3 and prints
+              "CANNOT VERIFY: the audit store could not be read"; `anchor` exited **4** -- this
+              tool's word for "the command line was wrong" -- and dumped a raw .NET stack trace at
+              the operator. The two commands answered the same outage with different numbers, and
+              the wrong one was the number automation reads.
+
+              The mechanism: only DbUpdateException and OperationCanceledException were caught, so a
+              SqlException escaped RunAsync, System.CommandLine's exception handler turned it into 1,
+              and CombineExitCodes maps any non-zero parser result to UsageError. Nothing was wrong
+              with the command line.
+
+              Misconfigured, matching verify, because the honest statement is the same one: there is
+              no verdict, and it is not a statement about the chain.
+            */
+            return (VerifyCommand.Misconfigured, new[]
             {
-                "INTERRUPTED: the walk was stopped, so nothing was recorded.",
-                "  Part of the chain was read and the rest was not, which is not a verdict.",
+                "NO VERDICT: the audit store could not be read, so nothing was recorded.",
+                $"  {failure.GetType().Name}: {failure.Message}",
+                "  This is NOT a statement about the chain, and nothing was written. Check the",
+                "  connection string and the keys first. If they are right, preserve the database",
+                "  and escalate -- a table that has vanished from a database where it belongs is",
+                "  the most complete tamper anyone holding write access can manage.",
             });
         }
     }
