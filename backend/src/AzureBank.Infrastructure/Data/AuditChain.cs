@@ -741,15 +741,34 @@ public sealed class AuditChain : IAuditChain
             if (!CryptographicOperations.FixedTimeEquals(
                     Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
             {
+                /*
+                  THE LAST THREE ARGUMENTS ARE NOT OPTIONAL HERE, whatever their defaults say. The
+                  tool decides what to tell an operator by reading them, so a verdict that omits
+                  them is a verdict that silently answers "no version, no key identity" -- and the
+                  branch meant to exonerate a confirmed key then never runs. Measured: it did not,
+                  and two tests were green over it, because both built the record by hand instead of
+                  taking one from this method.
+                */
+                var confirmed = row.KeyId is not null;
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
-                    $"Row {row.Id} does not match its own hash. Either it was altered after it was "
-                    + "written, or this verification is using a different Audit:ChainKey from the "
-                    + "one it was written with.",
+                    $"Row {row.Id} does not match its own hash. "
+                    + (confirmed
+                        ? "It was altered after it was written. The key is not in question: this "
+                          + "row records the key identity that the configured Audit:ChainKey "
+                          + "derives, and a row naming a key this verification does not hold is "
+                          + "refused before its hash is ever recomputed."
+                        : "Either it was altered after it was written, or this verification is "
+                          + "using a different Audit:ChainKey from the one it was written with. "
+                          + "This row records no key identity, so the two cannot be told apart "
+                          + "here."),
                     lowest,
                     highest,
-                    AuditChainBreakKind.HashMismatch);
+                    AuditChainBreakKind.HashMismatch,
+                    row.PayloadVersion,
+                    row.KeyId,
+                    _keyId);
             }
 
             previous = row.RowHash;

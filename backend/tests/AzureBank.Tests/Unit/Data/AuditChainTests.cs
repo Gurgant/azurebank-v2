@@ -1,3 +1,4 @@
+using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
@@ -258,6 +259,15 @@ public class AuditChainTests : IDisposable
             Event = "WrittenBeforeKeyIdentityExisted",
             Outcome = AuditOutcome.Succeeded,
             ActorUserId = Guid.Parse("88888888-8888-4888-8888-888888888888"),
+            // EVERY FIELD DISTINCT AND NON-EMPTY, for the reason the sibling vector states: a swap
+            // of two EMPTY fields is invisible to a hash. This is now the only computation of the
+            // legacy rendering left in the suite, and that rendering is frozen forever, so it is
+            // also the only thing standing between a future edit to that arm and silent breakage of
+            // every historical row.
+            SubjectType = "LegacySubjectType",
+            SubjectId = Guid.Parse("99999999-9999-4999-8999-999999999999"),
+            TraceId = "legacy-trace-id",
+            Detail = "legacy-detail",
             RowHash = string.Empty,
         };
         _context.AuditEvents.Add(row);
@@ -271,12 +281,13 @@ public class AuditChainTests : IDisposable
           make this test agree with whatever that hasher does, including a broken legacy arm -- which
           is the one thing it exists to catch. This value came from an independent HMAC-SHA256 over
           the legacy payload rendered by hand:
-            v2|7777...7777|1|639081975670000000|WrittenBeforeKeyIdentityExisted|Succeeded|8888...8888|||||
+            v2|7777...7777|1|639081975670000000|WrittenBeforeKeyIdentityExisted|Succeeded|
+            8888...8888|LegacySubjectType|9999...9999|legacy-trace-id||legacy-detail
           the same technique ADR-0044 used to find the ISO-8601-versus-ticks defect.
         */
         row.PayloadVersion = "v2";
         row.KeyId = null;
-        row.RowHash = "ef26888dc4d7feb75d3ccf46097befc93f61dce7710c58491622d536e9ba1296";
+        row.RowHash = "115e82f19c2fcd4a87c9f10edde251b62ca0131af94cbfce25bf437d3e1f29db";
         await _context.SaveChangesAsync();
 
         var verification = await _chain.VerifyAsync(_context);
@@ -354,6 +365,49 @@ public class AuditChainTests : IDisposable
         verification.RecordedKeyId.Should().Be("ffffffffffffffff");
         verification.ConfiguredKeyId.Should().Be(
             AuditChain.DeriveKeyId(TestKey), "the verdict names both, so a caller never parses a sentence");
+    }
+
+    [Fact]
+    public async Task ATamperedRowAtSequence1_CarriesItsIdentityIntoTheOPERATORSVERDICT()
+    {
+        /*
+          THE SEAM TEST, AND IT EXISTS BECAUSE ITS ABSENCE ALREADY COST SOMETHING. Every other test
+          of the operator report BUILDS AuditChainVerification BY HAND, so the suite was green over a
+          branch that could never run: the walk returned HashMismatch without the three diagnostic
+          fields, they defaulted to null, and the arm that exonerates a confirmed key was dead code
+          while a runbook, a code comment and a test all asserted it worked.
+
+          So this one takes the verdict FROM THE PRODUCER and hands it to the consumer untouched.
+          The assertion that would have caught the defect is the PayloadVersion one: a hand-built
+          record cannot fail it, and the real one did.
+
+          FALSIFIED by dropping the last three arguments at the HashMismatch return in AuditChain --
+          this reddens on the PayloadVersion assertion, and again on the printed text.
+        */
+        var row = NewEvent("TamperedAtSequenceOne");
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        row.Detail = "altered after it was written";   // KeyId deliberately left alone
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.Kind.Should().Be(AuditChainBreakKind.HashMismatch);
+        verification.FirstBrokenSequence.Should().Be(1);
+        verification.PayloadVersion.Should().Be(
+            "v3", "the verdict has to carry what the row declared, or the tool cannot tell the "
+            + "operator which of two opposite things happened");
+        verification.RecordedKeyId.Should().Be(AuditChain.DeriveKeyId(TestKey));
+
+        var (exitCode, lines) = VerifyCommand.Report(verification, 1, 1);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+        text.Should().NotContain(
+            "Confirm the key before escalating",
+            "the row named the key this verification holds, so it was confirmed one check earlier");
+        text.Should().Contain("WRITE", "which makes this an escalation");
     }
 
     [Fact]

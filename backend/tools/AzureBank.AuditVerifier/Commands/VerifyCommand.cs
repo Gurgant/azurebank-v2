@@ -154,7 +154,11 @@ public static class VerifyCommand
             */
             if (result.Verified == 0 && result.Kind == AuditChainBreakKind.HashMismatch)
             {
-                if (result.FirstBrokenSequence == 1 && result.PayloadVersion != "v3")
+                // GATED ON THE RECORDED IDENTITY, not on a version string. A literal "v3" here
+                // would duplicate AuditChain.CurrentPayloadVersion across an assembly boundary with
+                // nothing tying the two together, and it would need updating on every future
+                // version. What decides the advice is whether the row named a key at all.
+                if (result.FirstBrokenSequence == 1 && result.RecordedKeyId is null)
                 {
                     lines.Add("  Breaking at sequence 1 usually means the wrong Audit:ChainKey, not");
                     lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch");
