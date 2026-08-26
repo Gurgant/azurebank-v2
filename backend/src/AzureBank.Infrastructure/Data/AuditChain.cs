@@ -103,6 +103,9 @@ public enum AuditChainBreakKind
 /// </param>
 /// <param name="RecordedKeyId">The key identity that row carried, or null if it carried none.</param>
 /// <param name="ConfiguredKeyId">The identity of the key THIS verification holds.</param>
+/// <param name="TailRowHash">
+/// The <c>RowHash</c> of the last row this walk verified, and null on every break.
+/// </param>
 /// <remarks>
 /// THE RANGE COMES FROM THE WALK ITSELF, and it is here rather than left to the caller because the
 /// caller cannot get it right. Asking the database separately for MIN and MAX is two more statements
@@ -125,7 +128,8 @@ public readonly record struct AuditChainVerification(
     AuditChainBreakKind Kind = AuditChainBreakKind.None,
     string? PayloadVersion = null,
     string? RecordedKeyId = null,
-    string? ConfiguredKeyId = null)
+    string? ConfiguredKeyId = null,
+    string? TailRowHash = null)
 {
     /// <summary>True when every row read hashed and linked correctly.</summary>
     public bool IsIntact => FirstBrokenSequence is null;
@@ -775,7 +779,18 @@ public sealed class AuditChain : IAuditChain
             verified++;
         }
 
-        return new AuditChainVerification(verified, null, null, lowest, highest);
+        /*
+          THE TAIL HASH COMES FROM THE WALK, and this is the only place it can honestly come from.
+          Asking the database for it separately would be a SECOND instant: a row committed between
+          the walk and that read makes the count and the hash describe two different tables, which is
+          how a state that never existed gets anchored. `previous` already holds the last verified
+          row's hash, so this costs nothing and is taken from the same read as the count and range.
+
+          Null on every break above, deliberately: the hash of a tail this walk did not certify must
+          never be anchorable.
+        */
+        return new AuditChainVerification(
+            verified, null, null, lowest, highest, TailRowHash: previous);
     }
 
     /// <summary>

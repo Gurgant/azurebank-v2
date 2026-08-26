@@ -26,6 +26,7 @@ env:
   STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
   # ADR-0044. ValidateOnStart like the three above, so an unset value is a startup crash.
   AUDIT_CHAIN_KEY: "ci-only-throwaway-audit-chain-key-0123456789abcdef"
+  AUDIT_ANCHOR_KEY: "ci-only-throwaway-audit-anchor-key-fedcba9876543210"
   # PIN-hash pepper (ADR-0011). The Seeder and the API MUST share this value,
   # otherwise seeded demo PINs cannot be verified.
   PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"
@@ -84,6 +85,7 @@ jobs:
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
           StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
           Audit__ChainKey: ${{ env.AUDIT_CHAIN_KEY }}
+          Audit__AnchorKey: ${{ env.AUDIT_ANCHOR_KEY }}
           Security__PinPepper: ${{ env.PIN_PEPPER }}
           ASPNETCORE_ENVIRONMENT: Development
         run: |
@@ -159,6 +161,7 @@ jobs:
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
           StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
           Audit__ChainKey: ${{ env.AUDIT_CHAIN_KEY }}
+          Audit__AnchorKey: ${{ env.AUDIT_ANCHOR_KEY }}
           Security__PinPepper: ${{ env.PIN_PEPPER }}
           ASPNETCORE_ENVIRONMENT: Development
         run: |

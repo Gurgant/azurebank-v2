@@ -251,6 +251,23 @@ outside the system, which is SQL Server's ledger, deferred rather than rejected.
 honest claim is narrow: **this chain detects tampering by someone who holds the database but not the
 key, except at the end of the table.**
 
+**An anchor record now exists, and it does NOT close that end.** Running the verifier's `anchor`
+mode walks the chain once and records what it found — how far it reached, how many rows it held, and
+the tail's hash — chained to the record before it and authenticated under `Audit:AnchorKey`, a sixth
+secret the row chain does not use. ⚠️ **It detects no truncation.** Truncate the rows above some
+sequence, delete every record covering past it, and both chains verify perfectly, because each links
+backwards only; `ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit` asserts
+exactly that. What the record buys is narrower and real: DELETING records is loud, because the
+counter gaps and the links stop meeting, while MINTING one needs the key. **The evidence is the pair
+`(anchor number, covered-through sequence)` an operator wrote down somewhere this machine cannot
+reach** — the counter alone can be regrown by re-running the command, and the sequence cannot be
+regrown downward.
+
+**And it does not constrain the operator**, who holds the key and can write honest-looking records
+over a truncated table. An external timestamp is what would change that, and it is not built.
+**An anchor certifies EXISTENCE AT A TIME, never AUTHENTICITY:** it can only strengthen the standing
+of whatever was in the table when it fired, including a forged row appended before it.
+
 **Why that end is still open, written down rather than left to be inferred:**
 `docs/deferred/anchoring-the-audit-trail.md`. The short version is that an anchor is only as good as
 its freshness, freshness needs something running unattended, and nothing runs unattended here — so

@@ -50,6 +50,13 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     public DbSet<StepUpAuthorization> StepUpAuthorizations => Set<StepUpAuthorization>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
+    /// <summary>
+    /// What the audit chain looked like each time somebody ran the verifier. Insert-only: nothing
+    /// updates a record after it is written, which is what makes "any UPDATE here is tampering" a
+    /// rule rather than a hope.
+    /// </summary>
+    public DbSet<AuditAnchor> AuditAnchors => Set<AuditAnchor>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -207,6 +214,26 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
         {
             throw new InvalidOperationException(
                 "Transactions are immutable. Financial records cannot be modified or deleted.");
+        }
+
+        /*
+          ANCHORS ARE INSERT-ONLY, WITH NO WRITE-ONCE EXCEPTION. Transactions get one above, for a
+          circular foreign key no provider can order; nothing forces the equivalent here, and
+          refusing every update is what lets the design say "any UPDATE against AuditAnchors is
+          tampering" without a caveat. It is also why the timestamp token that will bind an anchor to
+          an instant arrives in its own table rather than filling a reserved column: a nullable slot
+          somebody later populates is a legitimate-looking UPDATE path on an append-only table.
+
+          ⚠️ STATED LIMIT: this defends against our own future code, never against the adversary. The
+          attacker this table exists for uses raw SQL and never passes through the change tracker.
+        */
+        if (ChangeTracker.Entries<AuditAnchor>()
+            .Any(e => e.State is EntityState.Deleted or EntityState.Modified))
+        {
+            throw new InvalidOperationException(
+                "Audit anchors are insert-only. A record says what the chain looked like at an "
+                + "instant, so changing one after the fact is not an update -- it is a different "
+                + "claim about a moment that has passed.");
         }
     }
 
