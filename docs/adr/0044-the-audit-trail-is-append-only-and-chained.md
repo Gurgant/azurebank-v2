@@ -303,15 +303,17 @@ out — Azurite is rejected with error 12136 over both http and https, measured 
 inferred, after two research agents contradicted each other on the point.
 
 **A second withdrawn argument, in the same section, and this one is why the paragraph above is now
-three paragraphs.** Until this amendment that paragraph said both gaps close "the same way — a digest
-anchored outside the system, which is SQL Server's ledger". It conflated the ledger's two halves. The
-DIGEST half is an anchor, and it needs exactly what a timestamp token needs: a copy held somewhere
-the operator cannot revise, refreshed on a schedule. The ENFORCEMENT half needs neither, and is the
-one that answers an attacker holding a connection. The sentence was written while the digest still
-looked like a local answer to the anchor problem; measuring that is what removed it, and what
-survives — `sp_generate_database_ledger_digest`, one JSON row, no destination — has nowhere of its
-own to go. Naming one control where there are two is what made the sentence read as settled, and it
-outlived two rewrites of the paragraph it sat in.
+three paragraphs.** The sentence that stood there said: *"Both gaps close the same way — a digest
+anchored outside the system, which is SQL Server's ledger, deferred rather than rejected."* It is
+left quoted rather than deleted, for the reason the retention correction below gives in the same
+words: a record of what a decision used to rest on is the point of this file. It conflated the
+ledger's two halves. The DIGEST half is an anchor, and it needs exactly what a timestamp token
+needs: a copy held somewhere the operator cannot revise, refreshed on a schedule. The ENFORCEMENT
+half needs neither, and is the one that answers an attacker holding a connection. The sentence was
+written while the digest still looked like a local answer to the anchor problem; measuring that is
+what removed it, and what survives — `sp_generate_database_ledger_digest`, one JSON row, no
+destination — has nowhere of its own to go. Naming one control where there are two is what made the
+sentence read as settled, and it outlived two rewrites of the paragraph it sat in.
 
 ### D3 — the chain is applied in the `SaveChanges` funnel
 

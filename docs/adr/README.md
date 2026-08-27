@@ -108,6 +108,21 @@ at that level** (the endpoint is still `[Authorize]`; what is missing is the ste
 ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consume, and is filed
 as a correction rather than a new policy: the decisions were already made, the document simply
 did not say them.
+
+TWO KINDS OF CHANGE ARE IN PLAY ABOVE AND THEY ARE HANDLED DIFFERENTLY, written down because the
+difference has now been re-argued on review and the supersession rule reads as covering both. **A
+decision that was RIGHT when it was made and was later changed keeps its wording and gains a
+pointer** — that is the rule stated above, and every example in it is one record changing another.
+**A statement that was never TRUE is replaced where it stands, and the superseded wording is quoted
+verbatim in a dated correction** — because leaving a falsehood in the position a reader meets first,
+with the retraction further down, is exactly how a withdrawn claim goes on being repeated, which is
+a failure ADR-0044 exists partly to record. That record has done it twice, removing the paragraph
+from its place and quoting it in full: the retention argument (**CORRECTED 2026-08-20**) and the
+tripwire promise (**Corrected 2026-08-25**). It gives its own reason in the first of them — *"It is
+left quoted rather than deleted, because a record of what a decision used to rest on is the point of
+this file."* Nothing is lost under either rule; what differs is which version the reader meets
+first, and a wrong FACT should not be it.
+
 The next free number is **0045**.
 
 <details>
