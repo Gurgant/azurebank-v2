@@ -173,30 +173,36 @@ public static class ExportCommand
           exits 4, measured, so the same mistake gets the same number whether the path is missing or
           empty.
 
-          ⚠️ Path.GetFullPath RATHER THAN IsNullOrWhiteSpace ALONE, and the difference is a shape the
-          first version missed. An embedded NUL is invalid on every platform, and
-          IsNullOrWhiteSpace returns FALSE for it -- so "a b.jsonl" walked past the guard, read the
-          chain, and hit the same ArgumentException in FileStream that this whole check exists to
-          stop. Measured: GetFullPath throws ArgumentException for empty, for whitespace AND for the
-          NUL, and succeeds for everything a filesystem will actually consider. One call classifies
-          the malformed-path class instead of enumerating members of it, which is what a check
-          written from a list of examples always ends up doing.
+          ⚠️ PURE STRING LOGIC, AND THE TWO EARLIER VERSIONS OF THIS CHECK BOTH FAILED ON A
+          PLATFORM I DID NOT RUN. The first used string.IsNullOrWhiteSpace, which returns FALSE for
+          an embedded NUL -- so "a\0b.jsonl" walked past it, read the chain, and hit the
+          ArgumentException this check exists to stop. The second replaced it with Path.GetFullPath,
+          measured on Windows to throw for empty, whitespace AND the NUL. CI on ubuntu-latest
+          disagreed twice: `export "   "` SUCCEEDED there and wrote a file named three spaces.
+          Confirmed outside .NET as well -- `touch "   "` on Ubuntu creates the file; `ls -b` shows
+          it. Whitespace is a legal filename on Linux, so GetFullPath classifies differently
+          depending on where the tool runs.
 
-          The try is around this ONE call, deliberately. A catch wide enough to cover the whole
-          operation would swallow real defects to improve one message.
+          So this rejects exactly the shapes that are a MISTAKE EVERYWHERE, using logic that cannot
+          vary: a path that is empty or blank, and a path containing a NUL. Nobody means to name an
+          audit copy three spaces, and an operator who typed that fumbled their quoting -- refusing
+          it identically on every platform is worth more to an operator tool than honouring an
+          exotic but legal filename. NUL is invalid on every filesystem there is.
+
+          Everything else is left to the filesystem to judge, which is the part the previous version
+          got wrong by trying to pre-empt. A path the platform rejects for its own reasons lands in
+          the write-failure branches below and reports exit 6 with the exception named, and
+          NoBadPathIsEVERReportedAsAStoreFailure pins the only answer that would be wrong: 3, the
+          code the runbook says to wire an alert on.
         */
-        try
-        {
-            _ = Path.GetFullPath(path);
-        }
-        catch (Exception failure) when (failure is ArgumentException or NotSupportedException)
+        if (string.IsNullOrWhiteSpace(path) || path.Contains('\0'))
         {
             return (VerifyCommand.UsageError, new[]
             {
                 "NOT EXPORTED: that is not a usable path.",
-                "  `export` needs somewhere to write the copy, and this argument cannot name a file",
-                $"  on this system -- {failure.GetType().Name}: {failure.Message}",
-                "  Nothing was read and nothing was written. Name a file that does not exist yet:",
+                "  `export` needs somewhere to write the copy, and a blank argument or one carrying",
+                "  a NUL character cannot name a file. Nothing was read and nothing was written.",
+                "  Name a file that does not exist yet:",
                 "    export ./anchors-2026-08-27.jsonl",
             });
         }

@@ -420,28 +420,35 @@ public class ExportCommandTests : IDisposable
           operator is never sent to check the DATABASE. Exit 3 is the one answer none of these may
           give, because 3 is the code the runbook tells you to wire an alert on.
 
-          ⚠️ AND THE FIRST VERSION OF THIS LIST WAS MEASURED ON ONE PLATFORM AND WRITTEN AS A
-          UNIVERSAL PROPERTY. It carried "a<b>c.jsonl" as an invalid character, measured on Windows
-          throwing IOException. CI on ubuntu-latest disagreed: angle brackets are an ordinary
-          filename there, so the export SUCCEEDED and the assertion read "expected one of {4, 6},
-          but found 0". Path.GetInvalidFileNameChars() returns 41 entries on Windows and 2 on Linux,
-          so "an invalid character" is not a portable idea and does not belong in a property test.
+          ⚠️ THIS LIST WAS WRONG TWICE, BOTH TIMES BY MEASURING ON WINDOWS AND WRITING THE RESULT
+          AS A UNIVERSAL PROPERTY, and both times CI on ubuntu-latest was what said so.
 
-          An embedded NUL replaces it, and it is the better shape anyway: invalid on every platform,
-          and the one this guard originally MISSED -- string.IsNullOrWhiteSpace returns FALSE for
-          "a\0b.jsonl", so it walked past the check, read the chain, and hit the same
-          ArgumentException the check exists to stop. Path.GetFullPath throws for all three
-          malformed shapes and for nothing else, which is why the guard now calls it instead of
-          enumerating examples.
+          First it carried "a<b>c.jsonl" as an invalid character, measured on Windows throwing
+          IOException. Angle brackets are an ordinary filename on Linux: the export SUCCEEDED and the
+          assertion read "expected one of {4, 6}, but found 0". Path.GetInvalidFileNameChars()
+          returns 41 entries on Windows and 2 on Linux, so "an invalid character" is not a portable
+          idea at all.
 
-          The three remaining shapes are portable by construction: a malformed path is rejected
-          before any filesystem call, a missing parent raises DirectoryNotFoundException (an
-          IOException) everywhere, and a directory raises either that or UnauthorizedAccessException
-          -- both already handled.
+          Then the guard moved to Path.GetFullPath, measured on Windows to reject empty, whitespace
+          AND an embedded NUL. Same failure one layer down: `export "   "` succeeded on Linux and
+          wrote a file named three spaces. Confirmed outside .NET too -- `touch "   "` on Ubuntu
+          creates it, `ls -b` shows it. That run also exposed a second defect in this file: a
+          whitespace path is RELATIVE, so it resolved against the shared process working directory
+          rather than the per-test one, and the file this test created made the sibling test see
+          "already exists" instead of a usage error.
+
+          So the guard is pure string logic now -- empty, blank, or containing a NUL -- which cannot
+          vary by platform because it never asks the platform anything. Everything else is left to
+          the filesystem to judge and lands in the write-failure branches at exit 6.
+
+          Every shape below is portable by construction: the first three are rejected before any
+          filesystem call, a missing parent raises DirectoryNotFoundException (an IOException)
+          everywhere, and a directory raises that or UnauthorizedAccessException -- both handled. No
+          relative path reaches the filesystem any more, which is what makes the tests independent.
 
           FALSIFIED two ways: removing any single write-failure catch drops that shape to the
-          catch-all and reddens here with 3, and replacing Path.GetFullPath with the old
-          IsNullOrWhiteSpace lets the NUL shape through to the same 3.
+          catch-all and reddens here with 3, and dropping either half of the guard lets its shape
+          through -- IsNullOrWhiteSpace alone misses the NUL, Contains('\0') alone misses the blank.
         */
         await WriteRowsAsync(2);
         await AnchorAsync();
