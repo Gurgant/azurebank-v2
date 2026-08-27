@@ -408,7 +408,7 @@ public class ExportCommandTests : IDisposable
                 VerifyCommand.UsageError,
                 "an empty path is a wrong command line, not an unreadable database");
             exitCode.Should().NotBe(VerifyCommand.Misconfigured);
-            string.Join(" ", lines).Should().Contain("no path was given");
+            string.Join(" ", lines).Should().Contain("not a usable path");
         }
     }
 
@@ -416,20 +416,32 @@ public class ExportCommandTests : IDisposable
     public async Task NoBadPathIsEVERReportedAsAStoreFailure()
     {
         /*
-          THE CLASS, NOT THE ONE INPUT THE REVIEW NAMED. Five bad-path shapes were measured and they
-          produce FOUR different exceptions from FileStream, with File.Exists returning false for
-          every one: empty and whitespace throw ArgumentException, a directory throws
-          UnauthorizedAccessException, a missing parent throws DirectoryNotFoundException (which IS
-          an IOException), an invalid character throws IOException. Only the first two were broken,
-          and fixing only those would leave the next shape one refactor away from the same wrong
-          sentence.
+          THE CLASS, NOT THE ONE INPUT THE REVIEW NAMED. Whatever is wrong with the PATH, the
+          operator is never sent to check the DATABASE. Exit 3 is the one answer none of these may
+          give, because 3 is the code the runbook tells you to wire an alert on.
 
-          So the assertion is the property rather than the codes: whatever is wrong with the PATH,
-          the operator is never sent to check the DATABASE. Exit 3 is the one answer none of these
-          may give, because 3 is the code the runbook tells you to wire an alert on.
+          ⚠️ AND THE FIRST VERSION OF THIS LIST WAS MEASURED ON ONE PLATFORM AND WRITTEN AS A
+          UNIVERSAL PROPERTY. It carried "a<b>c.jsonl" as an invalid character, measured on Windows
+          throwing IOException. CI on ubuntu-latest disagreed: angle brackets are an ordinary
+          filename there, so the export SUCCEEDED and the assertion read "expected one of {4, 6},
+          but found 0". Path.GetInvalidFileNameChars() returns 41 entries on Windows and 2 on Linux,
+          so "an invalid character" is not a portable idea and does not belong in a property test.
 
-          FALSIFIED by removing any one of the three write-failure catches: that shape falls to the
-          catch-all and reddens here with 3.
+          An embedded NUL replaces it, and it is the better shape anyway: invalid on every platform,
+          and the one this guard originally MISSED -- string.IsNullOrWhiteSpace returns FALSE for
+          "a\0b.jsonl", so it walked past the check, read the chain, and hit the same
+          ArgumentException the check exists to stop. Path.GetFullPath throws for all three
+          malformed shapes and for nothing else, which is why the guard now calls it instead of
+          enumerating examples.
+
+          The three remaining shapes are portable by construction: a malformed path is rejected
+          before any filesystem call, a missing parent raises DirectoryNotFoundException (an
+          IOException) everywhere, and a directory raises either that or UnauthorizedAccessException
+          -- both already handled.
+
+          FALSIFIED two ways: removing any single write-failure catch drops that shape to the
+          catch-all and reddens here with 3, and replacing Path.GetFullPath with the old
+          IsNullOrWhiteSpace lets the NUL shape through to the same 3.
         */
         await WriteRowsAsync(2);
         await AnchorAsync();
@@ -438,9 +450,9 @@ public class ExportCommandTests : IDisposable
         {
             ("empty", string.Empty),
             ("whitespace", "   "),
+            ("an embedded NUL", Path.Combine(_directory, "a\0b.jsonl")),
             ("a directory", _directory),
             ("a missing parent", Path.Combine(_directory, "no-such-dir", "f.jsonl")),
-            ("an invalid character", Path.Combine(_directory, "a<b>c.jsonl")),
         };
 
         foreach (var (name, path) in shapes)

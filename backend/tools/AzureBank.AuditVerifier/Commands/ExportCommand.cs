@@ -172,13 +172,30 @@ public static class ExportCommand
           this is. It also matches what the parser already does: `export` with no argument at all
           exits 4, measured, so the same mistake gets the same number whether the path is missing or
           empty.
+
+          ⚠️ Path.GetFullPath RATHER THAN IsNullOrWhiteSpace ALONE, and the difference is a shape the
+          first version missed. An embedded NUL is invalid on every platform, and
+          IsNullOrWhiteSpace returns FALSE for it -- so "a b.jsonl" walked past the guard, read the
+          chain, and hit the same ArgumentException in FileStream that this whole check exists to
+          stop. Measured: GetFullPath throws ArgumentException for empty, for whitespace AND for the
+          NUL, and succeeds for everything a filesystem will actually consider. One call classifies
+          the malformed-path class instead of enumerating members of it, which is what a check
+          written from a list of examples always ends up doing.
+
+          The try is around this ONE call, deliberately. A catch wide enough to cover the whole
+          operation would swallow real defects to improve one message.
         */
-        if (string.IsNullOrWhiteSpace(path))
+        try
+        {
+            _ = Path.GetFullPath(path);
+        }
+        catch (Exception failure) when (failure is ArgumentException or NotSupportedException)
         {
             return (VerifyCommand.UsageError, new[]
             {
-                "NOT EXPORTED: no path was given.",
-                "  `export` needs somewhere to write the copy, and an empty argument is not it.",
+                "NOT EXPORTED: that is not a usable path.",
+                "  `export` needs somewhere to write the copy, and this argument cannot name a file",
+                $"  on this system -- {failure.GetType().Name}: {failure.Message}",
                 "  Nothing was read and nothing was written. Name a file that does not exist yet:",
                 "    export ./anchors-2026-08-27.jsonl",
             });
