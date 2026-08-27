@@ -499,8 +499,15 @@ public class AuditChainTests : IDisposable
           intact. Nothing in the chain records how many rows there should have been.
 
           So a hash chain proves rows were not ALTERED or REMOVED FROM THE MIDDLE. It does not prove
-          none were removed from the end. That needs an external witness — an anchored TAIL, a
-          counter someone else keeps — which this system does not have yet.
+          none were removed from the end. That needs an EXTERNAL witness: a count somebody else
+          keeps.
+
+          ⚠️ AN ANCHORED TAIL IS NOT THAT BY ITSELF, and this comment used to list the two as one
+          thing, then say the system had neither. AuditAnchors has since shipped, and it lives in the
+          same database as the rows it counts — remove a suffix from both chains and each verifies
+          perfectly, because each links backwards only. What is still missing is the SOMEBODY ELSE,
+          and two deferred controls supply it at different layers: engine enforcement of the write,
+          and time issued from outside. ADR-0044 carries both and why neither replaces the other.
 
           This test exists because the runbook claimed the stronger property in writing. It is
           deliberately asserting the UNCOMFORTABLE direction.
@@ -510,7 +517,8 @@ public class AuditChainTests : IDisposable
           Wrong twice. The word is TAIL: `head` is sequence 1, the row truncation spares. And this
           asserts on what AuditChain.VerifyAsync returns, while an anchor check needs a token store
           and a pinned trust root, so it lands in AzureBank.AuditVerifier instead — the tail gets
-          anchored and this stays green.
+          anchored and this stays green. ✅ It did, and it does: migration 20260826135621
+          AddAuditAnchors landed and this test never moved.
 
           ⚠️ DO NOT DELETE IT THEN — the easier mistake to make from here. Green is the CORRECT
           answer at this layer: the chain alone cannot see a truncated
@@ -519,10 +527,15 @@ public class AuditChainTests : IDisposable
           SCOPE, not existence — "IsNotDetected" is a claim about the SYSTEM, and after anchoring the
           system detects it one layer up FOR ROWS A TRUSTED ANCHOR COVERS. Not for the rest:
           truncation of rows written since the last anchor is exactly as invisible as it is today,
-          which is why the interval is the guarantee. Rescope this to the chain, add a test at the
-          AzureBank.AuditVerifier layer for what the anchor catches, and move ADR-0044,
-          docs/runbooks/audit-chain-unavailable.md and docs/deferred/anchoring-the-audit-trail.md
-          with it. Nothing announces the day.
+          which is why the interval is the guarantee. Note the condition: no anchor here is TRUSTED
+          yet, so that sentence is still about a system this one is not.
+
+          ✅ THE DAY CAME AND NOTHING ANNOUNCED IT — which is precisely what that line was warning
+          about, so it is answered here rather than deleted. The verifier-layer tests exist
+          (AnchorCommandTests, AuditAnchorSqlServerTests), and ADR-0044 and
+          docs/deferred/anchoring-the-audit-trail.md both record that an anchor record now exists and
+          does NOT close the end. docs/runbooks/audit-chain-unavailable.md still says nothing about
+          it, and is the one item left on this list.
         */
         await WriteAsync("First", "Second", "Third");
 
