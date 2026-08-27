@@ -74,10 +74,17 @@ publication, and publication needs a schedule, which brings us back to the first
 ## What would make it worth building
 
 **The trigger is not Azure. It is anything that runs when nobody is here.** A €4/month VPS, AWS, GCP
-or a scheduled GitHub Actions workflow all satisfy it, and naming one vendor would make this read as
-a decision about a vendor rather than about a missing property. What is missing is a process alive
-between sessions that can fetch a timestamp on a cadence and publish it — and whatever supplies that
-changes both reasons below at once, which is why they are recorded together.
+or a scheduled GitHub Actions workflow all satisfy that trigger, and naming one vendor would make
+this read as a decision about a vendor rather than about a missing property. What is missing is a
+process alive between sessions that can fetch a timestamp on a cadence and publish it — and whatever
+supplies that changes both reasons below at once, which is why they are recorded together.
+
+⚠️ **Satisfying the trigger reconsiders this on its merits; it does not supply the control** — the
+same distinction ADR-0024 draws about its own re-open trigger, where the arrival of a contended
+resource reopens the decision rather than settling it. None of those platforms gives the anchoring
+job, the pinned trust root, or a published copy this deployment cannot revise. They give it
+somewhere to run, which is the one thing missing today and the reason the rest of this section is
+worth pricing rather than assuming.
 
 Azure is worked through here rather than the others because it is the deployment this project would
 actually reach for, and because pricing an example is what keeps "it would be cheap" from staying an
