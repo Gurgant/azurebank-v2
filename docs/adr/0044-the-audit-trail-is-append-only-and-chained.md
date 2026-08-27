@@ -97,6 +97,14 @@ it outright, which is the wrong thing to do to an ADR: it left the file describi
 though it had never been outstanding, and it discarded the Vault hang — the failure mode that
 motivated the bound in the first place.)
 
+**What that parenthetical does and does not forbid, added 2026-08-27 because a review read it as a
+general prohibition.** It is about a paragraph that was never WRONG — a record of what was decided,
+whose obligations were later discharged differently — and about a replacement that DISCARDED rather
+than quoted. Both halves matter. A statement of fact that was never true is corrected where it
+stands, with the old wording quoted in a dated note; this record does that twice below, at
+`Corrected 2026-08-25` and `CORRECTED 2026-08-20`, and the second says why in its own words.
+`docs/adr/README.md` now carries the distinction so it is not inferred from this sentence alone.
+
 **The cost was measured first, and it is larger than "the movement fails".** The chain's tail is
 read under `UPDLOCK, HOLDLOCK`, so the lock is global to `AuditEvents` and every audited save queues
 on it.

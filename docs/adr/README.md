@@ -109,19 +109,23 @@ ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consum
 as a correction rather than a new policy: the decisions were already made, the document simply
 did not say them.
 
-TWO KINDS OF CHANGE ARE IN PLAY ABOVE AND THEY ARE HANDLED DIFFERENTLY, written down because the
-difference has now been re-argued on review and the supersession rule reads as covering both. **A
-decision that was RIGHT when it was made and was later changed keeps its wording and gains a
-pointer** — that is the rule stated above, and every example in it is one record changing another.
-**A statement that was never TRUE is replaced where it stands, and the superseded wording is quoted
-verbatim in a dated correction** — because leaving a falsehood in the position a reader meets first,
-with the retraction further down, is exactly how a withdrawn claim goes on being repeated, which is
-a failure ADR-0044 exists partly to record. That record has done it twice, removing the paragraph
-from its place and quoting it in full: the retention argument (**CORRECTED 2026-08-20**) and the
-tripwire promise (**Corrected 2026-08-25**). It gives its own reason in the first of them — *"It is
-left quoted rather than deleted, because a record of what a decision used to rest on is the point of
-this file."* Nothing is lost under either rule; what differs is which version the reader meets
-first, and a wrong FACT should not be it.
+TWO KINDS OF CHANGE ARE IN PLAY ABOVE AND THEY ARE HANDLED DIFFERENTLY. The distinction is written
+down here because it had never been stated, both patterns are in the corpus, and a review has now
+read the supersession rule as covering corrections too. **A DECISION — something that was right when
+it was made — keeps its wording and gains a note.** That is the rule above, it is why ADR-0044's
+`UPDATED 2026-08-20` says its superseded paragraph "stands as written because it is the record of
+what was decided and why", and it is why ADR-0008's Level 2 row was annotated rather than split:
+that table is the January decision. **A STATEMENT OF FACT that was never true is corrected where it
+stands, and the superseded wording is quoted verbatim in a dated note.** ADR-0044 has done this
+twice, removing the paragraph from its place and quoting it back: the retention argument
+(**CORRECTED 2026-08-20**) and the tripwire promise (**Corrected 2026-08-25**). The first gives the
+reason — *"It is left quoted rather than deleted, because a record of what a decision used to rest
+on is the point of this file."* The same PR that annotated ADR-0008's table did both things at once:
+the decision row stood, while three over-broad absolutes were tightened in place and a quotation
+that had dropped a conjunct was simply fixed, "which is not acceptable in something presented as
+verbatim". Nothing is lost under either rule. What differs is which version a reader meets FIRST,
+and a wrong fact should not be it — leaving one in reading position with the retraction further down
+is exactly how the runbook went on repeating a claim ADR-0044 had already withdrawn.
 
 The next free number is **0045**.
 
