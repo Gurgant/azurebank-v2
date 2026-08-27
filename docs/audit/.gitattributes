@@ -1,0 +1,12 @@
+# The exported copy must be byte-identical wherever it was produced, because comparing copies is the
+# whole job of the format: one record per line, so a later export differs from an earlier one by
+# whole LINES. This clone has core.autocrlf=true and the repository has no root .gitattributes, so
+# without this line git would check the sample out as CRLF on Windows and leave it LF in CI -- a
+# difference on every line, for a reason that has nothing to do with the audit trail, in the one file
+# whose only signal is which lines differ.
+#
+# ExportedSampleTests.The_committed_bytes_are_what_the_tool_writes_on_any_platform asserts the
+# absence of CR, so without this the guard would go red on a fresh Windows clone and red for a reason
+# no reader could act on. Scoped to this directory deliberately: a root .gitattributes would
+# renormalise the whole repository in one commit.
+*.jsonl text eol=lf

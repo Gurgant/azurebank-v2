@@ -295,6 +295,22 @@ counter gaps and the links stop meeting, while MINTING one needs the key. **The 
 reach** — the counter alone can be regrown by re-running the command, and the sequence cannot be
 regrown downward.
 
+**And it no longer rests on somebody copying two numbers correctly.** `export <path>` writes every
+anchor record to a file outside the database, one JSON object per line, and refuses to overwrite an
+existing copy — overwriting the earlier one with the current state is the exact move a copy exists to
+make visible, so this verb is never able to do it. The format is the comparison: a later export
+differs from an earlier one by whole lines, so `diff` compares two of them and `git diff` compares
+published ones. `docs/audit/anchors.sample.jsonl` is a committed sample, and `docs/audit/README.md`
+says what it does and does not show.
+
+⚠️ **The export does not close the end of the table either, and the reason is the same one.** A file
+this machine wrote to this machine's disk has been seen by nobody, and the property an anchor buys is
+scoped to what a third party HAS seen — so the write is where the control begins rather than where it
+finishes, and the operator still supplies the elsewhere. It is a verb somebody types, which makes it
+a demonstration rather than a constraint. It adds no exit code: 0 the copy was produced, 1 produced
+over a chain that did not verify, 2 nothing to export, 3 the store could not be read, 6 a verdict and
+no file came of it.
+
 **And it does not constrain the operator**, who holds the key and can write honest-looking records
 over a truncated table. An external timestamp — the ANCHOR half of the pair corrected above, not a
 second answer to the same question — is what would change that, and it is not built.
