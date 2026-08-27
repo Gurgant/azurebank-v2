@@ -39,6 +39,7 @@ public class ExportCommandTests : IDisposable
     private readonly ServiceProvider _services;
     private readonly AzureBankDbContext _context;
     private readonly string _directory;
+    private readonly string _store = Guid.NewGuid().ToString();
 
     public ExportCommandTests()
     {
@@ -47,7 +48,7 @@ public class ExportCommandTests : IDisposable
 
         _context = new AzureBankDbContext(
             new DbContextOptionsBuilder<AzureBankDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .UseInMemoryDatabase(_store)
                 .Options,
             timeProvider: null,
             auditChain: chain);
@@ -273,6 +274,86 @@ public class ExportCommandTests : IDisposable
         exitCode.Should().Be(VerifyCommand.Misconfigured);
         string.Join(" ", lines).Should().Contain("NO VERDICT");
         File.Exists(path).Should().BeFalse("nothing is read, so nothing is written");
+    }
+
+
+    /// <summary>
+    /// A second provider over the SAME in-memory store, because EF does not support concurrent use
+    /// of one DbContext and the concurrency under test is on the FILE rather than on the database.
+    /// </summary>
+    private ServiceProvider Sibling()
+    {
+        var options = Options.Create(new AuditOptions { ChainKey = ChainKey, AnchorKey = AnchorKey });
+        var chain = new AuditChain(options, NullLogger<AuditChain>.Instance);
+        var collection = new ServiceCollection();
+        collection.AddSingleton<IOptions<AuditOptions>>(options);
+        collection.AddSingleton<IAuditChain>(chain);
+        collection.AddSingleton<IAuditAnchorChain>(new AuditAnchorChain(options));
+        collection.AddSingleton(new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_store).Options,
+            timeProvider: null,
+            auditChain: chain));
+        return collection.BuildServiceProvider();
+    }
+
+    [Fact]
+    public async Task ConcurrentExportsToOnePath_ProduceExactlyONEFile_AndNoneIsTruncated()
+    {
+        /*
+          THE PRE-CHECK HAS A WINDOW AND THE WRITE IS WHAT CLOSES IT. File.Exists returning false
+          says nothing about the moment of the write, and File.WriteAllTextAsync opens with
+          FileMode.Create, which TRUNCATES -- measured: a 29-byte file written over with 2 bytes is
+          2 bytes afterwards. So two runs aimed at one path could both pass the check and the second
+          could destroy the first, which is the exact thing this verb must never be able to do.
+          FileMode.CreateNew makes that the operating system's decision instead.
+
+          ⚠️ WHAT THIS TEST PROVES AND WHAT IT DOES NOT, with the numbers rather than a claim. The
+          INVARIANT -- exactly one writer, and the surviving file is a whole export rather than a
+          fragment -- is asserted deterministically. Whether the eight runs actually interleave is
+          NOT controlled, so the regression is caught probabilistically.
+
+          FALSIFIED, and measured twice because the first run is what corrected this paragraph.
+          With FileMode.Create restored and the pre-check removed, run in isolation it reddens at
+          "expected 1, found 3" -- and in the same mutation across the WHOLE suite it passed, because
+          nothing forced those eight to overlap. So a green here is weaker evidence than a red one,
+          and an earlier draft of this comment claiming "every run then reports success" was wrong on
+          both counts: not every run, and not every execution.
+        */
+        await WriteRowsAsync(4);
+        await AnchorAsync();
+        await WriteRowsAsync(3);
+        await AnchorAsync();
+
+        var path = Path_("contended.jsonl");
+        var siblings = Enumerable.Range(0, 8).Select(_ => Sibling()).ToArray();
+
+        try
+        {
+            var results = await Task.WhenAll(siblings.Select(s =>
+                ExportCommand.RunAsync(s, path, CancellationToken.None)));
+
+            results.Count(r => r.ExitCode == VerifyCommand.Intact).Should().Be(
+                1, "exactly one run may create the path; the rest must refuse rather than overwrite");
+            results.Where(r => r.ExitCode != VerifyCommand.Intact)
+                .Should().OnlyContain(r => r.ExitCode == AnchorCommand.NotRecorded,
+                    "a refusal is 'there was a verdict and no file came of it', never a chain verdict");
+
+            var records = (await File.ReadAllTextAsync(path))
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            records.Should().HaveCount(2, "the surviving file is a whole export, not a fragment");
+            foreach (var record in records)
+            {
+                JsonDocument.Parse(record).RootElement.GetProperty("payloadHash").GetString()
+                    .Should().NotBeNullOrWhiteSpace();
+            }
+        }
+        finally
+        {
+            foreach (var sibling in siblings)
+            {
+                sibling.Dispose();
+            }
+        }
     }
 
     [Fact]

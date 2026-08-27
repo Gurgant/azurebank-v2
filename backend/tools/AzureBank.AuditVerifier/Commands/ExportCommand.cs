@@ -182,14 +182,22 @@ public static class ExportCommand
         try
         {
             /*
-              REFUSED BEFORE ANYTHING IS READ, AND THIS IS THE ONE GUARD WORTH THE MOST HERE.
-              Overwriting an existing copy with the current state is precisely the move the copy
-              exists to detect: truncate the table, re-export over yesterday's file, and the evidence
-              that anything was ever different is gone -- destroyed by the tool that produced it, in
-              one command, with no warning. So an existing path is refused outright and the operator
-              names a new one; keeping both files is what makes `diff` the comparison.
+              REFUSED BEFORE ANYTHING IS READ. Overwriting an existing copy with the current state
+              is precisely the move the copy exists to detect: truncate the table, re-export over
+              yesterday's file, and the evidence that anything was ever different is gone --
+              destroyed by the tool that produced it, in one command, with no warning. So an existing
+              path is refused and the operator names a new one; keeping both files is what makes
+              `diff` the comparison.
 
               It is checked FIRST so a refusal costs nothing and reports nothing about the chain.
+
+              ⚠️ THIS CHECK IS THE MESSAGE, NOT THE GUARANTEE, and the first version of this comment
+              called it "the one guard worth the most here" without noticing the window underneath
+              it. Between File.Exists returning false and the write, another run can create the file
+              -- and File.WriteAllTextAsync opens with FileMode.Create, which TRUNCATES. Measured: a
+              29-byte file written over with 2 bytes is 2 bytes afterwards, not 29. So the guarantee
+              is FileMode.CreateNew at the write below, which is the operating system's job and has
+              no window; this check exists to say something useful before the database is read.
             */
             if (File.Exists(path))
             {
@@ -264,11 +272,21 @@ public static class ExportCommand
             }
 
             /*
+              CREATED EXCLUSIVELY, WHICH IS WHERE THE REFUSAL ACTUALLY LIVES. FileMode.CreateNew
+              fails if anything is already at the path, atomically, so two runs aimed at one path
+              cannot both write it and the earlier copy cannot be truncated by the later one.
+              FileShare.None keeps a reader from seeing the file half-written.
+
               NO BOM. Encoding.UTF8 emits one; new UTF8Encoding(false) does not. A leading BOM would
               put three bytes in front of the first record that no other producer of this format
               writes, and the first line of a JSON Lines file is expected to start with '{'.
             */
-            await File.WriteAllTextAsync(path, payload.ToString(), new UTF8Encoding(false), cancellationToken);
+            var bytes = new UTF8Encoding(false).GetBytes(payload.ToString());
+            await using (var file = new FileStream(
+                path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                await file.WriteAsync(bytes, cancellationToken);
+            }
 
             var lines = new List<string>
             {
@@ -327,6 +345,24 @@ public static class ExportCommand
                 $"  {path} may exist and be incomplete. Delete it and re-run, or export to a new",
                 "  path -- a partial copy installed as a reference is worse than none, because a",
                 "  later comparison would report a difference this machine created.",
+            });
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            /*
+              THE WINDOW THE PRE-CHECK CANNOT CLOSE, reported as what it is rather than as a disk
+              failure. Something arrived at this path while the chain was being read -- another run,
+              or somebody else -- and FileMode.CreateNew refused rather than truncating it. Measured
+              shape: IOException, HResult 0x80070050, "The file ... already exists", and File.Exists
+              is true from inside this filter, which is what makes the test portable rather than a
+              check on an HResult that differs per platform.
+            */
+            return (AnchorCommand.NotRecorded, new[]
+            {
+                $"NOT EXPORTED: {path} appeared while this run was reading the chain.",
+                "  Something else created it between the check and the write, and it was refused",
+                "  rather than overwritten -- an earlier copy is the only thing a later one can be",
+                "  compared against. Nothing was changed here. Export to a new path and keep both.",
             });
         }
         catch (IOException failure)
