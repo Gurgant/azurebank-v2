@@ -29,10 +29,20 @@ namespace AzureBank.Shared.Entities;
 /// not built yet.
 /// </para>
 /// <para>
-/// INSERT-ONLY, STRICTLY. No column is ever updated after the row is written — which is what lets
-/// "any UPDATE against this table is tampering" be a statement the database itself can enforce. The
-/// timestamp token that will bind an anchor to an instant attaches from a SEPARATE table rather than
-/// filling a reserved column here, precisely so that rule stays absolute.
+/// INSERT-ONLY, STRICTLY. No column is ever updated after the row is written, which is what makes
+/// "any UPDATE against this table is tampering" a rule with no exceptions left to argue about.
+/// </para>
+/// <para>
+/// ⚠️ THE APPLICATION ENFORCES THAT RULE. THE DATABASE DOES NOT, and this comment used to say it
+/// did. Nothing at the engine refuses an UPDATE against this table: three tests in
+/// <c>AuditAnchorSqlServerTests</c> issue one straight past the change tracker and it SUCCEEDS every
+/// time — which is the whole reason the authentication code is what catches it. Engine enforcement
+/// is what SQL Server's ledger would buy, it is deferred rather than rejected, and ADR-0044 records
+/// why. Until then the rule is a discipline this code keeps, not a property the store provides.
+/// </para>
+/// <para>
+/// The timestamp token that will bind an anchor to an instant attaches from a SEPARATE table rather
+/// than filling a reserved column here, precisely so that rule stays absolute.
 /// </para>
 /// </remarks>
 public class AuditAnchor

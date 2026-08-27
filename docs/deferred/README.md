@@ -26,6 +26,7 @@ plan.
 ## Contents
 
 - [`anchoring-the-audit-trail.md`](anchoring-the-audit-trail.md) — the audit chain cannot detect
-  rows deleted from its end. Closing that needs a digest anchored outside the system, which needs
-  something running unattended and somewhere the operator cannot revise. Neither exists on a
-  single-machine deployment.
+  rows deleted from its end. Closing that needs time issued by somebody else, which needs something
+  running unattended and somewhere the operator cannot revise. Neither exists on a single-machine
+  deployment. SQL Server's ledger closes a different layer — the write — and is deferred too;
+  ADR-0044 carries both and says why neither replaces the other.

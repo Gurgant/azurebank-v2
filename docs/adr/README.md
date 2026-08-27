@@ -108,6 +108,33 @@ at that level** (the endpoint is still `[Authorize]`; what is missing is the ste
 ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consume, and is filed
 as a correction rather than a new policy: the decisions were already made, the document simply
 did not say them.
+
+HOW A CORRECTION IS RECORDED, written down because it had never been stated and a review round went
+on it. **The note goes immediately against what it corrects.** That is the load-bearing half: a note
+in a section further down is one that the reader of the wrong sentence never reaches, and the reader
+of the note has to go hunting for what it refers to. **And nothing is deleted — a superseded clause
+is struck in place with `~~…~~` and the note follows it inline**, which is what ADR-0044 already
+does at its #231 revisit and ADR-0007 at its envelope note. Struck rather than merely annotated,
+because a wrong sentence left looking current is read as current: that is not a hypothetical here,
+it is why `docs/runbooks/audit-chain-unavailable.md` went on repeating a claim ADR-0044 had already
+withdrawn.
+
+THE ONE EXCEPTION IS TEXT AN OPERATOR READS UNDER PRESSURE — runbooks, printed verdicts, error
+strings. There the wrong wording is removed rather than struck, because nobody scrolls past a struck
+line during an incident and a `~~` renders as noise in a terminal. Everything else that describes
+the system AS IT IS rather than as it was decided — `docs/deferred/`, code comments, XML docs — is
+simply corrected in place, with a line saying what it used to claim.
+
+NOTE WHAT THIS RULE DOES NOT ASK ANYBODY TO DECIDE. An earlier draft of it split corrections by kind
+— a decision that was right when made versus a statement of fact that was never true — and that is a
+real distinction, but it puts a judgement in the middle of a rule, and a rule with a judgement in it
+is one that gets re-argued every time somebody new reads the file. This directory has already learnt
+that about MD040, four times across #94, #96, #127 and #129. Adjacency needs no classification. The
+two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`, `CORRECTED
+2026-08-20`) are already adjacent and quote the superseded wording in full, so nothing is lost by
+leaving them as they are; from here the wording is struck in place instead, which costs less and
+reads better.
+
 The next free number is **0045**.
 
 <details>

@@ -246,10 +246,42 @@ anything. A second test at the verifier layer asserts what the anchor catches. T
 checklist, and nothing announces the day.
 
 What this also does not defend against: an attacker holding both the database and the application's
-secrets can rewrite a row and recompute the chain. Both gaps close the same way — a digest anchored
-outside the system, which is SQL Server's ledger, deferred rather than rejected. Until then the
-honest claim is narrow: **this chain detects tampering by someone who holds the database but not the
-key, except at the end of the table.**
+secrets can rewrite a row and recompute the chain. ~~Both gaps close the same way — a digest anchored
+outside the system, which is SQL Server's ledger, deferred rather than rejected.~~ *(corrected
+2026-08-27: there are TWO controls and they close different layers — immediately below.)* Until then
+the honest claim is narrow: **this chain detects tampering by someone who holds the database but not
+the key, except at the end of the table.**
+
+**⚠️ CORRECTED 2026-08-27. The struck sentence named one control where there are two, and the
+correction sits against it rather than in a section further down, which is the whole of the rule
+`docs/adr/README.md` now states.** SQL Server's ledger and an RFC 3161 timestamp are COMPLEMENTARY
+rather than alternatives, because they close different layers.
+
+The ledger closes the WRITE. Once a row is committed, `APPEND_ONLY` refuses an UPDATE or a DELETE at
+the engine, and does it uncatchably — a `BEGIN TRY … BEGIN CATCH` around the attempt never reaches
+the CATCH block, because the batch simply dies — while `DROP TABLE` leaves the rows readable in
+residue that cannot itself be dropped, altered or renamed (measured: **Msg 37427**). That is the one
+property no application code can buy, and it needs nothing outside this machine.
+
+An RFC 3161 timestamp closes the ANCHOR. It is time issued by somebody else, which is the only thing
+that constrains the party holding every key — and that party is the operator, not the attacker the
+chain is built for.
+
+**Neither substitutes for the other.** Enforcement without outside time still leaves whoever owns the
+machine free to drop the whole database and start again: dropping a DATABASE containing ledger tables
+is permitted, it is dropping or truncating the TABLE that is refused. Outside time without
+enforcement anchors a table that any connection can still rewrite in place, since an anchor certifies
+only what was there when it fired. Both are deferred rather than rejected, and
+`docs/deferred/anchoring-the-audit-trail.md` argues the second at length.
+
+**Why one sentence could plausibly name either, which is the part worth keeping rather than merely
+fixing.** The ledger has two halves with opposite requirements. Its DIGEST is an anchor and needs
+exactly what a timestamp token needs — a copy held somewhere the operator cannot revise, refreshed on
+a schedule. Its ENFORCEMENT needs neither. The struck sentence was written while the digest still
+looked like a local answer to the anchor problem; measuring that is what removed it, since automatic
+upload rejects a local emulator (12136) and what survives — `sp_generate_database_ledger_digest`, one
+JSON row, no destination — has nowhere of its own to go. The claim outlived its premise, and naming
+one control where there are two is what made it read as settled.
 
 **An anchor record now exists, and it does NOT close that end.** Running the verifier's `anchor`
 mode walks the chain once and records what it found — how far it reached, how many rows it held, and
@@ -264,7 +296,8 @@ reach** — the counter alone can be regrown by re-running the command, and the 
 regrown downward.
 
 **And it does not constrain the operator**, who holds the key and can write honest-looking records
-over a truncated table. An external timestamp is what would change that, and it is not built.
+over a truncated table. An external timestamp — the ANCHOR half of the pair corrected above, not a
+second answer to the same question — is what would change that, and it is not built.
 **An anchor certifies EXISTENCE AT A TIME, never AUTHENTICITY:** it can only strengthen the standing
 of whatever was in the table when it fired, including a forged row appended before it.
 
@@ -283,6 +316,7 @@ schema still moving (measured: `DROP TABLE` leaves undroppable residue, Msg 3742
 columns may be added, Msg 37387), not because it cannot be done here. A local emulator is genuinely
 out — Azurite is rejected with error 12136 over both http and https, measured directly rather than
 inferred, after two research agents contradicted each other on the point.
+
 
 ### D3 — the chain is applied in the `SaveChanges` funnel
 
