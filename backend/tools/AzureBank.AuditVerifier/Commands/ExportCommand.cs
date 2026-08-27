@@ -150,6 +150,40 @@ public static class ExportCommand
         string path,
         CancellationToken cancellationToken)
     {
+        /*
+          THE PATH IS CHECKED BEFORE ANYTHING ELSE, INCLUDING THE KEY, because it is the thing the
+          operator just typed and the cheapest mistake to name. `export ""` is the reachable shape:
+          the parser accepts an empty string, so the handler receives one.
+
+          ⚠️ MEASURED, ACROSS THE WHOLE CLASS RATHER THAN THE ONE INPUT. Five bad-path shapes produce
+          FOUR different exceptions from FileStream, and File.Exists returns false for every one of
+          them: empty and whitespace throw ArgumentException, a directory throws
+          UnauthorizedAccessException, a missing parent throws DirectoryNotFoundException, an invalid
+          character throws IOException. The last three already land in the write-failure branches
+          below and report exit 6. ArgumentException did not -- it fell through to the catch-all and
+          reported "the audit store could not be read", which is a database outage, over a typo, at
+          the end of a walk that had already succeeded. That is the same defect `anchor` shipped once
+          and the same one the cancellation guard fixed: a wrong sentence is worse than a loud
+          failure, because an escape is loud and a sentence is not.
+
+          UsageError rather than NotRecorded, and the tool's own definitions decide it. 6 means
+          "there WAS a verdict but nothing could be recorded from it" -- and nothing has been read
+          here yet, so there is no verdict to have. 4 means the command line was wrong, which is what
+          this is. It also matches what the parser already does: `export` with no argument at all
+          exits 4, measured, so the same mistake gets the same number whether the path is missing or
+          empty.
+        */
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return (VerifyCommand.UsageError, new[]
+            {
+                "NOT EXPORTED: no path was given.",
+                "  `export` needs somewhere to write the copy, and an empty argument is not it.",
+                "  Nothing was read and nothing was written. Name a file that does not exist yet:",
+                "    export ./anchors-2026-08-27.jsonl",
+            });
+        }
+
         using var scope = services.CreateScope();
         var options = scope.ServiceProvider.GetRequiredService<IOptions<AuditOptions>>();
 

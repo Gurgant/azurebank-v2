@@ -378,4 +378,81 @@ public class ExportCommandTests : IDisposable
         text.Should().Contain("NOT EVIDENCE UNTIL IT IS SOMEWHERE THIS MACHINE CANNOT REACH");
         text.Should().Contain("diff", "the comparison is the operator's to run, and it needs naming");
     }
+
+    [Fact]
+    public async Task AnEmptyPathIsAUSAGEERROR_NotAStoreFailure()
+    {
+        /*
+          `export ""` is reachable: the parser accepts an empty string, so the handler gets one, and
+          File.Exists("") returns FALSE rather than throwing -- so the pre-check waves it through,
+          the chain is read, and only FileStream objects, with an ArgumentException that used to land
+          in the catch-all. The operator was then told "the audit store could not be read": a
+          database outage, over a typo, at the end of a walk that had already succeeded.
+
+          UsageError rather than NotRecorded because nothing has been read when this fires, so there
+          is no verdict for 6 to be about -- and because `export` with NO argument already exits 4
+          through the parser, so the same mistake keeps the same number.
+
+          FALSIFIED by deleting the IsNullOrWhiteSpace guard: this reddens with 3, which is the exact
+          bug.
+        */
+        await WriteRowsAsync(2);
+        await AnchorAsync();
+
+        foreach (var path in new[] { string.Empty, "   " })
+        {
+            var (exitCode, lines) = await ExportCommand.RunAsync(
+                _services, path, CancellationToken.None);
+
+            exitCode.Should().Be(
+                VerifyCommand.UsageError,
+                "an empty path is a wrong command line, not an unreadable database");
+            exitCode.Should().NotBe(VerifyCommand.Misconfigured);
+            string.Join(" ", lines).Should().Contain("no path was given");
+        }
+    }
+
+    [Fact]
+    public async Task NoBadPathIsEVERReportedAsAStoreFailure()
+    {
+        /*
+          THE CLASS, NOT THE ONE INPUT THE REVIEW NAMED. Five bad-path shapes were measured and they
+          produce FOUR different exceptions from FileStream, with File.Exists returning false for
+          every one: empty and whitespace throw ArgumentException, a directory throws
+          UnauthorizedAccessException, a missing parent throws DirectoryNotFoundException (which IS
+          an IOException), an invalid character throws IOException. Only the first two were broken,
+          and fixing only those would leave the next shape one refactor away from the same wrong
+          sentence.
+
+          So the assertion is the property rather than the codes: whatever is wrong with the PATH,
+          the operator is never sent to check the DATABASE. Exit 3 is the one answer none of these
+          may give, because 3 is the code the runbook tells you to wire an alert on.
+
+          FALSIFIED by removing any one of the three write-failure catches: that shape falls to the
+          catch-all and reddens here with 3.
+        */
+        await WriteRowsAsync(2);
+        await AnchorAsync();
+
+        var shapes = new (string Name, string Path)[]
+        {
+            ("empty", string.Empty),
+            ("whitespace", "   "),
+            ("a directory", _directory),
+            ("a missing parent", Path.Combine(_directory, "no-such-dir", "f.jsonl")),
+            ("an invalid character", Path.Combine(_directory, "a<b>c.jsonl")),
+        };
+
+        foreach (var (name, path) in shapes)
+        {
+            var (exitCode, _) = await ExportCommand.RunAsync(_services, path, CancellationToken.None);
+
+            exitCode.Should().NotBe(
+                VerifyCommand.Misconfigured,
+                $"{name} is wrong with the path, and 3 sends the operator to a database that is fine");
+            exitCode.Should().BeOneOf(
+                [VerifyCommand.UsageError, AnchorCommand.NotRecorded],
+                $"{name} is either a wrong command line or a verdict nothing came of");
+        }
+    }
 }
