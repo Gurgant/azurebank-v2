@@ -283,6 +283,9 @@ public static class AnchorCommand
         lines.Add($"      anchor {record.AnchorSequence:N0}  through sequence {record.CoveredThroughSequence:N0}");
         lines.Add("  The pair, not the counter alone -- a counter can be regrown by re-running this");
         lines.Add("  command, and the sequence it covers cannot be regrown downward.");
+        lines.Add("  Or run `export <path>`, which writes every record to a file so the numbers");
+        lines.Add("  do not depend on somebody copying them correctly. The file still has to");
+        lines.Add("  LEAVE: written here, it is deleted in the same breath as the rows it counts.");
         lines.Add(string.Empty);
         lines.Add("  This record is consistent with an intact chain covering through that sequence.");
         lines.Add("  It is EVIDENCE only if those are the numbers you already had: nothing here is");

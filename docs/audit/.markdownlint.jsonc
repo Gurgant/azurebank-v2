@@ -1,0 +1,15 @@
+// markdownlint configuration for `docs/audit/` only. markdownlint-cli2 reads the config nearest each
+// linted file and walks upwards, so without a file here this directory would silently inherit
+// `docs/.markdownlint.jsonc` — an exemption argued for a corpus that did not include it. Inheriting
+// an argument nobody made about your documents is what every config in this tree exists to stop.
+{
+  // MD040 (fenced-code-language) is OFF here, reached by counting this directory rather than by
+  // borrowing anybody else's count. COUNTED: two fence lines, one block, in README.md — a schematic
+  // of the export/diff cycle. It is not source and it is not measured output; it has no language,
+  // and inventing `text` for it would make it the odd one out among the bare fences in `docs/adr/`
+  // and `docs/runbooks/`, re-opening a question settled across PRs #94, #96, #127 and #129.
+  //
+  // `anchors.sample.jsonl` is not markdown and is not linted here at all. What keeps it honest is
+  // `ExportedSampleTests`, which reads it and checks its shape, its chain and its bytes.
+  "MD040": false
+}
