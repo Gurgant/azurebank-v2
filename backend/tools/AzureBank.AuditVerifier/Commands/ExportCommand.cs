@@ -339,8 +339,48 @@ public static class ExportCommand
               writes, and the first line of a JSON Lines file is expected to start with '{'.
             */
             var bytes = new UTF8Encoding(false).GetBytes(payload.ToString());
-            await using (var file = new FileStream(
-                path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+
+            /*
+              THE COLLISION CATCH WRAPS THE CONSTRUCTION AND NOTHING ELSE, and the first version of
+              this wrapped the write as well -- which made it able to say something false.
+
+              MEASURED: create with FileMode.CreateNew, write twelve bytes, then have the write fail.
+              The file is still there, twelve bytes long, and File.Exists returns TRUE. So the filter
+              `when (File.Exists(path))` matched, and the operator was told "something else created
+              it between the check and the write" and "nothing was changed here". Both false: this
+              run created it, and it left a partial copy behind. A partial export installed as a
+              reference is the worst artefact this verb can produce, and it was being announced as
+              the safest outcome.
+
+              Separating them means only a CreateNew failure can be read as a collision. A write that
+              fails after the file exists falls to the write-failure branch below, which says the
+              file may be partial and has to go.
+            */
+            FileStream file;
+            try
+            {
+                file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            }
+            catch (IOException) when (File.Exists(path))
+            {
+                /*
+                  THE WINDOW THE PRE-CHECK CANNOT CLOSE, reported as what it is rather than as a disk
+                  failure. Something arrived at this path while the chain was being read -- another
+                  run, or somebody else -- and FileMode.CreateNew refused rather than truncating it.
+                  Measured shape: IOException, HResult 0x80070050, "The file ... already exists", and
+                  File.Exists is true from inside this filter, which is what makes the test portable
+                  rather than a check on an HResult that differs per platform.
+                */
+                return (AnchorCommand.NotRecorded, new[]
+                {
+                    $"NOT EXPORTED: {path} appeared while this run was reading the chain.",
+                    "  Something else created it between the check and the write, and it was refused",
+                    "  rather than overwritten -- an earlier copy is the only thing a later one can be",
+                    "  compared against. Nothing was changed here. Export to a new path and keep both.",
+                });
+            }
+
+            await using (file)
             {
                 await file.WriteAsync(bytes, cancellationToken);
             }
@@ -404,24 +444,6 @@ public static class ExportCommand
                 "  later comparison would report a difference this machine created.",
             });
         }
-        catch (IOException) when (File.Exists(path))
-        {
-            /*
-              THE WINDOW THE PRE-CHECK CANNOT CLOSE, reported as what it is rather than as a disk
-              failure. Something arrived at this path while the chain was being read -- another run,
-              or somebody else -- and FileMode.CreateNew refused rather than truncating it. Measured
-              shape: IOException, HResult 0x80070050, "The file ... already exists", and File.Exists
-              is true from inside this filter, which is what makes the test portable rather than a
-              check on an HResult that differs per platform.
-            */
-            return (AnchorCommand.NotRecorded, new[]
-            {
-                $"NOT EXPORTED: {path} appeared while this run was reading the chain.",
-                "  Something else created it between the check and the write, and it was refused",
-                "  rather than overwritten -- an earlier copy is the only thing a later one can be",
-                "  compared against. Nothing was changed here. Export to a new path and keep both.",
-            });
-        }
         catch (IOException failure)
         {
             /*
@@ -437,6 +459,11 @@ public static class ExportCommand
                 $"  {failure.GetType().Name}: {failure.Message}",
                 "  The chain was read and nothing is wrong with it that this can see. Nothing was",
                 "  changed in the database. Check the path, the permissions and the free space.",
+                "  ⚠️ A PARTIAL FILE MAY BE AT THAT PATH. The copy is created before it is filled,",
+                "  so a write that fails part-way leaves a truncated one behind -- and a truncated",
+                "  export installed as a reference is worse than none, because a later comparison",
+                "  would report a difference this machine created. Delete it before re-running.",
+                "  This will not delete it: refusing to remove a copy is the whole point of the verb.",
             });
         }
         catch (UnauthorizedAccessException failure)

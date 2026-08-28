@@ -72,9 +72,20 @@ public class ExportCommandTests : IDisposable
         {
             Directory.Delete(_directory, recursive: true);
         }
-        catch (IOException)
+        catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
         {
-            // A leaked temp directory is not worth failing a green run over.
+            /*
+              BOTH TYPES, because the comment below used to promise something the catch did not
+              deliver. MEASURED: UnauthorizedAccessException.IsSubclassOf(typeof(IOException)) is
+              FALSE -- it derives from SystemException -- so a read-only or still-held file inside
+              the directory would have escaped Dispose and failed a run that had already gone green,
+              from the cleanup path, for a reason with nothing to do with the tests.
+
+              (DirectoryNotFoundException IS an IOException, measured in the same run, which is why
+              ExportCommand needs no separate arm for it.)
+
+              A leaked temp directory is not worth failing a green run over.
+            */
         }
 
         GC.SuppressFinalize(this);
