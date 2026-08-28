@@ -167,7 +167,8 @@ Four things have to be settled before the first token, and three of them are one
   two sequences, a count and two hashes is recomputable by anyone holding the table — including a
   plausible run of gap markers. So the record carries an HMAC under `Audit:AnchorKey`, a sixth
   secret the row chain does not use, covering the marker kind as well: a database-only attacker can
-  delete records (loud) but not mint them (quiet), and cannot flip a real record into a marker to
+  delete an interior record (loud) but not mint them (quiet), and cannot flip a real record into
+  a marker to
   collapse the operator's provable bound. ⚠️ It does not constrain the operator, who holds the key.
   It is one-way because the alibi is the thing a MAC has to rule out: records already published
   without one can be re-derived by the operator at any later date, so MACing them afterwards dates

@@ -31,7 +31,10 @@ public interface IAuditAnchorChain
     /// authentic.
     /// </summary>
     /// <remarks>
-    /// THIS IS WHAT MAKES "DELETING RECORDS IS LOUD" TRUE, and without it that sentence was a claim
+    /// THIS IS WHAT MAKES "DELETING AN INTERIOR RECORD IS LOUD" TRUE -- and only the interior: a
+    /// SUFFIX removal leaves 1..n with every link met and nothing here asks how tall the chain
+    /// should be, which DeletingAnchorsIsLoudONLYINTHEINTERIOR_ANDASUFFIXISSILENT measures both
+    /// ways. Without this walk even the interior half was a claim
     /// with no mechanism under it. Authenticating only the newest record leaves an interior deletion
     /// invisible: the survivor still verifies, and a later run extends a chain with a hole in it. A
     /// gapping counter and links that fail to meet are only signals if something looks, and this is
@@ -46,11 +49,18 @@ public interface IAuditAnchorChain
 /// <param name="FirstBrokenSequence">Where it stopped, or null when it reached the end.</param>
 /// <param name="Reason">What went wrong there, in a sentence an operator can act on.</param>
 /// <param name="Kind">Which kind of break it was.</param>
+/// <param name="DeepestCovered">
+/// The highest <c>CoveredThroughSequence</c> the walk saw, or null when nothing it read covers
+/// anything. Gap markers contribute nothing by construction.
+/// </param>
+/// <param name="Records">How many records the walk read.</param>
 public readonly record struct AuditAnchorChainVerification(
     long Verified,
     long? FirstBrokenSequence,
     string? Reason,
-    AuditAnchorChainBreakKind Kind = AuditAnchorChainBreakKind.None)
+    AuditAnchorChainBreakKind Kind = AuditAnchorChainBreakKind.None,
+    long? DeepestCovered = null,
+    long Records = 0)
 {
     /// <summary>True when every record read verified and none was missing.</summary>
     public bool IsIntact => FirstBrokenSequence is null;
@@ -218,6 +228,25 @@ public class AuditAnchorChain : IAuditAnchorChain
         string? previousPayloadHash = null;
         var expectedSequence = 1L;
 
+        /*
+          THE COVERAGE COMES FROM THIS WALK, NOT FROM A QUERY AFTERWARDS.
+
+          A caller that verified the chain here and then asked the table for MAX(CoveredThroughSequence)
+          separately would be describing two different instants: a record added between the two reads
+          is counted in the maximum and was never verified, and the coverage then reads DEEPER than
+          anything this walk vouched for -- which makes an uncovered window come out SMALLER than the
+          truth, the one direction that must not be wrong.
+
+          This repository has already solved the same problem one layer down and written the fix
+          into VerifyCommand: the sequence range used to be two extra queries and printed 101 rows
+          verified over a range ending at 100, and it was fixed by taking the range FROM the walk.
+          Same shape, same fix.
+
+          Gap markers contribute nothing, which is not a special case: their coverage column is null
+          by construction, so a marker simply never raises the maximum.
+        */
+        long? deepestCovered = null;
+
         await foreach (var record in context.Set<AuditAnchor>()
             .AsNoTracking()
             .OrderBy(a => a.AnchorSequence)
@@ -273,11 +302,18 @@ public class AuditAnchorChain : IAuditAnchorChain
             }
 
             previousPayloadHash = record.PayloadHash;
+            if (record.CoveredThroughSequence is { } through
+                && (deepestCovered is null || through > deepestCovered))
+            {
+                deepestCovered = through;
+            }
+
             expectedSequence++;
             verified++;
         }
 
-        return new AuditAnchorChainVerification(verified, null, null);
+        return new AuditAnchorChainVerification(
+            verified, null, null, DeepestCovered: deepestCovered, Records: verified);
     }
 
     public AuditAnchor Build(AuditChainVerification verification, AuditAnchor? tail, DateTime createdAtUtc)

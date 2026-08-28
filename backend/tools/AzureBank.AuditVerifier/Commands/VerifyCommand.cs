@@ -97,9 +97,11 @@ public static class VerifyCommand
     /// claim ever made is the one the current tail has to answer to.
     /// </para>
     /// <para>
-    /// A record can be deleted to lower that maximum, which is the same limit the anchor chain
-    /// already has and states: deleting records is loud, because the counter gaps and the links stop
-    /// meeting, and <c>ChainVerified</c> above is what looks.
+    /// A record can be deleted to lower that maximum, and the anchor chain catches only half of
+    /// that: an INTERIOR removal gaps the counter and breaks a link, which <c>ChainVerified</c>
+    /// above is what looks for, but a SUFFIX removal leaves 1..n intact and takes the maximum down
+    /// with it in silence. That is the same limit the row chain has, and it is why this number is a
+    /// lower bound rather than a measurement.
     /// </para>
     /// </remarks>
     public readonly record struct AnchorCoverage(bool ChainVerified, long? DeepestCovered, long Records);
@@ -562,16 +564,20 @@ public static class VerifyCommand
             var anchorState = await anchors.VerifyChainAsync(context, cancellationToken);
 
             /*
-              MaxAsync OVER A NULLABLE COLUMN RETURNS NULL FOR AN EMPTY SET AS WELL AS FOR AN
-              ALL-NULL ONE, and both mean the same thing here: nothing covers anything. The record
-              COUNT is read separately so the two can be told apart in the printed text -- "no anchor
+              BOTH NUMBERS COME OUT OF THE WALK ABOVE, and the first version of this asked the table
+              for them afterwards -- MaxAsync and LongCountAsync, two more reads. Three reads are
+              three instants: a record added between the verification and the maximum is counted in
+              the maximum and was never verified, so the coverage reads deeper than anything the walk
+              vouched for and the window comes out SMALLER than the truth. That is the one direction
+              this number must never be wrong in, and no ordering of three reads fixes it -- only
+              having one.
+
+              The count and the maximum are still separate values rather than one, because "no anchor
               was ever written" and "anchors exist and every one is a gap marker" are different
-              things to tell an operator, and only the count separates them.
+              things to tell an operator, and a null maximum alone cannot tell them apart.
             */
             var coverage = new AnchorCoverage(
-                anchorState.IsIntact,
-                await context.Set<AuditAnchor>().MaxAsync(a => a.CoveredThroughSequence, cancellationToken),
-                await context.Set<AuditAnchor>().LongCountAsync(cancellationToken));
+                anchorState.IsIntact, anchorState.DeepestCovered, anchorState.Records);
 
             var verification = await chain.VerifyAsync(context, cancellationToken);
 

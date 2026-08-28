@@ -58,7 +58,8 @@ public class AuditOptions
     /// </para>
     /// <para>
     /// WHAT IT DOES AND DOES NOT BUY, stated so no document has to overclaim later. It makes
-    /// DELETING an anchor loud — the chain's own counter gaps and its links stop meeting — while
+    /// DELETING an INTERIOR anchor loud — the chain's own counter gaps and its links stop meeting,
+    /// though a SUFFIX removal stays silent — while
     /// MINTING one requires this key. It does NOT constrain the operator, who holds it: on a
     /// single-machine deployment the person who can truncate the table is the person who can write
     /// honest-looking anchors over the result. That is why the anchor's value is the number an

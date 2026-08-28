@@ -15,10 +15,17 @@ namespace AzureBank.Shared.Entities;
 /// number somebody already has.
 /// </para>
 /// <para>
+/// ⚠️ AND "LOUD" MEANS INTERIOR, NOT ANY. Removing a SUFFIX of records is silent: the survivors
+/// are 1..n with every link met, and nothing in the walk asks how tall the chain ought to be. That
+/// is the same shape as the row chain's own limit and it is why the anchors alone cannot close
+/// truncation — the attack is a suffix removal in both tables. Measured both ways by
+/// <c>DeletingAnchorsIsLoudONLYINTHEINTERIOR_ANDASUFFIXISSILENT</c>. The unqualified sentence was
+/// repeated in nine places before it was checked.
+///
 /// ⚠️ ON ITS OWN THIS DETECTS NOTHING, and saying so is not modesty. Truncate the audit rows above
 /// some sequence, then delete every anchor covering past it, and BOTH chains verify perfectly —
-/// each links backwards only. What the record buys is narrower and real: deleting anchors is LOUD,
-/// because the counter gaps and the links stop meeting, while MINTING one needs
+/// each links backwards only. What the record buys is narrower and real: deleting an INTERIOR
+/// anchor is LOUD, because the counter gaps and the links stop meeting, while MINTING one needs
 /// <c>Audit:AnchorKey</c>. The evidence is the pair the operator wrote down somewhere else, and this
 /// table is what that pair is compared against.
 /// </para>
