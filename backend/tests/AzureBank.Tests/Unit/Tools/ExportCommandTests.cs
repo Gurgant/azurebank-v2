@@ -182,6 +182,102 @@ public class ExportCommandTests : IDisposable
             sentinel, "the earlier copy is the reference; this verb must never be able to destroy it");
     }
 
+    /// <summary>
+    /// A provider over the SAME store holding a DIFFERENT anchor key, so the stored records no
+    /// longer authenticate and <c>VerifyChainAsync</c> reports the chain broken. It is how an
+    /// operator actually reaches that state — a key rotated, a wrong environment, a second machine —
+    /// and it is the technique <c>AnchorCommandTests</c> already uses for the same purpose.
+    /// </summary>
+    private ServiceProvider Stranger()
+    {
+        var stranger = Options.Create(new AuditOptions
+        {
+            ChainKey = ChainKey,
+            AnchorKey = "a-completely-different-anchor-key-0123456789",
+        });
+        var chain = new AuditChain(stranger, NullLogger<AuditChain>.Instance);
+        var collection = new ServiceCollection();
+        collection.AddSingleton<IOptions<AuditOptions>>(stranger);
+        collection.AddSingleton<IAuditChain>(chain);
+        collection.AddSingleton<IAuditAnchorChain>(new AuditAnchorChain(stranger));
+        collection.AddSingleton(new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_store).Options,
+            timeProvider: null,
+            auditChain: chain));
+        return collection.BuildServiceProvider();
+    }
+
+    [Fact]
+    public async Task ABrokenChainStillExportsACopy_AndTheVerdictIsTheCHAINVerdict()
+    {
+        /*
+          COPYING ASSERTS NOTHING ABOUT WHAT IT COPIED, so a chain that has stopped verifying still
+          gets its copy -- that is the moment an off-machine copy is worth the most, and refusing
+          here would withhold the artefact exactly when it matters. But the exit code is the CHAIN's,
+          because that is the more serious of the two things this run learned.
+
+          FALSIFIED by returning VerifyCommand.Intact unconditionally on the success path.
+        */
+        await WriteRowsAsync(3);
+        await AnchorAsync();
+
+        using var stranger = Stranger();
+        var path = Path_("broken-but-copied.jsonl");
+        var (exitCode, lines) = await ExportCommand.RunAsync(stranger, path, CancellationToken.None);
+
+        exitCode.Should().Be(VerifyCommand.Broken, "the verdict about the chain is still the verdict");
+        File.Exists(path).Should().BeTrue("a chain that stopped verifying is when a copy is worth most");
+        string.Join(" ", lines).Should().Contain("THE ANCHOR CHAIN DID NOT VERIFY");
+    }
+
+    [Fact]
+    public async Task AWriteFailureNEVERBuriesACompletedBrokenVerdict()
+    {
+        /*
+          ⚠️ THE ONE THIS VERB HAD WRONG. The walk finishes and reports the chain broken; the write
+          then fails, and every failure branch returned NotRecorded (6) while printing "the chain was
+          read and nothing is wrong with it that this can see". Both halves false: something IS wrong
+          with it, and the more serious half was the one being swallowed. An operator whose chain has
+          stopped verifying, who exports to a path that already exists, was told the chain is fine.
+
+          The rule is not invented here. AnchoringABrokenChain_RecordsAGapMarkerAndSaysTheChainIsBroken
+          gives it in one line -- "the verdict about the chain is still the verdict" -- which is why
+          `anchor` exits 1 over a broken chain even when it did record a marker. A write problem is
+          fixed by naming another path in a second; a chain that does not verify is an incident.
+
+          ⚠️ A MISSING PARENT DIRECTORY, NOT AN OCCUPIED PATH, and the first draft of this test got
+          that wrong in a way worth keeping. An occupied path is caught by the PRE-CHECK, which runs
+          BEFORE the walk -- so there is no verdict yet, 6 is the honest answer there, and the test
+          failed at "expected 1, found 6" while the code was right. The branches this is about are
+          the ones AFTER the walk, and a missing parent reaches one deterministically on every
+          platform: it passes File.Exists, the chain is read, and only then does FileStream raise
+          DirectoryNotFoundException. The collision-at-create branch shares the same routing through
+          NotWritten but needs a genuine race, which no seam here can produce.
+
+          FALSIFIED by returning AnchorCommand.NotRecorded directly from the write-failure branch
+          instead of routing it through NotWritten: this reddens with 6.
+        */
+        await WriteRowsAsync(3);
+        await AnchorAsync();
+
+        var path = Path.Combine(_directory, "no-such-dir", "copy.jsonl");
+
+        using var stranger = Stranger();
+        var (exitCode, lines) = await ExportCommand.RunAsync(stranger, path, CancellationToken.None);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(
+            VerifyCommand.Broken,
+            "a failed write must not be able to downgrade a verdict the walk had already reached");
+        exitCode.Should().NotBe(AnchorCommand.NotRecorded);
+
+        text.Should().Contain("CHAIN BROKEN", "the more serious half is stated first");
+        text.Should().Contain("NOT EXPORTED", "and the writing failure is kept, not dropped");
+        text.Should().NotContain(
+            "nothing is wrong with it", "that sentence is what made this a false report");
+        File.Exists(path).Should().BeFalse("nothing was written, which is the other half");
+    }
+
     [Fact]
     public async Task AnEmptyAnchorTableWritesNOFILE_BecauseAnEmptyFileWouldBeAClaim()
     {

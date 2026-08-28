@@ -145,6 +145,47 @@ public static class ExportCommand
         return command;
     }
 
+    /// <summary>
+    /// What to exit with when the copy was not written, given whatever the walk had already found.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ <b>THE VERDICT ABOUT THE CHAIN IS STILL THE VERDICT.</b> That is not a new rule invented
+    /// here — it is the sentence <c>AnchoringABrokenChain_RecordsAGapMarkerAndSaysTheChainIsBroken</c>
+    /// gives for why <c>anchor</c> exits 1 over a broken chain even when it did record a marker. This
+    /// verb was breaking it: a chain that had already failed to verify, followed by a path collision
+    /// or a failed write, exited 6 and printed "the chain was read and nothing is wrong with it that
+    /// this can see". The write problem is fixed by naming a different path in one second; the broken
+    /// chain is an incident, and it was the half being swallowed.
+    /// </para>
+    /// <para>
+    /// So a completed BROKEN verdict wins the exit code and is stated first, with the writing
+    /// failure kept underneath it rather than dropped. A completed INTACT verdict leaves
+    /// <see cref="AnchorCommand.NotRecorded"/> in place, which is the more informative of the two
+    /// there — 0 would claim a copy exists. A null verdict means the walk never finished, so there is
+    /// nothing to preserve and nothing to hide.
+    /// </para>
+    /// </remarks>
+    private static (int ExitCode, string[] Lines) NotWritten(
+        AuditAnchorChainVerification? verdict, IEnumerable<string> lines)
+    {
+        if (verdict is not { IsIntact: false } broken)
+        {
+            return (AnchorCommand.NotRecorded, [.. lines]);
+        }
+
+        return (VerifyCommand.Broken,
+        [
+            "CHAIN BROKEN -- and separately, no copy was written.",
+            $"  {broken.Kind} at anchor {broken.FirstBrokenSequence?.ToString("N0") ?? "(unknown)"}:"
+                + $" {broken.Reason}",
+            "  This exits with the CHAIN verdict, not the writing one. The export can be retried",
+            "  against another path in a second; a chain that does not verify cannot.",
+            string.Empty,
+            .. lines,
+        ]);
+    }
+
     internal static async Task<(int ExitCode, string[] Lines)> RunAsync(
         IServiceProvider services,
         string path,
@@ -236,6 +277,13 @@ public static class ExportCommand
         var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
+        /*
+          THE VERDICT OUTLIVES THE TRY, because a failure to WRITE must not be able to bury what the
+          walk already found. It is null until the walk completes, which is what separates "no
+          verdict yet" from "intact" -- a bool could not.
+        */
+        AuditAnchorChainVerification? verdict = null;
+
         try
         {
             /*
@@ -285,6 +333,7 @@ public static class ExportCommand
             }
 
             var state = await anchors.VerifyChainAsync(context, cancellationToken);
+            verdict = state;
 
             var payload = new StringBuilder();
             foreach (var record in records)
@@ -371,7 +420,7 @@ public static class ExportCommand
                   File.Exists is true from inside this filter, which is what makes the test portable
                   rather than a check on an HResult that differs per platform.
                 */
-                return (AnchorCommand.NotRecorded, new[]
+                return NotWritten(verdict, new[]
                 {
                     $"NOT EXPORTED: {path} appeared while this run was reading the chain.",
                     "  Something else created it between the check and the write, and it was refused",
@@ -453,12 +502,12 @@ public static class ExportCommand
               own -- a full disk and a read-only directory are the same class of failure as a
               refused append.
             */
-            return (AnchorCommand.NotRecorded, new[]
+            return NotWritten(verdict, new[]
             {
                 $"NOT EXPORTED: {path} could not be written.",
                 $"  {failure.GetType().Name}: {failure.Message}",
-                "  The chain was read and nothing is wrong with it that this can see. Nothing was",
-                "  changed in the database. Check the path, the permissions and the free space.",
+                "  Nothing was changed in the database. Check the path, the permissions and the free",
+                "  space. Any verdict about the chain itself is stated above this, or not at all.",
                 "  ⚠️ A PARTIAL FILE MAY BE AT THAT PATH. The copy is created before it is filled,",
                 "  so a write that fails part-way leaves a truncated one behind -- and a truncated",
                 "  export installed as a reference is worse than none, because a later comparison",
@@ -470,12 +519,12 @@ public static class ExportCommand
         {
             // Not an IOException -- .NET raises this one for permissions and for a directory in the
             // way, and it is the same class of failure as the branch above.
-            return (AnchorCommand.NotRecorded, new[]
+            return NotWritten(verdict, new[]
             {
                 $"NOT EXPORTED: {path} could not be written.",
                 $"  {failure.GetType().Name}: {failure.Message}",
-                "  The chain was read and nothing is wrong with it that this can see. Nothing was",
-                "  changed in the database. Check the path and the permissions.",
+                "  Nothing was changed in the database. Check the path and the permissions. Any",
+                "  verdict about the chain itself is stated above this, or not at all.",
             });
         }
         catch (Exception failure)
