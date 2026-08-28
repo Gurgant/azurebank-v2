@@ -128,7 +128,10 @@ value** is what a TSA signs: a digest over the chain's state, `(lowest sequence,
 row count, tail hash)`. The **anchor record** is what gets stored and published, and it carries the
 same four fields plus its own counter and the previous record's hash — so the anchors form a second
 chain, over the first. Writing and verification would have to agree on one canonical byte rendering
-of each, and neither exists yet.
+of each, ~~and neither exists yet~~ *(corrected 2026-08-27: both exist —
+`AuditAnchorChain.RenderPayload` and `ComputeAnchoredValue`. The export verb deliberately adds no
+third one: it copies stored columns and derives nothing, because a third rendering would be a third
+place for writing and verification to disagree about bytes.)*
 
 **And the token needs a home, which is what these paragraphs kept skipping.** Publishing the record
 without the token publishes a claim rather than a timestamp: the CMS `TimeStampToken` is the only
@@ -215,6 +218,23 @@ correctly. Compare the count against your own.
 And a test asserts the uncomfortable direction on purpose.
 `TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit` deletes the last row, asserts the chain still
 reports intact, and exists so that the claim cannot quietly grow back.
+
+**A copy can now leave the machine, which is the half of this that was buildable here.**
+`AzureBank.AuditVerifier export <path>` writes the anchor chain to a file outside the database, one
+JSON record per line, and refuses to overwrite an existing one — because overwriting the earlier copy
+with the current state is precisely the move the copy exists to make visible. One record per line
+means `diff` between two exports is the comparison and needs no code, and a copy under version
+control shows an appended anchor as an addition and a revised history as a deletion beside it.
+`docs/audit/anchors.sample.jsonl` is one, committed so a reader can see the shape, with
+`docs/audit/README.md` beside it.
+
+⚠️ **It changes nothing above.** Writing a file is not the same as being seen, and this document's
+own scoping is the reason: the property is bounded to anchors a third party has SEEN, and a file this
+machine wrote to this machine's disk has been seen by nobody — whoever truncates the table deletes it
+in the same breath. It is also a verb somebody types, which the decisive reason above already
+disqualifies from being a control. So the export is the artefact and the demonstration; the schedule,
+the third party and the timestamp are all still missing, and the four things that have to be settled
+before the first token are still four.
 
 It is tempting to call that a tripwire — to say anchoring will turn it red, and that this is how the
 documents resting on it get corrected at the same time rather than a year later. It will not. The

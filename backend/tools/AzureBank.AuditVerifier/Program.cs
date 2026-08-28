@@ -90,6 +90,7 @@ internal static class Program
 
         rootCommand.AddCommand(VerifyCommand.Create(host.Services));
         rootCommand.AddCommand(AnchorCommand.Create(host.Services));
+        rootCommand.AddCommand(ExportCommand.Create(host.Services));
 
         var parsed = await rootCommand.InvokeAsync(args);
 
