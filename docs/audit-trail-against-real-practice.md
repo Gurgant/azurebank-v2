@@ -20,12 +20,19 @@ which this repository has already had happen to it.
 
 **The shape is mainstream, not improvised.** Two layers: a per-record keyed hash covering the record
 and its predecessor, and a periodic checkpoint over `(range, count, tail hash)` chained to the
-checkpoint before it. That is field-for-field what AWS CloudTrail does for log-file integrity
-validation — its digest carries the log files for the period, their hashes, and
-`previousDigestS3Object` / `previousDigestHashValue` / `previousDigestSignature`, and its own
-documentation says the chaining exists so tools "detect if a digest file has been deleted".[^digest]
-It is structurally what SQL Server's ledger does internally, hashing each block over the previous
-block's root hash.[^ledger]
+checkpoint before it. **That is structurally AWS CloudTrail's design for log-file integrity
+validation, not a field-for-field copy of it**, and the difference is worth keeping straight:
+CloudTrail's digest carries the log FILES delivered in a time window with their hashes, plus
+`previousDigestS3Object` / `previousDigestHashValue` / `previousDigestSignature`, and it SIGNS with
+`SHA256withRSA`. This checkpoint carries a SEQUENCE range with a row count, and authenticates with
+an HMAC. Same two layers, same reason for the second one — CloudTrail's own documentation says the
+chaining exists so tools "detect if a digest file has been deleted"[^digest] — and different
+primitives at every level below. The signing difference is itself one of the divergences named later
+on this page: it is why nobody but the operator can check this chain.
+
+The same architecture appears inside SQL Server's ledger, which hashes each block over the previous
+block's root hash.[^ledger] Two independent products reaching the same two-layer shape is the point:
+the design is the mainstream answer to this problem, not an invention that needs defending.
 
 [^digest]: [CloudTrail digest file structure](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-validation-digest-file-structure.html)
 [^ledger]: [SQL Server ledger overview](https://learn.microsoft.com/en-us/sql/relational-databases/security/ledger/ledger-overview?view=sql-server-ver17)

@@ -125,6 +125,62 @@ public class UncoveredWindowQueryTests : IDisposable
             "at least 0 rows", "which is what reading the newest record would have printed");
     }
 
+    [Fact]
+    public async Task WritingOverATruncationHEALSTheWindow_WhichIsWhyItIsNotADetector()
+    {
+        /*
+          THE VERIFIER PRINTS THIS ABOUT ITSELF AND NOTHING ASSERTED IT. The window block tells the
+          operator the number HEALS -- "sequences are reissued after a truncation, so writing enough
+          new rows brings the tail back past the claim" -- and that sentence was shipped, repeated in
+          docs/deferred/anchoring-the-audit-trail.md, and never held in place by anything. A comment
+          that asserts a behaviour is a test not yet written; this is the test.
+
+          It also matters more than the usual case for saying so, because the property it pins is a
+          LIMIT rather than a capability. A limit nobody asserts is the kind of claim that quietly
+          grows into "the window detects truncation" over a few edits, and the whole point of this
+          number is that it does not.
+
+          The state: nine rows, anchored -- record 1 covers through sequence 9. Four removed, so the
+          table ends at 5. Four written back. AuditChain assigns Sequence from the TAIL it just read
+          (row.Sequence = ++sequence), so the new rows take 6..9 -- the same numbers that were
+          deleted -- and the deepest anchor claim of 9 matches a tail of 9 again. The NEGATIVE window
+          its sibling test above asserts is gone, and nothing in the output remembers the truncation.
+
+          ⚠️ WHAT IS AND IS NOT PROVIDER-INDEPENDENT HERE, stated exactly rather than waved at. The
+          TAIL READ is branched: relational goes through FromSqlRaw with UPDLOCK/HOLDLOCK, InMemory
+          through an ordered LINQ read. The ASSIGNMENT is not -- both branches return (Sequence,
+          RowHash) of the last row and the shared line above assigns ++sequence from it. So the reuse
+          this test rests on is the shared half, which is why it sits beside its InMemory sibling.
+          What an InMemory test cannot speak for is the locking, and the locking is not what heals.
+          This was read from the source, NOT run against SQL Server; a SQL-gated version would be the
+          stronger form and does not exist.
+
+          FALSIFIED by deleting the WriteRowsAsync(4) below: the assertion reddens on NEGATIVE, which
+          is precisely what the sibling test asserts and this one must not.
+        */
+        await WriteRowsAsync(9);
+        await AnchorCommand.RunAsync(_services, CancellationToken.None);
+
+        var doomed = await _context.AuditEvents.OrderByDescending(e => e.Sequence).Take(4).ToListAsync();
+        _context.AuditEvents.RemoveRange(doomed);
+        await _context.SaveChangesAsync();
+
+        await WriteRowsAsync(4);
+
+        var (exitCode, lines) = await VerifyCommand.RunAsync(_services, CancellationToken.None);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+
+        (await _context.AuditEvents.MaxAsync(e => e.Sequence)).Should().Be(
+            9, "the deleted sequences are reissued, which is the mechanism the healing rests on");
+
+        text.Should().NotContain(
+            "NEGATIVE",
+            "the tail is back level with the deepest claim, so the arithmetic no longer disagrees -- "
+            + "the truncation happened and this number can no longer see it");
+    }
+
     /// <summary>
     /// A provider whose ROW key is wrong while its ANCHOR key is right, which is what makes
     /// <c>anchor</c> write a gap marker over a healthy anchor chain.
