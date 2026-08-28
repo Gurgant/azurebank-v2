@@ -248,6 +248,46 @@ public static class ExportCommand
             });
         }
 
+        /*
+          THE KEY IS VALIDATED AFTER THE PATH AND BEFORE THE SCOPE, and it has to be done here rather
+          than left to the host, for the reason VerifyCommand records: validating during construction
+          made --help unreachable on an unconfigured machine.
+
+          ⚠️ THIS COMMAND DID NOT SHIP WITHOUT A KEY GUARD -- IT SHIPPED WITH ONE THAT CANNOT RUN.
+          The guard is still below, reading options.Value, and reading options.Value is what triggers
+          the validation that checks the identical predicate. So it threw one line before the guard
+          and nothing caught it. Measured 2026-08-28 on the shipped build, Audit__AnchorKey unset:
+          `export` and `anchor` printed an unhandled OptionsValidationException and exited 4 -- "the
+          command line was wrong" -- for a correct command line, while `verify` answered 3 with a
+          sentence. Only VerifyCommand ran the validator inside a try, so only VerifyCommand survived
+          the change that broke the other two.
+
+          ⚠️ AND THE SUITE WAS GREEN THROUGHOUT. AMissingAnchorKeyIsRefusedBeforeAnythingIsRead builds
+          its provider by hand with Options.Create(...), which registers no validation and no
+          IStartupValidator, so options.Value returns the bad value quietly and the guard below is
+          reached. The test asserts the branch that production cannot enter. It is the composition
+          root that differs, not the command -- which is the repository's oldest rule wearing
+          different clothes: a test that asserts against a stand-in proves something about the
+          stand-in. AnAnchorKeyRejectedByTheRealCompositionRoot... now composes it the way Program.cs
+          does, and reddens on 4.
+
+          The path guard above stays FIRST: a typo in the thing just typed is still the cheapest
+          mistake to name, and it needs no configuration to catch.
+        */
+        try
+        {
+            services.GetService<IStartupValidator>()?.Validate();
+        }
+        catch (OptionsValidationException invalid)
+        {
+            var reasons = new List<string>
+            {
+                "CANNOT EXPORT: this tool is not configured to read the chain.",
+            };
+            reasons.AddRange(invalid.Failures.Select(failure => $"  {failure}"));
+            return (VerifyCommand.Misconfigured, reasons.ToArray());
+        }
+
         using var scope = services.CreateScope();
         var options = scope.ServiceProvider.GetRequiredService<IOptions<AuditOptions>>();
 

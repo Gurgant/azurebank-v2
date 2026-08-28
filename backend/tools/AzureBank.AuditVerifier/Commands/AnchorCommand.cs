@@ -78,14 +78,67 @@ public static class AnchorCommand
         IServiceProvider services,
         CancellationToken cancellationToken)
     {
+        /*
+          THIS GUARD USED TO READ options.Value AND WAS THEREFORE UNREACHABLE. It validated at the
+          point of use, "exactly where verify validates its own key" -- and then Audit:AnchorKey was
+          added to the options Validate() in ServiceCollectionExtensions, checking the identical
+          predicate. Reading .Value is what triggers that validation, so every input this guard could
+          have rejected threw OptionsValidationException on the line above the `if`. Nothing caught
+          it.
+
+          ⚠️ MEASURED 2026-08-28 on the shipped build, by running the recovery procedure in
+          docs/runbooks/audit-chain-unavailable.md. With Audit__AnchorKey unset, and again with a
+          10-character one, `anchor` printed an unhandled OptionsValidationException stack trace and
+          exited 4 -- the code this tool defines as "the command line was wrong", on a command line
+          that was right. The sentence below was printed zero times. `export` did the same. Only
+          `verify` answered 3 with prose, because only VerifyCommand ran the validator inside a try.
+
+          The comment above the extensions guard says the mirror "predicted its own failure and then
+          suffered it". It did so twice: adding the earlier guard silently killed the later one, and
+          the walk that found it was not a test but an operator's page being read out loud.
+
+          So validate the way verify does -- explicitly, before anything resolves options, catching
+          the failure rather than letting it escape -- and keep the sentence, which is still the one
+          worth printing.
+        */
+        try
+        {
+            services.GetService<IStartupValidator>()?.Validate();
+        }
+        catch (OptionsValidationException invalid)
+        {
+            /*
+              THE FAILURES ARE PRINTED, NOT ASSUMED. The first version of this catch discarded the
+              exception and named Audit:AnchorKey, because that is the key this command is about --
+              but the validator checks Audit:ChainKey too, and `anchor` needs it to verify the chain
+              it is about to anchor. A machine with a bad chain key would have been sent to look at
+              the other secret, which is the same wrong-sentence failure this command's own path
+              guard exists to prevent, committed one commit after fixing it.
+            */
+            var reasons = new List<string>
+            {
+                "NO VERDICT: this tool is not configured to record an anchor.",
+            };
+            reasons.AddRange(invalid.Failures.Select(failure => $"  {failure}"));
+            reasons.Add("  Both audit keys must be set before an anchor is written: the chain key to");
+            reasons.Add("  verify what is being anchored, the anchor key to authenticate the record.");
+            reasons.Add("  A record nobody can authenticate is a row anybody holding the database can");
+            reasons.Add("  write, which is the one thing this table exists not to be.");
+            return (VerifyCommand.Misconfigured, reasons.ToArray());
+        }
+
         using var scope = services.CreateScope();
-        var options = scope.ServiceProvider.GetRequiredService<IOptions<AuditOptions>>();
 
         /*
-          VALIDATED AT THE POINT OF USE, exactly where verify validates its own key and for the same
-          measured reason: doing it during host construction meant an unconfigured machine could not
-          even print --help.
+          AND THE POINT-OF-USE GUARD STAYS, BESIDE THE VALIDATOR RATHER THAN INSTEAD OF IT. Replacing
+          it was tried and AMissingAnchorKey_IsRefusedBeforeAnythingIsRead reddened at "expected 3,
+          found 2": on a provider composed without options validation -- which is what every existing
+          test builds, and the reason this defect stayed invisible -- GetService<IStartupValidator>()
+          returns null, the catch above can never fire, and the command walked an empty chain and
+          reported NothingToVerify instead of refusing. Two guards for one predicate is not redundancy
+          here; they answer for two different compositions, and the tool must refuse under both.
         */
+        var options = scope.ServiceProvider.GetRequiredService<IOptions<AuditOptions>>();
         if (string.IsNullOrWhiteSpace(options.Value.AnchorKey) || options.Value.AnchorKey.Length < 32)
         {
             return (VerifyCommand.Misconfigured, new[]
