@@ -241,13 +241,31 @@ WHERE l.resource_database_id = DB_ID()
 Then how long those sessions have held their transaction:
 
 ```sql
-SELECT st.session_id, dt.transaction_id, dt.database_transaction_begin_time,
-       DATEDIFF(second, dt.database_transaction_begin_time, GETDATE()) AS held_seconds
+SELECT st.session_id, dt.transaction_id, at.transaction_begin_time,
+       DATEDIFF(second, at.transaction_begin_time, GETDATE()) AS held_seconds,
+       dt.database_transaction_log_record_count AS log_records
 FROM sys.dm_tran_database_transactions dt
 JOIN sys.dm_tran_session_transactions st ON st.transaction_id = dt.transaction_id
+JOIN sys.dm_tran_active_transactions at ON at.transaction_id = dt.transaction_id
 WHERE dt.database_id = DB_ID()
-ORDER BY dt.database_transaction_begin_time;
+ORDER BY at.transaction_begin_time;
 ```
+
+⚠️ **The time comes from `dm_tran_active_transactions`, and it did not used to.** This query read
+`dt.database_transaction_begin_time`, and that column is **NULL until the transaction writes a log
+record** — while the tail is read under `UPDLOCK, HOLDLOCK` **before** anything is inserted
+(`AuditChain.cs:356`). So on exactly the blocked writer step 4 constructs, the age column was blank,
+`held_seconds` was blank, and `ORDER BY` ordered nothing. Measured 2026-08-28, one session holding
+that same statement in an open transaction:
+
+```
+dm_tran_database_transactions.begin_time = *** NULL ***   log_records = 0
+dm_tran_active_transactions.begin_time   = 2026-08-28 19:58:36.663
+```
+
+`log_records` is kept in the output because it is the tell: **0 means the session is holding the tail
+without having written anything yet**, which is the shape this runbook is about, and it is also why
+the old column had nothing to say.
 
 **Age says how long a transaction has been open. It does not say what it is holding.** This runbook
 used to run the second query alone, unfiltered, and call the oldest row the usual culprit — but
@@ -606,6 +624,27 @@ know the anchor table was there, now leaves a number that does not add up.
   this is the copy that goes stale unnoticed, because it is the only one no compiler reads. **6 means
   the chain was read and the WRITE failed**: a refused `anchor`, an `export` to a path that already
   exists or cannot be written. It is a statement about the operation you asked for, not the bank.
+
+  ⚠️ **AND "STATEMENTS ABOUT THE CHAIN" NOW MEANS TWO CHAINS, WHICH THESE CODES DO NOT SEPARATE.**
+  There is the audit chain in `AuditEvents` and the anchor chain in `AuditAnchors`, and since the
+  anchors shipped the codes have been overloaded in both directions:
+
+  - **`0` from `verify` does not mean the anchor chain verified.** `VerifyCommand` returns `Intact`
+    on the strength of the row walk alone, and prints `UNCOVERED WINDOW: not computed -- the anchor
+    chain did not verify.` underneath it. So an anchor record failing its own MAC — the one event
+    that table exists to make loud — reaches a script keyed on the exit code as **green**. **Read the
+    UNCOVERED WINDOW block, not just the verdict line.** Anything other than a number there is
+    something to act on.
+  - **`1` from `export` is about the ANCHOR chain, not this one.** `ExportCommand` takes its code
+    from the anchor verification it just wrote out, so it can exit 1 while `verify` on the same
+    database exits 0. Read `1` as "the chain THIS VERB is about is broken", and the verb decides
+    which.
+
+  Both are confirmed in `VerifyCommand.Report` and at `ExportCommand.cs:516`, and neither is a defect
+  in this page — the page is where they become visible, because it is the only document that treats
+  the codes as one vocabulary shared by every verb. **Whether the tool should instead give the anchor
+  chain its own code is a change to what alerts fire, and is not decided here.** Until it is, an
+  alert on `verify` returning non-zero does not cover the anchor chain, and nothing else does either.
 
   **`3` is the one to wire an alert on separately from `1`.** It covers everything that stopped the
   walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey` **or
