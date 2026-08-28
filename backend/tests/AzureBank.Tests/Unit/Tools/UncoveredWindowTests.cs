@@ -350,6 +350,45 @@ public class UncoveredWindowTests
     }
 
     [Fact]
+    public void A_disagreeing_COUNT_is_named_as_the_finding_rather_than_left_as_a_puzzle()
+    {
+        /*
+          THE UNIT AND THE INSTRUCTION HAVE TO MEET. The window is arithmetic in SEQUENCE space, and
+          the intact verdict three lines above already tells the operator to "compare the count
+          against your own". Follow both and a key-holding interior deletion produces two numbers
+          that disagree -- the span says 100, their COUNT(*) says 69 -- with nothing saying which to
+          believe. The likeliest conclusion from a tool that contradicts itself is that the tool is
+          broken, which is worse than either number, and it would be reached in exactly the incident
+          the numbers exist for.
+
+          So the disagreement is named as the finding. It is the only trace that deletion leaves:
+          VerifyAsync checks the link, the payload version, the key identity and the hash, and never
+          the contiguity, so the chain still reads intact with a hole in its numbering.
+
+          FALSIFIED by trimming the caveat back to naming the unit: the operator is told the number
+          is in sequences and left to work out what a mismatch means.
+        */
+        var (_, lines) = VerifyCommand.Report(
+            Intact(1_200, 1, 1_200), 1, 1_200,
+            new VerifyCommand.AnchorCoverage(true, 1_000, 3));
+
+        var text = string.Join(" ", lines);
+        /*
+          ASSERTED WITHIN ONE LINE EACH, because these lines are printed separately and joining them
+          for the assertion inserts the next line's indentation. The first draft asserted across a
+          break and reddened on whitespace rather than on meaning -- a test failing for a reason the
+          reader has to squint at is a test that will be deleted rather than fixed.
+        */
+        text.Should().Contain("SEQUENCE NUMBERS", "the unit is named");
+        text.Should().Contain(
+            "not a fault in this tool",
+            "a disagreement is diagnosed rather than left as a contradiction");
+        text.Should().Contain(
+            "the one trace a key-holding interior", "and attributed to the adversary that leaves it");
+        text.Should().Contain("Compare the count against your own", "the instruction it answers");
+    }
+
+    [Fact]
     public void A_window_of_zero_is_stated_as_a_bound_rather_than_as_coverage()
     {
         /*

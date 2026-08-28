@@ -426,6 +426,10 @@ public static class VerifyCommand
             "  Counted in SEQUENCE NUMBERS, which is a row count unless somebody holding",
             "  Audit:ChainKey removed rows and recomputed the links behind them -- the walk checks",
             "  the links, never the contiguity. Against anyone else the two are the same number.",
+            "  So if your own COUNT(*) over this range disagrees with this span, that gap is the",
+            "  finding, not a fault in this tool: it is the one trace a key-holding interior",
+            "  deletion leaves. The verdict above already tells you to compare counts -- this is",
+            "  what it means when they differ.",
         ];
     }
 
