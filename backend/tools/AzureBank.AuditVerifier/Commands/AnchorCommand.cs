@@ -105,15 +105,26 @@ public static class AnchorCommand
         {
             services.GetService<IStartupValidator>()?.Validate();
         }
-        catch (OptionsValidationException)
+        catch (OptionsValidationException invalid)
         {
-            return (VerifyCommand.Misconfigured, new[]
+            /*
+              THE FAILURES ARE PRINTED, NOT ASSUMED. The first version of this catch discarded the
+              exception and named Audit:AnchorKey, because that is the key this command is about --
+              but the validator checks Audit:ChainKey too, and `anchor` needs it to verify the chain
+              it is about to anchor. A machine with a bad chain key would have been sent to look at
+              the other secret, which is the same wrong-sentence failure this command's own path
+              guard exists to prevent, committed one commit after fixing it.
+            */
+            var reasons = new List<string>
             {
-                "NO VERDICT: Audit:AnchorKey is not configured, so nothing can be recorded.",
-                "  A record nobody can authenticate is a row anybody holding the database can write,",
-                "  which is the one thing this table exists not to be. Set it the way the other five",
-                "  secrets are set -- user-secrets in development, environment or vault elsewhere.",
-            });
+                "NO VERDICT: this tool is not configured to record an anchor.",
+            };
+            reasons.AddRange(invalid.Failures.Select(failure => $"  {failure}"));
+            reasons.Add("  Both audit keys must be set before an anchor is written: the chain key to");
+            reasons.Add("  verify what is being anchored, the anchor key to authenticate the record.");
+            reasons.Add("  A record nobody can authenticate is a row anybody holding the database can");
+            reasons.Add("  write, which is the one thing this table exists not to be.");
+            return (VerifyCommand.Misconfigured, reasons.ToArray());
         }
 
         using var scope = services.CreateScope();

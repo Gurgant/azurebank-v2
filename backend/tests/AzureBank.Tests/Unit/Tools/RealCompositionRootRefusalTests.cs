@@ -76,12 +76,54 @@ public class RealCompositionRootRefusalTests
       tests ever start needing one, the guard has moved after the first query and the guarantee is
       gone. Registration does not connect -- AddDbContext is lazy.
     */
-    private static ServiceProvider RealProvider()
+    private static ServiceProvider RealProvider(IConfiguration? configuration = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddVerifierServices(Configuration(), Environment());
+        services.AddVerifierServices(configuration ?? Configuration(), Environment());
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>The <b>other</b> key is the unusable one, and nothing else changes.</summary>
+    private static IConfiguration BadChainKeyConfiguration() =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] =
+                @"Server=(localdb)\MSSQLLocalDB;Database=Unreached;Trusted_Connection=True",
+            ["Audit:ChainKey"] = "tooshort10",
+            ["Audit:AnchorKey"] = new string('a', 40),
+        }).Build();
+
+    /*
+      A COMMAND MUST NAME THE KEY THAT ACTUALLY FAILED, not the key it is named after. The first
+      version of anchor's catch discarded the exception and reported Audit:AnchorKey unconditionally,
+      because that is the secret the command is about -- so a machine with a bad Audit:ChainKey was
+      sent to look at the wrong one. Both keys are validated together and `anchor` needs both: the
+      chain key to verify what it is anchoring, the anchor key to authenticate the record.
+
+      This is the same defect as reporting a database outage over a typo, which the path guard in
+      ExportCommand was written to prevent. It was reintroduced one commit after that fix, in the
+      catch that fixed something else -- and caught in review rather than by a test, which is why
+      this one exists.
+    */
+    [Theory]
+    [InlineData(true, "Audit:ChainKey", "Audit:AnchorKey")]
+    [InlineData(false, "Audit:AnchorKey", "Audit:ChainKey")]
+    public async Task AnchorNamesTheKeyThatFailed_NotTheOneItIsNamedAfter(
+        bool chainKeyIsBad, string expected, string notExpected)
+    {
+        await using var provider = RealProvider(chainKeyIsBad ? BadChainKeyConfiguration() : Configuration());
+
+        var (exitCode, lines) = await AnchorCommand.RunAsync(provider, CancellationToken.None);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Misconfigured);
+        text.Should().Contain(
+            expected,
+            "the operator is sent to the secret that is actually wrong");
+        text.Should().NotContain(
+            $"{notExpected} must be configured",
+            "naming the other key's failure would send them to a setting that is fine");
     }
 
     [Fact]
