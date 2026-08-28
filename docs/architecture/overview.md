@@ -170,4 +170,6 @@ trace, because the trace context propagates through the proxy hop.
 `docs/adr/` holds the decisions with their alternatives and residuals — the index names four to
 start with. `docs/engineering-traps.md` collects the things that fail silently. `SECURITY.md` has
 the security posture in one place, and `docs/engineering-practices.md` explains how to run and
-change the project.
+change the project. `docs/audit-trail-against-real-practice.md` sets the audit trail against what a
+real deployment would have and names the gap in each direction — read it if you want the limits
+before the design.
