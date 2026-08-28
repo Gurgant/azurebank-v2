@@ -55,6 +55,38 @@ nothing for a periodic anchoring job to live in, and "anchor when I remember to"
 A control that depends on somebody choosing to run it does not constrain that person, which is the
 one thing this control is for.
 
+**And the consequence is stronger than "less fresh": with no promised cadence, a missing anchor is
+not weak evidence. It is none.** This is the half of the argument that is easy to state backwards,
+so it is worth being exact about. If anchors are supposed to appear on a schedule, a gap in the
+series is itself a finding — something was deleted, or something stopped. If they appear when
+somebody remembers, a gap is indistinguishable from a quiet fortnight, and no amount of linkage
+recovers the difference. Chaining tells you an anchor that EXISTS was not tampered with. Only a
+promise about when they arrive tells you an anchor that is ABSENT should have been there.
+
+Both real systems examined for this make the cadence the mechanism rather than the linkage, and both
+do it by signing something over an interval in which nothing happened.
+
+- **CloudTrail mints an empty digest.** *"CloudTrail will deliver a digest file even when there has
+  been no API activity in your account during the one hour period that the digest file represents.
+  This can be useful when you need to assert that no log files were delivered during the hour
+  reported by the digest file."* The empty digest is a normal digest whose `logFiles` array is `[]`
+  and whose `newestEventTime` and `oldestEventTime` are `null`; it is signed and chained like any
+  other ([digest file structure](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-validation-digest-file-structure.html)).
+- **RFC 6962 signs the same tree again with a new timestamp.** *"Each log MUST produce on demand a
+  Signed Tree Head that is no older than the Maximum Merge Delay"*, and *"In the unlikely event that
+  it receives no new submissions during an MMD period, the log SHALL sign the same Merkle Tree Hash
+  with a fresh timestamp"* ([RFC 6962 §3.5](https://www.rfc-editor.org/rfc/rfc6962)). The tree hash
+  is unchanged and the signature is new, which is the entire point: the freshness, not the content,
+  is what is being attested.
+
+_Both quotes read from the sources on 2026-08-28, not from a summary of them._
+
+**So a cadence is not a nicer version of what is here — it is a different claim.** Anchoring on
+demand can say "these rows were covered as of this anchor". Only anchoring on a promise can say
+"nothing has been removed since, because you would be looking at a gap." That second sentence is the
+one an auditor is actually asking for, and this deployment cannot make it for the reason above:
+there is nothing running to make the promise to.
+
 ### The second reason: I own both sides
 
 The chain's threat model is somebody who holds the database but not the key. An anchor stored in
@@ -229,6 +261,26 @@ control shows an appended anchor as an addition and a revised history as a delet
 `docs/audit/anchors.sample.jsonl` is one, committed so a reader can see the shape, with
 `docs/audit/README.md` beside it.
 
+**And the gap is now a number rather than a shrug.** Every `verify` verdict is followed by an
+UNCOVERED WINDOW block: how far `AuditEvents` runs past the deepest sequence any anchor claims to
+cover. It is computed from local data alone and it does not pretend anything runs — it turns "I do
+not know how much sits outside every anchor" into a count.
+
+**It prints its own two limits rather than leaving them to be found.** It HEALS: sequences are
+reissued after a truncation, so writing enough new rows brings the tail back past the claim and the
+window reads zero again. And it is blind to the thorough version — delete the covering anchors along
+with the rows and the claim drops with the tail. A NEGATIVE window is reported separately and is the
+one to stop for, because it means the anchors claim coverage through a sequence that no longer
+exists. The runbook names the readings an operator is most likely to get wrong.
+
+⚠️ **This does not make the cadence argument above any weaker.** The window measures distance, not
+time, and the anchors it measures against sit in the database they anchor. It catches the truncation
+carried out by somebody who did not know `AuditAnchors` was there. Removing the covering anchors
+along with the rows is consistent and silent, which
+`AuditAnchorSqlServerTests.ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`
+asserts on purpose. The window raises the cost of the attack; the schedule and the third party are
+what would close it, and both are still missing.
+
 ⚠️ **It changes nothing above.** Writing a file is not the same as being seen, and this document's
 own scoping is the reason: the property is bounded to anchors a third party has SEEN, and a file this
 machine wrote to this machine's disk has been seen by nobody — whoever truncates the table deletes it
@@ -259,5 +311,13 @@ resting on it — ADR-0044, the runbook, and this page — move from "this canno
 chain cannot detect it, and here is what does." None of that announces itself, which is the part
 worth writing down.
 
-Until then, the count is the only witness, and the operator's own records are what it has to be
-compared against.
+~~Until then, the count is the only witness, and the operator's own records are what it has to be
+compared against.~~
+
+*(Corrected 2026-08-28. `docs/runbooks/audit-chain-unavailable.md` was corrected in the same week to
+say there are now three witnesses and only the last is a person, so this closing left the two pages
+disagreeing.)* **Until then, the operator's own records are the only witness OUTSIDE this machine**,
+and that distinction is the whole of it. `AuditAnchors` and the uncovered window are witnesses, and
+they are witnesses the same person can revise — which is why this document keeps arguing for a copy
+somebody else holds. What they buy is that the careless version of the attack now leaves arithmetic
+that does not add up. What they cannot buy is testimony from anybody but you.
