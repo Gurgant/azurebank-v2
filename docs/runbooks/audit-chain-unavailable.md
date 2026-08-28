@@ -384,9 +384,14 @@ recomputing hashes requires the key, which is exactly what an attacker who reach
 assumed not to have.
 
 **Capture, in this order, before anyone touches the database.** The verifier's full output including
-the exit code; the sequence it names and the rows on either side of it
-(`SELECT * FROM AuditEvents WHERE Sequence BETWEEN <n>-2 AND <n>+2`); the total row count; and the
-SQL Server default trace or audit for recent writes to `AuditEvents` if it is enabled.
+the exit code **and the UNCOVERED WINDOW block under it**; `export <path>` run to a file OUTSIDE this
+machine, which is the only step here that survives the machine; the sequence it names and the rows on
+either side of it (`SELECT * FROM AuditEvents WHERE Sequence BETWEEN <n>-2 AND <n>+2`); the total row
+count; and the SQL Server default trace or audit for recent writes to `AuditEvents` if it is enabled.
+
+`export` is safe to run here — it READS the anchor table and writes a file, it refuses to overwrite an
+existing one, and it touches nothing in the database. `anchor` is the verb to leave alone; the section
+below says why, and says it too late to help if you have already run it.
 
 **Then escalate rather than continue.** Deciding whether to keep taking traffic on an instance whose
 audit trail is proven altered is not an operational call — it is the decision ADR-0044 D1 exists to
@@ -405,13 +410,52 @@ thirty-second queue into a fast refusal; raising it makes every movement wait lo
 eventual failure, and holds a connection while it does. If the queue is legitimate rather than stuck
 — a genuine burst — the fix is capacity, not patience.
 
+**Do not run `anchor` during an incident. Run `export` instead, and run it FIRST.** The tool has
+three verbs and only two of them are safe here, which the rest of this page could not tell you
+because it was written when there was one.
+
+- `verify` READS. Safe, and it is the verdict everything below hangs on.
+- `export <path>` READS the anchor table and writes a FILE. Safe against the database, and it is the
+  one thing on this page that gets evidence somewhere the incident cannot reach. Run it before you
+  touch anything: it refuses to overwrite an existing file, so it cannot destroy an earlier copy, and
+  a chain that has stopped verifying is exactly when an off-machine copy is worth the most.
+- `anchor` WRITES a record into `AuditAnchors`. **That is the one to leave alone.** Two paragraphs
+  below, this page tells you the table is evidence and not to write to it; `anchor` is a write. It
+  will also record a GAP MARKER over a chain it cannot vouch for, which is honest and is still a new
+  row in the evidence, dated during your incident.
+
+Neither `export` nor the window below is a substitute for the number you wrote down elsewhere. They
+are cheaper to produce and they are not testimony from anybody else.
+
+Same three environment variables as the recovery block below — **both keys, or it exits 3** — and a
+destination that is not this machine:
+
+```bash
+dotnet run --project backend/tools/AzureBank.AuditVerifier -- export /mnt/evidence/anchors-$(date +%FT%H%M%S).jsonl
+```
+
+It refuses to overwrite: an existing file exits 6 and the copy already there is untouched. That is
+why the timestamp is in the name rather than a fixed `anchors.jsonl` you would have to argue with
+during an incident. `docs/audit/anchors.sample.jsonl` shows the shape of what lands.
+
 **Do not delete rows to "unstick" the table.** Two different things happen, and the one that sounds
 safer is the dangerous one.
 
 Deleting an **interior** row is caught: the row after it records a predecessor that is no longer
-there, and `VerifyAsync` reports the break at that sequence number. Deleting from the **end** is not
-caught at all. The surviving prefix links perfectly and hashes perfectly, because verification only
-ever looks backwards and has nothing to compare the end of the table against.
+there, and `VerifyAsync` reports the break at that sequence number. Deleting from the **end** is
+~~not caught at all~~ **not caught by the CHAIN** *(narrowed 2026-08-28)*. The surviving prefix links
+perfectly and hashes perfectly, because verification only ever looks backwards and has nothing to
+compare the end of the table against.
+
+What changed is that the chain is no longer the only thing looking. An anchor records how deep a
+walk reached, so a table that has since become shorter than an anchor claims produces a NEGATIVE
+uncovered window — read below — and that is an arithmetic disagreement, not a hash one. It catches
+the deletion done by somebody who did not know `AuditAnchors` existed. It does not catch the
+deletion done by somebody who did: removing the covering anchors along with the rows is consistent
+and silent, which
+`AuditAnchorSqlServerTests.ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`
+asserts on purpose. **So the sentence is now about effort, not impossibility** — and an operator who
+reads the old absolute is entitled to stop looking, which is why it is corrected rather than left.
 
 Measured, not argued — `AuditChainTests.TruncatingTheTAIL_IsNotDetected_AndThisPinsTheLimit` writes
 three rows, deletes the last one, and the chain still reports itself intact; the only trace is that
@@ -421,9 +465,18 @@ elsewhere and to nobody who did not.
 So truncation is the cheapest attack on this table — it needs **no key at all**, only write access —
 and it is also the easiest thing to do by accident while trying to clear a stuck table at three in
 the morning. ADR-0044 states the same limit and the honest claim it leaves: this chain detects
-tampering by someone holding the database but not the key, **except at the end of the table**. Until
-the tail is anchored outside the system, the only witness to how many rows there should be is
-somebody who wrote the number down.
+tampering by someone holding the database but not the key, **except at the end of the table**.
+
+~~Until the tail is anchored outside the system, the only witness to how many rows there should be is
+somebody who wrote the number down.~~ *(Corrected 2026-08-28: there are now three witnesses, and only
+the last of them is a person.)* The `AuditAnchors` table records how far each verification walk
+reached and how many rows it held; `verify` prints the UNCOVERED WINDOW, which is how far the table
+runs past the deepest sequence any anchor claims; and `export` writes the anchor chain to a file that
+can leave the machine. **None of them closes the gap** — a truncation that deletes the covering anchor
+records too is still silent, which
+`AuditAnchorSqlServerTests.ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`
+asserts on purpose. What they buy is that the LAZY version of the attack, done by somebody who did not
+know the anchor table was there, now leaves a number that does not add up.
 
 ---
 
@@ -431,8 +484,12 @@ somebody who wrote the number down.
 
 - **Verify the chain. Run this FROM THE REPOSITORY ROOT** — the `--project` path is relative to it,
   and from anywhere else `dotnet run` fails to find the project and exits **1**, which this document
-  defines four paragraphs below as CHAIN BROKEN. That failure happens before the tool starts, so
-  nothing inside it can translate the code. Confirm with `pwd` if you are not sure.
+  defines under **Exit codes, for scripting it** below as CHAIN BROKEN. (That pointer used to count
+  paragraphs -- "four paragraphs below" -- and the edit that added the second key and the uncovered
+  window pushed the definition eighty lines further down without touching the sentence that pointed
+  at it. A cross-reference by COUNT is one an unrelated edit can silently break; by NAME it
+  survives.) That failure happens before the tool starts, so nothing inside it can translate the
+  code. Confirm with `pwd` if you are not sure.
 
   The key and the connection string travel through the environment rather
   than as command arguments, because on Linux `/proc/<pid>/cmdline` is world-readable while
@@ -449,9 +506,44 @@ somebody who wrote the number down.
 
   ```bash
   read -rsp 'Audit:ChainKey: ' Audit__ChainKey && export Audit__ChainKey && echo
+  read -rsp 'Audit:AnchorKey: ' Audit__AnchorKey && export Audit__AnchorKey && echo
   read -rsp 'Connection string: ' ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection && echo
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
+
+  ⚠️ **TWO KEYS, AND THIS PROCEDURE STOPPED WORKING WHEN THE SECOND ONE ARRIVED.** The tool validates
+  both at startup and refuses to run without either. Running the version of this block that read only
+  `Audit:ChainKey`, measured:
+
+  ```
+  EXIT=3
+  CANNOT VERIFY: this tool is not configured to read the chain.
+    Audit:AnchorKey must be configured with at least 32 characters.
+  ```
+
+  3 is the code this document tells you to alert on as "the store could not be read" — so an operator
+  following the old text during an incident was sent to check a database that was fine, by the page
+  written to stop exactly that. `Audit:AnchorKey` authenticates the anchor records, and `verify` needs
+  it because it reads them now: see the uncovered window below.
+
+  ⚠️ **AND `verify` WAS THE ONLY VERB THAT ANSWERED LIKE THAT.** Running the same misconfiguration
+  through the other two, on the build shipped before this page was corrected:
+
+  ```
+  verify  -> EXIT=3   CANNOT VERIFY: this tool is not configured to read the chain.
+  export  -> EXIT=4   Unhandled exception: OptionsValidationException: Audit:AnchorKey must be ...
+  anchor  -> EXIT=4   Unhandled exception: OptionsValidationException: Audit:AnchorKey must be ...
+  ```
+
+  4 is **"the command line was wrong"**, and the command line was right — so a script keyed to these
+  codes, or an operator reading them, was pointed at their own typing instead of at the configuration.
+  `anchor` even had a guard written for this exact case, with better prose than the exception; it read
+  `options.Value` to reach it, which is what triggers the validation, so it threw one line before the
+  guard could run and printed its sentence zero times. Both now answer **3**, like `verify`.
+
+  This was not found by a test. It was found by running the commands on this page, which is the only
+  method that would have found it: the tool's own suite passes either way, because no test ran a verb
+  against a missing key and asserted the NUMBER an operator would see.
 
   PowerShell, since it is the history file this paragraph cites. **`-AsPlainText` on
   `ConvertFrom-SecureString` is PowerShell 7 or later**; on Windows PowerShell 5.1 it does not exist
@@ -461,6 +553,7 @@ somebody who wrote the number down.
   ```powershell
   # PowerShell 7+
   $env:Audit__ChainKey = (Read-Host 'Audit:ChainKey' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
+  $env:Audit__AnchorKey = (Read-Host 'Audit:AnchorKey' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
   $env:ConnectionStrings__DefaultConnection = (Read-Host 'Connection string' -AsSecureString |
   ConvertFrom-SecureString -AsPlainText)
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
@@ -471,11 +564,32 @@ somebody who wrote the number down.
   $key = Read-Host 'Audit:ChainKey' -AsSecureString
   $env:Audit__ChainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
       [Runtime.InteropServices.Marshal]::SecureStringToBSTR($key))
+  $anchorKey = Read-Host 'Audit:AnchorKey' -AsSecureString
+  $env:Audit__AnchorKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($anchorKey))
   $cs = Read-Host 'Connection string' -AsSecureString
   $env:ConnectionStrings__DefaultConnection = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
       [Runtime.InteropServices.Marshal]::SecureStringToBSTR($cs))
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
+
+  ⚠️ **AND IT PRINTS AN UNCOVERED WINDOW, which is new and is the line most likely to be misread.**
+  It says how far the table runs past the deepest sequence any anchor claims to cover — "at least N
+  rows are outside every anchor". Three readings of it are wrong and worth naming before you see it
+  at three in the morning:
+
+  - **Zero does NOT mean you are covered.** It means the deepest claim reaches the tail AT THAT
+    INSTANT, which one row written a moment later undoes. The line says "at least" for that reason.
+  - **It is not a freshness measure.** Nothing here schedules an anchor, so the window has no ceiling
+    and a small number now says nothing about tomorrow. A missing anchor is not evidence of anything.
+  - **NEGATIVE is the one to stop for.** It means the anchors claim coverage through a sequence that
+    no longer exists, and nothing legitimate produces it. Preserve the database, `export`, and
+    escalate before running anything that writes.
+
+  It is counted in SEQUENCE numbers. That is a row count unless somebody holding `Audit:ChainKey`
+  removed rows and recomputed the links behind them — the walk checks the links, never the
+  contiguity — so **a `SELECT COUNT(*)` that disagrees with the span is the finding, not a fault in
+  the tool.** It is the only trace that particular deletion leaves.
 
   It prints the verdict WITH the row count and the sequence range, because "intact" on its own is
   not an answer — a chain of zero rows links perfectly, and a table truncated to nothing reports
@@ -483,17 +597,46 @@ somebody who wrote the number down.
   40 rows where yesterday it had 40,000 is intact and catastrophic, and only the numbers say so.
 
   Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** no verdict
-  (the store could not be read), **4** the command line was wrong, **5** interrupted. Only 0, 1 and
-  2 are statements about the CHAIN.
+  (the store could not be read), **4** the command line was wrong, **5** interrupted, **6** there WAS
+  a verdict but nothing could be recorded from it. Only 0, 1 and 2 are statements about the CHAIN.
+
+  ⚠️ **This list stopped at 5 until 2026-08-28, and 6 had existed since the `anchor` mode shipped.**
+  A script written from it treated 6 as an unknown code. The list lives in FOUR places —
+  `VerifyCommand`'s constants, `AnchorCommand`'s, the header comment in `Program.cs`, and here — and
+  this is the copy that goes stale unnoticed, because it is the only one no compiler reads. **6 means
+  the chain was read and the WRITE failed**: a refused `anchor`, an `export` to a path that already
+  exists or cannot be written. It is a statement about the operation you asked for, not the bank.
 
   **`3` is the one to wire an alert on separately from `1`.** It covers everything that stopped the
-  walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey`, an unreachable
+  walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey` **or
+  `Audit:AnchorKey` — both are validated at startup and either alone stops all three verbs, which is
+  the failure this page's own recovery procedure produced until 2026-08-28** — an unreachable
   server, a connection string that is malformed or absent, **and the states step 6 is about — the
   `AuditEvents` table renamed, dropped or never migrated, or a login that cannot SELECT from it.**
   That last group is why the tool no longer stops at "check the connection string and the key": it
   now says that a vanished `AuditEvents` exits the same way and is the most complete tamper there
   is, and that the remedy step 6 points at — re-running migrations — would recreate the table and
   erase the evidence it ever went. Read the exception line above the advice; it names the cause.
+
+  ⚠️ **THERE ARE NOW TWO SUCH TABLES, AND STEP 6 ONLY KNOWS ABOUT ONE.** `verify` reads
+  `AuditAnchors` before it walks a row, so that table missing stops the walk exactly the same way.
+  Measured 2026-08-28 by renaming it away:
+
+  ```
+  EXIT=3
+  CANNOT VERIFY: the audit store could not be read, so there is no verdict.
+    SqlException: Invalid object name 'AuditAnchors'.
+  ```
+
+  **Do not read that as the lesser of the two.** A vanished `AuditAnchors` is the second half of the
+  one attack this system cannot see: removing rows from the end of `AuditEvents` is silent only if
+  the anchors covering them go too, which
+  `AuditAnchorSqlServerTests.ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit`
+  pins on purpose. So the table being absent has two readings — never migrated on this deployment, or
+  removed — and they are the same exception. **Which one it is depends on whether this deployment
+  ever anchored**, and re-running migrations answers it forever in the wrong direction: it recreates
+  an empty table, and an empty `AuditAnchors` is indistinguishable from one that was cleared. Check
+  the migration history and any exported copy before anybody runs a migration.
 
   **A WRONG key is not among them, and this runbook previously said it was.** A well-formed key that
   is simply not the one the chain was written with passes every check the tool can make, so the walk
@@ -550,8 +693,18 @@ somebody who wrote the number down.
   before any hash is recomputed, so there a wrong key produces an UNCHECKED row rather than a
   mismatch — which is why a mismatch on such a row exonerates the key instead of implicating it.
 
-  What it still cannot tell you is whether rows were removed from the END. That needs an anchor
-  outside the system and is tracked separately — see ADR-0044.
+  What it still cannot tell you is whether rows were removed from the END. ⚠️ **That sentence used to
+  continue "that needs an anchor outside the system", and this page struck the same claim fourteen
+  paragraphs above on 2026-08-28 while leaving this copy standing** — so the last thing the operator
+  read contradicted the correction they had already been given. The anchor now exists: `AuditAnchors`
+  records how deep each walk reached, and `verify` prints the UNCOVERED WINDOW under every verdict.
+  Neither closes the gap — a truncation that removes the covering anchor records too is still silent
+  — but the version of the attack carried out by somebody who did not know the anchor table was there
+  now leaves a number that does not add up. See ADR-0044.
+
+  _That correction was made by searching for the WORDING of the struck sentence, which does not
+  appear here: this copy said the same thing in different words and survived the search. When a claim
+  is withdrawn or narrowed, search for what it SAID, not for how it said it._
 - The refused movements were refused, not lost: no money moved, and no audit row claims it did.
   Customers can simply retry.
 - If the cause was contention rather than an outage, the number worth capturing is how long the tail
