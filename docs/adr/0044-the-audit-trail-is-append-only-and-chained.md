@@ -289,11 +289,15 @@ the tail's hash — chained to the record before it and authenticated under `Aud
 secret the row chain does not use. ⚠️ **It detects no truncation.** Truncate the rows above some
 sequence, delete every record covering past it, and both chains verify perfectly, because each links
 backwards only; `ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit` asserts
-exactly that. What the record buys is narrower and real: DELETING records is loud, because the
-counter gaps and the links stop meeting, while MINTING one needs the key. **The evidence is the pair
-`(anchor number, covered-through sequence)` an operator wrote down somewhere this machine cannot
-reach** — the counter alone can be regrown by re-running the command, and the sequence cannot be
-regrown downward.
+exactly that. *(Qualified 2026-08-28, and the qualifier is narrow: `verify` now prints the UNCOVERED
+WINDOW — how far past the deepest anchored sequence the table runs — so a truncation that left the
+anchor records BEHIND comes out as a negative window and is named. Deleting the covering records
+too, which is the sentence above, still produces perfect silence. What the window adds is that the
+lazy version of the attack stopped being free.)* What the record buys is narrower and real: DELETING
+records is loud, because the counter gaps and the links stop meeting, while MINTING one needs the
+key. **The evidence is the pair `(anchor number, covered-through sequence)` an operator wrote down
+somewhere this machine cannot reach** — the counter alone can be regrown by re-running the command,
+and the sequence cannot be regrown downward.
 
 **And it no longer rests on somebody copying two numbers correctly.** `export <path>` writes every
 anchor record to a file outside the database, one JSON object per line, and refuses to overwrite an
