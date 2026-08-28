@@ -36,6 +36,12 @@ public class UncoveredWindowQueryTests : IDisposable
     private readonly ServiceProvider _services;
     private readonly AzureBankDbContext _context;
 
+    /// <summary>
+    /// Named rather than inline, so a second provider can reach the SAME store — which is what
+    /// makes a gap marker reachable without reaching into the table by hand.
+    /// </summary>
+    private readonly string _store = Guid.NewGuid().ToString();
+
     public UncoveredWindowQueryTests()
     {
         var options = Options.Create(new AuditOptions { ChainKey = ChainKey, AnchorKey = AnchorKey });
@@ -43,7 +49,7 @@ public class UncoveredWindowQueryTests : IDisposable
 
         _context = new AzureBankDbContext(
             new DbContextOptionsBuilder<AzureBankDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options,
+                .UseInMemoryDatabase(_store).Options,
             timeProvider: null,
             auditChain: chain);
 
@@ -119,6 +125,35 @@ public class UncoveredWindowQueryTests : IDisposable
             "at least 0 rows", "which is what reading the newest record would have printed");
     }
 
+    /// <summary>
+    /// A provider whose ROW key is wrong while its ANCHOR key is right, which is what makes
+    /// <c>anchor</c> write a gap marker over a healthy anchor chain.
+    /// </summary>
+    /// <remarks>
+    /// <c>Build</c> sets <c>anchorable = verification.IsIntact &amp;&amp; verification.Verified &gt; 0</c>
+    /// from the ROW walk, and a marker's coverage columns are null by construction. The ANCHOR key
+    /// stays correct so the anchor chain still verifies and the record is appended rather than
+    /// refused — which is the state under test, not a broken one.
+    /// </remarks>
+    private ServiceProvider WrongRowKey()
+    {
+        var options = Options.Create(new AuditOptions
+        {
+            ChainKey = "a-completely-different-row-chain-key-0123456789",
+            AnchorKey = AnchorKey,
+        });
+        var chain = new AuditChain(options, NullLogger<AuditChain>.Instance);
+        var collection = new ServiceCollection();
+        collection.AddSingleton<IOptions<AuditOptions>>(options);
+        collection.AddSingleton<IAuditChain>(chain);
+        collection.AddSingleton<IAuditAnchorChain>(new AuditAnchorChain(options));
+        collection.AddSingleton(new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_store).Options,
+            timeProvider: null,
+            auditChain: chain));
+        return collection.BuildServiceProvider();
+    }
+
     [Fact]
     public async Task AGapMarkerOnTopOfAGoodAnchorDoesNotCryWolf()
     {
@@ -129,19 +164,41 @@ public class UncoveredWindowQueryTests : IDisposable
           unanchored on a chain that is perfectly well anchored, and an operator who is cried wolf at
           stops reading the line.
 
-          Here the marker is produced honestly: `anchor` refuses to append to a chain it cannot
-          authenticate, so a second provider holding a different anchor key writes one.
+          ⚠️ THE FIRST VERSION OF THIS TEST WROTE NO MARKER AND PROVED NOTHING. It anchored once over
+          six rows and asserted the window was zero -- which it is under BOTH implementations, since
+          with a single record the newest IS the deepest. Its comment claimed reading the newest
+          would redden it. Measured, that mutation reddens exactly ONE test in the suite and this was
+          not it: the evidence was in a run I had already done and read past.
 
-          FALSIFIED by reading the newest record: the window reports EVERY row and this reddens.
+          The marker is produced the way one really appears: the ROW chain fails to verify, so
+          `anchor` has nothing it can vouch for and records a marker instead. The ANCHOR key stays
+          correct, so the anchor chain verifies and the record is appended rather than refused.
+
+          FALSIFIED by keeping the newest record's coverage instead of the maximum: the window
+          reports EVERY row and this reddens -- now alongside the truncation test rather than
+          leaving it alone.
         */
         await WriteRowsAsync(6);
         await AnchorCommand.RunAsync(_services, CancellationToken.None);
 
+        using (var wrongKey = WrongRowKey())
+        {
+            await AnchorCommand.RunAsync(wrongKey, CancellationToken.None);
+        }
+
+        var records = await _context.Set<AuditAnchor>().OrderBy(a => a.AnchorSequence).ToListAsync();
+        records.Should().HaveCount(2, "the setup is the state under test and is checked, not assumed");
+        records[0].CoveredThroughSequence.Should().Be(6, "the first record anchored the six rows");
+        records[1].Kind.Should().Be(AuditAnchorKind.GapMarker, "and the second could vouch for none");
+        records[1].CoveredThroughSequence.Should().BeNull("a marker covers nothing by construction");
+
         var (_, lines) = await VerifyCommand.RunAsync(_services, CancellationToken.None);
         var text = string.Join(" ", lines);
 
-        text.Should().Contain("at least 0 rows", "the anchor reaches the tail");
-        text.Should().NotContain("EVERY row");
+        text.Should().Contain(
+            "at least 0 rows", "the DEEPEST record still reaches the tail, marker or no marker");
+        text.Should().NotContain(
+            "EVERY row", "which is what reading the newest record would have printed");
     }
 }
 
