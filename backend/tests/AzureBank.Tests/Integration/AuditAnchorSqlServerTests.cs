@@ -284,6 +284,69 @@ public sealed class AuditAnchorSqlServerTests : IDisposable
     }
 
     [SqlServerFact]
+    public async Task DeletingAnchorsIsLoudONLYINTHEINTERIOR_ANDASUFFIXISSILENT()
+    {
+        /*
+          THE HALF OF "DELETING RECORDS IS LOUD" THAT IS NOT TRUE, asserted so the sentence cannot go
+          on being repeated whole. Eight places in this repository said it without the qualifier,
+          including one written the same day this test was.
+
+          VerifyChainAsync walks in AnchorSequence order against an expectedSequence counter, checks
+          the MAC, and checks that each record links to the previous payload hash. Remove a record
+          from the MIDDLE and both fire: the counter finds a gap where it expected the missing
+          number, and the record after it points at a payload hash that is no longer there. Remove a
+          SUFFIX and neither can: the survivors are 1..n with every link met, and nothing in the walk
+          asks how tall the chain ought to be. It returns intact.
+
+          That is the same shape as the row chain's own limit one layer down, and it is why the
+          anchors alone cannot close truncation: the attack is a suffix removal in both tables, which
+          the test below this one performs in full.
+
+          FALSIFIED by asserting the suffix case reports broken -- it does not, and pretending it
+          does is the claim this pins.
+        */
+        var services = CreateSqlServices();
+        await ClearAsync(services);
+        await WriteRowsAsync(services, 3);
+        await AnchorAsync(services);
+        await WriteRowsAsync(services, 3);
+        await AnchorAsync(services);
+        await WriteRowsAsync(services, 3);
+        var third = await AnchorAsync(services);
+
+        using var scope = services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+
+        // The INTERIOR first: remove record 2 of 3 and the walk must name it.
+        var interior = await context.Database.ExecuteSqlRawAsync(
+            "DELETE FROM [AuditAnchors] WHERE [AnchorSequence] = {0}", third.AnchorSequence - 1);
+        interior.Should().Be(1);
+
+        var afterInterior = await anchors.VerifyChainAsync(context);
+        afterInterior.IsIntact.Should().BeFalse(
+            "a gap in the counter and a link that no longer meets are exactly what the walk checks");
+
+        // Now the SUFFIX: put the chain back to 1..2 by removing the highest, and it goes quiet.
+        await ClearAsync(services);
+        await WriteRowsAsync(services, 3);
+        await AnchorAsync(services);
+        await WriteRowsAsync(services, 3);
+        await AnchorAsync(services);
+        await WriteRowsAsync(services, 3);
+        var newest = await AnchorAsync(services);
+
+        var suffix = await context.Database.ExecuteSqlRawAsync(
+            "DELETE FROM [AuditAnchors] WHERE [AnchorSequence] >= {0}", newest.AnchorSequence);
+        suffix.Should().Be(1, "one record removed from the top, nothing else touched");
+
+        var afterSuffix = await anchors.VerifyChainAsync(context);
+        afterSuffix.IsIntact.Should().BeTrue(
+            "the survivors are 1..n with every link met, and nothing asks how tall the chain was");
+        afterSuffix.Records.Should().Be(2, "the walk reports what it read, not what used to be there");
+    }
+
+    [SqlServerFact]
     public async Task ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit()
     {
         /*
@@ -293,7 +356,8 @@ public sealed class AuditAnchorSqlServerTests : IDisposable
           so neither can see that it used to be longer.
 
           THIS IS WHY NOTHING IN THIS SLICE MAY CLAIM TO DETECT TRUNCATION. What the record buys is
-          narrower: deleting anchors is LOUD, because the counter gaps and the links stop meeting,
+          narrower: deleting an INTERIOR anchor is LOUD, because the counter gaps and the links
+          stop meeting -- a SUFFIX removal is silent, which the test above measures --
           while MINTING one needs Audit:AnchorKey. The evidence is the pair of numbers the operator
           wrote down somewhere this machine cannot reach.
 

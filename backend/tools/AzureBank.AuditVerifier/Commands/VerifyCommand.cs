@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Data.Common;
 using System.CommandLine.Invocation;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -73,6 +74,39 @@ public static class VerifyCommand
     public const int Interrupted = 5;
 
     /// <summary>
+    /// What the anchor table says it covers, observed before the row walk began.
+    /// </summary>
+    /// <param name="ChainVerified">
+    /// Whether the anchor chain itself verified. False means the numbers below are not worth
+    /// arithmetic: a chain with a hole in it can claim anything.
+    /// </param>
+    /// <param name="DeepestCovered">
+    /// The HIGHEST <c>CoveredThroughSequence</c> across every record — not the newest record's own.
+    /// Null when no record covers anything.
+    /// </param>
+    /// <param name="Records">How many anchor records exist at all.</param>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ <b>THE DEEPEST COVERAGE, NOT THE NEWEST RECORD'S, AND THE DIFFERENCE IS THE WHOLE POINT.</b>
+    /// Two states separate them and the tool must survive both. A gap marker written over a healthy
+    /// history is the newest record and covers NOTHING — its coverage columns are null by
+    /// construction — so reading the newest would report every row as unanchored and cry wolf. Worse
+    /// in the other direction: truncate the rows, then run <c>anchor</c> again, and the newest record
+    /// honestly covers through the NEW tail. Newest-based arithmetic then prints zero rows
+    /// uncovered — silence over exactly the attack this whole train exists to notice. The deepest
+    /// claim ever made is the one the current tail has to answer to.
+    /// </para>
+    /// <para>
+    /// A record can be deleted to lower that maximum, and the anchor chain catches only half of
+    /// that: an INTERIOR removal gaps the counter and breaks a link, which <c>ChainVerified</c>
+    /// above is what looks for, but a SUFFIX removal leaves 1..n intact and takes the maximum down
+    /// with it in silence. That is the same limit the row chain has, and it is why this number is a
+    /// lower bound rather than a measurement.
+    /// </para>
+    /// </remarks>
+    public readonly record struct AnchorCoverage(bool ChainVerified, long? DeepestCovered, long Records);
+
+    /// <summary>
     /// Turns a verification result into what the operator sees and what a script reads.
     /// </summary>
     /// <remarks>
@@ -81,7 +115,7 @@ public static class VerifyCommand
     /// untested mapping is how "intact" ends up printed over an empty table.
     /// </remarks>
     public static (int ExitCode, IReadOnlyList<string> Lines) Report(
-        AuditChainVerification result, long? lowest, long? highest)
+        AuditChainVerification result, long? lowest, long? highest, AnchorCoverage coverage = default)
     {
         /*
           BROKEN IS CHECKED BEFORE EMPTY, and the order is not cosmetic.
@@ -233,29 +267,203 @@ public static class VerifyCommand
             }
 
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");
+            /*
+              THE WINDOW IS NOT COMPUTED ON A BROKEN VERDICT, and the absence is stated rather than
+              left to be noticed. HighestSequence on a break is where the walk STOPPED, not where the
+              chain ends -- subtracting the anchor's coverage from it would produce a number about a
+              prefix, presented in the same words as a number about the whole table. There is no safe
+              direction for that error, so there is no number.
+            */
+            lines.Add(string.Empty);
+            lines.Add("UNCOVERED WINDOW: not computed. On a broken verdict the walk stops at the");
+            lines.Add("  break, so the highest sequence it reached is not the end of the table and");
+            lines.Add("  arithmetic against it would describe a prefix. Fix the break first.");
+
             return (Broken, lines);
         }
 
         if (result.Verified == 0)
         {
-            return (NothingToVerify, new[]
-            {
+            /*
+              ⚠️ THE WINDOW IS LOUDEST HERE AND THIS BRANCH USED TO RETURN BEFORE IT. An empty table
+              beside an anchor claiming coverage through sequence 5,000 is a table truncated to
+              NOTHING with the anchors left behind -- the most complete tamper there is, and the one
+              state where the arithmetic speaks on its own. Returning early made the tool silent in
+              exactly the case its own text calls out: "a table truncated to nothing reports exactly
+              what a fresh one does". It does not, once there is an anchor to disagree with it.
+
+              The tail is 0 here rather than null, which is what makes the negative branch below fire.
+            */
+            return (NothingToVerify,
+            [
                 "NOTHING TO VERIFY: the audit table has no rows.",
                 "  This is not the same as an intact chain. An empty chain links perfectly,",
                 "  so a table truncated to nothing reports exactly what a fresh one does.",
-            });
+                string.Empty,
+                .. UncoveredWindow(coverage, 0),
+            ]);
         }
 
-        return (Intact, new[]
-        {
+        return (Intact,
+        [
             $"CHAIN INTACT: {result.Verified:N0} rows verified.",
             $"  Sequence range: {lowest:N0} to {highest:N0}",
             "  This proves no row was altered by anyone who does not hold Audit:ChainKey,",
             "  and that none was removed from the MIDDLE. It does NOT prove none was removed",
             "  from the END -- truncation needs no key and leaves every surviving row linking",
             "  correctly. Compare the count against your own.",
-        });
+            string.Empty,
+            .. UncoveredWindow(coverage, highest),
+        ]);
     }
+
+    /// <summary>
+    /// How many rows sit above the deepest thing any anchor claims to cover.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THIS TURNS "I DO NOT KNOW HOW MUCH IS UNANCHORED" INTO A QUANTITY, which is the only half of
+    /// freshness this deployment can honestly produce. Nothing here runs unattended, so nothing can
+    /// demonstrate a cadence — but the gap itself is computable from local data, and a number an
+    /// operator can watch move is worth more than a paragraph they cannot.
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>IT IS A LOWER BOUND AND IT IS NOT AN UPPER BOUND ON ANYTHING.</b> A lower bound because
+    /// rows can be appended while the walk is still running, so the tail it is measured against may
+    /// already be behind. Not an upper bound because the cadence is HUMAN: nothing schedules an
+    /// anchor, so the window has no ceiling, and a small number today says nothing about tomorrow.
+    /// Every sentence below is written to stop the number being read as a guarantee.
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>A NEGATIVE WINDOW IS NOT AN ERROR TO CLAMP.</b> It means the anchors claim coverage
+    /// through a sequence that no longer exists, which is what a tail truncation looks like when
+    /// whoever did it left the anchor records behind. Clamping it to zero would delete the one
+    /// finding this arithmetic can make on its own.
+    /// </para>
+    /// </remarks>
+    private static string[] UncoveredWindow(AnchorCoverage coverage, long? highest)
+    {
+        /*
+          ⚠️ THE ARITHMETIC IS IN SEQUENCE SPACE, AND THAT IS A ROW COUNT ONLY BY ASSUMPTION.
+          `Sequence` is assigned as tail + 1 and never reused while rows are only appended, so on an
+          intact chain the span between two sequences is the number of rows between them. What makes
+          it an assumption rather than a fact is that VerifyAsync never checks contiguity: measured,
+          its per-row checks are the link, the payload version, the key identity and the hash, and
+          `Sequence` is read only for the range it reports. Someone holding Audit:ChainKey can
+          therefore delete an interior row and recompute the links behind it, leaving an INTACT chain
+          with a hole in its numbering -- and the window then counts a sequence that has no row.
+
+          That error is conservative: the window reads larger than the truth, never smaller. It is
+          still stated in the printed text, because a number whose unit is wrong under one adversary
+          is a number whose unit has to be named.
+        */
+        if (!coverage.ChainVerified)
+        {
+            return
+            [
+                "UNCOVERED WINDOW: not computed -- the anchor chain did not verify.",
+                "  A chain with a record missing or mis-linked can claim any coverage at all, so",
+                "  arithmetic on it would produce a number with nothing behind it. Run `anchor` to",
+                "  see what is wrong with it.",
+            ];
+        }
+
+        if (coverage.Records == 0)
+        {
+            return
+            [
+                "UNCOVERED WINDOW: EVERY row. No anchor has ever been recorded.",
+                "  There is nothing for the current tail to be compared against, so a truncation",
+                "  would leave no trace at all. Run `anchor`, then `export` the result somewhere",
+                "  this machine cannot reach.",
+            ];
+        }
+
+        if (coverage.DeepestCovered is not { } covered)
+        {
+            /*
+              RECORDS EXIST AND NONE OF THEM COVERS ANYTHING, which is a real state rather than a
+              defensive branch: every run against an empty or broken chain writes a GAP MARKER, and a
+              marker's coverage columns are null by construction. A deployment that only ever ran
+              `anchor` while the table was empty has a populated anchor chain covering nothing.
+            */
+            return
+            [
+                $"UNCOVERED WINDOW: EVERY row. {coverage.Records:N0} anchor records exist and none",
+                "  of them covers anything -- every one is a gap marker, which asserts coverage of",
+                "  nothing by construction. A populated anchor table is not the same as an anchored",
+                "  chain, and this is the case where the two look alike.",
+            ];
+        }
+
+        var tail = highest ?? 0;
+
+        if (covered > tail)
+        {
+            return
+            [
+                $"⚠️ UNCOVERED WINDOW: NEGATIVE. The anchors claim coverage through sequence"
+                    + $" {covered:N0}, and the chain ends at {tail:N0}.",
+                $"  {covered - tail:N0} sequences that an anchor says it saw are not there now. That",
+                "  is what a tail truncation looks like when whoever did it left the anchor records",
+                "  behind. It is NOT proof on its own -- the anchor key holder can write records",
+                "  claiming anything -- but nothing legitimate produces it. Preserve the database and",
+                "  escalate before running anything that writes.",
+                .. WhatTheWindowCannotSee(),
+            ];
+        }
+
+        var window = tail - covered;
+
+        return
+        [
+            window == 0
+                ? "UNCOVERED WINDOW: at least 0 rows -- the deepest anchor reaches the current tail."
+                : $"UNCOVERED WINDOW: at least {window:N0} rows are outside every anchor.",
+            $"  The deepest coverage any record claims is sequence {covered:N0}; the chain ends at"
+                + $" {tail:N0}.",
+            "  AT LEAST, because rows can be appended while this walk runs. And it is not an upper",
+            "  bound on anything: nothing here schedules an anchor, so the window has no ceiling and",
+            "  a small number now says nothing about tomorrow. A missing anchor is not evidence.",
+            "  Counted in SEQUENCE NUMBERS, which is a row count unless somebody holding",
+            "  Audit:ChainKey removed rows and recomputed the links behind them -- the walk checks",
+            "  the links, never the contiguity. Against anyone else the two are the same number.",
+            "  So if your own COUNT(*) over this range disagrees with this span, that gap is the",
+            "  finding, not a fault in this tool: it is the one trace a key-holding interior",
+            "  deletion leaves. The verdict above already tells you to compare counts -- this is",
+            "  what it means when they differ.",
+        ];
+    }
+
+    /// <summary>
+    /// The two limits the window has that its own arithmetic cannot show, printed with the negative
+    /// case because that is the only place an operator might mistake it for a detector.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ <b>IT HEALS.</b> <c>Sequence</c> is assigned as the current tail plus one, so a truncated
+    /// table reissues the numbers it lost: cut to 3,000 against an anchor claiming 5,000 and the
+    /// window reads −2,000, but write 2,000 further rows and the tail is back at 5,000 and the window
+    /// reads a clean zero. The signal is loud only while the table is still shorter than the deepest
+    /// claim, which on a busy system is not long.
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>AND IT IS BLIND TO THE THOROUGH VERSION.</b> Delete the anchors that cover past the cut
+    /// as well and the deepest claim drops with the tail, so the arithmetic is perfectly consistent
+    /// and prints nothing at all. That is
+    /// <c>ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit</c>, asserted on
+    /// SQL Server, and this number does not change it. What it catches is the version performed by
+    /// somebody who did not know the anchor table was there.
+    /// </para>
+    /// </remarks>
+    private static string[] WhatTheWindowCannotSee() =>
+    [
+        "  Two things this number cannot do, so it is not mistaken for a detector. It HEALS:",
+        "  sequences are reissued after a truncation, so writing enough new rows brings the tail",
+        "  back past the claim and the window reads zero again. And it is blind to the thorough",
+        "  version: delete the covering anchors too and the claim drops with the tail, which is",
+        "  ConsistentSuffixRemovalFromBOTHChains_IsNotDetected_AndThisPinsTheLimit.",
+    ];
 
     /// <summary>
     /// Does the whole job and returns what to print and what to exit with. Never throws.
@@ -335,9 +543,46 @@ public static class VerifyCommand
               whose numbering may start anywhere after a purge. The number to compare against
               yesterday is the COUNT.
             */
+            /*
+              THE ANCHORS ARE READ BEFORE THE WALK, AND THE ORDER IS THE ERROR DIRECTION.
+
+              The window needs two observations from two tables, so it cannot come from one instant
+              the way the sequence range does. What can be chosen is which way a race falls. Read the
+              anchors FIRST and an anchor written while the walk runs is missed, so the coverage used
+              is older, so the window comes out LARGER than the truth -- the operator is told the gap
+              is worse than it is. Read them last and that same anchor shrinks the window, and the
+              operator is told the gap is smaller than it is. Only one of those is safe to be wrong
+              about, and it is not the second.
+
+              This is the same trap the sequence range fell into on this command and had to be pulled
+              out of: MIN and MAX were asked before walking, a row committed in between, and it
+              printed 101 rows verified over a range ending at 100. The range was fixed by taking it
+              FROM the walk. This cannot be -- different table -- so the ordering carries it instead,
+              and the printed line says "at least" rather than a bare number.
+            */
+            var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+            var anchorState = await anchors.VerifyChainAsync(context, cancellationToken);
+
+            /*
+              BOTH NUMBERS COME OUT OF THE WALK ABOVE, and the first version of this asked the table
+              for them afterwards -- MaxAsync and LongCountAsync, two more reads. Three reads are
+              three instants: a record added between the verification and the maximum is counted in
+              the maximum and was never verified, so the coverage reads deeper than anything the walk
+              vouched for and the window comes out SMALLER than the truth. That is the one direction
+              this number must never be wrong in, and no ordering of three reads fixes it -- only
+              having one.
+
+              The count and the maximum are still separate values rather than one, because "no anchor
+              was ever written" and "anchors exist and every one is a gap marker" are different
+              things to tell an operator, and a null maximum alone cannot tell them apart.
+            */
+            var coverage = new AnchorCoverage(
+                anchorState.IsIntact, anchorState.DeepestCovered, anchorState.Records);
+
             var verification = await chain.VerifyAsync(context, cancellationToken);
 
-            return Report(verification, verification.LowestSequence, verification.HighestSequence);
+            return Report(
+                verification, verification.LowestSequence, verification.HighestSequence, coverage);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {

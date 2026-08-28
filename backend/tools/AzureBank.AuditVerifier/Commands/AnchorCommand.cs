@@ -25,7 +25,8 @@ namespace AzureBank.AuditVerifier.Commands;
 /// ⚠️ WHAT THIS DOES NOT DO, said here because the table's existence invites the opposite reading.
 /// It detects no truncation. Truncate the audit rows above some sequence, then delete every anchor
 /// covering past it, and both chains verify perfectly — each links backwards only. What a record
-/// buys is that DELETING anchors is loud, while MINTING one needs <c>Audit:AnchorKey</c>. The
+/// buys is that DELETING an INTERIOR anchor is loud — a suffix removal is not — while MINTING one
+/// needs <c>Audit:AnchorKey</c>. The
 /// evidence is the pair of numbers an operator wrote down somewhere this machine cannot reach.
 /// </para>
 /// </remarks>
@@ -110,7 +111,9 @@ public static class AnchorCommand
               record's link would assert that everything beneath it was there and fine. That is the
               one claim this run is least entitled to make, and making it laundered the deletion.
 
-              "Deleting records is loud" is only true because something looks. This is that thing.
+              "Deleting an interior record is loud" is only true because something looks. This is
+              that thing -- and it looks for a gap in the counter and a link that fails to meet,
+              neither of which a SUFFIX removal produces.
 
               Refusing is a denial the operator can be locked out by, and that is the accepted trade
               -- the same one the money path already makes when its audit row cannot be written.
