@@ -602,6 +602,23 @@ the forbidden thing said in code. `Audit:FoundingChainKey` now names it, is requ
 anything is retired — and not before, because until then there has only ever been one key — and must
 designate material the ring already holds, so each key lives in exactly one place.
 
+**⚠️ THE RING MADE AN INTACT VERDICT CLAIM LESS, AND EVERY SENTENCE THAT SAYS OTHERWISE IS NOW
+WRONG.** Before it, `verify` ended with *"no row was altered by anyone who does not hold
+Audit:ChainKey"*. After it, the honest statement is *a key in the RING* — because a retired key still
+recomputes every row at or below its boundary, which is the paragraph above stated from the
+operator's side. Rounding that back up in the one sentence somebody reads to conclude the bank was
+not attacked is the worst place in the system to overclaim, so the tool says the weaker thing.
+
+The same staleness reached three more sentences, and only one of them was raised in review. A hash
+mismatch on a row that names its key said the row *"records the key identity that the configured
+Audit:ChainKey derives"* — false after a rotation, when the ring selected a RETIRED key, and it sends
+an operator to compare two ids that are not supposed to match. Its sibling arm, one `if` away, still
+offered *"a different Audit:ChainKey"* as the alternative for a row that records no identity, which
+is checked under `Audit:FoundingChainKey`. And the verifier tool carried its own copy of the first
+one — the copy an operator actually reads during an incident. **A verdict that names the wrong knob
+is a wrong verdict even when its conclusion is right**, and the lesson repeats: the review named an
+instance, the defect was a class, and grepping for the class is what found the other three.
+
 **What this does not do.**
 
 - **A `v2` row cannot be rotated at all.** It records no key identity, so there is nothing to select

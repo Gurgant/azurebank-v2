@@ -242,10 +242,13 @@ Four things have to be settled before the first token, and three of them are one
 Verification says so out loud rather than leaving it to be inferred. An intact verdict ends with:
 
 ```
-This proves no row was altered by anyone who does not hold Audit:ChainKey,
-and that none was removed from the MIDDLE. It does NOT prove none was removed
-from the END -- truncation needs no key and leaves every surviving row linking
-correctly. Compare the count against your own.
+This proves no row was altered by anyone who does not hold a key in the
+configured RING -- Audit:ChainKey, or a retired key for the rows at or below
+its boundary -- and that none was removed from the MIDDLE. Retiring a key
+narrows what it can write, never what it can rewrite beneath that boundary.
+It does NOT prove none was removed from the END -- truncation needs no key and
+leaves every surviving row linking correctly.
+Compare the count against your own.
 ```
 
 And a test asserts the uncomfortable direction on purpose.

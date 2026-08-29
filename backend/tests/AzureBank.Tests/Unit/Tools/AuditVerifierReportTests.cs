@@ -541,5 +541,16 @@ public class AuditVerifierReportTests
             + "the key, except at the end of the table -- and records that the runbook had already "
             + "repeated the too-strong version once after that section withdrew it. This assertion "
             + "is what stops the tool from being the third place it comes back");
+        text.Should().Contain(
+            "RING",
+            "AND THE NARROW CLAIM GOT NARROWER WHEN THE RING LANDED, which this test would have let "
+            + "through: the sentence said \"anyone who does not hold Audit:ChainKey\", and after a "
+            + "rotation a RETIRED key still recomputes every row at or below its boundary. So an "
+            + "intact verdict excludes an attacker who holds no key in the RING, which is a weaker "
+            + "statement than the one the tool was printing. Retiring a key bounds what it can "
+            + "WRITE; it takes nothing away from what it can rewrite beneath that boundary, and the "
+            + "verdict an operator reads to conclude the bank was not attacked must not round that "
+            + "up. Asserting on \"Audit:ChainKey\" alone stays green through the overclaim, because "
+            + "the honest sentence still names it");
     }
 }

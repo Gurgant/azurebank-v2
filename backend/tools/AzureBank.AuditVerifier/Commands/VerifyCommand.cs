@@ -202,10 +202,11 @@ public static class VerifyCommand
                 {
                     // The opposite conclusion, and the stronger statement this tool could never make
                     // before: the key behind this row has already been confirmed by its own id.
-                    lines.Add("  The key is CONFIRMED for this row: it records the key id that the");
-                    lines.Add("  configured Audit:ChainKey derives, and a wrong key cannot reach a");
-                    lines.Add("  hash comparison on such a row. This is a WRITE, not a key problem.");
-                    lines.Add("  Preserve the table and escalate.");
+                    lines.Add("  The key is CONFIRMED for this row: it records a key id, the");
+                    lines.Add("  configured ring SELECTED the key by that id, and a key the ring");
+                    lines.Add("  cannot select never reaches a hash comparison. After a rotation");
+                    lines.Add("  that key is usually a RETIRED one, not Audit:ChainKey -- so this");
+                    lines.Add("  is a WRITE, not a key problem. Preserve the table and escalate.");
                 }
                 else
                 {
@@ -308,10 +309,17 @@ public static class VerifyCommand
         [
             $"CHAIN INTACT: {result.Verified:N0} rows verified.",
             $"  Sequence range: {lowest:N0} to {highest:N0}",
-            "  This proves no row was altered by anyone who does not hold Audit:ChainKey,",
-            "  and that none was removed from the MIDDLE. It does NOT prove none was removed",
-            "  from the END -- truncation needs no key and leaves every surviving row linking",
-            "  correctly. Compare the count against your own.",
+            "  This proves no row was altered by anyone who does not hold a key in the",
+            "  configured RING -- Audit:ChainKey, or a retired key for the rows at or below",
+            "  its boundary -- and that none was removed from the MIDDLE. Retiring a key",
+            "  narrows what it can write, never what it can rewrite beneath that boundary.",
+            // "Compare the count against your own" STAYS ON ONE LINE. The uncovered-window text
+            // below points at it by name -- "the verdict above already tells you to compare
+            // counts" -- and UncoveredWindowTests asserts the phrase is contiguous, which is what
+            // caught the rewrap that split it while every word was still on the screen.
+            "  It does NOT prove none was removed from the END -- truncation needs no key and",
+            "  leaves every surviving row linking correctly.",
+            "  Compare the count against your own.",
             string.Empty,
             .. UncoveredWindow(coverage, highest),
         ]);

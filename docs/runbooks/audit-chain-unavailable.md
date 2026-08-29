@@ -368,6 +368,10 @@ literally produces a service that will not construct. All three:
   column record no key, so something has to say which key wrote them; it must name material already
   in the ring.
 
+Through the environment each `:` becomes `__` and `N` is a zero-based index, so the first retired key
+is `Audit__RetiredChainKeys__0__Key` and `Audit__RetiredChainKeys__0__LastSequence`. The recovery
+blocks under **After recovery** read all three; this is the same list stated as configuration.
+
 ```bash
 dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
 ```
@@ -577,8 +581,20 @@ know the anchor table was there, now leaves a number that does not add up.
   read -rsp 'Audit:ChainKey: ' Audit__ChainKey && export Audit__ChainKey && echo
   read -rsp 'Audit:AnchorKey: ' Audit__AnchorKey && export Audit__AnchorKey && echo
   read -rsp 'Connection string: ' ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection && echo
+
+  # ONLY IF A KEY HAS EVER BEEN RETIRED -- see "Retiring a key takes three values" above.
+  # Repeat the first two lines, incrementing the 0, for every key ever retired.
+  read -rsp 'Retired chain key #0: ' Audit__RetiredChainKeys__0__Key && export Audit__RetiredChainKeys__0__Key && echo
+  read -rp  '  its LastSequence: ' Audit__RetiredChainKeys__0__LastSequence && export Audit__RetiredChainKeys__0__LastSequence
+  read -rsp 'Audit:FoundingChainKey: ' Audit__FoundingChainKey && export Audit__FoundingChainKey && echo
+
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
+
+  `LastSequence` is read with `-rp` rather than `-rsp` on purpose: it is not key material, and
+  getting it wrong is the hazard the value exists to bound, so it should be on screen to be checked.
+  The founding key IS material — it names which key wrote the rows that record none — so it is read
+  like the others even though it is a designation of a key already in the ring.
 
   ⚠️ **TWO KEYS, AND THIS PROCEDURE STOPPED WORKING WHEN THE SECOND ONE ARRIVED.** The tool validates
   both at startup and refuses to run without either. Running the version of this block that read only
@@ -614,6 +630,37 @@ know the anchor table was there, now leaves a number that does not add up.
   method that would have found it: the tool's own suite passes either way, because no test ran a verb
   against a missing key and asserted the NUMBER an operator would see.
 
+  ⚠️ **AND IT HAPPENED A SECOND TIME, THE SAME WAY, WHEN THE KEY RING ARRIVED.** The ring lines above
+  are not optional decoration on a rotated deployment: without them this procedure accuses an intact
+  chain. Three rows written under one key, the key then rotated, each configuration run against the
+  same untouched database:
+
+  ```
+  ChainKey (the NEW key) + AnchorKey, exactly as this block read before the ring:
+    EXIT=1   CHAIN BROKEN at sequence 1.
+             Row ... was written under key id '7057da02943bb1e6' and no key in this
+             verification's ring has that id -- it holds 'e7bca259f5837226' and no
+             retired keys.
+
+  + Audit__RetiredChainKeys__0__Key and __LastSequence, founding key still unset:
+    EXIT=3   CANNOT VERIFY: the audit store could not be read, so there is no verdict.
+             InvalidOperationException: Audit:FoundingChainKey is required once a key
+             has been retired.
+
+  + Audit__FoundingChainKey:
+    EXIT=0   CHAIN INTACT: 3 rows verified.
+  ```
+
+  **1 is the code this document tells you to alert on as CHAIN BROKEN**, which is worse than the
+  exit 3 the missing anchor key produced: 3 says the store could not be read and sends an operator to
+  the configuration, while 1 says the trail was tampered with and sends them to an incident. The
+  first rotation would have paged somebody, from the page written to stop exactly that, and the
+  verdict would have named a key id as evidence.
+
+  Note the middle run: the ring refuses to construct rather than guessing which key wrote the
+  identity-less rows, so a HALF-configured ring cannot silently verify history under the wrong key.
+  That refusal is why `Audit:FoundingChainKey` is listed above as required rather than recommended.
+
   PowerShell, since it is the history file this paragraph cites. **`-AsPlainText` on
   `ConvertFrom-SecureString` is PowerShell 7 or later**; on Windows PowerShell 5.1 it does not exist
   and both assignments end up EMPTY, which the verifier then reports as a missing key. Check with
@@ -625,6 +672,14 @@ know the anchor table was there, now leaves a number that does not add up.
   $env:Audit__AnchorKey = (Read-Host 'Audit:AnchorKey' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
   $env:ConnectionStrings__DefaultConnection = (Read-Host 'Connection string' -AsSecureString |
   ConvertFrom-SecureString -AsPlainText)
+
+  # Only if a key has ever been retired. Repeat the pair, incrementing the 0, for each one.
+  $env:Audit__RetiredChainKeys__0__Key = (Read-Host 'Retired chain key #0' -AsSecureString |
+  ConvertFrom-SecureString -AsPlainText)
+  $env:Audit__RetiredChainKeys__0__LastSequence = Read-Host '  its LastSequence'
+  $env:Audit__FoundingChainKey = (Read-Host 'Audit:FoundingChainKey' -AsSecureString |
+  ConvertFrom-SecureString -AsPlainText)
+
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
@@ -639,6 +694,16 @@ know the anchor table was there, now leaves a number that does not add up.
   $cs = Read-Host 'Connection string' -AsSecureString
   $env:ConnectionStrings__DefaultConnection = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
       [Runtime.InteropServices.Marshal]::SecureStringToBSTR($cs))
+
+  # Only if a key has ever been retired. Repeat, incrementing the 0, for each one.
+  $retired = Read-Host 'Retired chain key #0' -AsSecureString
+  $env:Audit__RetiredChainKeys__0__Key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($retired))
+  $env:Audit__RetiredChainKeys__0__LastSequence = Read-Host '  its LastSequence'
+  $founding = Read-Host 'Audit:FoundingChainKey' -AsSecureString
+  $env:Audit__FoundingChainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($founding))
+
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 

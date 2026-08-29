@@ -970,6 +970,106 @@ public class AuditChainTests : IDisposable
     }
 
     [Fact]
+    public async Task AWriteOnARowTheRINGAnsweredFor_DoesNotBlameTheCURRENTKey()
+    {
+        /*
+          A VERDICT THAT NAMES THE WRONG KNOB IS A WRONG VERDICT, even when its conclusion is right.
+          The exoneration arm was written before the ring existed and said the row "records the key
+          identity that the configured Audit:ChainKey derives". After a rotation that is FALSE by
+          construction: the row names the RETIRED key, the ring selected it by that id, and
+          Audit:ChainKey is a key this row has nothing to do with. An operator checking the sentence
+          against the configuration finds two ids that do not match and re-opens a key question the
+          tool had already closed -- while an actual write goes unescalated.
+
+          The conclusion the sentence carries is the one that matters and it is unchanged: the key is
+          not in question, this is a WRITE. Only the reason given for it was stale.
+
+          FALSIFIED by restoring the old wording: the Contain("ring") assertion reddens, and the
+          NotContain one reddens on the sentence this test is named after.
+
+          Raised in review on 9e92377.
+        */
+        await WriteAsync("Written under the key that was later retired");
+        var boundary = await _context.AuditEvents.MaxAsync(e => e.Sequence);
+
+        var row = await _context.AuditEvents.FirstAsync();
+        row.Detail = "altered after it was written";   // KeyId and PayloadVersion left alone
+        await _context.SaveChangesAsync();
+
+        var rotated = new AuditChain(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, boundary)],
+                FoundingChainKey = TestKey,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        var verification = await rotated.VerifyAsync(_context);
+
+        verification.Kind.Should().Be(AuditChainBreakKind.HashMismatch);
+        verification.RecordedKeyId.Should().Be(
+            AuditChain.DeriveKeyId(TestKey), "the row names the key that wrote it");
+        verification.ConfiguredKeyId.Should().NotBe(
+            verification.RecordedKeyId,
+            "THE STATE THAT MADE THE OLD SENTENCE FALSE -- the row was checked under a key the "
+            + "current one does not derive, which before the ring could not happen");
+
+        verification.Reason.Should().NotContain(
+            "the configured Audit:ChainKey",
+            "Audit:ChainKey did not derive this row's id and pointing an operator at it re-opens a "
+            + "key question the ring had already answered");
+        verification.Reason.Should().Contain(
+            "ring", "the ring is what selected the key, so the ring is what the verdict must name");
+
+        var (exitCode, lines) = VerifyCommand.Report(verification, 1, boundary);
+        var text = string.Join(" ", lines);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+        text.Should().Contain("WRITE", "the conclusion is unchanged: escalate, do not re-check keys");
+        text.Should().NotContain(
+            "configured Audit:ChainKey derives",
+            "THE SAME STALE SENTENCE LIVED IN THE TOOL TOO, which is the copy an operator actually "
+            + "reads during an incident -- the review named the library and this is the class");
+    }
+
+    [Fact]
+    public async Task AWriteOnAnIDENTITYLESSRow_PointsAtTheFOUNDINGKey_NotTheCurrentOne()
+    {
+        /*
+          THE OTHER HALF OF THE SAME DEFECT, one `if` away and not raised in review. A row recording
+          no key identity is checked under Audit:FoundingChainKey -- that is the whole reason the
+          founding key has to be named rather than assumed. The ambiguity arm still told the operator
+          the alternative was "a different Audit:ChainKey from the one it was written with", which
+          after a rotation sends them to a key that never touched the row.
+
+          Fixing the arm the review pointed at and leaving this one is the repeating defect in this
+          project: the instance gets fixed, the class does not.
+
+          FALSIFIED by restoring "using a different Audit:ChainKey": the Contain assertion reddens.
+        */
+        var row = NewEvent("WrittenBeforeKeyIdentityExisted");
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        // Demote to the legacy scheme and break the hash in the same edit: Pending() filters
+        // EntityState.Added, so a Modified row is never re-hashed on the way out.
+        row.PayloadVersion = "v2";
+        row.KeyId = null;
+        row.RowHash = new string('0', 64);
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.Kind.Should().Be(AuditChainBreakKind.HashMismatch);
+        verification.RecordedKeyId.Should().BeNull("this is the identity-less arm");
+        verification.Reason.Should().Contain(
+            "Audit:FoundingChainKey",
+            "that is the key the row was actually checked under, and it is the one an operator has "
+            + "to compare against the rotation record");
+    }
+
+    [Fact]
     public async Task SavingAnAuditRow_WithoutAChain_IsRefusedRatherThanWrittenUnhashed()
     {
         /*

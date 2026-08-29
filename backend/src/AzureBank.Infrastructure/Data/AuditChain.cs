@@ -941,6 +941,14 @@ public sealed class AuditChain : IAuditChain
                   and two tests were green over it, because both built the record by hand instead of
                   taking one from this method.
                 */
+                /*
+                  "NAMES A KEY" AND "THE RING SELECTED ITS KEY" ARE THE SAME CONDITION HERE, and the
+                  two guards above are what make them the same. A 'v2' row carrying a key id is
+                  refused before this point, and a 'v3' row whose id the ring cannot select returns
+                  above -- so a row reaching the hash comparison with a non-null KeyId is exactly a
+                  row the ring answered for. Reading it off KeyId keeps the condition next to the
+                  sentence it justifies.
+                */
                 var confirmed = row.KeyId is not null;
                 return new AuditChainVerification(
                     verified,
@@ -948,13 +956,15 @@ public sealed class AuditChain : IAuditChain
                     $"Row {row.Id} does not match its own hash. "
                     + (confirmed
                         ? "It was altered after it was written. The key is not in question: this "
-                          + "row records the key identity that the configured Audit:ChainKey "
-                          + "derives, and a row naming a key this verification does not hold is "
+                          + "row names a key id and the verification ring SELECTED that key by "
+                          + "that id — which after a rotation is usually a RETIRED key rather than "
+                          + "Audit:ChainKey — and a row naming an id the ring cannot select is "
                           + "refused before its hash is ever recomputed."
-                        : "Either it was altered after it was written, or this verification is "
-                          + "using a different Audit:ChainKey from the one it was written with. "
-                          + "This row records no key identity, so the two cannot be told apart "
-                          + "here."),
+                        : "Either it was altered after it was written, or this verification holds "
+                          + "different key material from the one that wrote it. This row records "
+                          + "no key identity, so it was checked under Audit:FoundingChainKey — "
+                          + "which is Audit:ChainKey only while nothing has been retired — and the "
+                          + "two cannot be told apart here."),
                     lowest,
                     highest,
                     AuditChainBreakKind.HashMismatch,
