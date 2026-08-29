@@ -179,6 +179,20 @@ public class UncoveredWindowQueryTests : IDisposable
             "NEGATIVE",
             "the tail is back level with the deepest claim, so the arithmetic no longer disagrees -- "
             + "the truncation happened and this number can no longer see it");
+
+        /*
+          AND THE POSITIVE HALF, because NotContain ALONE IS SATISFIED BY SILENCE. If the window block
+          stopped being printed at all, or its wording changed, the assertion above would still pass
+          while proving nothing about healing -- the same shape as the vacuous test this suite already
+          caught once. Raised in review on 457a9a7.
+
+          The whole clause rather than a fragment: "at least 0 rows" is a substring of nothing else,
+          but the tail of the sentence is the claim -- the deepest anchor REACHES the current tail,
+          which is what healed. MEASURED against VerifyCommand's zero branch rather than guessed.
+        */
+        text.Should().Contain(
+            "at least 0 rows -- the deepest anchor reaches the current tail",
+            "the healed window has to be stated, not merely not-negative");
     }
 
     /// <summary>

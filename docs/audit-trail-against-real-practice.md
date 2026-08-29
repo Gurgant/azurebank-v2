@@ -117,7 +117,7 @@ The API connects with `Trusted_Connection=True`, which resolves to the developer
 account, mapped to `dbo`, in both `db_owner` and `sysadmin`:
 
 ```
-principal = GURGANT\Drako | db user = dbo | db_owner = 1 | sysadmin = 1
+principal = <operator-account> | db user = dbo | db_owner = 1 | sysadmin = 1
 may SELECT / INSERT / UPDATE / DELETE / ALTER  on dbo.AuditEvents
 ```
 
