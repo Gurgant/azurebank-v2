@@ -140,10 +140,39 @@ public class TransactionService : ITransactionService
             throw new BusinessRuleException("PIN must be set before making withdrawals.", ErrorCodes.PinRequired);
         }
 
-        // Verify the PIN with attempt-limiting: throws 429 PIN_LOCKED if the PIN
-        // is locked (before any money moves), otherwise 401 on a wrong PIN.
-        if (!await _pinVerifier.VerifyPinAsync(userId, request.Pin))
+        /*
+          RECORD-AND-RETHROW, and the try exists for a refusal that never returns. VerifyPinAsync
+          THROWS PinLockedException rather than returning false when the attempt limit has been
+          reached, so the lockout -- the control standing between a guessed PIN and a balance --
+          cannot be observed by inspecting the return value. Measured: PinService throws at two
+          places and audits at neither, so before this change a tripped lockout left the trail
+          completely silent.
+
+          RecordRefusalAsync, never Record: every branch here throws, so a row enlisted in the
+          caller's unit of work would be rolled back by the very refusal it documents.
+        */
+        bool pinOk;
+        try
         {
+            // Verify the PIN with attempt-limiting: throws 429 PIN_LOCKED if the PIN
+            // is locked (before any money moves), otherwise 401 on a wrong PIN.
+            pinOk = await _pinVerifier.VerifyPinAsync(userId, request.Pin);
+        }
+        catch (PinLockedException)
+        {
+            await _audit.RecordRefusalAsync(
+                SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
+                actorUserId: userId, subjectType: "Account", subjectId: account.Id,
+                detail: ErrorCodes.PinLocked);
+            throw;
+        }
+
+        if (!pinOk)
+        {
+            await _audit.RecordRefusalAsync(
+                SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
+                actorUserId: userId, subjectType: "Account", subjectId: account.Id,
+                detail: ErrorCodes.InvalidPin);
             throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
         }
 
@@ -155,6 +184,19 @@ public class TransactionService : ITransactionService
             // Check sufficient funds
             if (account.Balance < request.Amount)
             {
+                /*
+                  NO AUDIT ROW HERE, and it is a correction to the first version of this change.
+                  ADR-0044 had already classified insufficient funds as a routine user outcome whose
+                  row-per-attempt is an unbounded write into a never-purged table, and that decision
+                  was reasoned before this branch existed. Wiring it anyway would have contradicted
+                  the ADR without arguing with it.
+
+                  ⚠️ AND THE CONTENTION ANGLE IS SHARPER THAN THE ADR STATED. A wrong PIN is BOUNDED
+                  -- three attempts and ADR-0010 locks the PIN. This is not: a caller can ask to
+                  withdraw more than they hold forever, at no cost, and every attempt would take the
+                  chain tail lock that every real money movement queues behind. An unaudited routine
+                  refusal is a gap; an audited one here is a contention amplifier anybody can drive.
+                */
                 throw new InsufficientFundsException(account.Balance, request.Amount);
             }
 
