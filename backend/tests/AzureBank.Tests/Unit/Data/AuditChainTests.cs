@@ -534,8 +534,11 @@ public class AuditChainTests : IDisposable
           about, so it is answered here rather than deleted. The verifier-layer tests exist
           (AnchorCommandTests, AuditAnchorSqlServerTests), and ADR-0044 and
           docs/deferred/anchoring-the-audit-trail.md both record that an anchor record now exists and
-          does NOT close the end. docs/runbooks/audit-chain-unavailable.md still says nothing about
-          it, and is the one item left on this list.
+          does NOT close the end. ✅ docs/runbooks/audit-chain-unavailable.md now says
+          plenty about it — the anchor appears throughout and the UNCOVERED WINDOW has its own
+          section, landed 2026-08-28. That was the last item on this list and it is closed. Noting it
+          here rather than deleting the line, because the line was a promise about a document and the
+          promise was kept.
         */
         await WriteAsync("First", "Second", "Third");
 
@@ -554,6 +557,60 @@ public class AuditChainTests : IDisposable
             2,
             "the ONLY trace is that the count dropped — which is evidence to somebody who wrote the "
             + "previous count down somewhere else, and to nobody who did not");
+    }
+
+    [Fact]
+    public async Task DeletingTheOLDESTRows_IsLOUD_WhichIsWhyRetentionCannotPurgeThisTable()
+    {
+        /*
+          THE THIRD SHAPE, AND THE ONE A RETENTION POLICY ACTUALLY TAKES. The two tests around this
+          one cover deletion from the MIDDLE (caught) and from the END (invisible). Neither is what a
+          retention rule asks for. A retention rule says "remove what is older than N years", which is
+          a PREFIX deletion — the oldest rows, from sequence 1 upward — and until now nothing pinned
+          what this chain does with that.
+
+          It is caught, and it is caught LOUDLY: the lowest surviving row records a predecessor hash,
+          the walk starts with `previous = null`, and the two do not match. AuditChain says so in as
+          many words — "expected to follow '(start of chain)'" — and reports LinkBroken, the same
+          verdict a tamper gets. There is no separate vocabulary for a lawful deletion, and there
+          should not be: a chain that could tell an authorised removal from an unauthorised one would
+          have to trust whoever declared it authorised.
+
+          ⚠️ SO THE COLLISION IS REAL AND THIS TEST IS WHERE IT IS MEASURED. AMLR Art. 77 carries a
+          deletion duty at expiry; this table is built so that discharging it here would be
+          indistinguishable from an attack. The answer ADR-0044 records is not to soften the chain but
+          to have nothing in this table the duty reaches: pseudonymous ids only, erasure upstream in
+          the business tables where a real DELETE is possible.
+
+          ⚠️ AND THAT IS WHY THIS TEST EXISTS RATHER THAN A COMMENT. The policy says "never purge the
+          trail". The cheap way to break that policy is not malice, it is somebody in a year reading
+          "retention: 5 years" and writing a job that deletes old audit rows, believing it safe
+          because the rows are old. This goes red the moment that job runs against a fixture.
+
+          FALSIFIED by removing the TAIL instead of the head: IsIntact goes back to true, which is
+          the sibling test above and the reason both are needed.
+        */
+        await WriteAsync("First", "Second", "Third");
+
+        (await _chain.VerifyAsync(_context)).Verified.Should().Be(3, "three rows were written");
+
+        var oldest = await _context.AuditEvents.OrderBy(e => e.Sequence).FirstAsync();
+        _context.AuditEvents.Remove(oldest);
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse(
+            "a prefix deletion leaves the lowest surviving row pointing at a hash that is gone, and "
+            + "the walk starts expecting no predecessor at all");
+        verification.Kind.Should().Be(
+            AuditChainBreakKind.LinkBroken,
+            "the same verdict a tamper gets — the chain has no vocabulary for an authorised removal, "
+            + "and inventing one would mean trusting whoever declared it authorised");
+        verification.Reason.Should().Contain(
+            "start of chain",
+            "the message names the shape, which is what an operator needs to tell this from a "
+            + "mid-table deletion");
     }
 
     [Fact]
