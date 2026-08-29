@@ -585,7 +585,15 @@ public class AuditChainTests : IDisposable
           ⚠️ AND THAT IS WHY THIS TEST EXISTS RATHER THAN A COMMENT. The policy says "never purge the
           trail". The cheap way to break that policy is not malice, it is somebody in a year reading
           "retention: 5 years" and writing a job that deletes old audit rows, believing it safe
-          because the rows are old. This goes red the moment that job runs against a fixture.
+          because the rows are old.
+
+          ⚠️ BUT ONLY IF THE JOB LEAVES A SURVIVOR, and the first version of this comment claimed
+          more than that — it said the test goes red the moment such a job runs. Raised in review and
+          measured: delete EVERY row and the chain reports intact, because there is no surviving row
+          left to point at a missing predecessor. The partial purge is loud and the total one is
+          silent, which is the opposite of the comfortable assumption that a bigger deletion is
+          easier to see. PurgingTheWHOLETable_IsSILENT_WhichIsTheOtherHalfOfWhyRetentionCannotUseIt
+          is the other half, and the two are only useful together.
 
           FALSIFIED by removing the TAIL instead of the head: IsIntact goes back to true, which is
           the sibling test above and the reason both are needed.
@@ -611,6 +619,51 @@ public class AuditChainTests : IDisposable
             "start of chain",
             "the message names the shape, which is what an operator needs to tell this from a "
             + "mid-table deletion");
+    }
+
+    [Fact]
+    public async Task PurgingTheWHOLETable_IsSILENT_WhichIsTheOtherHalfOfWhyRetentionCannotUseIt()
+    {
+        /*
+          THE HOLE IN THE TEST ABOVE, AND IT WAS RAISED IN REVIEW. That test deletes ONE of three rows
+          and concludes that a purge job would be caught. It would not, necessarily: a retention job
+          says "delete everything older than N years", and on a table where everything is older than
+          N years that deletes EVERY row. No survivor is left to point at a missing predecessor, so
+          there is nothing for the walk to catch.
+
+          Measured here rather than reasoned about, because the comfortable assumption is that a
+          bigger deletion is easier to see. It is the opposite: the PARTIAL purge is loud and the
+          TOTAL one is silent. The chain can only speak through a surviving row.
+
+          ⚠️ THIS IS WHY "NEVER PURGE THIS TABLE" IS A POLICY AND NOT A CONTROL. Nothing in the chain
+          enforces it. A partial purge produces a verdict indistinguishable from tampering; a complete
+          purge produces the verdict a fresh installation produces. Neither is a retention mechanism,
+          and the difference between them is not a safety margin — it is which mistake happens to be
+          made.
+
+          The operator-facing tool is one layer better and it is worth being exact about where: it
+          refuses to render an empty table as green, exiting NothingToVerify rather than Intact. That
+          separates zero from non-zero. It does not separate "purged" from "new", because nothing in
+          this database can.
+        */
+        await WriteAsync("First", "Second", "Third");
+
+        (await _chain.VerifyAsync(_context)).Verified.Should().Be(3, "three rows were written");
+
+        _context.AuditEvents.RemoveRange(await _context.AuditEvents.ToListAsync());
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeTrue(
+            "MEASURED, and it is the uncomfortable answer: with no surviving row there is no broken "
+            + "link to find, so the chain reports the same thing it reports for a table nobody has "
+            + "written to yet");
+        verification.Verified.Should().Be(
+            0,
+            "the ONLY trace a complete purge leaves is the count, which is evidence to somebody "
+            + "holding a number from elsewhere and to nobody else — the same limit the tail "
+            + "truncation test records, arrived at from the other end");
     }
 
     [Fact]

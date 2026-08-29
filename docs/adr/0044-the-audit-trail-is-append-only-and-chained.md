@@ -402,10 +402,11 @@ decision used to rest on is the point of this file.
   cannot delete a row without breaking the HMAC linkage of every row after it — so **retention is an
   unsolved problem for this design, not a solved one**, and B3 inherits it. ⚠️ **NARROWED, not
     withdrawn, on 2026-08-29 by D6 below.** What is now answered is the records-management half: there
-    is a stated period, a stated place where erasure happens, and a reason it discharges the duty
-    without touching this table. What is still unsolved is the half this sentence was really about —
-    deleting a row FROM here — and D6 says so in its own closing list rather than letting the arrival
-    of a policy imply the problem went away.
+    is a stated period and a stated position — this table is never purged — together with the measured
+    reason nothing here can purge it safely. What is NOT answered is the duty itself: D6's first
+    version claimed erasure was solved upstream and three review findings took that apart, so the
+    section now records that erasure is undischarged and names the three redesigns that would close
+    it. The arrival of a policy is not the arrival of a solution, and D6 says so in its own words.
 - **PSD2 Art. 21's five years is confirmed**, and narrower than a general audit rule: it binds Member
   States to require *payment institutions* to keep records *"for the purpose of this Title"*.
 - **AMLD Art. 40 is superseded by Regulation (EU) 2024/1624 (AMLR) Art. 77 from 10 July 2027.** The
@@ -453,19 +454,33 @@ open-ended by construction, which is a property of the rule and not a hole in th
 months queryable and three immediately available is PCI DSS 10.5.1's shape, kept as a **design
 reference rather than an obligation**, for the reason given above.
 
-**The decision: `AuditEvents` is never purged, and erasure happens upstream.** Three things make that
-lawful rather than convenient, and the third is the one that does the work.
+**The decision: `AuditEvents` is never purged.** ⚠️ **The first version of this section went on to
+say that erasure is therefore solved upstream, and that was wrong in three separate ways — all three
+raised in review on `21c81df` and all three corrected here.** The corrected position is narrower and
+is the honest one: nothing in this design can purge this table safely, and the upstream answer covers
+less than half of what it appeared to.
 
-1. The duty is on **personal data**. D5 keeps personal data out of this table — pseudonymous ids, no
-   `Detail` carrying a name, a handle, an amount or a balance.
-2. AMLR Art. 77(2) permits retaining **a reference instead of a copy**, *"provided that … the obliged
-   entities can provide immediately to competent authorities the information and that the information
-   cannot be modified or altered."* That is this design exactly: the audit row points at an immutable
-   ledger row, and `EnforceTransactionImmutability` is what keeps the second half true.
-3. When the period expires, the **business rows** are deleted, where a real `DELETE` is possible. The
-   audit row is not touched and does not need to be: its pointer no longer resolves, and an identifier
-   that can no longer be linked to a person is no longer personal data. **The row becomes anonymous by
-   the deletion of something else.**
+1. **The duty is on personal data, and D5 keeps personal data out of this table** — pseudonymous ids,
+   no `Detail` carrying a name, a handle, an amount or a balance. This part stands unchanged.
+2. ⚠️ **Pseudonymous is not anonymous, and deleting one table does not make it so.** An identifier
+   stays personal data while anybody could reasonably link it back, which is a question about every
+   copy that exists — backups, and the rest of this schema — not only about the row just deleted.
+   Deleting a `User` row removes *one* mapping. It does not establish that none remains, and this
+   ADR should not claim a conclusion that would need an inventory nobody has taken.
+3. ⚠️ **And the row the money pointers point AT cannot be deleted at all.**
+   `EnforceTransactionImmutability` refuses `EntityState.Deleted` on `Transaction` in as many words —
+   *"Transactions are immutable. Financial records cannot be modified or deleted."* So for the four
+   money events, whose `SubjectId` names a ledger row, the target survives by construction, and with
+   it the path from that row to an account and its owner. **The erasure-upstream answer applies to
+   pointers whose target is deletable, and the majority of this table's pointers are not.** That is
+   the same immutability the paragraph above cites as a STRENGTH, seen from the other side.
+4. ⚠️ **AMLR Art. 77(2) is a conditional derogation, not a licence, and invoking it here contradicted
+   the paragraph two above.** It permits a reference instead of a copy only where the entity is within
+   scope, the information stays immediately retrievable and unalterable, and internal procedures
+   document the retrieval. This system is **not** an obliged entity — stated above — so citing 77(2)
+   as validation borrows authority from a rule that does not reach it. It is kept as **design
+   corroboration**: the shape it describes is the shape built here, which is worth knowing and is not
+   a legal basis.
 
 **Why not a soft delete, which is the obvious alternative and was asked directly.** It would keep the
 chain intact, which is its whole attraction, and it fails twice.
@@ -489,17 +504,34 @@ it exists because the cheap way to break this policy is not malice — it is som
 "retention: five years" in a year's time and writing a job that deletes old audit rows, believing it
 safe because the rows are old.
 
+⚠️ **AND THE LOUDNESS DEPENDS ON A SURVIVOR, WHICH IS THE OPPOSITE OF THE COMFORTABLE ASSUMPTION.**
+A retention job on a table where everything has expired deletes EVERY row — and then no survivor is
+left to point at a missing predecessor, so `VerifyAsync` reports intact with zero rows verified,
+which is exactly what it reports for an installation nobody has written to yet. Measured, by
+`PurgingTheWHOLETable_IsSILENT_WhichIsTheOtherHalfOfWhyRetentionCannotUseIt`. **The partial purge is
+indistinguishable from tampering and the total one is indistinguishable from a fresh start**, so the
+difference between the two failures is not a safety margin — it is which mistake happens to be made.
+The operator tool is one layer better and only one: it refuses to render an empty table green,
+exiting `NothingToVerify`. That separates zero from non-zero, never "purged" from "new".
+
 **What this does not solve, stated so nobody inherits it as settled.**
 
-- It rests on the business rows being **producible during** the period and **deleted after**. Those
-  are two different obligations on a different table, and nothing in this design enforces the
-  ordering. A deletion that happens early breaks Art. 77(2)'s condition; one that never happens leaves
-  the pointer live forever.
+- **Erasure is not discharged, and for the money events it cannot be.** The first draft of this list
+  said only that nothing enforces the produce-then-delete ordering. The correction above is stronger:
+  on `Transaction` the deletion is not merely unordered, it is REFUSED, so the pointer's target
+  outlives any retention period by design. Where the target IS deletable — a `User` row — the ordering
+  is still unenforced, and an early deletion would break the very condition Art. 77(2) attaches.
+- **Three things would close it, and each is a redesign rather than a setting.** Segmenting the chain
+  into periods that can be dropped whole; per-subject encryption so that destroying a key erases the
+  data without touching a row; or making ledger rows deletable, which trades this table's problem for
+  a worse one two tables over. None is proposed here. Naming them is what stops the next reader
+  concluding that the problem has no shape.
 - **There is no purge job**, and there is nothing to run one — the same premise that defers anchoring
   defers this. The policy is a rule a person follows, which is weaker than a rule a system enforces,
   and saying so is the point.
-- If a supervisor ever required deletion **from this table**, this design has no answer short of
-  segmenting the chain into periods that can be dropped whole. That is a redesign, not a setting.
+- **The honest summary, so the arrival of a policy is not read as the arrival of a solution:** this
+  section states a period and states that the table is never purged. It does NOT discharge a deletion
+  duty, and if this system ever came within one, the work above is where that would start.
 
 ## What is wired, and what is not
 
