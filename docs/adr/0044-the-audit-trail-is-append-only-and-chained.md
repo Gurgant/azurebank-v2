@@ -619,6 +619,21 @@ one — the copy an operator actually reads during an incident. **A verdict that
 is a wrong verdict even when its conclusion is right**, and the lesson repeats: the review named an
 instance, the defect was a class, and grepping for the class is what found the other three.
 
+**⚠️ AND THE BOUNDARY WAS OPTIONAL UNTIL REVIEW, BECAUSE THE FORGER PICKS THE PAYLOAD VERSION.**
+Bounding retired keys by `KeyId` bounds every key a row can NAME. A `v2` row names none — that
+version records no key identity — so it is checked under `Audit:FoundingChainKey` without naming it,
+and the keyed bound never ran. **Measured: a row minted with the retired founding key, at the tail,
+above its boundary, labelled `v2` — verified clean, `IsIntact = True`.** Before the ring the same row
+needed the CURRENT key, so this was the ring handing an old key a power it did not have: the exact
+regression the paragraph above says the boundary exists to prevent, reached by choosing a different
+payload version. **A boundary that one payload version can walk around is not a boundary.**
+
+The founding key now carries the epoch of the ring entry it designates — it inherits it rather than
+configuring it twice, because a designation that could disagree with the key it names would be a
+second place for the same fact to live. `AV2RowMintedWithTheRETIREDFoundingKey_IsRefused…` pins it,
+and it verifies the forgery under a raised boundary FIRST: the epoch is checked before the hash, so
+a fixture whose forged hash was merely wrong would be refused by accident and prove nothing.
+
 **What this does not do.**
 
 - **A `v2` row cannot be rotated at all.** It records no key identity, so there is nothing to select

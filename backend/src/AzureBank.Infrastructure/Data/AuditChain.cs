@@ -216,6 +216,20 @@ public sealed class AuditChain : IAuditChain
     /// <summary>The key that wrote the rows recording no key identity. Never assumed; see below.</summary>
     private readonly string _foundingKey;
 
+    /// <summary>
+    /// The sequence the FOUNDING key stopped writing at, or null while it is still the current key.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ WITHOUT THIS, THE BOUNDARY ON EVERY OTHER KEY IS OPTIONAL — a forger picks the payload
+    /// version. A 'v2' row records no key identity, so it is checked under the founding key without
+    /// naming it; bounding retired keys by <c>KeyId</c> alone therefore left a route to the founding
+    /// key that skipped the bound entirely. MEASURED before this field existed: a row minted with the
+    /// retired founding key, at the tail, above its boundary, labelled 'v2' — verified clean,
+    /// <c>IsIntact = True</c>. Before the ring the same row needed the CURRENT key, so this was the
+    /// ring handing an old key a power it did not have, which is what the bound exists to prevent.
+    /// </remarks>
+    private readonly long? _foundingLastSequence;
+
     public AuditChain(IOptions<AuditOptions> options, ILogger<AuditChain> logger)
     {
         _options = options;
@@ -303,7 +317,9 @@ public sealed class AuditChain : IAuditChain
                     + "key that did not write it.");
             }
 
+            // Nothing retired, so the current key is the founding key and has no epoch to end.
             _foundingKey = options.Value.ChainKey;
+            _foundingLastSequence = null;
         }
         else if (!_keyRing.ContainsKey(DeriveKeyId(founding)))
         {
@@ -315,6 +331,12 @@ public sealed class AuditChain : IAuditChain
         else
         {
             _foundingKey = founding;
+
+            // ITS EPOCH COMES FROM THE RING ENTRY, because the founding key is a DESIGNATION of a
+            // key already in the ring rather than a second copy -- so whatever bound that entry
+            // carries is the bound here too. Null when the designation points at the current key,
+            // which is unbounded by definition.
+            _foundingLastSequence = _keyRing[DeriveKeyId(founding)].LastSequence;
         }
     }
 
@@ -891,36 +913,86 @@ public sealed class AuditChain : IAuditChain
             }
             else
             {
-                // The FOUNDING key, not the current one. See AuditOptions.FoundingChainKey: a null
-                // identity means none was recorded, and re-pointing those rows at whatever is
-                // current is the one thing ADR-0044 named and refused in advance.
-                selectedKey = _foundingKey;
+                /*
+                  The FOUNDING key, not the current one. See AuditOptions.FoundingChainKey: a null
+                  identity means none was recorded, and re-pointing those rows at whatever is current
+                  is the one thing ADR-0044 named and refused in advance.
+
+                  ⚠️ AND BOUNDED BY THE SAME EPOCH, because the forger picks the payload version.
+                  Selecting by KeyId bounds every key a row can NAME; a 'v2' row names none, so
+                  labelling a minted row 'v2' reached the founding key without naming it and skipped
+                  the bound. Measured: such a row, at the tail, above the boundary, verified clean.
+                  A boundary that one payload version can walk around is not a boundary.
+                */
+                if (_foundingLastSequence is { } foundingLast && row.Sequence > foundingLast)
+                {
+                    selectedKey = null;
+                    expiredBoundary = foundingLast;
+                }
+                else
+                {
+                    selectedKey = _foundingKey;
+                }
             }
 
-            if (row.PayloadVersion == CurrentPayloadVersion && selectedKey is null)
+            // NO VERSION GATE HERE. It used to read `PayloadVersion == CurrentPayloadVersion &&
+            // selectedKey is null`, which was safe only while the v2 arm could not produce null.
+            // Now that it can, the gate would let a refused row fall through to a hash comparison
+            // against a null key -- turning a security refusal into a crash.
+            if (selectedKey is null)
             {
+                /*
+                  THREE WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. They are
+                  spelled out separately because collapsing any pair produces a sentence that is
+                  false for one of them and points its reader at the wrong setting -- which on the
+                  minting readings means the prescribed fix completes the attack.
+                */
+                var reason = (expiredBoundary, row.KeyId) switch
+                {
+                    // Named a key the ring holds, above that key's epoch.
+                    ({ } bound, not null) =>
+                        $"Row {row.Id} names key id '{row.KeyId}', which this verification DOES "
+                        + $"hold — but that key was retired at sequence {bound:N0} and this row is "
+                        + $"sequence {row.Sequence:N0}. Its hash was NOT checked. Two readings, and "
+                        + "they need opposite responses: either the recorded boundary is too LOW "
+                        + "and this row is genuine history, or the row was MINTED with a retired "
+                        + "key after the rotation. ⚠️ Raising LastSequence turns this verdict "
+                        + "green either way — so establish which it is from the rotation record "
+                        + "before touching the configuration.",
+
+                    // Named NOTHING, above the founding key's epoch. The dangerous one: the v2
+                    // payload records no key identity, so this is how a forger reaches the founding
+                    // key without naming it, and the boundary is the only thing that sees it.
+                    ({ } bound, null) =>
+                        $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
+                        + "identity, so it is checked under Audit:FoundingChainKey — and that key "
+                        + $"was retired at sequence {bound:N0} while this row is sequence "
+                        + $"{row.Sequence:N0}. Its hash was NOT checked. A row above the founding "
+                        + "key's boundary that names no key is the one shape that reaches that key "
+                        + "without naming it, so treat MINTING as the leading reading here rather "
+                        + "than as the alternative. The benign reading is that the boundary is too "
+                        + "LOW. ⚠️ Raising LastSequence turns this verdict green either way — "
+                        + "establish which it is from the rotation record, outside this database, "
+                        + "before touching the configuration.",
+
+                    // Named a key the ring does not hold at all.
+                    _ =>
+                        $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and no key "
+                        + $"in this verification's ring has that id — it holds '{_keyId}'"
+                        + (_keyRing.Count > 1
+                            ? $" and {_keyRing.Count - 1} retired key(s)"
+                            : " and no retired keys")
+                        + ". Its hash was NOT checked. Either the key that wrote this row was never "
+                        + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
+                        + "is positional: a missing key fails at the LOWEST "
+                        + $"'{CurrentPayloadVersion}' row it wrote and every one after it, while a "
+                        + "single row failing among verified siblings is a write.",
+                };
+
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
-                    expiredBoundary is { } bound
-                        ? $"Row {row.Id} names key id '{row.KeyId}', which this verification DOES "
-                          + $"hold — but that key was retired at sequence {bound:N0} and this row is "
-                          + $"sequence {row.Sequence:N0}. Its hash was NOT checked. Two readings, and "
-                          + "they need opposite responses: either the recorded boundary is too LOW "
-                          + "and this row is genuine history, or the row was MINTED with a retired "
-                          + "key after the rotation. ⚠️ Raising LastSequence turns this verdict "
-                          + "green either way — so establish which it is from the rotation record "
-                          + "before touching the configuration."
-                        : $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and no key "
-                          + $"in this verification's ring has that id — it holds '{_keyId}'"
-                          + (_keyRing.Count > 1
-                              ? $" and {_keyRing.Count - 1} retired key(s)"
-                              : " and no retired keys")
-                          + ". Its hash was NOT checked. Either the key that wrote this row was never "
-                          + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
-                          + "is positional: a missing key fails at the LOWEST "
-                          + $"'{CurrentPayloadVersion}' row it wrote and every one after it, while a "
-                          + "single row failing among verified siblings is a write.",
+                    reason,
                     lowest,
                     highest,
                     AuditChainBreakKind.UnknownScheme,

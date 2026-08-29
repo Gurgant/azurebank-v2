@@ -366,7 +366,9 @@ literally produces a service that will not construct. All three:
   difference; too low refuses real rows, which is loud and correctable. **Err low.**
 - `Audit:FoundingChainKey` — required as soon as anything is retired. Rows older than the key-identity
   column record no key, so something has to say which key wrote them; it must name material already
-  in the ring.
+  in the ring. **It INHERITS that entry's `LastSequence`**, and there is nothing to set separately:
+  it is a designation of a key in the ring, so the epoch bounding that key bounds it here too. A
+  `v2` row above the boundary is refused for the same reason a keyed one is.
 
 Through the environment each `:` becomes `__` and `N` is a zero-based index, so the first retired key
 is `Audit__RetiredChainKeys__0__Key` and `Audit__RetiredChainKeys__0__LastSequence`. The recovery
@@ -377,17 +379,47 @@ dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
 ```
 
 Run it after configuring, before believing it. A ring that will not construct fails at startup with
-the reason in the message, and a ring that constructs but is wrong shows up here as the same
-`UnknownScheme` verdict you started with.
+the reason in the message.
 
-⚠️ **AND THERE IS A SECOND KEY-RELATED VERDICT THAT LOOKS LIKE THE FIRST AND NEEDS THE OPPOSITE
-RESPONSE. READ WHICH ONE YOU HAVE BEFORE TOUCHING ANYTHING.**
+⚠️ **A RING THAT CONSTRUCTS BUT IS WRONG DOES NOT ALWAYS COME BACK AS `UnknownScheme`, AND THIS
+PARAGRAPH SAID IT DID.** That was the comfortable version and it is the dangerous one, because the
+worst of the four outcomes is the one that reports nothing at all. Which you get depends on HOW the
+ring is wrong:
+
+| what is wrong | verdict | where it breaks |
+| --- | --- | --- |
+| the key that wrote a row is not in the ring | `UnknownScheme` | lowest row that key wrote |
+| a `LastSequence` is too LOW | `UnknownScheme` | first row above the recorded boundary |
+| `FoundingChainKey` names the wrong ring member | `HashMismatch` | lowest `v2` row |
+| a `LastSequence` is too HIGH | **`CHAIN INTACT`** | nowhere — nothing is reported |
+
+*(All four rows were run, not reasoned about — the same method that found the exit-1 defect further
+down this page. Row three is the only one whose verdict names a configuration setting on its own;
+the other three have to be read positionally.)*
+
+**The last row is why "run it and see" is not a check on the ring.** Too high does not fail; it
+silently admits rows a retired key had no business writing, which is the whole hazard the boundary
+exists to catch. Nothing in the verdict distinguishes it from an honest one. Only the rotation
+record does — see the boundary guidance below.
+
+**The third row is the one that reads like tampering.** A founding key that the ring HOLDS is
+applied to the identity-less rows and its hash is recomputed, so a wrong designation reaches a hash
+comparison and fails it. It is a `HashMismatch` at the lowest `v2` row and every one after — which
+is positionally identical to a write, so check the designation before escalating.
+
+⚠️ **AND THE TWO `UnknownScheme` VERDICTS LOOK ALIKE AND NEED OPPOSITE RESPONSES. READ WHICH ONE
+YOU HAVE BEFORE TOUCHING ANYTHING.**
 
 - *"…and no key in this verification's ring has that id"* — the key that wrote the row was never
   retired into the configuration. Adding it, with its boundary, is the fix.
 - *"…which this verification DOES hold — but that key was retired at sequence N and this row is
   sequence M"* — the ring HAS the key. The row sits above the sequence that key stopped writing at,
   so its hash is correct under a key that had no business writing by then.
+- *"…is a `v2` row, which records no key identity, so it is checked under `Audit:FoundingChainKey`
+  — and that key was retired at sequence N"* — the same boundary, reached WITHOUT a key id. Treat
+  minting as the leading reading rather than the alternative: a `v2` row records no key, so
+  labelling a new row `v2` is the one way to reach the founding key without naming it, and the
+  boundary is the only thing that sees it.
 
 **The second one has two readings and they are not equally benign.** Either the recorded
 `LastSequence` is too LOW and the row is genuine history written before the rotation, or the row was

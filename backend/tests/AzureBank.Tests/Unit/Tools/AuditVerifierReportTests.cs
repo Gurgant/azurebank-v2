@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
 using Microsoft.Extensions.Options;
@@ -541,6 +542,23 @@ public class AuditVerifierReportTests
             + "the key, except at the end of the table -- and records that the runbook had already "
             + "repeated the too-strong version once after that section withdrew it. This assertion "
             + "is what stops the tool from being the third place it comes back");
+        /*
+          ASSERT THE CLAIM, NOT A TOKEN, AND NOT THE LINE BREAKS EITHER. `Contain("RING")` passed on
+          a single word, so restoring the old current-key-only sentence while any other line said
+          "RING" would have kept this green. Asserting the whole phrase against the raw text is the
+          opposite mistake: the sentence is emitted as separate console lines, so the phrase spans a
+          break and a literal match pins where that break falls -- the review's own suggested literal,
+          "a key in the RING", does not appear in the output for exactly that reason. Collapsing the
+          whitespace first asserts what the sentence SAYS and lets it be re-wrapped freely.
+        */
+        var claim = Regex.Replace(text, @"\s+", " ");
+        claim.Should().Contain(
+            "does not hold a key in the configured RING",
+            "the narrowed claim has to be the one printed, not merely a word from it");
+        claim.Should().NotContain(
+            "altered by anyone who does not hold Audit:ChainKey",
+            "and the sentence it replaced has to be absent, or a partial regression restores the "
+            + "overclaim while every assertion above still passes");
         text.Should().Contain(
             "RING",
             "AND THE NARROW CLAIM GOT NARROWER WHEN THE RING LANDED, which this test would have let "

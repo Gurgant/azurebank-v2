@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Entities;
@@ -1067,6 +1070,103 @@ public class AuditChainTests : IDisposable
             "Audit:FoundingChainKey",
             "that is the key the row was actually checked under, and it is the one an operator has "
             + "to compare against the rotation record");
+    }
+
+    [Fact]
+    public async Task AV2RowMintedWithTheRETIREDFoundingKey_IsRefused_BecauseTheEpochBoundsItToo()
+    {
+        /*
+          THE BOUNDARY WAS OPTIONAL, AND THE FORGER PICKED THE PAYLOAD VERSION. Bounding retired keys
+          by KeyId bounds every key a row can NAME. A 'v2' row names none — that version records no
+          key identity — so it is checked under Audit:FoundingChainKey without naming it, and the
+          KeyId-keyed bound never ran. Labelling a minted row 'v2' therefore reached the retired
+          founding key and skipped the epoch check entirely.
+
+          MEASURED BEFORE THE FIX: such a row, at the tail, above the founding key's boundary,
+          verified clean — IsIntact = True, Verified = 3. Before the ring the same row needed the
+          CURRENT key, so this was the ring handing an old key a power it did not have. That is the
+          exact regression RetiredChainKey's own documentation says the boundary exists to prevent,
+          reached by choosing a different payload version.
+
+          THE FIRST ASSERTION IS A CONTROL AND IT IS NOT OPTIONAL. The boundary is checked BEFORE
+          the hash, so a fixture whose forged hash is simply WRONG would be refused for the right
+          reason by accident and this test would pass while proving nothing. Verifying first with a
+          boundary high enough to admit the row proves the hash is genuinely valid under the founding
+          key — that this is a real forgery rather than a broken fixture — and only then does the
+          refusal below mean anything.
+
+          Raised in review on 7370276 as Major, and it was right.
+        */
+        await WriteAsync("Before", "Rotation");
+        var boundary = await _context.AuditEvents.MaxAsync(e => e.Sequence);
+
+        _context.AuditEvents.Add(NewEvent("MintedWithTheRetiredFoundingKey"));
+        await _context.SaveChangesAsync();
+
+        // Demote it to the legacy scheme and hash it as one. Pending() filters EntityState.Added, so
+        // a Modified row is never re-hashed on the way out — which is how a raw-SQL insert looks.
+        var minted = await _context.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
+        minted.PayloadVersion = "v2";
+        minted.KeyId = null;
+        minted.RowHash = LegacyHash(TestKey, minted);
+        await _context.SaveChangesAsync();
+
+        minted.Sequence.Should().Be(boundary + 1, "the forgery has to sit ABOVE the boundary");
+
+        AuditChain Ring(long lastSequence) => new(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, lastSequence)],
+                FoundingChainKey = TestKey,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        var admitted = await Ring(boundary + 10).VerifyAsync(_context);
+        admitted.IsIntact.Should().BeTrue(
+            "THE CONTROL: with a boundary high enough to admit it, the row verifies — which proves "
+            + "the hash really is valid under the retired founding key, so the refusal below is a "
+            + "refusal of a genuine forgery and not of a broken fixture");
+
+        var refused = await Ring(boundary).VerifyAsync(_context);
+
+        refused.IsIntact.Should().BeFalse(
+            "the row hashes correctly under a key retired before it was written, which is minting");
+        refused.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        refused.FirstBrokenSequence.Should().Be(boundary + 1);
+        refused.Reason.Should().Contain(
+            "Audit:FoundingChainKey",
+            "the operator has to be told WHICH key answered for this row, and it is not the one the "
+            + "row names — it names none");
+        refused.Reason.Should().Contain(
+            "MINTING",
+            "on this shape minting is the LEADING reading, not the alternative: a row above the "
+            + "founding boundary carrying no identity is the one way to reach that key unnamed");
+    }
+
+    /// <summary>
+    /// An INDEPENDENT rendering of the legacy payload, so the fixture above does not simply agree
+    /// with whatever the production hasher does. It is the same technique the frozen literal in
+    /// <c>ALegacyRowVerifies…</c> uses, computed here because the row's identifiers are generated.
+    /// </summary>
+    private static string LegacyHash(string key, AuditEvent row)
+    {
+        var payload = string.Join('|',
+            row.PayloadVersion,
+            row.Id.ToString("N"),
+            row.Sequence.ToString(CultureInfo.InvariantCulture),
+            row.OccurredAt.Ticks.ToString(CultureInfo.InvariantCulture),
+            row.Event,
+            row.Outcome.ToString(),
+            row.ActorUserId?.ToString("N") ?? string.Empty,
+            row.SubjectType ?? string.Empty,
+            row.SubjectId?.ToString("N") ?? string.Empty,
+            row.TraceId ?? string.Empty,
+            row.PreviousHash ?? string.Empty,
+            row.Detail ?? string.Empty);
+
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
+        return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
     }
 
     [Fact]
