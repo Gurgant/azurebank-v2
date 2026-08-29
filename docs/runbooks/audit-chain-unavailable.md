@@ -583,7 +583,7 @@ know the anchor table was there, now leaves a number that does not add up.
   read -rsp 'Connection string: ' ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection && echo
 
   # ONLY IF A KEY HAS EVER BEEN RETIRED -- see "Retiring a key takes three values" above.
-  # Repeat the first two lines, incrementing the 0, for every key ever retired.
+  # Repeat the two RetiredChainKeys lines, incrementing the 0, for each key retired.
   read -rsp 'Retired chain key #0: ' Audit__RetiredChainKeys__0__Key && export Audit__RetiredChainKeys__0__Key && echo
   read -rp  '  its LastSequence: ' Audit__RetiredChainKeys__0__LastSequence && export Audit__RetiredChainKeys__0__LastSequence
   read -rsp 'Audit:FoundingChainKey: ' Audit__FoundingChainKey && export Audit__FoundingChainKey && echo
