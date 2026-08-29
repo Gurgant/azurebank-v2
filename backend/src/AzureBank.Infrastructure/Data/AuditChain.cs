@@ -850,16 +850,39 @@ public sealed class AuditChain : IAuditChain
               halves false. Raised in review on 9ea4e80.)
             */
             string? selectedKey;
+
+            /*
+              ⚠️ TWO WAYS TO HAVE NO KEY, AND THEY NEED OPPOSITE REMEDIES, so they are not allowed to
+              produce the same sentence. Both used to land on `selectedKey = null` and report "no key
+              in this ring has that id" -- which is FALSE for the second one, because the ring does
+              have it.
+
+              UNKNOWN ID: the key that wrote this row was never retired into the configuration. Add
+              it, and the row verifies.
+
+              EXPIRED BOUNDARY: the ring holds that key, and the row sits ABOVE the sequence the key
+              stopped writing at. The remediation is the opposite of the first one and the wrong move
+              is available: raising LastSequence makes the verdict go green, and if the row was
+              minted after the retirement, raising it is completing the attack. So the message has to
+              name the boundary and both readings rather than send anybody to the config.
+            */
+            long? expiredBoundary = null;
+
             if (row.PayloadVersion == CurrentPayloadVersion)
             {
                 if (row.KeyId is not null && _keyRing.TryGetValue(row.KeyId, out var found))
                 {
-                    // ⚠️ THE BOUNDARY, and it is the half that makes the ring safe rather than
-                    // merely convenient. A correct hash under a key that had stopped writing by this
-                    // sequence is not history -- it is what minting looks like.
-                    selectedKey = found.LastSequence is { } last && row.Sequence > last
-                        ? null
-                        : found.Key;
+                    // A correct hash under a key that had stopped writing by this sequence is not
+                    // history -- it is what minting looks like.
+                    if (found.LastSequence is { } last && row.Sequence > last)
+                    {
+                        selectedKey = null;
+                        expiredBoundary = last;
+                    }
+                    else
+                    {
+                        selectedKey = found.Key;
+                    }
                 }
                 else
                 {
@@ -879,16 +902,25 @@ public sealed class AuditChain : IAuditChain
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
-                    $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and no key "
-                      + $"in this verification's ring has that id — it holds '{_keyId}'"
-                      + (_keyRing.Count > 1
-                          ? $" and {_keyRing.Count - 1} retired key(s)"
-                          : " and no retired keys")
-                      + ". Its hash was NOT checked. Either the key that wrote this row was never "
-                      + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
-                      + "is positional: a missing key fails at the LOWEST "
-                      + $"'{CurrentPayloadVersion}' row it wrote and every one after it, while a "
-                      + "single row failing among verified siblings is a write.",
+                    expiredBoundary is { } bound
+                        ? $"Row {row.Id} names key id '{row.KeyId}', which this verification DOES "
+                          + $"hold — but that key was retired at sequence {bound:N0} and this row is "
+                          + $"sequence {row.Sequence:N0}. Its hash was NOT checked. Two readings, and "
+                          + "they need opposite responses: either the recorded boundary is too LOW "
+                          + "and this row is genuine history, or the row was MINTED with a retired "
+                          + "key after the rotation. ⚠️ Raising LastSequence turns this verdict "
+                          + "green either way — so establish which it is from the rotation record "
+                          + "before touching the configuration."
+                        : $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and no key "
+                          + $"in this verification's ring has that id — it holds '{_keyId}'"
+                          + (_keyRing.Count > 1
+                              ? $" and {_keyRing.Count - 1} retired key(s)"
+                              : " and no retired keys")
+                          + ". Its hash was NOT checked. Either the key that wrote this row was never "
+                          + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
+                          + "is positional: a missing key fails at the LOWEST "
+                          + $"'{CurrentPayloadVersion}' row it wrote and every one after it, while a "
+                          + "single row failing among verified siblings is a write.",
                     lowest,
                     highest,
                     AuditChainBreakKind.UnknownScheme,

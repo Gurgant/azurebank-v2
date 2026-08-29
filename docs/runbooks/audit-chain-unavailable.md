@@ -376,6 +376,26 @@ Run it after configuring, before believing it. A ring that will not construct fa
 the reason in the message, and a ring that constructs but is wrong shows up here as the same
 `UnknownScheme` verdict you started with.
 
+⚠️ **AND THERE IS A SECOND KEY-RELATED VERDICT THAT LOOKS LIKE THE FIRST AND NEEDS THE OPPOSITE
+RESPONSE. READ WHICH ONE YOU HAVE BEFORE TOUCHING ANYTHING.**
+
+- *"…and no key in this verification's ring has that id"* — the key that wrote the row was never
+  retired into the configuration. Adding it, with its boundary, is the fix.
+- *"…which this verification DOES hold — but that key was retired at sequence N and this row is
+  sequence M"* — the ring HAS the key. The row sits above the sequence that key stopped writing at,
+  so its hash is correct under a key that had no business writing by then.
+
+**The second one has two readings and they are not equally benign.** Either the recorded
+`LastSequence` is too LOW and the row is genuine history written before the rotation, or the row was
+**minted with a retired key after the rotation** — which is the attack the boundary exists to catch.
+
+🔒 **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES, WHICH IS EXACTLY WHY IT IS NOT
+THE FIRST MOVE.** If the row was minted, raising the boundary completes the attack and the trail then
+attests to it. Establish which reading is true from something outside this database — the change
+record for the rotation, the deployment that carried it, the ticket that ordered it — and only then
+correct the configuration. If nothing outside can say when the key was retired, the honest position
+is that this row cannot be verified, and that is a finding rather than a configuration task.
+
 **Classify first — it costs one command, and the tool already prints the two things that decide
 it:** the KIND of break, and `Rows verified before the break`. The verifier only ever reads, so
 running it again destroys no evidence and moves nothing: three rows read with the right key, then a

@@ -929,6 +929,23 @@ public class AuditChainTests : IDisposable
             + "which is minting rather than history");
         verification.FirstBrokenSequence.Should().Be(
             boundary + 1, "the epoch boundary is where a retired key stops being an answer");
+
+        /*
+          AND THE VERDICT MUST SAY WHICH FAILURE THIS IS. An expired boundary and an unknown key id
+          both leave the walk with no key, and they used to produce the same sentence -- "no key in
+          this ring has that id", which is FALSE here because the ring does hold it. The remedies are
+          opposite, and the wrong one is available: raising LastSequence turns this verdict green,
+          and if the row really was minted after the retirement, raising it completes the attack.
+          Raised in review on 32770df.
+        */
+        verification.Reason.Should().Contain(
+            "which this verification DOES hold",
+            "the ring has the key — saying otherwise sends the operator to add what is already there");
+        verification.Reason.Should().Contain(
+            "retired at sequence", "the boundary is the fact that decides this");
+        verification.Reason.Should().NotContain(
+            "no key in this verification's ring",
+            "that sentence belongs to the OTHER failure and would prescribe the wrong fix");
     }
 
     [Fact]
