@@ -493,9 +493,12 @@ public class SecurityEventConstantTests
             + "administrative and B1 added four money movements. Moving this means moving that "
             + "section in the same commit");
         refusals.Should().Be(
-            3,
+            8,
             "the out-of-band half is counted separately because it answers a different question — "
-            + "which refusals survive their own rollback");
+            + "which refusals survive their own rollback. Three were token paths; five were added "
+            + "on 2026-08-29 for money refusals — locked PIN, wrong PIN and insufficient funds on "
+            + "the withdrawal, and an absent step-up at both transfer kinds. Moving this means "
+            + "moving ADR-0044's \"What is wired\" section in the same commit");
 
         perProject["Infrastructure"].Should().Be(
             2,

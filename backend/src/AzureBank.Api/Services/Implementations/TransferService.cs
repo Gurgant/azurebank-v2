@@ -218,7 +218,25 @@ public class TransferService : ITransferService
         // Get sender's account with ownership check
         var fromAccount = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.FromAccountId, userId);
 
-        var authorizationId = RequireAuthorization(stepUpAuthorizationId);
+        /*
+          RECORDED AT THE CALL SITE, not inside RequireAuthorization, for a reason that decides the
+          row's usefulness: the helper is static and runs before nothing, while HERE the sender's
+          account is already resolved -- so the refusal can name the account it was refused against
+          instead of naming nobody. Both transfer kinds go through the same helper, so both record.
+        */
+        Guid authorizationId;
+        try
+        {
+            authorizationId = RequireAuthorization(stepUpAuthorizationId);
+        }
+        catch (AuthenticationException)
+        {
+            await _audit.RecordRefusalAsync(
+                SecurityEvents.MoneyTransferRefused, AuditOutcome.Refused,
+                actorUserId: userId, subjectType: "Account", subjectId: fromAccount.Id,
+                detail: ErrorCodes.AuthorizationRequired);
+            throw;
+        }
 
         var (senderUser, recipient, recipientAccount) =
             await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag);
@@ -444,7 +462,30 @@ public class TransferService : ITransferService
           shipCheckAsync` tells them only what `GET /api/accounts` already does, so there is nothing
           to withhold and the more specific refusal is the more useful one.
         */
-        var authorizationId = RequireAuthorization(stepUpAuthorizationId);
+        /*
+          RECORDED AT THE CALL SITE, not inside RequireAuthorization, for a reason that decides the
+          row's usefulness: the helper is static and runs before nothing, while HERE the sender's
+          account is already resolved -- so the refusal can name the account it was refused against
+          instead of naming nobody. Both transfer kinds go through the same helper, so both record.
+        */
+        Guid authorizationId;
+        try
+        {
+            authorizationId = RequireAuthorization(stepUpAuthorizationId);
+        }
+        catch (AuthenticationException)
+        {
+            await _audit.RecordRefusalAsync(
+                SecurityEvents.MoneyTransferRefused, AuditOutcome.Refused,
+                // fromAccount, NOT toAccount: the subject is the account the money would have LEFT
+                // and the one the step-up is consumed against, which is the same rule the four
+                // success events follow. An internal transfer resolves both accounts before this
+                // point, so the nearer variable is the destination -- and naming it here would put
+                // the refusal on the wrong account while every test still passed.
+                actorUserId: userId, subjectType: "Account", subjectId: fromAccount.Id,
+                detail: ErrorCodes.AuthorizationRequired);
+            throw;
+        }
 
         // Same account check (should be caught by validator, but double-check)
         if (request.FromAccountId == request.ToAccountId)

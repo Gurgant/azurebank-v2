@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
@@ -367,6 +368,235 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         (await context.AuditEvents.AsNoTracking()
             .CountAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.MoneyTransferred))
             .Should().Be(0, "an internal move must not be recorded as a payment to a third party");
+    }
+
+    [Fact]
+    public async Task AWithdrawalRefusedForFunds_WritesItsRow_NamingTheAccountAndNotTheAmount()
+    {
+        /*
+          THE FIRST MONEY REFUSAL EVER RECORDED. Before this the table held the withdrawal that
+          succeeded and nothing about the one refused, which is the half a bank is actually asked
+          about.
+
+          Two assertions carry the design and they pull in opposite directions. The Detail must be
+          PRESENT, because a refusal commits no ledger row and a row saying only "refused" points at
+          nothing. And the Detail must be the CODE ALONE, because ADR-0044 D5 does not stop applying
+          when the movement fails -- a balance beside an actor id in a never-purged table is
+          financial data about an identifiable person either way.
+        */
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        await DepositAsync(token, accountId, 50m);
+
+        var response = await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new { accountId, amount = 5000m, description = "more than there is", pin = "123456" });
+        response.IsSuccessStatusCode.Should().BeFalse("50 does not cover 5000");
+
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
+        row.Outcome.Should().Be(AuditOutcome.Refused);
+        row.SubjectType.Should().Be("Account");
+        row.Detail.Should().Be(
+            ErrorCodes.InsufficientFunds,
+            "the reason is the part no ledger row can be consulted for -- and the code ALONE, because "
+            + "D5 forbids the balance and the amount from landing here");
+
+        /*
+          RESOLVE THE SUBJECT, for the reason AWithdrawal_WritesItsOwnEvent_NotTheDepositOne records
+          measured: SubjectType is a hard-coded literal and proves nothing on its own. That test
+          found that pointing a Transaction-typed row at an ACCOUNT left the whole suite green. This
+          is the same check with the types swapped, because here the account is the right subject.
+        */
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var account = await db.Accounts.AsNoTracking().SingleOrDefaultAsync(a => a.Id == row.SubjectId);
+        account.Should().NotBeNull(
+            "SubjectType says Account, so SubjectId must resolve to one -- there is no foreign key, "
+            + "so nothing else would notice it naming a transaction that was never created");
+        account!.Id.Should().Be(accountId);
+
+        // The class, not the instance: no Detail this actor produced may carry the figures.
+        var details = await db.AuditEvents.AsNoTracking()
+            .Where(e => e.ActorUserId == userId && e.Detail != null)
+            .Select(e => e.Detail!).ToListAsync();
+        details.Should().NotContain(
+            d => d.Contains("5000") || d.Contains("50."),
+            "ADR-0044 D5: amounts and balances must not reach a table designed never to be purged");
+    }
+
+    [Fact]
+    public async Task AWrongPinOnAWithdrawal_WritesItsRow_BecauseThatIsTheAttemptWorthSeeing()
+    {
+        // A guessed PIN against somebody's balance is the event this table exists for, and until
+        // 2026-08-29 it left nothing at all.
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        await DepositAsync(token, accountId, 500m);
+
+        var response = await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new { accountId, amount = 10m, description = "guessing", pin = "999999" });
+        response.IsSuccessStatusCode.Should().BeFalse("999999 is not the PIN");
+
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
+        row.Outcome.Should().Be(AuditOutcome.Refused);
+        row.Detail.Should().Be(ErrorCodes.InvalidPin);
+        row.SubjectId.Should().Be(accountId, "the account is what the attempt was made against");
+    }
+
+    [Fact]
+    public async Task TheLockoutItself_LeavesARow_AndItIsNotTheWrongPinOne()
+    {
+        /*
+          THE BRANCH THAT RETURNS NOTHING. VerifyPinAsync THROWS PinLockedException once the attempt
+          limit is crossed rather than returning false, so the lockout cannot be observed by reading
+          the return value -- it needs its own catch, and a catch with no test is a branch nobody has
+          entered. Measured: PinService throws its lockout at two places and audits at neither, so
+          before this the control that stops a PIN brute-force was completely silent.
+        */
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        await DepositAsync(token, accountId, 500m);
+
+        for (var i = 0; i < ValidationRules.MaxPinAttempts; i++)
+        {
+            await PostMonetaryAsync(
+                "/api/transactions/withdraw",
+                new { accountId, amount = 10m, description = "guessing", pin = "999999" });
+        }
+
+        // The attempt AFTER the limit: refused by the lockout rather than by the PIN, and it uses
+        // the CORRECT PIN on purpose -- that is what makes it the lockout and not another miss.
+        var locked = await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new { accountId, amount = 10m, description = "still guessing", pin = "123456" });
+        locked.StatusCode.Should().Be(
+            HttpStatusCode.TooManyRequests,
+            "the correct PIN is refused too once the card is locked -- that is the control working");
+
+        var rows = await RowsForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
+        /*
+          THE OFF-BY-ONE IS THE SYSTEM, NOT THE TEST -- and the first version of this assertion had
+          it wrong. The attempt that CROSSES the threshold never returns false: PinService increments
+          and locks in one atomic statement and then throws, so that attempt is recorded as the
+          LOCKOUT and not as a wrong PIN. Measured here: three wrong attempts leave TWO InvalidPin
+          rows, not three.
+
+          Worth asserting rather than tidying away, because anyone counting InvalidPin rows to answer
+          "how many times was the PIN guessed" is short by exactly one, every time.
+        */
+        rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
+            ValidationRules.MaxPinAttempts - 1,
+            "the attempt that trips the lock is recorded as the lockout instead");
+        rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
+            2, "the attempt that trips it, and the one refused afterwards by the lock itself");
+    }
+
+    [Fact]
+    public async Task ATransferWithoutStepUp_IsSubjectedToTheAccountTheMoneyWouldHaveLeft()
+    {
+        /*
+          THE SUBJECT IS THE ASSERTION. An internal transfer resolves BOTH accounts before this
+          refusal is reached, so the nearest variable at the call site is the DESTINATION -- and
+          naming it would put the refusal on the wrong account while every other assertion here
+          still passed. Not hypothetical: writing this change, the first version did exactly that.
+          It is the same defect shape AnExternalTransfer_WritesOneRow_SubjectedToTheLegTheActorOwns
+          guards on the success path.
+        */
+        var (_, payeeId, _) = await RegisterTestUserAsync();
+        string payeeTag;
+        using (var lookup = Factory.Services.CreateScope())
+        {
+            var db = lookup.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            payeeTag = (await db.Users.AsNoTracking().SingleAsync(u => u.Id == payeeId)).AzureTag;
+        }
+
+        var (payerToken, payerId, payerAccountId) = await RegisterTestUserAsync();
+        SetAuthHeader(payerToken);
+        await SetPinAsync(payerToken);
+        await DepositAsync(payerToken, payerAccountId, 500m);
+
+        // No stepUpAuthorizationId: the header is absent, which is the refusal under test.
+        var response = await PostMonetaryAsync(
+            "/api/transfers",
+            new TransferRequest
+            {
+                FromAccountId = payerAccountId,
+                RecipientAzureTag = payeeTag,
+                Amount = 75m,
+                Description = "unauthorised",
+            });
+        response.IsSuccessStatusCode.Should().BeFalse("a transfer without a step-up must be refused");
+
+        var row = await SingleRowForActorAsync(payerId, SecurityEvents.MoneyTransferRefused);
+        row.Outcome.Should().Be(AuditOutcome.Refused);
+        row.SubjectType.Should().Be("Account");
+        row.Detail.Should().Be(ErrorCodes.AuthorizationRequired);
+        row.SubjectId.Should().Be(
+            payerAccountId,
+            "the subject is the account the money would have left, never the destination");
+    }
+
+    [Fact]
+    public async Task AnInternalTransferWithoutStepUp_NamesTheSOURCEAccount_NotTheDestination()
+    {
+        /*
+          THE ONE THAT WOULD HAVE CAUGHT IT. The external path resolves ONE account before the
+          refusal, so pointing the row at "the account" cannot go wrong there. The internal path
+          resolves BOTH -- source then destination -- so the nearest variable at the refusal is the
+          DESTINATION, and a row subjected to it would name the account the money was going TO while
+          every other assertion still passed.
+
+          That is not a hypothetical failure mode. Writing this change, the first version took the
+          nearest account and put the refusal on the wrong one; it was caught by reading the
+          generated diff, which is luck rather than a guard. This is the guard.
+        */
+        var (token, userId, firstAccountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        await DepositAsync(token, firstAccountId, 300m);
+
+        var created = await Client.PostAsJsonAsync(
+            "/api/accounts",
+            new CreateAccountRequest { Name = "Second", Type = AccountType.Savings },
+            JsonOptions);
+        created.IsSuccessStatusCode.Should().BeTrue(await created.Content.ReadAsStringAsync());
+        var secondAccountId = (await created.Content
+            .ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!.Id;
+
+        // No stepUpAuthorizationId: the refusal under test.
+        var response = await PostMonetaryAsync(
+            "/api/transfers/internal",
+            new InternalTransferRequest
+            {
+                FromAccountId = firstAccountId,
+                ToAccountId = secondAccountId,
+                Amount = 60m,
+                Description = "unauthorised",
+            });
+        response.IsSuccessStatusCode.Should().BeFalse("an internal transfer without a step-up is refused");
+
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyTransferRefused);
+        row.Detail.Should().Be(ErrorCodes.AuthorizationRequired);
+        row.SubjectId.Should().Be(
+            firstAccountId,
+            "the subject is the account the money would have LEFT; naming the destination is the "
+            + "exact mistake this test exists for, and both accounts belong to the same actor here "
+            + "so nothing else in the row would look wrong");
+        row.SubjectId.Should().NotBe(secondAccountId);
+    }
+
+    private async Task<List<AuditEvent>> RowsForActorAsync(Guid actorUserId, string securityEvent)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        return await context.AuditEvents
+            .AsNoTracking()
+            .Where(e => e.ActorUserId == actorUserId && e.Event == securityEvent)
+            .ToListAsync();
     }
 
     private async Task<AuditEvent> SingleRowForActorAsync(Guid actorUserId, string securityEvent)

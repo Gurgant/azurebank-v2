@@ -253,6 +253,53 @@ public static class SecurityEvents
     /// <remarks>OWASP: <c>sensitive_change:[userid]</c>.</remarks>
     public const string MoneyTransferredInternally = "MoneyTransferredInternally";
 
+    /*
+      MONEY REFUSED, and the Detail rule INVERTS here. The four events above carry a null Detail
+      because the amount, the counterparty and the account are already on the Transaction row and
+      SubjectId reaches it -- the row is a pointer, and the thing it points at holds the facts.
+
+      A REFUSAL HAS NO TRANSACTION ROW. Nothing was committed, so there is nothing to point at, and
+      a pointer-shaped row would answer no question at all: "a withdrawal was refused" without
+      saying what refused it is indistinguishable from noise. So these two carry a Detail, and the
+      four above still must not.
+
+      ⚠️ WHAT THE DETAIL IS ALLOWED TO BE, because ADR-0044 D5 did not stop applying. The Detail is
+      the ERROR CODE and nothing else -- a closed vocabulary from ErrorCodes, the same string the
+      caller already received over HTTP. NOT the amount, NOT the balance, NOT the counterparty
+      handle. An amount beside an actor id in a table designed never to be purged is financial data
+      about an identifiable person, and that hazard is the same whether the movement succeeded or
+      was refused. The reason is what is otherwise unrecoverable; the amount is what D5 forbids.
+
+      SUBJECT IS THE ACCOUNT, not a transaction that does not exist. The account is already in the
+      system, so this adds no new personal data and stays retrievable, which is the property the
+      null-Detail argument above rests on.
+
+      WHAT IS DELIBERATELY NOT HERE. PIN_REQUIRED: a user who never enrolled a PIN is a setup state,
+      not an attempt to defeat a control. SELF_TRANSFER_NOT_ALLOWED, SAME_ACCOUNT_TRANSFER and
+      RECIPIENT_NO_ACCOUNT: input mistakes caught before any money decision is reached. Recording
+      those would grow the table without adding a signal anybody would read.
+    */
+
+    /// <summary>
+    /// A withdrawal was refused before any money moved. Detail carries the ErrorCodes reason.
+    /// </summary>
+    /// <remarks>
+    /// Raised for a locked PIN, a wrong PIN, and insufficient funds. The first two are the control
+    /// that stands between a guessed PIN and somebody's balance, and until now neither left a row.
+    /// <para>OWASP: <c>authn_login_fail</c> for the PIN cases, <c>sensitive_change</c> otherwise.</para>
+    /// </remarks>
+    public const string MoneyWithdrawalRefused = "MoneyWithdrawalRefused";
+
+    /// <summary>
+    /// A transfer was refused before any money moved. Detail carries the ErrorCodes reason.
+    /// </summary>
+    /// <remarks>
+    /// Raised at both transfer kinds when the step-up authorisation is absent, which is the one
+    /// refusal on that path that is about a control rather than about a typo.
+    /// <para>OWASP: <c>authz_fail:[userid,resource]</c>.</para>
+    /// </remarks>
+    public const string MoneyTransferRefused = "MoneyTransferRefused";
+
     /// <summary>
     /// The audit chain could not be taken, so the action it was about was refused (ADR-0044 D1).
     /// </summary>

@@ -140,10 +140,39 @@ public class TransactionService : ITransactionService
             throw new BusinessRuleException("PIN must be set before making withdrawals.", ErrorCodes.PinRequired);
         }
 
-        // Verify the PIN with attempt-limiting: throws 429 PIN_LOCKED if the PIN
-        // is locked (before any money moves), otherwise 401 on a wrong PIN.
-        if (!await _pinVerifier.VerifyPinAsync(userId, request.Pin))
+        /*
+          RECORD-AND-RETHROW, and the try exists for a refusal that never returns. VerifyPinAsync
+          THROWS PinLockedException rather than returning false when the attempt limit has been
+          reached, so the lockout -- the control standing between a guessed PIN and a balance --
+          cannot be observed by inspecting the return value. Measured: PinService throws at two
+          places and audits at neither, so before this change a tripped lockout left the trail
+          completely silent.
+
+          RecordRefusalAsync, never Record: every branch here throws, so a row enlisted in the
+          caller's unit of work would be rolled back by the very refusal it documents.
+        */
+        bool pinOk;
+        try
         {
+            // Verify the PIN with attempt-limiting: throws 429 PIN_LOCKED if the PIN
+            // is locked (before any money moves), otherwise 401 on a wrong PIN.
+            pinOk = await _pinVerifier.VerifyPinAsync(userId, request.Pin);
+        }
+        catch (PinLockedException)
+        {
+            await _audit.RecordRefusalAsync(
+                SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
+                actorUserId: userId, subjectType: "Account", subjectId: account.Id,
+                detail: ErrorCodes.PinLocked);
+            throw;
+        }
+
+        if (!pinOk)
+        {
+            await _audit.RecordRefusalAsync(
+                SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
+                actorUserId: userId, subjectType: "Account", subjectId: account.Id,
+                detail: ErrorCodes.InvalidPin);
             throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
         }
 
@@ -155,6 +184,18 @@ public class TransactionService : ITransactionService
             // Check sufficient funds
             if (account.Balance < request.Amount)
             {
+                /*
+                  The DETAIL is the code and not the numbers. InsufficientFundsException carries the
+                  balance and the requested amount because the caller is the account owner and is
+                  entitled to both; the audit row is a different reader with a different lifetime,
+                  and a balance beside an actor id in a never-purged table is what ADR-0044 D5 is
+                  about. The reason is the part that cannot be recovered later -- there is no ledger
+                  row to look it up on.
+                */
+                await _audit.RecordRefusalAsync(
+                    SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
+                    actorUserId: userId, subjectType: "Account", subjectId: account.Id,
+                    detail: ErrorCodes.InsufficientFunds);
                 throw new InsufficientFundsException(account.Balance, request.Amount);
             }
 

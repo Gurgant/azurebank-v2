@@ -425,7 +425,7 @@ survive is the claim that retention was settled.
 
 ## What is wired, and what is not
 
-**Eleven events write a row today.** Seven are administrative: `AccountDeleted`,
+**Thirteen events write a row today.** Seven are administrative: `AccountDeleted`,
 `AccountNumberRevealed`, `AzureTagRenamed`, `PinEnrolled`, `RefreshTokenUnknown`,
 `RefreshTokenReuse` and `RefreshTokenReuseRevokeFailed`. For those the log line is kept alongside the
 row — two destinations, two jobs.
@@ -434,7 +434,26 @@ row — two destinations, two jobs.
 `MoneyTransferred` and `MoneyTransferredInternally`. Until then this table recorded a renamed handle
 and not one movement of money, which is the single thing a bank is audited for.
 
-Three things about those four are decisions rather than details.
+**Two are money REFUSALS, added 2026-08-29**: `MoneyWithdrawalRefused` and `MoneyTransferRefused`.
+Five sites raise them — a locked PIN, a wrong PIN and insufficient funds on the withdrawal path, and
+an absent step-up authorisation at both transfer kinds. Until then a bank recorded the withdrawal
+that succeeded and not the one refused because somebody was guessing a PIN, and `PinService` throws
+its lockout at two places while auditing at neither.
+
+⚠️ **The `Detail` rule INVERTS on these two, and D5 is why it inverts rather than lapsing.** The four
+successes below carry a null `Detail` because the facts live on the ledger row `SubjectId` reaches. A
+refusal commits no ledger row, so a pointer-shaped row would point at nothing and "a withdrawal was
+refused" without a reason is indistinguishable from noise. So these carry a `Detail` — **the
+`ErrorCodes` constant and nothing else**, the same string the caller already received over HTTP. Not
+the amount, not the balance, not the counterparty. The reason is the part that is otherwise
+unrecoverable; the amount is the part D5 forbids, and D5 does not stop applying because the movement
+failed.
+
+**Their subject is the ACCOUNT, not a transaction that does not exist** — and on a transfer it is the
+account the money would have LEFT, which is the same rule the successes follow. The account is
+already in the system, so naming it adds no new personal data and keeps the row retrievable.
+
+Three things about the four movements are decisions rather than details.
 
 **They emit NO `SecurityEvent` log line, and that is the first event class to do so.** The
 administrative seven are worth waking an operator for; a deposit is not, and the money paths already
