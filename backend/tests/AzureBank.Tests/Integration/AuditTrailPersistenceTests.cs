@@ -371,18 +371,20 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task AWithdrawalRefusedForFunds_WritesItsRow_NamingTheAccountAndNotTheAmount()
+    public async Task AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision()
     {
         /*
-          THE FIRST MONEY REFUSAL EVER RECORDED. Before this the table held the withdrawal that
-          succeeded and nothing about the one refused, which is the half a bank is actually asked
-          about.
+          THE ABSENCE IS THE ASSERTION, and it is a correction: the first version of this branch DID
+          audit insufficient funds, and ADR-0044 had already decided otherwise before the branch
+          existed -- a routine user outcome whose row-per-attempt is an unbounded write into a
+          never-purged table. Wiring it would have contradicted the ADR without arguing with it.
 
-          Two assertions carry the design and they pull in opposite directions. The Detail must be
-          PRESENT, because a refusal commits no ledger row and a row saying only "refused" points at
-          nothing. And the Detail must be the CODE ALONE, because ADR-0044 D5 does not stop applying
-          when the movement fails -- a balance beside an actor id in a never-purged table is
-          financial data about an identifiable person either way.
+          The contention angle is sharper than the ADR stated and is the reason this test exists
+          rather than the site simply being deleted. A wrong PIN is BOUNDED: three attempts and
+          ADR-0010 locks it. This is not -- a caller can ask for more than they hold forever, at no
+          cost, and each attempt would take the chain tail lock that every real money movement queues
+          behind. Somebody re-reading the refusal list will eventually think this one was forgotten.
+          It was not.
         */
         var (token, userId, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
@@ -394,35 +396,10 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             new { accountId, amount = 5000m, description = "more than there is", pin = "123456" });
         response.IsSuccessStatusCode.Should().BeFalse("50 does not cover 5000");
 
-        var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
-        row.Outcome.Should().Be(AuditOutcome.Refused);
-        row.SubjectType.Should().Be("Account");
-        row.Detail.Should().Be(
-            ErrorCodes.InsufficientFunds,
-            "the reason is the part no ledger row can be consulted for -- and the code ALONE, because "
-            + "D5 forbids the balance and the amount from landing here");
-
-        /*
-          RESOLVE THE SUBJECT, for the reason AWithdrawal_WritesItsOwnEvent_NotTheDepositOne records
-          measured: SubjectType is a hard-coded literal and proves nothing on its own. That test
-          found that pointing a Transaction-typed row at an ACCOUNT left the whole suite green. This
-          is the same check with the types swapped, because here the account is the right subject.
-        */
-        using var scope = Factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
-        var account = await db.Accounts.AsNoTracking().SingleOrDefaultAsync(a => a.Id == row.SubjectId);
-        account.Should().NotBeNull(
-            "SubjectType says Account, so SubjectId must resolve to one -- there is no foreign key, "
-            + "so nothing else would notice it naming a transaction that was never created");
-        account!.Id.Should().Be(accountId);
-
-        // The class, not the instance: no Detail this actor produced may carry the figures.
-        var details = await db.AuditEvents.AsNoTracking()
-            .Where(e => e.ActorUserId == userId && e.Detail != null)
-            .Select(e => e.Detail!).ToListAsync();
-        details.Should().NotContain(
-            d => d.Contains("5000") || d.Contains("50."),
-            "ADR-0044 D5: amounts and balances must not reach a table designed never to be purged");
+        var rows = await RowsForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
+        rows.Should().BeEmpty(
+            "insufficient funds is a routine outcome the ADR keeps out of the trail on purpose, and "
+            + "it is the one refusal on this path nothing bounds");
     }
 
     [Fact]
@@ -444,6 +421,20 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         row.Outcome.Should().Be(AuditOutcome.Refused);
         row.Detail.Should().Be(ErrorCodes.InvalidPin);
         row.SubjectId.Should().Be(accountId, "the account is what the attempt was made against");
+
+        /*
+          D5, CHECKED ON THE CLASS RATHER THAN ON THIS ROW. The Detail is asserted exactly above, so
+          this adds nothing about THIS row -- it is here to catch a LATER refusal site that decides
+          an amount would be useful. The rule is the table, not the call.
+        */
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var details = await db.AuditEvents.AsNoTracking()
+            .Where(e => e.ActorUserId == userId && e.Detail != null)
+            .Select(e => e.Detail!).ToListAsync();
+        details.Should().OnlyContain(
+            d => !d.Any(char.IsDigit),
+            "ADR-0044 D5: no figure may reach a table designed never to be purged");
     }
 
     [Fact]

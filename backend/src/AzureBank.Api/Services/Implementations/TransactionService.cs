@@ -185,17 +185,18 @@ public class TransactionService : ITransactionService
             if (account.Balance < request.Amount)
             {
                 /*
-                  The DETAIL is the code and not the numbers. InsufficientFundsException carries the
-                  balance and the requested amount because the caller is the account owner and is
-                  entitled to both; the audit row is a different reader with a different lifetime,
-                  and a balance beside an actor id in a never-purged table is what ADR-0044 D5 is
-                  about. The reason is the part that cannot be recovered later -- there is no ledger
-                  row to look it up on.
+                  NO AUDIT ROW HERE, and it is a correction to the first version of this change.
+                  ADR-0044 had already classified insufficient funds as a routine user outcome whose
+                  row-per-attempt is an unbounded write into a never-purged table, and that decision
+                  was reasoned before this branch existed. Wiring it anyway would have contradicted
+                  the ADR without arguing with it.
+
+                  ⚠️ AND THE CONTENTION ANGLE IS SHARPER THAN THE ADR STATED. A wrong PIN is BOUNDED
+                  -- three attempts and ADR-0010 locks the PIN. This is not: a caller can ask to
+                  withdraw more than they hold forever, at no cost, and every attempt would take the
+                  chain tail lock that every real money movement queues behind. An unaudited routine
+                  refusal is a gap; an audited one here is a contention amplifier anybody can drive.
                 */
-                await _audit.RecordRefusalAsync(
-                    SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
-                    actorUserId: userId, subjectType: "Account", subjectId: account.Id,
-                    detail: ErrorCodes.InsufficientFunds);
                 throw new InsufficientFundsException(account.Balance, request.Amount);
             }
 

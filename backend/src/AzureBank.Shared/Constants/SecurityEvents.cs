@@ -278,6 +278,15 @@ public static class SecurityEvents
       not an attempt to defeat a control. SELF_TRANSFER_NOT_ALLOWED, SAME_ACCOUNT_TRANSFER and
       RECIPIENT_NO_ACCOUNT: input mistakes caught before any money decision is reached. Recording
       those would grow the table without adding a signal anybody would read.
+
+      ⚠️ AND INSUFFICIENT_FUNDS, which the first version of this change DID wire. ADR-0044 had
+      already classified it with the routine outcomes above -- an unbounded write into a never-purged
+      table -- and that decision was reasoned before this code existed. The contention angle makes it
+      firmer than the ADR put it: a wrong PIN is BOUNDED at three attempts by ADR-0010's lockout,
+      while a caller can ask to withdraw more than they hold forever at no cost, and every attempt
+      would take the chain tail lock that every real money movement queues behind.
+      AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision asserts the absence, because
+      somebody re-reading this list will otherwise think it was forgotten.
     */
 
     /// <summary>

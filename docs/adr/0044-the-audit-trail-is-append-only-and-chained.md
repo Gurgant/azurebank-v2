@@ -435,10 +435,11 @@ row — two destinations, two jobs.
 and not one movement of money, which is the single thing a bank is audited for.
 
 **Two are money REFUSALS, added 2026-08-29**: `MoneyWithdrawalRefused` and `MoneyTransferRefused`.
-Five sites raise them — a locked PIN, a wrong PIN and insufficient funds on the withdrawal path, and
-an absent step-up authorisation at both transfer kinds. Until then a bank recorded the withdrawal
-that succeeded and not the one refused because somebody was guessing a PIN, and `PinService` throws
-its lockout at two places while auditing at neither.
+Four sites raise them — a locked PIN and a wrong PIN on the withdrawal path, and an absent step-up
+authorisation at both transfer kinds. Until then a bank recorded the withdrawal that succeeded and
+not the one refused because somebody was guessing a PIN, and `PinService` throws its lockout at two
+places while auditing at neither. **This is the change the paragraph further down anticipated**, and
+it wires only what that paragraph named as a security signal.
 
 ⚠️ **The `Detail` rule INVERTS on these two, and D5 is why it inverts rather than lapsing.** The four
 successes below carry a null `Detail` because the facts live on the ledger row `SubjectId` reaches. A
@@ -496,6 +497,18 @@ because a row written about an attempt must die with the attempt — the opposit
 flip, which is about the request and survives every attempt. An audit trail that overcounts
 movements is worse than one that misses them: it manufactures evidence of transfers that never
 happened. Pinned by `ADepositThatRetries_WritesExactlyOneAuditRow`.
+
+⚠️ **SUPERSEDED IN PART on 2026-08-29, and the two halves went opposite ways.** The paragraph below
+is kept whole, because its reasoning is what decided the split and not only its conclusion.
+
+WHAT CHANGED: the security signals it names — a transfer presented without a step-up, a wrong PIN —
+ARE now wired, which is the "own change with its own tests" its last sentence asked for, plus the PIN
+LOCKOUT it did not anticipate because that branch throws instead of returning.
+
+WHAT DID NOT CHANGE: insufficient funds, self-transfer and same-account stay out, for exactly the
+reason given below. The first draft of that change wired insufficient funds as well, and this
+paragraph is what caught it — a decision recorded with its reasoning was still doing its job eight
+days later, against the person who wrote it.
 
 **Money REFUSALS are not wired here**, and the reason is measured rather than assumed. There are 19
 throw sites across `TransactionService` and `TransferService`, and most are business validation —
