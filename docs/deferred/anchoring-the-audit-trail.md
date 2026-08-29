@@ -283,8 +283,14 @@ what would close it, and both are still missing.
 
 ⚠️ **It changes nothing above.** Writing a file is not the same as being seen, and this document's
 own scoping is the reason: the property is bounded to anchors a third party has SEEN, and a file this
-machine wrote to this machine's disk has been seen by nobody — whoever truncates the table deletes it
-in the same breath. It is also a verb somebody types, which the decisive reason above already
+machine wrote to this machine's disk has been seen by nobody, and whoever can truncate the table can
+delete the file too. ⚠️ *(Corrected 2026-08-29: this said the truncation deletes the file "in the
+same breath", which reads as one move. They are two operations — one against the database, one
+against the filesystem — and `docs/audit/README.md` already had it right, in the same week: "whoever
+CAN truncate the table CAN delete the export". Three pages, two wordings, and the correct one was
+already in the repository.)*
+
+It is also a verb somebody types, which the decisive reason above already
 disqualifies from being a control. So the export is the artefact and the demonstration; the schedule,
 the third party and the timestamp are all still missing, and the four things that have to be settled
 before the first token are still four.

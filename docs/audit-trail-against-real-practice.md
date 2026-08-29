@@ -85,9 +85,18 @@ the comparison and needs no tooling. `docs/audit/anchors.sample.jsonl` is commit
 see the shape without running anything.
 
 **What it does not buy is the word "cannot".** A file this machine wrote to this machine's disk has
-been seen by nobody; whoever truncates the table deletes it in the same breath. The honest claim is
+been seen by nobody, and whoever can truncate the table can delete the file too. The honest claim is
 *seen, not stored safely* — and this one is not yet seen either. The deferred page argues that
 distinction properly.
+
+⚠️ **But they are two operations, and that is worth stating rather than blurring.** Truncating
+`AuditEvents` is a statement against the database; removing the export is a second act against the
+filesystem. An earlier version of this paragraph said the truncation deleted the file "in the same
+breath", which reads as one move and is not. The distinction is the same one the uncovered window
+rests on: **the careless version of the attack leaves the copy sitting there**, and somebody who did
+not think about a file on disk has left the thing that disagrees with them. It buys no guarantee —
+one extra command removes it — but "no guarantee" and "no obstacle" are different claims, and this
+page had been making the wrong one.
 
 ### 2 — The gap is a number, and a number is not a schedule
 
