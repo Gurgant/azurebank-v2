@@ -534,8 +534,11 @@ public class AuditChainTests : IDisposable
           about, so it is answered here rather than deleted. The verifier-layer tests exist
           (AnchorCommandTests, AuditAnchorSqlServerTests), and ADR-0044 and
           docs/deferred/anchoring-the-audit-trail.md both record that an anchor record now exists and
-          does NOT close the end. docs/runbooks/audit-chain-unavailable.md still says nothing about
-          it, and is the one item left on this list.
+          does NOT close the end. ✅ docs/runbooks/audit-chain-unavailable.md now says
+          plenty about it — the anchor appears throughout and the UNCOVERED WINDOW has its own
+          section, landed 2026-08-28. That was the last item on this list and it is closed. Noting it
+          here rather than deleting the line, because the line was a promise about a document and the
+          promise was kept.
         */
         await WriteAsync("First", "Second", "Third");
 
@@ -554,6 +557,116 @@ public class AuditChainTests : IDisposable
             2,
             "the ONLY trace is that the count dropped — which is evidence to somebody who wrote the "
             + "previous count down somewhere else, and to nobody who did not");
+    }
+
+    [Fact]
+    public async Task DeletingTheOLDESTRows_IsLOUD_WhichIsWhyRetentionCannotPurgeThisTable()
+    {
+        /*
+          THE THIRD SHAPE, AND THE ONE A RETENTION POLICY ACTUALLY TAKES. The two tests around this
+          one cover deletion from the MIDDLE (caught) and from the END (invisible). Neither is what a
+          retention rule asks for. A retention rule says "remove what is older than N years", which is
+          a PREFIX deletion — the oldest rows, from sequence 1 upward — and until now nothing pinned
+          what this chain does with that.
+
+          It is caught, and it is caught LOUDLY: the lowest surviving row records a predecessor hash,
+          the walk starts with `previous = null`, and the two do not match. AuditChain says so in as
+          many words — "expected to follow '(start of chain)'" — and reports LinkBroken, the same
+          verdict a tamper gets. There is no separate vocabulary for a lawful deletion, and there
+          should not be: a chain that could tell an authorised removal from an unauthorised one would
+          have to trust whoever declared it authorised.
+
+          ⚠️ SO THE COLLISION IS REAL AND THIS TEST IS WHERE IT IS MEASURED. AMLR Art. 77 carries a
+          deletion duty at expiry, and this table is built so that discharging it here would be
+          indistinguishable from an attack.
+
+          ⚠️ THIS COMMENT USED TO ADD "and the answer is erasure upstream, where a real DELETE is
+          possible". That was wrong twice and D6 in ADR-0044 now says so: pseudonymous ids are still
+          personal data while anybody can link them, and EnforceTransactionImmutability REFUSES to
+          delete the ledger row the money events point at. The duty is undischarged, not relocated.
+
+          ⚠️ AND THAT IS WHY THIS TEST EXISTS RATHER THAN A COMMENT. The policy says "never purge the
+          trail". The cheap way to break that policy is not malice, it is somebody in a year reading
+          "retention: 5 years" and writing a job that deletes old audit rows, believing it safe
+          because the rows are old.
+
+          ⚠️ BUT ONLY IF THE JOB LEAVES A SURVIVOR, and the first version of this comment claimed
+          more than that — it said the test goes red the moment such a job runs. Raised in review and
+          measured: delete EVERY row and the chain reports intact, because there is no surviving row
+          left to point at a missing predecessor. The partial purge is loud and the total one is
+          silent, which is the opposite of the comfortable assumption that a bigger deletion is
+          easier to see. PurgingTheWHOLETable_IsSILENT_WhichIsTheOtherHalfOfWhyRetentionCannotUseIt
+          is the other half, and the two are only useful together.
+
+          FALSIFIED by removing the TAIL instead of the head: IsIntact goes back to true, which is
+          the sibling test above and the reason both are needed.
+        */
+        await WriteAsync("First", "Second", "Third");
+
+        (await _chain.VerifyAsync(_context)).Verified.Should().Be(3, "three rows were written");
+
+        var oldest = await _context.AuditEvents.OrderBy(e => e.Sequence).FirstAsync();
+        _context.AuditEvents.Remove(oldest);
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse(
+            "a prefix deletion leaves the lowest surviving row pointing at a hash that is gone, and "
+            + "the walk starts expecting no predecessor at all");
+        verification.Kind.Should().Be(
+            AuditChainBreakKind.LinkBroken,
+            "the same verdict a tamper gets — the chain has no vocabulary for an authorised removal, "
+            + "and inventing one would mean trusting whoever declared it authorised");
+        verification.Reason.Should().Contain(
+            "start of chain",
+            "the message names the shape, which is what an operator needs to tell this from a "
+            + "mid-table deletion");
+    }
+
+    [Fact]
+    public async Task PurgingTheWHOLETable_IsSILENT_WhichIsTheOtherHalfOfWhyRetentionCannotUseIt()
+    {
+        /*
+          THE HOLE IN THE TEST ABOVE, AND IT WAS RAISED IN REVIEW. That test deletes ONE of three rows
+          and concludes that a purge job would be caught. It would not, necessarily: a retention job
+          says "delete everything older than N years", and on a table where everything is older than
+          N years that deletes EVERY row. No survivor is left to point at a missing predecessor, so
+          there is nothing for the walk to catch.
+
+          Measured here rather than reasoned about, because the comfortable assumption is that a
+          bigger deletion is easier to see. It is the opposite: the PARTIAL purge is loud and the
+          TOTAL one is silent. The chain can only speak through a surviving row.
+
+          ⚠️ THIS IS WHY "NEVER PURGE THIS TABLE" IS A POLICY AND NOT A CONTROL. Nothing in the chain
+          enforces it. A partial purge produces a verdict indistinguishable from tampering; a complete
+          purge produces the verdict a fresh installation produces. Neither is a retention mechanism,
+          and the difference between them is not a safety margin — it is which mistake happens to be
+          made.
+
+          The operator-facing tool is one layer better and it is worth being exact about where: it
+          refuses to render an empty table as green, exiting NothingToVerify rather than Intact. That
+          separates zero from non-zero. It does not separate "purged" from "new", because nothing in
+          this database can.
+        */
+        await WriteAsync("First", "Second", "Third");
+
+        (await _chain.VerifyAsync(_context)).Verified.Should().Be(3, "three rows were written");
+
+        _context.AuditEvents.RemoveRange(await _context.AuditEvents.ToListAsync());
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeTrue(
+            "MEASURED, and it is the uncomfortable answer: with no surviving row there is no broken "
+            + "link to find, so the chain reports the same thing it reports for a table nobody has "
+            + "written to yet");
+        verification.Verified.Should().Be(
+            0,
+            "the ONLY trace a complete purge leaves is the count, which is evidence to somebody "
+            + "holding a number from elsewhere and to nobody else — the same limit the tail "
+            + "truncation test records, arrived at from the other end");
     }
 
     [Fact]
