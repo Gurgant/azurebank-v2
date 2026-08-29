@@ -651,15 +651,22 @@ know the anchor table was there, now leaves a number that does not add up.
     EXIT=0   CHAIN INTACT: 3 rows verified.
   ```
 
-  **1 is the code this document tells you to alert on as CHAIN BROKEN**, which is worse than the
-  exit 3 the missing anchor key produced: 3 says the store could not be read and sends an operator to
-  the configuration, while 1 says the trail was tampered with and sends them to an incident. The
-  first rotation would have paged somebody, from the page written to stop exactly that, and the
-  verdict would have named a key id as evidence.
+  **1 is the code this document tells you to alert on as CHAIN BROKEN**, and the middle run shows
+  what the same procedure answers when the ring is merely INCOMPLETE: 3, which says the store could
+  not be read and names the setting to add. Two exits three lines apart, sending an operator to
+  opposite places — 3 to the configuration, 1 to an incident. The anchor-key omission a release
+  earlier also answered 3, which is what makes this one the worse of the two: the first rotation
+  would have paged somebody, from the page written to stop exactly that, and the verdict would have
+  named a key id as evidence.
 
-  Note the middle run: the ring refuses to construct rather than guessing which key wrote the
+  *(That sentence read "worse than the exit 3 the missing anchor key produced" until review. True of
+  the earlier incident, and wrong where it sits: the 3 in the fence six lines above is a FOUNDING-key
+  3, so it sent a reader to check `Audit:AnchorKey`, which is set and fine. A page read under
+  pressure is read locally.)*
+
+  That refusal is deliberate: the ring will not construct rather than guess which key wrote the
   identity-less rows, so a HALF-configured ring cannot silently verify history under the wrong key.
-  That refusal is why `Audit:FoundingChainKey` is listed above as required rather than recommended.
+  It is why `Audit:FoundingChainKey` is listed above as required rather than recommended.
 
   PowerShell, since it is the history file this paragraph cites. **`-AsPlainText` on
   `ConvertFrom-SecureString` is PowerShell 7 or later**; on Windows PowerShell 5.1 it does not exist
