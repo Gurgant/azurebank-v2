@@ -204,6 +204,14 @@ public sealed class AuditChain : IAuditChain
 
     private readonly string _keyId;
 
+    /// <summary>
+    /// Key id to key material, for VERIFICATION only. Writing always uses the current key.
+    /// </summary>
+    private readonly Dictionary<string, string> _keyRing;
+
+    /// <summary>The key that wrote the rows recording no key identity. Never assumed; see below.</summary>
+    private readonly string _foundingKey;
+
     public AuditChain(IOptions<AuditOptions> options, ILogger<AuditChain> logger)
     {
         _options = options;
@@ -212,6 +220,84 @@ public sealed class AuditChain : IAuditChain
         // Once, here, and never inside the walk or inside the UPDLOCK/HOLDLOCK window that every
         // business write waits behind.
         _keyId = DeriveKeyId(options.Value.ChainKey);
+
+        /*
+          THE RING IS BUILT HERE AND VALIDATED HERE, rather than in an options Validate() at startup,
+          because there are two composition roots -- the API and the operator verifier -- and a
+          structural rule enforced in one of them is a rule the other does not have. A constructor
+          throw covers both, and the verifier already learned this lesson the other way round: a
+          guard added to only one place is a guard with a hole the shape of the other place.
+
+          IDS ARE DERIVED, never configured, for the reason DeriveKeyId records: a configured id is a
+          second place to state the same fact and the two drift with nothing detecting it. That
+          applies with more force to a retired key, whose rows can never be rewritten to correct a
+          drifted id.
+        */
+        _keyRing = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [_keyId] = options.Value.ChainKey,
+        };
+
+        foreach (var retired in options.Value.RetiredChainKeys ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(retired))
+            {
+                throw new InvalidOperationException(
+                    "Audit:RetiredChainKeys contains a blank entry. A blank key cannot have written "
+                    + "any row, so its presence is a configuration mistake rather than a no-op.");
+            }
+
+            var id = DeriveKeyId(retired);
+
+            // A retired key equal to the current one is not harmless: it reads as "we rotated" while
+            // the ring holds one key, so the deployment believes history is covered when nothing
+            // changed. Refused loudly rather than deduplicated quietly.
+            if (!_keyRing.TryAdd(id, retired))
+            {
+                throw new InvalidOperationException(
+                    $"Audit:RetiredChainKeys contains a key whose id '{id}' is already in the ring — "
+                    + (id == _keyId
+                        ? "it is the CURRENT Audit:ChainKey. Retiring the key still in use would let "
+                          + "the deployment believe it had rotated when it has not."
+                        : "the same retired key is listed twice."));
+            }
+        }
+
+        /*
+          THE FOUNDING KEY IS NAMED, NEVER ASSUMED, and ADR-0044 chose that word before this code
+          existed: "whatever adds a second key must add a ring entry for the FOUNDING key rather than
+          silently re-point history at whatever is current." A null KeyId means no identity was
+          recorded, not that the current key wrote it — so defaulting to the current key would
+          re-attribute history at the moment of rotation and then report those rows as tampered.
+
+          Empty is allowed ONLY while nothing has been retired, because then the current key is the
+          only one there has ever been. The first rotation makes the designation required.
+        */
+        var founding = options.Value.FoundingChainKey;
+        if (string.IsNullOrWhiteSpace(founding))
+        {
+            if (_keyRing.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    "Audit:FoundingChainKey is required once a key has been retired. Rows written "
+                    + "before the key-identity column record no identity, and verifying them under "
+                    + "whatever Audit:ChainKey holds today would silently re-attribute history to a "
+                    + "key that did not write it.");
+            }
+
+            _foundingKey = options.Value.ChainKey;
+        }
+        else if (!_keyRing.ContainsKey(DeriveKeyId(founding)))
+        {
+            throw new InvalidOperationException(
+                "Audit:FoundingChainKey names a key that is neither Audit:ChainKey nor one of "
+                + "Audit:RetiredChainKeys. It is a designation, not a second copy — the key's "
+                + "material must live in exactly one place.");
+        }
+        else
+        {
+            _foundingKey = founding;
+        }
     }
 
     /// <summary>
@@ -341,7 +427,9 @@ public sealed class AuditChain : IAuditChain
             row.PayloadVersion = CurrentPayloadVersion;
             row.KeyId = _keyId;
 
-            row.RowHash = ComputeRowHash(row);
+            // The CURRENT key, always. A retired key is read-side only: it exists so its rows stay
+            // verifiable, never so it can write another one.
+            row.RowHash = ComputeRowHash(row, _options.Value.ChainKey);
             previous = row.RowHash;
         }
     }
@@ -722,17 +810,49 @@ public sealed class AuditChain : IAuditChain
                     _keyId);
             }
 
-            if (row.PayloadVersion == CurrentPayloadVersion && row.KeyId != _keyId)
+            /*
+              THE ROW NAMES ITS KEY AND THE RING LOOKS IT UP. It does not try keys in turn, and the
+              difference is the whole safety of rotating: a trial-keyring verifier accepts a row a
+              RETIRED key could have minted at any sequence, so every rotation would widen the
+              forgery surface instead of narrowing it. The id is inside the hashed payload, so a row
+              cannot lie about which key to check it with without breaking the hash that check
+              produces.
+
+              ⚠️ A 'v2' ROW CANNOT BE ROTATED, and this is where that shows. That version records no
+              key identity, so there is nothing to select on and the row is checked under the current
+              key alone -- meaning a rotation strands every legacy row. That is not an oversight in
+              the ring; it is the reason the tail-anchor decision required KeyId as a stored column
+              BEFORE the first anchor rather than alongside rotation.
+            */
+            string? selectedKey;
+            if (row.PayloadVersion == CurrentPayloadVersion)
+            {
+                selectedKey = row.KeyId is null ? null
+                    : _keyRing.GetValueOrDefault(row.KeyId);
+            }
+            else
+            {
+                // The FOUNDING key, not the current one. See AuditOptions.FoundingChainKey: a null
+                // identity means none was recorded, and re-pointing those rows at whatever is
+                // current is the one thing ADR-0044 named and refused in advance.
+                selectedKey = _foundingKey;
+            }
+
+            if (row.PayloadVersion == CurrentPayloadVersion && selectedKey is null)
             {
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
-                    $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and this "
-                    + $"verification holds the key whose id is '{_keyId}', so its hash was NOT "
-                    + "checked. Either this is the wrong key for this row, or the column was "
-                    + "overwritten. Which one is positional: a wrong key fails at the LOWEST "
-                    + $"'{CurrentPayloadVersion}' row and every one after it, while a single row "
-                    + "failing among verified siblings is a write.",
+                    $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and no key "
+                      + $"in this verification's ring has that id — it holds '{_keyId}'"
+                      + (_keyRing.Count > 1
+                          ? $" and {_keyRing.Count - 1} retired key(s)"
+                          : " and no retired keys")
+                      + ". Its hash was NOT checked. Either the key that wrote this row was never "
+                      + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
+                      + "is positional: a missing key fails at the LOWEST "
+                      + $"'{CurrentPayloadVersion}' row it wrote and every one after it, while a "
+                      + "single row failing among verified siblings is a write.",
                     lowest,
                     highest,
                     AuditChainBreakKind.UnknownScheme,
@@ -741,7 +861,7 @@ public sealed class AuditChain : IAuditChain
                     _keyId);
             }
 
-            var expected = ComputeRowHash(row);
+            var expected = ComputeRowHash(row, selectedKey!);
             if (!CryptographicOperations.FixedTimeEquals(
                     Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
             {
@@ -844,9 +964,9 @@ public sealed class AuditChain : IAuditChain
       column and the prefix the same thing rather than two copies of it: overwrite the column and the
       hash stops matching, so the declaration is protected by the very hash it selects.
     */
-    private string ComputeRowHash(AuditEvent row) => row.PayloadVersion switch
+    private static string ComputeRowHash(AuditEvent row, string key) => row.PayloadVersion switch
     {
-        CurrentPayloadVersion => Hmac(string.Join('|',
+        CurrentPayloadVersion => Hmac(key, string.Join('|',
             row.PayloadVersion,
             row.KeyId ?? string.Empty,
             row.Id.ToString("N"),
@@ -863,7 +983,7 @@ public sealed class AuditChain : IAuditChain
 
         // Byte-identical to what shipped, with the sole change that element one reads the column
         // instead of a literal -- so historical rows keep the hashes they were written with.
-        LegacyPayloadVersion => Hmac(string.Join('|',
+        LegacyPayloadVersion => Hmac(key, string.Join('|',
             row.PayloadVersion,
             row.Id.ToString("N"),
             row.Sequence.ToString(CultureInfo.InvariantCulture),
@@ -885,9 +1005,13 @@ public sealed class AuditChain : IAuditChain
             + "recomputing a hash; reaching here means that check was bypassed."),
     };
 
-    private string Hmac(string payload)
+    // The key is a PARAMETER rather than a field read, because the write path and the verify path
+    // now disagree about which key is correct: writing is always the current one, verifying is
+    // whichever key the row names. A method that reached for _options here would silently make every
+    // historical row fail after a rotation.
+    private static string Hmac(string key, string payload)
     {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.Value.ChainKey));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
         return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
     }
 }

@@ -342,8 +342,17 @@ a deletion of the OLDEST rows from outside the application — an archival job, 
 restore of a partial backup. Both are measured below and neither involves an attacker, but they are
 not equally likely. A wrong key happens on any deploy or rotation that exports the wrong value, and
 it is the first thing to rule out. The other is not routine here: this application never deletes an
-audit row, and ADR-0044 D5 leaves retention unsolved — so it is benign only if you can name the job
-or the restore that did it.
+audit row, and ADR-0044 **D6** records retention as an unsolved problem rather than a scheduled job —
+so it is benign only if you can name the job or the restore that did it. *(Was "D5" until 2026-08-29;
+D5 is the no-personal-data decision and D6 is retention, added the day before this correction.)*
+
+⚠️ **A WRONG KEY NOW HAS A REMEDY AND NOT ONLY A DIAGNOSIS.** The verifier holds a RING of chain keys
+and picks the one each row names, so a rotation no longer strands history — provided the retired key
+was added to `Audit:RetiredChainKeys`. The message says which case you are in: it names the row's key
+id and reports how many keys the ring holds. If the ring has no retired keys and the row names
+something else, the key that wrote it was never retired into the configuration, and adding it is the
+fix. **Adding a key you cannot account for is not** — the ring is how an honest rotation stays
+verifiable, never a way to make a verdict go green.
 
 **Classify first — it costs one command, and the tool already prints the two things that decide
 it:** the KIND of break, and `Rows verified before the break`. The verifier only ever reads, so

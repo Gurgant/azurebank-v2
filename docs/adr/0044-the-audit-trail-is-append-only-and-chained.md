@@ -547,6 +547,55 @@ exiting `NothingToVerify`. That separates zero from non-zero, never "purged" fro
   section states a period and states that the table is never purged. It does NOT discharge a deletion
   duty, and if this system ever came within one, the work above is where that would start.
 
+### D7 — a key ring, so a rotation stops destroying the history it protects
+
+Rotating `Audit:ChainKey` used to cost a deployment its entire past. Every row records the identity
+of the key that wrote it; a verifier holding a different key matched none of them, and the walk broke
+at the lowest row with a verdict that reads exactly like tampering. The one operational hygiene
+measure a keyed design most obviously wants was the one it could not survive.
+
+**The rows are not rewritten, and that was ratified before this code existed.** Re-hashing history to
+the new key would invalidate every anchor ever issued, and — in the database — it is the same
+operation the anchor exists to detect. So the fix is read-side only: `Audit:RetiredChainKeys` holds
+the retired material, and verification picks the key the row names.
+
+**⚠️ The ring SELECTS by `KeyId`; it never TRIES keys in turn**, and the difference is the entire
+safety of rotating. The tail-anchor decision named the hazard in one sentence before there was
+anything to name it about: a trial-keyring verifier accepts a row a **retired** key could have minted
+at any sequence, so every rotation would widen the forgery surface instead of narrowing it. Selection
+works because `KeyId` sits *inside* the hashed payload — a row cannot lie about which key to check it
+with, because changing the claim changes the hash the check recomputes.
+`AuditChainTests.ARowThatLIESAboutItsKeyIsCaught_WhichIsWhyTheRingSELECTSRatherThanTRIES` pins it,
+and replacing the lookup with a loop reddens that test and nothing else.
+
+**A retired key reads and never writes.** Writing always takes `Audit:ChainKey`. Possessing an old
+key is the exact circumstance a rotation assumes has happened, so a ring whose members could also
+write would hand the attacker the ability to append rows that verify.
+
+**⚠️ The FOUNDING key is named, never assumed — and the first draft of this ring assumed it.** Rows
+older than the key-identity column carry a null `KeyId`, which means *no identity was recorded* and
+never *the current key*. This ADR chose that word in advance: "whatever adds a second key must add a
+ring entry for the FOUNDING key rather than silently re-point history at whatever is current." The
+first version of the ring verified those rows under whatever `Audit:ChainKey` held today, which is
+the forbidden thing said in code. `Audit:FoundingChainKey` now names it, is required as soon as
+anything is retired — and not before, because until then there has only ever been one key — and must
+designate material the ring already holds, so each key lives in exactly one place.
+
+**What this does not do.**
+
+- **A `v2` row cannot be rotated at all.** It records no key identity, so there is nothing to select
+  on, and trying keys is the one thing the ring must not do. Those rows verify under the founding key
+  and no other. This is not a gap in the ring; it is why the key-identity column was required *before*
+  the first anchor rather than alongside rotation.
+- **Nothing forces the anchor a rotation should trigger.** The same decision ratified that "a rotation
+  must force an immediate on-demand anchor, with the key-epoch boundary carried in the anchor". This
+  change does not implement that, because nothing here runs unattended to notice a rotation happened —
+  the same premise that defers anchoring itself. It is an operator step, and an operator step is
+  weaker than a mechanism; saying so is the point.
+- **The ring is a read-side convenience, not a security control.** It makes an honest rotation
+  survivable. It constrains nobody: whoever holds the current key can write whatever they like, which
+  is what D1 and the anchor already say in their own sections.
+
 ## What is wired, and what is not
 
 **Thirteen events write a row today.** Seven are administrative: `AccountDeleted`,

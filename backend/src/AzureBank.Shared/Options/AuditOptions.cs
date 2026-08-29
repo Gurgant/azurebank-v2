@@ -69,6 +69,58 @@ public class AuditOptions
     public string AnchorKey { get; set; } = string.Empty;
 
     /// <summary>
+    /// Chain keys this deployment has RETIRED, so rows written under them stay verifiable after a
+    /// rotation. Empty until the first rotation, which is the state every deployment starts in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A ROTATION MUST NEVER REWRITE A ROW — the tail-anchor decision ratified that, and the reason
+    /// is that re-hashing history would invalidate every anchor ever issued while being, in the
+    /// database, the exact row-rewriting operation the anchor exists to detect. So the only way a
+    /// rotated deployment can still verify its own past is to keep the retired key and select it per
+    /// row.
+    /// </para>
+    /// <para>
+    /// ⚠️ SELECTED BY <c>AuditEvent.KeyId</c>, NEVER TRIED IN TURN. The same decision names the
+    /// hazard in one sentence: a verifier that trials a keyring lets a RETIRED key mint rows at any
+    /// sequence forever, so the forgery surface grows with every rotation — which inverts the reason
+    /// to rotate. The row states which key wrote it, that id is inside the hashed payload, and it is
+    /// the id that picks the key. A row naming a key this deployment does not hold stays UNCHECKED
+    /// and breaks the walk, exactly as before.
+    /// </para>
+    /// <para>
+    /// Retiring a key does NOT let it write. Writing always uses <see cref="ChainKey"/>; these are
+    /// read-side only, which is what keeps a retired key from being usable by whoever obtained it.
+    /// </para>
+    /// </remarks>
+    public IList<string> RetiredChainKeys { get; set; } = [];
+
+    /// <summary>
+    /// Which key wrote the rows that record NO key identity. Empty until the first rotation, when it
+    /// becomes required.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ ADR-0044 SETTLED THIS BEFORE THE RING EXISTED, in a sentence whose wording is the whole
+    /// point: *"whatever adds a second key must add a ring entry for the FOUNDING key rather than
+    /// silently re-point history at whatever is current."* Rows written before the key-identity
+    /// column carry a null <c>KeyId</c>, and a null means "no identity was recorded", never "the
+    /// current key". Verifying them under whatever <see cref="ChainKey"/> happens to hold today
+    /// would make a rotation quietly re-attribute history — and then report every one of those rows
+    /// as tampered, which is the failure mode the whole design exists to avoid.
+    /// </para>
+    /// <para>
+    /// It is a DESIGNATION, not a second copy: the value must also be <see cref="ChainKey"/> or one
+    /// of <see cref="RetiredChainKeys"/>, so there is exactly one place each key's material lives.
+    /// Before any rotation it is left empty and the current key is the founding key by definition,
+    /// because it is the only one there has ever been. Once a key is retired, leaving it empty is
+    /// refused rather than assumed: the assumption would be silent and almost always wrong.
+    /// </para>
+    /// </remarks>
+    public string FoundingChainKey { get; set; } = string.Empty;
+
+
+    /// <summary>
     /// How long the chain's tail read may wait, in seconds, before the movement it belongs to is
     /// refused. Bounds the queue every money movement stands in.
     /// </summary>

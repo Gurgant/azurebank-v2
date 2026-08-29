@@ -669,6 +669,199 @@ public class AuditChainTests : IDisposable
             + "truncation test records, arrived at from the other end");
     }
 
+    private const string RotatedKey = "unit-test-audit-chain-key-AFTER-rotation-9876543210";
+
+    [Fact]
+    public async Task AfterARotation_HistoryStillVerifies_BecauseTheRingHoldsTheRetiredKey()
+    {
+        /*
+          THE POINT OF #241, IN ONE ASSERTION. Before the ring, rotating Audit:ChainKey made every
+          existing row unverifiable: the row names the key that wrote it, the verifier held a
+          different one, and the walk broke at the lowest row with a verdict that reads exactly like
+          tampering. A deployment could not rotate a key without destroying its own evidence.
+
+          The rows are NOT rewritten and that is ratified rather than convenient: re-hashing history
+          would invalidate every anchor ever issued while being, in the database, the same operation
+          the anchor exists to detect. So the fix is read-side only.
+        */
+        await WriteAsync("Before", "Rotation");
+
+        var rotated = new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey], FoundingChainKey = TestKey }),
+            NullLogger<AuditChain>.Instance);
+
+        var verification = await rotated.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeTrue(
+            "the rows name the retired key, the ring holds it, and nothing was rewritten");
+        verification.Verified.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task WithoutRetiringTheOldKey_RotationStrandsTheHistory_WhichIsTheHONESTDefault()
+    {
+        // The negative half, and it must stay: a ring that quietly accepted rows it holds no key for
+        // would turn "I cannot check this" into "this is fine", which is the failure the whole
+        // verifier exists to avoid. Forgetting to retire a key is loud.
+        await WriteAsync("Before", "Rotation");
+
+        var rotated = new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = RotatedKey }),
+            NullLogger<AuditChain>.Instance);
+
+        var verification = await rotated.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse();
+        verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        verification.Reason.Should().Contain(
+            "no key",
+            "the message must say the ring lacks the key, not that the row is wrong");
+    }
+
+    [Fact]
+    public async Task ARetiredKeyCanREADItsRowsAndNeverWriteANewOne()
+    {
+        /*
+          THE PROPERTY THAT MAKES A RING SAFE TO HOLD. Retiring a key keeps it in the process for
+          verification; if it could also write, then possessing an old key — the exact thing rotation
+          assumes has happened — would let somebody append rows that verify. Writing takes
+          Audit:ChainKey and nothing else.
+        */
+        var rotated = new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey], FoundingChainKey = TestKey }),
+            NullLogger<AuditChain>.Instance);
+
+        using var after = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>()
+                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .Options,
+            timeProvider: null,
+            auditChain: rotated);
+
+        after.AuditEvents.Add(NewEvent("After"));
+        await after.SaveChangesAsync();
+
+        var written = await after.AuditEvents.SingleAsync();
+        written.KeyId.Should().Be(
+            AuditChain.DeriveKeyId(RotatedKey),
+            "a new row is written under the CURRENT key, never under a retired one");
+        written.KeyId.Should().NotBe(AuditChain.DeriveKeyId(TestKey));
+    }
+
+    [Fact]
+    public async Task ARowThatLIESAboutItsKeyIsCaught_WhichIsWhyTheRingSELECTSRatherThanTRIES()
+    {
+        /*
+          THE ASSERTION THAT SEPARATES A RING FROM A TRIAL LOOP, and the tail-anchor decision named
+          the hazard before this code existed: a verifier that tries each key in turn accepts a row a
+          RETIRED key could have minted at any sequence, so every rotation widens the forgery surface
+          instead of narrowing it.
+
+          Here the row was hashed under the retired key and then relabelled to claim the current one.
+          A trial verifier would find a key that matches and pass it. Selection by the stated id
+          cannot: KeyId is INSIDE the hashed payload, so changing it changes the hash the check
+          recomputes, and the row fails as a hash mismatch rather than being quietly accepted.
+
+          FALSIFIED by replacing the lookup with a loop over the ring: this reddens and nothing else
+          in the suite does, which is the whole reason it is written down.
+        */
+        var rows = await WriteAsync("Written under the old key");
+        var row = rows[0];
+
+        row.KeyId = AuditChain.DeriveKeyId(RotatedKey);
+        _context.Entry(row).State = EntityState.Detached;
+
+        var rotated = new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey], FoundingChainKey = TestKey }),
+            NullLogger<AuditChain>.Instance);
+
+        var stored = await _context.AuditEvents.FirstAsync();
+        stored.KeyId = AuditChain.DeriveKeyId(RotatedKey);
+        await _context.SaveChangesAsync();
+
+        var verification = await rotated.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse(
+            "the ring holds BOTH keys, so a trial loop would have found one that matched — the id is "
+            + "hashed, so relabelling it breaks the hash instead");
+        verification.Kind.Should().Be(AuditChainBreakKind.HashMismatch);
+    }
+
+    [Theory]
+    [InlineData("", "blank")]
+    [InlineData(TestKey, "CURRENT")]
+    public void ARingThatCannotMeanWhatItSays_IsRefusedAtConstruction(string retired, string why)
+    {
+        /*
+          REFUSED LOUDLY RATHER THAN DEDUPLICATED QUIETLY. Retiring the key still in use reads as "we
+          rotated" while the ring holds one key, so the deployment believes its history is covered
+          when nothing changed — the worst of the three outcomes, because it is the silent one. A
+          blank entry cannot have written any row, so it is a mistake and not a no-op.
+        */
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = TestKey, RetiredChainKeys = [retired] }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<InvalidOperationException>(
+            "a {0} retired key makes the ring claim something it cannot deliver", why);
+    }
+
+    [Fact]
+    public void RetiringAKeyWithoutNamingTheFoundingOne_IsRefused_BecauseTheDEFAULTWouldBeWrong()
+    {
+        /*
+          ADR-0044 SETTLED THIS BEFORE THE RING EXISTED, and the first version of the ring did the
+          forbidden thing anyway. The sentence is: "whatever adds a second key must add a ring entry
+          for the FOUNDING key rather than silently re-point history at whatever is current."
+
+          A null KeyId means no identity was RECORDED — it never means "the current key". Rows
+          predating the key-identity column were written by whatever key existed then, and after a
+          rotation that is not Audit:ChainKey any more. Defaulting to the current key would
+          re-attribute those rows at the moment of rotation and then report every one of them as
+          tampered, which is the exact failure the design exists to prevent.
+
+          So the designation is required as soon as it can be wrong, and not before: with no retired
+          key there has only ever been one, and requiring it then would be ceremony.
+        */
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey] }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<InvalidOperationException>()
+            .WithMessage("*FoundingChainKey is required*");
+    }
+
+    [Fact]
+    public void AFoundingKeyTheRingDoesNotHold_IsRefused_BecauseItIsADesignationNotACopy()
+    {
+        // One place per key. A founding key naming material that is neither the current key nor a
+        // retired one is a claim with nothing behind it -- and it would verify nothing while looking
+        // configured.
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [TestKey],
+                FoundingChainKey = "a-key-this-deployment-has-never-held-0123456789",
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<InvalidOperationException>()
+            .WithMessage("*neither Audit:ChainKey nor one of*");
+    }
+
+    [Fact]
+    public void BeforeAnyRotation_TheFoundingKeyNeedsNoNaming_BecauseThereIsOnlyOne()
+    {
+        // The other half of the rule, so the guard cannot quietly become "always required" and turn
+        // a fresh deployment into a configuration exercise.
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = TestKey }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().NotThrow();
+    }
+
     [Fact]
     public async Task AChainWrittenWithADifferentKey_DoesNotVerify()
     {
