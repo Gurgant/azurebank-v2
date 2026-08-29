@@ -293,9 +293,14 @@ public static class SecurityEvents
     /// A withdrawal was refused before any money moved. Detail carries the ErrorCodes reason.
     /// </summary>
     /// <remarks>
-    /// Raised for a locked PIN, a wrong PIN, and insufficient funds. The first two are the control
-    /// that stands between a guessed PIN and somebody's balance, and until now neither left a row.
-    /// <para>OWASP: <c>authn_login_fail</c> for the PIN cases, <c>sensitive_change</c> otherwise.</para>
+    /// Raised for a locked PIN and a wrong PIN — the control that stands between a guessed PIN and
+    /// somebody's balance, and until 2026-08-29 neither left a row.
+    /// <para>
+    /// NOT raised for insufficient funds, and the omission is a decision rather than a gap: see the
+    /// block comment above. A contract that merely stayed silent about it would let the next reader
+    /// add the site back as an oversight, which is how the first draft of this change went wrong.
+    /// </para>
+    /// <para>OWASP: <c>authn_login_fail</c>.</para>
     /// </remarks>
     public const string MoneyWithdrawalRefused = "MoneyWithdrawalRefused";
 
