@@ -89,11 +89,19 @@ public class AuditOptions
     /// and breaks the walk, exactly as before.
     /// </para>
     /// <para>
+    /// ⚠️ EACH ENTRY CARRIES THE SEQUENCE IT STOPPED AT, and that bound is what stops the ring being
+    /// a REGRESSION. Selection by id defeats a row that LIES about its key; it does nothing about a
+    /// row MINTED with a retired key and labelled honestly. Measured before the bound existed: such
+    /// a row, appended after the rotation, verified clean — a power the key's holder did not have
+    /// before the ring, because a retired key used to verify nothing at all. See
+    /// <see cref="RetiredChainKey"/>.
+    /// </para>
+    /// <para>
     /// Retiring a key does NOT let it write. Writing always uses <see cref="ChainKey"/>; these are
     /// read-side only, which is what keeps a retired key from being usable by whoever obtained it.
     /// </para>
     /// </remarks>
-    public IList<string> RetiredChainKeys { get; set; } = [];
+    public IList<RetiredChainKey> RetiredChainKeys { get; set; } = [];
 
     /// <summary>
     /// Which key wrote the rows that record NO key identity. Empty until the first rotation, when it

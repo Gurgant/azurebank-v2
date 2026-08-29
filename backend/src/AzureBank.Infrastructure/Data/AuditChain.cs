@@ -207,7 +207,11 @@ public sealed class AuditChain : IAuditChain
     /// <summary>
     /// Key id to key material, for VERIFICATION only. Writing always uses the current key.
     /// </summary>
-    private readonly Dictionary<string, string> _keyRing;
+    /// <summary>
+    /// Key id to (material, highest sequence it may answer for). The current key is unbounded; a
+    /// retired one is bounded, which is what stops it minting rows after its epoch.
+    /// </summary>
+    private readonly Dictionary<string, (string Key, long? LastSequence)> _keyRing;
 
     /// <summary>The key that wrote the rows recording no key identity. Never assumed; see below.</summary>
     private readonly string _foundingKey;
@@ -233,13 +237,15 @@ public sealed class AuditChain : IAuditChain
           applies with more force to a retired key, whose rows can never be rewritten to correct a
           drifted id.
         */
-        _keyRing = new Dictionary<string, string>(StringComparer.Ordinal)
+        _keyRing = new Dictionary<string, (string Key, long? LastSequence)>(StringComparer.Ordinal)
         {
-            [_keyId] = options.Value.ChainKey,
+            // Unbounded: the key in use answers for whatever it writes next.
+            [_keyId] = (options.Value.ChainKey, null),
         };
 
-        foreach (var retired in options.Value.RetiredChainKeys ?? [])
+        foreach (var entry in options.Value.RetiredChainKeys ?? [])
         {
+            var retired = entry?.Key ?? string.Empty;
             if (string.IsNullOrWhiteSpace(retired))
             {
                 throw new InvalidOperationException(
@@ -247,12 +253,24 @@ public sealed class AuditChain : IAuditChain
                     + "any row, so its presence is a configuration mistake rather than a no-op.");
             }
 
+            // A retired key with no boundary is the unbounded ring this bound exists to prevent, so
+            // it is refused rather than defaulted -- a default here would be silently permissive,
+            // and the permissive direction is the one that hands an old key a new power.
+            if (entry!.LastSequence < 1)
+            {
+                throw new InvalidOperationException(
+                    $"Audit:RetiredChainKeys has an entry with LastSequence {entry.LastSequence}. A "
+                    + "retired key answers only for rows at or below the sequence it stopped writing "
+                    + "at; without that boundary it could authenticate rows minted after it was "
+                    + "retired, which is the regression the boundary exists to prevent.");
+            }
+
             var id = DeriveKeyId(retired);
 
             // A retired key equal to the current one is not harmless: it reads as "we rotated" while
             // the ring holds one key, so the deployment believes history is covered when nothing
             // changed. Refused loudly rather than deduplicated quietly.
-            if (!_keyRing.TryAdd(id, retired))
+            if (!_keyRing.TryAdd(id, (retired, entry.LastSequence)))
             {
                 throw new InvalidOperationException(
                     $"Audit:RetiredChainKeys contains a key whose id '{id}' is already in the ring — "
@@ -818,17 +836,35 @@ public sealed class AuditChain : IAuditChain
               cannot lie about which key to check it with without breaking the hash that check
               produces.
 
-              ⚠️ A 'v2' ROW CANNOT BE ROTATED, and this is where that shows. That version records no
-              key identity, so there is nothing to select on and the row is checked under the current
-              key alone -- meaning a rotation strands every legacy row. That is not an oversight in
-              the ring; it is the reason the tail-anchor decision required KeyId as a stored column
-              BEFORE the first anchor rather than alongside rotation.
+              ⚠️ A 'v2' ROW SELECTS NOTHING, and this is where that shows. That version records no
+              key identity, so there is no id to look up: those rows are checked under the FOUNDING
+              key and no other, which is why that key has to be named rather than assumed. They are
+              not stranded by a rotation -- naming the founding key is exactly what keeps them
+              verifiable -- but they can never be rotated either, because rotation needs a per-row
+              identity to select on. That is not an oversight in the ring; it is why the tail-anchor
+              decision required KeyId as a stored column BEFORE the first anchor rather than
+              alongside rotation.
+
+              (This comment said "checked under the current key alone -- meaning a rotation strands
+              every legacy row" until the founding key landed a few commits later, which made both
+              halves false. Raised in review on 9ea4e80.)
             */
             string? selectedKey;
             if (row.PayloadVersion == CurrentPayloadVersion)
             {
-                selectedKey = row.KeyId is null ? null
-                    : _keyRing.GetValueOrDefault(row.KeyId);
+                if (row.KeyId is not null && _keyRing.TryGetValue(row.KeyId, out var found))
+                {
+                    // ⚠️ THE BOUNDARY, and it is the half that makes the ring safe rather than
+                    // merely convenient. A correct hash under a key that had stopped writing by this
+                    // sequence is not history -- it is what minting looks like.
+                    selectedKey = found.LastSequence is { } last && row.Sequence > last
+                        ? null
+                        : found.Key;
+                }
+                else
+                {
+                    selectedKey = null;
+                }
             }
             else
             {

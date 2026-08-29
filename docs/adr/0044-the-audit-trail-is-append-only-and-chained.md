@@ -572,6 +572,27 @@ and replacing the lookup with a loop reddens that test and nothing else.
 key is the exact circumstance a rotation assumes has happened, so a ring whose members could also
 write would hand the attacker the ability to append rows that verify.
 
+⚠️ **AND THAT IS NOT ENOUGH ON ITS OWN — THE FIRST VERSION OF THIS RING WAS A REGRESSION.** Refusing
+to write through a retired key stops OUR code from doing it. It does nothing about somebody who
+holds the retired key and a database connection: they compute an honest hash under it, label the row
+honestly, insert by raw SQL, and a ring that accepts any member key at any sequence verifies it.
+**Measured before the fix: such a row, appended after the rotation, verified clean.** Before the ring
+there was no such row at all — a retired key verified nothing, so its holder could forge nothing. An
+unbounded ring therefore hands an old key a power it did not have, which is the opposite of what
+rotating is for, and it is what the tail-anchor decision meant by "the forgery surface grows with
+every rotation".
+
+**So each retired key carries the sequence it stopped at**, and answers only at or below it. A row
+above the boundary is refused even when its hash is correct, because a correct hash under a key that
+had no business writing by then is what minting looks like.
+`ARetiredKeyCannotMintAROWATTHETAIL_BecauseTheRingBoundsItToItsEpoch` pins it, and it was written as
+a REPRODUCTION first: it failed against the unbounded ring before it passed against the bounded one.
+
+**What the boundary does not buy.** Below it the retired key is as powerful as it ever was — whoever
+holds it can rewrite that stretch and recompute it, exactly as the current key's holder can rewrite
+the present. It bounds a retired key's FUTURE, not its past, which is the whole of what rotation can
+achieve without an anchor from outside.
+
 **⚠️ The FOUNDING key is named, never assumed — and the first draft of this ring assumed it.** Rows
 older than the key-identity column carry a null `KeyId`, which means *no identity was recorded* and
 never *the current key*. This ADR chose that word in advance: "whatever adds a second key must add a

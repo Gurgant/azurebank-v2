@@ -36,12 +36,16 @@ public class AuditChainTests : IDisposable
     private readonly AzureBankDbContext _context;
     private readonly AuditChain _chain;
 
+    /// <summary>Named, so a second context can reach the SAME store — which is what lets a test
+    /// write through a different key than the one it verifies with.</summary>
+    private readonly string _storeName = Guid.NewGuid().ToString();
+
     public AuditChainTests()
     {
         _chain = new AuditChain(Options.Create(new AuditOptions { ChainKey = TestKey }), NullLogger<AuditChain>.Instance);
         _context = new AzureBankDbContext(
             new DbContextOptionsBuilder<AzureBankDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .UseInMemoryDatabase(_storeName)
                 .Options,
             timeProvider: null,
             auditChain: _chain);
@@ -669,6 +673,9 @@ public class AuditChainTests : IDisposable
             + "truncation test records, arrived at from the other end");
     }
 
+    private static RetiredChainKey Retired(string key, long lastSequence) =>
+        new() { Key = key, LastSequence = lastSequence };
+
     private const string RotatedKey = "unit-test-audit-chain-key-AFTER-rotation-9876543210";
 
     [Fact]
@@ -687,7 +694,7 @@ public class AuditChainTests : IDisposable
         await WriteAsync("Before", "Rotation");
 
         var rotated = new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey], FoundingChainKey = TestKey }),
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)], FoundingChainKey = TestKey }),
             NullLogger<AuditChain>.Instance);
 
         var verification = await rotated.VerifyAsync(_context);
@@ -728,7 +735,7 @@ public class AuditChainTests : IDisposable
           Audit:ChainKey and nothing else.
         */
         var rotated = new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey], FoundingChainKey = TestKey }),
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)], FoundingChainKey = TestKey }),
             NullLogger<AuditChain>.Instance);
 
         using var after = new AzureBankDbContext(
@@ -772,7 +779,7 @@ public class AuditChainTests : IDisposable
         _context.Entry(row).State = EntityState.Detached;
 
         var rotated = new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey], FoundingChainKey = TestKey }),
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)], FoundingChainKey = TestKey }),
             NullLogger<AuditChain>.Instance);
 
         var stored = await _context.AuditEvents.FirstAsync();
@@ -788,9 +795,11 @@ public class AuditChainTests : IDisposable
     }
 
     [Theory]
-    [InlineData("", "blank")]
-    [InlineData(TestKey, "CURRENT")]
-    public void ARingThatCannotMeanWhatItSays_IsRefusedAtConstruction(string retired, string why)
+    [InlineData("", 5L, "blank")]
+    [InlineData(TestKey, 5L, "CURRENT")]
+    [InlineData("a-perfectly-good-retired-key-0123456789abcdef", 0L, "unbounded")]
+    public void ARingThatCannotMeanWhatItSays_IsRefusedAtConstruction(
+        string retired, long lastSequence, string why)
     {
         /*
           REFUSED LOUDLY RATHER THAN DEDUPLICATED QUIETLY. Retiring the key still in use reads as "we
@@ -799,7 +808,12 @@ public class AuditChainTests : IDisposable
           blank entry cannot have written any row, so it is a mistake and not a no-op.
         */
         var build = () => new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = TestKey, RetiredChainKeys = [retired] }),
+            Options.Create(new AuditOptions
+            {
+                ChainKey = TestKey,
+                RetiredChainKeys = [Retired(retired, lastSequence)],
+                FoundingChainKey = TestKey,
+            }),
             NullLogger<AuditChain>.Instance);
 
         build.Should().Throw<InvalidOperationException>(
@@ -824,7 +838,7 @@ public class AuditChainTests : IDisposable
           key there has only ever been one, and requiring it then would be ceremony.
         */
         var build = () => new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [TestKey] }),
+            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)] }),
             NullLogger<AuditChain>.Instance);
 
         build.Should().Throw<InvalidOperationException>()
@@ -841,7 +855,7 @@ public class AuditChainTests : IDisposable
             Options.Create(new AuditOptions
             {
                 ChainKey = RotatedKey,
-                RetiredChainKeys = [TestKey],
+                RetiredChainKeys = [Retired(TestKey, 2)],
                 FoundingChainKey = "a-key-this-deployment-has-never-held-0123456789",
             }),
             NullLogger<AuditChain>.Instance);
@@ -860,6 +874,61 @@ public class AuditChainTests : IDisposable
             NullLogger<AuditChain>.Instance);
 
         build.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task ARetiredKeyCannotMintAROWATTHETAIL_BecauseTheRingBoundsItToItsEpoch()
+    {
+        /*
+          THE HAZARD THE TAIL-ANCHOR DECISION NAMED, REPRODUCED BEFORE IT WAS FIXED. Selecting the
+          key by KeyId stops a row LYING about which key to check it with — relabelling changes the
+          hash. It does not stop a row being MINTED: somebody holding the retired key computes an
+          honest hash under it, labels it honestly, and a ring that accepts any member key at any
+          sequence verifies it.
+
+          That makes the ring a REGRESSION without a bound. Before it, a retired key verified nothing
+          and its holder could forge nothing; after it, the same holder can append. The decision said
+          so in advance — "a trial-keyring verifier lets a RETIRED key mint rows at any sequence
+          forever, so the forgery surface grows with every rotation, inverting the reason to rotate"
+          — and the first version of this ring shipped exactly that, one selection mechanism weaker.
+
+          The bound is the key-epoch boundary the same decision asked for: a retired key is valid
+          only up to the sequence at which it was retired. Rows above that are refused even though
+          their hash is correct, because a correct hash under a key that had no business writing then
+          is precisely what minting looks like.
+        */
+        await WriteAsync("One", "Two");
+
+        var boundary = await _context.AuditEvents.MaxAsync(e => e.Sequence);
+
+        // The attacker: holds the retired key, writes through it, and does not lie about anything.
+        var withRetiredKey = new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = TestKey }), NullLogger<AuditChain>.Instance);
+        using (var theirs = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_storeName).Options,
+            timeProvider: null,
+            auditChain: withRetiredKey))
+        {
+            theirs.AuditEvents.Add(NewEvent("Minted after the rotation"));
+            await theirs.SaveChangesAsync();
+        }
+
+        var rotated = new AuditChain(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, boundary)],
+                FoundingChainKey = TestKey,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        var verification = await rotated.VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeFalse(
+            "the row hashes correctly under a key that had already been retired when it was written, "
+            + "which is minting rather than history");
+        verification.FirstBrokenSequence.Should().Be(
+            boundary + 1, "the epoch boundary is where a retired key stops being an answer");
     }
 
     [Fact]

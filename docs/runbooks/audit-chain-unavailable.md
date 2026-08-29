@@ -354,6 +354,28 @@ something else, the key that wrote it was never retired into the configuration, 
 fix. **Adding a key you cannot account for is not** — the ring is how an honest rotation stays
 verifiable, never a way to make a verdict go green.
 
+⚠️ **RETIRING A KEY TAKES THREE VALUES, NOT ONE, AND THE PROCESS REFUSES TO START WITHOUT THEM.** An
+earlier version of this paragraph said "adding it is the fix" and stopped there; following that
+literally produces a service that will not construct. All three:
+
+- `Audit:RetiredChainKeys:N:Key` — the retired key material.
+- `Audit:RetiredChainKeys:N:LastSequence` — the **highest `AuditEvents.Sequence` that key legitimately
+  wrote**, which is the tail at the moment the new key took over. Rows above it that name this key
+  are refused even when their hash is correct, because a valid hash under a key that had stopped
+  writing is what MINTING looks like rather than history. Too high re-opens that window by the
+  difference; too low refuses real rows, which is loud and correctable. **Err low.**
+- `Audit:FoundingChainKey` — required as soon as anything is retired. Rows older than the key-identity
+  column record no key, so something has to say which key wrote them; it must name material already
+  in the ring.
+
+```bash
+dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
+```
+
+Run it after configuring, before believing it. A ring that will not construct fails at startup with
+the reason in the message, and a ring that constructs but is wrong shows up here as the same
+`UnknownScheme` verdict you started with.
+
 **Classify first — it costs one command, and the tool already prints the two things that decide
 it:** the KIND of break, and `Rows verified before the break`. The verifier only ever reads, so
 running it again destroys no evidence and moves nothing: three rows read with the right key, then a
