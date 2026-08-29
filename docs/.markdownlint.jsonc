@@ -9,11 +9,20 @@
   //
   // MEASURED, with the linter rather than with a grep, which matters because a grep for a bare fence
   // also counts the CLOSING fence of every tagged block and roughly doubles the answer. The honest
-  // count: markdownlint reports exactly FOUR MD040 hits across the root of `docs/`, all four in
-  // `engineering-traps.md`, and `docs/api/` has none. All four are transcripts — an HMAC round-trip
-  // showing what `datetime2` does to a formatted timestamp, a `SqlServerRetryingExecutionStrategy`
-  // exception copied verbatim, a table of which GUID forms each parser accepts, and three sort
-  // orders for the same ten values. None of them is source and none of them has a language.
+  // count, RE-MEASURED 2026-08-28 with `default: false, MD040: true` over a copy of this folder:
+  // EIGHT hits across the root of `docs/` — SIX in `engineering-traps.md` and TWO in
+  // `audit-trail-against-real-practice.md` — and `docs/api/` has none. Every one is a transcript:
+  // an HMAC round-trip showing what `datetime2` does to a formatted timestamp, a
+  // `SqlServerRetryingExecutionStrategy` exception copied verbatim, a table of which GUID forms each
+  // parser accepts, three sort orders for the same ten values, and the two permission probes on the
+  // survey page. None is source and none has a language.
+  //
+  // ⚠️ THIS SENTENCE SAID "EXACTLY FOUR, ALL FOUR IN `engineering-traps.md`" AND WAS ALREADY WRONG
+  // BEFORE THE EDIT THAT FOUND IT. That file had since gained two more transcripts, and nothing
+  // re-runs this count, because MD040 is off here and a rule that never fires cannot notice that the
+  // number describing it has moved. A comment carrying a measured figure is a claim with no test
+  // behind it — re-measure it in the change that alters what it counts, which is the only moment
+  // anybody is looking.
   //
   // WHY THIS FILE EXISTS. The convention was settled twice in writing and this document already
   // followed it, but no config sat anywhere above it — so MD040 fired on all four, and a review on
