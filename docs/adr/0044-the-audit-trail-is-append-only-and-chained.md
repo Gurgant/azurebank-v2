@@ -413,12 +413,14 @@ decision used to rest on is the point of this file.
   period stays five years, and the clock explicitly also starts *"on the date of refusal to enter
   into a business relationship"* — which is directly about the refusal rows this design commits
   separately. A system being designed in 2026 should target Art. 77.
-- **AMLR Art. 77(2) blesses the pointer design of D5 outright**: a reference may be retained instead
+- **AMLR Art. 77(2) describes the shape of the pointer design**: a reference may be retained instead
   of a copy *"provided that … the obliged entities can provide immediately to competent authorities
-  the information and that the information cannot be modified or altered."* That is exactly the
-  audit row pointing at an immutable ledger row — with a condition attached, which is that the
-  pointed-at row must stay immediately producible and unalterable. `EnforceTransactionImmutability`
-  is what makes that true today.
+  the information and that the information cannot be modified or altered."* That is what an audit row
+  pointing at an immutable ledger row looks like. ⚠️ **This bullet said "blesses … outright" and D6
+  below takes that apart** — 77(2) is a conditional derogation for obliged entities, this system is
+  not one, and `EnforceTransactionImmutability` holds the second condition only against code that
+  goes through the change tracker. Read as design corroboration, which is what it is; read as
+  endorsement, it would put two conflicting legal positions in one file.
 - **NIST SP 800-53 AU-11 still names no number** — *"[Assignment: organization-defined time period]"*
   — so the original parenthetical was correct and stands.
 - **And the EDPS says the unbounded chain is itself the exposure**: where security monitoring
@@ -460,20 +462,32 @@ raised in review on `21c81df` and all three corrected here.** The corrected posi
 is the honest one: nothing in this design can purge this table safely, and the upstream answer covers
 less than half of what it appeared to.
 
-1. **The duty is on personal data, and D5 keeps personal data out of this table** — pseudonymous ids,
-   no `Detail` carrying a name, a handle, an amount or a balance. This part stands unchanged.
+1. **The duty is on personal data, and D5 keeps DIRECT identifiers out of this table** — no name, no
+   handle, no `Detail` carrying an amount or a balance. ⚠️ **Narrowed from "keeps personal data out",
+   which contradicted the point below in the same list.** Pseudonymous ids are personal data while
+   anybody can link them, so what D5 removes is the part that needs no linking; it does not put this
+   table outside the duty.
 2. ⚠️ **Pseudonymous is not anonymous, and deleting one table does not make it so.** An identifier
    stays personal data while anybody could reasonably link it back, which is a question about every
    copy that exists — backups, and the rest of this schema — not only about the row just deleted.
    Deleting a `User` row removes *one* mapping. It does not establish that none remains, and this
    ADR should not claim a conclusion that would need an inventory nobody has taken.
-3. ⚠️ **And the row the money pointers point AT cannot be deleted at all.**
-   `EnforceTransactionImmutability` refuses `EntityState.Deleted` on `Transaction` in as many words —
+3. ⚠️ **And the row the money pointers point AT is refused deletion.**
+   `EnforceTransactionImmutability` rejects `EntityState.Deleted` on `Transaction` in as many words —
    *"Transactions are immutable. Financial records cannot be modified or deleted."* So for the four
-   money events, whose `SubjectId` names a ledger row, the target survives by construction, and with
-   it the path from that row to an account and its owner. **The erasure-upstream answer applies to
-   pointers whose target is deletable, and the majority of this table's pointers are not.** That is
+   money events, whose `SubjectId` names a ledger row, the target outlives any retention period, and
+   with it the path from that row to an account and its owner. **The erasure-upstream answer applies
+   to pointers whose target is deletable, and the majority of this table's pointers are not.** That is
    the same immutability the paragraph above cites as a STRENGTH, seen from the other side.
+
+   ⚠️ **The guard is APPLICATION-LEVEL, and saying so makes the problem worse rather than smaller.**
+   It runs in `SaveChanges` against the change tracker, `AuditEvent.SubjectId` carries an index and no
+   foreign key, and no trigger defends the referenced row — the same stated limit this file already
+   records for the anchor guard: *"this defends against our own future code, never against the
+   adversary."* So a lawful deletion at expiry could only be performed the way an attacker would
+   perform an unlawful one: raw SQL, around the guard, leaving a pointer that resolves to nothing.
+   **The compliant act and the attack are the same act.** That is the collision in its sharpest form,
+   and it is the reason this section ends by naming redesigns rather than procedures.
 4. ⚠️ **AMLR Art. 77(2) is a conditional derogation, not a licence, and invoking it here contradicted
    the paragraph two above.** It permits a reference instead of a copy only where the entity is within
    scope, the information stays immediately retrievable and unalterable, and internal procedures

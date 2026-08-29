@@ -577,10 +577,13 @@ public class AuditChainTests : IDisposable
           have to trust whoever declared it authorised.
 
           ⚠️ SO THE COLLISION IS REAL AND THIS TEST IS WHERE IT IS MEASURED. AMLR Art. 77 carries a
-          deletion duty at expiry; this table is built so that discharging it here would be
-          indistinguishable from an attack. The answer ADR-0044 records is not to soften the chain but
-          to have nothing in this table the duty reaches: pseudonymous ids only, erasure upstream in
-          the business tables where a real DELETE is possible.
+          deletion duty at expiry, and this table is built so that discharging it here would be
+          indistinguishable from an attack.
+
+          ⚠️ THIS COMMENT USED TO ADD "and the answer is erasure upstream, where a real DELETE is
+          possible". That was wrong twice and D6 in ADR-0044 now says so: pseudonymous ids are still
+          personal data while anybody can link them, and EnforceTransactionImmutability REFUSES to
+          delete the ledger row the money events point at. The duty is undischarged, not relocated.
 
           ⚠️ AND THAT IS WHY THIS TEST EXISTS RATHER THAN A COMMENT. The policy says "never purge the
           trail". The cheap way to break that policy is not malice, it is somebody in a year reading
