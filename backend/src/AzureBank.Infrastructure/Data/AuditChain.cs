@@ -217,7 +217,7 @@ public sealed class AuditChain : IAuditChain
     /// what stops a row it signs after its epoch from being ACCEPTED — nothing stops it being
     /// written, which is a different sentence and the one that is true.
     /// </summary>
-    private readonly Dictionary<string, (string Key, long? LastSequence)> _keyRing;
+    private readonly Dictionary<string, (string Key, long FirstSequence, long? LastSequence)> _keyRing;
 
     /// <summary>
     /// The key that wrote the rows recording no key identity. Never assumed; see below.
@@ -237,6 +237,13 @@ public sealed class AuditChain : IAuditChain
     /// ring handing an old key a power it did not have, which is what the bound exists to prevent.
     /// </remarks>
     private readonly long? _foundingLastSequence;
+
+    /// <summary>
+    /// The sequence the FOUNDING key started at. 1 whenever the designation is what it should be —
+    /// the oldest key in the ring — and higher only when the configuration says something it cannot
+    /// mean, which the walk then refuses instead of quietly accepting.
+    /// </summary>
+    private readonly long _foundingFirstSequence;
 
     public AuditChain(IOptions<AuditOptions> options, ILogger<AuditChain> logger)
     {
@@ -259,13 +266,49 @@ public sealed class AuditChain : IAuditChain
           applies with more force to a retired key, whose rows can never be rewritten to correct a
           drifted id.
         */
-        _keyRing = new Dictionary<string, (string Key, long? LastSequence)>(StringComparer.Ordinal)
+        /*
+          ⚠️ AN EPOCH HAS TWO ENDS, AND THE FIRST VERSION OF THIS RING GAVE IT ONE. Every boundary
+          check was `row.Sequence > last` -- an upper bound only -- so a retired key answered for
+          EVERY sequence from the bottom of the table up to its own retirement, including the
+          stretches earlier keys wrote.
+
+          MEASURED before this: with A retired at 2 and B retired at 4, the holder of B re-authored
+          sequences 1 through 4 -- relabelling A's two rows as B's -- and the walk returned
+          IsIntact = True. So compromising the NEWEST retired key handed over the whole history, not
+          that key's own epoch, and each further rotation made the prize larger rather than smaller.
+          That inverts the reason to rotate for the second time on this branch.
+
+          THE LOWER BOUND IS DERIVED, NEVER CONFIGURED. The recorded boundaries already partition the
+          sequence space: a key that stopped at N was preceded by one that stopped at N', so its
+          epoch is (N', N]. Asking an operator for the start as well would be a second place to state
+          one fact -- the same objection DeriveKeyId records against configured ids -- and the two
+          would drift with nothing detecting it.
+        */
+        var retiredEntries = (options.Value.RetiredChainKeys ?? [])
+            .Where(e => e is not null)
+            .OrderBy(e => e!.LastSequence)
+            .ToList();
+
+        _keyRing = new Dictionary<string, (string Key, long FirstSequence, long? LastSequence)>(
+            StringComparer.Ordinal)
         {
-            // Unbounded: the key in use answers for whatever it writes next.
-            [_keyId] = (options.Value.ChainKey, null),
+            /*
+              The current key answers from the last retirement onwards and has no upper bound: it is
+              the key in use, so it answers for whatever it writes next. Its FIRST sequence is not
+              open either -- a row BELOW the last retirement was written by a key that had already
+              stopped, so naming the current key there is as wrong as naming a retired key above its
+              own boundary, and for the same reason.
+            */
+            [_keyId] = (
+                options.Value.ChainKey,
+                retiredEntries.Count == 0 ? 1 : retiredEntries[^1]!.LastSequence + 1,
+                null),
         };
 
-        foreach (var entry in options.Value.RetiredChainKeys ?? [])
+        // Walks in boundary order, so each entry's epoch starts where the previous one ended.
+        long nextEpochStart = 1;
+
+        foreach (var entry in retiredEntries)
         {
             var retired = entry?.Key ?? string.Empty;
             if (string.IsNullOrWhiteSpace(retired))
@@ -308,12 +351,31 @@ public sealed class AuditChain : IAuditChain
                     + "retired, which is the regression the boundary exists to prevent.");
             }
 
+            /*
+              TWO RETIRED KEYS CLAIMING THE SAME BOUNDARY CANNOT BOTH BE ANSWERED FOR, because the
+              rows beneath it would belong to whichever happened to sort first -- and sort order
+              between equal keys is not something a configuration file states. It is refused rather
+              than resolved, since resolving it means guessing which key wrote history.
+
+              This is not the same as a key that wrote nothing. A rotation with no writes between it
+              and the next one gives the second key an EMPTY epoch, which the derivation below
+              expresses as a start above its own end, and that key correctly answers for no rows.
+            */
+            if (entry.LastSequence == nextEpochStart - 1 && nextEpochStart > 1)
+            {
+                throw new InvalidOperationException(
+                    $"Audit:RetiredChainKeys has two entries whose LastSequence is "
+                    + $"{entry.LastSequence}. Boundaries partition the sequence space, so two keys "
+                    + "ending at the same row leaves the rows beneath it claimed by both and the "
+                    + "ring cannot tell which one wrote them.");
+            }
+
             var id = DeriveKeyId(retired);
 
             // A retired key equal to the current one is not harmless: it reads as "we rotated" while
             // the ring holds one key, so the deployment believes history is covered when nothing
             // changed. Refused loudly rather than deduplicated quietly.
-            if (!_keyRing.TryAdd(id, (retired, entry.LastSequence)))
+            if (!_keyRing.TryAdd(id, (retired, nextEpochStart, entry.LastSequence)))
             {
                 throw new InvalidOperationException(
                     $"Audit:RetiredChainKeys contains a key whose id '{id}' is already in the ring — "
@@ -322,6 +384,8 @@ public sealed class AuditChain : IAuditChain
                           + "the deployment believe it had rotated when it has not."
                         : "the same retired key is listed twice."));
             }
+
+            nextEpochStart = entry.LastSequence + 1;
         }
 
         /*
@@ -349,6 +413,7 @@ public sealed class AuditChain : IAuditChain
             // Nothing retired, so the current key is the founding key and has no epoch to end.
             _foundingKey = options.Value.ChainKey;
             _foundingLastSequence = null;
+            _foundingFirstSequence = 1;
         }
         else if (!_keyRing.ContainsKey(DeriveKeyId(founding)))
         {
@@ -365,7 +430,9 @@ public sealed class AuditChain : IAuditChain
             // key already in the ring rather than a second copy -- so whatever bound that entry
             // carries is the bound here too. Null when the designation points at the current key,
             // which is unbounded by definition.
-            _foundingLastSequence = _keyRing[DeriveKeyId(founding)].LastSequence;
+            var foundingEntry = _keyRing[DeriveKeyId(founding)];
+            _foundingLastSequence = foundingEntry.LastSequence;
+            _foundingFirstSequence = foundingEntry.FirstSequence;
         }
     }
 
@@ -918,17 +985,26 @@ public sealed class AuditChain : IAuditChain
               name the boundary and both readings rather than send anybody to the config.
             */
             long? expiredBoundary = null;
+            long? unbegunBoundary = null;
 
             if (row.PayloadVersion == CurrentPayloadVersion)
             {
                 if (row.KeyId is not null && _keyRing.TryGetValue(row.KeyId, out var found))
                 {
                     // A correct hash under a key that had stopped writing by this sequence is not
-                    // history -- it is what minting looks like.
+                    // history -- it is what minting looks like. The same is true underneath: a key
+                    // that had not STARTED by this sequence did not write here either, and a ring
+                    // that only bounded the top let the newest retired key re-author everything
+                    // below it.
                     if (found.LastSequence is { } last && row.Sequence > last)
                     {
                         selectedKey = null;
                         expiredBoundary = last;
+                    }
+                    else if (row.Sequence < found.FirstSequence)
+                    {
+                        selectedKey = null;
+                        unbegunBoundary = found.FirstSequence;
                     }
                     else
                     {
@@ -958,6 +1034,15 @@ public sealed class AuditChain : IAuditChain
                     selectedKey = null;
                     expiredBoundary = foundingLast;
                 }
+                else if (row.Sequence < _foundingFirstSequence)
+                {
+                    // Only reachable when Audit:FoundingChainKey designates something other than the
+                    // OLDEST key in the ring. Identity-less rows are the oldest rows there are, so a
+                    // founding key whose epoch starts above them is a designation that cannot mean
+                    // what it says -- and saying so is better than checking those rows under it.
+                    selectedKey = null;
+                    unbegunBoundary = _foundingFirstSequence;
+                }
                 else
                 {
                     selectedKey = _foundingKey;
@@ -976,10 +1061,23 @@ public sealed class AuditChain : IAuditChain
                   false for one of them and points its reader at the wrong setting -- which on the
                   minting readings means the prescribed fix completes the attack.
                 */
-                var reason = (expiredBoundary, row.KeyId) switch
+                var reason = (expiredBoundary, unbegunBoundary, row.KeyId) switch
                 {
+                    // BELOW the key's epoch. The mirror of the expired case and the one that made
+                    // the boundary half a boundary: a key answering from the bottom of the table
+                    // meant compromising the NEWEST retired key handed over the whole history.
+                    (null, { } start, _) =>
+                        $"Row {row.Id} is sequence {row.Sequence:N0} and names a key whose epoch "
+                        + $"begins at {start:N0} — so it names a key that had not started writing "
+                        + "when this row was written. Its hash was NOT checked. An earlier key wrote "
+                        + "this stretch; a row here that claims a later one is either a boundary "
+                        + "recorded too HIGH for that earlier key, or a row RE-AUTHORED by whoever "
+                        + "holds the later one. ⚠️ Epochs are derived from the recorded boundaries, "
+                        + "so moving one moves two — check the rotation record before changing "
+                        + "anything.",
+
                     // Named a key the ring holds, above that key's epoch.
-                    ({ } bound, not null) =>
+                    ({ } bound, _, not null) =>
                         $"Row {row.Id} names key id '{row.KeyId}', which this verification DOES "
                         + $"hold — but that key was retired at sequence {bound:N0} and this row is "
                         + $"sequence {row.Sequence:N0}. Its hash was NOT checked. Two readings, and "
@@ -992,7 +1090,7 @@ public sealed class AuditChain : IAuditChain
                     // Named NOTHING, above the founding key's epoch. The dangerous one: the v2
                     // payload records no key identity, so this is how a forger reaches the founding
                     // key without naming it, and the boundary is the only thing that sees it.
-                    ({ } bound, null) =>
+                    ({ } bound, _, null) =>
                         $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
                         + "identity, so it is checked under Audit:FoundingChainKey — and that key "
                         + $"was retired at sequence {bound:N0} while this row is sequence "

@@ -794,8 +794,20 @@ public class AuditChainTests : IDisposable
 
           Here the row was hashed under the retired key and then relabelled to claim the current one.
           A trial verifier would find a key that matches and pass it. Selection by the stated id
-          cannot: KeyId is INSIDE the hashed payload, so changing it changes the hash the check
-          recomputes, and the row fails as a hash mismatch rather than being quietly accepted.
+          cannot.
+
+          ⚠️ WHICH CHECK CATCHES IT MOVED, AND THE OLD ANSWER IS WORTH KEEPING WRITTEN DOWN. Until
+          epochs had a lower bound this failed as a HASH MISMATCH: KeyId is inside the hashed
+          payload, so relabelling changed the hash the check recomputed. It now fails EARLIER, as
+          UnknownScheme, because derived epochs partition the sequence space -- a row at sequence 1
+          belongs to exactly one key's epoch, so naming any other key puts it outside that key's
+          range before its hash is ever recomputed.
+
+          That is strictly stronger and it makes the hash-in-payload defence the SECOND line rather
+          than the first. Both still hold; only the order changed. The assertion follows the code
+          rather than the other way round, and the previous expectation is recorded here because a
+          reader finding UnknownScheme where a comment promised HashMismatch would otherwise suspect
+          a regression.
 
           FALSIFIED by replacing the lookup with a loop over the ring: this reddens and nothing else
           in the suite does, which is the whole reason it is written down.
@@ -817,9 +829,16 @@ public class AuditChainTests : IDisposable
         var verification = await rotated.VerifyAsync(_context);
 
         verification.IsIntact.Should().BeFalse(
-            "the ring holds BOTH keys, so a trial loop would have found one that matched — the id is "
-            + "hashed, so relabelling it breaks the hash instead");
-        verification.Kind.Should().Be(AuditChainBreakKind.HashMismatch);
+            "the ring holds BOTH keys, so a trial loop would have found one that matched");
+        verification.Kind.Should().Be(
+            AuditChainBreakKind.UnknownScheme,
+            "epochs partition the sequences, so a row naming a key whose epoch does not contain it "
+            + "is refused before any hash is recomputed — this was HashMismatch until the epoch "
+            + "gained a lower bound, and the earlier refusal is the stronger of the two");
+        verification.Reason.Should().Contain(
+            "epoch begins at",
+            "and the verdict has to say WHICH boundary it fell outside, or the operator cannot tell "
+            + "this from a key the ring does not hold at all");
     }
 
     [Theory]
@@ -1200,6 +1219,120 @@ public class AuditChainTests : IDisposable
     {
         var payload = string.Join('|',
             row.PayloadVersion,
+            row.Id.ToString("N"),
+            row.Sequence.ToString(CultureInfo.InvariantCulture),
+            row.OccurredAt.Ticks.ToString(CultureInfo.InvariantCulture),
+            row.Event,
+            row.Outcome.ToString(),
+            row.ActorUserId?.ToString("N") ?? string.Empty,
+            row.SubjectType ?? string.Empty,
+            row.SubjectId?.ToString("N") ?? string.Empty,
+            row.TraceId ?? string.Empty,
+            row.PreviousHash ?? string.Empty,
+            row.Detail ?? string.Empty);
+
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
+        return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+    }
+
+    [Fact]
+    public async Task TheNEWESTRetiredKeyCannotREAUTHORWhatOlderKeysWrote_BecauseAnEpochHasTwoEnds()
+    {
+        /*
+          AN EPOCH HAS TWO ENDS, AND THE FIRST VERSION OF THIS RING GAVE IT ONE. Every boundary check
+          was `row.Sequence > last`. An upper bound stops a retired key minting ABOVE its retirement;
+          nothing stopped it answering for every sequence BELOW, including the stretches that older
+          keys wrote.
+
+          MEASURED BEFORE THE FIX, and this test is that measurement: with TestKey retired at 2 and
+          SecondKey retired at 4, the holder of SecondKey re-authored sequences 1 through 4 --
+          relabelling the first two rows, which TestKey wrote -- and the walk returned
+          IsIntact = True with four rows verified.
+
+          So compromising the NEWEST retired key handed over the whole history rather than one
+          epoch, and every further rotation made the prize bigger instead of smaller. That is the
+          second time on this branch that a half-bounded ring inverted the reason to rotate.
+
+          The lower bound is DERIVED, never configured: the recorded boundaries already partition the
+          sequence space, so a key that stopped at N was preceded by one that stopped at N' and its
+          epoch is (N', N]. Asking for the start as well would be a second place to state one fact.
+        */
+        var second = "unit-test-audit-chain-key-the-SECOND-retired-0123456789";
+
+        await WriteAsync("TestKey one", "TestKey two");
+
+        // Sequences 3 and 4, written under the key that is retired second.
+        using (var epochTwo = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_storeName).Options,
+            timeProvider: null,
+            auditChain: new AuditChain(
+                Options.Create(new AuditOptions { ChainKey = second }),
+                NullLogger<AuditChain>.Instance)))
+        {
+            epochTwo.AuditEvents.Add(NewEvent("SecondKey three"));
+            await epochTwo.SaveChangesAsync();
+            epochTwo.AuditEvents.Add(NewEvent("SecondKey four"));
+            await epochTwo.SaveChangesAsync();
+        }
+
+        AuditChain Ring() => new(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, 2), Retired(second, 4)],
+                FoundingChainKey = TestKey,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        var honest = await Ring().VerifyAsync(_context);
+        honest.IsIntact.Should().BeTrue(
+            "THE CONTROL: two rotations, nothing touched — an honest table with three epochs still "
+            + "verifies, or the bound below would be refusing history rather than forgery");
+        honest.Verified.Should().Be(4);
+
+        // The attacker holds the SECOND retired key and re-authors the whole prefix under it,
+        // including the two rows the FIRST key wrote. Nothing is minted above any boundary.
+        using (var theirs = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_storeName).Options,
+            timeProvider: null,
+            auditChain: new AuditChain(
+                Options.Create(new AuditOptions { ChainKey = second }),
+                NullLogger<AuditChain>.Instance)))
+        {
+            string? previous = null;
+            foreach (var row in await theirs.AuditEvents.OrderBy(e => e.Sequence).ToListAsync())
+            {
+                row.Detail = $"re-authored at {row.Sequence}";
+                row.KeyId = AuditChain.DeriveKeyId(second);
+                row.PreviousHash = previous;
+                row.RowHash = CurrentHash(second, row);
+                previous = row.RowHash;
+            }
+
+            await theirs.SaveChangesAsync();
+        }
+
+        _context.ChangeTracker.Clear();
+        var forged = await Ring().VerifyAsync(_context);
+
+        forged.IsIntact.Should().BeFalse(
+            "the two oldest rows name a key whose epoch begins at 3, so it had not started writing "
+            + "when they were written");
+        forged.FirstBrokenSequence.Should().Be(
+            1, "and it breaks at the FIRST re-authored row, not somewhere in the middle");
+        forged.Reason.Should().Contain("epoch begins at 3");
+    }
+
+    /// <summary>
+    /// An INDEPENDENT rendering of the current payload, for the same reason
+    /// <see cref="LegacyHash"/> exists: a fixture that asks the production hasher for its forgery
+    /// agrees with whatever that hasher does, including a broken arm.
+    /// </summary>
+    private static string CurrentHash(string key, AuditEvent row)
+    {
+        var payload = string.Join('|',
+            row.PayloadVersion,
+            row.KeyId ?? string.Empty,
             row.Id.ToString("N"),
             row.Sequence.ToString(CultureInfo.InvariantCulture),
             row.OccurredAt.Ticks.ToString(CultureInfo.InvariantCulture),

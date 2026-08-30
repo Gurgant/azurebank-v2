@@ -424,6 +424,8 @@ ring is wrong:
 | a `LastSequence` is too LOW | `UnknownScheme` | first row above the recorded boundary |
 | `FoundingChainKey` names the wrong ring member | `HashMismatch` | lowest `v2` row |
 | a `LastSequence` is too HIGH | **`CHAIN INTACT`** | nowhere — nothing is reported |
+| a `LastSequence` is too LOW for the key BELOW it | `UnknownScheme` | first row of the next epoch |
+| two retired keys share a `LastSequence` | refused at construction | before any row is read |
 
 *(All four rows were run, not reasoned about — the same method that found the exit-1 defect further
 down this page. Row three is the only one whose verdict names a configuration setting on its own;
@@ -452,6 +454,14 @@ YOU HAVE BEFORE TOUCHING ANYTHING.**
   minting as the leading reading rather than the alternative: a `v2` row records no key, so
   labelling a new row `v2` is the one way to reach the founding key without naming it, and the
   boundary is the only thing that sees it.
+- *"…names a key whose epoch begins at N"* — the OTHER end of the same boundary, and it is not a
+  variation on the three above. The row sits BELOW the epoch of the key it names, so an earlier key
+  wrote that stretch. Two readings again: the earlier key's `LastSequence` is recorded too LOW, which
+  pushes the next epoch down over rows it does not own; or the rows were **re-authored by whoever
+  holds the later key**. ⚠️ **Epochs are derived from the boundaries, so moving one moves two** —
+  raising the earlier key's boundary lowers the start of the next one, and the verdict changes for
+  rows you did not think you were touching. Establish the rotation points from outside this database
+  before editing any of them.
 
 **The second one has two readings and they are not equally benign.** Either the recorded
 `LastSequence` is too LOW and the row is genuine history written before the rotation, or the row was

@@ -39,8 +39,16 @@ public sealed class RetiredChainKey
 
     /// <summary>
     /// The highest <c>AuditEvent.Sequence</c> this key legitimately wrote. Rows above it that name
-    /// this key are refused.
+    /// this key are refused — and so are rows BELOW the epoch it opens.
     /// </summary>
+    /// <remarks>
+    /// ⚠️ THIS ONE NUMBER DEFINES TWO EDGES. The epoch each retired key answers for runs from one
+    /// past the PREVIOUS key's boundary up to this one, so the boundaries partition the sequence
+    /// space between them and no start is configured anywhere. Recording this value therefore moves
+    /// two edges: raising it extends this key's reach upward AND pushes the next key's epoch up with
+    /// it. There is no way to state one without the other, which is deliberate — a separately
+    /// configured start would be a second place for the same fact.
+    /// </remarks>
     /// <remarks>
     /// Read it off the table at the moment of rotation — it is the tail sequence when the new key
     /// took over. Recording it too HIGH re-opens the minting window by exactly the difference;

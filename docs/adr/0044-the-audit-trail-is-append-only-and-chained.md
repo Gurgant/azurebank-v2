@@ -644,6 +644,35 @@ second place for the same fact to live. It is pinned by
 forgery under a raised boundary FIRST: the epoch is checked before the hash, so
 a fixture whose forged hash was merely wrong would be refused by accident and prove nothing.
 
+**⚠️ AN EPOCH HAS TWO ENDS, AND THE FIRST TWO VERSIONS OF THIS RING GAVE IT ONE.** Every boundary
+check read `row.Sequence > last`. An upper bound stops a retired key minting ABOVE its retirement;
+nothing stopped it answering for every sequence BELOW it, including the stretches older keys wrote.
+**Measured:** with one key retired at 2 and a second at 4, the holder of the second re-authored
+sequences 1 through 4 — relabelling the first key's two rows as its own — and the walk returned
+`IsIntact = True`, four rows verified. So compromising the NEWEST retired key handed over the whole
+history rather than one epoch, and each further rotation made the prize larger instead of smaller.
+That is the second time on this branch that a half-bounded ring inverted the reason to rotate; the
+first was the missing upper bound itself.
+
+**The lower bound is DERIVED, never configured.** The recorded boundaries already partition the
+sequence space: a key that stopped at N was preceded by one that stopped at N', so its epoch is
+`(N', N]`, the first key's starts at 1, and the current key's starts one past the last retirement.
+Asking an operator for the start as well would be a second place to state one fact — the objection
+`DeriveKeyId` records against configured ids — and the two would drift with nothing detecting it.
+Two retired keys claiming the SAME boundary are refused, because the rows beneath it would belong to
+whichever sorted first and sort order is not something a configuration states. A rotation with no
+writes between it and the next one is different and is allowed: that key gets an empty epoch and
+correctly answers for no rows.
+`TheNEWESTRetiredKeyCannotREAUTHORWhatOlderKeysWrote_BecauseAnEpochHasTwoEnds` pins it, control
+first — an honest three-epoch table must still verify, or the bound would be refusing history.
+
+**A consequence worth stating: the key identity inside the payload is now the SECOND line, not the
+first.** Epochs partition `[1, ∞)`, so a row belongs to exactly one key's epoch and naming any other
+key puts it outside a range before its hash is recomputed. `ARowThatLIESAboutItsKey…` used to fail as
+`HashMismatch` and now fails as `UnknownScheme`, earlier and with a better message. Both defences
+still hold; only the order changed, and the test records the old expectation so that finding the new
+verdict does not read as a regression.
+
 **Every key in the ring is held to the same strength floor**, which it was not until review. Both
 composition roots require `Audit:ChainKey` to be at least 32 characters; a retired key was checked
 only for being non-blank, so a three-character one would have been accepted — and would then have
