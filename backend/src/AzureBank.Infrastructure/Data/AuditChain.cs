@@ -72,11 +72,20 @@ public enum AuditChainBreakKind
     /// payload, so a stored value that is not what the schema says it must be is itself a
     /// modification — the same reasoning <see cref="Unreadable"/> already carries.
     /// <para>
-    /// It says nothing about WHY. A verifier holding a different key, an older build that cannot
-    /// render this version, and an overwritten column all print this, and the discriminator is
-    /// positional rather than textual: the first two fail at the lowest-sequence row of that scheme
-    /// and at every one after it, while a single interior row failing among verified siblings is a
-    /// write.
+    /// It says nothing about WHY, and since the key ring there are FIVE ways to get here rather
+    /// than three: no key in the ring has the row's id; the ring has that key but the row sits above
+    /// the sequence it was retired at; the row records no id and sits above the founding key's
+    /// boundary; the row names a key whose epoch has not begun; and this build cannot render the
+    /// version the row declares. An overwritten column produces the same verdict as several of them.
+    /// The discriminator is positional rather than textual: all but an overwrite fail at the
+    /// lowest-sequence row they apply to and at every one after it, while a single interior row
+    /// failing among verified siblings is a write.
+    /// <para>
+    /// This paragraph said "three" and led with "a verifier holding a different key", which the two
+    /// boundary verdicts make false — the ring HOLDS the key in both. The same sentence lived in the
+    /// verifier's output and in the runbook; those two were corrected first and this copy was
+    /// missed, which is the shape of every stale claim on this branch.
+    /// </para>
     /// </para>
     /// </remarks>
     UnknownScheme,
@@ -284,9 +293,16 @@ public sealed class AuditChain : IAuditChain
           one fact -- the same objection DeriveKeyId records against configured ids -- and the two
           would drift with nothing detecting it.
         */
+        /*
+          THE CONFIGURATION INDEX IS CARRIED THROUGH THE SORT, because the messages below name it and
+          a sorted position is not the position an operator edits. Ordering by boundary is what makes
+          the epochs derivable; reporting by that order would send somebody to `:1` for a mistake
+          they made in `:0`.
+        */
         var retiredEntries = (options.Value.RetiredChainKeys ?? [])
-            .Where(e => e is not null)
-            .OrderBy(e => e!.LastSequence)
+            .Select((entry, index) => (Entry: entry, Index: index))
+            .Where(e => e.Entry is not null)
+            .OrderBy(e => e.Entry!.LastSequence)
             .ToList();
 
         _keyRing = new Dictionary<string, (string Key, long FirstSequence, long? LastSequence)>(
@@ -301,20 +317,20 @@ public sealed class AuditChain : IAuditChain
             */
             [_keyId] = (
                 options.Value.ChainKey,
-                retiredEntries.Count == 0 ? 1 : retiredEntries[^1]!.LastSequence + 1,
+                retiredEntries.Count == 0 ? 1 : retiredEntries[^1].Entry!.LastSequence + 1,
                 null),
         };
 
         // Walks in boundary order, so each entry's epoch starts where the previous one ended.
         long nextEpochStart = 1;
 
-        foreach (var entry in retiredEntries)
+        foreach (var (entry, configIndex) in retiredEntries)
         {
             var retired = entry?.Key ?? string.Empty;
             if (string.IsNullOrWhiteSpace(retired))
             {
-                throw new InvalidOperationException(
-                    "Audit:RetiredChainKeys contains a blank entry. A blank key cannot have written "
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} is blank. A blank key cannot have written "
                     + "any row, so its presence is a configuration mistake rather than a no-op.");
             }
 
@@ -332,8 +348,9 @@ public sealed class AuditChain : IAuditChain
             */
             if (retired.Length < MinimumKeyLength)
             {
-                throw new InvalidOperationException(
-                    $"Audit:RetiredChainKeys contains a key of {retired.Length} characters. A retired "
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} holds a key of {retired.Length} "
+                    + "characters. A retired "
                     + $"key must be at least {MinimumKeyLength}, the same floor Audit:ChainKey is "
                     + "held to in both composition roots: it authenticates every row in its epoch, "
                     + "and those rows can never be rewritten under a stronger key.");
@@ -344,8 +361,8 @@ public sealed class AuditChain : IAuditChain
             // and the permissive direction is the one that hands an old key a new power.
             if (entry!.LastSequence < 1)
             {
-                throw new InvalidOperationException(
-                    $"Audit:RetiredChainKeys has an entry with LastSequence {entry.LastSequence}. A "
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} has LastSequence {entry.LastSequence}. A "
                     + "retired key answers only for rows at or below the sequence it stopped writing "
                     + "at; without that boundary it could authenticate rows minted after it was "
                     + "retired, which is the regression the boundary exists to prevent.");
@@ -363,8 +380,8 @@ public sealed class AuditChain : IAuditChain
             */
             if (entry.LastSequence == nextEpochStart - 1 && nextEpochStart > 1)
             {
-                throw new InvalidOperationException(
-                    $"Audit:RetiredChainKeys has two entries whose LastSequence is "
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} repeats a LastSequence of "
                     + $"{entry.LastSequence}. Boundaries partition the sequence space, so two keys "
                     + "ending at the same row leaves the rows beneath it claimed by both and the "
                     + "ring cannot tell which one wrote them.");
@@ -377,8 +394,9 @@ public sealed class AuditChain : IAuditChain
             // changed. Refused loudly rather than deduplicated quietly.
             if (!_keyRing.TryAdd(id, (retired, nextEpochStart, entry.LastSequence)))
             {
-                throw new InvalidOperationException(
-                    $"Audit:RetiredChainKeys contains a key whose id '{id}' is already in the ring — "
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} holds a key whose id '{id}' is already "
+                    + "in the ring — "
                     + (id == _keyId
                         ? "it is the CURRENT Audit:ChainKey. Retiring the key still in use would let "
                           + "the deployment believe it had rotated when it has not."
@@ -403,7 +421,7 @@ public sealed class AuditChain : IAuditChain
         {
             if (_keyRing.Count > 1)
             {
-                throw new InvalidOperationException(
+                throw new AuditKeyRingException(
                     "Audit:FoundingChainKey is required once a key has been retired. Rows written "
                     + "before the key-identity column record no identity, and verifying them under "
                     + "whatever Audit:ChainKey holds today would silently re-attribute history to a "
@@ -417,7 +435,7 @@ public sealed class AuditChain : IAuditChain
         }
         else if (!_keyRing.ContainsKey(DeriveKeyId(founding)))
         {
-            throw new InvalidOperationException(
+            throw new AuditKeyRingException(
                 "Audit:FoundingChainKey names a key that is neither Audit:ChainKey nor one of "
                 + "Audit:RetiredChainKeys. It is a designation, not a second copy — the key's "
                 + "material must live in exactly one place.");

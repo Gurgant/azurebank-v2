@@ -314,8 +314,23 @@ public static class ExportCommand
             });
         }
 
-        var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
-        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        /*
+          RESOLVED INSIDE A TRY, for the reason AnchorCommand records at the same point: building the
+          context builds the ring, the ring can refuse, and until this guard existed the refusal left
+          this verb exiting 4 with a stack trace. IAuditAnchorChain alone would not have triggered it
+          -- it depends only on IOptions -- which is exactly why the guard has to wrap the context.
+        */
+        IAuditAnchorChain anchors;
+        AzureBankDbContext context;
+        try
+        {
+            anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+            context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        }
+        catch (AuditKeyRingException ring)
+        {
+            return VerifyCommand.RingNotConfigured(ring);
+        }
 
         /*
           THE VERDICT OUTLIVES THE TRY, because a failure to WRITE must not be able to bury what the

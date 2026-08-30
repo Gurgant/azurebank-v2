@@ -355,8 +355,9 @@ fix. **Adding a key you cannot account for is not** — the ring is how an hones
 verifiable, never a way to make a verdict go green.
 
 ⚠️ **RETIRING A KEY TAKES THREE VALUES, NOT ONE.** An earlier version of this paragraph said
-"adding it is the fix" and stopped there; following that literally produces a deployment that fails
-at the first audited operation. All three:
+"adding it is the fix" and stopped there; following that literally produces a deployment that
+starts and then fails the first request that opens the database — measured below, and wider than an
+audited write. All three:
 
 - `Audit:RetiredChainKeys:N:Key` — the retired key material.
 - `Audit:RetiredChainKeys:N:LastSequence` — the **highest `AuditEvents.Sequence` that key legitimately
@@ -404,10 +405,18 @@ come up, and concludes the ring is right.
   merely an audited write. And by **D1** an audited operation whose audit write fails takes the
   business action down with it, so past the login the same typo surfaces as failed money movements —
   at request time, however long after the deploy that caused it.
-- **The verifier reports it as a STORE problem.** The chain is resolved inside `RunAsync`'s `try`, so
-  the constructor's exception is caught by the generic handler and printed as
-  `CANNOT VERIFY: the audit store could not be read` — **exit 3** — with the real reason on the next
-  line and advice about connection strings under it. The transcript is below.
+- **The verifier says so plainly, and all three verbs say the same thing.** A ring that will not
+  construct answers `CANNOT PROCEED: this tool is not configured to read the chain` — **exit 3** —
+  with the reason on the next line, naming the `Audit:RetiredChainKeys:N` entry at fault by its
+  CONFIGURATION index rather than its position after the boundary sort.
+
+  *(This bullet described something worse until it was measured. `verify` reported the refusal as
+  `the audit store could not be read` — a sentence about the table, on a run that never opened the
+  table — and `anchor` and `export` did not catch it at all: **exit 4**, which the list below defines
+  as "the command line was wrong", with an unhandled stack trace. That is the identical incident
+  recorded further down this page from an earlier release, same two verbs, closing with "Both now
+  answer 3, like `verify`" — re-opened by the ring guards, because a constructor throw surfaces
+  wherever a verb happens to resolve the chain. All three now share one verdict.)*
 
 Neither is a reason to skip `verify`; both are reasons not to read a clean startup as evidence that
 the ring is right. *(Making it refuse at startup in both roots is worth doing and is not this change:
@@ -724,9 +733,9 @@ know the anchor table was there, now leaves a number that does not add up.
              retired keys.
 
   + Audit__RetiredChainKeys__0__Key and __LastSequence, founding key still unset:
-    EXIT=3   CANNOT VERIFY: the audit store could not be read, so there is no verdict.
-             InvalidOperationException: Audit:FoundingChainKey is required once a key
-             has been retired.
+    EXIT=3   CANNOT PROCEED: this tool is not configured to read the chain.
+             Audit:FoundingChainKey is required once a key has been retired. ...
+             (verify, anchor and export all answer this, identically)
 
   + Audit__FoundingChainKey:
     EXIT=0   CHAIN INTACT: 3 rows verified.

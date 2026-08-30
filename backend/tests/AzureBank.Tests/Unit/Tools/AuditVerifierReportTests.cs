@@ -307,10 +307,22 @@ public class AuditVerifierReportTests
             1, 5);
 
         exitCode.Should().Be(VerifyCommand.Broken);
-        string.Join(" ", lines).Should().Contain(
-            "Audit:ChainKey",
-            "a wrong key mismatches on the first row of the table, every time, because the first "
-            + "hash it recomputes is already different");
+
+        /*
+          ⚠️ "Audit:ChainKey" IS A SUBSTRING OF "Audit:FoundingChainKey", and after the key ring this
+          branch prints the second. So the assertion below kept passing while the sentence it was
+          written for had been replaced -- green, and about a different key. It now asserts the key
+          this branch actually names, which is the one applied to a row recording no identity.
+        */
+        var text = string.Join(" ", lines);
+        text.Should().Contain(
+            "Audit:FoundingChainKey",
+            "a row that records no key identity is checked under the FOUNDING key, so that is the "
+            + "one to confirm — Audit:ChainKey is it only while nothing has been retired");
+        text.Should().Contain(
+            "Confirm the key before escalating",
+            "and the hint has to survive as one phrase: a re-wrap that split it would leave the "
+            + "sibling test's NotContain passing over a sentence that is still printed");
     }
 
     [Fact]
@@ -498,6 +510,55 @@ public class AuditVerifierReportTests
             + "would send the operator away from it");
         string.Join(" ", lines).Should().Contain("4,313", "the operator needs the position");
         string.Join(" ", lines).Should().Contain("4,312", "and how much verified before it");
+    }
+
+    [Fact]
+    public void TheUnknownSchemeBlockEnumeratesEVERYWayToReachIt_NotTheThreeItUsedTo()
+    {
+        /*
+          THE PROSE WAS REWRITTEN AND NOTHING ASSERTED IT. The verdict block for UnknownScheme listed
+          THREE readings, led by "you hold a different key than the one that wrote this row". The key
+          ring added two causes in which the verification DOES hold the row's key -- above a retired
+          key's epoch, and above the founding key's -- and the epoch's lower bound added a third.
+          For those, the old first reading was false while sitting at the top of the list an operator
+          reads to decide what to check.
+
+          The rewrite that fixed it shipped with no test at all: `git log` over
+          backend/tests/AzureBank.Tests/Unit/Tools/ shows the commit that changed this text touched
+          nothing here, while the commit BEFORE it had paired its change with assertions. This is
+          that pairing put back.
+
+          It asserts the SHAPE rather than the sentences: how many readings are offered, and that the
+          list does not lead with a claim that is false for most of them. Pinning the wording would
+          make every future rewrite red for no reason, which is how a test stops being read.
+        */
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(
+                0, 1, "Row ... was written under key id 'ffffffffffffffff' and no key ...", 1, 5,
+                AuditChainBreakKind.UnknownScheme, "v3", "ffffffffffffffff", "b78e425e698034a4"),
+            1, 5);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+
+        var readings = lines.Count(line => line.TrimStart().StartsWith("- ", StringComparison.Ordinal));
+        readings.Should().Be(
+            5,
+            "there are five ways to reach UnknownScheme since the ring: an id the ring does not "
+            + "hold, a row above a retired key's boundary, an identity-less row above the founding "
+            + "key's, a row below the epoch of the key it names, and a version this build cannot "
+            + "render. A list that offers fewer sends an operator looking for a cause it does not "
+            + "name");
+
+        var text = string.Join(" ", lines);
+        text.Should().NotContain(
+            "you hold a different key than the one that wrote this row",
+            "THE OLD LEADING READING, false for three of the five: on every boundary verdict the "
+            + "ring HOLDS the key and refuses the row anyway. Leading with it sent an operator to "
+            + "compare two ids that are not supposed to match");
+        text.Should().Contain(
+            "not by itself the problem",
+            "and the block has to say so where it prints the two ids, or an operator reads the "
+            + "mismatch as the finding");
     }
 
     [Fact]

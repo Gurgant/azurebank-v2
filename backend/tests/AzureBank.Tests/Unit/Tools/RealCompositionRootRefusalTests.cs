@@ -175,4 +175,66 @@ public class RealCompositionRootRefusalTests
             "the runbook documents exit codes per code rather than per verb, so a verb that answers "
             + "differently makes that page wrong without changing a word of it");
     }
+
+    /// <summary>A ring that will not construct: the retired key is shorter than the floor.</summary>
+    private static IConfiguration BadRingConfiguration() =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] =
+                @"Server=(localdb)\MSSQLLocalDB;Database=Unreached;Trusted_Connection=True",
+            ["Audit:ChainKey"] = new string('k', 40),
+            ["Audit:AnchorKey"] = new string('a', 40),
+            ["Audit:RetiredChainKeys:0:Key"] = "tooshort10",
+            ["Audit:RetiredChainKeys:0:LastSequence"] = "5",
+            ["Audit:FoundingChainKey"] = "tooshort10",
+        }).Build();
+
+    /*
+      THE SIBLING ABOVE COULD NOT SEE THIS, AND THE REGRESSION WENT STRAIGHT THROUGH IT. That test
+      makes both keys well-formed except one, so the OPTIONS validator refuses and every verb catches
+      OptionsValidationException. The key ring is not options validation: its rules live in
+      AuditChain's constructor, so they fire wherever a verb happens to RESOLVE the chain -- inside
+      verify's try, one line above anchor's and export's.
+
+      MEASURED before this test existed, one short retired key: verify answered 3 with prose, anchor
+      and export answered 4 with an unhandled stack trace. 4 is this tool's code for "the command
+      line was wrong" and the command line was right -- which is, to the character, the incident
+      docs/runbooks/audit-chain-unavailable.md already records from an earlier release and closes
+      with "Both now answer 3, like verify." The key ring re-opened it.
+
+      So the fixture has to break the RING rather than a key, and all three verbs have to be asked.
+      A guard that covers two of the three is the shape of this defect both times it happened.
+    */
+    [Fact]
+    public async Task AllThreeVerbsAnswerTheSameWayToARingThatWillNotCONSTRUCT()
+    {
+        await using var provider = RealProvider(BadRingConfiguration());
+        var path = Path.Combine(Path.GetTempPath(), $"ring-{Guid.NewGuid():N}.jsonl");
+
+        var verify = await VerifyCommand.RunAsync(provider, CancellationToken.None);
+        var export = await ExportCommand.RunAsync(provider, path, CancellationToken.None);
+        var anchor = await AnchorCommand.RunAsync(provider, CancellationToken.None);
+
+        new[] { verify.ExitCode, export.ExitCode, anchor.ExitCode }.Should().AllBeEquivalentTo(
+            VerifyCommand.Misconfigured,
+            "a ring that cannot be built is a configuration problem in every verb, and 4 would tell "
+            + "an operator their command line was wrong when it was not");
+
+        foreach (var (label, lines) in new[]
+                 {
+                     ("verify", verify.Lines), ("export", export.Lines), ("anchor", anchor.Lines),
+                 })
+        {
+            var text = string.Join(" ", lines);
+            text.Should().Contain(
+                "at least 32",
+                "{0} has to print the REASON, or exit 3 sends the operator to a key that is fine",
+                label);
+            text.Should().NotContain(
+                "the audit store could not be read",
+                "{0} must not describe a configuration refusal as a statement about the table -- "
+                + "nothing was read, and that sentence starts an incident about the data",
+                label);
+        }
+    }
 }

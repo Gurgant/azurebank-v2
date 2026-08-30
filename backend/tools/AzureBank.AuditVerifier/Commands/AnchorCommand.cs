@@ -150,9 +150,26 @@ public static class AnchorCommand
             });
         }
 
-        var chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
-        var anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
-        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        /*
+          RESOLVED INSIDE A TRY, because resolving the chain BUILDS the ring and the ring can refuse.
+          Until this guard existed these three lines threw straight past every handler in this file
+          and the process exited 4 -- "the command line was wrong" -- for a configuration problem.
+          AzureBankDbContext takes IAuditChain in its constructor, so the third line triggers it too;
+          catching only around the first would have left the same hole one line lower.
+        */
+        IAuditChain chain;
+        IAuditAnchorChain anchors;
+        AzureBankDbContext context;
+        try
+        {
+            chain = scope.ServiceProvider.GetRequiredService<IAuditChain>();
+            anchors = scope.ServiceProvider.GetRequiredService<IAuditAnchorChain>();
+            context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        }
+        catch (AuditKeyRingException ring)
+        {
+            return VerifyCommand.RingNotConfigured(ring);
+        }
 
         try
         {

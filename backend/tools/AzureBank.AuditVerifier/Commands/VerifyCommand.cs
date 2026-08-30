@@ -43,6 +43,34 @@ public static class VerifyCommand
     public const int Misconfigured = 3;
 
     /// <summary>
+    /// The verdict for a ring that cannot be built, shared by all three verbs.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ SHARED BECAUSE IT WAS NOT, AND THE TWO VERBS THAT LACKED IT ANSWERED 4. The ring's rules
+    /// are enforced in <see cref="AuditChain"/>'s constructor, so they surface wherever a caller
+    /// happens to resolve the chain — inside <c>verify</c>'s try, one line ABOVE the try in
+    /// <c>anchor</c> and <c>export</c>. Measured with one short retired key: <c>verify</c> 3 with
+    /// prose, the other two <b>4</b> with an unhandled stack trace, which this tool's own scale
+    /// defines as "the command line was wrong" while the command line was right.
+    /// <para>
+    /// The runbook records the identical defect from an earlier release, same two verbs, and closes
+    /// *"Both now answer 3, like `verify`."* — so this is that incident re-opened by the key ring,
+    /// and a verdict in one place is what stops it re-opening a third time.
+    /// </para>
+    /// </remarks>
+    internal static (int ExitCode, string[] Lines) RingNotConfigured(AuditKeyRingException failure) =>
+    (
+        Misconfigured,
+        [
+            "CANNOT PROCEED: this tool is not configured to read the chain.",
+            $"  {failure.Message}",
+            "  NOTHING WAS READ. The key ring is checked when the chain is BUILT, so this is a",
+            "  statement about the configuration and not about the audit table -- do not treat it",
+            "  as a finding about the data. Exit 3, the same code a missing key produces, because",
+            "  it is the same kind of problem.",
+        ]);
+
+    /// <summary>
     /// The command line itself was wrong: no command, a mistyped one, an unknown option.
     /// </summary>
     /// <remarks>
@@ -197,8 +225,11 @@ public static class VerifyCommand
                     // NOT Audit:ChainKey. This branch fires on a row recording NO key identity,
                     // and those are checked under Audit:FoundingChainKey -- which is Audit:ChainKey
                     // only while nothing has been retired. Naming the current key here sends an
-                    // operator to a key that never touched the row: the same defect the hash-mismatch
-                    // verdict was corrected for on 9e92377, in the sibling arm, and missed here.
+                    // operator to a key that never touched the row: the same defect raised in
+                    // review on 9e92377 and corrected on fc1c496, in the sibling arm below, and
+                    // missed here. (This comment named 9e92377 as the CORRECTION until it was
+                    // checked -- that commit never touched this file. Raised on / corrected on are
+                    // different commits and this corpus keeps the two phrasings apart.)
                     lines.Add("  Breaking at sequence 1 usually means the wrong key, not tampering");
                     lines.Add("  -- a wrong key is well-formed, so validation cannot catch it. This");
                     lines.Add("  row records no key identity, so the key applied to it is");
@@ -658,6 +689,14 @@ public static class VerifyCommand
                 "  was already signalled arrives here too. If you stopped it because it seemed to",
                 "  hang, the hang is the thing to look at. Otherwise run it again.",
             });
+        }
+        catch (AuditKeyRingException ring)
+        {
+            // BEFORE the generic handler, which would print "the audit store could not be read" --
+            // a sentence about the table, for a problem in the configuration, on a run that never
+            // opened the table. That mislabelling arrived with the ring guards and is fixed here
+            // rather than apologised for in the runbook.
+            return RingNotConfigured(ring);
         }
         catch (Exception failure)
         {
