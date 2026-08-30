@@ -268,8 +268,14 @@ public static class ExportCommand
           reached. The test asserts the branch that production cannot enter. It is the composition
           root that differs, not the command -- which is the repository's oldest rule wearing
           different clothes: a test that asserts against a stand-in proves something about the
-          stand-in. AnAnchorKeyRejectedByTheRealCompositionRoot... now composes it the way Program.cs
-          does, and reddens on 4.
+          stand-in. ExportRefusesAnUnusableAnchorKeyWithAVerdictCode_NotAUsageError now composes it
+          the way Program.cs does, and reddens on 4.
+
+          (This sentence named a test that does not exist -- a plausible name for one, elided, which
+          no suite has ever declared. The guard written to catch exactly that could not see it: its
+          citation scan classified comments by a per-line prefix, so it never read the inside of a
+          block comment like this one. The dead name is deliberately not repeated here, because
+          repeating it is another citation and the guard would be right to refuse it again.)
 
           The path guard above stays FIRST: a typo in the thing just typed is still the cheapest
           mistake to name, and it needs no configuration to catch.

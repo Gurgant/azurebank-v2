@@ -339,9 +339,9 @@ public static class VerifyCommand
                 lines.Add("      to keep one, or records none on a version that has;");
                 lines.Add("    - this build cannot render the version the row declares.");
                 lines.Add("  Each fails at the LOWEST row it applies to and at every one after it,");
-                lines.Add("  except the below-the-epoch pair, which fails over the INTERVAL between");
-                lines.Add("  the previous boundary and the epoch start. A single row failing among");
-                lines.Add("  verified siblings is a write.");
+                lines.Add("  except the below-the-epoch pair, which applies to a PREFIX: every row");
+                lines.Add("  from the bottom of the table up to the previous key's boundary. A");
+                lines.Add("  single row failing among verified siblings is a write.");
                 lines.Add("  ⚠️ AN OVERWRITTEN COLUMN PRODUCES SEVERAL OF THESE and is not one more");
                 lines.Add("  entry in the list: PayloadVersion and KeyId are inside the hashed");
                 lines.Add("  payload, so changing either is a modification that then surfaces as");

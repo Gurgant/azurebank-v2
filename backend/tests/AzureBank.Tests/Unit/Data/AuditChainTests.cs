@@ -1049,7 +1049,12 @@ public class AuditChainTests : IDisposable
             }),
             NullLogger<AuditChain>.Instance);
 
-        build.Should().Throw<InvalidOperationException>()
+        build.Should().Throw<AuditKeyRingException>(
+            "⚠️ THIS ASSERTED THE BASE TYPE, AND A DEDUPLICATION MADE THAT MATTER. A sibling test "
+            + "asserting AuditKeyRingException was removed as a near-duplicate of this one — the "
+            + "names differed by three words — which left this guard covered only by the base class "
+            + "that every InvalidOperationException satisfies. Removing a duplicate is right; "
+            + "removing the STRONGER of two is how a tidy-up loses coverage")
             .WithMessage("*neither Audit:ChainKey nor one of*");
     }
 

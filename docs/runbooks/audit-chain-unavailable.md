@@ -560,9 +560,11 @@ row count never moved.
   7. the same, **below** that key's epoch.
 
   **The discriminator between them is positional, not textual:** each fails at the LOWEST row it
-  applies to and at every one after it — except the two below-the-epoch causes, which fail over the
-  INTERVAL between the previous boundary and the epoch start. A single row failing among verified
-  siblings is a write. ⚠️ **An overwritten column is not an eighth cause** — `PayloadVersion` and
+  applies to and at every one after it — except the two below-the-epoch causes, which apply to a
+  PREFIX instead: every row from the bottom of the table up to the previous key's boundary. A single
+  row failing among verified siblings is a write. *(This said "the INTERVAL between the previous
+  boundary and the epoch start", and that interval is empty: an epoch begins one past the boundary
+  beneath it, and equal boundaries are refused, so the gap is always exactly one.)* ⚠️ **An overwritten column is not an eighth cause** — `PayloadVersion` and
   `KeyId` are both inside the hashed payload, so changing either is a modification that then surfaces
   as whichever of the seven it happens to trip. Exit code is 1.
 

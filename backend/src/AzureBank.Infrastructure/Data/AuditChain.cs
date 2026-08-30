@@ -88,9 +88,16 @@ public enum AuditChainBreakKind
     /// An overwritten column is not a ninth path: it is how several of those come about, because
     /// both columns are inside the hashed payload. The discriminator is positional rather than
     /// textual — each path fails at the lowest-sequence row it applies to and at every one after it,
-    /// EXCEPT the two below-the-epoch paths, which fail over the interval between the previous
-    /// boundary and the epoch's start. A single interior row failing among verified siblings is a
-    /// write.
+    /// EXCEPT the two below-the-epoch paths, which apply to a PREFIX instead: every row from the
+    /// bottom of the table up to the previous key's boundary. A single interior row failing among
+    /// verified siblings is a write.
+    /// <para>
+    /// This said the two below-the-epoch paths fail "over the interval between the previous boundary
+    /// and the epoch's start", and that interval is EMPTY by construction — an epoch begins one past
+    /// the boundary beneath it and equal boundaries are refused, so the gap is always exactly one.
+    /// The rows those paths apply to are the ones BELOW that boundary, which is a prefix and not a
+    /// gap.
+    /// </para>
     /// </para>
     /// <para>
     /// This paragraph said "three" and led with "a verifier holding a different key", which the
@@ -338,12 +345,16 @@ public sealed class AuditChain : IAuditChain
 
         /*
           A NULL ENTRY IS REFUSED, NOT DROPPED, and it used to be dropped by a Where() one line up.
-          Silently is the problem: a list holding only nulls -- which is what a JSON array element
-          written as `null` binds to -- left the ring with one key, so the deployment read as "never
-          rotated" and the Audit:FoundingChainKey requirement never fired. A configuration that says
-          a rotation happened would have produced a verifier that believed none had.
+          Silently is the problem: a dropped entry left the ring with one key, so the deployment read
+          as "never rotated" and the Audit:FoundingChainKey requirement never fired. A configuration
+          that says a rotation happened would have produced a verifier that believed none had.
 
-          Measured: RetiredChainKeys = [null] built a ring and required no founding key.
+          ⚠️ THE SHAPE THAT REACHES THIS IS A CALLER PASSING null, NOT A JSON null. This comment said
+          the entry came from `"RetiredChainKeys": [ null ]`; measured with the real binder, that
+          element binds to a NON-null RetiredChainKey whose Key is empty and whose LastSequence is 0,
+          so it was already refused by the blank-key guard above. What was dropped silently is a null
+          the caller supplies directly — which every test in this file does, and which is one of the
+          two ways this type is constructed.
         */
         foreach (var (entry, configIndex) in retiredEntries)
         {

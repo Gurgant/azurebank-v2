@@ -139,6 +139,51 @@ public class AuditProseGuardTests
         }
     }
 
+    /// <summary>
+    /// The inverse of <see cref="CodeLines"/>: the comment lines, block interiors included.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ THE CITATION SCAN CLASSIFIED COMMENTS BY A PER-LINE PREFIX, which is the defect this file
+    /// fixed for the headline extraction thirty lines above and left standing here. This corpus
+    /// writes <c>/* … */</c> with unprefixed interior lines, so the scan never read inside a block
+    /// comment — and one was hiding a dead citation the whole time: <c>ExportCommand</c> named a
+    /// test that does not exist, inside a block, and the guard written to catch exactly that could
+    /// not see it. Sharing the state machine is what makes the two extractions agree about what a
+    /// comment is.
+    /// </remarks>
+    private static IEnumerable<string> CommentLines(string path)
+    {
+        var inBlockComment = false;
+
+        foreach (var line in File.ReadLines(path))
+        {
+            var trimmed = line.TrimStart();
+
+            if (inBlockComment)
+            {
+                if (trimmed.Contains("*/", StringComparison.Ordinal))
+                {
+                    inBlockComment = false;
+                }
+
+                yield return line;
+                continue;
+            }
+
+            if (trimmed.StartsWith("/*", StringComparison.Ordinal))
+            {
+                inBlockComment = !trimmed.Contains("*/", StringComparison.Ordinal);
+                yield return line;
+                continue;
+            }
+
+            if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*'))
+            {
+                yield return line;
+            }
+        }
+    }
+
     [Fact]
     public void EveryVerdictHeadlineTheToolCanPrint_IsAccountedForInTheRunbook()
     {
@@ -158,11 +203,28 @@ public class AuditProseGuardTests
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        headlines.Should().HaveCountGreaterThanOrEqualTo(
-            12,
-            "the extraction found {0}; VerifyCommand alone contributes six, so a threshold below "
-            + "that would let a broken regex pass while checking almost nothing — which is how the "
-            + "first version of this guard shipped", headlines.Count);
+        /*
+          EXACT, NOT A FLOOR, AND THE FLOOR IS WHAT WAS WRONG WITH IT. This asserted ">= 12" with a
+          reason claiming "VerifyCommand alone contributes six" -- both numbers written from memory,
+          and the six is simply false: measured per file, before the Distinct, VerifyCommand yields
+          SEVEN, AnchorCommand five, ExportCommand seven, and nineteen collapse to fifteen because
+          INTERRUPTED, CHAIN BROKEN and NO VERDICT are each printed by more than one verb.
+
+          A floor of twelve also left a hole the check below cannot close. That check passes a
+          headline the runbook merely CONTAINS, and two of the fifteen -- ANCHOR and EXPORTED -- are
+          single words that any page discussing anchoring or exporting contains by accident. They
+          are documented, but this guard cannot tell that from a coincidence, so a NEW single-word
+          verdict would be waved through as documented. The exact count is what notices it: a new
+          verdict cannot arrive without this number moving, whatever the runbook happens to say.
+        */
+        headlines.Should().HaveCount(
+            15,
+            "the extraction found {0}: seven from VerifyCommand, five from AnchorCommand, seven from "
+            + "ExportCommand, fifteen after the shared ones collapse. Fewer means the regex or the "
+            + "comment stripper regressed -- the first version of this guard shipped blind to four "
+            + "verdicts for want of a colon. MORE means a verdict was added, and the point of "
+            + "reddening on that is the check below: it accepts a headline the runbook CONTAINS, "
+            + "which single words like ANCHOR and EXPORTED satisfy by coincidence", headlines.Count);
 
         /*
           The colon is not part of the match and is not required in the page either. Some verdicts
@@ -262,7 +324,8 @@ public class AuditProseGuardTests
     /// Listed rather than pattern-excluded, so that a citation of something that does not exist
     /// anywhere cannot hide behind a rule about interfaces or framework namespaces.
     /// </remarks>
-    private static readonly string[] DeclaredElsewhere = ["IDbContextOptionsConfiguration"];
+    private static readonly string[] DeclaredElsewhere =
+        ["IDbContextOptionsConfiguration", "SqlServerRetryingExecutionStrategy"];
 
     [Fact]
     public void EverySymbolNamedInTheAuditCorpus_Exists()
@@ -318,33 +381,48 @@ public class AuditProseGuardTests
             File.Exists(path).Should().BeTrue($"{relative} is in the policed corpus and must be there");
 
             var markdown = relative.EndsWith(".md", StringComparison.Ordinal);
-            var lines = File.ReadAllLines(path);
 
-            for (var i = 0; i < lines.Length; i++)
+            // Markdown cites inside backticks; C# cites inside comments, block interiors included.
+            var prose = markdown
+                ? File.ReadLines(path).SelectMany(l =>
+                    Regex.Matches(l, "`([^`]+)`").Select(m => m.Groups[1].Value))
+                : CommentLines(path);
+
+            /*
+              A TOKEN THIS FILE USES AS DATA IS NOT A CITATION. AuditChainTests renders a hashed
+              payload inside a block comment, event name and all, and the event name is a long
+              PascalCase word — indistinguishable by shape from a test name, and not one. Anything
+              the same file also writes as a string literal is a value the corpus handles rather
+              than a symbol it names, so it is not a claim to check.
+            */
+            var literals = markdown
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : Regex.Matches(File.ReadAllText(path), "\"([^\"\\n]{4,})\"")
+                    .Select(m => m.Groups[1].Value)
+                    .ToHashSet(StringComparer.Ordinal);
+
+            foreach (var name in prose
+                         .SelectMany(c => Regex.Matches(c, @"[A-Z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*…?")
+                             .Select(m => m.Value))
+                         .Where(LooksLikeASymbol))
             {
-                var trimmed = lines[i].TrimStart();
-                var candidates = markdown
-                    ? Regex.Matches(lines[i], "`([^`]+)`").Select(m => m.Groups[1].Value)
-                    : trimmed.StartsWith("//", StringComparison.Ordinal)
-                      || trimmed.StartsWith('*')
-                      || trimmed.StartsWith("/*", StringComparison.Ordinal)
-                        ? [lines[i]]
-                        : [];
+                var stem = name.TrimEnd('…', '.');
 
-                foreach (var name in candidates
-                             .SelectMany(c => Regex.Matches(c, @"[A-Z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*…?")
-                                 .Select(m => m.Value))
-                             .Where(LooksLikeASymbol))
+                // Matched EXACTLY, not by containment: a token the file also writes as a whole
+                // literal is data. Anything narrower would let a real citation hide inside a
+                // longer message string that happens to contain it.
+                if (literals.Contains(stem))
                 {
-                    checkedCitations++;
-                    var stem = name.TrimEnd('…');
-                    if (declared.Any(d => d.StartsWith(stem, StringComparison.Ordinal)))
-                    {
-                        continue;
-                    }
-
-                    unresolved.Add($"{relative}:{i + 1} names '{name}'");
+                    continue;
                 }
+
+                checkedCitations++;
+                if (declared.Any(d => d.StartsWith(stem, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                unresolved.Add($"{relative} names '{name}'");
             }
         }
 
@@ -355,9 +433,15 @@ public class AuditProseGuardTests
           the test would pass having checked nothing at all.
         */
         checkedCitations.Should().BeGreaterThanOrEqualTo(
-            20,
-            "the scan checked {0} citations across {1} files; the corpus carries about twenty-six, "
-            + "so materially fewer means the citation scan broke rather than the corpus improving",
+            45,
+            "the scan checked {0} citations across {1} files. THE FLOOR SITS JUST UNDER THE MEASURED "
+            + "VALUE ON PURPOSE — 45 against 49 observed by raising this number until the assertion "
+            + "printed it. It was first written at 20, and 20 is the defect this reason exists to "
+            + "name: a floor set far below the truth passes with most of the scan dead, and this one "
+            + "did exactly that while the citation scan was skipping every block comment -- measured "
+            + "by putting that regression back, the scan then sees 40, and 40 clears 20 twice over. "
+            + "Four of slack absorbs a sentence being reworded; it does not absorb the scan going "
+            + "quiet",
             checkedCitations, AuditCorpus.Length);
 
         unresolved.Should().BeEmpty(
