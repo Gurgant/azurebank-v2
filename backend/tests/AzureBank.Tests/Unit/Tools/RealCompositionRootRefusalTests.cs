@@ -1,4 +1,6 @@
+using AzureBank.Api.Extensions;
 using AzureBank.AuditVerifier.Commands;
+using AzureBank.Infrastructure.Data;
 using AzureBank.AuditVerifier.Extensions;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
@@ -175,6 +177,76 @@ public class RealCompositionRootRefusalTests
             "the runbook documents exit codes per code rather than per verb, so a verb that answers "
             + "differently makes that page wrong without changing a word of it");
     }
+
+    /*
+      THE SECOND COMPOSITION ROOT, WHICH NOTHING TESTED. AuditChain puts the ring's rules in its
+      CONSTRUCTOR rather than in an options Validate(), and the comment that justifies that says why
+      in one sentence: "there are two composition roots -- the API and the operator verifier -- and a
+      structural rule enforced in one of them is a rule the other does not have."
+
+      Every test in this file built the VERIFIER's root. So the argument for where the guards live
+      was asserted in the file that exists to assert it, for one of the two roots it names. If the
+      API root ever registered AuditChain differently -- a singleton, a factory that swallows, a
+      different options binding -- nothing here would have noticed.
+
+      Only the ring is exercised, and deliberately: the API's root wires dozens of services this test
+      has no business in. Resolving IAuditChain from it is the whole assertion.
+    */
+    [Fact]
+    public void TheAPIRootRefusesTheSameRingTheVerifierRootDoes()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplicationServices(BadRingConfiguration());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolve = () => scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        resolve.Should().Throw<AuditKeyRingException>(
+            "the guards live in the constructor precisely so that BOTH roots get them, and that "
+            + "claim is only worth what it is tested against")
+            .WithMessage("*characters*");
+    }
+
+    /*
+      AND A RING THAT IS VALID MUST BIND FROM REAL CONFIGURATION. Every other fixture here is
+      deliberately broken, so nothing established that the colon-separated keys an operator actually
+      writes -- Audit:RetiredChainKeys:0:Key, :0:LastSequence, Audit:FoundingChainKey -- bind to the
+      options at all. A typo in a binding path would have made every refusal test PASS harder while
+      the working configuration silently produced an empty ring.
+    */
+    [Fact]
+    public void AVALIDRingBindsFromRealConfiguration_AndTheEpochsComeOutOfIt()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddVerifierServices(GoodRingConfiguration(), Environment());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolve = () => scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        resolve.Should().NotThrow(
+            "a well-formed ring has to bind from the configuration shape the runbook tells an "
+            + "operator to write, or every refusal in this file is testing a ring that was empty "
+            + "for a reason nobody meant");
+    }
+
+    /// <summary>A ring that DOES construct: one retired key, its boundary, and a founding key.</summary>
+    private static IConfiguration GoodRingConfiguration() =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] =
+                @"Server=(localdb)\MSSQLLocalDB;Database=Unreached;Trusted_Connection=True",
+            ["Audit:ChainKey"] = new string('k', 40),
+            ["Audit:AnchorKey"] = new string('a', 40),
+            ["Audit:RetiredChainKeys:0:Key"] = new string('r', 40),
+            ["Audit:RetiredChainKeys:0:LastSequence"] = "12",
+            ["Audit:FoundingChainKey"] = new string('r', 40),
+        }).Build();
 
     /// <summary>A ring that will not construct: the retired key is shorter than the floor.</summary>
     private static IConfiguration BadRingConfiguration() =>

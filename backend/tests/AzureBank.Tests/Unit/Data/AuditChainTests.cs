@@ -741,8 +741,10 @@ public class AuditChainTests : IDisposable
         verification.IsIntact.Should().BeFalse();
         verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
         verification.Reason.Should().Contain(
-            "no key",
-            "the message must say the ring lacks the key, not that the row is wrong");
+            "no key in this verification's ring has that id",
+            "THE WHOLE CLAIM, not the two words it starts with. \"no key\" also appears in the "
+            + "identity-less verdicts, so the short literal would have passed on a verdict about a "
+            + "row this test never produces");
     }
 
     [Fact]
@@ -809,8 +811,14 @@ public class AuditChainTests : IDisposable
           reader finding UnknownScheme where a comment promised HashMismatch would otherwise suspect
           a regression.
 
-          FALSIFIED by replacing the lookup with a loop over the ring: this reddens and nothing else
-          in the suite does, which is the whole reason it is written down.
+          FALSIFIED by replacing the lookup with a loop over the ring: this reddens, on Kind
+          rather than on IsIntact — a trial verifier finds no key matching the relabelled row and
+          returns UnknownScheme where selection returns HashMismatch.
+
+          ⚠️ IT NO LONGER REDDENS ALONE, and the sentence here used to claim it did. That was true
+          when this was the ring's only test; the epoch tests added later redden under the same
+          mutation. The claim is kept in its corrected form rather than deleted because "nothing else
+          does" is the kind of thing a reader relies on when deciding what a failure means.
         */
         // WriteAsync reads back with AsNoTracking, so the returned instances are detached copies.
         // Two lines here used to relabel rows[0] and then Detach it — a mutation on a copy nothing
@@ -842,18 +850,28 @@ public class AuditChainTests : IDisposable
     }
 
     [Theory]
-    [InlineData("", 5L, "blank")]
-    [InlineData(TestKey, 5L, "CURRENT")]
-    [InlineData("a-perfectly-good-retired-key-0123456789abcdef", 0L, "unbounded")]
-    [InlineData("too-short-to-be-a-key", 5L, "WEAKER than Audit:ChainKey is held to")]
+    [InlineData("", 5L, "is blank", "blank")]
+    [InlineData(TestKey, 5L, "already in the ring", "the CURRENT key")]
+    [InlineData("a-perfectly-good-retired-key-0123456789abcdef", 0L, "has LastSequence", "unbounded")]
+    [InlineData("too-short-to-be-a-key", 5L, "characters", "shorter than the floor")]
+    [InlineData("a-perfectly-good-retired-key-0123456789abcdef", long.MaxValue,
+        "largest a sequence can be", "boundary at the top of the range")]
     public void ARingThatCannotMeanWhatItSays_IsRefusedAtConstruction(
-        string retired, long lastSequence, string why)
+        string retired, long lastSequence, string fragment, string why)
     {
         /*
           REFUSED LOUDLY RATHER THAN DEDUPLICATED QUIETLY. Retiring the key still in use reads as "we
           rotated" while the ring holds one key, so the deployment believes its history is covered
-          when nothing changed — the worst of the three outcomes, because it is the silent one. A
-          blank entry cannot have written any row, so it is a mistake and not a no-op.
+          when nothing changed — the silent outcome, and the worst. A blank entry cannot have written
+          any row, so it is a mistake and not a no-op.
+
+          ⚠️ THE TYPE AND THE MESSAGE ARE BOTH ASSERTED, AND NEITHER USED TO BE. This asserted
+          InvalidOperationException, which every one of these guards satisfies — and so does any
+          OTHER InvalidOperationException the constructor might grow. Two consequences it hid:
+          AuditKeyRingException, the whole point of giving anchor and export a verdict instead of an
+          exit-4 stack trace, was never asserted anywhere in the suite; and the blank case is ALSO
+          shorter than the floor, so deleting the blank guard entirely would have left this green on
+          the length guard. A fragment unique to each guard is what makes the case isolate it.
         */
         var build = () => new AuditChain(
             Options.Create(new AuditOptions
@@ -864,8 +882,82 @@ public class AuditChainTests : IDisposable
             }),
             NullLogger<AuditChain>.Instance);
 
-        build.Should().Throw<InvalidOperationException>(
-            "a {0} retired key makes the ring claim something it cannot deliver", why);
+        build.Should().Throw<AuditKeyRingException>(
+            "a {0} retired key makes the ring claim something it cannot deliver — and the TYPE is "
+            + "what the three verbs catch to answer 3 instead of exiting 4", why)
+            .WithMessage($"*{fragment}*");
+    }
+
+    [Fact]
+    public void TwoRetiredKeysSharingABoundary_AreRefused_BecauseTheRowsBeneathBelongToBoth()
+    {
+        /*
+          THE GUARD WITH NO TEST UNTIL NOW, and it is the one the epoch derivation rests on. Epochs
+          are derived by sorting on LastSequence and starting each one past the previous end, so two
+          entries ending at the same row leave the stretch beneath claimed by both — and which one
+          gets it depends on sort order between equal keys, which no configuration file states.
+
+          Refusing is not the same as refusing a key that wrote nothing. A key that wrote nothing has
+          no row naming its id, so it needs no ring entry at all; listing it is what creates the
+          ambiguity. Measured while auditing: of 512 boundary triples, ZERO produce an empty epoch,
+          because sorting makes equality the only reachable collision and this is what refuses it.
+        */
+        var second = "a-second-retired-key-0123456789abcdefghij";
+
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, 4), Retired(second, 4)],
+                FoundingChainKey = TestKey,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<AuditKeyRingException>()
+            .WithMessage("*repeats a LastSequence*");
+    }
+
+    [Fact]
+    public void TheSameRetiredKeyListedTwice_IsRefused_AndSaysSoRatherThanNamingTheCurrentOne()
+    {
+        /*
+          THE OTHER ARM OF THE DUPLICATE-ID GUARD. Its sibling — a retired entry equal to the CURRENT
+          key — has a Theory case; this one had none, and the two produce different sentences on
+          purpose: one means "you believe you rotated and did not", the other means "you listed the
+          same key twice". Asserting only the type would let either message serve for both.
+        */
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, 2), Retired(TestKey, 4)],
+                FoundingChainKey = TestKey,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<AuditKeyRingException>()
+            .WithMessage("*the same retired key is listed twice*");
+    }
+
+    [Fact]
+    public void AFoundingKeyTheRingDoesNotHold_IsRefused_BecauseADesignationIsNotACopy()
+    {
+        /*
+          The designation names material that must already live in the ring, so that each key's bytes
+          have exactly one home. A founding key nobody else holds would be a second copy, and two
+          copies of one fact drift with nothing detecting it.
+        */
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, 2)],
+                FoundingChainKey = "a-key-that-is-in-no-ring-0123456789abcdef",
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<AuditKeyRingException>()
+            .WithMessage("*neither Audit:ChainKey nor one of*");
     }
 
     [Fact]
@@ -894,7 +986,7 @@ public class AuditChainTests : IDisposable
             }),
             NullLogger<AuditChain>.Instance);
 
-        build.Should().Throw<InvalidOperationException>()
+        build.Should().Throw<AuditKeyRingException>()
             .WithMessage("*FoundingChainKey is required*");
     }
 
@@ -1089,7 +1181,10 @@ public class AuditChainTests : IDisposable
             "Audit:ChainKey did not derive this row's id and pointing an operator at it re-opens a "
             + "key question the ring had already answered");
         verification.Reason.Should().Contain(
-            "ring", "the ring is what selected the key, so the ring is what the verdict must name");
+            "the verification ring SELECTED that key",
+            "the four-letter token this used to assert matches \"during\", \"string\" and any "
+            + "future wording that happens to contain them — the claim is that SELECTION happened, "
+            + "so the claim is what to assert");
 
         var (exitCode, lines) = VerifyCommand.Report(verification, 1, boundary);
         var text = string.Join(" ", lines);
@@ -1347,6 +1442,108 @@ public class AuditChainTests : IDisposable
 
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
         return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+    }
+
+    [Fact]
+    public async Task AnIDENTITYLESSRowBELOWTheFoundingEpoch_IsSentToTheDESIGNATION_NotToABoundary()
+    {
+        /*
+          THE ARM THAT DID NOT EXIST, AND THE VERDICT IT USED TO BORROW WAS WRONG TWICE OVER.
+
+          Until the arms were split, a row reaching the below-the-epoch refusal was told it "names a
+          key whose epoch begins at N". A 'v2' row names nothing — the tool printed "key id '(none)'"
+          one line under that same sentence. Worse than the false description: BOTH remedies it
+          offered were the wrong ones. It sent the operator to a recorded LastSequence, and
+          _foundingFirstSequence is INHERITED from the entry the designation names, so no boundary
+          edit moves it. The prescribed first action produces no change at all while the actual
+          misconfiguration stays exactly where it is.
+
+          There is exactly one way to reach this, and it is not an attack: Audit:FoundingChainKey
+          designates a ring member that is not the OLDEST, so the epoch it opens starts above the
+          identity-less rows — which are the oldest rows there are.
+        */
+        var second = "a-second-retired-key-0123456789abcdefghij";
+
+        await WriteAsync("One", "Two");
+
+        using (var epochTwo = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_storeName).Options,
+            timeProvider: null,
+            auditChain: new AuditChain(
+                Options.Create(new AuditOptions { ChainKey = second }),
+                NullLogger<AuditChain>.Instance)))
+        {
+            epochTwo.AuditEvents.Add(NewEvent("Three"));
+            await epochTwo.SaveChangesAsync();
+        }
+
+        // Sequence 1 demoted to the legacy scheme, hashed honestly under the SECOND key so that the
+        // refusal below is a refusal of the epoch and not an accident of a broken fixture.
+        var oldest = await _context.AuditEvents.OrderBy(e => e.Sequence).FirstAsync();
+        oldest.PayloadVersion = "v2";
+        oldest.KeyId = null;
+        oldest.RowHash = LegacyHash(second, oldest);
+        await _context.SaveChangesAsync();
+
+        AuditChain Ring(string founding) => new(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, 2), Retired(second, 3)],
+                FoundingChainKey = founding,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        _context.ChangeTracker.Clear();
+        var refused = await Ring(second).VerifyAsync(_context);
+
+        refused.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        refused.FirstBrokenSequence.Should().Be(1);
+        refused.RecordedKeyId.Should().BeNull("a 'v2' row records no key identity");
+
+        refused.Reason.Should().NotContain(
+            "names a key",
+            "THE SENTENCE THIS ARM EXISTS TO STOP: the row carries no key id, and the tool prints "
+            + "\"key id '(none)'\" one line below this reason");
+        refused.Reason.Should().Contain(
+            "The fix is Audit:FoundingChainKey",
+            "the designation is the ONLY thing that can produce this, so it is the only thing worth "
+            + "naming");
+        refused.Reason.Should().Contain(
+            "No LastSequence edit can move this",
+            "because the founding key inherits its epoch — sending an operator to a boundary here "
+            + "costs them an edit that changes nothing and moves two other epochs while it does it");
+    }
+
+    [Fact]
+    public async Task ACurrentVersionRowWithNOKeyIdentity_GetsItsOwnVerdict_NotTheUnknownIdOne()
+    {
+        /*
+          The mirror of the 'v2' row carrying an id, and it had no arm of its own: it fell to the
+          default, which told the operator the row "was written under key id '(none)' and no key in
+          this verification's ring has that id". No key has an id that is not an id. The situation is
+          not an unknown key at all — it is a column that should carry an identity and does not, on a
+          version that has somewhere to keep one.
+        */
+        var row = NewEvent("CurrentVersionStrippedOfItsIdentity");
+        _context.AuditEvents.Add(row);
+        await _context.SaveChangesAsync();
+
+        row.KeyId = null;
+        await _context.SaveChangesAsync();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        verification.RecordedKeyId.Should().BeNull();
+        verification.Reason.Should().NotContain(
+            "no key in this verification's ring has that id",
+            "there is no id for the ring to fail to hold — that sentence belongs to a row that names "
+            + "something the ring does not have");
+        verification.Reason.Should().Contain(
+            "records the identity of the key that wrote it, and records none",
+            "the verdict has to say what is actually wrong: a column that this version keeps and "
+            + "this row does not carry");
     }
 
     [Fact]
