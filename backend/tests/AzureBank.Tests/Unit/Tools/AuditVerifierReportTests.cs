@@ -562,7 +562,7 @@ public class AuditVerifierReportTests
         readings.Should().Be(
             7,
             "a list that offers fewer causes than the walk can return sends an operator looking for "
-            + "one it does not name, and each of the six takes a different action");
+            + "one it does not name, and each of the seven takes a different action");
 
         var text = string.Join(" ", lines);
         text.Should().NotContain(

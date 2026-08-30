@@ -1308,7 +1308,8 @@ public class AuditChainTests : IDisposable
     /// <summary>
     /// An INDEPENDENT rendering of the legacy payload, so the fixture above does not simply agree
     /// with whatever the production hasher does. It is the same technique the frozen literal in
-    /// <c>ALegacyRowVerifies…</c> uses, computed here because the row's identifiers are generated.
+    /// <c>ALegacyRowWithNoKeyIdentity_StillVerifies_UnderTheFoundingKey</c> uses, computed here
+    /// because this row's identifiers are generated rather than fixed.
     /// </summary>
     private static string LegacyHash(string key, AuditEvent row)
     {
