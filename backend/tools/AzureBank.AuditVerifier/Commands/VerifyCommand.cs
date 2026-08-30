@@ -315,27 +315,31 @@ public static class VerifyCommand
                 lines.Add("  keys besides it, so those two differing is not by itself the problem.");
                 lines.Add("  The hash was NOT checked, so this is a row left UNVERIFIED, never a");
                 lines.Add("  row proved good.");
-                lines.Add("  SIX causes produce this verdict. The line above says which one;");
+                lines.Add("  SEVEN causes produce this verdict. The line above says which one;");
                 lines.Add("  between the rest the discriminator is POSITIONAL, not textual:");
                 lines.Add("    - no key in the ring has this row's id;");
-                lines.Add("    - the ring HAS that key, but the row sits above the sequence it was");
-                lines.Add("      retired at;");
+                lines.Add("    - the ring HAS that key, but the row sits ABOVE the epoch it closes;");
                 lines.Add("    - the ring HAS that key and the row sits BELOW the epoch it opens,");
                 lines.Add("      so an earlier key wrote this stretch;");
-                lines.Add("    - the row records no key id and sits above the sequence");
-                lines.Add("      Audit:FoundingChainKey was retired at;");
+                lines.Add("    - the row records no key id, so Audit:FoundingChainKey answers for");
+                lines.Add("      it, and the row sits ABOVE that key's epoch;");
+                lines.Add("    - the row records no key id and sits BELOW that key's epoch, which");
+                lines.Add("      only a founding designation other than the OLDEST key can produce;");
                 lines.Add("    - the row records a key id on a payload version that has no place");
-                lines.Add("      to keep one, so nothing wrote that value legitimately;");
+                lines.Add("      to keep one, or records none on a version that has;");
                 lines.Add("    - this build cannot render the version the row declares.");
-                lines.Add("  Each fails at the LOWEST row it applies to and at every one after it.");
-                lines.Add("  A single row failing among verified siblings is a write.");
-                lines.Add("  ⚠️ AN OVERWRITTEN COLUMN PRODUCES SEVERAL OF THESE and is not a sixth");
+                lines.Add("  Each fails at the LOWEST row it applies to and at every one after it,");
+                lines.Add("  except the below-the-epoch pair, which fails over the INTERVAL between");
+                lines.Add("  the previous boundary and the epoch start. A single row failing among");
+                lines.Add("  verified siblings is a write.");
+                lines.Add("  ⚠️ AN OVERWRITTEN COLUMN PRODUCES SEVERAL OF THESE and is not one more");
                 lines.Add("  entry in the list: PayloadVersion and KeyId are inside the hashed");
                 lines.Add("  payload, so changing either is a modification that then surfaces as");
                 lines.Add("  whichever of the causes above it happens to trip.");
-                lines.Add("  The two boundary readings have MINTING as their alternative, and raising");
-                lines.Add("  LastSequence turns the verdict green either way. Read the runbook before");
-                lines.Add("  touching the configuration.");
+                lines.Add("  THREE of the seven are boundary causes and each has MINTING as its");
+                lines.Add("  alternative -- except the last, where the fix is the DESIGNATION and no");
+                lines.Add("  LastSequence edit can move it. Read the runbook before touching the");
+                lines.Add("  configuration.");
                 lines.Add("  A missing ring entry is fixed in configuration; none of the rest is, and");
                 lines.Add("  no reading here makes this a row proved good. Treat it as a break.");
             }
@@ -382,11 +386,12 @@ public static class VerifyCommand
         [
             $"CHAIN INTACT: {result.Verified:N0} rows verified.",
             $"  Sequence range: {lowest:N0} to {highest:N0}",
-            "  This proves no row was altered by anyone who does not hold a key in the",
-            "  configured RING -- Audit:ChainKey, or a retired key for the rows at or below",
-            "  its boundary -- and that none was removed from the MIDDLE. Retiring a key",
-            "  narrows what a verification ACCEPTS from it, never what it can write: below",
-            "  that boundary it still rewrites and recomputes as freely as it ever did.",
+            "  This proves no row was altered by anyone who does not hold the key whose",
+            "  EPOCH that row falls in -- Audit:ChainKey for everything since the last",
+            "  retirement, and each retired key for its own stretch and no other -- and",
+            "  that none was removed from the MIDDLE. Retiring a key narrows what a",
+            "  verification ACCEPTS from it, never what it can write: inside its own epoch",
+            "  it still rewrites and recomputes as freely as it ever did.",
             // "Compare the count against your own" STAYS ON ONE LINE. The uncovered-window text
             // below points at it by name -- "the verdict above already tells you to compare
             // counts" -- and UncoveredWindowTests asserts the phrase is contiguous, which is what

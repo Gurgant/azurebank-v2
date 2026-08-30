@@ -560,7 +560,7 @@ public class AuditVerifierReportTests
         */
         var readings = lines.Count(line => line.TrimStart().StartsWith("- ", StringComparison.Ordinal));
         readings.Should().Be(
-            6,
+            7,
             "a list that offers fewer causes than the walk can return sends an operator looking for "
             + "one it does not name, and each of the six takes a different action");
 
@@ -633,22 +633,25 @@ public class AuditVerifierReportTests
         */
         var claim = Regex.Replace(text, @"\s+", " ");
         claim.Should().Contain(
-            "does not hold a key in the configured RING",
-            "the narrowed claim has to be the one printed, not merely a word from it");
+            "does not hold the key whose EPOCH that row falls in",
+            "the narrowed claim has to be the one printed, not merely a word from it — and it "
+            + "narrowed twice: first from Audit:ChainKey to the ring, then from the ring to the one "
+            + "key whose epoch contains the row");
+        claim.Should().NotContain(
+            "a retired key for the rows at or below its boundary",
+            "the pre-lower-bound description of what a retired key answers for, printed on every "
+            + "intact verdict until the epoch gained a start");
         claim.Should().NotContain(
             "altered by anyone who does not hold Audit:ChainKey",
             "and the sentence it replaced has to be absent, or a partial regression restores the "
             + "overclaim while every assertion above still passes");
-        text.Should().Contain(
-            "RING",
-            "AND THE NARROW CLAIM GOT NARROWER WHEN THE RING LANDED, which this test would have let "
-            + "through: the sentence said \"anyone who does not hold Audit:ChainKey\", and after a "
-            + "rotation a RETIRED key still recomputes every row at or below its boundary. So an "
-            + "intact verdict excludes an attacker who holds no key in the RING, which is a weaker "
-            + "statement than the one the tool was printing. Retiring a key bounds what it can "
-            + "WRITE; it takes nothing away from what it can rewrite beneath that boundary, and the "
-            + "verdict an operator reads to conclude the bank was not attacked must not round that "
-            + "up. Asserting on \"Audit:ChainKey\" alone stays green through the overclaim, because "
-            + "the honest sentence still names it");
+        /*
+          THE SUBSUMED ASSERTION IS GONE, and its reason is worth keeping for one line: it asserted
+          the single token "RING" underneath an assertion that already required the whole phrase, so
+          it could never fail on its own. It then failed for the opposite reason — the claim narrowed
+          again, from "a key in the ring" to "the key whose epoch that row falls in", and the token
+          disappeared. An assertion that only ever fails when something ELSE has already failed is
+          noise until the day it misleads.
+        */
     }
 }

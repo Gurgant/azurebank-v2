@@ -376,9 +376,16 @@ public sealed class AuditChain : IAuditChain
               between equal keys is not something a configuration file states. It is refused rather
               than resolved, since resolving it means guessing which key wrote history.
 
-              This is not the same as a key that wrote nothing. A rotation with no writes between it
-              and the next one gives the second key an EMPTY epoch, which the derivation below
-              expresses as a start above its own end, and that key correctly answers for no rows.
+              ⚠️ AND A KEY THAT WROTE NOTHING IS THE SAME CONFIGURATION, not a different one. This
+              paragraph used to say a zero-write rotation "gives the second key an EMPTY epoch …
+              and that key correctly answers for no rows", one line above the guard that makes it
+              impossible. Measured: 512 boundary triples, ZERO produce an empty epoch — entries are
+              sorted ascending, so only equality is reachable, and equality is what this refuses.
+
+              Refusing is right, and not merely what the code happens to do. A key that wrote nothing
+              has no row naming its id, so a ring entry for it answers for nothing; its only effect
+              is to make the boundary beneath it ambiguous. The honest configuration for a rotation
+              with no writes is to leave that key OUT of the ring entirely.
             */
             if (entry.LastSequence == nextEpochStart - 1 && nextEpochStart > 1)
             {
@@ -387,6 +394,27 @@ public sealed class AuditChain : IAuditChain
                     + $"{entry.LastSequence}. Boundaries partition the sequence space, so two keys "
                     + "ending at the same row leaves the rows beneath it claimed by both and the "
                     + "ring cannot tell which one wrote them.");
+            }
+
+            /*
+              ⚠️ THE EPOCH ARITHMETIC IS UNCHECKED, AND long.MaxValue MAKES IT WRAP THE WRONG WAY.
+              Every epoch start is `previous LastSequence + 1`, including the CURRENT key's. C# is
+              unchecked by default, so a boundary of long.MaxValue produces long.MinValue silently --
+              and the current key would then answer for every row in the table, which is the one key
+              a bound is supposed to be able to constrain from below.
+
+              Refused rather than computed with `checked`, because an OverflowException escapes the
+              AuditKeyRingException family and would leave `anchor` and `export` exiting 4 again.
+              Refused rather than bounded to the table's tail, because a boundary above the tail is
+              legitimate -- the runbook's triage table has a row for exactly that.
+            */
+            if (entry.LastSequence == long.MaxValue)
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} has LastSequence {entry.LastSequence}, "
+                    + "the largest a sequence can be. Every epoch begins one past the previous "
+                    + "boundary, so there is no room for an epoch above this one and the arithmetic "
+                    + "that derives it would wrap.");
             }
 
             var id = DeriveKeyId(retired);
@@ -983,6 +1011,13 @@ public sealed class AuditChain : IAuditChain
               decision required KeyId as a stored column BEFORE the first anchor rather than
               alongside rotation.
 
+              THE FOUNDING KEY'S EPOCH BINDS THEM AT BOTH ENDS, like every other. Above it a 'v2'
+              row is minting -- that version is the one shape that reaches the founding key without
+              naming it. Below it the reading is entirely different and is not an attack at all:
+              identity-less rows are the OLDEST rows there are, so an epoch starting above them
+              means the designation names a ring member that is not the oldest. The two get separate
+              verdicts below, because their remedies have nothing in common.
+
               (This comment said "checked under the current key alone -- meaning a rotation strands
               every legacy row" until the founding key landed a few commits later, which made both
               halves false. Raised in review on 9ea4e80.)
@@ -1076,25 +1111,61 @@ public sealed class AuditChain : IAuditChain
             if (selectedKey is null)
             {
                 /*
-                  THREE WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. They are
-                  spelled out separately because collapsing any pair produces a sentence that is
-                  false for one of them and points its reader at the wrong setting -- which on the
-                  minting readings means the prescribed fix completes the attack.
+                  FIVE WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. Two axes, and
+                  the arms below are their product: the row is ABOVE the epoch or BELOW it, and it
+                  either NAMES a key or records no identity and is answered for by
+                  Audit:FoundingChainKey. The fifth is a row that names an id the ring does not hold.
+
+                  They are spelled out separately because collapsing any pair produces a sentence
+                  that is false for one of them and points its reader at the wrong setting -- which
+                  on the minting readings means the prescribed fix completes the attack.
+
+                  ⚠️ THIS SAID THREE, AND THE COLLAPSE IT WARNS ABOUT WAS SITTING IN IT. The count was
+                  written when the boundary had one end. Giving the epoch a start added two paths and
+                  a single arm was left serving both, so a row that names NOTHING was told it "names
+                  a key" and sent to edit a LastSequence that cannot move it. Enumerated from the
+                  assignments to selectedKey above, not from the arms below -- counting the arms is
+                  what let the arms be wrong.
                 */
                 var reason = (expiredBoundary, unbegunBoundary, row.KeyId) switch
                 {
-                    // BELOW the key's epoch. The mirror of the expired case and the one that made
-                    // the boundary half a boundary: a key answering from the bottom of the table
-                    // meant compromising the NEWEST retired key handed over the whole history.
-                    (null, { } start, _) =>
-                        $"Row {row.Id} is sequence {row.Sequence:N0} and names a key whose epoch "
-                        + $"begins at {start:N0} — so it names a key that had not started writing "
-                        + "when this row was written. Its hash was NOT checked. An earlier key wrote "
-                        + "this stretch; a row here that claims a later one is either a boundary "
-                        + "recorded too HIGH for that earlier key, or a row RE-AUTHORED by whoever "
-                        + "holds the later one. ⚠️ Epochs are derived from the recorded boundaries, "
-                        + "so moving one moves two — check the rotation record before changing "
-                        + "anything.",
+                    // NAMES a key, BELOW that key's epoch. The mirror of the expired case and the
+                    // one that made the boundary half a boundary: a key answering from the bottom of
+                    // the table meant compromising the NEWEST retired key handed over the history.
+                    (null, { } start, not null) =>
+                        $"Row {row.Id} is sequence {row.Sequence:N0} and names key id "
+                        + $"'{row.KeyId}', whose epoch begins at {start:N0} — so it names a key that "
+                        + "had not started writing when this row was written. Its hash was NOT "
+                        + "checked. An earlier key wrote this stretch; a row here that claims a later "
+                        + "one is either a boundary recorded too HIGH for that earlier key, or a row "
+                        + "RE-AUTHORED by whoever holds the later one. ⚠️ Epochs are derived from the "
+                        + "recorded boundaries, so moving one moves two — check the rotation record "
+                        + "before changing anything.",
+
+                    /*
+                      NAMES NOTHING, below the FOUNDING key's epoch — and this arm exists because the
+                      one above was serving both. A 'v2' row records no key identity, so the sentence
+                      "names a key" was false for it, and worse, both remedies it offered were the
+                      wrong ones: _foundingFirstSequence is INHERITED from the designated entry, so
+                      no LastSequence edit moves it. An operator following that verdict would have
+                      changed retirement boundaries — which the same sentence warns changes verdicts
+                      for rows they did not think they were touching — while the actual
+                      misconfiguration stayed exactly where it was.
+
+                      There is only one way to get here, and it is not an attack: the designation
+                      names a ring member that is not the OLDEST, so the epoch it opens starts above
+                      the identity-less rows, which are the oldest rows there are.
+                    */
+                    (null, { } start, null) =>
+                        $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
+                        + "identity, so it is checked under Audit:FoundingChainKey — and the epoch "
+                        + $"that key opens begins at {start:N0}, while this row is sequence "
+                        + $"{row.Sequence:N0}. Its hash was NOT checked. Rows recording no identity "
+                        + "are the OLDEST rows there are, so a founding key whose epoch starts above "
+                        + "them is a designation that cannot mean what it says. ⚠️ The fix is "
+                        + "Audit:FoundingChainKey — point it at the oldest key in the ring. No "
+                        + "LastSequence edit can move this: the founding key INHERITS its epoch from "
+                        + "the entry it designates.",
 
                     // Named a key the ring holds, above that key's epoch.
                     ({ } bound, _, not null) =>
@@ -1122,9 +1193,23 @@ public sealed class AuditChain : IAuditChain
                         + "establish which it is from the rotation record, outside this database, "
                         + "before touching the configuration.",
 
-                    // Named a key the ring does not hold at all.
+                    /*
+                      Declares the CURRENT version, which has a place to record a key identity, and
+                      carries none. The exact mirror of the 'v2' row carrying an id, refused higher
+                      up: one version has nowhere to keep the value, the other has nowhere to get it
+                      from, and neither is something the writer produces.
+                    */
+                    (null, null, null) =>
+                        $"Row {row.Id} declares payload version '{CurrentPayloadVersion}', which "
+                        + "records the identity of the key that wrote it, and records none. Its hash "
+                        + "was NOT checked: there is nothing to select a key by. Nothing this "
+                        + "deployment writes leaves that column empty on this version, so the value "
+                        + "was removed after the fact — and the column is inside the hashed payload, "
+                        + "which makes removing it a modification rather than a configuration note.",
+
+                    // Names an id the ring does not hold at all.
                     _ =>
-                        $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and no key "
+                        $"Row {row.Id} was written under key id '{row.KeyId}' and no key "
                         + $"in this verification's ring has that id — it holds '{_keyId}'"
                         + (_keyRing.Count > 1
                             ? $" and {_keyRing.Count - 1} retired key(s)"
