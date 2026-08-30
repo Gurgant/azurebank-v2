@@ -72,11 +72,13 @@ public enum AuditChainBreakKind
     /// payload, so a stored value that is not what the schema says it must be is itself a
     /// modification — the same reasoning <see cref="Unreadable"/> already carries.
     /// <para>
-    /// It says nothing about WHY, and since the key ring there are FIVE ways to get here rather
-    /// than three: no key in the ring has the row's id; the ring has that key but the row sits above
-    /// the sequence it was retired at; the row records no id and sits above the founding key's
-    /// boundary; the row names a key whose epoch has not begun; and this build cannot render the
-    /// version the row declares. An overwritten column produces the same verdict as several of them.
+    /// It says nothing about WHY, and since the key ring there are SIX ways to get here rather than
+    /// three: this build cannot render the version the row declares; a <c>v2</c> row carries a key
+    /// id, which that version has nowhere to keep; no key in the ring has the row's id; the ring has
+    /// that key but the row sits ABOVE the sequence it was retired at; the row records no id and
+    /// sits above the founding key's boundary; and the ring has that key but the row sits BELOW the
+    /// epoch it opens. An overwritten column is not a seventh — it is how several of those come
+    /// about, because both columns are inside the hashed payload.
     /// The discriminator is positional rather than textual: all but an overwrite fail at the
     /// lowest-sequence row they apply to and at every one after it, while a single interior row
     /// failing among verified siblings is a write.

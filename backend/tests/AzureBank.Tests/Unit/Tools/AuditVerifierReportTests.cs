@@ -540,14 +540,29 @@ public class AuditVerifierReportTests
 
         exitCode.Should().Be(VerifyCommand.Broken);
 
+        /*
+          ⚠️ THE NUMBER COMES FROM AuditChain, NOT FROM THE BLOCK, and the first version of this test
+          got that backwards: it counted the bullets and asserted the count it found, so it agreed
+          with whatever the block happened to say. It asserted FIVE while the code already had six --
+          the epoch's lower bound had landed a commit earlier and the block was never updated.
+
+          The six, each a distinct return or switch arm in AuditChain.VerifyAsync:
+            1. the payload version cannot be rendered by this build;
+            2. a 'v2' row carries a key id, which that version has nowhere to keep;
+            3. no key in the ring has the row's id;
+            4. the ring holds the key, the row is ABOVE its boundary;
+            5. the row records no id and is above Audit:FoundingChainKey's boundary;
+            6. the ring holds the key, the row is BELOW the epoch it opens.
+
+          An overwritten column is NOT a seventh: it is how several of the above come about, since
+          PayloadVersion and KeyId are inside the hashed payload. Listing it as a peer is what made
+          the old block read as five when it covered four.
+        */
         var readings = lines.Count(line => line.TrimStart().StartsWith("- ", StringComparison.Ordinal));
         readings.Should().Be(
-            5,
-            "there are five ways to reach UnknownScheme since the ring: an id the ring does not "
-            + "hold, a row above a retired key's boundary, an identity-less row above the founding "
-            + "key's, a row below the epoch of the key it names, and a version this build cannot "
-            + "render. A list that offers fewer sends an operator looking for a cause it does not "
-            + "name");
+            6,
+            "a list that offers fewer causes than the walk can return sends an operator looking for "
+            + "one it does not name, and each of the six takes a different action");
 
         var text = string.Join(" ", lines);
         text.Should().NotContain(
@@ -559,6 +574,10 @@ public class AuditVerifierReportTests
             "not by itself the problem",
             "and the block has to say so where it prints the two ids, or an operator reads the "
             + "mismatch as the finding");
+        text.Should().Contain(
+            "BELOW the epoch it opens",
+            "the lower bound is a cause the walk returns, so the list has to offer it — it was "
+            + "missing for two commits while this test asserted the block's own count back at it");
     }
 
     [Fact]

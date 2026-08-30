@@ -513,16 +513,20 @@ row count never moved.
   the old reading, and only those.
 - `declares payload version ... which this build cannot render`, `was written under key id ...`, or
   either of the two boundary verdicts — the row was **NOT CHECKED**, which is never the same as
-  checked and found good. **Five readings since the ring**, and the verdict line itself says which:
-  no key in the ring has this row's id; the ring HAS that key but the row sits above the sequence it
-  was retired at; the row records no key id and sits above `Audit:FoundingChainKey`'s boundary; this
-  build is older than the row; or the column was overwritten — and that column is inside the hashed
-  payload, so overwriting it is a modification. **The discriminator between them is positional, not
-  textual:** all but the last fail at the LOWEST row they apply to and at every one after it, while a
-  single row failing among verified siblings is a write. Exit code is 1. ⚠️ **A missing ring entry is
-  fixed in configuration; nothing else here is, and none of it makes the row proved good.** The two
-  boundary readings have MINTING as their alternative — see **RAISING `LastSequence` TURNS THAT
-  VERDICT GREEN IN BOTH CASES** below before changing anything.
+  checked and found good. **SIX causes produce it since the ring**, and the verdict line itself says
+  which: this build cannot render the version the row declares; a `v2` row carries a key id, which
+  that version has nowhere to keep; no key in the ring has this row's id; the ring HAS that key but
+  the row sits ABOVE the sequence it was retired at; the row records no key id and sits above
+  `Audit:FoundingChainKey`'s boundary; or the ring HAS that key and the row sits BELOW the epoch it
+  opens. **The discriminator between them is positional, not textual:** each fails at the LOWEST row
+  it applies to and at every one after it, while a single row failing among verified siblings is a
+  write. ⚠️ **An overwritten column is not a seventh cause** — `PayloadVersion` and `KeyId` are
+  both inside the hashed payload, so changing either is a modification that then surfaces as
+  whichever of the six it happens to trip. Exit code is 1. ⚠️ **A missing ring entry is fixed in
+  configuration; nothing else here is, and none of it makes the row proved good.** The THREE boundary
+  causes — above a retired key's epoch, above the founding key's, and below the epoch a named key
+  opens — all have MINTING as their alternative: see **RAISING `LastSequence` TURNS THAT VERDICT
+  GREEN IN BOTH CASES** below before changing anything.
 - `expected to follow ... A row was deleted, reordered, or inserted` with **`Rows verified before
   the break: 0`** — the first row read names a predecessor that is not there. **The sequence it
   broke at says which of two things happened, and they are not the same incident.** At **sequence

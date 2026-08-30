@@ -293,12 +293,21 @@ public static class VerifyCommand
             if (result.Kind == AuditChainBreakKind.UnknownScheme)
             {
                 /*
-                  FIVE READINGS SINCE THE RING, AND THIS SAID THREE. The ring added two causes in
-                  which the verification DOES hold the row's key -- above a retired key's epoch, and
-                  above the founding key's -- so the old first reading, "you hold a different key
-                  than the one that wrote this row", was false for both while sitting at the top of
-                  the list. The verdict printed above already says WHICH one this is; the list exists
-                  to name the alternatives an operator has to rule out.
+                  SIX CAUSES SINCE THE RING, AND THIS SAID THREE, THEN FIVE. The ring added two
+                  in which the verification DOES hold the row's key -- above a retired key's epoch,
+                  and above the founding key's -- so the old first reading, "you hold a different key
+                  than the one that wrote this row", was false for both while leading the list. The
+                  epoch's lower bound then added a third of that shape, and the count here was not
+                  moved with it.
+
+                  ⚠️ THE LIST NOW ENUMERATES CAUSES, NOT READINGS, and that is why it grew by two
+                  rather than one. "The column was overwritten" was sitting among them as a peer; it
+                  is not a cause the walk can return, it is an explanation for several of them, so it
+                  moved below. The sixth is a 'v2' row carrying a key id, which has always been its
+                  own return and was never listed at all.
+
+                  Counted from AuditChain's returns, not from this block -- the test that guards it
+                  used to count these bullets, which made it agree with whatever was written here.
                 */
                 lines.Add($"  This row declares payload version '{result.PayloadVersion ?? "(none)"}' and key id");
                 lines.Add($"  '{result.RecordedKeyId ?? "(none)"}'. The CURRENT key's id is");
@@ -306,18 +315,24 @@ public static class VerifyCommand
                 lines.Add("  keys besides it, so those two differing is not by itself the problem.");
                 lines.Add("  The hash was NOT checked, so this is a row left UNVERIFIED, never a");
                 lines.Add("  row proved good.");
-                lines.Add("  Five readings. The verdict above says which; between the rest the");
-                lines.Add("  discriminator is POSITIONAL, not textual:");
+                lines.Add("  SIX causes produce this verdict. The line above says which one;");
+                lines.Add("  between the rest the discriminator is POSITIONAL, not textual:");
                 lines.Add("    - no key in the ring has this row's id;");
                 lines.Add("    - the ring HAS that key, but the row sits above the sequence it was");
                 lines.Add("      retired at;");
+                lines.Add("    - the ring HAS that key and the row sits BELOW the epoch it opens,");
+                lines.Add("      so an earlier key wrote this stretch;");
                 lines.Add("    - the row records no key id and sits above the sequence");
                 lines.Add("      Audit:FoundingChainKey was retired at;");
-                lines.Add("    - this build cannot render the version the row declares;");
-                lines.Add("    - the column was overwritten, which is a modification inside the");
-                lines.Add("      hashed payload.");
-                lines.Add("  All but the last fail at the LOWEST row they apply to and at every one");
-                lines.Add("  after it. A single row failing among verified siblings is a write.");
+                lines.Add("    - the row records a key id on a payload version that has no place");
+                lines.Add("      to keep one, so nothing wrote that value legitimately;");
+                lines.Add("    - this build cannot render the version the row declares.");
+                lines.Add("  Each fails at the LOWEST row it applies to and at every one after it.");
+                lines.Add("  A single row failing among verified siblings is a write.");
+                lines.Add("  ⚠️ AN OVERWRITTEN COLUMN PRODUCES SEVERAL OF THESE and is not a sixth");
+                lines.Add("  entry in the list: PayloadVersion and KeyId are inside the hashed");
+                lines.Add("  payload, so changing either is a modification that then surfaces as");
+                lines.Add("  whichever of the causes above it happens to trip.");
                 lines.Add("  The two boundary readings have MINTING as their alternative, and raising");
                 lines.Add("  LastSequence turns the verdict green either way. Read the runbook before");
                 lines.Add("  touching the configuration.");
