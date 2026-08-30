@@ -135,10 +135,18 @@ public class AuditEvent
     /// it holds is the key that wrote the row, and say so when it does not.
     /// <para>
     /// NULL MEANS "NO KEY IDENTITY WAS RECORDED", not "some particular key". Such a row is verified
-    /// under the FOUNDING key — today that is <c>Audit:ChainKey</c> because it is the only one there
-    /// has ever been. The word is deliberate: whatever adds a second key must add a ring entry for
-    /// the founding key rather than silently re-point every historical row at whatever is current.
-    /// NULL asserts nothing, hashes nothing, and is the absence of a claim rather than a claim.
+    /// under the FOUNDING key, which <c>Audit:FoundingChainKey</c> names — and that is
+    /// <c>Audit:ChainKey</c> only while nothing has been retired, because until then it is the only
+    /// key there has ever been. NULL asserts nothing, hashes nothing, and is the absence of a claim
+    /// rather than a claim.
+    /// </para>
+    /// <para>
+    /// This paragraph used to end "whatever adds a second key must add a ring entry for the founding
+    /// key rather than silently re-point every historical row at whatever is current", as future
+    /// work. That work landed with the key ring: the designation is REQUIRED as soon as anything is
+    /// retired, it must name material already in the ring, and it INHERITS that entry's epoch — so a
+    /// row recording no identity is refused above the founding key's boundary exactly as a keyed row
+    /// is above its own.
     /// </para>
     /// </remarks>
     public string? KeyId { get; set; }

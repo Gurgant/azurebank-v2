@@ -194,9 +194,17 @@ public static class VerifyCommand
                 // version. What decides the advice is whether the row named a key at all.
                 if (result.FirstBrokenSequence == 1 && result.RecordedKeyId is null)
                 {
-                    lines.Add("  Breaking at sequence 1 usually means the wrong Audit:ChainKey, not");
-                    lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch");
-                    lines.Add("  it. Confirm the key before escalating.");
+                    // NOT Audit:ChainKey. This branch fires on a row recording NO key identity,
+                    // and those are checked under Audit:FoundingChainKey -- which is Audit:ChainKey
+                    // only while nothing has been retired. Naming the current key here sends an
+                    // operator to a key that never touched the row: the same defect the hash-mismatch
+                    // verdict was corrected for on 9e92377, in the sibling arm, and missed here.
+                    lines.Add("  Breaking at sequence 1 usually means the wrong key, not tampering");
+                    lines.Add("  -- a wrong key is well-formed, so validation cannot catch it. This");
+                    lines.Add("  row records no key identity, so the key applied to it is");
+                    lines.Add("  Audit:FoundingChainKey, which is Audit:ChainKey only while nothing");
+                    lines.Add("  has been retired.");
+                    lines.Add("  Confirm the key before escalating.");
                 }
                 else if (result.FirstBrokenSequence == 1)
                 {
@@ -253,18 +261,37 @@ public static class VerifyCommand
             */
             if (result.Kind == AuditChainBreakKind.UnknownScheme)
             {
+                /*
+                  FIVE READINGS SINCE THE RING, AND THIS SAID THREE. The ring added two causes in
+                  which the verification DOES hold the row's key -- above a retired key's epoch, and
+                  above the founding key's -- so the old first reading, "you hold a different key
+                  than the one that wrote this row", was false for both while sitting at the top of
+                  the list. The verdict printed above already says WHICH one this is; the list exists
+                  to name the alternatives an operator has to rule out.
+                */
                 lines.Add($"  This row declares payload version '{result.PayloadVersion ?? "(none)"}' and key id");
-                lines.Add($"  '{result.RecordedKeyId ?? "(none)"}'; this verification holds the key whose id is");
-                lines.Add($"  '{result.ConfiguredKeyId ?? "(none)"}'. Its hash was NOT checked -- so this is a row");
-                lines.Add("  left UNVERIFIED, never a row proved good.");
-                lines.Add("  Three readings, and the discriminator is POSITIONAL, not textual:");
-                lines.Add("    - you hold a different key than the one that wrote this row;");
+                lines.Add($"  '{result.RecordedKeyId ?? "(none)"}'. The CURRENT key's id is");
+                lines.Add($"  '{result.ConfiguredKeyId ?? "(none)"}' -- and the ring may hold retired");
+                lines.Add("  keys besides it, so those two differing is not by itself the problem.");
+                lines.Add("  The hash was NOT checked, so this is a row left UNVERIFIED, never a");
+                lines.Add("  row proved good.");
+                lines.Add("  Five readings. The verdict above says which; between the rest the");
+                lines.Add("  discriminator is POSITIONAL, not textual:");
+                lines.Add("    - no key in the ring has this row's id;");
+                lines.Add("    - the ring HAS that key, but the row sits above the sequence it was");
+                lines.Add("      retired at;");
+                lines.Add("    - the row records no key id and sits above the sequence");
+                lines.Add("      Audit:FoundingChainKey was retired at;");
                 lines.Add("    - this build cannot render the version the row declares;");
                 lines.Add("    - the column was overwritten, which is a modification inside the");
                 lines.Add("      hashed payload.");
-                lines.Add("  The first two fail at the LOWEST row of that scheme and at every one");
+                lines.Add("  All but the last fail at the LOWEST row they apply to and at every one");
                 lines.Add("  after it. A single row failing among verified siblings is a write.");
-                lines.Add("  This is NEVER a configuration note. Treat it as a break.");
+                lines.Add("  The two boundary readings have MINTING as their alternative, and raising");
+                lines.Add("  LastSequence turns the verdict green either way. Read the runbook before");
+                lines.Add("  touching the configuration.");
+                lines.Add("  A missing ring entry is fixed in configuration; none of the rest is, and");
+                lines.Add("  no reading here makes this a row proved good. Treat it as a break.");
             }
 
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");

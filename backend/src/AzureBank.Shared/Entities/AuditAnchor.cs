@@ -116,11 +116,19 @@ public class AuditAnchor
     /// </remarks>
     public string? TailRowHash { get; set; }
 
-    /// <summary>Identity of the <c>Audit:ChainKey</c> the walk behind this record verified under.</summary>
+    /// <summary>Identity of the CURRENT <c>Audit:ChainKey</c> the run behind this record held.</summary>
     /// <remarks>
     /// <see cref="TailRowHash"/> is an HMAC under SOME chain key, and without this the record names
     /// a hex string with no way to know which key produced it. Present on gap markers too: a run
     /// always holds a chain key, whatever the walk found.
+    /// <para>
+    /// ⚠️ ONE ID FOR A WALK THAT MAY HAVE USED SEVERAL. This said "the key the walk verified under",
+    /// which stopped being accurate when the key ring landed: a walk over a rotated table applies
+    /// whichever key each row names, and this field is written from the current key unconditionally.
+    /// It still answers the question it exists for — the TAIL is written under the current key, so
+    /// this is the key behind <see cref="TailRowHash"/> — but it does not describe the walk. See
+    /// ADR-0044 D7, which records the anchor half of rotation as deferred rather than done.
+    /// </para>
     /// </remarks>
     public string VerifiedUnderChainKeyId { get; set; } = string.Empty;
 

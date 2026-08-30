@@ -676,6 +676,25 @@ public class AuditChainTests : IDisposable
             + "truncation test records, arrived at from the other end");
     }
 
+    /// <summary>
+    /// The ring as it stands after a rotation: the current key is <see cref="RotatedKey"/>,
+    /// <see cref="TestKey"/> is retired at <paramref name="lastSequence"/>, and TestKey is the
+    /// founding key — which is what it is, since it wrote everything the fixture writes.
+    /// </summary>
+    /// <remarks>
+    /// Extracted because the three call sites were byte-identical 141-column lines, 36 past the
+    /// corpus wrap. They were introduced on 32770df and survived four rounds of review because each
+    /// round measured only its own working-tree diff and never the branch.
+    /// </remarks>
+    private static AuditChain RotatedRing(long lastSequence) => new(
+        Options.Create(new AuditOptions
+        {
+            ChainKey = RotatedKey,
+            RetiredChainKeys = [Retired(TestKey, lastSequence)],
+            FoundingChainKey = TestKey,
+        }),
+        NullLogger<AuditChain>.Instance);
+
     private static RetiredChainKey Retired(string key, long lastSequence) =>
         new() { Key = key, LastSequence = lastSequence };
 
@@ -696,9 +715,7 @@ public class AuditChainTests : IDisposable
         */
         await WriteAsync("Before", "Rotation");
 
-        var rotated = new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)], FoundingChainKey = TestKey }),
-            NullLogger<AuditChain>.Instance);
+        var rotated = RotatedRing(lastSequence: 2);
 
         var verification = await rotated.VerifyAsync(_context);
 
@@ -736,10 +753,18 @@ public class AuditChainTests : IDisposable
           verification; if it could also write, then possessing an old key — the exact thing rotation
           assumes has happened — would let somebody append rows that verify. Writing takes
           Audit:ChainKey and nothing else.
+
+          BOTH HALVES ARE ASSERTED, which they were not until review pointed it out: this test named
+          READ and WRITE and only ever exercised WRITE, so the half its first word claims was carried
+          by the title alone.
         */
-        var rotated = new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)], FoundingChainKey = TestKey }),
-            NullLogger<AuditChain>.Instance);
+        await WriteAsync("Written", "UnderTheOldKey");
+
+        var rotated = RotatedRing(lastSequence: 2);
+
+        var read = await rotated.VerifyAsync(_context);
+        read.IsIntact.Should().BeTrue("the READ half: a retired key still answers for its own rows");
+        read.Verified.Should().Be(2);
 
         using var after = new AzureBankDbContext(
             new DbContextOptionsBuilder<AzureBankDbContext>()
@@ -775,15 +800,15 @@ public class AuditChainTests : IDisposable
           FALSIFIED by replacing the lookup with a loop over the ring: this reddens and nothing else
           in the suite does, which is the whole reason it is written down.
         */
+        // WriteAsync reads back with AsNoTracking, so the returned instances are detached copies.
+        // Two lines here used to relabel rows[0] and then Detach it — a mutation on a copy nothing
+        // reads and an attach-then-detach of an untracked object. Neither could reach the database,
+        // and a reader could mistake them for the edit under test, which happens on `stored` below.
+        // Raised in review on 930495f.
         var rows = await WriteAsync("Written under the old key");
-        var row = rows[0];
+        rows.Should().HaveCount(1, "the relabelling below assumes a single row to relabel");
 
-        row.KeyId = AuditChain.DeriveKeyId(RotatedKey);
-        _context.Entry(row).State = EntityState.Detached;
-
-        var rotated = new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)], FoundingChainKey = TestKey }),
-            NullLogger<AuditChain>.Instance);
+        var rotated = RotatedRing(lastSequence: 2);
 
         var stored = await _context.AuditEvents.FirstAsync();
         stored.KeyId = AuditChain.DeriveKeyId(RotatedKey);
@@ -801,6 +826,7 @@ public class AuditChainTests : IDisposable
     [InlineData("", 5L, "blank")]
     [InlineData(TestKey, 5L, "CURRENT")]
     [InlineData("a-perfectly-good-retired-key-0123456789abcdef", 0L, "unbounded")]
+    [InlineData("too-short-to-be-a-key", 5L, "WEAKER than Audit:ChainKey is held to")]
     public void ARingThatCannotMeanWhatItSays_IsRefusedAtConstruction(
         string retired, long lastSequence, string why)
     {
@@ -841,7 +867,12 @@ public class AuditChainTests : IDisposable
           key there has only ever been one, and requiring it then would be ceremony.
         */
         var build = () => new AuditChain(
-            Options.Create(new AuditOptions { ChainKey = RotatedKey, RetiredChainKeys = [Retired(TestKey, 2)] }),
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, 2)],
+                // FoundingChainKey deliberately absent: that absence is what this test is about.
+            }),
             NullLogger<AuditChain>.Instance);
 
         build.Should().Throw<InvalidOperationException>()
@@ -932,6 +963,22 @@ public class AuditChainTests : IDisposable
             + "which is minting rather than history");
         verification.FirstBrokenSequence.Should().Be(
             boundary + 1, "the epoch boundary is where a retired key stops being an answer");
+
+        /*
+          THE CONTROL, added in review. The boundary is checked BEFORE the hash, so a fixture whose
+          minted row did not actually hash correctly would be refused for the right reason by
+          accident and everything above would pass while proving nothing. Raising the boundary admits
+          the row: that is what makes the refusal a refusal of a genuine forgery.
+
+          Here the row was written through the production write path, so its hash is valid by
+          construction — but "by construction" is the kind of reasoning that stops being true after
+          an unrelated edit, and the sibling test for the v2 route needs the same control for a
+          stronger reason. Asserting it costs one line.
+        */
+        var admitted = await RotatedRing(lastSequence: boundary + 1).VerifyAsync(_context);
+        admitted.IsIntact.Should().BeTrue(
+            "with the boundary raised past it the minted row verifies, which is what proves its hash "
+            + "was genuinely valid under the retired key rather than merely wrong");
 
         /*
           AND THE VERDICT MUST SAY WHICH FAILURE THIS IS. An expired boundary and an unknown key id

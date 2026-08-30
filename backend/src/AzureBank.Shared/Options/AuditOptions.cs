@@ -98,7 +98,15 @@ public class AuditOptions
     /// </para>
     /// <para>
     /// Retiring a key does NOT let it write. Writing always uses <see cref="ChainKey"/>; these are
-    /// read-side only, which is what keeps a retired key from being usable by whoever obtained it.
+    /// read-side only.
+    /// </para>
+    /// <para>
+    /// ⚠️ READ-SIDE-ONLY IS NOT WHAT KEEPS A RETIRED KEY FROM BEING USABLE, and this paragraph
+    /// claimed it was — one paragraph under the one that disproves it. It stops OUR code writing
+    /// through a retired key. It does nothing about somebody holding that key and a database
+    /// connection, who computes an honest hash and inserts by raw SQL. The BOUNDARY above is what
+    /// stops that, and only ABOVE the boundary: at or below its epoch a retired key still mints rows
+    /// that verify. Raised in review on 930495f.
     /// </para>
     /// </remarks>
     public IList<RetiredChainKey> RetiredChainKeys { get; set; } = [];

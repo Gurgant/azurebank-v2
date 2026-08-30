@@ -354,9 +354,9 @@ something else, the key that wrote it was never retired into the configuration, 
 fix. **Adding a key you cannot account for is not** — the ring is how an honest rotation stays
 verifiable, never a way to make a verdict go green.
 
-⚠️ **RETIRING A KEY TAKES THREE VALUES, NOT ONE, AND THE PROCESS REFUSES TO START WITHOUT THEM.** An
-earlier version of this paragraph said "adding it is the fix" and stopped there; following that
-literally produces a service that will not construct. All three:
+⚠️ **RETIRING A KEY TAKES THREE VALUES, NOT ONE.** An earlier version of this paragraph said
+"adding it is the fix" and stopped there; following that literally produces a deployment that fails
+at the first audited operation. All three:
 
 - `Audit:RetiredChainKeys:N:Key` — the retired key material.
 - `Audit:RetiredChainKeys:N:LastSequence` — the **highest `AuditEvents.Sequence` that key legitimately
@@ -378,8 +378,40 @@ blocks under **After recovery** read all three; this is the same list stated as 
 dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
 ```
 
-Run it after configuring, before believing it. A ring that will not construct fails at startup with
-the reason in the message.
+Run it after configuring, before believing it — and run it because **NOTHING ELSE WILL TELL YOU IN
+TIME**.
+
+⚠️ **A HALF-CONFIGURED RING DOES NOT STOP EITHER PROCESS FROM STARTING, AND THIS PAGE SAID IT DID.**
+The claim was "the process refuses to start without them"; measured, that is false in both
+composition roots, and the wrong direction to be wrong in — an operator who deploys, sees the service
+come up, and concludes the ring is right.
+
+- **The API starts normally, then fails the first request that touches the database.** Run with a
+  retired key and no `Audit__FoundingChainKey`:
+
+  ```
+  [INF] Microsoft.Hosting.Lifetime: Now listening on: http://127.0.0.1:5399
+  [INF] Microsoft.Hosting.Lifetime: Application started. Press Ctrl+C to shut down.
+
+  POST /api/auth/login  ->  HTTP 500
+  [ERR] GlobalExceptionHandler: Unhandled exception: InvalidOperationException -
+        Audit:FoundingChainKey is required once a key has been retired.
+  ```
+
+  `IAuditChain` is registered `AddScoped` and nothing resolves it at startup — `ValidateOnStart`
+  covers the OPTIONS, while the ring's rules live in the `AuditChain` constructor, which runs when
+  something first opens a `AzureBankDbContext`. That is a LOGIN, before any authentication, not
+  merely an audited write. And by **D1** an audited operation whose audit write fails takes the
+  business action down with it, so past the login the same typo surfaces as failed money movements —
+  at request time, however long after the deploy that caused it.
+- **The verifier reports it as a STORE problem.** The chain is resolved inside `RunAsync`'s `try`, so
+  the constructor's exception is caught by the generic handler and printed as
+  `CANNOT VERIFY: the audit store could not be read` — **exit 3** — with the real reason on the next
+  line and advice about connection strings under it. The transcript is below.
+
+Neither is a reason to skip `verify`; both are reasons not to read a clean startup as evidence that
+the ring is right. *(Making it refuse at startup in both roots is worth doing and is not this change:
+it needs a place that covers both roots without stating the rules twice, and its own measurement.)*
 
 ⚠️ **A RING THAT CONSTRUCTS BUT IS WRONG DOES NOT ALWAYS COME BACK AS `UnknownScheme`, AND THIS
 PARAGRAPH SAID IT DID.** That was the comfortable version and it is the dangerous one, because the
@@ -400,7 +432,7 @@ the other three have to be read positionally.)*
 **The last row is why "run it and see" is not a check on the ring.** Too high does not fail; it
 silently admits rows a retired key had no business writing, which is the whole hazard the boundary
 exists to catch. Nothing in the verdict distinguishes it from an honest one. Only the rotation
-record does — see the boundary guidance below.
+record does — see **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES** below.
 
 **The third row is the one that reads like tampering.** A founding key that the ring HOLDS is
 applied to the identity-less rows and its hash is recomputed, so a wrong designation reaches a hash
@@ -460,13 +492,18 @@ row count never moved.
   recomputed. So a hash mismatch on such a row is not ambiguous any more — the key behind it has
   already been confirmed. Rows written before key identity existed (`PayloadVersion` = `v2`) keep
   the old reading, and only those.
-- `declares payload version ... which this build cannot render` or `was written under key id ...` —
-  the row was **NOT CHECKED**, which is never the same as checked and found good. Three readings:
-  you hold a different key than the one that wrote it, this build is older than the row, or the
-  column was overwritten — and that column is inside the hashed payload, so overwriting it is a
-  modification. **The discriminator is positional, not textual:** the first two fail at the LOWEST
-  row of that scheme and at every one after it, while a single row failing among verified siblings
-  is a write. Exit code is 1. ⚠️ **Never triage this as a configuration note.**
+- `declares payload version ... which this build cannot render`, `was written under key id ...`, or
+  either of the two boundary verdicts — the row was **NOT CHECKED**, which is never the same as
+  checked and found good. **Five readings since the ring**, and the verdict line itself says which:
+  no key in the ring has this row's id; the ring HAS that key but the row sits above the sequence it
+  was retired at; the row records no key id and sits above `Audit:FoundingChainKey`'s boundary; this
+  build is older than the row; or the column was overwritten — and that column is inside the hashed
+  payload, so overwriting it is a modification. **The discriminator between them is positional, not
+  textual:** all but the last fail at the LOWEST row they apply to and at every one after it, while a
+  single row failing among verified siblings is a write. Exit code is 1. ⚠️ **A missing ring entry is
+  fixed in configuration; nothing else here is, and none of it makes the row proved good.** The two
+  boundary readings have MINTING as their alternative — see **RAISING `LastSequence` TURNS THAT
+  VERDICT GREEN IN BOTH CASES** below before changing anything.
 - `expected to follow ... A row was deleted, reordered, or inserted` with **`Rows verified before
   the break: 0`** — the first row read names a predecessor that is not there. **The sequence it
   broke at says which of two things happened, and they are not the same incident.** At **sequence
@@ -570,7 +607,9 @@ elsewhere and to nobody who did not.
 So truncation is the cheapest attack on this table — it needs **no key at all**, only write access —
 and it is also the easiest thing to do by accident while trying to clear a stuck table at three in
 the morning. ADR-0044 states the same limit and the honest claim it leaves: this chain detects
-tampering by someone holding the database but not the key, **except at the end of the table**.
+tampering by someone holding the database but not **any key in the verification ring**, **except at
+the end of the table**. *(Singular "the key" until 2026-08-30; a retired key in the ring recomputes
+every row at or below its boundary, so the plural is the honest form.)*
 
 ~~Until the tail is anchored outside the system, the only witness to how many rows there should be is
 somebody who wrote the number down.~~ *(Corrected 2026-08-28: there are now three witnesses, and only
@@ -671,7 +710,7 @@ know the anchor table was there, now leaves a number that does not add up.
   ChainKey (the NEW key) + AnchorKey, exactly as this block read before the ring:
     EXIT=1   CHAIN BROKEN at sequence 1.
              Row ... was written under key id '7057da02943bb1e6' and no key in this
-             verification's ring has that id -- it holds 'e7bca259f5837226' and no
+             verification's ring has that id — it holds 'e7bca259f5837226' and no
              retired keys.
 
   + Audit__RetiredChainKeys__0__Key and __LastSequence, founding key still unset:
@@ -685,16 +724,18 @@ know the anchor table was there, now leaves a number that does not add up.
 
   **1 is the code this document tells you to alert on as CHAIN BROKEN**, and the middle run shows
   what the same procedure answers when the ring is merely INCOMPLETE: 3, which says the store could
-  not be read and names the setting to add. Two exits three lines apart, sending an operator to
-  opposite places — 3 to the configuration, 1 to an incident. The anchor-key omission a release
+  not be read and names the setting to add. The same procedure, two runs apart, sending an operator
+  to opposite places — 3 to the configuration, 1 to an incident. The anchor-key omission a release
   earlier also answered 3, which is what makes this one the worse of the two: the first rotation
   would have paged somebody, from the page written to stop exactly that, and the verdict would have
   named a key id as evidence.
 
   *(That sentence read "worse than the exit 3 the missing anchor key produced" until review. True of
-  the earlier incident, and wrong where it sits: the 3 in the fence six lines above is a FOUNDING-key
-  3, so it sent a reader to check `Audit:AnchorKey`, which is set and fine. A page read under
-  pressure is read locally.)*
+  the earlier incident, and wrong where it sits: the 3 in the block above is the middle run's, a
+  FOUNDING-key 3, so it sent a reader to check `Audit:AnchorKey`, which that run supplies and which
+  is fine. A page read under pressure is read locally. The first correction of this sentence said
+  "six lines above" and counted wrong — which is why it now names the run instead of counting lines,
+  the same rule this page states for the exit-code cross-reference further up.)*
 
   That refusal is deliberate: the ring will not construct rather than guess which key wrote the
   identity-less rows, so a HALF-configured ring cannot silently verify history under the wrong key.

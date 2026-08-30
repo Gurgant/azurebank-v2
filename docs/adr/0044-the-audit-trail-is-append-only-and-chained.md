@@ -252,6 +252,11 @@ outside the system, which is SQL Server's ledger, deferred rather than rejected.
 the honest claim is narrow: **this chain detects tampering by someone who holds the database but not
 the key, except at the end of the table.**
 
+*(⚠️ Amended by D7, 2026-08-30: read "**not any key in the verification ring**". Once a key is
+retired the ring holds more than one, and a holder of a RETIRED key can rewrite that key's epoch and
+recompute it — bounded above by its `LastSequence`, unbounded below. The singular reads as a stronger
+claim than the system makes, and the places that quoted it have been amended with it.)*
+
 **⚠️ CORRECTED 2026-08-27. The struck sentence named one control where there are two, and the
 correction sits against it rather than in a section further down, which is the whole of the rule
 `docs/adr/README.md` now states.** SQL Server's ledger and an RFC 3161 timestamp are COMPLEMENTARY
@@ -605,9 +610,10 @@ designate material the ring already holds, so each key lives in exactly one plac
 **⚠️ THE RING MADE AN INTACT VERDICT CLAIM LESS, AND EVERY SENTENCE THAT SAYS OTHERWISE IS NOW
 WRONG.** Before it, `verify` ended with *"no row was altered by anyone who does not hold
 Audit:ChainKey"*. After it, the honest statement is *a key in the RING* — because a retired key still
-recomputes every row at or below its boundary, which is the paragraph above stated from the
-operator's side. Rounding that back up in the one sentence somebody reads to conclude the bank was
-not attacked is the worst place in the system to overclaim, so the tool says the weaker thing.
+recomputes every row at or below its boundary, which is **What the boundary does not buy** stated
+from the operator's side. Rounding that back up in the one sentence somebody reads to conclude the
+bank was not attacked is the worst place in the system to overclaim, so the tool says the weaker
+thing.
 
 The same staleness reached three more sentences, and only one of them was raised in review. A hash
 mismatch on a row that names its key said the row *"records the key identity that the configured
@@ -625,14 +631,25 @@ version records no key identity — so it is checked under `Audit:FoundingChainK
 and the keyed bound never ran. **Measured: a row minted with the retired founding key, at the tail,
 above its boundary, labelled `v2` — verified clean, `IsIntact = True`.** Before the ring the same row
 needed the CURRENT key, so this was the ring handing an old key a power it did not have: the exact
-regression the paragraph above says the boundary exists to prevent, reached by choosing a different
-payload version. **A boundary that one payload version can walk around is not a boundary.**
+regression **⚠️ THE BOUNDARY IS NOT BOOKKEEPING** in `RetiredChainKey` says the boundary exists to
+prevent, reached by choosing a different payload version. **A boundary that one payload version can
+walk around is not a boundary.**
 
 The founding key now carries the epoch of the ring entry it designates — it inherits it rather than
 configuring it twice, because a designation that could disagree with the key it names would be a
-second place for the same fact to live. `AV2RowMintedWithTheRETIREDFoundingKey_IsRefused…` pins it,
-and it verifies the forgery under a raised boundary FIRST: the epoch is checked before the hash, so
+second place for the same fact to live. It is pinned by
+`AV2RowMintedWithTheRETIREDFoundingKey_IsRefused_BecauseTheEpochBoundsItToo`, which verifies the
+forgery under a raised boundary FIRST: the epoch is checked before the hash, so
 a fixture whose forged hash was merely wrong would be refused by accident and prove nothing.
+
+**Every key in the ring is held to the same strength floor**, which it was not until review. Both
+composition roots require `Audit:ChainKey` to be at least 32 characters; a retired key was checked
+only for being non-blank, so a three-character one would have been accepted — and would then have
+been the only thing standing behind every row in its epoch, the stretch of the trail nobody can
+rewrite to repair. A key weak enough to guess makes its epoch forgeable by anyone holding the
+database, which is precisely the attacker D2 is written against. The floor lives in the ring
+construction rather than in each root's options validation, for the reason the ring itself lives
+there: a structural rule enforced in one root is a rule the other does not have.
 
 **What this does not do.**
 
@@ -640,14 +657,38 @@ a fixture whose forged hash was merely wrong would be refused by accident and pr
   on, and trying keys is the one thing the ring must not do. Those rows verify under the founding key
   and no other. This is not a gap in the ring; it is why the key-identity column was required *before*
   the first anchor rather than alongside rotation.
+- **An anchor records ONE key id for a walk that may have used several, and this change does not
+  fix it.** `AuditAnchor.VerifiedUnderChainKeyId` is written from the current key unconditionally, so
+  after a rotation it names the key the RUN held rather than the keys the walk actually applied — and
+  `TailRowHash` is an HMAC under whichever key the tail row named. The field still answers the
+  question it was added for, because the tail is written under the current key; it no longer
+  describes the whole walk. Left as it is deliberately: the anchor half of rotation is deferred
+  below, and changing the anchor schema for a field nothing reads yet would be schema churn ahead of
+  the decision that should shape it. Stated here because an omission decided is different from one
+  forgotten, and only one of the two is safe to find later.
 - **Nothing forces the anchor a rotation should trigger.** The same decision ratified that "a rotation
   must force an immediate on-demand anchor, with the key-epoch boundary carried in the anchor". This
   change does not implement that, because nothing here runs unattended to notice a rotation happened —
   the same premise that defers anchoring itself. It is an operator step, and an operator step is
   weaker than a mechanism; saying so is the point.
-- **The ring is a read-side convenience, not a security control.** It makes an honest rotation
-  survivable. It constrains nobody: whoever holds the current key can write whatever they like, which
-  is what D1 and the anchor already say in their own sections.
+- **The ring is a read-side convenience, and it adds no control that did not exist before it.** It
+  makes an honest rotation survivable. It constrains the CURRENT key's holder not at all: they write
+  whatever they like, which is what D1 and the anchor already say in their own sections. *(This
+  bullet said "it constrains nobody" until review, and that is false: the boundary refuses rows above
+  a retired key's epoch even when their hash is correct, which is a constraint on somebody. Written
+  before the boundary existed and left standing after, it invited a reader to drop the boundary as
+  decoration — the exact regression the boundary closes.)*
+- **What the boundary constrains is a power the ring itself introduced, not one the world had.**
+  Before the ring, a rotation left every old row refused under any key the deployment held —
+  `WithoutRetiringTheOldKey_RotationStrandsTheHistory…` pins that — so an old key's holder could
+  produce nothing that verified. Measured against `main`, this change only WIDENS what verification
+  accepts; the boundary is what stops that widening running past the retirement point. Below the
+  boundary the ring still hands an old key more than it had, never less. So: not a new control, a
+  self-limit on a new capability.
+- **And it is defeasible by whoever holds the configuration.** The refusal happens at VERIFICATION,
+  never at write time, and the verdict says so itself — *"Raising LastSequence turns this verdict
+  green either way"*. A read-side setting an operator can turn green is not the same kind of object
+  as a hash; the anchor is still the thing that would change the picture.
 
 ## What is wired, and what is not
 

@@ -199,21 +199,28 @@ public sealed class AuditChain : IAuditChain
       anything. Publishing it is not a widening -- a database-only attacker already has an offline
       oracle for guessing the key in every row's RowHash.
     */
+    /// <summary>
+    /// The strength floor every key in the ring is held to, mirroring the value both composition
+    /// roots apply to <c>Audit:ChainKey</c>. Stated once here because the ring is the only place
+    /// that sees retired keys at all.
+    /// </summary>
+    internal const int MinimumKeyLength = 32;
+
     private const string KeyIdDomain = "AzureBank.Audit.KeyId.v1";
     private const int KeyIdHexLength = 16;
 
     private readonly string _keyId;
 
     /// <summary>
-    /// Key id to key material, for VERIFICATION only. Writing always uses the current key.
-    /// </summary>
-    /// <summary>
-    /// Key id to (material, highest sequence it may answer for). The current key is unbounded; a
-    /// retired one is bounded, which is what stops it minting rows after its epoch.
+    /// Key id to (material, highest sequence it may answer for), for VERIFICATION only — writing
+    /// always uses the current key. The current key is unbounded; a retired one is bounded, which is
+    /// what stops it minting rows after its epoch.
     /// </summary>
     private readonly Dictionary<string, (string Key, long? LastSequence)> _keyRing;
 
-    /// <summary>The key that wrote the rows recording no key identity. Never assumed; see below.</summary>
+    /// <summary>
+    /// The key that wrote the rows recording no key identity. Never assumed; see below.
+    /// </summary>
     private readonly string _foundingKey;
 
     /// <summary>
@@ -265,6 +272,27 @@ public sealed class AuditChain : IAuditChain
                 throw new InvalidOperationException(
                     "Audit:RetiredChainKeys contains a blank entry. A blank key cannot have written "
                     + "any row, so its presence is a configuration mistake rather than a no-op.");
+            }
+
+            /*
+              THE SAME STRENGTH FLOOR THE CURRENT KEY HAS, and it was missing. Both composition roots
+              hold Audit:ChainKey to 32 characters -- see each root's ServiceCollectionExtensions --
+              while a retired key was checked only for being
+              non-blank. A three-character retired key would have been accepted and would then have
+              been the only thing standing behind every row in its epoch, which is the stretch of the
+              trail nobody can rewrite to repair. A key weak enough to guess makes its epoch forgeable
+              by anyone holding the database, which is the attacker the chain is built for.
+
+              The floor lives here rather than in each root's options validation for the reason the
+              block above gives: a structural rule enforced in one root is a rule the other lacks.
+            */
+            if (retired.Length < MinimumKeyLength)
+            {
+                throw new InvalidOperationException(
+                    $"Audit:RetiredChainKeys contains a key of {retired.Length} characters. A retired "
+                    + $"key must be at least {MinimumKeyLength}, the same floor Audit:ChainKey is "
+                    + "held to in both composition roots: it authenticates every row in its epoch, "
+                    + "and those rows can never be rewritten under a stronger key.");
             }
 
             // A retired key with no boundary is the unbounded ring this bound exists to prevent, so
