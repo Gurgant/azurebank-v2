@@ -245,7 +245,8 @@ Verification says so out loud rather than leaving it to be inferred. An intact v
 This proves no row was altered by anyone who does not hold a key in the
 configured RING -- Audit:ChainKey, or a retired key for the rows at or below
 its boundary -- and that none was removed from the MIDDLE. Retiring a key
-narrows what it can write, never what it can rewrite beneath that boundary.
+narrows what a verification ACCEPTS from it, never what it can write: below
+that boundary it still rewrites and recomputes as freely as it ever did.
 It does NOT prove none was removed from the END -- truncation needs no key and
 leaves every surviving row linking correctly.
 Compare the count against your own.

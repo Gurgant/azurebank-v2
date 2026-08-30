@@ -125,9 +125,13 @@ public class AuditAnchor
     /// ⚠️ ONE ID FOR A WALK THAT MAY HAVE USED SEVERAL. This said "the key the walk verified under",
     /// which stopped being accurate when the key ring landed: a walk over a rotated table applies
     /// whichever key each row names, and this field is written from the current key unconditionally.
-    /// It still answers the question it exists for — the TAIL is written under the current key, so
-    /// this is the key behind <see cref="TailRowHash"/> — but it does not describe the walk. See
-    /// ADR-0044 D7, which records the anchor half of rotation as deferred rather than done.
+    /// It answers which key the RUN held, and nothing beyond that. It does NOT necessarily identify
+    /// the key behind <see cref="TailRowHash"/>: an anchor taken after a rotation but before the
+    /// first row is written under the new key finds a tail that a RETIRED key authenticated, while
+    /// this field says the current one. The first version of this paragraph claimed the two were the
+    /// same "because the tail is written under the current key" — true whenever anything has been
+    /// written since the rotation, and false in exactly the window a rotation opens. See ADR-0044 D7,
+    /// which records the anchor half of rotation as deferred rather than done.
     /// </para>
     /// </remarks>
     public string VerifiedUnderChainKeyId { get; set; } = string.Empty;

@@ -339,7 +339,8 @@ public static class VerifyCommand
             "  This proves no row was altered by anyone who does not hold a key in the",
             "  configured RING -- Audit:ChainKey, or a retired key for the rows at or below",
             "  its boundary -- and that none was removed from the MIDDLE. Retiring a key",
-            "  narrows what it can write, never what it can rewrite beneath that boundary.",
+            "  narrows what a verification ACCEPTS from it, never what it can write: below",
+            "  that boundary it still rewrites and recomputes as freely as it ever did.",
             // "Compare the count against your own" STAYS ON ONE LINE. The uncovered-window text
             // below points at it by name -- "the verdict above already tells you to compare
             // counts" -- and UncoveredWindowTests asserts the phrase is contiguous, which is what

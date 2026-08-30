@@ -214,7 +214,8 @@ public sealed class AuditChain : IAuditChain
     /// <summary>
     /// Key id to (material, highest sequence it may answer for), for VERIFICATION only — writing
     /// always uses the current key. The current key is unbounded; a retired one is bounded, which is
-    /// what stops it minting rows after its epoch.
+    /// what stops a row it signs after its epoch from being ACCEPTED — nothing stops it being
+    /// written, which is a different sentence and the one that is true.
     /// </summary>
     private readonly Dictionary<string, (string Key, long? LastSequence)> _keyRing;
 

@@ -763,29 +763,49 @@ know the anchor table was there, now leaves a number that does not add up.
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
+  ⚠️ **`SecureStringToBSTR` HANDS YOU PLAINTEXT IN UNMANAGED MEMORY AND NOBODY FREES IT FOR YOU.**
+  Every version of this block above called it and threw the pointer away, so each key stayed in
+  cleartext in the process's unmanaged heap for as long as the session lived — which on this page is
+  a shell somebody keeps open through an incident. `ZeroFreeBSTR` is the documented counterpart: it
+  overwrites the buffer before releasing it. It belongs in a `finally`, so an interrupted `Read-Host`
+  does not leave the allocation behind, and once it is in a `finally` it is worth writing once:
+
   ```powershell
   # Windows PowerShell 5.1
-  $key = Read-Host 'Audit:ChainKey' -AsSecureString
-  $env:Audit__ChainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($key))
-  $anchorKey = Read-Host 'Audit:AnchorKey' -AsSecureString
-  $env:Audit__AnchorKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($anchorKey))
-  $cs = Read-Host 'Connection string' -AsSecureString
-  $env:ConnectionStrings__DefaultConnection = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($cs))
+  function ConvertFrom-SecureStringPlain {
+      param([Security.SecureString]$Secure)
+      $bstr = [IntPtr]::Zero
+      try {
+          $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+          [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+      }
+      finally {
+          if ($bstr -ne [IntPtr]::Zero) {
+              [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+          }
+      }
+  }
+
+  $env:Audit__ChainKey = ConvertFrom-SecureStringPlain (Read-Host 'Audit:ChainKey' -AsSecureString)
+  $env:Audit__AnchorKey = ConvertFrom-SecureStringPlain (Read-Host 'Audit:AnchorKey' -AsSecureString)
+  $env:ConnectionStrings__DefaultConnection = ConvertFrom-SecureStringPlain (
+      Read-Host 'Connection string' -AsSecureString)
 
   # Only if a key has ever been retired. Repeat, incrementing the 0, for each one.
-  $retired = Read-Host 'Retired chain key #0' -AsSecureString
-  $env:Audit__RetiredChainKeys__0__Key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($retired))
+  $env:Audit__RetiredChainKeys__0__Key = ConvertFrom-SecureStringPlain (
+      Read-Host 'Retired chain key #0' -AsSecureString)
   $env:Audit__RetiredChainKeys__0__LastSequence = Read-Host '  its LastSequence'
-  $founding = Read-Host 'Audit:FoundingChainKey' -AsSecureString
-  $env:Audit__FoundingChainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($founding))
+  $env:Audit__FoundingChainKey = ConvertFrom-SecureStringPlain (
+      Read-Host 'Audit:FoundingChainKey' -AsSecureString)
 
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
+
+  Run, not reasoned about: the function round-trips a 42-character key on **Windows PowerShell
+  5.1.26100.9278**, which is the edition this block exists for, and on PowerShell 7.6.5 beside it.
+  **None of this makes the value private from the process** — an environment variable is readable by
+  anything running as you, and the PowerShell 7 block above hands `-AsPlainText` a managed string
+  that the GC may copy. What it removes is the one copy nothing ever reclaims.
 
   ⚠️ **AND IT PRINTS AN UNCOVERED WINDOW, which is new and is the line most likely to be misread.**
   It says how far the table runs past the deepest sequence any anchor claims to cover — "at least N

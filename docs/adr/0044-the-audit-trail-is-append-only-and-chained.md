@@ -554,9 +554,11 @@ exiting `NothingToVerify`. That separates zero from non-zero, never "purged" fro
 
 ### D7 — a key ring, so a rotation stops destroying the history it protects
 
-Rotating `Audit:ChainKey` used to cost a deployment its entire past. Every row records the identity
-of the key that wrote it; a verifier holding a different key matched none of them, and the walk broke
-at the lowest row with a verdict that reads exactly like tampering. The one operational hygiene
+Rotating `Audit:ChainKey` used to cost a deployment its entire past. Every row written since key
+identity existed records the identity of the key that wrote it — the older ones record none, and
+this section returns to them under `Audit:FoundingChainKey`. A verifier holding a different key
+matched none of the ones that do, and the walk broke at the lowest row with a verdict that reads
+exactly like tampering. The one operational hygiene
 measure a keyed design most obviously wants was the one it could not survive.
 
 **The rows are not rewritten, and that was ratified before this code existed.** Re-hashing history to
@@ -660,9 +662,12 @@ there: a structural rule enforced in one root is a rule the other does not have.
 - **An anchor records ONE key id for a walk that may have used several, and this change does not
   fix it.** `AuditAnchor.VerifiedUnderChainKeyId` is written from the current key unconditionally, so
   after a rotation it names the key the RUN held rather than the keys the walk actually applied — and
-  `TailRowHash` is an HMAC under whichever key the tail row named. The field still answers the
-  question it was added for, because the tail is written under the current key; it no longer
-  describes the whole walk. Left as it is deliberately: the anchor half of rotation is deferred
+  `TailRowHash` is an HMAC under whichever key the tail row named. So the field answers which key
+  the RUN held and nothing more: an anchor taken after a rotation but before the first write under
+  the new key records the current id beside a tail a RETIRED key authenticated. *(This bullet first
+  said the field "still answers the question it was added for, because the tail is written under the
+  current key" — true whenever anything has been written since the rotation, false in exactly the
+  window a rotation opens.)* Left as it is deliberately: the anchor half of rotation is deferred
   below, and changing the anchor schema for a field nothing reads yet would be schema churn ahead of
   the decision that should shape it. Stated here because an omission decided is different from one
   forgotten, and only one of the two is safe to find later.
