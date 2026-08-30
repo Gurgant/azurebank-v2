@@ -640,10 +640,14 @@ are cheaper to produce and they are not testimony from anybody else.
 
 The same environment as the recovery block below, and a destination that is not this machine.
 **Both keys, or it exits 3** — and after a rotation, the whole ring too: every
-`Audit__RetiredChainKeys__N__Key` with its `__LastSequence`, and `Audit__FoundingChainKey`. `export`
-verifies the chain before it copies anything, so an incomplete ring stops it exactly as it stops
-`verify`: a missing retired key reports rotated history as broken, and a retired key without the
-founding designation refuses to build the ring at all.
+`Audit__RetiredChainKeys__N__Key` with its `__LastSequence`, and `Audit__FoundingChainKey`.
+
+An incomplete ring
+stops `export` for the same reason it stops `verify` — the ring is built when the chain is RESOLVED,
+before either verb reads anything — so a retired key without the founding designation refuses at the
+same point in both. *(What `export` does NOT do is verify the audit chain: it copies the ANCHOR
+chain, and its exit code speaks for that one. A sentence here said it "verifies the chain before it
+copies anything", which is true of the anchor chain and false of the one this page is about.)*
 
 *(This line said "same three environment variables" and was written before the ring existed. It kept
 pointing at a block that has since grown to six.)*
@@ -950,7 +954,11 @@ know the anchor table was there, now leaves a number that does not add up.
   build**: a blank or under-32-character retired key, a `LastSequence` below 1 or at the top of the
   range, two retired entries sharing a boundary, the same key listed twice or equal to the current
   one, and `Audit:FoundingChainKey` missing once anything is retired or naming material the ring does
-  not hold. All of those answer 3 in all three verbs and print the entry's configuration index.
+  not hold. All of those answer 3 in all three verbs. The per-entry ones name the offending
+  `Audit:RetiredChainKeys:N` by its CONFIGURATION index — which is not its position after the
+  boundary sort, so it is the one to edit. The three that are not per-entry — a short or missing
+  `Audit:ChainKey`, and either founding-key refusal — have no index to give and name the setting
+  instead.
 
   ⚠️ **"Validated at startup" is not true of the ring, and this paragraph used to say it of both
   keys.** The two audit KEYS are options validation and do stop the verifier before it reads. The

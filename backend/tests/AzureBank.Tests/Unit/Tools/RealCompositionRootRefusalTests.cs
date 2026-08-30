@@ -217,26 +217,50 @@ public class RealCompositionRootRefusalTests
       options at all. A typo in a binding path would have made every refusal test PASS harder while
       the working configuration silently produced an empty ring.
     */
-    [Fact]
-    public void AVALIDRingBindsFromRealConfiguration_AndTheEpochsComeOutOfIt()
+    [Theory]
+    [InlineData("12", true)]
+    [InlineData("0", false)]
+    public void ARingBindsFromRealConfiguration_AndTheBOUNDARYBindsWithIt(
+        string lastSequence, bool shouldBuild)
     {
+        /*
+          ⚠️ A NotThrow ON ITS OWN PROVES ALMOST NOTHING HERE, which is what this test was until an
+          adversarial pass pointed at it. An empty ring does not throw either: if
+          Audit:RetiredChainKeys:0:LastSequence never reached the options, the entry would bind with
+          LastSequence 0 -- or the list would bind empty -- and a NotThrow would call that a success.
+          The name even promised epochs, and no epoch was ever observed.
+
+          So the two cases differ in ONE character of configuration and they have to DISAGREE. A
+          boundary of 12 must build; a boundary of 0 must be refused by the boundary guard, quoting
+          what only that guard says. If the binding path were broken both would build, and this
+          reddens on the second case -- which is the only shape that shows the value arrived.
+        */
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddVerifierServices(GoodRingConfiguration(), Environment());
+        services.AddVerifierServices(RingConfiguration(lastSequence), Environment());
 
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
 
         var resolve = () => scope.ServiceProvider.GetRequiredService<IAuditChain>();
 
-        resolve.Should().NotThrow(
-            "a well-formed ring has to bind from the configuration shape the runbook tells an "
-            + "operator to write, or every refusal in this file is testing a ring that was empty "
-            + "for a reason nobody meant");
+        if (shouldBuild)
+        {
+            resolve.Should().NotThrow(
+                "a well-formed ring has to bind from the configuration shape the runbook tells an "
+                + "operator to write, or every refusal in this file is testing a ring that was "
+                + "empty for a reason nobody meant");
+        }
+        else
+        {
+            resolve.Should().Throw<AuditKeyRingException>(
+                "the boundary has to arrive from configuration, not default to zero unnoticed")
+                .WithMessage("*without that boundary*");
+        }
     }
 
-    /// <summary>A ring that DOES construct: one retired key, its boundary, and a founding key.</summary>
-    private static IConfiguration GoodRingConfiguration() =>
+    /// <summary>One retired key with the boundary the caller names, and a founding key.</summary>
+    private static IConfiguration RingConfiguration(string lastSequence) =>
         new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:DefaultConnection"] =
@@ -244,7 +268,7 @@ public class RealCompositionRootRefusalTests
             ["Audit:ChainKey"] = new string('k', 40),
             ["Audit:AnchorKey"] = new string('a', 40),
             ["Audit:RetiredChainKeys:0:Key"] = new string('r', 40),
-            ["Audit:RetiredChainKeys:0:LastSequence"] = "12",
+            ["Audit:RetiredChainKeys:0:LastSequence"] = lastSequence,
             ["Audit:FoundingChainKey"] = new string('r', 40),
         }).Build();
 

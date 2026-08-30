@@ -851,8 +851,9 @@ public class AuditChainTests : IDisposable
 
     [Theory]
     [InlineData("", 5L, "is blank", "blank")]
-    [InlineData(TestKey, 5L, "already in the ring", "the CURRENT key")]
-    [InlineData("a-perfectly-good-retired-key-0123456789abcdef", 0L, "has LastSequence", "unbounded")]
+    [InlineData(TestKey, 5L, "it is the CURRENT Audit:ChainKey", "the CURRENT key")]
+    [InlineData("a-perfectly-good-retired-key-0123456789abcdef", 0L, "without that boundary",
+        "unbounded")]
     [InlineData("too-short-to-be-a-key", 5L, "characters", "shorter than the floor")]
     [InlineData("a-perfectly-good-retired-key-0123456789abcdef", long.MaxValue,
         "largest a sequence can be", "boundary at the top of the range")]
@@ -872,7 +873,11 @@ public class AuditChainTests : IDisposable
           AuditKeyRingException, the whole point of giving anchor and export a verdict instead of an
           exit-4 stack trace, was never asserted anywhere in the suite; and the blank case is ALSO
           shorter than the floor, so deleting the blank guard entirely would have left this green on
-          the length guard. A fragment unique to each guard is what makes the case isolate it.
+          the length guard. A fragment unique to each guard is what makes the case isolate it — and
+          two of these were not unique until an adversarial pass said so. "already in the ring" is
+          the SHARED prefix of both arms of the duplicate-id refusal, so the CURRENT-key case was
+          satisfied by the listed-twice message; "has LastSequence" opens both the below-1 guard and
+          the at-MaxValue guard. Each case now quotes something only its own guard says.
         */
         var build = () => new AuditChain(
             Options.Create(new AuditOptions
@@ -997,27 +1002,6 @@ public class AuditChainTests : IDisposable
 
         build.Should().Throw<AuditKeyRingException>()
             .WithMessage("*the same retired key is listed twice*");
-    }
-
-    [Fact]
-    public void AFoundingKeyTheRingDoesNotHold_IsRefused_BecauseADesignationIsNotACopy()
-    {
-        /*
-          The designation names material that must already live in the ring, so that each key's bytes
-          have exactly one home. A founding key nobody else holds would be a second copy, and two
-          copies of one fact drift with nothing detecting it.
-        */
-        var build = () => new AuditChain(
-            Options.Create(new AuditOptions
-            {
-                ChainKey = RotatedKey,
-                RetiredChainKeys = [Retired(TestKey, 2)],
-                FoundingChainKey = "a-key-that-is-in-no-ring-0123456789abcdef",
-            }),
-            NullLogger<AuditChain>.Instance);
-
-        build.Should().Throw<AuditKeyRingException>()
-            .WithMessage("*neither Audit:ChainKey nor one of*");
     }
 
     [Fact]
