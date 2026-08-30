@@ -541,22 +541,32 @@ public class AuditVerifierReportTests
         exitCode.Should().Be(VerifyCommand.Broken);
 
         /*
-          ⚠️ THE NUMBER COMES FROM AuditChain, NOT FROM THE BLOCK, and the first version of this test
-          got that backwards: it counted the bullets and asserted the count it found, so it agreed
-          with whatever the block happened to say. It asserted FIVE while the code already had six --
-          the epoch's lower bound had landed a commit earlier and the block was never updated.
+          ⚠️ WHERE THE EXPECTED NUMBER COMES FROM, AND WHERE IT DOES NOT. The ACTUAL count is taken
+          from the block, which is unavoidable — the block is the thing under test. The EXPECTED
+          number is the part that can be got wrong, and the first version of this test got it by
+          counting the same block, so the assertion agreed with whatever was written there. It
+          asserted FIVE while the walk had six, then the enumeration below was left at six while the
+          assertion moved to seven — the same defect, one round later, inside the comment written to
+          prevent it.
 
-          The six, each a distinct return or switch arm in AuditChain.VerifyAsync:
+          So the expected number is derived HERE, from the walk's returns, and the derivation is
+          written out so the next person can check it rather than trust it:
+
+          The EIGHT paths, each a distinct return or switch arm in VerifyAsync, in the order the
+          walk reaches them:
             1. the payload version cannot be rendered by this build;
             2. a 'v2' row carries a key id, which that version has nowhere to keep;
             3. no key in the ring has the row's id;
-            4. the ring holds the key, the row is ABOVE its boundary;
-            5. the row records no id and is above Audit:FoundingChainKey's boundary;
-            6. the ring holds the key, the row is BELOW the epoch it opens.
+            4. the ring holds the key, the row is ABOVE its epoch;
+            5. the ring holds the key, the row is BELOW its epoch;
+            6. the row records no id and is ABOVE Audit:FoundingChainKey's epoch;
+            7. the row records no id and is BELOW it;
+            8. the row declares the current version and carries no id at all.
 
-          An overwritten column is NOT a seventh: it is how several of the above come about, since
-          PayloadVersion and KeyId are inside the hashed payload. Listing it as a peer is what made
-          the old block read as five when it covered four.
+          Eight paths, SEVEN printed causes: paths 2 and 8 share one bullet because they share one
+          action — the identity column contradicts the version, so the value was written after the
+          fact. An overwritten column is not a ninth: it is how several of them come about, since
+          PayloadVersion and KeyId are both inside the hashed payload.
         */
         var readings = lines.Count(line => line.TrimStart().StartsWith("- ", StringComparison.Ordinal));
         readings.Should().Be(
@@ -567,9 +577,10 @@ public class AuditVerifierReportTests
         var text = string.Join(" ", lines);
         text.Should().NotContain(
             "you hold a different key than the one that wrote this row",
-            "THE OLD LEADING READING, false for three of the five: on every boundary verdict the "
+            "THE OLD LEADING READING, false for all four boundary causes: on every one of them the "
             + "ring HOLDS the key and refuses the row anyway. Leading with it sent an operator to "
-            + "compare two ids that are not supposed to match");
+            + "compare two ids that are not supposed to match. (This reason said \"three of the "
+            + "five\" — a count of the list as it stood two rewrites ago.)");
         text.Should().Contain(
             "not by itself the problem",
             "and the block has to say so where it prints the two ids, or an operator reads the "

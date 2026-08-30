@@ -72,21 +72,33 @@ public enum AuditChainBreakKind
     /// payload, so a stored value that is not what the schema says it must be is itself a
     /// modification — the same reasoning <see cref="Unreadable"/> already carries.
     /// <para>
-    /// It says nothing about WHY, and since the key ring there are SIX ways to get here rather than
-    /// three: this build cannot render the version the row declares; a <c>v2</c> row carries a key
-    /// id, which that version has nowhere to keep; no key in the ring has the row's id; the ring has
-    /// that key but the row sits ABOVE the sequence it was retired at; the row records no id and
-    /// sits above the founding key's boundary; and the ring has that key but the row sits BELOW the
-    /// epoch it opens. An overwritten column is not a seventh — it is how several of those come
-    /// about, because both columns are inside the hashed payload.
-    /// The discriminator is positional rather than textual: all but an overwrite fail at the
-    /// lowest-sequence row they apply to and at every one after it, while a single interior row
-    /// failing among verified siblings is a write.
+    /// It says nothing about WHY, and the walk reaches it by EIGHT paths: this build cannot render
+    /// the version the row declares; a <c>v2</c> row carries a key id, which that version has
+    /// nowhere to keep; a <c>v3</c> row carries none, which its version does keep; no key in the
+    /// ring has the row's id; and four boundary paths — the row sits ABOVE or BELOW the epoch of the
+    /// key that answers for it, once for a row that NAMES that key and once for a row that records
+    /// no identity and is answered for by <c>Audit:FoundingChainKey</c>.
     /// <para>
-    /// This paragraph said "three" and led with "a verifier holding a different key", which the two
-    /// boundary verdicts make false — the ring HOLDS the key in both. The same sentence lived in the
-    /// verifier's output and in the runbook; those two were corrected first and this copy was
-    /// missed, which is the shape of every stale claim on this branch.
+    /// The verifier prints SEVEN causes rather than eight, because the two identity-column paths
+    /// take one action between them — the column contradicts the version, so the value was written
+    /// after the fact — and an operator does not act differently on the two. Every other path takes
+    /// a different action, which is why they are separate.
+    /// </para>
+    /// <para>
+    /// An overwritten column is not a ninth path: it is how several of those come about, because
+    /// both columns are inside the hashed payload. The discriminator is positional rather than
+    /// textual — each path fails at the lowest-sequence row it applies to and at every one after it,
+    /// EXCEPT the two below-the-epoch paths, which fail over the interval between the previous
+    /// boundary and the epoch's start. A single interior row failing among verified siblings is a
+    /// write.
+    /// </para>
+    /// <para>
+    /// This paragraph said "three" and led with "a verifier holding a different key", which the
+    /// boundary verdicts make false — the ring HOLDS the key in all four. It then said "six" while
+    /// the walk had eight, because the count was corrected in the verifier's output and in the
+    /// runbook and this copy was missed AGAIN, one commit after the paragraph below it says that is
+    /// the shape of every stale claim on this branch. Counted from the returns now, and the returns
+    /// are listed above so the next person can count them too.
     /// </para>
     /// </para>
     /// </remarks>
@@ -301,11 +313,48 @@ public sealed class AuditChain : IAuditChain
           the epochs derivable; reporting by that order would send somebody to `:1` for a mistake
           they made in `:0`.
         */
+        /*
+          THE FLOOR APPLIES TO THE CURRENT KEY TOO, and it did not. Both composition roots hold
+          Audit:ChainKey to the same length, so this looked covered -- but that is precisely the
+          argument the block above rejects for everything else in the ring: "a structural rule
+          enforced in one of them is a rule the other does not have." The current key was the one
+          member governed only by the roots, so a caller constructing AuditChain directly got no
+          check at all. Measured: ChainKey = "" built a ring.
+        */
+        if (string.IsNullOrWhiteSpace(options.Value.ChainKey)
+            || options.Value.ChainKey.Length < MinimumKeyLength)
+        {
+            throw new AuditKeyRingException(
+                $"Audit:ChainKey is {options.Value.ChainKey?.Length ?? 0} characters. It must be at "
+                + $"least {MinimumKeyLength}, the same floor every retired key is held to: it "
+                + "authenticates every row written from here on, and a key weak enough to guess "
+                + "makes them forgeable by anyone holding the database.");
+        }
+
         var retiredEntries = (options.Value.RetiredChainKeys ?? [])
             .Select((entry, index) => (Entry: entry, Index: index))
-            .Where(e => e.Entry is not null)
-            .OrderBy(e => e.Entry!.LastSequence)
+            .OrderBy(e => e.Entry?.LastSequence ?? long.MinValue)
             .ToList();
+
+        /*
+          A NULL ENTRY IS REFUSED, NOT DROPPED, and it used to be dropped by a Where() one line up.
+          Silently is the problem: a list holding only nulls -- which is what a JSON array element
+          written as `null` binds to -- left the ring with one key, so the deployment read as "never
+          rotated" and the Audit:FoundingChainKey requirement never fired. A configuration that says
+          a rotation happened would have produced a verifier that believed none had.
+
+          Measured: RetiredChainKeys = [null] built a ring and required no founding key.
+        */
+        foreach (var (entry, configIndex) in retiredEntries)
+        {
+            if (entry is null)
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} is null. An entry that binds to nothing "
+                    + "cannot describe a rotation, and dropping it would leave the ring claiming "
+                    + "fewer rotations than the configuration states.");
+            }
+        }
 
         _keyRing = new Dictionary<string, (string Key, long FirstSequence, long? LastSequence)>(
             StringComparer.Ordinal)
@@ -328,7 +377,7 @@ public sealed class AuditChain : IAuditChain
 
         foreach (var (entry, configIndex) in retiredEntries)
         {
-            var retired = entry?.Key ?? string.Empty;
+            var retired = entry!.Key ?? string.Empty;
             if (string.IsNullOrWhiteSpace(retired))
             {
                 throw new AuditKeyRingException(
@@ -597,6 +646,32 @@ public sealed class AuditChain : IAuditChain
 
         foreach (var row in pending)
         {
+            /*
+              ⚠️ THE OVERFLOW GUARD FOUR COMMITS AGO WENT ON THE WRONG NUMBER. It refuses a CONFIGURED
+              LastSequence of long.MaxValue, and the configured number is the one an operator types.
+              The number that matters here is the STORED tail, and that is the one an attacker with
+              write access controls.
+
+              MEASURED: plant a single row at long.MaxValue and the next honest write receives
+              long.MinValue, because ++ is unchecked. Sequence is the column the walk ORDERS BY, so
+              every row written afterwards sorts BELOW the entire history, and the verdict becomes
+              LinkBroken with nothing verified. One UPDATE, and the trail reads as destroyed.
+
+              Refusing is the D1 trade, deliberately: an audit write that cannot be made honestly
+              fails the business action rather than being made dishonestly. It also leaves the
+              planted row in place as the evidence of what happened, which a wrap does not.
+            */
+            if (sequence == long.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"The audit trail's tail is at sequence {sequence}, the largest a sequence can "
+                    + "be, so the next row has nowhere to go. Nothing this deployment writes reaches "
+                    + "that value: it is assigned as tail + 1 from an empty table. A tail there was "
+                    + "PUT there, and continuing would wrap the next sequence to the bottom of the "
+                    + "range and reorder the whole trail beneath it. Preserve the table and "
+                    + "escalate.");
+            }
+
             row.Sequence = ++sequence;
             row.PreviousHash = previous;
 
@@ -1111,10 +1186,15 @@ public sealed class AuditChain : IAuditChain
             if (selectedKey is null)
             {
                 /*
-                  FIVE WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. Two axes, and
-                  the arms below are their product: the row is ABOVE the epoch or BELOW it, and it
-                  either NAMES a key or records no identity and is answered for by
-                  Audit:FoundingChainKey. The fifth is a row that names an id the ring does not hold.
+                  SIX WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. Four are a
+                  product of two axes: the row is ABOVE the epoch or BELOW it, and it either NAMES a
+                  key or records no identity and is answered for by Audit:FoundingChainKey. The
+                  fifth is a row that names an id the ring does not hold; the sixth is a row on the
+                  current version carrying no id at all, which is the mirror of the 'v2' row
+                  carrying one and is refused higher up.
+
+                  (This said FIVE until the sixth arm was added in the same commit that added it.
+                  Counted from the arms below, not from memory.)
 
                   They are spelled out separately because collapsing any pair produces a sentence
                   that is false for one of them and points its reader at the wrong setting -- which
@@ -1147,7 +1227,9 @@ public sealed class AuditChain : IAuditChain
                       one above was serving both. A 'v2' row records no key identity, so the sentence
                       "names a key" was false for it, and worse, both remedies it offered were the
                       wrong ones: _foundingFirstSequence is INHERITED from the designated entry, so
-                      no LastSequence edit moves it. An operator following that verdict would have
+                      the only boundary that moves it is the PRECEDING entry's, and moving that
+                      hands the rows beneath to a key that did not write them. An operator following
+                      the old verdict would have
                       changed retirement boundaries — which the same sentence warns changes verdicts
                       for rows they did not think they were touching — while the actual
                       misconfiguration stayed exactly where it was.
@@ -1163,9 +1245,11 @@ public sealed class AuditChain : IAuditChain
                         + $"{row.Sequence:N0}. Its hash was NOT checked. Rows recording no identity "
                         + "are the OLDEST rows there are, so a founding key whose epoch starts above "
                         + "them is a designation that cannot mean what it says. ⚠️ The fix is "
-                        + "Audit:FoundingChainKey — point it at the oldest key in the ring. No "
-                        + "LastSequence edit can move this: the founding key INHERITS its epoch from "
-                        + "the entry it designates.",
+                        + "Audit:FoundingChainKey — point it at the OLDEST key in the ring. Lowering "
+                        + "the boundary of the entry BEFORE it would move this epoch's start, "
+                        + "because the start is derived from that boundary — but it fixes nothing: "
+                        + "it hands the rows beneath to a key that did not write them, and the "
+                        + "verdict moves rather than clearing.",
 
                     // Named a key the ring holds, above that key's epoch.
                     ({ } bound, _, not null) =>

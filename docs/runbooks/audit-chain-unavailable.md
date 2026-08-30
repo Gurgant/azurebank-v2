@@ -432,24 +432,42 @@ ring is wrong:
 | --- | --- | --- |
 | the key that wrote a row is not in the ring | `UnknownScheme` | lowest row that key wrote |
 | a `LastSequence` is too LOW | `UnknownScheme` | first row above the recorded boundary |
-| `FoundingChainKey` names the wrong ring member | `HashMismatch` | lowest `v2` row |
+| `FoundingChainKey` names the wrong ring member | `UnknownScheme` | lowest `v2` row |
 | a `LastSequence` is too HIGH | **`CHAIN INTACT`** | nowhere — nothing is reported |
 | a `LastSequence` is too LOW for the key BELOW it | `UnknownScheme` | first row of the next epoch |
 | two retired keys share a `LastSequence` | refused at construction | before any row is read |
 
 *(All six rows were run, not reasoned about — the same method that found the exit-1 defect further
-down this page. Row three is the only one whose verdict names a configuration setting on its own;
-the other three have to be read positionally.)*
+down this page. Two of the six verdicts name the setting at fault on their own: the shared-boundary
+refusal names the configuration index, and the wrong-designation verdict names
+`Audit:FoundingChainKey`. The rest have to be read positionally. This note said "row three … the
+other three" and counted, which stopped being true the moment the table grew from four rows to six —
+so it names rows now instead of numbering them.)*
 
-**The last row is why "run it and see" is not a check on the ring.** Too high does not fail; it
+**`LastSequence` too HIGH is why "run it and see" is not a check on the ring.** It does not fail; it
 silently admits rows a retired key had no business writing, which is the whole hazard the boundary
-exists to catch. Nothing in the verdict distinguishes it from an honest one. Only the rotation
-record does — see **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES** below.
+exists to catch. Nothing in the verdict distinguishes it from an honest one. Only the rotation record
+does — see **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES** below. *(This paragraph
+opened "The last row is why…" and meant the too-high row, which stopped being last when two more were
+appended below it.)*
 
-**The third row is the one that reads like tampering.** A founding key that the ring HOLDS is
-applied to the identity-less rows and its hash is recomputed, so a wrong designation reaches a hash
-comparison and fails it. It is a `HashMismatch` at the lowest `v2` row and every one after — which
-is positionally identical to a write, so check the designation before escalating.
+**The third row USED to be the one that read like tampering, and no longer is.** While an epoch had
+only an upper end, a founding key the ring HOLDS was applied to the identity-less rows and its hash
+recomputed, so a wrong designation reached a hash comparison and failed it as a `HashMismatch` —
+positionally identical to a write, and the reason this row told you to check the designation before
+escalating.
+
+**The epoch's lower end made that case unreachable.** Identity-less rows are the oldest rows there
+are, so only the OLDEST ring entry's epoch contains them; designating anything else puts them BELOW
+that key's epoch and the walk refuses them before any hash is recomputed. Measured: with two retired
+keys and the designation pointed at the second, the verdict is `UnknownScheme` reading *"the epoch
+that key opens begins at 3, while this row is sequence 1"*, and it names `Audit:FoundingChainKey` as
+the fix. Strictly better — the verdict now says which setting is wrong instead of looking like an
+attack.
+
+*(A `HashMismatch` on the lowest `v2` row still means something, but something else: the ring entry
+the designation names holds the wrong key MATERIAL. The epoch is right, so the walk gets as far as
+the hash and the hash disagrees. That is a wrong retired key, not a wrong designation.)*
 
 ⚠️ **AND THE TWO `UnknownScheme` VERDICTS LOOK ALIKE AND NEED OPPOSITE RESPONSES. READ WHICH ONE
 YOU HAVE BEFORE TOUCHING ANYTHING.**
@@ -481,9 +499,12 @@ YOU HAVE BEFORE TOUCHING ANYTHING.**
 - *"…is a `v2` row … the epoch that key opens begins at N"* — the FOURTH boundary verdict, and the
   only one with no minting reading at all. An identity-less row is among the oldest in the table, so
   an epoch starting above it means `Audit:FoundingChainKey` designates a ring member that is **not
-  the oldest**. ⚠️ **No `LastSequence` edit can move this**: the founding key INHERITS its epoch from
-  the entry it designates, so editing boundaries changes two other epochs and leaves this verdict
-  exactly where it was. Re-point the designation.
+  the oldest**. ⚠️ **A `LastSequence` edit is not the fix, and it is not a no-op either.** The
+  founding epoch's start is DERIVED from the preceding entry's boundary, so lowering that boundary
+  does move it — measured, and what you get is a different break rather than a clear verdict: the
+  rows beneath the new start belong to a key that did not write them, so the walk fails on the link
+  instead. And it can never reach sequence 1 while any entry precedes the designation, because a
+  `LastSequence` below 1 is refused. Re-point the designation.
 
 **The second one has two readings and they are not equally benign.** Either the recorded
 `LastSequence` is too LOW and the row is genuine history written before the rotation, or the row was
@@ -550,7 +571,8 @@ row count never moved.
   MINTING as their alternative: see **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES**
   below before changing anything. **The fourth, cause 7, does not** — an identity-less row below the
   founding epoch has one cause only, a designation that is not the ring's oldest key, and no
-  `LastSequence` edit can move it.
+  `LastSequence` edit clears it — the boundary before it does move this epoch's start, and moving
+  it trades this verdict for a link break rather than resolving anything.
 - `expected to follow ... A row was deleted, reordered, or inserted` with **`Rows verified before
   the break: 0`** — the first row read names a predecessor that is not there. **The sequence it
   broke at says which of two things happened, and they are not the same incident.** At **sequence

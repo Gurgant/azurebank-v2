@@ -856,8 +856,9 @@ public class AuditChainTests : IDisposable
     [InlineData("too-short-to-be-a-key", 5L, "characters", "shorter than the floor")]
     [InlineData("a-perfectly-good-retired-key-0123456789abcdef", long.MaxValue,
         "largest a sequence can be", "boundary at the top of the range")]
+    [InlineData(null, 5L, "is null", "entry that binds to nothing")]
     public void ARingThatCannotMeanWhatItSays_IsRefusedAtConstruction(
-        string retired, long lastSequence, string fragment, string why)
+        string? retired, long lastSequence, string fragment, string why)
     {
         /*
           REFUSED LOUDLY RATHER THAN DEDUPLICATED QUIETLY. Retiring the key still in use reads as "we
@@ -877,7 +878,7 @@ public class AuditChainTests : IDisposable
             Options.Create(new AuditOptions
             {
                 ChainKey = TestKey,
-                RetiredChainKeys = [Retired(retired, lastSequence)],
+                RetiredChainKeys = [retired is null ? null! : Retired(retired, lastSequence)],
                 FoundingChainKey = TestKey,
             }),
             NullLogger<AuditChain>.Instance);
@@ -886,6 +887,65 @@ public class AuditChainTests : IDisposable
             "a {0} retired key makes the ring claim something it cannot deliver — and the TYPE is "
             + "what the three verbs catch to answer 3 instead of exiting 4", why)
             .WithMessage($"*{fragment}*");
+    }
+
+    [Theory]
+    [InlineData("", 0)]
+    [InlineData("x", 1)]
+    [InlineData("shorter-than-the-floor", 22)]
+    public void TheCURRENTKeyIsHeldToTheSameFloorAsTheRetiredOnes(string chainKey, int length)
+    {
+        /*
+          THE ONE MEMBER OF THE RING GOVERNED ONLY BY THE ROOTS, until this. Both composition roots
+          hold Audit:ChainKey to the floor, which made it look covered — and that is exactly the
+          argument the ring construction rejects for everything else it checks: "a structural rule
+          enforced in one of them is a rule the other does not have."
+
+          MEASURED before the guard: ChainKey = "" built a ring. A caller constructing AuditChain
+          directly — which every test in this file does, and which the two roots are not the only
+          way to do — got no check at all.
+        */
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = chainKey }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<AuditKeyRingException>(
+            "a {0}-character current key authenticates every row written from here on", length)
+            .WithMessage("*Audit:ChainKey is*");
+    }
+
+    [Fact]
+    public async Task ATailAtTheTOPOfTheRange_STOPSTheNextWrite_RatherThanWrappingBeneathIt()
+    {
+        /*
+          THE OVERFLOW GUARD WENT ON THE WRONG NUMBER, and this is the number it should have been on.
+          The constructor refuses a CONFIGURED LastSequence of long.MaxValue — an operator's typo.
+          The STORED tail is the one an attacker with write access controls, and `++sequence` in
+          Link() is unchecked.
+
+          MEASURED before this guard: plant one row at long.MaxValue and the next honest write
+          receives long.MinValue. Sequence is the column the walk ORDERS BY, so every row written
+          afterwards sorts BELOW the entire history and the verdict becomes LinkBroken with nothing
+          verified. One UPDATE turns the trail into something that reads as destroyed.
+
+          Refusing is the D1 trade taken deliberately: an audit write that cannot be made honestly
+          fails the business action rather than being made dishonestly. It also leaves the planted
+          row in place as evidence, which a silent wrap does not.
+        */
+        await WriteAsync("One", "Two");
+
+        var tail = await _context.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
+        tail.Sequence = long.MaxValue;
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        _context.AuditEvents.Add(NewEvent("TheNextHonestWrite"));
+
+        var write = () => _context.SaveChangesAsync();
+
+        (await write.Should().ThrowAsync<InvalidOperationException>(
+            "wrapping would reorder the whole trail beneath the row that was planted"))
+            .WithMessage("*largest a sequence can be*");
     }
 
     [Fact]
@@ -1511,9 +1571,16 @@ public class AuditChainTests : IDisposable
             "the designation is the ONLY thing that can produce this, so it is the only thing worth "
             + "naming");
         refused.Reason.Should().Contain(
-            "No LastSequence edit can move this",
-            "because the founding key inherits its epoch — sending an operator to a boundary here "
-            + "costs them an edit that changes nothing and moves two other epochs while it does it");
+            "point it at the OLDEST key in the ring",
+            "the designation is the fix, and the verdict has to say which way to point it");
+        refused.Reason.Should().Contain(
+            "it fixes nothing",
+            "⚠️ THIS PINNED A FALSE ABSOLUTE UNTIL IT WAS MEASURED. The verdict said \"No "
+            + "LastSequence edit can move this\", and the epoch's start IS derived from the "
+            + "preceding entry's boundary, so lowering that boundary moves it — measured, at which "
+            + "point the row stops being refused for the epoch and the walk fails on the link "
+            + "instead. The honest warning is that the edit does something and that what it does is "
+            + "worse, not that it does nothing");
     }
 
     [Fact]

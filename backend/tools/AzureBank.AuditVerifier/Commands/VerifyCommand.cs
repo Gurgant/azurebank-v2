@@ -293,21 +293,31 @@ public static class VerifyCommand
             if (result.Kind == AuditChainBreakKind.UnknownScheme)
             {
                 /*
-                  SIX CAUSES SINCE THE RING, AND THIS SAID THREE, THEN FIVE. The ring added two
-                  in which the verification DOES hold the row's key -- above a retired key's epoch,
-                  and above the founding key's -- so the old first reading, "you hold a different key
-                  than the one that wrote this row", was false for both while leading the list. The
-                  epoch's lower bound then added a third of that shape, and the count here was not
-                  moved with it.
+                  SEVEN CAUSES, AND THIS COMMENT HAS SAID THREE, THEN FIVE, THEN SIX. Each time the
+                  number moved, this paragraph -- the one that ARGUES for the number -- was left
+                  behind by a commit that changed the strings below it. That is the branch's own
+                  defect committed against its own explanation, so the count is now derived here
+                  rather than remembered:
 
-                  ⚠️ THE LIST NOW ENUMERATES CAUSES, NOT READINGS, and that is why it grew by two
-                  rather than one. "The column was overwritten" was sitting among them as a peer; it
-                  is not a cause the walk can return, it is an explanation for several of them, so it
-                  moved below. The sixth is a 'v2' row carrying a key id, which has always been its
-                  own return and was never listed at all.
+                  The EIGHT paths, each a distinct return or switch arm in VerifyAsync, in the order the
+                  walk reaches them:
+                    1. the payload version cannot be rendered by this build;
+                    2. a 'v2' row carries a key id, which that version has nowhere to keep;
+                    3. no key in the ring has the row's id;
+                    4. the ring holds the key, the row is ABOVE its epoch;
+                    5. the ring holds the key, the row is BELOW its epoch;
+                    6. the row records no id and is ABOVE Audit:FoundingChainKey's epoch;
+                    7. the row records no id and is BELOW it;
+                    8. the row declares the current version and carries no id at all.
 
-                  Counted from AuditChain's returns, not from this block -- the test that guards it
-                  used to count these bullets, which made it agree with whatever was written here.
+                  Eight paths, SEVEN printed causes. Paths 2 and 8 share a bullet because they share
+                  an action -- the identity column contradicts the version, so the value was written
+                  after the fact -- and an operator does nothing different on the two. Every other
+                  path takes a different action.
+
+                  ⚠️ THE LIST ENUMERATES CAUSES, NOT READINGS. "The column was overwritten" used to
+                  sit among them as a peer; it is not something the walk can return, it is how
+                  several of them come about, so it is stated below the list instead.
                 */
                 lines.Add($"  This row declares payload version '{result.PayloadVersion ?? "(none)"}' and key id");
                 lines.Add($"  '{result.RecordedKeyId ?? "(none)"}'. The CURRENT key's id is");
@@ -339,8 +349,10 @@ public static class VerifyCommand
                 lines.Add("  FOUR of the seven are boundary causes -- above and below, for a row");
                 lines.Add("  that names a key and for one that does not. Three have MINTING as");
                 lines.Add("  their alternative; the fourth, an identity-less row BELOW the founding");
-                lines.Add("  epoch, does not -- there the fix is the DESIGNATION and no LastSequence");
-                lines.Add("  edit can move it. Read the runbook before touching the configuration.");
+                lines.Add("  epoch, does not -- there the fix is the DESIGNATION. A boundary edit");
+                lines.Add("  moves that epoch's start without clearing the verdict, because the rows");
+                lines.Add("  beneath then belong to a key that did not write them. Read the runbook");
+                lines.Add("  before touching the configuration.");
                 lines.Add("  A missing ring entry is fixed in configuration; none of the rest is, and");
                 lines.Add("  no reading here makes this a row proved good. Treat it as a break.");
             }
