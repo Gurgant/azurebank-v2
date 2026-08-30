@@ -42,8 +42,10 @@ guarantees that any tampering will be detected when the ledger data is verified"
 the same place in its own words — "the honest claim is narrow: this chain detects tampering by
 someone who holds the database but not the key" — and the verifier prints that limit above the green
 line rather than leaving it to be inferred. *(Updated 2026-08-30: after the key ring, both ADR-0044
-and the verifier state it as **not any key in the ring** — a retired key still recomputes its own
-epoch. The claim got narrower, and what the verifier prints got narrower with it.)*
+and the verifier state it as **not the key whose epoch that row falls in** — a retired key still
+recomputes its own epoch, and only its own. This note first said "not any key in the ring", which
+was the shape of the claim for the hour before the epoch gained a lower end. The claim got narrower
+twice, and what the verifier prints got narrower with it both times.)*
 
 **Almost every divergence below is one premise expressed many times:** nothing here runs unattended,
 and one principal owns everything. Both are true of this deployment and both are labelled where they
@@ -171,9 +173,10 @@ as closed. **Naming an open problem is cheaper than discovering it has been assu
 right family and is adequate. What a supervisor or an external auditor would look for and not find
 is items 1–5 and 8 — an external copy, a cadence, third-party time, storage immutability, alerting,
 and a retention policy. The honest scope of the control is the one the verifier prints: tampering by
-somebody holding the database but not **any key in the verification ring**, up to the last number a
-human wrote down. *(The verifier said "not Audit:ChainKey" when this was written; the key ring made
-that too strong, since a retired key recomputes every row at or below its boundary.)*
+somebody holding the database but not **the key whose epoch that row falls in**, up to the last
+number a human wrote down. *(The verifier said "not Audit:ChainKey" when this was written; the key
+ring made that too strong, and "any key in the ring" too weak — a retired key recomputes its own
+epoch and no other.)*
 
 **For a portfolio: right, and at the edge of over-built.** NIST SP 800-53 AU-9(3) — "Implement
 cryptographic mechanisms to protect the integrity of audit information and audit tools" — is

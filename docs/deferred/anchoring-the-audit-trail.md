@@ -8,8 +8,12 @@ breaks the walk at a nameable sequence. ADR-0044 sets out the design and, delibe
 perfectly, every hash matches, and verification reports intact. Nothing in the chain records how
 many rows there should have been. Truncation needs no key at all — only write access — which makes
 it the cheapest attack on this table, and the only one the chain misses against the attacker it is
-built for: somebody who holds the database but not the key. Somebody holding both rewrites a row and
-recomputes the chain, which is equally invisible — ADR-0044 records that as the other gap. Two
+built for: somebody who holds the database but not the key that answers for the rows they want to
+change. *(Singular "the key" until 2026-08-30. Since the key ring the verifier holds several, each
+answering for its own EPOCH, so the attacker the chain is built for is one who holds none of the
+keys covering the stretch they are after — narrower than "the key", and the narrowing is what the
+ring cost.)* Somebody holding that key rewrites a row and recomputes the chain, which is equally
+invisible — ADR-0044 records that as the other gap. Two
 controls close them and they close different layers: SQL Server's ledger at the WRITE, an external
 timestamp at the ANCHOR. This document is about the second. Delete every row and the verifier does
 say something else — `NOTHING TO VERIFY`, on the stated grounds that an empty chain links perfectly
@@ -89,8 +93,10 @@ there is nothing running to make the promise to.
 
 ### The second reason: I own both sides
 
-The chain's threat model is somebody who holds the database but not the key. An anchor stored in
-that same database is deleted in the same breath as the rows it protects — a suffix removed from
+The chain's threat model is somebody who holds the database but not the key whose epoch covers the
+rows they want — see the correction at the head of this document; it was written when there was one
+key. An anchor stored in that same database is deleted in the same breath as the rows it protects
+— a suffix removed from
 both chains verifies perfectly, because each links backwards only.
 
 So the token has to live somewhere I cannot quietly revise. On a single-machine deployment the
@@ -242,11 +248,12 @@ Four things have to be settled before the first token, and three of them are one
 Verification says so out loud rather than leaving it to be inferred. An intact verdict ends with:
 
 ```
-This proves no row was altered by anyone who does not hold a key in the
-configured RING -- Audit:ChainKey, or a retired key for the rows at or below
-its boundary -- and that none was removed from the MIDDLE. Retiring a key
-narrows what a verification ACCEPTS from it, never what it can write: below
-that boundary it still rewrites and recomputes as freely as it ever did.
+This proves no row was altered by anyone who does not hold the key whose
+EPOCH that row falls in -- Audit:ChainKey for everything since the last
+retirement, and each retired key for its own stretch and no other -- and
+that none was removed from the MIDDLE. Retiring a key narrows what a
+verification ACCEPTS from it, never what it can write: inside its own epoch
+it still rewrites and recomputes as freely as it ever did.
 It does NOT prove none was removed from the END -- truncation needs no key and
 leaves every surviving row linking correctly.
 Compare the count against your own.

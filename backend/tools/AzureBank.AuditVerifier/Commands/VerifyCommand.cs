@@ -336,10 +336,11 @@ public static class VerifyCommand
                 lines.Add("  entry in the list: PayloadVersion and KeyId are inside the hashed");
                 lines.Add("  payload, so changing either is a modification that then surfaces as");
                 lines.Add("  whichever of the causes above it happens to trip.");
-                lines.Add("  THREE of the seven are boundary causes and each has MINTING as its");
-                lines.Add("  alternative -- except the last, where the fix is the DESIGNATION and no");
-                lines.Add("  LastSequence edit can move it. Read the runbook before touching the");
-                lines.Add("  configuration.");
+                lines.Add("  FOUR of the seven are boundary causes -- above and below, for a row");
+                lines.Add("  that names a key and for one that does not. Three have MINTING as");
+                lines.Add("  their alternative; the fourth, an identity-less row BELOW the founding");
+                lines.Add("  epoch, does not -- there the fix is the DESIGNATION and no LastSequence");
+                lines.Add("  edit can move it. Read the runbook before touching the configuration.");
                 lines.Add("  A missing ring entry is fixed in configuration; none of the rest is, and");
                 lines.Add("  no reading here makes this a row proved good. Treat it as a break.");
             }

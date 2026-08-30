@@ -21,15 +21,26 @@ namespace AzureBank.Shared.Options;
 /// key-epoch boundary" by name.
 /// </para>
 /// <para>
-/// So a retired key answers only for rows at or below <see cref="LastSequence"/>. A row above it is
-/// refused even when its hash is correct, because a correct hash under a key that had no business
-/// writing by then is exactly what minting looks like.
+/// So a retired key answers only for rows inside its own EPOCH — at or below
+/// <see cref="LastSequence"/>, and no lower than one past the previous key's boundary. A row on
+/// either side of it is refused even when its hash is correct, because a correct hash under a key
+/// that had no business writing there is exactly what minting looks like.
 /// </para>
 /// <para>
-/// WHAT IT DOES NOT BUY. Below the boundary the retired key is as powerful as it ever was: whoever
+/// WHAT IT DOES NOT BUY. Inside its own epoch the retired key is as powerful as it ever was: whoever
 /// holds it can rewrite that stretch of history and recompute it, exactly as the current key's
-/// holder can rewrite the present. The boundary bounds the FUTURE of a retired key, not its past —
-/// which is the whole of what rotation can achieve without an external anchor.
+/// holder can rewrite the present. What the boundaries buy is that the damage stays THERE — they
+/// partition the sequence space, so a compromised retired key reaches neither the rows later keys
+/// wrote nor the rows earlier ones did. Rotation confines a key to one epoch; it cannot make that
+/// epoch unrewritable, which is the whole of what rotation can achieve without an external anchor.
+/// </para>
+/// <para>
+/// ⚠️ THIS PARAGRAPH SAID "the boundary bounds the FUTURE of a retired key, not its past" UNTIL THE
+/// EPOCH GAINED A START. That was true of the first version of the ring and false of every
+/// configuration doing more than one rotation, while the member documentation twelve lines below
+/// said the opposite — one file, two security models. It read CONSERVATIVE rather than dangerous,
+/// which is why it survived: an incident responder told to treat more of the table as rewritable
+/// than really is loses time, not evidence.
 /// </para>
 /// </remarks>
 public sealed class RetiredChainKey
@@ -42,18 +53,23 @@ public sealed class RetiredChainKey
     /// this key are refused — and so are rows BELOW the epoch it opens.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// ⚠️ THIS ONE NUMBER DEFINES TWO EDGES. The epoch each retired key answers for runs from one
     /// past the PREVIOUS key's boundary up to this one, so the boundaries partition the sequence
     /// space between them and no start is configured anywhere. Recording this value therefore moves
     /// two edges: raising it extends this key's reach upward AND pushes the next key's epoch up with
     /// it. There is no way to state one without the other, which is deliberate — a separately
     /// configured start would be a second place for the same fact.
-    /// </remarks>
-    /// <remarks>
+    /// </para>
+    /// <para>
     /// Read it off the table at the moment of rotation — it is the tail sequence when the new key
-    /// took over. Recording it too HIGH re-opens the minting window by exactly the difference;
-    /// recording it too LOW refuses rows the key really did write, which is loud and correctable
-    /// rather than silent. When in doubt, err low.
+    /// took over. Getting it wrong therefore costs on both sides, which the single-edge version of
+    /// this advice did not say: too HIGH re-opens this key's minting window by the difference AND
+    /// pushes the next epoch's start above rows the next key genuinely wrote; too LOW refuses rows
+    /// this key really did write AND pulls the next epoch's start down over rows it did not. Both
+    /// directions are loud — a refused row is a verdict — so err low, and expect the noise to appear
+    /// in TWO epochs rather than one.
+    /// </para>
     /// </remarks>
     public long LastSequence { get; set; }
 }

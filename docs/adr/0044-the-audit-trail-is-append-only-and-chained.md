@@ -252,10 +252,13 @@ outside the system, which is SQL Server's ledger, deferred rather than rejected.
 the honest claim is narrow: **this chain detects tampering by someone who holds the database but not
 the key, except at the end of the table.**
 
-*(⚠️ Amended by D7, 2026-08-30: read "**not any key in the verification ring**". Once a key is
-retired the ring holds more than one, and a holder of a RETIRED key can rewrite that key's epoch and
-recompute it — bounded above by its `LastSequence`, unbounded below. The singular reads as a stronger
-claim than the system makes, and the places that quoted it have been amended with it.)*
+*(⚠️ Amended by D7, 2026-08-30: read "**not the key whose EPOCH that row falls in**". Once a key is
+retired the ring holds more than one, and a holder of a RETIRED key can rewrite the rows inside that
+key's epoch and recompute them — bounded ABOVE by its `LastSequence` and BELOW by a `FirstSequence`
+derived from the previous retirement, so one compromised key reaches neither the rows later keys
+wrote nor the rows earlier ones did. The singular reads as a stronger claim than the system makes,
+and the places that quoted it have been amended with it. This note first said "unbounded below",
+which was true for the hour between the two commits that gave the epoch its two ends.)*
 
 **⚠️ CORRECTED 2026-08-27. The struck sentence named one control where there are two, and the
 correction sits against it rather than in a section further down, which is the whole of the rule
@@ -595,10 +598,15 @@ had no business writing by then is what minting looks like.
 `ARetiredKeyCannotMintAROWATTHETAIL_BecauseTheRingBoundsItToItsEpoch` pins it, and it was written as
 a REPRODUCTION first: it failed against the unbounded ring before it passed against the bounded one.
 
-**What the boundary does not buy.** Below it the retired key is as powerful as it ever was — whoever
-holds it can rewrite that stretch and recompute it, exactly as the current key's holder can rewrite
-the present. It bounds a retired key's FUTURE, not its past, which is the whole of what rotation can
-achieve without an anchor from outside.
+**What the boundaries do not buy.** Inside its own epoch the retired key is as powerful as it ever
+was — whoever holds it can rewrite that stretch and recompute it, exactly as the current key's holder
+can rewrite the present. What they buy is that the damage stays THERE: the recorded boundaries
+partition the sequence space, so a compromised retired key reaches neither the rows later keys wrote
+nor the rows earlier ones did. Rotation confines a key to one epoch; it cannot make that epoch
+unrewritable, which is the whole of what rotation can achieve without an anchor from outside.
+*(This paragraph said the boundary "bounds a retired key's FUTURE, not its past" until the epoch
+gained a start — the singular "boundary" is the tell, and the section added below never came back to
+correct the section above it.)*
 
 **⚠️ The FOUNDING key is named, never assumed — and the first draft of this ring assumed it.** Rows
 older than the key-identity column carry a null `KeyId`, which means *no identity was recorded* and
@@ -612,8 +620,8 @@ designate material the ring already holds, so each key lives in exactly one plac
 **⚠️ THE RING MADE AN INTACT VERDICT CLAIM LESS, AND EVERY SENTENCE THAT SAYS OTHERWISE IS NOW
 WRONG.** Before it, `verify` ended with *"no row was altered by anyone who does not hold
 Audit:ChainKey"*. After it, the honest statement is *a key in the RING* — because a retired key still
-recomputes every row at or below its boundary, which is **What the boundary does not buy** stated
-from the operator's side. Rounding that back up in the one sentence somebody reads to conclude the
+recomputes every row inside its own epoch, which is **What the boundaries do not buy** stated from
+the operator's side. Rounding that back up in the one sentence somebody reads to conclude the
 bank was not attacked is the worst place in the system to overclaim, so the tool says the weaker
 thing.
 
@@ -660,9 +668,15 @@ sequence space: a key that stopped at N was preceded by one that stopped at N', 
 Asking an operator for the start as well would be a second place to state one fact — the objection
 `DeriveKeyId` records against configured ids — and the two would drift with nothing detecting it.
 Two retired keys claiming the SAME boundary are refused, because the rows beneath it would belong to
-whichever sorted first and sort order is not something a configuration states. A rotation with no
-writes between it and the next one is different and is allowed: that key gets an empty epoch and
-correctly answers for no rows.
+whichever sorted first and sort order is not something a configuration states.
+
+**A rotation with no writes between it and the next one is the SAME configuration, not a different
+one**, and this paragraph claimed otherwise: that such a key "gets an empty epoch and correctly
+answers for no rows". Measured while auditing — 512 boundary triples, **zero** produce an empty
+epoch, because sorting makes equality the only reachable collision and the refusal above is what
+meets it. Refusing is right rather than merely what the code does: a key that wrote nothing has no
+row naming its id, so a ring entry for it answers for nothing and its only effect is to make the
+boundary beneath it ambiguous. The honest configuration leaves that key OUT of the ring.
 `TheNEWESTRetiredKeyCannotREAUTHORWhatOlderKeysWrote_BecauseAnEpochHasTwoEnds` pins it, control
 first — an honest three-epoch table must still verify, or the bound would be refusing history.
 
