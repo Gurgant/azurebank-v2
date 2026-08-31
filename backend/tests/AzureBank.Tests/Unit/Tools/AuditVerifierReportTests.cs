@@ -627,6 +627,17 @@ public class AuditVerifierReportTests
             RepoRoot().FullName, "backend", "src", "AzureBank.Infrastructure", "Data",
             "AuditChain.cs"));
 
+        /*
+          ⚠️ EQUALITY, NOT Contains, AND THE DIFFERENCE IS THE WHOLE COUNT. AuditChain.cs mentions
+          AuditChainBreakKind.UnknownScheme five times: three returns, and twice inside XML doc
+          prose. A containment test would find all five and make this two too high. Comparing the
+          TRIMMED LINE for equality finds only the three returns, because a doc line trims to
+          "/// The version the breaking row declared..." and cannot equal the target. Minus one for
+          the switch's own return leaves the two refused before the switch is reached.
+
+          Written down because a reviewer read this as Contains and reported the miscount it would
+          have caused -- a reasonable misreading of a line whose correctness rests on one operator.
+        */
         var returnsOutsideTheSwitch =
             walk.Count(l => l.Trim() == "AuditChainBreakKind.UnknownScheme,") - 1;
 
