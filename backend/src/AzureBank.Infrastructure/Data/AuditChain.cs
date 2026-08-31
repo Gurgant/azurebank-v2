@@ -97,8 +97,26 @@ public enum AuditChainBreakKind
     /// </para>
     /// <para>
     /// An overwritten column is not a TENTH path: it is how several of those come about, because
-    /// both columns are inside the hashed payload. Each path applies to an INTERVAL — the epoch of
-    /// the key it concerns — and the walk returns at the first row of it.
+    /// both columns are inside the hashed payload.
+    /// <para>
+    /// The nine paths fall into THREE shapes, and how wide the damage is depends on which:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>ROW-LOCAL — an unrenderable payload version, and the identity column contradicting the
+    /// version. These concern no epoch and no key: the row is refused on its own, and the rows
+    /// around it are untouched.</item>
+    /// <item>A WHOLE EPOCH — a key the ring does not hold. The rows it answers for ARE its stretch,
+    /// so the walk stops at the first of them.</item>
+    /// <item>OUTSIDE an epoch — the four boundary paths, plus the below-sequence-1 one. The failing
+    /// row is by definition NOT in the epoch the verdict names, so that epoch says where the key was
+    /// valid, never where the damage is.</item>
+    /// </list>
+    /// <para>
+    /// ⚠️ THIS SAID "each path applies to an INTERVAL — the epoch of the key it concerns", which is
+    /// true of ONE of the three shapes. Raised in review on the runbook's copy of the same sentence;
+    /// the verifier's printed copy had already been narrowed to five of the seven causes and still
+    /// said nothing about the two row-local ones.
+    /// </para>
     /// <para>
     /// ⚠️ SO THE POSITIONAL DISCRIMINATOR IS GONE, AND THIS PARAGRAPH SOLD IT TWICE. It said each
     /// path "fails at the lowest-sequence row it applies to and at every one after it, while a

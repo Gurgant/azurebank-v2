@@ -653,8 +653,18 @@ row count never moved.
      **above** that key's epoch;
   7. the same, **below** that key's epoch.
 
-  ⚠️ **THE DISCRIMINATOR USED TO BE POSITIONAL AND THE RING BROKE IT.** Each cause applies to an
-  INTERVAL — the epoch of the key it concerns — and the walk stops at the first row of that interval.
+  ⚠️ **THE DISCRIMINATOR USED TO BE POSITIONAL AND THE RING BROKE IT.** How wide the damage is
+  depends on WHICH of the seven you have, and they come in three shapes:
+
+  - **Row-local** — causes 1 and 2, an unrenderable payload version and the identity column
+    contradicting the version. No epoch and no key are involved: the row is refused on its own and
+    the rows around it are untouched.
+  - **A whole epoch** — cause 3, a key the ring does not hold. The rows it answers for ARE its
+    stretch, so the walk stops at the first of them.
+  - **Outside an epoch** — causes 4 to 7. The failing row is by definition NOT inside the epoch the
+    verdict names, so **that epoch tells you where the key was valid, never where the damage is.**
+    Scoping an incident from it scopes the wrong rows.
+
   So a key missing from `Audit:RetiredChainKeys` breaks at the first row of THAT key's epoch, with
   rows above it that would verify if the walk went on — the same signature a single overwritten row
   produces. When the missing key is the OLDEST, its epoch starts at 1, so the break is at row 1 with
