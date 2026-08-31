@@ -189,31 +189,58 @@ public class AuditProseGuardTests
         */
         var runbook = Read(Runbook);
 
-        var headlines = CommandFiles
-            .SelectMany(file => CodeLines(
-                Path.Combine(RepoRoot().FullName, "backend", "tools", "AzureBank.AuditVerifier",
-                    "Commands", file)))
-            .SelectMany(line => Headline.Matches(line).Select(m => m.Groups[1].Value))
+        var perFile = CommandFiles.ToDictionary(
+            file => file,
+            file => CodeLines(
+                    Path.Combine(RepoRoot().FullName, "backend", "tools", "AzureBank.AuditVerifier",
+                        "Commands", file))
+                .SelectMany(line => Headline.Matches(line).Select(m => m.Groups[1].Value))
+                .ToList(),
+            StringComparer.Ordinal);
+
+        var headlines = perFile.Values
+            .SelectMany(found => found)
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
         /*
+          ⚠️ THE BREAKDOWN IS COMPUTED, NOT NARRATED, AND THAT IS THE POINT OF THIS VARIABLE. Every
+          previous version of this block wrote the per-file counts into the prose by hand, and every
+          time the extraction changed they were left behind -- most recently in the very commit that
+          widened the pattern and moved the assertion, so a reader who made this test redden was
+          handed two different derivations of the same number, in one file, thirty lines apart. The
+          numbers are read out of this run now; the prose keeps only the reasoning, which does not
+          drift because it is not a measurement.
+        */
+        var breakdown = string.Join(
+            "; ",
+            perFile.Select(file =>
+                $"{file.Key} {file.Value.Distinct(StringComparer.Ordinal).Count()} distinct of "
+                + $"{file.Value.Count} matched"));
+
+        /*
           EXACT, NOT A FLOOR, AND THE FLOOR IS WHAT WAS WRONG WITH IT. This asserted ">= 12" with a
           reason claiming "VerifyCommand alone contributes six", both numbers written from memory,
-          and the six is false. Measured per file: VerifyCommand contributes SEVEN distinct
-          headlines, AnchorCommand five, ExportCommand seven, and those nineteen collapse to fifteen
-          because INTERRUPTED, CHAIN BROKEN and NO VERDICT are each printed by more than one verb.
+          and the six was false.
 
-          (⚠️ This said "before the Distinct" and that is a different number. Before the Distinct the
-          per-file MATCH counts are 13, 8 and 12 -- thirty-three, not nineteen. The single Distinct
-          runs after both SelectMany calls, over one flattened sequence covering all three files, so
-          the pipeline goes 33 to 15 in one step and nineteen is never an intermediate total the code
-          computes. Nineteen is the sum of the per-file DISTINCT counts, which is a real property of
-          the headline population and not a stage of this pipeline. The distinction matters because
-          the claim being made is about where the number came from.)
+          The TOTAL is written here because it is the thing being asserted: a number a reader must
+          be able to disagree with. Everything under it -- what each file contributes, how many
+          matches precede the collapse -- is computed above and printed in the failure message,
+          because those are measurements and this block has proved it cannot hold one. What does not
+          move is the SHAPE: a single Distinct runs after both SelectMany calls, over one flattened
+          sequence covering all three files, so the pipeline collapses matches to distinct headlines
+          in ONE step and the sum of the per-file distinct counts is never an intermediate total the
+          code computes. Four headlines are shared -- INTERRUPTED by all three verbs, CHAIN BROKEN
+          and NO VERDICT by two each -- and that difference is the whole collapse.
+
+          ⚠️ THIS PARAGRAPH HELD THOSE NUMBERS UNTIL A REVIEW CAUGHT THEM STALE, IN THE COMMIT THAT
+          WIDENED THE PATTERN AND MOVED THE ASSERTION. The file whose entire subject is prose
+          drifting from code drifted from its own assertion, thirty lines apart, in one commit. It is
+          the strongest argument available for the split above: an assertion has an oracle and a
+          paragraph does not, so the paragraph should not be carrying arithmetic.
 
           A floor of twelve also left a hole the check below cannot close. That check passes a
-          headline the runbook merely CONTAINS, and THREE of the fifteen -- INTERRUPTED, ANCHOR and
+          headline the runbook merely CONTAINS, and THREE of the sixteen -- INTERRUPTED, ANCHOR and
           EXPORTED -- are single words a page on this subject contains by accident. The check is
           Contains, so what matters is occurrences: "anchor" occurs 75 times in the runbook, none of
           them the verdict; "exported" once, in a sentence about migrations; "interrupted" twice,
@@ -232,20 +259,17 @@ public class AuditProseGuardTests
           coincidence between two different verbs' output. It is documented deliberately now, in the
           export section, and the coincidence is no longer what carries it.
 
-          The exact count is what
-          notices it: a new verdict cannot arrive without this number moving, whatever the runbook
-          happens to say.
+          The exact count is what notices it: a new verdict cannot arrive without this number
+          moving, whatever the runbook happens to say.
         */
         headlines.Should().HaveCount(
             16,
-            "the extraction found {0}. Per file the DISTINCT headlines are seven from "
-            + "VerifyCommand, five from AnchorCommand and eight from ExportCommand; the sixteen is "
-            + "what those twenty collapse to. Fewer means the regex or the comment stripper "
+            "the extraction found {0}, from {1}. FEWER means the regex or the comment stripper "
             + "regressed -- the first version of this guard shipped blind to four verdicts for want "
             + "of a colon, and the second to any headline behind a warning prefix. MORE means a "
             + "verdict was added, and the point of reddening on that is the check below: it accepts "
             + "a headline the runbook CONTAINS, which single words like ANCHOR and EXPORTED satisfy "
-            + "by coincidence", headlines.Count);
+            + "by coincidence", headlines.Count, breakdown);
 
         /*
           The colon is not part of the match and is not required in the page either. Some verdicts
