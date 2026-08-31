@@ -212,11 +212,20 @@ public class AuditProseGuardTests
           numbers are read out of this run now; the prose keeps only the reasoning, which does not
           drift because it is not a measurement.
         */
+        var shared = perFile.Values
+            .SelectMany(found => found.Distinct(StringComparer.Ordinal))
+            .GroupBy(headline => headline, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .OrderBy(group => group.Key, StringComparer.Ordinal)
+            .ToList();
+
         var breakdown = string.Join(
-            "; ",
-            perFile.Select(file =>
-                $"{file.Key} {file.Value.Distinct(StringComparer.Ordinal).Count()} distinct of "
-                + $"{file.Value.Count} matched"));
+                "; ",
+                perFile.Select(file =>
+                    $"{file.Key} {file.Value.Distinct(StringComparer.Ordinal).Count()} distinct of "
+                    + $"{file.Value.Count} matched"))
+            + $". Shared: {string.Join(", ", shared.Select(g => $"{g.Key} in {g.Count()} files"))}"
+            + $", removing {shared.Sum(group => group.Count() - 1)} duplicate occurrences";
 
         /*
           EXACT, NOT A FLOOR, AND THE FLOOR IS WHAT WAS WRONG WITH IT. This asserted ">= 12" with a
@@ -230,8 +239,18 @@ public class AuditProseGuardTests
           move is the SHAPE: a single Distinct runs after both SelectMany calls, over one flattened
           sequence covering all three files, so the pipeline collapses matches to distinct headlines
           in ONE step and the sum of the per-file distinct counts is never an intermediate total the
-          code computes. Four headlines are shared -- INTERRUPTED by all three verbs, CHAIN BROKEN
-          and NO VERDICT by two each -- and that difference is the whole collapse.
+          code computes. The difference between that sum and the asserted total is entirely the
+          duplicate occurrences contributed by headlines more than one verb prints -- INTERRUPTED,
+          CHAIN BROKEN and NO VERDICT as this stands. The list and the arithmetic are in the message
+          for a reason beyond habit: a headline can START being shared without the asserted total
+          moving at all, so that is a change this paragraph would never have been made to notice.
+
+          (⚠️ It said "FOUR headlines are shared" and then named THREE. Four is the number of
+          duplicate OCCURRENCES the Distinct removes -- INTERRUPTED appears in three files and
+          contributes two, the other two contribute one each. The paragraph exists so a reader can
+          reconcile the per-file counts with the total, and it named the one quantity that makes the
+          reconciliation impossible. Raised in review, two sentences after this same paragraph
+          declares that measurements belong in the message because this block cannot hold one.)
 
           ⚠️ THIS PARAGRAPH HELD THOSE NUMBERS UNTIL A REVIEW CAUGHT THEM STALE, IN THE COMMIT THAT
           WIDENED THE PATTERN AND MOVED THE ASSERTION. The file whose entire subject is prose
