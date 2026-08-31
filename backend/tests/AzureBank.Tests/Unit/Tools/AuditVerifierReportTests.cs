@@ -632,10 +632,37 @@ public class AuditVerifierReportTests
 
         var switchStart = Array.FindIndex(
             walk, l => l.Contains("var reason = (expiredBoundary", StringComparison.Ordinal));
+
+        /*
+          ⚠️ THE ANCHORS ARE CHECKED BEFORE THEY ARE USED, because a guard that derives its
+          expectation from a source file has two ways to stop working and only one of them is a
+          failing assertion. If the anchor line is renamed, FindIndex returns -1 and the SECOND
+          FindIndex throws ArgumentOutOfRangeException -- the test still fails, but with an exception
+          that says nothing about what changed, during a run where somebody is looking at a different
+          diff. And the closing brace is found by text, so a nested initializer ending in "};" inside
+          an arm would truncate the slice and UNDERCOUNT the arms, which is the silent direction.
+          The default arm is always last, so requiring it inside the slice is what proves the slice
+          reached the end of the switch.
+        */
+        switchStart.Should().BeGreaterThanOrEqualTo(
+            0,
+            "the reason switch is found by the text \"var reason = (expiredBoundary\"; if that line "
+            + "was renamed this guard has to say so rather than fail on an index");
+
         var switchEnd = Array.FindIndex(
             walk, switchStart, walk.Length - switchStart, l => l.Trim() == "};");
-        var arms = walk[switchStart..switchEnd]
-            .Count(l => Regex.IsMatch(l, @"^\s+(\(|_ =>)"));
+
+        switchEnd.Should().BeGreaterThan(
+            switchStart, "the switch has to close after it opens, or the slice below is meaningless");
+
+        var block = walk[switchStart..switchEnd];
+
+        block.Should().Contain(
+            l => l.Trim().StartsWith("_ =>", StringComparison.Ordinal),
+            "the default arm is the last one, so a slice that does not reach it stopped early -- "
+            + "which would UNDERCOUNT the paths and make this guard agree with a walk it never read");
+
+        var arms = block.Count(l => Regex.IsMatch(l, @"^\s+(\(|_ =>)"));
 
         var paths = returnsOutsideTheSwitch + arms;
 

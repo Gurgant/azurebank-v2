@@ -75,17 +75,28 @@ public enum AuditChainBreakKind
     /// It says nothing about WHY, and the walk reaches it by NINE paths: this build cannot render
     /// the version the row declares; a <c>v2</c> row carries a key id, which that version has
     /// nowhere to keep; a <c>v3</c> row carries none, which its version does keep; no key in the
-    /// ring has the row's id; and four boundary paths — the row sits ABOVE or BELOW the epoch of the
-    /// key that answers for it, once for a row that NAMES that key and once for a row that records
-    /// no identity and is answered for by <c>Audit:FoundingChainKey</c>.
+    /// ring has the row's id; four boundary paths — the row sits ABOVE or BELOW the epoch of the key
+    /// that answers for it, once for a row that NAMES that key and once for a row that records no
+    /// identity and is answered for by <c>Audit:FoundingChainKey</c>; and one that is not a boundary
+    /// at all — an identity-less row stored BELOW sequence 1, which reaches the same comparison
+    /// because the founding epoch starts at 1 on a ring that has never rotated.
     /// <para>
-    /// The verifier prints SEVEN causes rather than eight, because the two identity-column paths
-    /// take one action between them — the column contradicts the version, so the value was written
-    /// after the fact — and an operator does not act differently on the two. Every other path takes
-    /// a different action, which is why they are separate.
+    /// The verifier prints SEVEN causes rather than nine, because two PAIRS of paths take one action
+    /// each. The identity-column pair — a <c>v2</c> row carrying an id and a <c>v3</c> row carrying
+    /// none — says the column contradicts the version, so the value was written after the fact. The
+    /// below-the-founding-epoch pair prints different TEXT, one sending the operator to the
+    /// designation and the other to escalation, but occupies one entry in the printed list, which
+    /// names both. Every other path takes a different action, which is why they are separate.
     /// </para>
     /// <para>
-    /// An overwritten column is not a ninth path: it is how several of those come about, because
+    /// ⚠️ THIS PARAGRAPH ENUMERATED EIGHT ITEMS UNDER A HEADING THAT SAID NINE, and closed with
+    /// "rather than eight". The ninth path was added in the same commit that changed the heading and
+    /// nowhere else. The count is DERIVED from this file by
+    /// <c>AuditVerifierReportTests.TheUnknownSchemeBlockEnumeratesEVERYWayToReachIt…</c>, which
+    /// reddens when a path is added; the ENUMERATION is not, and this is what that costs.
+    /// </para>
+    /// <para>
+    /// An overwritten column is not a TENTH path: it is how several of those come about, because
     /// both columns are inside the hashed payload. Each path applies to an INTERVAL — the epoch of
     /// the key it concerns — and the walk returns at the first row of it.
     /// <para>
@@ -1267,15 +1278,18 @@ public sealed class AuditChain : IAuditChain
             if (selectedKey is null)
             {
                 /*
-                  SIX WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. Four are a
+                  SEVEN WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. Four are a
                   product of two axes: the row is ABOVE the epoch or BELOW it, and it either NAMES a
                   key or records no identity and is answered for by Audit:FoundingChainKey. The
                   fifth is a row that names an id the ring does not hold; the sixth is a row on the
-                  current version carrying no id at all, which is the mirror of the 'v2' row
-                  carrying one and is refused higher up.
+                  current version carrying no id at all, which is the mirror of the 'v2' row carrying
+                  one and is refused higher up. The seventh is not a boundary at all -- an
+                  identity-less row stored BELOW sequence 1, which reaches the same comparison
+                  because the founding epoch starts at 1 on a ring that has never rotated, and which
+                  no setting can fix.
 
-                  (This said FIVE until the sixth arm was added in the same commit that added it.
-                  Counted from the arms below, not from memory.)
+                  (This said FIVE, then SIX, each time in the commit that added the arm. Counted from
+                  the arms below, not from memory.)
 
                   They are spelled out separately because collapsing any pair produces a sentence
                   that is false for one of them and points its reader at the wrong setting -- which
@@ -1286,15 +1300,16 @@ public sealed class AuditChain : IAuditChain
                   a single arm was left serving both, so a row that names NOTHING was told it "names
                   a key" and sent to edit a LastSequence that cannot move it.
 
-                  ⚠️ SIX IS RIGHT AND THE DERIVATION WRITTEN HERE WAS NOT. This block said it
-                  enumerated the six "from the assignments to selectedKey above, not from the arms
-                  below", and eleven lines higher it said the opposite -- "counted from the arms
-                  below, not from memory". The assignments give FIVE, not six: one of them serves
-                  two situations that the tuple separates downstream, a 'v3' row naming an id the
-                  ring does not hold and a 'v3' row carrying no id at all. So the arms are the only
-                  place the six can be counted, which is the procedure this comment claimed to have
-                  avoided. Counting the arms is safe here BECAUSE the five assignments are checked
-                  against them: five assignments, six arms, and the one that splits is named.
+                  ⚠️ THE COUNT COMES FROM THE ARMS, AND THE DERIVATION WRITTEN HERE ONCE SAID
+                  OTHERWISE. This block claimed it enumerated them "from the assignments to
+                  selectedKey above, not from the arms below", while eleven lines higher it said the
+                  opposite. The assignments give FIVE: two of them each serve two situations that the
+                  tuple separates downstream -- a 'v3' row naming an id the ring does not hold versus
+                  one carrying no id at all, and an identity-less row below the founding epoch by
+                  DESIGNATION versus one below sequence 1. So the arms are the only place the number
+                  can be counted, which is the procedure this comment claimed to have avoided.
+                  Counting them is safe BECAUSE the five assignments are reconciled against them:
+                  five assignments, seven arms, and both splits are named above.
                 */
                 /*
                   ⚠️ BLANK IS NOT AN IDENTITY, AND THE TUPLE USED row.KeyId RAW. A 'v3' row whose

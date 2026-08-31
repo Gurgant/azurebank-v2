@@ -521,14 +521,20 @@ the designation names holds the wrong key MATERIAL. The epoch is right, so the w
 the hash and the hash disagrees. That is a wrong retired key, not a wrong designation.)*
 
 ⚠️ **AND THE `UnknownScheme` VERDICTS LOOK ALIKE AND NEED DIFFERENT RESPONSES. READ WHICH ONE YOU
-HAVE BEFORE TOUCHING ANYTHING.** The walk can print **eight** distinct `UnknownScheme` messages,
-which the exit-code section below groups into **seven causes** because two of them share one action.
-Six come out of the reason switch: the five below, which a ring misconfiguration can produce, and a
-sixth at the end of this section that nothing in the configuration causes. The other two are refused
-before the switch is reached — an unrenderable payload version, and a `v2` row carrying a key id —
-and they are causes 1 and 2 in that list. *(This heading said "THE TWO" while five bullets followed,
-then "six", which counted the switch arms and no more. Three censuses of the same thing on one page
-is what this branch keeps producing; they are reconciled here rather than replaced by a fourth.)*
+HAVE BEFORE TOUCHING ANYTHING.** The walk can print **nine** distinct `UnknownScheme` messages,
+which the exit-code section below groups into **seven causes** because two PAIRS of them share an
+action. Seven come out of the reason switch: the five below, which a ring misconfiguration can
+produce, a sixth at the end of this section that nothing in the configuration causes, and a seventh
+that shares the fifth's entry in the printed list — an identity-less row stored below sequence 1,
+which is a planted row rather than a designation mistake and says so in its own text. The other two
+are refused before the switch is reached — an unrenderable payload version, and a `v2` row carrying
+a key id — and they are causes 1 and 2 in that list.
+
+*(This heading said "THE TWO" while five bullets followed, then "six", which counted the switch arms
+and no more, then "eight", which counted them before a seventh arm was added. FOUR censuses of the
+same thing on one page is what this branch keeps producing; they are reconciled here rather than
+replaced by a fifth. The number itself is derived from `AuditChain.cs` by a test — this page is the
+copy that has to be moved by hand, and this is the fourth time it was not.)*
 
 - *"…and no key in this verification's ring has that id"* — the key that wrote the row was never
   retired into the configuration. Adding it, with its boundary, is the fix.
