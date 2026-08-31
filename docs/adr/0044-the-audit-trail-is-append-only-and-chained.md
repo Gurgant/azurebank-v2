@@ -782,9 +782,15 @@ there: a structural rule enforced in one root is a rule the other does not have.
   `main` accepted. The narrowing exists only once a rotation has been recorded.)*
 - **And it is defeasible by whoever holds the configuration.** The refusal happens at VERIFICATION,
   never at write time, and the verdict says so itself — *"Raising LastSequence can turn this verdict
-  green under either reading, and going green does not tell you which was true"*. A read-side setting
-  an operator can turn green is not the same kind of object as a hash; the anchor is still the thing
-  that would change the picture.
+  green under either reading, and going green does not tell you which was true"*. ⚠️ **Which
+  direction defeats it depends on which end of the epoch was crossed**, and this bullet quoted only
+  the verdict for one of them: a row ABOVE a retired key's boundary is admitted by RAISING that
+  boundary, while a row BELOW the current key's start is admitted by LOWERING the last retirement's
+  — raising it moves that start further away and refuses the row harder. Both are one edit to one
+  number by whoever holds the configuration, which is the point the bullet is making; naming only
+  the raise made it read as one remedy for two different failures. A read-side setting an operator
+  can turn green is not the same kind of object as a hash; the anchor is still the thing that would
+  change the picture.
 
 ## What is wired, and what is not
 

@@ -90,9 +90,20 @@ public class AuditProseGuardTests
     /// therefore could not see <c>CHAIN BROKEN at sequence {n}</c>, <c>ANCHOR {n} recorded.</c>,
     /// <c>GAP MARKER {n} recorded:</c> or <c>EXPORTED {n} anchor records to {path}</c> — four
     /// verdicts an operator meets, invisible to the guard written to find them.
+    /// <para>
+    /// ⚠️ A WARNING PREFIX MADE A HEADLINE INVISIBLE TOO, and that is the second correction. The
+    /// pattern required an upper-case letter straight after the quote, so a literal opening
+    /// <c>"⚠️ …"</c> matched nothing at all. Raised in review against
+    /// <c>⚠️ UNCOVERED WINDOW: NEGATIVE…</c>, which turned out to be covered anyway — the plain
+    /// <c>UNCOVERED WINDOW</c> is extracted from another line and the runbook documents the NEGATIVE
+    /// case twice. What the blindness actually hid was <c>ExportCommand</c>'s
+    /// <c>⚠️ THE ANCHOR CHAIN DID NOT VERIFY</c>, which no version of this guard had ever checked.
+    /// Measured: widening it takes the extraction from 15 headlines to 16, and that one is the
+    /// difference.
+    /// </para>
     /// </remarks>
     private static readonly Regex Headline =
-        new("\"\\s?([A-Z][A-Z]+(?: [A-Z]+)*)", RegexOptions.Compiled);
+        new("\"(?:⚠️\\s*)?\\s?([A-Z][A-Z]+(?: [A-Z]+)*)", RegexOptions.Compiled);
 
     /// <summary>
     /// Yields the lines of a C# file that are neither comments nor string continuations.
@@ -211,20 +222,30 @@ public class AuditProseGuardTests
           "anchor", a different quantity from the one the two siblings in the same sentence report.)
 
           So two of the three are documented only by coincidence and the third is documented for a
-          reason this check cannot see either,
-          and a NEW single-word verdict would be waved through as documented. The exact count is what
+          reason this check cannot see either, and a NEW single-word verdict would be waved through
+          as documented.
+
+          ⚠️ AND THE SIXTEENTH HEADLINE ARRIVED THE SAME WAY. Widening the regex to see a warning
+          prefix surfaced ExportCommand's "⚠️ THE ANCHOR CHAIN DID NOT VERIFY", which no version of
+          this guard had checked. The runbook did contain that phrase -- in lower case, describing a
+          line VerifyCommand prints, not this one -- so it would have passed on a case-insensitive
+          coincidence between two different verbs' output. It is documented deliberately now, in the
+          export section, and the coincidence is no longer what carries it.
+
+          The exact count is what
           notices it: a new verdict cannot arrive without this number moving, whatever the runbook
           happens to say.
         */
         headlines.Should().HaveCount(
-            15,
+            16,
             "the extraction found {0}. Per file the DISTINCT headlines are seven from "
-            + "VerifyCommand, five from AnchorCommand and seven from ExportCommand; the fifteen is "
-            + "what those nineteen collapse to. Fewer means the regex or the "
-            + "comment stripper regressed -- the first version of this guard shipped blind to four "
-            + "verdicts for want of a colon. MORE means a verdict was added, and the point of "
-            + "reddening on that is the check below: it accepts a headline the runbook CONTAINS, "
-            + "which single words like ANCHOR and EXPORTED satisfy by coincidence", headlines.Count);
+            + "VerifyCommand, five from AnchorCommand and eight from ExportCommand; the sixteen is "
+            + "what those twenty collapse to. Fewer means the regex or the comment stripper "
+            + "regressed -- the first version of this guard shipped blind to four verdicts for want "
+            + "of a colon, and the second to any headline behind a warning prefix. MORE means a "
+            + "verdict was added, and the point of reddening on that is the check below: it accepts "
+            + "a headline the runbook CONTAINS, which single words like ANCHOR and EXPORTED satisfy "
+            + "by coincidence", headlines.Count);
 
         /*
           The colon is not part of the match and is not required in the page either. Some verdicts

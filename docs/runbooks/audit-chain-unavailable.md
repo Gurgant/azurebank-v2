@@ -672,15 +672,22 @@ row count never moved.
   key", not evidence of anything worse. **A configuration mistake and a write can look identical in
   one run.**
 
-  What separates them is a second run **with that key in the ring**, and it takes two settings, not
-  one:
+  What separates them is a second run **with that key in the ring**, and it takes **three** values.
+  Supply fewer and the ring refuses to build — exit 3, with neither reading confirmed, which is the
+  one outcome this run exists to avoid:
 
   - `Audit:RetiredChainKeys:N:Key` — the retired key's **material**. ⚠️ **Not the id the verdict
     prints.** The id is 16 hex characters derived one-way from the material, so it cannot be pasted
     back; it tells you WHICH key to fetch from wherever your keys are kept. Pasting it here fails
     the 32-character floor and you get a third error instead of an answer.
+  - `Audit:RetiredChainKeys:N:LastSequence` — the sequence that key stopped writing at, **from the
+    rotation record**. It is a plain `long` with no default worth having: leave it out and it binds
+    to `0`, which the constructor refuses outright.
   - `Audit:FoundingChainKey` — **required as soon as anything is retired.** Add the first retired
-    entry without it and the ring refuses to build: exit 3, and neither reading confirmed.
+    entry without it and the ring refuses to build for a different reason.
+
+  *(This said "two settings, not one" and listed the material and the designation. The boundary is
+  not optional and its absence is not benign: the procedure as written exited 3 every time.)*
 
   Then verify again. A configuration miss clears. A write does not.
 
@@ -1050,10 +1057,12 @@ know the anchor table was there, now leaves a number that does not add up.
     no longer exists, and nothing legitimate produces it. Preserve the database, `export`, and
     escalate before running anything that writes.
 
-  It is counted in SEQUENCE numbers. That is a row count unless somebody holding `Audit:ChainKey`
-  removed rows and recomputed the links behind them — the walk checks the links, never the
-  contiguity — so **a `SELECT COUNT(*)` that disagrees with the span is the finding, not a fault in
-  the tool.** It is the only trace that particular deletion leaves.
+  It is counted in SEQUENCE numbers. That is a row count unless somebody holding **the keys covering
+  a stretch** removed rows from it and recomputed the links behind them — the walk checks the links,
+  never the contiguity — so **a `SELECT COUNT(*)` that disagrees with the span is the finding, not a
+  fault in the tool.** It is the only trace that particular deletion leaves. *(This named
+  `Audit:ChainKey` alone. Since the ring a retired key answers for its own epoch, so its holder can
+  do the same inside that epoch — the same narrowing the intact verdict already carries.)*
 
   It prints the verdict WITH the row count and the sequence range, because "intact" on its own is
   not an answer — a chain of zero rows links perfectly, and a table truncated to nothing reports
@@ -1081,6 +1090,11 @@ know the anchor table was there, now leaves a number that does not add up.
     that table exists to make loud — reaches a script keyed on the exit code as **green**. **Read the
     UNCOVERED WINDOW block, not just the verdict line.** Anything other than a number there is
     something to act on.
+  - **`THE ANCHOR CHAIN DID NOT VERIFY` on an `export` run is a verdict, not a note about the
+    file.** `export` writes the copy anyway and says so underneath: a chain that has stopped
+    verifying is when an off-machine copy is worth the most, and copying asserts nothing about what
+    it copies. **Read the `Kind` and the anchor sequence printed below that line** — that is the
+    finding. The file is evidence of the broken state, not a repair of it.
   - **`1` from `export` is about the ANCHOR chain, not this one.** `ExportCommand` takes its code
     from the anchor verification it just wrote out, so it can exit 1 while `verify` on the same
     database exits 0. Read `1` as "the chain THIS VERB is about is broken", and the verb decides
