@@ -682,8 +682,8 @@ public class AuditChainTests : IDisposable
     /// founding key — which is what it is, since it wrote everything the fixture writes.
     /// </summary>
     /// <remarks>
-    /// Extracted because the three call sites were byte-identical 141-column lines, 36 past the
-    /// corpus wrap. They were introduced on 32770df and survived four rounds of review because each
+    /// Extracted because the three call sites were byte-identical 141-column lines, 41 past the
+    /// corpus wrap of 100. They were introduced on 32770df and survived four rounds of review because each
     /// round measured only its own working-tree diff and never the branch.
     /// </remarks>
     private static AuditChain RotatedRing(long lastSequence) => new(
@@ -811,9 +811,17 @@ public class AuditChainTests : IDisposable
           reader finding UnknownScheme where a comment promised HashMismatch would otherwise suspect
           a regression.
 
-          FALSIFIED by replacing the lookup with a loop over the ring: this reddens, on Kind
-          rather than on IsIntact — a trial verifier finds no key matching the relabelled row and
-          returns UnknownScheme where selection returns HashMismatch.
+          FALSIFIED by replacing the lookup with a loop over the ring: this reddens on the REASON.
+          Both selection and a trial loop return UnknownScheme here — selection because the
+          relabelled row names the current key at a sequence below that key's epoch, a trial loop
+          because no key in the ring reproduces the hash — so Kind and IsIntact agree and cannot
+          separate them. What a trial loop has no way to say is "epoch begins at", because it has no
+          epochs, and that is what the assertion below pins.
+
+          (This said the mutation reddens on Kind, "where selection returns HashMismatch". Selection
+          returns UnknownScheme, as the paragraph eight lines above and the assertion twenty-seven
+          lines below both state. The note described the world before the epoch had a lower end,
+          when the relabelled row still reached the hash.)
 
           ⚠️ IT NO LONGER REDDENS ALONE, and the sentence here used to claim it did. That was true
           when this was the ring's only test; the epoch tests added later redden under the same
@@ -854,7 +862,7 @@ public class AuditChainTests : IDisposable
     [InlineData(TestKey, 5L, "it is the CURRENT Audit:ChainKey", "the CURRENT key")]
     [InlineData("a-perfectly-good-retired-key-0123456789abcdef", 0L, "without that boundary",
         "unbounded")]
-    [InlineData("too-short-to-be-a-key", 5L, "characters", "shorter than the floor")]
+    [InlineData("too-short-to-be-a-key", 5L, "holds a key of", "shorter than the floor")]
     [InlineData("a-perfectly-good-retired-key-0123456789abcdef", long.MaxValue,
         "largest a sequence can be", "boundary at the top of the range")]
     [InlineData(null, 5L, "is null", "entry that binds to nothing")]
@@ -874,10 +882,15 @@ public class AuditChainTests : IDisposable
           exit-4 stack trace, was never asserted anywhere in the suite; and the blank case is ALSO
           shorter than the floor, so deleting the blank guard entirely would have left this green on
           the length guard. A fragment unique to each guard is what makes the case isolate it — and
-          two of these were not unique until an adversarial pass said so. "already in the ring" is
+          THREE of these were not unique until an adversarial pass said so. "already in the ring" is
           the SHARED prefix of both arms of the duplicate-id refusal, so the CURRENT-key case was
           satisfied by the listed-twice message; "has LastSequence" opens both the below-1 guard and
-          the at-MaxValue guard. Each case now quotes something only its own guard says.
+          the at-MaxValue guard; and "characters" is said by TWO floor guards, the one on
+          Audit:ChainKey and the one on a retired key, so the length case quoted a word that does not
+          name which floor it tripped. That third one survived the pass that found the other two, and
+          the sentence claiming all six were unique was written in the same commit. Each case now
+          quotes something only its own guard says -- verified by testing every fragment for
+          containment against all ten AuditKeyRingException messages, not by reading.
         */
         var build = () => new AuditChain(
             Options.Create(new AuditOptions
@@ -1194,8 +1207,13 @@ public class AuditChainTests : IDisposable
           The conclusion the sentence carries is the one that matters and it is unchanged: the key is
           not in question, this is a WRITE. Only the reason given for it was stale.
 
-          FALSIFIED by restoring the old wording: the Contain("ring") assertion reddens, and the
-          NotContain one reddens on the sentence this test is named after.
+          FALSIFIED by restoring the old wording: both assertions below redden — the NotContain on
+          "the configured Audit:ChainKey", and the Contain on "the verification ring SELECTED that
+          key".
+
+          (This named a Contain("ring") assertion. There is no such assertion: the commit that
+          replaced it with the sentence above left this note pointing at the line it deleted. It was
+          also the weaker of the two, since "ring" is a substring of "during" and "string".)
 
           Raised in review on 9e92377.
         */
@@ -1384,7 +1402,8 @@ public class AuditChainTests : IDisposable
     public async Task TheNEWESTRetiredKeyCannotREAUTHORWhatOlderKeysWrote_BecauseAnEpochHasTwoEnds()
     {
         /*
-          AN EPOCH HAS TWO ENDS, AND THE FIRST VERSION OF THIS RING GAVE IT ONE. Every boundary check
+          AN EPOCH HAS TWO ENDS. THE FIRST VERSION OF THIS RING GAVE IT NONE, THE SECOND GAVE IT
+          ONE. Every boundary check
           was `row.Sequence > last`. An upper bound stops a retired key minting ABOVE its retirement;
           nothing stopped it answering for every sequence BELOW, including the stretches that older
           keys wrote.

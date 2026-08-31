@@ -502,8 +502,12 @@ attack.
 the designation names holds the wrong key MATERIAL. The epoch is right, so the walk gets as far as
 the hash and the hash disagrees. That is a wrong retired key, not a wrong designation.)*
 
-⚠️ **AND THE TWO `UnknownScheme` VERDICTS LOOK ALIKE AND NEED OPPOSITE RESPONSES. READ WHICH ONE
-YOU HAVE BEFORE TOUCHING ANYTHING.**
+⚠️ **AND THE `UnknownScheme` VERDICTS LOOK ALIKE AND NEED DIFFERENT RESPONSES. READ WHICH ONE YOU
+HAVE BEFORE TOUCHING ANYTHING.** There are **six**, and the five below are the ones a ring
+misconfiguration can produce; the sixth is at the end of this section because nothing in the
+configuration causes it. *(This heading said "THE TWO", and said it while five bullets followed —
+the count was written for three and never moved as bullets were appended. The list itself has
+disagreed with it for some time: its last bullet calls itself "the FOURTH boundary verdict".)*
 
 - *"…and no key in this verification's ring has that id"* — the key that wrote the row was never
   retired into the configuration. Adding it, with its boundary, is the fix.
@@ -546,6 +550,14 @@ YOU HAVE BEFORE TOUCHING ANYTHING.**
   before a key is ever selected. Handing a row to a key that did not write it produces a HASH
   MISMATCH, not a link break. And in the shape this verdict fires on, no row is handed to anybody:
   the floor above keeps it below the epoch.)*
+
+⚠️ **THE SIXTH VERDICT IS NOT A CONFIGURATION PROBLEM AT ALL, AND THIS PAGE DID NOT LIST IT.**
+
+- *"…declares payload version `v3`, which records the identity of the key that wrote it, and records
+  none"* — there is nothing to select a key by, so the hash is not checked. Nothing this deployment
+  writes leaves that column empty on this version, and the column is inside the hashed payload, so
+  the value was removed after the fact. **Do not look for a missing ring entry.** It is the mirror of
+  a `v2` row CARRYING an identity, and it is a modification. Treat it as a break.
 
 **The second one has two readings and they are not equally benign.** Either the recorded
 `LastSequence` is too LOW and the row is genuine history written before the rotation, or the row was

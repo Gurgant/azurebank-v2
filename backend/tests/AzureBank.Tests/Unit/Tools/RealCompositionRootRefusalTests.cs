@@ -232,8 +232,15 @@ public class RealCompositionRootRefusalTests
 
           So the two cases differ in ONE character of configuration and they have to DISAGREE. A
           boundary of 12 must build; a boundary of 0 must be refused by the boundary guard, quoting
-          what only that guard says. If the binding path were broken both would build, and this
-          reddens on the second case -- which is the only shape that shows the value arrived.
+          what only that guard says.
+
+          ⚠️ AND THE CASE THAT CARRIES THE PROOF IS THE FIRST ONE, NOT THE SECOND. This said "if the
+          binding path were broken both would build, and this reddens on the second case". Backwards
+          on both halves. LastSequence is a non-nullable long, so a value that never reaches the
+          options binds to 0, and the constructor refuses 0 -- which means a broken binding path
+          makes NEITHER case build. The '0' row would then still throw with the message it expects
+          and stay GREEN: it is the row that cannot detect the breakage. The '12' row is the one that
+          reddens on NotThrow, and it is the only shape that shows the value arrived.
         */
         var services = new ServiceCollection();
         services.AddLogging();

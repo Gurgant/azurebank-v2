@@ -625,15 +625,21 @@ the operator's side. Rounding that back up in the one sentence somebody reads to
 bank was not attacked is the worst place in the system to overclaim, so the tool says the weaker
 thing.
 
-The same staleness reached three more sentences, and only one of them was raised in review. A hash
+The same staleness reached four more sentences, and only one of them was raised in review. A hash
 mismatch on a row that names its key said the row *"records the key identity that the configured
 Audit:ChainKey derives"* — false after a rotation, when the ring selected a RETIRED key, and it sends
 an operator to compare two ids that are not supposed to match. Its sibling arm, one `if` away, still
 offered *"a different Audit:ChainKey"* as the alternative for a row that records no identity, which
 is checked under `Audit:FoundingChainKey`. And the verifier tool carried its own copy of the first
-one — the copy an operator actually reads during an incident. **A verdict that names the wrong knob
-is a wrong verdict even when its conclusion is right**, and the lesson repeats: the review named an
-instance, the defect was a class, and grepping for the class is what found the other three.
+one — the copy an operator actually reads during an incident. And it carried a copy of the SIBLING
+arm too, as a hint printed at sequence 1: *"Breaking at sequence 1 usually means the wrong
+`Audit:ChainKey`"*, on the one branch that fires for rows recording no identity, which are the rows
+`Audit:FoundingChainKey` answers for. **A verdict that names the wrong knob is a wrong verdict even
+when its conclusion is right**, and the lesson repeats: the review named an instance, the defect was
+a class, and grepping for the class is what found the other three. *(This paragraph said "three more
+sentences" while enumerating three and listing four, because the sequence-1 hint was corrected in
+the code and never added here. Its own arithmetic gave it away: three sentences minus the one raised
+in review leaves two, not "the other three".)*
 
 **⚠️ AND THE BOUNDARY WAS OPTIONAL UNTIL REVIEW, BECAUSE THE FORGER PICKS THE PAYLOAD VERSION.**
 Bounding retired keys by `KeyId` bounds every key a row can NAME. A `v2` row names none — that
@@ -652,7 +658,8 @@ second place for the same fact to live. It is pinned by
 forgery under a raised boundary FIRST: the epoch is checked before the hash, so
 a fixture whose forged hash was merely wrong would be refused by accident and prove nothing.
 
-**⚠️ AN EPOCH HAS TWO ENDS, AND THE FIRST TWO VERSIONS OF THIS RING GAVE IT ONE.** Every boundary
+**⚠️ AN EPOCH HAS TWO ENDS, AND THE SECOND VERSION OF THIS RING GAVE IT ONE — THE FIRST GAVE IT
+NONE.** Every boundary
 check read `row.Sequence > last`. An upper bound stops a retired key minting ABOVE its retirement;
 nothing stopped it answering for every sequence BELOW it, including the stretches older keys wrote.
 **Measured:** with one key retired at 2 and a second at 4, the holder of the second re-authored

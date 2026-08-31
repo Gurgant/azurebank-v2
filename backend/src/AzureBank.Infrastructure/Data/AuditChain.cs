@@ -298,7 +298,8 @@ public sealed class AuditChain : IAuditChain
           drifted id.
         */
         /*
-          ⚠️ AN EPOCH HAS TWO ENDS, AND THE FIRST VERSION OF THIS RING GAVE IT ONE. Every boundary
+          ⚠️ AN EPOCH HAS TWO ENDS. THE FIRST VERSION OF THIS RING GAVE IT NONE, THE SECOND GAVE
+          IT ONE. Every boundary
           check was `row.Sequence > last` -- an upper bound only -- so a retired key answered for
           EVERY sequence from the bottom of the table up to its own retirement, including the
           stretches earlier keys wrote.
@@ -1223,9 +1224,17 @@ public sealed class AuditChain : IAuditChain
                   ⚠️ THIS SAID THREE, AND THE COLLAPSE IT WARNS ABOUT WAS SITTING IN IT. The count was
                   written when the boundary had one end. Giving the epoch a start added two paths and
                   a single arm was left serving both, so a row that names NOTHING was told it "names
-                  a key" and sent to edit a LastSequence that cannot move it. Enumerated from the
-                  assignments to selectedKey above, not from the arms below -- counting the arms is
-                  what let the arms be wrong.
+                  a key" and sent to edit a LastSequence that cannot move it.
+
+                  ⚠️ SIX IS RIGHT AND THE DERIVATION WRITTEN HERE WAS NOT. This block said it
+                  enumerated the six "from the assignments to selectedKey above, not from the arms
+                  below", and eleven lines higher it said the opposite -- "counted from the arms
+                  below, not from memory". The assignments give FIVE, not six: one of them serves
+                  two situations that the tuple separates downstream, a 'v3' row naming an id the
+                  ring does not hold and a 'v3' row carrying no id at all. So the arms are the only
+                  place the six can be counted, which is the procedure this comment claimed to have
+                  avoided. Counting the arms is safe here BECAUSE the five assignments are checked
+                  against them: five assignments, six arms, and the one that splits is named.
                 */
                 var reason = (expiredBoundary, unbegunBoundary, row.KeyId) switch
                 {

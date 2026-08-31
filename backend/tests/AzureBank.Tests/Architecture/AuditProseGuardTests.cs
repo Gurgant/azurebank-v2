@@ -24,7 +24,7 @@ namespace AzureBank.Tests.Architecture;
 /// tool no longer prints sends somebody to check a setting that is fine, during the one incident the
 /// page exists for. So two of these three assertions are about what the tool SAYS and where that
 /// text is quoted, and the third is about names — a document naming a test that does not exist is a
-/// pointer to nothing, which happened twice.
+/// pointer to nothing, which happened three times on this branch.
 /// </para>
 /// <para>
 /// ⚠️ EVERY ASSERTION HERE DERIVES ITS INPUT FROM THE CODE, and every extraction carries a count
@@ -205,22 +205,35 @@ public class AuditProseGuardTests
 
         /*
           EXACT, NOT A FLOOR, AND THE FLOOR IS WHAT WAS WRONG WITH IT. This asserted ">= 12" with a
-          reason claiming "VerifyCommand alone contributes six" -- both numbers written from memory,
-          and the six is simply false: measured per file, before the Distinct, VerifyCommand yields
-          SEVEN, AnchorCommand five, ExportCommand seven, and nineteen collapse to fifteen because
-          INTERRUPTED, CHAIN BROKEN and NO VERDICT are each printed by more than one verb.
+          reason claiming "VerifyCommand alone contributes six", both numbers written from memory,
+          and the six is false. Measured per file: VerifyCommand contributes SEVEN distinct
+          headlines, AnchorCommand five, ExportCommand seven, and those nineteen collapse to fifteen
+          because INTERRUPTED, CHAIN BROKEN and NO VERDICT are each printed by more than one verb.
+
+          (⚠️ This said "before the Distinct" and that is a different number. Before the Distinct the
+          per-file MATCH counts are 13, 8 and 12 -- thirty-three, not nineteen. The single Distinct
+          runs after both SelectMany calls, over one flattened sequence covering all three files, so
+          the pipeline goes 33 to 15 in one step and nineteen is never an intermediate total the code
+          computes. Nineteen is the sum of the per-file DISTINCT counts, which is a real property of
+          the headline population and not a stage of this pipeline. The distinction matters because
+          the claim being made is about where the number came from.)
 
           A floor of twelve also left a hole the check below cannot close. That check passes a
-          headline the runbook merely CONTAINS, and two of the fifteen -- ANCHOR and EXPORTED -- are
-          single words that any page discussing anchoring or exporting contains by accident. They
-          are documented, but this guard cannot tell that from a coincidence, so a NEW single-word
-          verdict would be waved through as documented. The exact count is what notices it: a new
-          verdict cannot arrive without this number moving, whatever the runbook happens to say.
+          headline the runbook merely CONTAINS, and THREE of the fifteen -- INTERRUPTED, ANCHOR and
+          EXPORTED -- are single words a page on this subject contains by accident. ANCHOR matches
+          65 times, none of them the verdict; EXPORTED matches once, in a sentence about migrations;
+          INTERRUPTED matches twice, once in prose about freeing a BSTR and once in the exit-code
+          list, where the mention is deliberate but lowercase. So two of the three are documented
+          only by coincidence and the third is documented for a reason this check cannot see either,
+          and a NEW single-word verdict would be waved through as documented. The exact count is what
+          notices it: a new verdict cannot arrive without this number moving, whatever the runbook
+          happens to say.
         */
         headlines.Should().HaveCount(
             15,
-            "the extraction found {0}: seven from VerifyCommand, five from AnchorCommand, seven from "
-            + "ExportCommand, fifteen after the shared ones collapse. Fewer means the regex or the "
+            "the extraction found {0}. Per file the DISTINCT headlines are seven from "
+            + "VerifyCommand, five from AnchorCommand and seven from ExportCommand; the fifteen is "
+            + "what those nineteen collapse to. Fewer means the regex or the "
             + "comment stripper regressed -- the first version of this guard shipped blind to four "
             + "verdicts for want of a colon. MORE means a verdict was added, and the point of "
             + "reddening on that is the check below: it accepts a headline the runbook CONTAINS, "
@@ -247,11 +260,14 @@ public class AuditProseGuardTests
     public void TheIntactVerdictQuotedInTheDeferredDocument_IsWhatTheToolPrints()
     {
         /*
-          THIS EXACT QUOTATION DRIFTED TWICE. docs/deferred/anchoring-the-audit-trail.md reproduces
-          the intact verdict verbatim under a heading that says "What is true today", and the verdict
-          was rewritten twice on this branch — once when the ring narrowed the claim from
-          Audit:ChainKey to the ring, and again when the epoch narrowed it from the ring to the one
-          key whose epoch contains the row. Both times the quotation was caught by hand.
+          THIS EXACT QUOTATION DRIFTED THREE TIMES. docs/deferred/anchoring-the-audit-trail.md
+          reproduces the intact verdict verbatim under a heading that says "What is true today", and
+          three commits on this branch rewrote that verdict: the ring narrowed the claim from
+          Audit:ChainKey to the ring; a second commit rewrote "narrows what it can WRITE" into
+          "narrows what a verification ACCEPTS from it"; and a third narrowed the ring to the one key
+          whose epoch contains the row. All three times the quotation was caught by hand, and the
+          middle one is the one this comment used to omit -- a rewrite of the sentence's meaning
+          rather than of the key it names, which is exactly the kind a reader skims past.
 
           Comparing the whole block rather than a phrase is deliberate: a phrase match would survive
           a rewrite that kept one sentence, which is precisely how the second drift looked.
@@ -290,10 +306,26 @@ public class AuditProseGuardTests
 
     /*
       THE FILES THIS GUARD POLICES. Scoped to the audit-chain corpus rather than the repository,
-      because elsewhere the same shape catches error codes, index names and environment variables —
-      SELF_TRANSFER_NOT_ALLOWED, IX_Accounts_AccountNumber, OTEL_EXPORTER_OTLP_ENDPOINT — which are
-      not symbols and never will be. Measured repo-wide: fourteen false positives against zero real
-      ones. Widening it is a separate decision with those to answer for.
+      because elsewhere the shape catches long index names and framework types this repo does not
+      declare — IX_Transactions_TransactionNumber, SqlServerTransientExceptionDetector,
+      OpenApiSecuritySchemeReference — and because widening it means owning what it then finds.
+
+      ⚠️ THE THREE EXAMPLES HERE USED TO BE SELF_TRANSFER_NOT_ALLOWED, IX_Accounts_AccountNumber AND
+      OTEL_EXPORTER_OTLP_ENDPOINT, AND LooksLikeASymbol DISCARDS ALL THREE. An underscored name needs
+      a segment of 14 characters; their longest are 8, 13 and 8, so not one of them can ever reach
+      the resolution step, at this scope or any other. The remark on LooksLikeASymbol 170 lines below
+      says so in as many words — "the SCREAMING_SNAKE_CASE identifiers that trip a naive version …
+      fail all three" — so this file contradicted itself, and the sentence arguing for the SCOPE was
+      the half that was wrong. IX_Accounts_AccountNumber misses by one character; the index name that
+      does get through is IX_Transactions_TransactionNumber, at 17.
+
+      Measured repo-wide by porting this guard's logic over 380 .cs and 151 .md files: 175 citations
+      checked, 22 unresolved occurrences over 16 distinct names. NOT fourteen, and NOT zero real
+      ones: at least two are genuine dead citations of exactly the kind this guard exists to catch —
+      AzureBankDbContext.cs names AuditChainRetryingStrategySqlServerTests in the present tense and
+      no such class exists, and docs/adr/0041 names an elided Transfer_WithNoPinField… that no test
+      answers to. Both are older than this branch, so neither is fixed here; the point is that the
+      sentence claiming a clean widening was measuring nothing.
     */
     private static readonly string[] AuditCorpus =
     [
@@ -332,9 +364,11 @@ public class AuditProseGuardTests
     {
         /*
           A DOCUMENT NAMING A TEST THAT DOES NOT EXIST IS A POINTER TO NOTHING, and this corpus has
-          done it twice: an ADR cited a name truncated mid-word inside a code span, and a summary in
+          done it THREE times: an ADR cited an elided name inside a code span; a summary in
           AuditChainTests cited `ALegacyRowVerifies…`, which is not a prefix of any test in the
-          suite. Both were invisible to every other instrument — the compiler does not read prose,
+          suite; and ExportCommand cited one from inside a block comment, where this guard's own
+          citation scan could not see it until the scan was fixed. The third is recorded thirty lines
+          above, in the remark on CommentLines, by the same commit that left "twice" standing here. Both were invisible to every other instrument — the compiler does not read prose,
           and an elided name is exactly the shape a reader cannot check by eye.
 
           ELISIONS ARE ALLOWED AND ARE THE POINT. The corpus writes `SomeVeryLongTestName…` on

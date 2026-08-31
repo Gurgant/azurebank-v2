@@ -309,10 +309,17 @@ public class AuditVerifierReportTests
         exitCode.Should().Be(VerifyCommand.Broken);
 
         /*
-          ⚠️ "Audit:ChainKey" IS A SUBSTRING OF "Audit:FoundingChainKey", and after the key ring this
-          branch prints the second. So the assertion below kept passing while the sentence it was
-          written for had been replaced -- green, and about a different key. It now asserts the key
-          this branch actually names, which is the one applied to a row recording no identity.
+          ⚠️ THE ASSERTION BELOW USED TO BE Contain("Audit:ChainKey") AND STAYED GREEN THROUGH A
+          REWRITE OF THE SENTENCE IT WAS WRITTEN FOR. It now asserts the key this branch actually
+          names, which is the one applied to a row recording no identity.
+
+          The explanation here was that "Audit:ChainKey" is a SUBSTRING of "Audit:FoundingChainKey".
+          It is not -- the colon is followed by "Founding", so only the bare "ChainKey" nests. The
+          real reason is simpler and worse: the replacement block prints the literal on its own,
+          "Audit:FoundingChainKey, which is Audit:ChainKey only while nothing / has been retired",
+          so the old assertion matches the second mention and would be green TODAY. A stale
+          assertion was diagnosed with a mechanism that does not exist, which left the actual
+          weakness -- an assertion satisfied by a word the verdict happens to mention -- unnamed.
         */
         var text = string.Join(" ", lines);
         text.Should().Contain(
