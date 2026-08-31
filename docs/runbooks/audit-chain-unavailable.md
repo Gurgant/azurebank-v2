@@ -364,8 +364,14 @@ audited write. All three:
 - `Audit:RetiredChainKeys:N:LastSequence` — the **highest `AuditEvents.Sequence` that key legitimately
   wrote**, which is the tail at the moment the new key took over. Rows above it that name this key
   are refused even when their hash is correct, because a valid hash under a key that had stopped
-  writing is what MINTING looks like rather than history. Too high re-opens that window by the
-  difference; too low refuses real rows, which is loud and correctable. **Err low.**
+  writing is what MINTING looks like rather than history. Getting it wrong costs on BOTH sides: too high
+  re-opens that window by the difference, and also pushes the NEXT key's epoch start above rows that
+  key genuinely wrote, so it refuses real rows too — just later ones. Too low refuses this key's own
+  real rows, at the first row above the boundary. There is no safe direction to err in; take the
+  number from the rotation record. *(This read "Too high re-opens that window; too low refuses real
+  rows, which is loud and correctable. **Err low.**" That is the single-edge version of the advice,
+  removed from `RetiredChainKey.cs` on this branch as wrong once the epoch gained a lower end, and
+  left standing here.)*
 - `Audit:FoundingChainKey` — required as soon as anything is retired. Rows older than the key-identity
   column record no key, so something has to say which key wrote them; it must name material already
   in the ring. **It INHERITS that entry's `LastSequence`**, and there is nothing to set separately:
@@ -433,23 +439,50 @@ ring is wrong:
 | the key that wrote a row is not in the ring | `UnknownScheme` | lowest row that key wrote |
 | a `LastSequence` is too LOW | `UnknownScheme` | first row above the recorded boundary |
 | `FoundingChainKey` names the wrong ring member | `UnknownScheme` | lowest `v2` row |
-| a `LastSequence` is too HIGH | **`CHAIN INTACT`** | nowhere — nothing is reported |
-| a `LastSequence` is too LOW for the key BELOW it | `UnknownScheme` | first row of the next epoch |
+| a `LastSequence` is too HIGH, nothing written above the real boundary yet | **`CHAIN INTACT`** | nowhere — nothing is reported |
+| a `LastSequence` is too HIGH, the newer key has already written above it | `UnknownScheme` | first row the newer key wrote |
 | two retired keys share a `LastSequence` | refused at construction | before any row is read |
 
-*(All six rows were run, not reasoned about — the same method that found the exit-1 defect further
-down this page. Two of the six verdicts name the setting at fault on their own: the shared-boundary
-refusal names the configuration index, and the wrong-designation verdict names
-`Audit:FoundingChainKey`. The rest have to be read positionally. This note said "row three … the
-other three" and counted, which stopped being true the moment the table grew from four rows to six —
-so it names rows now instead of numbering them.)*
+⚠️ **THE LAST TWO ROWS ARE THE SAME MISCONFIGURATION, AND THIS TABLE USED TO GIVE IT TWO
+CONTRADICTORY ANSWERS.** It carried `too HIGH` → `CHAIN INTACT`, *nothing is reported*, and directly
+beneath it `too LOW for the key BELOW it` → `UnknownScheme` at the *first row of the next epoch*. The
+second row's cause was backwards: a boundary recorded too LOW never breaks at the next epoch's first
+row — it is a boundary recorded too **HIGH** that does, because the next key's epoch STARTS at this
+one's `LastSequence + 1`, so over-claiming here pushes the newer key's epoch above rows that key
+genuinely wrote. The two rows were the same error seen from both sides, filed as different errors
+with opposite verdicts, and an operator triaging by symptom would have read the wrong one.
 
-**`LastSequence` too HIGH is why "run it and see" is not a check on the ring.** It does not fail; it
-silently admits rows a retired key had no business writing, which is the whole hazard the boundary
-exists to catch. Nothing in the verdict distinguishes it from an honest one. Only the rotation record
-does — see **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES** below. *(This paragraph
-opened "The last row is why…" and meant the too-high row, which stopped being last when two more were
-appended below it.)*
+What decides which answer you get is whether the over-claimed range is EMPTY. Measured, both states,
+same ring:
+
+```
+retired key truly stopped at 2, boundary recorded 4
+  the newer key has already written rows 3 and 4  ->  IsIntact=False  UnknownScheme  breaks at 3
+  nothing written above 2                         ->  IsIntact=True   nothing reported
+```
+
+The silent state is not the harmless one. It is the window an attacker needs — the range is empty,
+so a holder of the retired key can mint into it and the walk accepts every row — and it is the state
+a deployment is in for exactly as long as it takes the new key to write. The loud state is how the
+same mistake surfaces once the system is in use, and it surfaces as rows the CURRENT key wrote being
+refused, which reads like tampering and is not.
+
+*(The note here said "All six rows were run, not reasoned about". Two of them had not been, and that
+is how one of them ended up backwards and the other unconditional. The two states above were run —
+the block is the output. Two of the six verdicts name the setting at fault on their own: the
+shared-boundary refusal names the configuration index, and the wrong-designation verdict names
+`Audit:FoundingChainKey`. The rest have to be read positionally.)*
+
+**`LastSequence` too HIGH is why "run it and see" is not a check on the ring** — while the
+over-claimed range is still empty. In that state it does not fail; it silently admits rows a retired
+key had no business writing, which is the whole hazard the boundary exists to catch, and nothing in
+the verdict distinguishes it from an honest one. Only the rotation record does — see **RAISING
+`LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES** below. Once the newer key has written into
+that range the same misconfiguration is loud, and running it and seeing DOES catch it; what it cannot
+do is tell you the ring is right before anything has been written under it, which is precisely when
+you are deciding to trust it. *(This paragraph stated the silence unconditionally, and this page's
+own table now shows both states. It also opened "The last row is why…" and meant the too-high row,
+which stopped being last when two more were appended below it.)*
 
 **The third row USED to be the one that read like tampering, and no longer is.** While an epoch had
 only an upper end, a founding key the ring HOLDS was applied to the identity-less rows and its hash
