@@ -680,6 +680,42 @@ public class AuditVerifierReportTests
             + "action; every other path takes its own");
 
         var text = string.Join(" ", lines);
+
+        /*
+          ⚠️ THE BULLETS ARE PINNED TO THE WALK AND THE WORDS ABOVE THEM WERE NOT. The block opens
+          "SEVEN causes produce this verdict" and says "of the seven" twice more, all three as
+          spelled literals. Adding a path reddens the count above and leaves those words untouched,
+          which puts "SEVEN causes" in front of an operator over eight bullets. Raised in review, and
+          it is the same shape as everything else on this branch: a number asserted in one place and
+          narrated in another, with nothing tying the two.
+
+          The TOTAL is pinned here. The two sub-counts -- "FOUR of the seven are boundary causes",
+          "TWO of the seven are fixed in configuration" -- are NOT, and that is a decision rather
+          than an oversight: they classify causes by what an operator does about them, and nothing in
+          the block's shape carries that classification for a test to derive. Writing them down as
+          unpinned is the honest half of the fix.
+        */
+        var spelledNumbers = new[]
+        {
+            "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN",
+        };
+
+        readings.Should().BeLessThan(
+            spelledNumbers.Length,
+            "the spelled-number table has to cover the count, or the two assertions below cannot "
+            + "check the words and would fail on an index instead of on the thing they guard");
+
+        var spelled = spelledNumbers[readings];
+
+        text.Should().Contain(
+            $"{spelled} causes produce this verdict",
+            "the printed total is a literal, and nothing else stops it being left behind when a "
+            + "path and its bullet are added together");
+        text.Should().Contain(
+            $"of the {spelled.ToLowerInvariant()}",
+            "the same total is repeated twice more, in the boundary-cause line and the "
+            + "fixed-in-configuration line, and both have to move with it");
+
         text.Should().NotContain(
             "you hold a different key than the one that wrote this row",
             "THE OLD LEADING READING, false for all four boundary causes: on every one of them the "

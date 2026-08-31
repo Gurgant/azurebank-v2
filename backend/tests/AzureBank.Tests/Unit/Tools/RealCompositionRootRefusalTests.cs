@@ -207,7 +207,15 @@ public class RealCompositionRootRefusalTests
         resolve.Should().Throw<AuditKeyRingException>(
             "the guards live in the constructor precisely so that BOTH roots get them, and that "
             + "claim is only worth what it is tested against")
-            .WithMessage("*characters*");
+            .WithMessage(
+                "*holds a key of*",
+                "⚠️ THIS QUOTED \"characters\" AND SIX PLACES SAY IT -- four option validators, "
+                + "AuditChain's own floor guard on Audit:ChainKey, and the retired-key guard this "
+                + "fixture trips. The verifier-root sibling was narrowed to the unique fragment one "
+                + "commit earlier and this one was left, which is the same half-swept correction "
+                + "the file keeps producing. It matters more in the API root than in the verifier's, "
+                + "because this root DOES register the option validators whose message also says "
+                + "\"at least 32 characters\"");
     }
 
     /*
