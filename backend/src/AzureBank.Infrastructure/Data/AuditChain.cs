@@ -1107,8 +1107,10 @@ public sealed class AuditChain : IAuditChain
               verdicts below, because their remedies have nothing in common.
 
               (This comment said "checked under the current key alone -- meaning a rotation strands
-              every legacy row" until the founding key landed a few commits later, which made both
-              halves false. Raised in review on 9ea4e80.)
+              every legacy row", and the founding key that makes both halves false landed in the
+              SAME commit, fifteen lines below it. Not a sentence outlived by later work: a sentence that
+              was already false when it was written, three lines above the code contradicting it.
+              Raised in review on 9ea4e80.)
             */
             string? selectedKey;
 

@@ -193,9 +193,13 @@ reject correctly written rows and report them the way it reports tampering. It l
 external anchor exists, because the first token would freeze the rendering and the key permanently.
 
 **A NULL key identity means no identity was recorded, not some particular key.** Such rows are
-verified under the FOUNDING key — today that is `Audit:ChainKey`, because it is the only one there
-has ever been. The word is deliberate: whatever adds a second key must add a ring entry for the
-founding key rather than silently re-point history at whatever is current. The migration writes no
+verified under the FOUNDING key, which `Audit:FoundingChainKey` names and which is `Audit:ChainKey`
+only while nothing has been retired. The word was deliberate before the ring existed, and the ring
+kept the promise it was making: a second key must add a ring entry for the founding key rather than
+silently re-point history at whatever is current, and the constructor now refuses to build without
+one. *(Written as future work — "today that is `Audit:ChainKey`, because it is the only one there
+has ever been" — and left in the future tense after D7, below, implemented it.)* The migration
+writes no
 identity onto those rows, because none was ever recorded and inventing one would put an
 unfalsifiable claim outside their hashed payload.
 
@@ -576,7 +580,9 @@ at any sequence, so every rotation would widen the forgery surface instead of na
 works because `KeyId` sits *inside* the hashed payload — a row cannot lie about which key to check it
 with, because changing the claim changes the hash the check recomputes.
 `AuditChainTests.ARowThatLIESAboutItsKeyIsCaught_WhichIsWhyTheRingSELECTSRatherThanTRIES` pins it,
-and replacing the lookup with a loop reddens that test and nothing else.
+and replacing the lookup with a loop reddens it. *(This said "and nothing else". The test itself
+withdrew that on this branch — the epoch tests added later redden under the same mutation, because
+a trial loop has no epochs to check a row against. The ADR was the copy nobody re-read.)*
 
 **A retired key reads and never writes.** Writing always takes `Audit:ChainKey`. Possessing an old
 key is the exact circumstance a rotation assumes has happened, so a ring whose members could also
@@ -619,11 +625,15 @@ designate material the ring already holds, so each key lives in exactly one plac
 
 **⚠️ THE RING MADE AN INTACT VERDICT CLAIM LESS, AND EVERY SENTENCE THAT SAYS OTHERWISE IS NOW
 WRONG.** Before it, `verify` ended with *"no row was altered by anyone who does not hold
-Audit:ChainKey"*. After it, the honest statement is *a key in the RING* — because a retired key still
-recomputes every row inside its own epoch, which is **What the boundaries do not buy** stated from
-the operator's side. Rounding that back up in the one sentence somebody reads to conclude the
-bank was not attacked is the worst place in the system to overclaim, so the tool says the weaker
-thing.
+Audit:ChainKey"*. The claim then narrowed TWICE. First to *a key in the RING*, when the ring landed.
+Then, when the epoch gained a lower end, to *the key whose EPOCH that row falls in* — which is what
+the tool prints today: *"`Audit:ChainKey` for everything since the last retirement, and each retired
+key for its own stretch and no other"*. A retired key still recomputes every row inside its own epoch,
+which is **What the boundaries do not buy** stated from the operator's side. Rounding that
+back up in the one sentence somebody reads to conclude the bank was not attacked is the worst place
+in the system to overclaim, so the tool says the weakest true thing. *(This paragraph stopped at the
+first narrowing and closed with "so the tool says the weaker thing", while the tool had already said
+something narrower still. A paragraph about a claim going stale, one step stale itself.)*
 
 The same staleness reached four more sentences, and only one of them was raised in review. A hash
 mismatch on a row that names its key said the row *"records the key identity that the configured
@@ -721,9 +731,9 @@ there: a structural rule enforced in one root is a rule the other does not have.
   below, and changing the anchor schema for a field nothing reads yet would be schema churn ahead of
   the decision that should shape it. Stated here because an omission decided is different from one
   forgotten, and only one of the two is safe to find later.
-- **Nothing forces the anchor a rotation should trigger.** The same decision ratified that "a rotation
-  must force an immediate on-demand anchor, with the key-epoch boundary carried in the anchor". This
-  change does not implement that, because nothing here runs unattended to notice a rotation happened —
+- **Nothing forces the anchor a rotation should trigger.** A rotation ought to force an immediate
+  anchor carrying the key-epoch boundary, and this change does not implement it, because nothing
+  here runs unattended to notice a rotation happened —
   the same premise that defers anchoring itself. It is an operator step, and an operator step is
   weaker than a mechanism; saying so is the point.
 - **The ring is a read-side convenience, and it adds one control that did not exist before it.** It

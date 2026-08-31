@@ -154,8 +154,15 @@ public static class AnchorCommand
           RESOLVED INSIDE A TRY, because resolving the chain BUILDS the ring and the ring can refuse.
           Until this guard existed these three lines threw straight past every handler in this file
           and the process exited 4 -- "the command line was wrong" -- for a configuration problem.
-          AzureBankDbContext takes IAuditChain in its constructor, so the third line triggers it too;
-          catching only around the first would have left the same hole one line lower.
+          The FIRST of the three is the one that builds the ring -- resolving IAuditChain runs the
+          constructor where every AuditKeyRingException is thrown -- and the other two cannot throw
+          it independently, because IAuditChain is scoped and all three resolutions share one scope,
+          so the instance is already built and cached. The try wraps all three anyway: the point is
+          that nothing between them escapes, not that each is a separate hazard.
+
+          (This said the third line "triggers it too" because AzureBankDbContext takes IAuditChain,
+          and that would have been a reason to widen the try. The real reason is narrower, and the
+          guard is right either way.)
         */
         IAuditChain chain;
         IAuditAnchorChain anchors;

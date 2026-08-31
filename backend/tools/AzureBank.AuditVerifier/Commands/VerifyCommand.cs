@@ -325,8 +325,8 @@ public static class VerifyCommand
                 lines.Add("  keys besides it, so those two differing is not by itself the problem.");
                 lines.Add("  The hash was NOT checked, so this is a row left UNVERIFIED, never a");
                 lines.Add("  row proved good.");
-                lines.Add("  SEVEN causes produce this verdict. The line above says which one;");
-                lines.Add("  between the rest the discriminator is POSITIONAL, not textual:");
+                lines.Add("  SEVEN causes produce this verdict. The SECOND line of this report --");
+                lines.Add("  the one directly under CHAIN BROKEN -- says which one. They are:");
                 lines.Add("    - no key in the ring has this row's id;");
                 lines.Add("    - the ring HAS that key, but the row sits ABOVE the epoch it closes;");
                 lines.Add("    - the ring HAS that key and the row sits BELOW the epoch it opens,");
@@ -353,11 +353,12 @@ public static class VerifyCommand
                 lines.Add("  that names a key and for one that does not. Three have MINTING as");
                 lines.Add("  their alternative; the fourth, an identity-less row BELOW the founding");
                 lines.Add("  epoch, does not -- there the fix is the DESIGNATION. A boundary edit");
-                lines.Add("  moves that epoch's start without clearing the verdict, because the rows");
-                lines.Add("  beneath then belong to a key that did not write them. Read the runbook");
-                lines.Add("  before touching the configuration.");
-                lines.Add("  A missing ring entry is fixed in configuration; none of the rest is, and");
-                lines.Add("  no reading here makes this a row proved good. Treat it as a break.");
+                lines.Add("  moves that start without clearing the verdict: it floors at 2, since");
+                lines.Add("  a boundary below 1 is refused, and the row that gets here is older.");
+                lines.Add("  Read the runbook before touching the configuration.");
+                lines.Add("  TWO of the seven are fixed in configuration -- a missing ring entry,");
+                lines.Add("  and the designation for cause 7. The rest are not, and no reading");
+                lines.Add("  here makes this a row proved good. Treat it as a break.");
             }
 
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");

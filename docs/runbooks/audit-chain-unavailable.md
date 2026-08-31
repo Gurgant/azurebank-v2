@@ -477,7 +477,8 @@ shared-boundary refusal names the configuration index, and the wrong-designation
 over-claimed range is still empty. In that state it does not fail; it silently admits rows a retired
 key had no business writing, which is the whole hazard the boundary exists to catch, and nothing in
 the verdict distinguishes it from an honest one. Only the rotation record does — see **RAISING
-`LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES** below. Once the newer key has written into
+`LastSequence` CAN TURN THAT VERDICT GREEN UNDER EITHER READING** below. Once the newer key has
+written into
 that range the same misconfiguration is loud, and running it and seeing DOES catch it; what it cannot
 do is tell you the ring is right before anything has been written under it, which is precisely when
 you are deciding to trust it. *(This paragraph stated the silence unconditionally, and this page's
@@ -630,20 +631,30 @@ row count never moved.
   the rule from before the ring, when one key answered for every `v3` row and a wrong key therefore
   failed at the first one. It also said the below-the-epoch causes apply to a PREFIX, "every row from
   the bottom of the table up to the previous key's boundary": they apply only to the rows naming that
-  key, which is its epoch, not everything beneath it.)* ⚠️ **An overwritten column is not an eighth cause** — `PayloadVersion` and
-  `KeyId` are both inside the hashed payload, so changing either is a modification that then surfaces
-  as whichever of the seven it happens to trip. Exit code is 1.
+  key, which is its epoch, not everything beneath it.)*
 
-  ⚠️ **A missing ring entry is fixed in configuration; nothing else here is, and none of it makes the
-  row proved good.** **FOUR of the seven are boundary causes** — 4, 5, 6 and 7. Three of those have
-  MINTING as their alternative: see **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES**
-  below before changing anything. **The fourth, cause 7, does not** — an identity-less row below the
-  founding epoch has one cause only, a designation that is not the ring's oldest key, and no
-  `LastSequence` edit clears it — the boundary before it does move this epoch's start, and moving it
-  achieves nothing an operator can use: the boundary floors at 1, so this epoch's start floors at 2,
-  and the identity-less row that gets here is sequence 1. The same verdict prints again with a
-  smaller number in it. *(This said moving it "trades this verdict for a link break". No
-  configuration value can produce a link break — see the FOURTH boundary verdict above.)*
+  ⚠️ **An overwritten column is not an eighth cause** — `PayloadVersion` and `KeyId` are both inside
+  the hashed payload, so changing either is a modification that then surfaces as whichever of the
+  seven it happens to trip. Exit code is 1.
+
+  ⚠️ **TWO of the seven are fixed in configuration — a missing ring entry, and the DESIGNATION for
+  cause 7. The rest are not, and none of it makes the row proved good.** *(This said "a missing ring
+  entry is fixed in configuration; nothing else here is", two lines above naming the designation as
+  the fix for cause 7. `Audit:FoundingChainKey` is configuration.)*
+
+  **FOUR of the seven are boundary causes** — 4, 5, 6 and 7. Three of those have MINTING as their
+  alternative: see **RAISING `LastSequence` CAN TURN THAT VERDICT GREEN UNDER EITHER READING**,
+  **ABOVE**, before changing anything. *(This said "below". The section is some seventy lines
+  earlier, so an operator scrolling down from here during an incident never reaches the one
+  paragraph that tells them not to make the edit.)*
+
+  **The fourth, cause 7, does not** — an identity-less row below the founding epoch has one cause
+  only, a designation that is not the ring's oldest key, and no `LastSequence` edit clears it. The
+  boundary before it does move this epoch's start, and moving it achieves nothing an operator can
+  use: the boundary floors at 1, so this epoch's start floors at 2, and the identity-less row that
+  gets here is sequence 1. The same verdict prints again with a smaller number in it. *(This said
+  moving it "trades this verdict for a link break". No configuration value can produce a link break
+  — see the FOURTH boundary verdict above.)*
 - `expected to follow ... A row was deleted, reordered, or inserted` with **`Rows verified before
   the break: 0`** — the first row read names a predecessor that is not there. **The sequence it
   broke at says which of two things happened, and they are not the same incident.** At **sequence
