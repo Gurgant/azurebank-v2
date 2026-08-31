@@ -1,8 +1,17 @@
 # Anchoring the audit trail, and why this deployment cannot
 
 The audit trail is append-only and hash-chained: every row's HMAC covers the previous row's hash, so
-for anybody who does not hold `Audit:ChainKey`, altering a row or removing one from the middle
-breaks the walk at a nameable sequence. ADR-0044 sets out the design and, deliberately, its limit.
+for anybody who holds none of the keys in the verification ring, altering a row or removing one from
+the middle breaks the walk at a nameable sequence. ADR-0044 sets out the design and, deliberately,
+its limit.
+
+*(This said "anybody who does not hold `Audit:ChainKey`", which the key ring made false for the
+ALTERING half. A row inside a retired key's epoch is checked under THAT key, so its holder — who
+does not hold `Audit:ChainKey` — can alter the row and recompute the hash, and only the LINK to the
+row above stops them. It stops them exactly until the rows above are also inside epochs they hold,
+which is the case when the retired key's boundary is the top of the table: the rotation is recorded
+and nothing has been written under the new key yet. The same empty range the triage table in the
+runbook calls the window an attacker needs.)*
 
 **The limit is the end of the table.** Delete the newest rows and the surviving prefix links
 perfectly, every hash matches, and verification reports intact. Nothing in the chain records how

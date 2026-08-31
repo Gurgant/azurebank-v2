@@ -1564,12 +1564,19 @@ public class AuditChainTests : IDisposable
             "the designation is the fix, and the verdict has to say which way to point it");
         refused.Reason.Should().Contain(
             "it fixes nothing",
-            "⚠️ THIS PINNED A FALSE ABSOLUTE UNTIL IT WAS MEASURED. The verdict said \"No "
-            + "LastSequence edit can move this\", and the epoch's start IS derived from the "
-            + "preceding entry's boundary, so lowering that boundary moves it — measured, at which "
-            + "point the row stops being refused for the epoch and the walk fails on the link "
-            + "instead. The honest warning is that the edit does something and that what it does is "
-            + "worse, not that it does nothing");
+            "⚠️ THIS REASON HAS BEEN WRONG TWICE, AND THE SECOND TIME IT SAID \"MEASURED\". It "
+            + "first pinned a false absolute — the verdict said \"No LastSequence edit can move "
+            + "this\" and the epoch's start IS derived from the preceding entry's boundary. The "
+            + "repair then claimed the edit makes the row stop being refused and the walk fail on "
+            + "the LINK instead, and called that measured. Both halves are false IN THIS FIXTURE. "
+            + "The ring is [Retired(TestKey, 2), Retired(second, 3)] with the designation on "
+            + "'second', so the founding epoch is [3,3]; the lowest boundary the entry before it "
+            + "can legally take is 1, which puts the founding start at 2; the row is sequence 1. "
+            + "One is still below two, so the same arm fires and only the printed number changes. "
+            + "And no configuration value can produce a link break: that test compares two STORED "
+            + "columns before any key is selected. A row handed to the wrong key gives a hash "
+            + "mismatch. What the verdict must say is that the edit moves the start and still "
+            + "refuses the row");
     }
 
     [Fact]

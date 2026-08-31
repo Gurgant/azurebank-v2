@@ -532,20 +532,34 @@ YOU HAVE BEFORE TOUCHING ANYTHING.**
 - *"…is a `v2` row … the epoch that key opens begins at N"* — the FOURTH boundary verdict, and the
   only one with no minting reading at all. An identity-less row is among the oldest in the table, so
   an epoch starting above it means `Audit:FoundingChainKey` designates a ring member that is **not
-  the oldest**. ⚠️ **A `LastSequence` edit is not the fix, and it is not a no-op either.** The
-  founding epoch's start is DERIVED from the preceding entry's boundary, so lowering that boundary
-  does move it — measured, and what you get is a different break rather than a clear verdict: the
-  rows beneath the new start belong to a key that did not write them, so the walk fails on the link
-  instead. And it can never reach sequence 1 while any entry precedes the designation, because a
-  `LastSequence` below 1 is refused. Re-point the designation.
+  the oldest**. ⚠️ **A `LastSequence` edit is not the fix, and it does less than this page used to
+  say.** The founding epoch's start IS derived from the preceding entry's boundary, so lowering that
+  boundary does move it — and it cannot move it far enough to matter. A `LastSequence` below 1 is
+  refused, so the start floors at **2**; identity-less rows are the oldest rows there are, so the row
+  that reaches this verdict is sequence 1. One is still below two. The same verdict prints again with
+  a smaller number in it. Re-point the designation.
+
+  *(This said the edit gets you "a different break rather than a clear verdict … the walk fails on
+  the link instead — measured". It was not measured and it is not true. A configuration edit cannot
+  produce a link break at all: the link test compares this row's stored `PreviousHash` against the
+  previous row's stored `RowHash` — two columns, no key, no epoch, no recomputed hash — and it runs
+  before a key is ever selected. Handing a row to a key that did not write it produces a HASH
+  MISMATCH, not a link break. And in the shape this verdict fires on, no row is handed to anybody:
+  the floor above keeps it below the epoch.)*
 
 **The second one has two readings and they are not equally benign.** Either the recorded
 `LastSequence` is too LOW and the row is genuine history written before the rotation, or the row was
 **minted with a retired key after the rotation** — which is the attack the boundary exists to catch.
 
-🔒 **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES, WHICH IS EXACTLY WHY IT IS NOT
-THE FIRST MOVE.** If the row was minted, raising the boundary completes the attack and the trail then
-attests to it. Establish which reading is true from something outside this database — the change
+🔒 **RAISING `LastSequence` CAN TURN THAT VERDICT GREEN UNDER EITHER READING, WHICH IS EXACTLY WHY IT
+IS NOT THE FIRST MOVE — AND GOING GREEN IS NOT EVIDENCE THAT THE BENIGN READING WAS THE TRUE ONE.**
+If the row was minted, raising the boundary completes the attack and the trail then attests to it.
+*(This said "IN BOTH CASES", flatly. Measured, the minting case is conditional: raising this entry's
+boundary also raises the NEXT key's epoch start, so it goes green only when nothing was written under
+the newer key in the range you just handed back. When something was, the break MOVES DOWN to the
+first row that key wrote — a lower sequence than the one you started from — which is the same pair of
+states the triage table above measures. The reason not to raise it is unchanged; the reason given
+was wrong.)* Establish which reading is true from something outside this database — the change
 record for the rotation, the deployment that carried it, the ticket that ordered it — and only then
 correct the configuration. If nothing outside can say when the key was retired, the honest position
 is that this row cannot be verified, and that is a finding rather than a configuration task.
@@ -592,12 +606,19 @@ row count never moved.
      **above** that key's epoch;
   7. the same, **below** that key's epoch.
 
-  **The discriminator between them is positional, not textual:** each fails at the LOWEST row it
-  applies to and at every one after it — except the two below-the-epoch causes, which apply to a
-  PREFIX instead: every row from the bottom of the table up to the previous key's boundary. A single
-  row failing among verified siblings is a write. *(This said "the INTERVAL between the previous
-  boundary and the epoch start", and that interval is empty: an epoch begins one past the boundary
-  beneath it, and equal boundaries are refused, so the gap is always exactly one.)* ⚠️ **An overwritten column is not an eighth cause** — `PayloadVersion` and
+  ⚠️ **THE DISCRIMINATOR USED TO BE POSITIONAL AND THE RING BROKE IT.** Each cause applies to an
+  INTERVAL — the epoch of the key it concerns — and the walk stops at the first row of that interval.
+  So a key missing from `Audit:RetiredChainKeys` breaks in the MIDDLE of the table, with verified
+  rows beneath it, and rows above its epoch would verify if the walk went on: that is the same
+  signature a single overwritten row produces. **A configuration mistake and a write now look
+  identical in one run.** What separates them is a second run: add the id the verdict names to
+  `Audit:RetiredChainKeys` with the boundary from the rotation record and verify again. A
+  configuration miss clears. A write does not. *(This page said "each fails at the LOWEST row it
+  applies to and at EVERY ONE AFTER IT … a single row failing among verified siblings is a write" —
+  the rule from before the ring, when one key answered for every `v3` row and a wrong key therefore
+  failed at the first one. It also said the below-the-epoch causes apply to a PREFIX, "every row from
+  the bottom of the table up to the previous key's boundary": they apply only to the rows naming that
+  key, which is its epoch, not everything beneath it.)* ⚠️ **An overwritten column is not an eighth cause** — `PayloadVersion` and
   `KeyId` are both inside the hashed payload, so changing either is a modification that then surfaces
   as whichever of the seven it happens to trip. Exit code is 1.
 
@@ -606,8 +627,11 @@ row count never moved.
   MINTING as their alternative: see **RAISING `LastSequence` TURNS THAT VERDICT GREEN IN BOTH CASES**
   below before changing anything. **The fourth, cause 7, does not** — an identity-less row below the
   founding epoch has one cause only, a designation that is not the ring's oldest key, and no
-  `LastSequence` edit clears it — the boundary before it does move this epoch's start, and moving
-  it trades this verdict for a link break rather than resolving anything.
+  `LastSequence` edit clears it — the boundary before it does move this epoch's start, and moving it
+  achieves nothing an operator can use: the boundary floors at 1, so this epoch's start floors at 2,
+  and the identity-less row that gets here is sequence 1. The same verdict prints again with a
+  smaller number in it. *(This said moving it "trades this verdict for a link break". No
+  configuration value can produce a link break — see the FOURTH boundary verdict above.)*
 - `expected to follow ... A row was deleted, reordered, or inserted` with **`Rows verified before
   the break: 0`** — the first row read names a predecessor that is not there. **The sequence it
   broke at says which of two things happened, and they are not the same incident.** At **sequence

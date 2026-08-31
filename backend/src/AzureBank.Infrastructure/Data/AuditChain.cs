@@ -86,17 +86,18 @@ public enum AuditChainBreakKind
     /// </para>
     /// <para>
     /// An overwritten column is not a ninth path: it is how several of those come about, because
-    /// both columns are inside the hashed payload. The discriminator is positional rather than
-    /// textual — each path fails at the lowest-sequence row it applies to and at every one after it,
-    /// EXCEPT the two below-the-epoch paths, which apply to a PREFIX instead: every row from the
-    /// bottom of the table up to the previous key's boundary. A single interior row failing among
-    /// verified siblings is a write.
+    /// both columns are inside the hashed payload. Each path applies to an INTERVAL — the epoch of
+    /// the key it concerns — and the walk returns at the first row of it.
     /// <para>
-    /// This said the two below-the-epoch paths fail "over the interval between the previous boundary
-    /// and the epoch's start", and that interval is EMPTY by construction — an epoch begins one past
-    /// the boundary beneath it and equal boundaries are refused, so the gap is always exactly one.
-    /// The rows those paths apply to are the ones BELOW that boundary, which is a prefix and not a
-    /// gap.
+    /// ⚠️ SO THE POSITIONAL DISCRIMINATOR IS GONE, AND THIS PARAGRAPH SOLD IT TWICE. It said each
+    /// path "fails at the lowest-sequence row it applies to and at every one after it, while a
+    /// single interior row failing among verified siblings is a write" — true when one key answered
+    /// for every <c>v3</c> row, false with a ring: a key missing from <c>Audit:RetiredChainKeys</c>
+    /// fails over its own epoch and nothing above it, so it breaks in the middle with verified rows
+    /// beneath, which is exactly the shape attributed to a write. It then said the below-the-epoch
+    /// paths apply to a PREFIX, "every row from the bottom of the table up to the previous key's
+    /// boundary" — they apply to the rows naming that key, not to everything beneath. What separates
+    /// a configuration miss from a write is a second run after adding the named id to the ring.
     /// </para>
     /// </para>
     /// <para>
@@ -1121,9 +1122,17 @@ public sealed class AuditChain : IAuditChain
 
               EXPIRED BOUNDARY: the ring holds that key, and the row sits ABOVE the sequence the key
               stopped writing at. The remediation is the opposite of the first one and the wrong move
-              is available: raising LastSequence makes the verdict go green, and if the row was
+              is available: raising LastSequence can make the verdict go green, and if the row was
               minted after the retirement, raising it is completing the attack. So the message has to
               name the boundary and both readings rather than send anybody to the config.
+
+              ⚠️ "MAKES THE VERDICT GO GREEN" WAS UNCONDITIONAL HERE AND IN BOTH VERDICT STRINGS.
+              It is conditional in the minting reading: raising this entry's boundary also raises the
+              NEXT epoch's start, because a start is derived as the previous boundary plus one, so
+              every row the newer key wrote in the range just handed back is refused and the break
+              moves DOWN rather than clearing. It goes green only when that range is empty -- which
+              is the state a deployment sits in between the rotation and the newer key's first
+              write, and the state the minting attack needs.
             */
             long? expiredBoundary = null;
             long? unbegunBoundary = null;
@@ -1259,8 +1268,8 @@ public sealed class AuditChain : IAuditChain
                         + "Audit:FoundingChainKey — point it at the OLDEST key in the ring. Lowering "
                         + "the boundary of the entry BEFORE it would move this epoch's start, "
                         + "because the start is derived from that boundary — but it fixes nothing: "
-                        + "it hands the rows beneath to a key that did not write them, and the "
-                        + "verdict moves rather than clearing.",
+                        + "a boundary below 1 is refused, so the start floors at 2, and this row is "
+                        + "older than that. The same message prints with a smaller number in it.",
 
                     // Named a key the ring holds, above that key's epoch.
                     ({ } bound, _, not null) =>
@@ -1269,8 +1278,9 @@ public sealed class AuditChain : IAuditChain
                         + $"sequence {row.Sequence:N0}. Its hash was NOT checked. Two readings, and "
                         + "they need opposite responses: either the recorded boundary is too LOW "
                         + "and this row is genuine history, or the row was MINTED with a retired "
-                        + "key after the rotation. ⚠️ Raising LastSequence turns this verdict "
-                        + "green either way — so establish which it is from the rotation record "
+                        + "key after the rotation. ⚠️ Raising LastSequence can turn this verdict "
+                        + "green under either reading, and going green does not tell you which was "
+                        + "true — so establish which it is from the rotation record "
                         + "before touching the configuration.",
 
                     // Named NOTHING, above the founding key's epoch. The dangerous one: the v2
@@ -1284,9 +1294,10 @@ public sealed class AuditChain : IAuditChain
                         + "key's boundary that names no key is the one shape that reaches that key "
                         + "without naming it, so treat MINTING as the leading reading here rather "
                         + "than as the alternative. The benign reading is that the boundary is too "
-                        + "LOW. ⚠️ Raising LastSequence turns this verdict green either way — "
-                        + "establish which it is from the rotation record, outside this database, "
-                        + "before touching the configuration.",
+                        + "LOW. ⚠️ Raising LastSequence can turn this verdict green under either "
+                        + "reading, and going green does not tell you which was true — establish "
+                        + "which it is from the rotation record, outside this database, before "
+                        + "touching the configuration.",
 
                     /*
                       Declares the CURRENT version, which has a place to record a key identity, and
@@ -1311,9 +1322,11 @@ public sealed class AuditChain : IAuditChain
                             : " and no retired keys")
                         + ". Its hash was NOT checked. Either the key that wrote this row was never "
                         + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
-                        + "is positional: a missing key fails at the LOWEST "
-                        + $"'{CurrentPayloadVersion}' row it wrote and every one after it, while a "
-                        + "single row failing among verified siblings is a write.",
+                        + "is NOT positional -- a missing key fails over its own epoch and nothing "
+                        + "above it, so it breaks in the middle with verified rows beneath, which is "
+                        + "what a write looks like as well. Add this id to Audit:RetiredChainKeys "
+                        + "with the boundary from the rotation record and verify again: a "
+                        + "configuration miss clears, a write does not.",
                 };
 
                 return new AuditChainVerification(

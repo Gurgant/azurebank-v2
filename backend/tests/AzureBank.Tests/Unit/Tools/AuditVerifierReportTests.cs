@@ -519,9 +519,15 @@ public class AuditVerifierReportTests
           THE PROSE WAS REWRITTEN AND NOTHING ASSERTED IT. The verdict block for UnknownScheme listed
           THREE readings, led by "you hold a different key than the one that wrote this row". The key
           ring added two causes in which the verification DOES hold the row's key -- above a retired
-          key's epoch, and above the founding key's -- and the epoch's lower bound added a third.
-          For those, the old first reading was false while sitting at the top of the list an operator
-          reads to decide what to check.
+          key's epoch, and above the founding key's -- and the epoch's lower bound added TWO more,
+          the mirror of each, for a class of FOUR. For those, the old first reading was false while
+          sitting at the top of the list an operator reads to decide what to check.
+
+          (This said the lower bound "added a third". It added both below-the-epoch paths in one
+          commit -- row below its own key's epoch, and identity-less row below the founding key's --
+          and every neighbour on the branch already says four: the enum doc's "four boundary paths",
+          the switch comment's "two paths and a single arm was left serving both", and the printed
+          "FOUR of the seven are boundary causes". This was the last place still counting one.)
 
           The rewrite that fixed it shipped with no test at all: `git log` over
           backend/tests/AzureBank.Tests/Unit/Tools/ shows the commit that changed this text touched

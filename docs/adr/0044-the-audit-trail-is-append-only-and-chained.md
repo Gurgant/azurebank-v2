@@ -719,20 +719,36 @@ there: a structural rule enforced in one root is a rule the other does not have.
   change does not implement that, because nothing here runs unattended to notice a rotation happened —
   the same premise that defers anchoring itself. It is an operator step, and an operator step is
   weaker than a mechanism; saying so is the point.
-- **The ring is a read-side convenience, and it adds no control that did not exist before it.** It
-  makes an honest rotation survivable. It constrains the CURRENT key's holder not at all: they write
-  whatever they like, which is what D1 and the anchor already say in their own sections. *(This
-  bullet said "it constrains nobody" until review, and that is false: the boundary refuses rows above
-  a retired key's epoch even when their hash is correct, which is a constraint on somebody. Written
-  before the boundary existed and left standing after, it invited a reader to drop the boundary as
-  decoration — the exact regression the boundary closes.)*
+- **The ring is a read-side convenience, and it adds one control that did not exist before it.** It
+  makes an honest rotation survivable, and it puts a FLOOR under the current key. At write time the
+  current key's holder is still unconstrained — `row.Sequence = ++sequence` and the hash is taken
+  under `Audit:ChainKey` whatever the row says. At VERIFICATION they are not: `Audit:ChainKey` is
+  itself a ring member, its epoch starts at one past the last retirement, and a row naming it below
+  that is refused before its hash is recomputed. With one retirement recorded at 100, a row naming
+  the current key verifies at 101 and above and at no sequence in [1, 100]. On `main` all 100 of
+  them verified. *(This bullet said "it constrains nobody", then "it constrains the CURRENT key's
+  holder not at all" with a parenthetical naming only the refusal ABOVE a retired key's epoch. That
+  parenthetical was written when an epoch had one end. The lower end, added later on this branch,
+  constrains the current key too, and no bullet here said so.)*
 - **What the boundary constrains is a power the ring itself introduced, not one the world had.**
   Before the ring, a rotation left every old row refused under any key the deployment held —
   `WithoutRetiringTheOldKey_RotationStrandsTheHistory…` pins that — so an old key's holder could
-  produce nothing that verified. Measured against `main`, this change only WIDENS what verification
-  accepts; the boundary is what stops that widening running past the retirement point. Below the
-  boundary the ring still hands an old key more than it had, never less. So: not a new control, a
-  self-limit on a new capability.
+  produce nothing that verified. For the RETIRED keys the boundary is exactly that: it stops the
+  widening running past the retirement point, and below the boundary the ring still hands an old key
+  more than it had, never less. A self-limit on a new capability.
+
+  ⚠️ **BUT "this change only WIDENS what verification accepts" IS FALSE, AND IT WAS THE SECURITY
+  ARGUMENT OF THIS SECTION.** Measured against `main`: at `fc1ce40` the only gate on a `v3` row was
+  `row.KeyId != _keyId` — identity, with sequence nowhere in it — so a row honestly naming the
+  current key verified at ANY sequence. At HEAD the current key carries a `FirstSequence` of one past
+  the last retirement, and a row below it is refused before the hash. Concretely: `Audit:ChainKey`
+  = K_new with K_old retired at 100, and a `v3` row at sequence 50 naming K_new with a hash correct
+  under K_new. On `main` that row verified; here it does not. That is a NARROWING, on the current
+  key, over the whole range [1, 100] — and it is a new control, not a self-limit. It is the right
+  control: below the last retirement the current key had not started writing, so naming it there is
+  as wrong as naming a retired key above its own boundary. What was wrong was calling it nothing.
+  *(With nothing retired the ring holds one key whose epoch starts at 1, and HEAD accepts everything
+  `main` accepted. The narrowing exists only once a rotation has been recorded.)*
 - **And it is defeasible by whoever holds the configuration.** The refusal happens at VERIFICATION,
   never at write time, and the verdict says so itself — *"Raising LastSequence turns this verdict
   green either way"*. A read-side setting an operator can turn green is not the same kind of object
