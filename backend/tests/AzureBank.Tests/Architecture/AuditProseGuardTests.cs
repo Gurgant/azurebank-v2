@@ -502,4 +502,20 @@ public class AuditProseGuardTests
 
         return stem.Length >= 30;
     }
+
+    /*
+      ⚠️ WHAT THAT 30 COSTS, MEASURED, BECAUSE A FLOOR THIS HIGH CHECKS FEW CITATIONS. A
+      non-underscored name needs thirty characters, which admits long test names and almost nothing
+      else: class names and member names in the corpus are shorter and are never checked. So this
+      guard catches a dead TEST citation and would not catch a renamed class the runbook points an
+      operator at.
+
+      Lowering it is not a one-line change, which is why it is written down rather than done. At 24
+      the scan surfaces PreviousAnchorPayloadHash -- a real property of AuditAnchor, unresolved only
+      because the declared set collects types and methods and not properties. At 20 it surfaces
+      SaveChangesInterceptor, an EF type this repo does not declare. Both are false alarms, and a
+      guard that cries wolf is a guard somebody turns off. Widening it means collecting properties
+      into the declared set and extending DeclaredElsewhere for framework types, together, in one
+      change that can be reviewed as a whole.
+    */
 }

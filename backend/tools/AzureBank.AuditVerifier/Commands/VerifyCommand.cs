@@ -299,20 +299,23 @@ public static class VerifyCommand
                   defect committed against its own explanation, so the count is now derived here
                   rather than remembered:
 
-                  The EIGHT paths, each a distinct return or switch arm in VerifyAsync, in the order the
-                  walk reaches them:
+                  The NINE paths, each a distinct return or switch arm in VerifyAsync, in
+                  the order the walk reaches them:
                     1. the payload version cannot be rendered by this build;
                     2. a 'v2' row carries a key id, which that version has nowhere to keep;
                     3. no key in the ring has the row's id;
                     4. the ring holds the key, the row is ABOVE its epoch;
                     5. the ring holds the key, the row is BELOW its epoch;
                     6. the row records no id and is ABOVE Audit:FoundingChainKey's epoch;
-                    7. the row records no id and is BELOW it;
-                    8. the row declares the current version and carries no id at all.
+                    7. the row records no id and is BELOW it, by designation;
+                    8. the row records no id and is BELOW it because its sequence is under 1;
+                    9. the row declares the current version and carries no id at all.
 
-                  Eight paths, SEVEN printed causes. Paths 2 and 8 share a bullet because they share
-                  an action -- the identity column contradicts the version, so the value was written
-                  after the fact -- and an operator does nothing different on the two. Every other
+                  Nine paths, SEVEN printed causes. Two PAIRS share a bullet, each because it takes
+                  one action: the identity column contradicting the version (2 and 9), and the
+                  identity-less row below the founding epoch (7 and 8). The second pair prints
+                  different TEXT -- one sends the operator to the designation, the other to
+                  escalation -- but occupies one entry in the list, which names both. Every other
                   path takes a different action.
 
                   ⚠️ THE LIST ENUMERATES CAUSES, NOT READINGS. "The column was overwritten" used to
@@ -333,25 +336,37 @@ public static class VerifyCommand
                 lines.Add("      so an earlier key wrote this stretch;");
                 lines.Add("    - the row records no key id, so Audit:FoundingChainKey answers for");
                 lines.Add("      it, and the row sits ABOVE that key's epoch;");
-                lines.Add("    - the row records no key id and sits BELOW that key's epoch, which");
-                lines.Add("      only a founding designation other than the OLDEST key can produce;");
+                lines.Add("    - the row records no key id and sits BELOW that key's epoch --");
+                lines.Add("      either a founding designation that is not the OLDEST key, or a");
+                lines.Add("      row stored below sequence 1, which no key is needed to insert and");
+                lines.Add("      no setting can fix;");
                 lines.Add("    - the row records a key id on a payload version that has no place");
                 lines.Add("      to keep one, or records none on a version that has;");
                 lines.Add("    - this build cannot render the version the row declares.");
-                lines.Add("  Each applies to an INTERVAL -- the epoch of the key it concerns --");
-                lines.Add("  and this walk stopped at the first row of it. A key missing from");
-                lines.Add("  Audit:RetiredChainKeys therefore breaks in the MIDDLE of the table,");
-                lines.Add("  with verified rows beneath it, which is what a single overwritten row");
-                lines.Add("  looks like too. To tell them apart, add the id above to");
-                lines.Add("  Audit:RetiredChainKeys with the boundary from the rotation record and");
-                lines.Add("  verify again: a configuration miss clears, a write does not.");
+                lines.Add("  This walk stopped at the first row it could not answer for. For the");
+                lines.Add("  four boundary causes that row is OUTSIDE the epoch named above it, so");
+                lines.Add("  the epoch is where the key was valid, not where the damage is. For a");
+                lines.Add("  key missing from the ring the affected rows ARE that key's epoch --");
+                lines.Add("  which starts at sequence 1 when the missing key is the oldest, so a");
+                lines.Add("  break at row 1 with nothing verified is the ordinary shape of");
+                lines.Add("  forgetting to retire a key, not evidence of anything worse.");
+                lines.Add("  A missing entry and a single overwritten row can look alike. To tell");
+                lines.Add("  them apart, run again with that key in the ring: the id above says");
+                lines.Add("  WHICH key you need and cannot be pasted back -- it is derived from the");
+                lines.Add("  material -- so add the KEY as Audit:RetiredChainKeys:N:Key with");
+                lines.Add("  LastSequence from the rotation record, and set Audit:FoundingChainKey,");
+                lines.Add("  required as soon as anything is retired. A miss clears; a write does");
+                lines.Add("  not.");
                 lines.Add("  ⚠️ AN OVERWRITTEN COLUMN PRODUCES SEVERAL OF THESE and is not one more");
                 lines.Add("  entry in the list: PayloadVersion and KeyId are inside the hashed");
                 lines.Add("  payload, so changing either is a modification that then surfaces as");
                 lines.Add("  whichever of the causes above it happens to trip.");
                 lines.Add("  FOUR of the seven are boundary causes -- above and below, for a row");
-                lines.Add("  that names a key and for one that does not. Three have MINTING as");
-                lines.Add("  their alternative; the fourth, an identity-less row BELOW the founding");
+                lines.Add("  that names a key and for one that does not. On the two ABOVE-the-epoch");
+                lines.Add("  causes minting is a reading, and on the identity-less one it is the");
+                lines.Add("  LEADING reading -- the line above says so, because a 'v2' row is how a");
+                lines.Add("  forger reaches the founding key without naming it. The fourth, an");
+                lines.Add("  identity-less row BELOW the founding");
                 lines.Add("  epoch, does not -- there the fix is the DESIGNATION. A boundary edit");
                 lines.Add("  moves that start but cannot lower it past the designation's POSITION");
                 lines.Add("  in boundary order, so on a trail that begins at sequence 1 it never");

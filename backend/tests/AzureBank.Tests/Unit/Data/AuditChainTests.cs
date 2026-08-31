@@ -695,6 +695,86 @@ public class AuditChainTests : IDisposable
         }),
         NullLogger<AuditChain>.Instance);
 
+    [Fact]
+    public async Task ALEGACYRowStoredBELOWSequenceONE_IsSentToESCALATION_NotToTheDESIGNATION()
+    {
+        /*
+          A REGRESSION AGAINST main, FOUND BY ASKING WHAT ELSE REACHES AN ARM. The founding-epoch
+          guard is `row.Sequence < _foundingFirstSequence`, and on a deployment that has NEVER
+          rotated _foundingFirstSequence is hard-set to 1 -- one key in the ring, no designation
+          configured at all. So any 'v2' row stored at 0 or below reaches the arm whose comment used
+          to say the only way in was a misdesignation.
+
+          The verdict then prescribed re-pointing Audit:FoundingChainKey, which cannot change
+          anything there: with nothing retired the current key's entry is built with FirstSequence 1,
+          so the founding epoch starts at 1 whatever it is pointed at, and there is no other member
+          to point at. At the BASE commit the same row reached the hash and came back HashMismatch,
+          which told the operator to preserve the table and escalate -- so the ring made the guidance
+          worse for a row that only tampering can produce.
+
+          Nothing here needs a key: Sequence has no CHECK constraint, and the epoch test runs before
+          the hash.
+        */
+        await WriteAsync("Genesis");
+
+        var planted = await _context.AuditEvents.SingleAsync();
+        planted.PayloadVersion = "v2";
+        planted.KeyId = null;
+        planted.Sequence = 0;
+        planted.PreviousHash = null;
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var neverRotated = new AuditChain(
+            Options.Create(new AuditOptions { ChainKey = TestKey }),
+            NullLogger<AuditChain>.Instance);
+
+        var verification = await neverRotated.VerifyAsync(_context);
+
+        verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        verification.Reason.Should().Contain(
+            "Preserve the table and escalate",
+            "the row can only have been inserted, so the operator's first move is preservation");
+        verification.Reason.Should().NotContain(
+            "The fix is Audit:FoundingChainKey",
+            "⚠️ THE PRESCRIPTION THAT MADE THIS WORTH FIXING. On a ring with one key there is no "
+            + "designation to re-point and the founding epoch starts at 1 either way, so the "
+            + "instruction sent the operator to a setting that cannot move the verdict");
+    }
+
+    [Fact]
+    public async Task ACurrentVersionRowWhoseIdentityWasBLANKED_ReadsAsREMOVED_NotAsAMissingRingEntry()
+    {
+        /*
+          BLANK IS NOT AN IDENTITY, AND THE SWITCH USED THE RAW COLUMN. The records-none arm matched
+          `row.KeyId is null`, so a 'v3' row whose identity column was emptied rather than nulled
+          fell through to the default arm -- the one that says a key is missing from
+          Audit:RetiredChainKeys and tells the operator to go and add it.
+
+          That is the opposite instruction. KeyId is inside the hashed payload and nothing this
+          deployment writes leaves it empty on this version, so an empty value was removed after the
+          fact. The 'v2' mirror has always caught every non-null value, blanked ones included; this
+          side now agrees with it.
+        */
+        await WriteAsync("One");
+
+        var blanked = await _context.AuditEvents.SingleAsync();
+        blanked.KeyId = "   ";
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var verification = await _chain.VerifyAsync(_context);
+
+        verification.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        verification.Reason.Should().Contain(
+            "records none",
+            "an emptied identity column is an identity that was removed, which is a modification");
+        verification.Reason.Should().NotContain(
+            "was never added to Audit:RetiredChainKeys",
+            "⚠️ THE WRONG FIRST MOVE. The default arm sends the operator to configure a retired key "
+            + "for an id that is not an id, during an incident that is a write");
+    }
+
     private static RetiredChainKey Retired(string key, long lastSequence) =>
         new() { Key = key, LastSequence = lastSequence };
 
@@ -1007,7 +1087,38 @@ public class AuditChainTests : IDisposable
             NullLogger<AuditChain>.Instance);
 
         build.Should().Throw<AuditKeyRingException>()
-            .WithMessage("*repeats a LastSequence*");
+            .WithMessage("*Boundaries partition the sequence space*");
+    }
+
+    [Fact]
+    public void ONEKeyListedTWICE_IsNotReportedAsTwoKeysColliding_BecauseTheEditDiffers()
+    {
+        /*
+          THE SAME GUARD, THE OTHER SHAPE, AND IT USED TO GIVE THE WRONG INSTRUCTION. The boundary
+          collision runs BEFORE the duplicate-id refusal, so a wholly duplicated entry -- the
+          copy-paste of Audit__RetiredChainKeys__0__Key and __LastSequence into slot 1 -- reached it
+          first and was reported as "two keys ending at the same row". It is one key listed twice.
+
+          The two need OPPOSITE edits, which is why the message has to tell them apart: remove the
+          duplicate entry here, versus correct a boundary there. And correcting a boundary is the
+          edit every other message on this branch tells the operator to make only from the rotation
+          record, so sending them to it for a copy-paste is the expensive direction to be wrong in.
+        */
+        var build = () => new AuditChain(
+            Options.Create(new AuditOptions
+            {
+                ChainKey = RotatedKey,
+                RetiredChainKeys = [Retired(TestKey, 4), Retired(TestKey, 4)],
+                FoundingChainKey = TestKey,
+            }),
+            NullLogger<AuditChain>.Instance);
+
+        build.Should().Throw<AuditKeyRingException>()
+            .WithMessage("*ONE key listed twice*")
+            .Which.Message.Should().NotContain(
+                "two keys ending at the same row",
+                "the collision wording sends the operator to edit a boundary, and the boundary is "
+                + "not what is wrong here");
     }
 
     [Fact]
@@ -1378,11 +1489,20 @@ public class AuditChainTests : IDisposable
             }),
             NullLogger<AuditChain>.Instance);
 
-        var admitted = await Ring(boundary + 10).VerifyAsync(_context);
+        /*
+          ⚠️ THE CONTROL SITS EXACTLY ON THE BOUNDARY, AND IT USED TO SIT TEN ABOVE IT. Ten of slack
+          proves the hash is valid, which is what a control is for, but it leaves the comparison
+          itself untested: no assertion in this file ever put a 'v2' row at exactly
+          _foundingLastSequence, so flipping `row.Sequence > foundingLast` to `>=` changed nothing
+          any test could see. The epoch's upper end is INCLUSIVE -- a key answers for the row it
+          stopped at -- and the control is the only place that says so.
+        */
+        var admitted = await Ring(minted.Sequence).VerifyAsync(_context);
         admitted.IsIntact.Should().BeTrue(
-            "THE CONTROL: with a boundary high enough to admit it, the row verifies — which proves "
-            + "the hash really is valid under the retired founding key, so the refusal below is a "
-            + "refusal of a genuine forgery and not of a broken fixture");
+            "THE CONTROL, and the inclusive end of the epoch: with the boundary recorded AT this "
+            + "row the key still answers for it, which proves the hash really is valid under the "
+            + "retired founding key — so the refusal below is a refusal of a genuine forgery and "
+            + "not of a broken fixture, and `>` is not `>=`");
 
         var refused = await Ring(boundary).VerifyAsync(_context);
 
@@ -1513,6 +1633,44 @@ public class AuditChainTests : IDisposable
         forged.FirstBrokenSequence.Should().Be(
             1, "and it breaks at the FIRST re-authored row, not somewhere in the middle");
         forged.Reason.Should().Contain("epoch begins at 3");
+
+        /*
+          ⚠️ AND THE ROW AT EXACTLY FirstSequence - 1, WHICH NOTHING ELSE PINS. Re-authoring all four
+          rows puts the break at 1, two below the epoch start of 3 -- so `row.Sequence < FirstSequence`
+          and `row.Sequence < FirstSequence - 1` produce byte-identical results and the off-by-one is
+          invisible. The interesting row is 2: the last row the FIRST key wrote, one below the second
+          key's epoch. Restoring row 1 to its honest author leaves exactly that shape.
+
+          It matters because the loose form is the permissive one: it would let the holder of the
+          NEWEST retired key re-author the boundary row of the key beneath it, one row per rotation.
+        */
+        using (var restore = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_storeName).Options,
+            timeProvider: null,
+            auditChain: Ring()))
+        {
+            var first = await restore.AuditEvents.OrderBy(e => e.Sequence).FirstAsync();
+            first.Detail = "TestKey one";
+            first.KeyId = AuditChain.DeriveKeyId(TestKey);
+            first.PreviousHash = null;
+            first.RowHash = CurrentHash(TestKey, first);
+
+            var boundaryRow = await restore.AuditEvents.SingleAsync(e => e.Sequence == 2);
+            boundaryRow.PreviousHash = first.RowHash;
+            boundaryRow.RowHash = CurrentHash(second, boundaryRow);
+
+            await restore.SaveChangesAsync();
+        }
+
+        _context.ChangeTracker.Clear();
+        var onTheBoundary = await Ring().VerifyAsync(_context);
+
+        onTheBoundary.FirstBrokenSequence.Should().Be(
+            2,
+            "the row at exactly FirstSequence - 1 has to be refused, or the newest retired key "
+            + "reaches one row into the epoch below it");
+        onTheBoundary.Kind.Should().Be(AuditChainBreakKind.UnknownScheme);
+        onTheBoundary.Verified.Should().Be(1, "row 1 is honest again and verifies under its own key");
     }
 
     /// <summary>

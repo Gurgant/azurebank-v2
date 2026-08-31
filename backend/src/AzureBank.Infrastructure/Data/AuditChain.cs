@@ -72,7 +72,7 @@ public enum AuditChainBreakKind
     /// payload, so a stored value that is not what the schema says it must be is itself a
     /// modification — the same reasoning <see cref="Unreadable"/> already carries.
     /// <para>
-    /// It says nothing about WHY, and the walk reaches it by EIGHT paths: this build cannot render
+    /// It says nothing about WHY, and the walk reaches it by NINE paths: this build cannot render
     /// the version the row declares; a <c>v2</c> row carries a key id, which that version has
     /// nowhere to keep; a <c>v3</c> row carries none, which its version does keep; no key in the
     /// ring has the row's id; and four boundary paths — the row sits ABOVE or BELOW the epoch of the
@@ -472,11 +472,27 @@ public sealed class AuditChain : IAuditChain
             */
             if (entry.LastSequence == nextEpochStart - 1 && nextEpochStart > 1)
             {
+                /*
+                  ⚠️ AND THIS GUARD RUNS BEFORE THE DUPLICATE-ID ONE, so it sees a wholly duplicated
+                  entry first -- the same key material pasted into slot 1 with the same boundary --
+                  and used to call that "two keys ending at the same row". It is one key listed
+                  twice, and the operator who edits a boundary on that advice is changing a number
+                  every other message on this branch tells them to take only from the rotation
+                  record. The message says which it is, from the material, rather than assuming.
+                */
+                var duplicateOfPrevious = _keyRing.ContainsKey(DeriveKeyId(retired));
+
                 throw new AuditKeyRingException(
-                    $"Audit:RetiredChainKeys:{configIndex} repeats a LastSequence of "
-                    + $"{entry.LastSequence}. Boundaries partition the sequence space, so two keys "
-                    + "ending at the same row leaves the rows beneath it claimed by both and the "
-                    + "ring cannot tell which one wrote them.");
+                    $"Audit:RetiredChainKeys:{configIndex} ends at {entry.LastSequence}, the same "
+                    + "sequence as the entry before it. "
+                    + (duplicateOfPrevious
+                        ? "It also holds a key the ring already has, so this is ONE key listed "
+                          + "twice rather than two keys colliding: remove the duplicate entry. "
+                          + "Editing the boundary would change a number that must come from the "
+                          + "rotation record."
+                        : "Boundaries partition the sequence space, so two keys ending at the same "
+                          + "row leaves the rows beneath claimed by both and the ring cannot tell "
+                          + "which one wrote them."));
             }
 
             /*
@@ -1213,10 +1229,28 @@ public sealed class AuditChain : IAuditChain
                 }
                 else if (row.Sequence < _foundingFirstSequence)
                 {
-                    // Only reachable when Audit:FoundingChainKey designates something other than the
-                    // OLDEST key in the ring. Identity-less rows are the oldest rows there are, so a
-                    // founding key whose epoch starts above them is a designation that cannot mean
-                    // what it says -- and saying so is better than checking those rows under it.
+                    /*
+                      TWO SHAPES REACH THIS, AND THEY NEED OPPOSITE RESPONSES.
+
+                      (a) Audit:FoundingChainKey designates something other than the OLDEST key in
+                          the ring. Identity-less rows are the oldest rows there are, so a founding
+                          key whose epoch starts above them is a designation that cannot mean what it
+                          says, and saying so is better than checking those rows under it.
+
+                      (b) ⚠️ THE ROW'S SEQUENCE IS BELOW 1. On a deployment that has never rotated
+                          _foundingFirstSequence is hard-set to 1, so this branch fires for any 'v2'
+                          row stored at 0 or below -- with ONE key in the ring and no designation
+                          configured at all. The comment here used to say (a) was the only way in.
+                          Link() assigns `++sequence` from a tail of 0, so nothing this deployment
+                          writes can produce a non-positive sequence and no CHECK constraint stops
+                          one being inserted; it is a modification, and re-pointing a designation
+                          that does not exist cannot change the verdict. At the base commit the same
+                          row reached the hash and came back HashMismatch, which told the operator to
+                          preserve the table and escalate -- so getting this wrong is a regression
+                          against what the tool used to say, not merely a gap.
+
+                      The arm below picks between them on the sequence, which it already has.
+                    */
                     selectedKey = null;
                     unbegunBoundary = _foundingFirstSequence;
                 }
@@ -1262,7 +1296,20 @@ public sealed class AuditChain : IAuditChain
                   avoided. Counting the arms is safe here BECAUSE the five assignments are checked
                   against them: five assignments, six arms, and the one that splits is named.
                 */
-                var reason = (expiredBoundary, unbegunBoundary, row.KeyId) switch
+                /*
+                  ⚠️ BLANK IS NOT AN IDENTITY, AND THE TUPLE USED row.KeyId RAW. A 'v3' row whose
+                  KeyId column was emptied rather than nulled is not null, so it missed the
+                  records-none arm and fell through to the default one -- which told the operator a
+                  key was missing from Audit:RetiredChainKeys and to go and add it. The right reading
+                  is the opposite: the column is inside the hashed payload, nothing this deployment
+                  writes leaves it empty on this version, so the value was removed after the fact.
+                  Normalised here rather than at the lookup, because _keyRing.TryGetValue fails on
+                  either shape and only the VERDICT needs to tell them apart.
+                */
+                var recordedIdentity =
+                    string.IsNullOrWhiteSpace(row.KeyId) ? null : row.KeyId;
+
+                var reason = (expiredBoundary, unbegunBoundary, recordedIdentity) switch
                 {
                     // NAMES a key, BELOW that key's epoch. The mirror of the expired case and the
                     // one that made the boundary half a boundary: a key answering from the bottom of
@@ -1293,6 +1340,17 @@ public sealed class AuditChain : IAuditChain
                       names a ring member that is not the OLDEST, so the epoch it opens starts above
                       the identity-less rows, which are the oldest rows there are.
                     */
+                    (null, { } start, null) when row.Sequence < 1 =>
+                        $"Row {row.Id} is a '{LegacyPayloadVersion}' row stored at sequence "
+                        + $"{row.Sequence:N0}, which is below the first sequence this trail can "
+                        + "have. Its hash was NOT checked. ⚠️ THIS IS NOT A CONFIGURATION PROBLEM. "
+                        + "Writing assigns each row the tail plus one, starting from 1, so nothing "
+                        + "this deployment writes lands here and no key needs to be held to put it "
+                        + "there — the row was inserted. Do NOT edit Audit:FoundingChainKey or any "
+                        + "boundary: on a deployment that has never rotated the founding epoch "
+                        + "starts at 1 whatever you point it at, and this row is below 1 either way. "
+                        + "Preserve the table and escalate.",
+
                     (null, { } start, null) =>
                         $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
                         + "identity, so it is checked under Audit:FoundingChainKey — and the epoch "
@@ -1363,9 +1421,13 @@ public sealed class AuditChain : IAuditChain
                         + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
                         + "is NOT positional -- a missing key fails over its own epoch and nothing "
                         + "above it, so it breaks in the middle with verified rows beneath, which is "
-                        + "what a write looks like as well. Add this id to Audit:RetiredChainKeys "
-                        + "with the boundary from the rotation record and verify again: a "
-                        + "configuration miss clears, a write does not.",
+                        + "what a write looks like as well. To tell them apart, run again with that "
+                        + "key in the ring: the id above says WHICH retired key you need — it is "
+                        + "derived from the material and cannot be pasted back — so take that key "
+                        + "from wherever they are kept, add it as Audit:RetiredChainKeys:N:Key with "
+                        + "LastSequence from the rotation record, and set Audit:FoundingChainKey, "
+                        + "which becomes required as soon as anything is retired. A configuration "
+                        + "miss clears. A write does not.",
                 };
 
                 return new AuditChainVerification(

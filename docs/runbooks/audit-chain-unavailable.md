@@ -81,8 +81,13 @@ whole signal.
 ## Triage, in order
 
 **1. Is the database reachable at all?** If the body you just printed also reports `database`
-unhealthy, this is not an audit problem — it is the database, and the audit chain is simply the
-first thing to notice. Treat it as a database outage.
+unhealthy, that USED to settle it. ⚠️ **It no longer does.** Since the ring's rules moved into
+`AuditChain`'s constructor, and `AzureBankDbContext` takes an `IAuditChain`, a refusal to build the
+ring fails the `database` check too — both readiness checks resolve the context, so a typo in
+`Audit__RetiredChainKeys__0__LastSequence` reports exactly like an outage. Before treating it as
+one, read the failure text: a ring refusal names an `Audit:` setting and says so in prose, while a
+real outage carries a connection or timeout error. If it names a setting, go to step 5 and leave the
+database alone.
 
 **2. Does it say `A timeout occurred while running check.`?** That wording is the framework's, not
 ours, and it means the check was cancelled rather than that it found anything. Usually the readiness
@@ -552,12 +557,19 @@ is what this branch keeps producing; they are reconciled here rather than replac
 - *"…is a `v2` row … the epoch that key opens begins at N"* — the FOURTH boundary verdict, and the
   only one with no minting reading at all. An identity-less row is among the oldest in the table, so
   an epoch starting above it means `Audit:FoundingChainKey` designates a ring member that is **not
-  the oldest**. ⚠️ **A `LastSequence` edit is not the fix, and it does less than this page used to
-  say.** The founding epoch's start IS derived from the preceding entry's boundary, so lowering that
-  boundary does move it — and it cannot move it far enough to matter. A `LastSequence` below 1 is
-  refused, so the start floors at **2**; identity-less rows are the oldest rows there are, so the row
-  that reaches this verdict is sequence 1. One is still below two. The same verdict prints again with
-  a smaller number in it. Re-point the designation.
+  the oldest**. ⚠️ **A row stored BELOW sequence 1 reaches this check too**, on a ring with one key
+  and no designation at all, because the founding epoch starts at 1 there. That row gets a different
+  verdict — *"below the first sequence this trail can have … Preserve the table and escalate"* — and
+  nothing in the configuration causes it or can fix it.
+
+  ⚠️ **For the designation reading, a `LastSequence` edit is not the fix either.** The founding
+  epoch's start IS derived from the preceding entry's boundary, so lowering that boundary does move
+  it — and it cannot move it far enough on an honest table. Boundaries are at least 1 and strictly
+  increase, so the start cannot fall below the designation's POSITION in that order: **2** for the
+  second key, **3** for the third. The edit clears this row only if its sequence reaches that
+  number, and identity-less rows are the oldest there are — **so if it clears, the trail does not
+  begin at sequence 1, and that is a second finding rather than a fix.** Re-point the
+  designation.
 
   *(This said the edit gets you "a different break rather than a clear verdict … the walk fails on
   the link instead — measured". It was not measured and it is not true. A configuration edit cannot
@@ -637,12 +649,26 @@ row count never moved.
 
   ⚠️ **THE DISCRIMINATOR USED TO BE POSITIONAL AND THE RING BROKE IT.** Each cause applies to an
   INTERVAL — the epoch of the key it concerns — and the walk stops at the first row of that interval.
-  So a key missing from `Audit:RetiredChainKeys` breaks in the MIDDLE of the table, with verified
-  rows beneath it, and rows above its epoch would verify if the walk went on: that is the same
-  signature a single overwritten row produces. **A configuration mistake and a write now look
-  identical in one run.** What separates them is a second run: add the id the verdict names to
-  `Audit:RetiredChainKeys` with the boundary from the rotation record and verify again. A
-  configuration miss clears. A write does not. *(This page said "each fails at the LOWEST row it
+  So a key missing from `Audit:RetiredChainKeys` breaks at the first row of THAT key's epoch, with
+  rows above it that would verify if the walk went on — the same signature a single overwritten row
+  produces. When the missing key is the OLDEST, its epoch starts at 1, so the break is at row 1 with
+  nothing verified: that is the ordinary shape of "we rotated once and forgot to retire the old
+  key", not evidence of anything worse. **A configuration mistake and a write can look identical in
+  one run.**
+
+  What separates them is a second run **with that key in the ring**, and it takes two settings, not
+  one:
+
+  - `Audit:RetiredChainKeys:N:Key` — the retired key's **material**. ⚠️ **Not the id the verdict
+    prints.** The id is 16 hex characters derived one-way from the material, so it cannot be pasted
+    back; it tells you WHICH key to fetch from wherever your keys are kept. Pasting it here fails
+    the 32-character floor and you get a third error instead of an answer.
+  - `Audit:FoundingChainKey` — **required as soon as anything is retired.** Add the first retired
+    entry without it and the ring refuses to build: exit 3, and neither reading confirmed.
+
+  Then verify again. A configuration miss clears. A write does not.
+
+  *(This page said "each fails at the LOWEST row it
   applies to and at EVERY ONE AFTER IT … a single row failing among verified siblings is a write" —
   the rule from before the ring, when one key answered for every `v3` row and a wrong key therefore
   failed at the first one. It also said the below-the-epoch causes apply to a PREFIX, "every row from
@@ -664,8 +690,11 @@ row count never moved.
   earlier, so an operator scrolling down from here during an incident never reaches the one
   paragraph that tells them not to make the edit.)*
 
-  **The fourth, cause 7, does not** — an identity-less row below the founding epoch has one cause
-  only, a designation that is not the ring's oldest key, and no `LastSequence` edit clears it. The
+  **The fourth, cause 7, does not** — an identity-less row below the founding epoch has **two**
+  causes and neither is minting. Either the designation is not the ring's oldest key, or the row is
+  stored **below sequence 1**, which nothing this deployment writes can produce and no key is needed
+  to insert. The second has its own verdict text and its own instruction — preserve and escalate,
+  and edit nothing. For the first, no `LastSequence` edit clears it. The
   boundary before it does move this epoch's start, and moving it achieves nothing an operator can
   use on a trail that begins at sequence 1. Boundaries are at least 1 and strictly increase, so this
   epoch's start cannot fall below the designation's POSITION in that order — 2 for the second key,

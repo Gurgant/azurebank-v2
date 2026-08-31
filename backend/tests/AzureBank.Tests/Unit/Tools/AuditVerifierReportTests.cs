@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
@@ -22,6 +23,28 @@ namespace AzureBank.Tests.Unit.Tools;
 /// </remarks>
 public class AuditVerifierReportTests
 {
+    /// <summary>
+    /// Walks up from the test assembly until it finds the repository root.
+    /// </summary>
+    /// <remarks>
+    /// Same shape as <c>AuditProseGuardTests.RepoRoot</c>, and here for the same reason: a guard
+    /// that derives its expectation from a source file must FAIL when it cannot find that file
+    /// rather than quietly assert something weaker.
+    /// </remarks>
+    private static DirectoryInfo RepoRoot()
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
+        {
+            dir = dir.Parent;
+        }
+
+        dir.Should().NotBeNull(
+            because: "the expected path count is read out of AuditChain.cs; a run that cannot find "
+            + "it must say so rather than pass");
+        return dir!;
+    }
+
     [Fact]
     public async Task AnUnreachableDatabase_IsNoVerdict_AndMustNotLookLikeABrokenChain()
     {
@@ -565,27 +588,69 @@ public class AuditVerifierReportTests
           So the expected number is derived HERE, from the walk's returns, and the derivation is
           written out so the next person can check it rather than trust it:
 
-          The EIGHT paths, each a distinct return or switch arm in VerifyAsync, in the order the
-          walk reaches them:
+          The NINE paths, each a distinct return or switch arm in VerifyAsync, in
+          the order the walk reaches them:
             1. the payload version cannot be rendered by this build;
             2. a 'v2' row carries a key id, which that version has nowhere to keep;
             3. no key in the ring has the row's id;
             4. the ring holds the key, the row is ABOVE its epoch;
             5. the ring holds the key, the row is BELOW its epoch;
             6. the row records no id and is ABOVE Audit:FoundingChainKey's epoch;
-            7. the row records no id and is BELOW it;
-            8. the row declares the current version and carries no id at all.
+            7. the row records no id and is BELOW it, by designation;
+            8. the row records no id and is BELOW it because its sequence is under 1;
+            9. the row declares the current version and carries no id at all.
 
-          Eight paths, SEVEN printed causes: paths 2 and 8 share one bullet because they share one
-          action — the identity column contradicts the version, so the value was written after the
-          fact. An overwritten column is not a ninth: it is how several of them come about, since
-          PayloadVersion and KeyId are both inside the hashed payload.
+          Nine paths, SEVEN printed causes: two PAIRS share a bullet, each pair because it takes one
+          action — the identity column contradicting the version (2 and 9), and the identity-less
+          row below the founding epoch (7 and 8), where 8 is a row stored under sequence 1 and gets
+          its own verdict TEXT while sharing 7's entry in the list. An overwritten column is not a
+          TENTH path: it is how several of them come about, since PayloadVersion and KeyId are both
+          inside the hashed payload.
         */
         var readings = lines.Count(line => line.TrimStart().StartsWith("- ", StringComparison.Ordinal));
+        /*
+          ⚠️ THE EXPECTED NUMBER IS READ OUT OF AuditChain.cs, NOT WRITTEN HERE. Both sides of this
+          comparison used to come from the printed block: the actual count from its bullets, the
+          expected count from a literal somebody typed after reading the same bullets. Nothing in
+          the test touched VerifyAsync, so it reddened when the BLOCK changed and never when the
+          WALK did -- the direction its own reason claims to protect. An engineer adding a tenth
+          path and forgetting the bullet shipped green.
+
+          The walk's paths are counted from two shapes in the source: the UnknownScheme returns
+          outside the reason switch, and the arms of that switch. Two pairs of paths share one
+          bullet each, because each pair takes one action -- the identity column contradicting the
+          version ('v2' with an id, 'v3' without one), and the identity-less row below the founding
+          epoch (a designation that is not the oldest, or a sequence below 1). So the bullets are
+          the paths minus those two collapses, and adding a path without a bullet reddens here.
+        */
+        var walk = File.ReadAllLines(Path.Combine(
+            RepoRoot().FullName, "backend", "src", "AzureBank.Infrastructure", "Data",
+            "AuditChain.cs"));
+
+        var returnsOutsideTheSwitch =
+            walk.Count(l => l.Trim() == "AuditChainBreakKind.UnknownScheme,") - 1;
+
+        var switchStart = Array.FindIndex(
+            walk, l => l.Contains("var reason = (expiredBoundary", StringComparison.Ordinal));
+        var switchEnd = Array.FindIndex(
+            walk, switchStart, walk.Length - switchStart, l => l.Trim() == "};");
+        var arms = walk[switchStart..switchEnd]
+            .Count(l => Regex.IsMatch(l, @"^\s+(\(|_ =>)"));
+
+        var paths = returnsOutsideTheSwitch + arms;
+
+        paths.Should().Be(
+            9,
+            "the walk's paths are derived from AuditChain.cs, not from this file: {0} returns "
+            + "outside the reason switch and {1} arms in it. If this number moved, a path was "
+            + "added or removed and the printed list has to move with it",
+            returnsOutsideTheSwitch, arms);
+
         readings.Should().Be(
-            7,
+            paths - 2,
             "a list that offers fewer causes than the walk can return sends an operator looking for "
-            + "one it does not name, and each of the seven takes a different action");
+            + "one it does not name. Two pairs of paths share a bullet because each pair takes one "
+            + "action; every other path takes its own");
 
         var text = string.Join(" ", lines);
         text.Should().NotContain(
