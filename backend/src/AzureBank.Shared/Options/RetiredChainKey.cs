@@ -66,9 +66,18 @@ public sealed class RetiredChainKey
     /// took over. Getting it wrong therefore costs on both sides, which the single-edge version of
     /// this advice did not say: too HIGH re-opens this key's minting window by the difference AND
     /// pushes the next epoch's start above rows the next key genuinely wrote; too LOW refuses rows
-    /// this key really did write AND pulls the next epoch's start down over rows it did not. Both
-    /// directions are loud — a refused row is a verdict — so err low, and expect the noise to appear
-    /// in TWO epochs rather than one.
+    /// this key really did write AND pulls the next epoch's start down over rows it did not.
+    /// </para>
+    /// <para>
+    /// ⚠️ AND THERE IS NO SAFE DIRECTION TO ERR IN. This said "both directions are loud — a refused
+    /// row is a verdict — so err low", which is the single-edge advice one paragraph after
+    /// withdrawing the single-edge advice. Too LOW is loud. Too HIGH is loud ONLY once the newer key
+    /// has written above the real boundary; while that range is still empty nothing names the newer
+    /// key inside it, the walk returns intact, and nothing is reported — which is exactly the window
+    /// a retired key needs to mint into, and exactly the state a deployment is in between the
+    /// rotation and the next write. Measured, and the transcript is in the runbook's triage table.
+    /// Take the number from the rotation record; do not lean either way. Expect the noise, when
+    /// there is any, in TWO epochs rather than one.
     /// </para>
     /// </remarks>
     public long LastSequence { get; set; }

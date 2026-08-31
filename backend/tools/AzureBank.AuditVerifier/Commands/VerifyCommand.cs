@@ -353,12 +353,13 @@ public static class VerifyCommand
                 lines.Add("  that names a key and for one that does not. Three have MINTING as");
                 lines.Add("  their alternative; the fourth, an identity-less row BELOW the founding");
                 lines.Add("  epoch, does not -- there the fix is the DESIGNATION. A boundary edit");
-                lines.Add("  moves that start without clearing the verdict: it floors at 2, since");
-                lines.Add("  a boundary below 1 is refused, and the row that gets here is older.");
-                lines.Add("  Read the runbook before touching the configuration.");
-                lines.Add("  TWO of the seven are fixed in configuration -- a missing ring entry,");
-                lines.Add("  and the designation for cause 7. The rest are not, and no reading");
-                lines.Add("  here makes this a row proved good. Treat it as a break.");
+                lines.Add("  moves that start but cannot lower it past the designation's POSITION");
+                lines.Add("  in boundary order, so on a trail that begins at sequence 1 it never");
+                lines.Add("  clears. Read the runbook before touching the configuration.");
+                lines.Add("  TWO of the seven are fixed in configuration: a missing ring entry,");
+                lines.Add("  and the DESIGNATION for an identity-less row below the founding");
+                lines.Add("  epoch. The rest are not, and no reading here makes this a row proved");
+                lines.Add("  good. Treat it as a break.");
             }
 
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");
@@ -451,11 +452,18 @@ public static class VerifyCommand
           ⚠️ THE ARITHMETIC IS IN SEQUENCE SPACE, AND THAT IS A ROW COUNT ONLY BY ASSUMPTION.
           `Sequence` is assigned as tail + 1 and never reused while rows are only appended, so on an
           intact chain the span between two sequences is the number of rows between them. What makes
-          it an assumption rather than a fact is that VerifyAsync never checks contiguity: measured,
-          its per-row checks are the link, the payload version, the key identity and the hash, and
-          `Sequence` is read only for the range it reports. Someone holding Audit:ChainKey can
-          therefore delete an interior row and recompute the links behind it, leaving an INTACT chain
-          with a hole in its numbering -- and the window then counts a sequence that has no row.
+          it an assumption rather than a fact is that VerifyAsync never checks CONTIGUITY. It does
+          now read `Sequence` for more than the range: since the epoch gained two ends the walk
+          compares every row's sequence against the bounds of the key answering for it, four
+          comparisons in all. What it never does is check that one row's sequence follows the last.
+          So somebody holding the keys covering a stretch can delete an interior row from it and
+          recompute the links behind it, leaving an INTACT chain with a hole in its numbering -- and
+          the window then counts a sequence that has no row.
+
+          (This said the per-row checks are "the link, the payload version, the key identity and the
+          hash, and `Sequence` is read only for the range it reports", and named Audit:ChainKey as
+          the key that makes the deletion possible. Both were true before the ring; the same file
+          corrected the identical singular-key overclaim fifty lines above and left this one.)
 
           That error is conservative: the window reads larger than the truth, never smaller. It is
           still stated in the printed text, because a number whose unit is wrong under one adversary

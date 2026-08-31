@@ -194,11 +194,15 @@ external anchor exists, because the first token would freeze the rendering and t
 
 **A NULL key identity means no identity was recorded, not some particular key.** Such rows are
 verified under the FOUNDING key, which `Audit:FoundingChainKey` names and which is `Audit:ChainKey`
-only while nothing has been retired. The word was deliberate before the ring existed, and the ring
-kept the promise it was making: a second key must add a ring entry for the founding key rather than
-silently re-point history at whatever is current, and the constructor now refuses to build without
-one. *(Written as future work — "today that is `Audit:ChainKey`, because it is the only one there
-has ever been" — and left in the future tense after D7, below, implemented it.)* The migration
+only while nothing has been retired. The word was deliberate before the ring existed: "whatever adds
+a second key must add a ring entry for the FOUNDING key rather than silently re-point history at
+whatever is current". The ring kept that promise, and the constructor now refuses to build without
+one. *(That sentence is quoted verbatim by four other files. A rewrite here dropped its opening words
+and left every one of them citing a sentence this document no longer contained, which is the defect
+the rewrite was itself correcting elsewhere. It is restored as written and the tense repaired around
+it instead. It was also written as future work — "today that is `Audit:ChainKey`, because it is the
+only one there has ever been" — and left in the future tense after D7, below, implemented it.)* The
+migration
 writes no
 identity onto those rows, because none was ever recorded and inventing one would put an
 unfalsifiable claim outside their hashed payload.
@@ -574,9 +578,12 @@ operation the anchor exists to detect. So the fix is read-side only: `Audit:Reti
 the retired material, and verification picks the key the row names.
 
 **⚠️ The ring SELECTS by `KeyId`; it never TRIES keys in turn**, and the difference is the entire
-safety of rotating. The tail-anchor decision named the hazard in one sentence before there was
-anything to name it about: a trial-keyring verifier accepts a row a **retired** key could have minted
-at any sequence, so every rotation would widen the forgery surface instead of narrowing it. Selection
+safety of rotating. The hazard can be named in one sentence: a trial-keyring verifier accepts a row
+a **retired** key could have minted at any sequence, so every rotation would widen the forgery
+surface instead of narrowing it. *(This attributed that sentence to the tail-anchor decision. That
+document does not contain it, or the words "forgery", "trial-keyring" or "key-epoch" — the sentence
+was written here and given a source it never had. The argument stands on its own; the citation was
+the only thing wrong with it.)* Selection
 works because `KeyId` sits *inside* the hashed payload — a row cannot lie about which key to check it
 with, because changing the claim changes the hash the check recomputes.
 `AuditChainTests.ARowThatLIESAboutItsKeyIsCaught_WhichIsWhyTheRingSELECTSRatherThanTRIES` pins it,
@@ -604,7 +611,11 @@ had no business writing by then is what minting looks like.
 `ARetiredKeyCannotMintAROWATTHETAIL_BecauseTheRingBoundsItToItsEpoch` pins it, and it was written as
 a REPRODUCTION first: it failed against the unbounded ring before it passed against the bounded one.
 
-**What the boundaries do not buy.** Inside its own epoch the retired key is as powerful as it ever
+**What the boundaries do not buy.** ⚠️ *Within limits the sentence below did not state: rewriting a
+stretch changes the RowHash of its TOP row, and the first row of the NEXT epoch still records the old
+one, so the walk breaks on the LINK there. The rewrite is invisible only when no row above it falls
+outside the attacker's epochs — for one retired key, when its boundary is the top of the table.*
+Inside its own epoch the retired key is as powerful as it ever
 was — whoever holds it can rewrite that stretch and recompute it, exactly as the current key's holder
 can rewrite the present. What they buy is that the damage stays THERE: the recorded boundaries
 partition the sequence space, so a compromised retired key reaches neither the rows later keys wrote
@@ -764,12 +775,16 @@ there: a structural rule enforced in one root is a rule the other does not have.
   key, over the whole range [1, 100] — and it is a new control, not a self-limit. It is the right
   control: below the last retirement the current key had not started writing, so naming it there is
   as wrong as naming a retired key above its own boundary. What was wrong was calling it nothing.
-  *(With nothing retired the ring holds one key whose epoch starts at 1, and HEAD accepts everything
+  *(With nothing retired the ring holds one key whose epoch starts at 1, so HEAD accepts every row
+  at sequence 1 or above that `main` accepted — but the floor is real even then: a row at sequence 0
+  or below, honestly naming the current key, verified on `main` and is refused here. `Sequence` is
+  never generated by the store, so that shape is the attacker's to write. HEAD accepts everything
   `main` accepted. The narrowing exists only once a rotation has been recorded.)*
 - **And it is defeasible by whoever holds the configuration.** The refusal happens at VERIFICATION,
-  never at write time, and the verdict says so itself — *"Raising LastSequence turns this verdict
-  green either way"*. A read-side setting an operator can turn green is not the same kind of object
-  as a hash; the anchor is still the thing that would change the picture.
+  never at write time, and the verdict says so itself — *"Raising LastSequence can turn this verdict
+  green under either reading, and going green does not tell you which was true"*. A read-side setting
+  an operator can turn green is not the same kind of object as a hash; the anchor is still the thing
+  that would change the picture.
 
 ## What is wired, and what is not
 

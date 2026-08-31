@@ -11,7 +11,10 @@ namespace AzureBank.Infrastructure.Data;
 /// surfaces wherever the type happens to be resolved, and that is not the same place in every
 /// caller. Measured on the operator verifier with one short retired key: <c>verify</c> answered 3
 /// with prose, because it resolves the chain inside its try; <c>anchor</c> and <c>export</c> answered
-/// <b>4</b> with an unhandled stack trace, because they resolve it one line above theirs.
+/// <b>4</b> with an unhandled stack trace, because the ring was built outside theirs. <c>anchor</c>
+/// resolves the chain itself, one line above its try; <c>export</c> never resolves it at all — the
+/// ring is a transitive dependency of the database context it builds, which is why widening the try
+/// was the fix in both and why the two verbs reach the same throw by different routes.
 /// </para>
 /// <para>
 /// Exit 4 is that tool's code for "the command line was wrong", and the command line was right. The

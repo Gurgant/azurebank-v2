@@ -21,8 +21,12 @@ built for: somebody who holds the database but not the key that answers for the 
 change. *(Singular "the key" until 2026-08-30. Since the key ring the verifier holds several, each
 answering for its own EPOCH, so the attacker the chain is built for is one who holds none of the
 keys covering the stretch they are after — narrower than "the key", and the narrowing is what the
-ring cost.)* Somebody holding that key rewrites a row and recomputes the chain, which is equally
-invisible — ADR-0044 records that as the other gap. Two
+ring cost.)* Somebody holding the keys for that stretch rewrites a row and recomputes the chain,
+which is invisible only while every row ABOVE the rewrite also falls in an epoch they hold: the link
+compares stored hashes with no key involved, so the first row above their reach stops linking.
+ADR-0044 records that as the other gap. *(This said "somebody holding that key ... which is equally
+invisible", singular and unconditional, ten lines under the correction that made the threat model
+per-epoch.)* Two
 controls close them and they close different layers: SQL Server's ledger at the WRITE, an external
 timestamp at the ANCHOR. This document is about the second. Delete every row and the verifier does
 say something else — `NOTHING TO VERIFY`, on the stated grounds that an empty chain links perfectly

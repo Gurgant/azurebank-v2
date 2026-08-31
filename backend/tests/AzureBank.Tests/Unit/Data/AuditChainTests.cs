@@ -783,6 +783,21 @@ public class AuditChainTests : IDisposable
             AuditChain.DeriveKeyId(RotatedKey),
             "a new row is written under the CURRENT key, never under a retired one");
         written.KeyId.Should().NotBe(AuditChain.DeriveKeyId(TestKey));
+
+        /*
+          ⚠️ THE COLUMN IS NOT THE KEY, AND UNTIL THIS ASSERTION THE WRITE HALF ONLY CHECKED THE
+          COLUMN. Link() sets row.KeyId and row.RowHash from two independent expressions, so handing
+          a RING MEMBER to the hasher -- the founding key, say, which here is the retired TestKey --
+          would leave the identity column reading "current" and the hash taken under a retired key,
+          and every assertion above would still pass. What the test's name promises is that writing
+          takes Audit:ChainKey and nothing else; that is a claim about the HASH.
+        */
+        CurrentHash(RotatedKey, written).Should().Be(
+            written.RowHash,
+            "the row has to hash under the CURRENT key, which is the half the identity column cannot "
+            + "show");
+        CurrentHash(TestKey, written).Should().NotBe(
+            written.RowHash, "and not under the retired one, whatever the column says");
     }
 
     [Fact]
@@ -1298,6 +1313,19 @@ public class AuditChainTests : IDisposable
             "Audit:FoundingChainKey",
             "that is the key the row was actually checked under, and it is the one an operator has "
             + "to compare against the rotation record");
+
+        /*
+          ⚠️ THE 'NotTheCurrentOne' HALF OF THIS TEST'S NAME WAS CARRIED BY THE TITLE ALONE. Three
+          assertions, all of them about what the verdict DOES say, and none about the wording the
+          test exists to keep out -- the old alternative, which sent an operator to the current key
+          for a row the founding key answers for. A blanket NotContain("Audit:ChainKey") is not
+          available: the corrected text names it legitimately, in "Audit:FoundingChainKey, which is
+          Audit:ChainKey only while nothing has been retired". What must be absent is the OLD
+          ALTERNATIVE, so that is what is asserted.
+        */
+        verification.Reason.Should().NotContain(
+            "a different Audit:ChainKey from the one it was written with",
+            "the alternative this arm used to offer names a key that never touched the row");
     }
 
     [Fact]
@@ -1582,20 +1610,21 @@ public class AuditChainTests : IDisposable
             "point it at the OLDEST key in the ring",
             "the designation is the fix, and the verdict has to say which way to point it");
         refused.Reason.Should().Contain(
-            "it fixes nothing",
-            "⚠️ THIS REASON HAS BEEN WRONG TWICE, AND THE SECOND TIME IT SAID \"MEASURED\". It "
-            + "first pinned a false absolute — the verdict said \"No LastSequence edit can move "
-            + "this\" and the epoch's start IS derived from the preceding entry's boundary. The "
-            + "repair then claimed the edit makes the row stop being refused and the walk fail on "
-            + "the LINK instead, and called that measured. Both halves are false IN THIS FIXTURE. "
-            + "The ring is [Retired(TestKey, 2), Retired(second, 3)] with the designation on "
-            + "'second', so the founding epoch is [3,3]; the lowest boundary the entry before it "
-            + "can legally take is 1, which puts the founding start at 2; the row is sequence 1. "
-            + "One is still below two, so the same arm fires and only the printed number changes. "
-            + "And no configuration value can produce a link break: that test compares two STORED "
-            + "columns before any key is selected. A row handed to the wrong key gives a hash "
-            + "mismatch. What the verdict must say is that the edit moves the start and still "
-            + "refuses the row");
+            "a second finding rather than a fix",
+            "⚠️ THIS REASON HAS BEEN WRONG THREE TIMES, AND TWICE IT SAID \"MEASURED\". It first "
+            + "pinned a false absolute — \"No LastSequence edit can move this\" — when the epoch's "
+            + "start IS derived from the preceding entry's boundary. The first repair claimed the "
+            + "edit makes the row stop being refused and the walk fail on the LINK instead, and "
+            + "called that measured; no configuration value can produce a link break, since that "
+            + "test compares two STORED columns before any key is selected. The second said the "
+            + "start \"floors at 2\" and the row \"is older than that\", true HERE and not in "
+            + "general: the floor is the designation's POSITION in boundary order, and nothing in "
+            + "the code puts the row at sequence 1 — only the shape of an honest table does. In "
+            + "this fixture the ring is [Retired(TestKey, 2), Retired(second, 3)] designating "
+            + "'second', the founding epoch is [3,3], the lowest legal preceding boundary is 1, so "
+            + "the start becomes 2 and the row at sequence 1 stays refused. The verdict has to say "
+            + "the edit moves the start, still refuses this row, and that clearing it would mean "
+            + "the trail does not begin at 1");
     }
 
     [Fact]

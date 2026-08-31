@@ -104,7 +104,23 @@ public class AuditProseGuardTests
     /// Continuations are skipped because a headline is the FIRST line of a verdict; a line beginning
     /// with <c>+</c> is the middle of one.
     /// </remarks>
-    private static IEnumerable<string> CodeLines(string path)
+    private static IEnumerable<string> CodeLines(string path) =>
+        Classify(path)
+            .Where(l => !l.IsComment && !l.Line.TrimStart().StartsWith('+'))
+            .Select(l => l.Line);
+
+    /// <summary>
+    /// The ONE comment/code classifier both extractions run on.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ THERE USED TO BE TWO, AND A COMMENT CLAIMED THEY SHARED A STATE MACHINE. They did not:
+    /// <c>CodeLines</c> and <c>CommentLines</c> were separate loops with a private
+    /// <c>inBlockComment</c> each, so the divergence that sentence said was prevented was exactly
+    /// what the shape allowed — and had already happened once, when the block-comment fix landed in
+    /// one of them and not the other. Now there is one, and the claim is true because there is
+    /// nothing left to diverge.
+    /// </remarks>
+    private static IEnumerable<(string Line, bool IsComment)> Classify(string path)
     {
         var inBlockComment = false;
 
@@ -119,23 +135,20 @@ public class AuditProseGuardTests
                     inBlockComment = false;
                 }
 
+                yield return (line, true);
                 continue;
             }
 
             if (trimmed.StartsWith("/*", StringComparison.Ordinal))
             {
                 inBlockComment = !trimmed.Contains("*/", StringComparison.Ordinal);
+                yield return (line, true);
                 continue;
             }
 
-            if (trimmed.StartsWith("//", StringComparison.Ordinal)
-                || trimmed.StartsWith('*')
-                || trimmed.StartsWith('+'))
-            {
-                continue;
-            }
-
-            yield return line;
+            yield return (
+                line,
+                trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*'));
         }
     }
 
@@ -144,45 +157,15 @@ public class AuditProseGuardTests
     /// </summary>
     /// <remarks>
     /// ⚠️ THE CITATION SCAN CLASSIFIED COMMENTS BY A PER-LINE PREFIX, which is the defect this file
-    /// fixed for the headline extraction thirty lines above and left standing here. This corpus
-    /// writes <c>/* … */</c> with unprefixed interior lines, so the scan never read inside a block
-    /// comment — and one was hiding a dead citation the whole time: <c>ExportCommand</c> named a
-    /// test that does not exist, inside a block, and the guard written to catch exactly that could
-    /// not see it. Sharing the state machine is what makes the two extractions agree about what a
-    /// comment is.
+    /// had already fixed for the headline extraction and left standing here. This corpus writes
+    /// <c>/* … */</c> with unprefixed interior lines, so the scan never read inside a block comment
+    /// — and one was hiding a dead citation the whole time: <c>ExportCommand</c> named a test that
+    /// does not exist, inside a block, and the guard written to catch exactly that could not see it.
+    /// Both extractions now run on <see cref="Classify"/>, so there is no second state machine left
+    /// to diverge.
     /// </remarks>
-    private static IEnumerable<string> CommentLines(string path)
-    {
-        var inBlockComment = false;
-
-        foreach (var line in File.ReadLines(path))
-        {
-            var trimmed = line.TrimStart();
-
-            if (inBlockComment)
-            {
-                if (trimmed.Contains("*/", StringComparison.Ordinal))
-                {
-                    inBlockComment = false;
-                }
-
-                yield return line;
-                continue;
-            }
-
-            if (trimmed.StartsWith("/*", StringComparison.Ordinal))
-            {
-                inBlockComment = !trimmed.Contains("*/", StringComparison.Ordinal);
-                yield return line;
-                continue;
-            }
-
-            if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*'))
-            {
-                yield return line;
-            }
-        }
-    }
+    private static IEnumerable<string> CommentLines(string path) =>
+        Classify(path).Where(l => l.IsComment).Select(l => l.Line);
 
     [Fact]
     public void EveryVerdictHeadlineTheToolCanPrint_IsAccountedForInTheRunbook()
@@ -220,11 +203,15 @@ public class AuditProseGuardTests
 
           A floor of twelve also left a hole the check below cannot close. That check passes a
           headline the runbook merely CONTAINS, and THREE of the fifteen -- INTERRUPTED, ANCHOR and
-          EXPORTED -- are single words a page on this subject contains by accident. ANCHOR matches
-          65 times, none of them the verdict; EXPORTED matches once, in a sentence about migrations;
-          INTERRUPTED matches twice, once in prose about freeing a BSTR and once in the exit-code
-          list, where the mention is deliberate but lowercase. So two of the three are documented
-          only by coincidence and the third is documented for a reason this check cannot see either,
+          EXPORTED -- are single words a page on this subject contains by accident. The check is
+          Contains, so what matters is occurrences: "anchor" occurs 75 times in the runbook, none of
+          them the verdict; "exported" once, in a sentence about migrations; "interrupted" twice,
+          once in prose about freeing a BSTR and once in the exit-code list, where the mention is
+          deliberate but lowercase. (65 was written here first: that is the number of LINES carrying
+          "anchor", a different quantity from the one the two siblings in the same sentence report.)
+
+          So two of the three are documented only by coincidence and the third is documented for a
+          reason this check cannot see either,
           and a NEW single-word verdict would be waved through as documented. The exact count is what
           notices it: a new verdict cannot arrive without this number moving, whatever the runbook
           happens to say.
@@ -319,13 +306,15 @@ public class AuditProseGuardTests
       the half that was wrong. IX_Accounts_AccountNumber misses by one character; the index name that
       does get through is IX_Transactions_TransactionNumber, at 17.
 
-      Measured repo-wide by porting this guard's logic over 380 .cs and 151 .md files: 175 citations
-      checked, 22 unresolved occurrences over 16 distinct names. NOT fourteen, and NOT zero real
-      ones: at least two are genuine dead citations of exactly the kind this guard exists to catch —
-      AzureBankDbContext.cs names AuditChainRetryingStrategySqlServerTests in the present tense and
-      no such class exists, and docs/adr/0041 names an elided Transfer_WithNoPinField… that no test
-      answers to. Both are older than this branch, so neither is fixed here; the point is that the
-      sentence claiming a clean widening was measuring nothing.
+      Measured repo-wide by porting this guard's logic over every .cs and .md file: a couple of
+      dozen unresolved names, NOT the fourteen this comment used to claim, and NOT zero real ones.
+      No exact figure is pinned here on purpose — it moves with every document edit, and the version
+      of this sentence that did pin one was already stale one commit later. What does not move is
+      the counter-example: at least two of them are genuine dead citations of exactly the kind this
+      guard exists to catch — AzureBankDbContext.cs names AuditChainRetryingStrategySqlServerTests
+      in the present tense and no such class exists, and docs/adr/0041 names an elided
+      Transfer_WithNoPinField… that no test answers to. Both are older than this branch, so neither
+      is fixed here; the point is that the sentence claiming a clean widening measured nothing.
     */
     private static readonly string[] AuditCorpus =
     [
@@ -367,9 +356,10 @@ public class AuditProseGuardTests
           done it THREE times: an ADR cited an elided name inside a code span; a summary in
           AuditChainTests cited `ALegacyRowVerifies…`, which is not a prefix of any test in the
           suite; and ExportCommand cited one from inside a block comment, where this guard's own
-          citation scan could not see it until the scan was fixed. The third is recorded thirty lines
-          above, in the remark on CommentLines, by the same commit that left "twice" standing here. Both were invisible to every other instrument — the compiler does not read prose,
-          and an elided name is exactly the shape a reader cannot check by eye.
+          citation scan could not see it until the scan was fixed. All three were invisible to every
+          other instrument in the build — the compiler does not read prose, and an elided name is
+          exactly the shape a reader cannot check by eye. The third is recorded in the remark on
+          Classify, by the same commit that left "twice" standing here.
 
           ELISIONS ARE ALLOWED AND ARE THE POINT. The corpus writes `SomeVeryLongTestName…` on
           purpose, and a prefix match is what makes that legal while still checking it resolves.

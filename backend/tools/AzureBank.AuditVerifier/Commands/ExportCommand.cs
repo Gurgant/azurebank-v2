@@ -321,7 +321,7 @@ public static class ExportCommand
         }
 
         /*
-          RESOLVED INSIDE A TRY, for the reason AnchorCommand records at the same point: building the
+          RESOLVED INSIDE A TRY, and for THIS verb the reason is the transitive one -- building the
           context builds the ring, the ring can refuse, and until this guard existed the refusal left
           this verb exiting 4 with a stack trace. IAuditAnchorChain alone would not have triggered it
           -- it depends only on IOptions -- which is exactly why the guard has to wrap the context.

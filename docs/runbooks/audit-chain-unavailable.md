@@ -369,9 +369,11 @@ audited write. All three:
   key genuinely wrote, so it refuses real rows too — just later ones. Too low refuses this key's own
   real rows, at the first row above the boundary. There is no safe direction to err in; take the
   number from the rotation record. *(This read "Too high re-opens that window; too low refuses real
-  rows, which is loud and correctable. **Err low.**" That is the single-edge version of the advice,
-  removed from `RetiredChainKey.cs` on this branch as wrong once the epoch gained a lower end, and
-  left standing here.)*
+  rows, which is loud and correctable. **Err low.**" — the single-edge version of the advice. The
+  same advice was standing in `RetiredChainKey.cs` too, one paragraph after that file withdrew the
+  single-edge framing, and the footnote here claimed it had already been removed from there. It had
+  not. Both are corrected now, and the reason "err low" is wrong at all is that too HIGH is SILENT
+  while the range it over-claims is empty.)*
 - `Audit:FoundingChainKey` — required as soon as anything is retired. Rows older than the key-identity
   column record no key, so something has to say which key wrote them; it must name material already
   in the ring. **It INHERITS that entry's `LastSequence`**, and there is nothing to set separately:
@@ -414,8 +416,11 @@ come up, and concludes the ring is right.
   at request time, however long after the deploy that caused it.
 - **The verifier says so plainly, and all three verbs say the same thing.** A ring that will not
   construct answers `CANNOT PROCEED: this tool is not configured to read the chain` — **exit 3** —
-  with the reason on the next line, naming the `Audit:RetiredChainKeys:N` entry at fault by its
-  CONFIGURATION index rather than its position after the boundary sort.
+  with the reason on the next line. Where the refusal is about a particular entry it names that
+  entry by its CONFIGURATION index rather than its position after the boundary sort. Three of the
+  refusals are not about an entry — a blank or short `Audit:ChainKey`, and either
+  `Audit:FoundingChainKey` failure — and those name the setting instead. The scenario in this very
+  bullet, a retired key with no `Audit__FoundingChainKey`, is one of the three.
 
   *(This bullet described something worse until it was measured. `verify` reported the refusal as
   `the audit store could not be read` — a sentence about the table, on a run that never opened the
@@ -443,14 +448,20 @@ ring is wrong:
 | a `LastSequence` is too HIGH, the newer key has already written above it | `UnknownScheme` | first row the newer key wrote |
 | two retired keys share a `LastSequence` | refused at construction | before any row is read |
 
-⚠️ **THE LAST TWO ROWS ARE THE SAME MISCONFIGURATION, AND THIS TABLE USED TO GIVE IT TWO
+⚠️ **THE TWO `too HIGH` ROWS ARE ONE MISCONFIGURATION, AND THIS TABLE USED TO GIVE IT TWO
 CONTRADICTORY ANSWERS.** It carried `too HIGH` → `CHAIN INTACT`, *nothing is reported*, and directly
 beneath it `too LOW for the key BELOW it` → `UnknownScheme` at the *first row of the next epoch*. The
-second row's cause was backwards: a boundary recorded too LOW never breaks at the next epoch's first
-row — it is a boundary recorded too **HIGH** that does, because the next key's epoch STARTS at this
-one's `LastSequence + 1`, so over-claiming here pushes the newer key's epoch above rows that key
-genuinely wrote. The two rows were the same error seen from both sides, filed as different errors
-with opposite verdicts, and an operator triaging by symptom would have read the wrong one.
+second row's cause was backwards. What breaks at **the first row the newer key wrote** is a boundary
+recorded too **HIGH**: the next key's epoch STARTS at this one's `LastSequence + 1`, so
+over-claiming here pushes the newer key's epoch above rows that key genuinely wrote. Too LOW breaks
+somewhere else entirely — at the first row above the recorded boundary, which is row 2 of this
+table. *(The
+correction that replaced the backwards row said too HIGH breaks at "the next epoch's first row". It
+does not: it breaks at the first row the NEWER key wrote, which sits BELOW the inflated epoch start.
+The table says it correctly; this sentence did not.)*
+
+The two rows were the same error seen from both sides, filed as different errors with opposite
+verdicts, and an operator triaging by symptom would have read the wrong one.
 
 What decides which answer you get is whether the over-claimed range is EMPTY. Measured, both states,
 same ring:
@@ -469,9 +480,10 @@ refused, which reads like tampering and is not.
 
 *(The note here said "All six rows were run, not reasoned about". Two of them had not been, and that
 is how one of them ended up backwards and the other unconditional. The two states above were run —
-the block is the output. Two of the six verdicts name the setting at fault on their own: the
-shared-boundary refusal names the configuration index, and the wrong-designation verdict names
-`Audit:FoundingChainKey`. The rest have to be read positionally.)*
+the block is the output. THREE of the six verdicts name the setting at fault on their own: the
+shared-boundary refusal names the configuration index, the wrong-designation verdict names
+`Audit:FoundingChainKey`, and the not-in-the-ring verdict names `Audit:RetiredChainKeys` twice and
+prescribes the edit. The rest have to be read positionally.)*
 
 **`LastSequence` too HIGH is why "run it and see" is not a check on the ring** — while the
 over-claimed range is still empty. In that state it does not fail; it silently admits rows a retired
@@ -504,11 +516,14 @@ the designation names holds the wrong key MATERIAL. The epoch is right, so the w
 the hash and the hash disagrees. That is a wrong retired key, not a wrong designation.)*
 
 ⚠️ **AND THE `UnknownScheme` VERDICTS LOOK ALIKE AND NEED DIFFERENT RESPONSES. READ WHICH ONE YOU
-HAVE BEFORE TOUCHING ANYTHING.** There are **six**, and the five below are the ones a ring
-misconfiguration can produce; the sixth is at the end of this section because nothing in the
-configuration causes it. *(This heading said "THE TWO", and said it while five bullets followed —
-the count was written for three and never moved as bullets were appended. The list itself has
-disagreed with it for some time: its last bullet calls itself "the FOURTH boundary verdict".)*
+HAVE BEFORE TOUCHING ANYTHING.** The walk can print **eight** distinct `UnknownScheme` messages,
+which the exit-code section below groups into **seven causes** because two of them share one action.
+Six come out of the reason switch: the five below, which a ring misconfiguration can produce, and a
+sixth at the end of this section that nothing in the configuration causes. The other two are refused
+before the switch is reached — an unrenderable payload version, and a `v2` row carrying a key id —
+and they are causes 1 and 2 in that list. *(This heading said "THE TWO" while five bullets followed,
+then "six", which counted the switch arms and no more. Three censuses of the same thing on one page
+is what this branch keeps producing; they are reconciled here rather than replaced by a fourth.)*
 
 - *"…and no key in this verification's ring has that id"* — the key that wrote the row was never
   retired into the configuration. Adding it, with its boundary, is the fix.
@@ -560,8 +575,9 @@ disagreed with it for some time: its last bullet calls itself "the FOURTH bounda
   the value was removed after the fact. **Do not look for a missing ring entry.** It is the mirror of
   a `v2` row CARRYING an identity, and it is a modification. Treat it as a break.
 
-**The second one has two readings and they are not equally benign.** Either the recorded
-`LastSequence` is too LOW and the row is genuine history written before the rotation, or the row was
+**The second of the five, `retired at sequence N`, has two readings and they are not equally
+benign.** Either the recorded `LastSequence` is too LOW and the row is genuine history written
+before the rotation, or the row was
 **minted with a retired key after the rotation** — which is the attack the boundary exists to catch.
 
 🔒 **RAISING `LastSequence` CAN TURN THAT VERDICT GREEN UNDER EITHER READING, WHICH IS EXACTLY WHY IT
@@ -651,10 +667,15 @@ row count never moved.
   **The fourth, cause 7, does not** — an identity-less row below the founding epoch has one cause
   only, a designation that is not the ring's oldest key, and no `LastSequence` edit clears it. The
   boundary before it does move this epoch's start, and moving it achieves nothing an operator can
-  use: the boundary floors at 1, so this epoch's start floors at 2, and the identity-less row that
-  gets here is sequence 1. The same verdict prints again with a smaller number in it. *(This said
-  moving it "trades this verdict for a link break". No configuration value can produce a link break
-  — see the FOURTH boundary verdict above.)*
+  use on a trail that begins at sequence 1. Boundaries are at least 1 and strictly increase, so this
+  epoch's start cannot fall below the designation's POSITION in that order — 2 for the second key,
+  3 for the third — and the identity-less rows this fires on are the oldest in the table. The same
+  verdict prints again with a smaller number in it. **If the edit DOES clear it, the trail does not
+  start at sequence 1, and that is a second finding rather than a fix.** *(This said the start
+  "floors at 2, and the identity-less row that gets here is sequence 1". The floor depends on where
+  the designation sits in boundary order, and nothing in the code constrains the row to sequence 1 —
+  only the shape of an honest table does. It also said moving it "trades this verdict for a link
+  break"; no configuration value can produce a link break.)*
 - `expected to follow ... A row was deleted, reordered, or inserted` with **`Rows verified before
   the break: 0`** — the first row read names a predecessor that is not there. **The sequence it
   broke at says which of two things happened, and they are not the same incident.** At **sequence
@@ -1020,8 +1041,9 @@ know the anchor table was there, now leaves a number that does not add up.
     database exits 0. Read `1` as "the chain THIS VERB is about is broken", and the verb decides
     which.
 
-  Both are confirmed in `VerifyCommand.Report` and in `ExportCommand.RunAsync`'s final return, and
-  neither is a defect
+  Both are confirmed in `VerifyCommand.Report` and in the return `ExportCommand.RunAsync` makes once
+  it has walked the anchor chain — not its LAST return, which is the exit-3 refusal for an audit
+  store it could not read. Neither is a defect
   in this page — the page is where they become visible, because it is the only document that treats
   the codes as one vocabulary shared by every verb. **Whether the tool should instead give the anchor
   chain its own code is a change to what alerts fire, and is not decided here.** Until it is, an
@@ -1045,8 +1067,10 @@ know the anchor table was there, now leaves a number that does not add up.
   ⚠️ **"Validated at startup" is not true of the ring, and this paragraph used to say it of both
   keys.** The two audit KEYS are options validation and do stop the verifier before it reads. The
   RING's rules live in `AuditChain`'s constructor, so they fire when something first resolves the
-  chain — in the API that is the first request that opens the database, not the deploy. See the
-  measured transcript under **RETIRING A KEY TAKES THREE VALUES** above.
+  chain — in the API that is the first request that opens the database, not the deploy. The measured
+  transcript is in the bullet on the verifier's three verbs, further up this page, where the
+  `Now listening on` / `POST /api/auth/login -> HTTP 500` output is quoted. *(This pointed at
+  **RETIRING A KEY TAKES THREE VALUES**, which holds a command to run and no output at all.)*
   That last group is why the tool no longer stops at "check the connection string and the key": it
   now says that a vanished `AuditEvents` exits the same way and is the most complete tamper there
   is, and that the remedy step 6 points at — re-running migrations — would recreate the table and

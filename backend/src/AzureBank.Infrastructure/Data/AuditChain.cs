@@ -243,10 +243,17 @@ public sealed class AuditChain : IAuditChain
     private readonly string _keyId;
 
     /// <summary>
-    /// Key id to (material, highest sequence it may answer for), for VERIFICATION only — writing
-    /// always uses the current key. The current key is unbounded; a retired one is bounded, which is
-    /// what stops a row it signs after its epoch from being ACCEPTED — nothing stops it being
-    /// written, which is a different sentence and the one that is true.
+    /// Key id to (material, FIRST sequence it answers for, LAST sequence it answers for), for
+    /// VERIFICATION only — writing always uses the current key. Every entry is bounded BELOW,
+    /// including the current key, whose epoch starts one past the last retirement; only the current
+    /// key is unbounded above, because it answers for whatever it writes next. The bounds stop a row
+    /// signed outside a key's epoch from being ACCEPTED — nothing stops it being written, which is a
+    /// different sentence and the one that is true.
+    /// <para>
+    /// This said "(material, highest sequence it may answer for)" and "the current key is
+    /// unbounded". The value has been a three-tuple since the epoch gained a lower end, and that
+    /// same change bounded the current key below.
+    /// </para>
     /// </summary>
     private readonly Dictionary<string, (string Key, long FirstSequence, long? LastSequence)> _keyRing;
 
@@ -333,11 +340,20 @@ public sealed class AuditChain : IAuditChain
         if (string.IsNullOrWhiteSpace(options.Value.ChainKey)
             || options.Value.ChainKey.Length < MinimumKeyLength)
         {
+            /*
+              TWO REASONS REACH THIS AND THE MESSAGE HAS TO SAY WHICH. The guard is blank OR short,
+              and a key of forty spaces is blank while satisfying the only remedy a length-only
+              message gives -- "Audit:ChainKey is 40 characters. It must be at least 32" tells the
+              operator to lengthen something already long enough.
+            */
             throw new AuditKeyRingException(
-                $"Audit:ChainKey is {options.Value.ChainKey?.Length ?? 0} characters. It must be at "
-                + $"least {MinimumKeyLength}, the same floor every retired key is held to: it "
-                + "authenticates every row written from here on, and a key weak enough to guess "
-                + "makes them forgeable by anyone holding the database.");
+                (string.IsNullOrWhiteSpace(options.Value.ChainKey)
+                    ? "Audit:ChainKey is blank. "
+                    : $"Audit:ChainKey is {options.Value.ChainKey.Length} characters. ")
+                + $"It must be non-blank and at least {MinimumKeyLength} characters, the same floor "
+                + "every retired key is held to: it authenticates every row written from here on, "
+                + "and a key weak enough to guess makes them forgeable by anyone holding the "
+                + "database.");
         }
 
         var retiredEntries = (options.Value.RetiredChainKeys ?? [])
@@ -373,11 +389,16 @@ public sealed class AuditChain : IAuditChain
             StringComparer.Ordinal)
         {
             /*
-              The current key answers from the last retirement onwards and has no upper bound: it is
-              the key in use, so it answers for whatever it writes next. Its FIRST sequence is not
-              open either -- a row BELOW the last retirement was written by a key that had already
-              stopped, so naming the current key there is as wrong as naming a retired key above its
-              own boundary, and for the same reason.
+              The current key answers from ONE PAST the last retirement and has no upper bound: it
+              is the key in use, so it answers for whatever it writes next. Its FIRST sequence is not
+              open either -- a row AT OR BELOW the last retirement was written by a key that had
+              already stopped, so naming the current key there is as wrong as naming a retired key
+              above its own boundary, and for the same reason.
+
+              (This said "from the last retirement onwards", which is off by one in the permissive
+              direction: the entry is built with LastSequence + 1, so a row at exactly the retirement
+              sequence naming the current key is refused, and a reader trusting the sentence would
+              have called that a bug.)
             */
             [_keyId] = (
                 options.Value.ChainKey,
@@ -1108,9 +1129,12 @@ public sealed class AuditChain : IAuditChain
 
               (This comment said "checked under the current key alone -- meaning a rotation strands
               every legacy row", and the founding key that makes both halves false landed in the
-              SAME commit, fifteen lines below it. Not a sentence outlived by later work: a sentence that
-              was already false when it was written, three lines above the code contradicting it.
-              Raised in review on 9ea4e80.)
+              SAME commit, fifteen lines below it. Not a sentence outlived by later work: one that
+              was already false when it was written, in the same diff as the code contradicting it.
+              (The distance was given twice and given differently -- "fifteen lines below" here and
+              "three lines above" one clause later -- so one of the two had to be wrong. Measured in
+              9ea4e80: the sentence ends on line 823, selectedKey = _foundingKey is on 838.) Raised
+              in review on 9ea4e80.)
             */
             string? selectedKey;
 
@@ -1259,8 +1283,8 @@ public sealed class AuditChain : IAuditChain
                       "names a key" was false for it, and worse, both remedies it offered were the
                       wrong ones: _foundingFirstSequence is INHERITED from the designated entry, so
                       the only boundary that moves it is the PRECEDING entry's, and moving that
-                      hands the rows beneath to a key that did not write them. An operator following
-                      the old verdict would have
+                      cannot lower the start past the designation's position in boundary order. An
+                      operator following the old verdict would have
                       changed retirement boundaries — which the same sentence warns changes verdicts
                       for rows they did not think they were touching — while the actual
                       misconfiguration stayed exactly where it was.
@@ -1278,9 +1302,13 @@ public sealed class AuditChain : IAuditChain
                         + "them is a designation that cannot mean what it says. ⚠️ The fix is "
                         + "Audit:FoundingChainKey — point it at the OLDEST key in the ring. Lowering "
                         + "the boundary of the entry BEFORE it would move this epoch's start, "
-                        + "because the start is derived from that boundary — but it fixes nothing: "
-                        + "a boundary below 1 is refused, so the start floors at 2, and this row is "
-                        + "older than that. The same message prints with a smaller number in it.",
+                        + "because the start is derived from that boundary — but it cannot move it "
+                        + "far enough. Boundaries are at least 1 and strictly increase, so this "
+                        + "epoch's start cannot fall below the designation's POSITION in that order: "
+                        + "2 for the second key, 3 for the third. The edit clears this row only if "
+                        + "its sequence is at or above that number, and identity-less rows are the "
+                        + "OLDEST there are — so if it clears, the trail does not begin at sequence "
+                        + "1, which is a second finding rather than a fix.",
 
                     // Named a key the ring holds, above that key's epoch.
                     ({ } bound, _, not null) =>
