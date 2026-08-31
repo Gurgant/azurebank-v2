@@ -329,9 +329,39 @@ public class RealCompositionRootRefusalTests
                  })
         {
             var text = string.Join(" ", lines);
+
+            /*
+              ⚠️ "at least 32" DOES NOT ISOLATE THE GUARD THIS TEST IS NAMED AFTER. Six places say
+              it: four Audit/Idempotency/StepUp option validators in the API root, AuditChain's own
+              floor guard on Audit:ChainKey, and the retired-key floor guard this fixture trips. The
+              tightest collision is the closest one -- the ChainKey guard is fifteen lines above the
+              retired-key guard in the SAME constructor and is checked FIRST, so shortening
+              Audit:ChainKey in the fixture would move the refusal to a different guard and leave
+              this assertion green.
+
+              That matters here more than anywhere, because the whole point of this test is that the
+              RING refuses rather than options validation -- the paragraph above it exists to draw
+              exactly that line, and the sibling test covers the other side of it. So three
+              assertions: the reason is printed at all, it is THIS guard, and it is not the options
+              validator the sibling exercises.
+            */
             text.Should().Contain(
                 "at least 32",
                 "{0} has to print the REASON, or exit 3 sends the operator to a key that is fine",
+                label);
+            text.Should().Contain(
+                "holds a key of",
+                "{0} has to print the refusal from the RETIRED-key floor guard, which is the only "
+                + "place that says this -- otherwise the assertion above is satisfied by any of the "
+                + "six that mention the floor, including the Audit:ChainKey guard fifteen lines "
+                + "above it in the same constructor",
+                label);
+            text.Should().NotContain(
+                "must be configured with",
+                "{0} must be refused by the RING, not by options validation. That phrasing belongs "
+                + "to the ValidateOnStart validators and to nothing else, and the sibling test above "
+                + "is the one that covers them -- if it appears here the two tests have collapsed "
+                + "onto one path and the ring's own refusal is untested",
                 label);
             text.Should().NotContain(
                 "the audit store could not be read",
