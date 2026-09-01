@@ -1,4 +1,6 @@
+using AzureBank.Api.Extensions;
 using AzureBank.AuditVerifier.Commands;
+using AzureBank.Infrastructure.Data;
 using AzureBank.AuditVerifier.Extensions;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
@@ -174,5 +176,206 @@ public class RealCompositionRootRefusalTests
             VerifyCommand.Misconfigured,
             "the runbook documents exit codes per code rather than per verb, so a verb that answers "
             + "differently makes that page wrong without changing a word of it");
+    }
+
+    /*
+      THE SECOND COMPOSITION ROOT, WHICH NOTHING TESTED. AuditChain puts the ring's rules in its
+      CONSTRUCTOR rather than in an options Validate(), and the comment that justifies that says why
+      in one sentence: "there are two composition roots -- the API and the operator verifier -- and a
+      structural rule enforced in one of them is a rule the other does not have."
+
+      Every test in this file built the VERIFIER's root. So the argument for where the guards live
+      was asserted in the file that exists to assert it, for one of the two roots it names. If the
+      API root ever registered AuditChain differently -- a singleton, a factory that swallows, a
+      different options binding -- nothing here would have noticed.
+
+      Only the ring is exercised, and deliberately: the API's root wires dozens of services this test
+      has no business in. Resolving IAuditChain from it is the whole assertion.
+    */
+    [Fact]
+    public void TheAPIRootRefusesTheSameRingTheVerifierRootDoes()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplicationServices(BadRingConfiguration());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolve = () => scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        resolve.Should().Throw<AuditKeyRingException>(
+            "the guards live in the constructor precisely so that BOTH roots get them, and that "
+            + "claim is only worth what it is tested against")
+            .WithMessage(
+                "*holds a key of*",
+                "⚠️ THIS QUOTED \"characters\" AND SIX PLACES SAY IT -- four option validators, "
+                + "AuditChain's own floor guard on Audit:ChainKey, and the retired-key guard this "
+                + "fixture trips. The verifier-root sibling was narrowed to the unique fragment one "
+                + "commit earlier and this one was left, which is the same half-swept correction "
+                + "the file keeps producing. It matters more in the API root than in the verifier's, "
+                + "because this root DOES register the option validators whose message also says "
+                + "\"at least 32 characters\"");
+    }
+
+    /*
+      AND A RING THAT IS VALID MUST BIND FROM REAL CONFIGURATION. Every other fixture here is
+      deliberately broken, so nothing established that the colon-separated keys an operator actually
+      writes -- Audit:RetiredChainKeys:0:Key, :0:LastSequence, Audit:FoundingChainKey -- bind to the
+      options at all. A typo in a binding path would have made every refusal test PASS harder while
+      the working configuration silently produced an empty ring.
+    */
+    [Theory]
+    [InlineData("12", true)]
+    [InlineData("0", false)]
+    public void ARingBindsFromRealConfiguration_AndTheBOUNDARYBindsWithIt(
+        string lastSequence, bool shouldBuild)
+    {
+        /*
+          ⚠️ A NotThrow ON ITS OWN PROVES ALMOST NOTHING HERE, which is what this test was until an
+          adversarial pass pointed at it. An empty ring does not throw either: if
+          Audit:RetiredChainKeys:0:LastSequence never reached the options, the entry would bind with
+          LastSequence 0 -- or the list would bind empty -- and a NotThrow would call that a success.
+          The name even promised epochs, and no epoch was ever observed.
+
+          So the two cases differ in ONE character of configuration and they have to DISAGREE. A
+          boundary of 12 must build; a boundary of 0 must be refused by the boundary guard, quoting
+          what only that guard says.
+
+          ⚠️ AND THE CASE THAT CARRIES THE PROOF IS THE FIRST ONE, NOT THE SECOND. This said "if the
+          binding path were broken both would build, and this reddens on the second case". Backwards
+          on both halves. LastSequence is a non-nullable long, so a value that never reaches the
+          options binds to 0, and the constructor refuses 0 -- which means a broken binding path
+          makes NEITHER case build. The '0' row would then still throw with the message it expects
+          and stay GREEN: it is the row that cannot detect the breakage. The '12' row is the one that
+          reddens on NotThrow, and it is the only shape that shows the value arrived.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddVerifierServices(RingConfiguration(lastSequence), Environment());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolve = () => scope.ServiceProvider.GetRequiredService<IAuditChain>();
+
+        if (shouldBuild)
+        {
+            resolve.Should().NotThrow(
+                "a well-formed ring has to bind from the configuration shape the runbook tells an "
+                + "operator to write, or every refusal in this file is testing a ring that was "
+                + "empty for a reason nobody meant");
+        }
+        else
+        {
+            resolve.Should().Throw<AuditKeyRingException>(
+                "the boundary has to arrive from configuration, not default to zero unnoticed")
+                .WithMessage("*without that boundary*");
+        }
+    }
+
+    /// <summary>One retired key with the boundary the caller names, and a founding key.</summary>
+    private static IConfiguration RingConfiguration(string lastSequence) =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] =
+                @"Server=(localdb)\MSSQLLocalDB;Database=Unreached;Trusted_Connection=True",
+            ["Audit:ChainKey"] = new string('k', 40),
+            ["Audit:AnchorKey"] = new string('a', 40),
+            ["Audit:RetiredChainKeys:0:Key"] = new string('r', 40),
+            ["Audit:RetiredChainKeys:0:LastSequence"] = lastSequence,
+            ["Audit:FoundingChainKey"] = new string('r', 40),
+        }).Build();
+
+    /// <summary>A ring that will not construct: the retired key is shorter than the floor.</summary>
+    private static IConfiguration BadRingConfiguration() =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] =
+                @"Server=(localdb)\MSSQLLocalDB;Database=Unreached;Trusted_Connection=True",
+            ["Audit:ChainKey"] = new string('k', 40),
+            ["Audit:AnchorKey"] = new string('a', 40),
+            ["Audit:RetiredChainKeys:0:Key"] = "tooshort10",
+            ["Audit:RetiredChainKeys:0:LastSequence"] = "5",
+            ["Audit:FoundingChainKey"] = "tooshort10",
+        }).Build();
+
+    /*
+      THE SIBLING ABOVE COULD NOT SEE THIS, AND THE REGRESSION WENT STRAIGHT THROUGH IT. That test
+      makes both keys well-formed except one, so the OPTIONS validator refuses and every verb catches
+      OptionsValidationException. The key ring is not options validation: its rules live in
+      AuditChain's constructor, so they fire wherever a verb happens to RESOLVE the chain -- inside
+      verify's try, one line above anchor's and export's.
+
+      MEASURED before this test existed, one short retired key: verify answered 3 with prose, anchor
+      and export answered 4 with an unhandled stack trace. 4 is this tool's code for "the command
+      line was wrong" and the command line was right -- which is, to the character, the incident
+      docs/runbooks/audit-chain-unavailable.md already records from an earlier release and closes
+      with "Both now answer 3, like verify." The key ring re-opened it.
+
+      So the fixture has to break the RING rather than a key, and all three verbs have to be asked.
+      A guard that covers two of the three is the shape of this defect both times it happened.
+    */
+    [Fact]
+    public async Task AllThreeVerbsAnswerTheSameWayToARingThatWillNotCONSTRUCT()
+    {
+        await using var provider = RealProvider(BadRingConfiguration());
+        var path = Path.Combine(Path.GetTempPath(), $"ring-{Guid.NewGuid():N}.jsonl");
+
+        var verify = await VerifyCommand.RunAsync(provider, CancellationToken.None);
+        var export = await ExportCommand.RunAsync(provider, path, CancellationToken.None);
+        var anchor = await AnchorCommand.RunAsync(provider, CancellationToken.None);
+
+        new[] { verify.ExitCode, export.ExitCode, anchor.ExitCode }.Should().AllBeEquivalentTo(
+            VerifyCommand.Misconfigured,
+            "a ring that cannot be built is a configuration problem in every verb, and 4 would tell "
+            + "an operator their command line was wrong when it was not");
+
+        foreach (var (label, lines) in new[]
+                 {
+                     ("verify", verify.Lines), ("export", export.Lines), ("anchor", anchor.Lines),
+                 })
+        {
+            var text = string.Join(" ", lines);
+
+            /*
+              ⚠️ "at least 32" DOES NOT ISOLATE THE GUARD THIS TEST IS NAMED AFTER. Six places say
+              it: four Audit/Idempotency/StepUp option validators in the API root, AuditChain's own
+              floor guard on Audit:ChainKey, and the retired-key floor guard this fixture trips. The
+              tightest collision is the closest one -- the ChainKey guard is fifteen lines above the
+              retired-key guard in the SAME constructor and is checked FIRST, so shortening
+              Audit:ChainKey in the fixture would move the refusal to a different guard and leave
+              this assertion green.
+
+              That matters here more than anywhere, because the whole point of this test is that the
+              RING refuses rather than options validation -- the paragraph above it exists to draw
+              exactly that line, and the sibling test covers the other side of it. So three
+              assertions: the reason is printed at all, it is THIS guard, and it is not the options
+              validator the sibling exercises.
+            */
+            text.Should().Contain(
+                "at least 32",
+                "{0} has to print the REASON, or exit 3 sends the operator to a key that is fine",
+                label);
+            text.Should().Contain(
+                "holds a key of",
+                "{0} has to print the refusal from the RETIRED-key floor guard, which is the only "
+                + "place that says this -- otherwise the assertion above is satisfied by any of the "
+                + "six that mention the floor, including the Audit:ChainKey guard fifteen lines "
+                + "above it in the same constructor",
+                label);
+            text.Should().NotContain(
+                "must be configured with",
+                "{0} must be refused by the RING, not by options validation. That phrasing belongs "
+                + "to the ValidateOnStart validators and to nothing else, and the sibling test above "
+                + "is the one that covers them -- if it appears here the two tests have collapsed "
+                + "onto one path and the ring's own refusal is untested",
+                label);
+            text.Should().NotContain(
+                "the audit store could not be read",
+                "{0} must not describe a configuration refusal as a statement about the table -- "
+                + "nothing was read, and that sentence starts an incident about the data",
+                label);
+        }
     }
 }

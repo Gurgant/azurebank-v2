@@ -116,11 +116,28 @@ public class AuditAnchor
     /// </remarks>
     public string? TailRowHash { get; set; }
 
-    /// <summary>Identity of the <c>Audit:ChainKey</c> the walk behind this record verified under.</summary>
+    /// <summary>Identity of the CURRENT <c>Audit:ChainKey</c> the run behind this record held.</summary>
     /// <remarks>
-    /// <see cref="TailRowHash"/> is an HMAC under SOME chain key, and without this the record names
-    /// a hex string with no way to know which key produced it. Present on gap markers too: a run
-    /// always holds a chain key, whatever the walk found.
+    /// The key a run HELD, recorded so that the record names something more than a hex string.
+    /// Present on gap markers too: a run always holds a chain key, whatever the walk found.
+    /// <para>
+    /// ⚠️ IT DOES NOT IDENTIFY THE KEY BEHIND <see cref="TailRowHash"/>, and this paragraph used to
+    /// imply that it did — "without this the record names a hex string with no way to know which key
+    /// produced it" reads as a claim about the tail's key, which the paragraph below then denies.
+    /// Two sentences, one remarks block, opposite claims.
+    /// </para>
+    /// <para>
+    /// ⚠️ ONE ID FOR A WALK THAT MAY HAVE USED SEVERAL. This said "the key the walk verified under",
+    /// which stopped being accurate when the key ring landed: a walk over a rotated table applies
+    /// whichever key each row names, and this field is written from the current key unconditionally.
+    /// It answers which key the RUN held, and nothing beyond that. It does NOT necessarily identify
+    /// the key behind <see cref="TailRowHash"/>: an anchor taken after a rotation but before the
+    /// first row is written under the new key finds a tail that a RETIRED key authenticated, while
+    /// this field says the current one. The first version of this paragraph claimed the two were the
+    /// same "because the tail is written under the current key" — true whenever anything has been
+    /// written since the rotation, and false in exactly the window a rotation opens. See ADR-0044 D7,
+    /// which records the anchor half of rotation as deferred rather than done.
+    /// </para>
     /// </remarks>
     public string VerifiedUnderChainKeyId { get; set; } = string.Empty;
 

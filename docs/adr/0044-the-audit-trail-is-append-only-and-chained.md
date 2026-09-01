@@ -192,10 +192,28 @@ makes a payload change or a key rotation survivable at all — until now either 
 reject correctly written rows and report them the way it reports tampering. It lands before any
 external anchor exists, because the first token would freeze the rendering and the key permanently.
 
-**A NULL key identity means no identity was recorded, not some particular key.** Such rows are
-verified under the FOUNDING key — today that is `Audit:ChainKey`, because it is the only one there
-has ever been. The word is deliberate: whatever adds a second key must add a ring entry for the
-founding key rather than silently re-point history at whatever is current. The migration writes no
+**A NULL key identity means no identity was recorded, not some particular key** — and what happens
+to such a row depends on the version it declares. A legacy `v2` row records none because that
+version had nowhere to keep one, so it is answered for by the FOUNDING key, which
+`Audit:FoundingChainKey` names and which is `Audit:ChainKey` only while nothing has been retired —
+and only inside that key's inherited epoch, outside which the row is refused at either end. A
+`v3` row is the opposite: its version DOES keep an identity, so an empty one was removed after the
+fact, and the walk refuses it as `UnknownScheme` before recomputing anything. Reading the second as
+the first would file a modification as historical data, which is the wrong direction to be wrong in.
+*(This sentence applied the founding key to every null identity. The arm that gives a null its
+second meaning was added by the branch that added the ring, and this copy is the fourth place to
+carry the unqualified version — the others are corrected in the same commit family.)*
+
+The word was deliberate before the ring existed: "whatever adds
+a second key must add a ring entry for the FOUNDING key rather than silently re-point history at
+whatever is current". The ring kept that promise, and the constructor now refuses to build without
+one. *(That sentence is quoted verbatim by four other files. A rewrite here dropped its opening words
+and left every one of them citing a sentence this document no longer contained, which is the defect
+the rewrite was itself correcting elsewhere. It is restored as written and the tense repaired around
+it instead. It was also written as future work — "today that is `Audit:ChainKey`, because it is the
+only one there has ever been" — and left in the future tense after D7, below, implemented it.)* The
+migration
+writes no
 identity onto those rows, because none was ever recorded and inventing one would put an
 unfalsifiable claim outside their hashed payload.
 
@@ -251,6 +269,14 @@ outside the system, which is SQL Server's ledger, deferred rather than rejected.
 2026-08-27: there are TWO controls and they close different layers — immediately below.)* Until then
 the honest claim is narrow: **this chain detects tampering by someone who holds the database but not
 the key, except at the end of the table.**
+
+*(⚠️ Amended by D7, 2026-08-30: read "**not the key whose EPOCH that row falls in**". Once a key is
+retired the ring holds more than one, and a holder of a RETIRED key can rewrite the rows inside that
+key's epoch and recompute them — bounded ABOVE by its `LastSequence` and BELOW by a `FirstSequence`
+derived from the previous retirement, so one compromised key reaches neither the rows later keys
+wrote nor the rows earlier ones did. The singular reads as a stronger claim than the system makes,
+and the places that quoted it have been amended with it. This note first said "unbounded below",
+which was true for the hour between the two commits that gave the epoch its two ends.)*
 
 **⚠️ CORRECTED 2026-08-27. The struck sentence named one control where there are two, and the
 correction sits against it rather than in a section further down, which is the whole of the rule
@@ -546,6 +572,238 @@ exiting `NothingToVerify`. That separates zero from non-zero, never "purged" fro
 - **The honest summary, so the arrival of a policy is not read as the arrival of a solution:** this
   section states a period and states that the table is never purged. It does NOT discharge a deletion
   duty, and if this system ever came within one, the work above is where that would start.
+
+### D7 — a key ring, so a rotation stops destroying the history it protects
+
+Rotating `Audit:ChainKey` used to cost a deployment its entire past. Every row written since key
+identity existed records the identity of the key that wrote it — the older ones record none, and
+this section returns to them under `Audit:FoundingChainKey`. A verifier holding a different key
+matched none of the ones that do, and the walk broke at the lowest row with a verdict that reads
+exactly like tampering. The one operational hygiene
+measure a keyed design most obviously wants was the one it could not survive.
+
+**The rows are not rewritten, and that was ratified before this code existed.** Re-hashing history to
+the new key would invalidate every anchor ever issued, and — in the database — it is the same
+operation the anchor exists to detect. So the fix is read-side only: `Audit:RetiredChainKeys` holds
+the retired material, and verification picks the key the row names.
+
+**⚠️ The ring SELECTS by `KeyId`; it never TRIES keys in turn**, and the difference is the entire
+safety of rotating. The hazard can be named in one sentence: a trial-keyring verifier accepts a row
+a **retired** key could have minted at any sequence, so every rotation would widen the forgery
+surface instead of narrowing it. *(This attributed that sentence to the tail-anchor decision. That
+document does not contain it, or the words "forgery", "trial-keyring" or "key-epoch" — the sentence
+was written here and given a source it never had. The argument stands on its own; the citation was
+the only thing wrong with it.)* Selection
+works because `KeyId` sits *inside* the hashed payload — a row cannot lie about which key to check it
+with, because changing the claim changes the hash the check recomputes.
+`AuditChainTests.ARowThatLIESAboutItsKeyIsCaught_WhichIsWhyTheRingSELECTSRatherThanTRIES` pins it,
+and replacing the lookup with a loop reddens it. *(This said "and nothing else". The test itself
+withdrew that on this branch — the epoch tests added later redden under the same mutation, because
+a trial loop has no epochs to check a row against. The ADR was the copy nobody re-read.)*
+
+**A retired key reads and never writes.** Writing always takes `Audit:ChainKey`. Possessing an old
+key is the exact circumstance a rotation assumes has happened, so a ring whose members could also
+write would hand the attacker the ability to append rows that verify.
+
+⚠️ **AND THAT IS NOT ENOUGH ON ITS OWN — THE FIRST VERSION OF THIS RING WAS A REGRESSION.** Refusing
+to write through a retired key stops OUR code from doing it. It does nothing about somebody who
+holds the retired key and a database connection: they compute an honest hash under it, label the row
+honestly, insert by raw SQL, and a ring that accepts any member key at any sequence verifies it.
+**Measured before the fix: such a row, appended after the rotation, verified clean.** Before the ring
+there was no such row at all — a retired key verified nothing, so its holder could forge nothing. An
+unbounded ring therefore hands an old key a power it did not have, which is the opposite of what
+rotating is for, and it is what the tail-anchor decision meant by "the forgery surface grows with
+every rotation".
+
+**So each retired key carries the sequence it stopped at**, and answers only at or below it. A row
+above the boundary is refused even when its hash is correct, because a correct hash under a key that
+had no business writing by then is what minting looks like.
+`ARetiredKeyCannotMintAROWATTHETAIL_BecauseTheRingBoundsItToItsEpoch` pins it, and it was written as
+a REPRODUCTION first: it failed against the unbounded ring before it passed against the bounded one.
+
+**What the boundaries do not buy.** ⚠️ *Within limits the sentence below did not state: rewriting a
+stretch changes the RowHash of its TOP row, and the first row of the NEXT epoch still records the old
+one, so the walk breaks on the LINK there. The rewrite is invisible only when no row above it falls
+outside the attacker's epochs — for one retired key, when its boundary is the top of the table.*
+Inside its own epoch the retired key is as powerful as it ever
+was — whoever holds it can rewrite that stretch and recompute it, exactly as the current key's holder
+can rewrite the present. What they buy is that the damage stays THERE: the recorded boundaries
+partition the sequence space, so a compromised retired key reaches neither the rows later keys wrote
+nor the rows earlier ones did. Rotation confines a key to one epoch; it cannot make that epoch
+unrewritable, which is the whole of what rotation can achieve without an anchor from outside.
+*(This paragraph said the boundary "bounds a retired key's FUTURE, not its past" until the epoch
+gained a start — the singular "boundary" is the tell, and the section added below never came back to
+correct the section above it.)*
+
+**⚠️ The FOUNDING key is named, never assumed — and the first draft of this ring assumed it.** Rows
+older than the key-identity column carry a null `KeyId`, which means *no identity was recorded* and
+never *the current key*. This ADR chose that word in advance: "whatever adds a second key must add a
+ring entry for the FOUNDING key rather than silently re-point history at whatever is current." The
+first version of the ring verified those rows under whatever `Audit:ChainKey` held today, which is
+the forbidden thing said in code. `Audit:FoundingChainKey` now names it, is required as soon as
+anything is retired — and not before, because until then there has only ever been one key — and must
+designate material the ring already holds, so each key lives in exactly one place.
+
+**⚠️ THE RING MADE AN INTACT VERDICT CLAIM LESS, AND EVERY SENTENCE THAT SAYS OTHERWISE IS NOW
+WRONG.** Before it, `verify` ended with *"no row was altered by anyone who does not hold
+Audit:ChainKey"*. The claim then narrowed TWICE. First to *a key in the RING*, when the ring landed.
+Then, when the epoch gained a lower end, to *the key whose EPOCH that row falls in* — which is what
+the tool prints today: *"`Audit:ChainKey` for everything since the last retirement, and each retired
+key for its own stretch and no other"*. A retired key still recomputes every row inside its own epoch,
+which is **What the boundaries do not buy** stated from the operator's side. Rounding that
+back up in the one sentence somebody reads to conclude the bank was not attacked is the worst place
+in the system to overclaim, so the tool says the weakest true thing. *(This paragraph stopped at the
+first narrowing and closed with "so the tool says the weaker thing", while the tool had already said
+something narrower still. A paragraph about a claim going stale, one step stale itself.)*
+
+The same staleness reached four more sentences, and only one of them was raised in review. A hash
+mismatch on a row that names its key said the row *"records the key identity that the configured
+Audit:ChainKey derives"* — false after a rotation, when the ring selected a RETIRED key, and it sends
+an operator to compare two ids that are not supposed to match. Its sibling arm, one `if` away, still
+offered *"a different Audit:ChainKey"* as the alternative for a row that records no identity, which
+is checked under `Audit:FoundingChainKey`. And the verifier tool carried its own copy of the first
+one — the copy an operator actually reads during an incident. And it carried a copy of the SIBLING
+arm too, as a hint printed at sequence 1: *"Breaking at sequence 1 usually means the wrong
+`Audit:ChainKey`"*, on the one branch that fires for rows recording no identity, which are the rows
+`Audit:FoundingChainKey` answers for. **A verdict that names the wrong knob is a wrong verdict even
+when its conclusion is right**, and the lesson repeats: the review named an instance, the defect was
+a class, and grepping for the class is what found the other three. *(This paragraph said "three more
+sentences" while enumerating three and listing four, because the sequence-1 hint was corrected in
+the code and never added here. Its own arithmetic gave it away: three sentences minus the one raised
+in review leaves two, not "the other three".)*
+
+**⚠️ AND THE BOUNDARY WAS OPTIONAL UNTIL REVIEW, BECAUSE THE FORGER PICKS THE PAYLOAD VERSION.**
+Bounding retired keys by `KeyId` bounds every key a row can NAME. A `v2` row names none — that
+version records no key identity — so it is checked under `Audit:FoundingChainKey` without naming it,
+and the keyed bound never ran. **Measured: a row minted with the retired founding key, at the tail,
+above its boundary, labelled `v2` — verified clean, `IsIntact = True`.** Before the ring the same row
+needed the CURRENT key, so this was the ring handing an old key a power it did not have: the exact
+regression **⚠️ THE BOUNDARY IS NOT BOOKKEEPING** in `RetiredChainKey` says the boundary exists to
+prevent, reached by choosing a different payload version. **A boundary that one payload version can
+walk around is not a boundary.**
+
+The founding key now carries the epoch of the ring entry it designates — it inherits it rather than
+configuring it twice, because a designation that could disagree with the key it names would be a
+second place for the same fact to live. It is pinned by
+`AV2RowMintedWithTheRETIREDFoundingKey_IsRefused_BecauseTheEpochBoundsItToo`, which verifies the
+forgery under a raised boundary FIRST: the epoch is checked before the hash, so
+a fixture whose forged hash was merely wrong would be refused by accident and prove nothing.
+
+**⚠️ AN EPOCH HAS TWO ENDS, AND THE SECOND VERSION OF THIS RING GAVE IT ONE — THE FIRST GAVE IT
+NONE.** Every boundary
+check read `row.Sequence > last`. An upper bound stops a retired key minting ABOVE its retirement;
+nothing stopped it answering for every sequence BELOW it, including the stretches older keys wrote.
+**Measured:** with one key retired at 2 and a second at 4, the holder of the second re-authored
+sequences 1 through 4 — relabelling the first key's two rows as its own — and the walk returned
+`IsIntact = True`, four rows verified. So compromising the NEWEST retired key handed over the whole
+history rather than one epoch, and each further rotation made the prize larger instead of smaller.
+That is the second time on this branch that a half-bounded ring inverted the reason to rotate; the
+first was the missing upper bound itself.
+
+**The lower bound is DERIVED, never configured.** The recorded boundaries already partition the
+sequence space: a key that stopped at N was preceded by one that stopped at N', so its epoch is
+`(N', N]`, the first key's starts at 1, and the current key's starts one past the last retirement.
+Asking an operator for the start as well would be a second place to state one fact — the objection
+`DeriveKeyId` records against configured ids — and the two would drift with nothing detecting it.
+Two retired keys claiming the SAME boundary are refused, because the rows beneath it would belong to
+whichever sorted first and sort order is not something a configuration states.
+
+**A rotation with no writes between it and the next one is the SAME configuration, not a different
+one**, and this paragraph claimed otherwise: that such a key "gets an empty epoch and correctly
+answers for no rows". Measured while auditing — 512 boundary triples, **zero** produce an empty
+epoch, because sorting makes equality the only reachable collision and the refusal above is what
+meets it. Refusing is right rather than merely what the code does: a key that wrote nothing has no
+row naming its id, so a ring entry for it answers for nothing and its only effect is to make the
+boundary beneath it ambiguous. The honest configuration leaves that key OUT of the ring.
+`TheNEWESTRetiredKeyCannotREAUTHORWhatOlderKeysWrote_BecauseAnEpochHasTwoEnds` pins it, control
+first — an honest three-epoch table must still verify, or the bound would be refusing history.
+
+**A consequence worth stating: the key identity inside the payload is now the SECOND line, not the
+first.** Epochs partition `[1, ∞)`, so a row belongs to exactly one key's epoch and naming any other
+key puts it outside a range before its hash is recomputed. `ARowThatLIESAboutItsKey…` used to fail as
+`HashMismatch` and now fails as `UnknownScheme`, earlier and with a better message. Both defences
+still hold; only the order changed, and the test records the old expectation so that finding the new
+verdict does not read as a regression.
+
+**Every key in the ring is held to the same strength floor**, which it was not until review. Both
+composition roots require `Audit:ChainKey` to be at least 32 characters; a retired key was checked
+only for being non-blank, so a three-character one would have been accepted — and would then have
+been the only thing standing behind every row in its epoch, the stretch of the trail nobody can
+rewrite to repair. A key weak enough to guess makes its epoch forgeable by anyone holding the
+database, which is precisely the attacker D2 is written against. The floor lives in the ring
+construction rather than in each root's options validation, for the reason the ring itself lives
+there: a structural rule enforced in one root is a rule the other does not have.
+
+**What this does not do.**
+
+- **A `v2` row cannot be rotated at all.** It records no key identity, so there is nothing to select
+  on, and trying keys is the one thing the ring must not do. The founding key is the only one that
+  answers for those rows — **and answering is not accepting**: the designation INHERITS its entry's
+  epoch, so a `v2` row outside that epoch, at either end, is refused as `UnknownScheme` before any
+  hash. *(This said they "verify under the founding key and no other", which names the key and
+  silently promises the outcome.)* This is not a gap in the ring; it is why the key-identity column
+  was required *before* the first anchor rather than alongside rotation.
+- **An anchor records ONE key id for a walk that may have used several, and this change does not
+  fix it.** `AuditAnchor.VerifiedUnderChainKeyId` is written from the current key unconditionally, so
+  after a rotation it names the key the RUN held rather than the keys the walk actually applied — and
+  `TailRowHash` is an HMAC under whichever key the tail row named. So the field answers which key
+  the RUN held and nothing more: an anchor taken after a rotation but before the first write under
+  the new key records the current id beside a tail a RETIRED key authenticated. *(This bullet first
+  said the field "still answers the question it was added for, because the tail is written under the
+  current key" — true whenever anything has been written since the rotation, false in exactly the
+  window a rotation opens.)* Left as it is deliberately: the anchor half of rotation is deferred
+  below, and changing the anchor schema for a field nothing reads yet would be schema churn ahead of
+  the decision that should shape it. Stated here because an omission decided is different from one
+  forgotten, and only one of the two is safe to find later.
+- **Nothing forces the anchor a rotation should trigger.** A rotation ought to force an immediate
+  anchor carrying the key-epoch boundary, and this change does not implement it, because nothing
+  here runs unattended to notice a rotation happened —
+  the same premise that defers anchoring itself. It is an operator step, and an operator step is
+  weaker than a mechanism; saying so is the point.
+- **The ring is a read-side convenience, and it adds one control that did not exist before it.** It
+  makes an honest rotation survivable, and it puts a FLOOR under the current key. At write time the
+  current key's holder is still unconstrained — `row.Sequence = ++sequence` and the hash is taken
+  under `Audit:ChainKey` whatever the row says. At VERIFICATION they are not: `Audit:ChainKey` is
+  itself a ring member, its epoch starts at one past the last retirement, and a row naming it below
+  that is refused before its hash is recomputed. With one retirement recorded at 100, a row naming
+  the current key verifies at 101 and above and at no sequence in [1, 100]. On `main` all 100 of
+  them verified. *(This bullet said "it constrains nobody", then "it constrains the CURRENT key's
+  holder not at all" with a parenthetical naming only the refusal ABOVE a retired key's epoch. That
+  parenthetical was written when an epoch had one end. The lower end, added later on this branch,
+  constrains the current key too, and no bullet here said so.)*
+- **What the boundary constrains is a power the ring itself introduced, not one the world had.**
+  Before the ring, a rotation left every old row refused under any key the deployment held —
+  `WithoutRetiringTheOldKey_RotationStrandsTheHistory…` pins that — so an old key's holder could
+  produce nothing that verified. For the RETIRED keys the boundary is exactly that: it stops the
+  widening running past the retirement point, and below the boundary the ring still hands an old key
+  more than it had, never less. A self-limit on a new capability.
+
+  ⚠️ **BUT "this change only WIDENS what verification accepts" IS FALSE, AND IT WAS THE SECURITY
+  ARGUMENT OF THIS SECTION.** Measured against `main`: at `fc1ce40` the only gate on a `v3` row was
+  `row.KeyId != _keyId` — identity, with sequence nowhere in it — so a row honestly naming the
+  current key verified at ANY sequence. At HEAD the current key carries a `FirstSequence` of one past
+  the last retirement, and a row below it is refused before the hash. Concretely: `Audit:ChainKey`
+  = K_new with K_old retired at 100, and a `v3` row at sequence 50 naming K_new with a hash correct
+  under K_new. On `main` that row verified; here it does not. That is a NARROWING, on the current
+  key, over the whole range [1, 100] — and it is a new control, not a self-limit. It is the right
+  control: below the last retirement the current key had not started writing, so naming it there is
+  as wrong as naming a retired key above its own boundary. What was wrong was calling it nothing.
+  *(With nothing retired the ring holds one key whose epoch starts at 1, so HEAD accepts every row
+  at sequence 1 or above that `main` accepted — but the floor is real even then: a row at sequence 0
+  or below, honestly naming the current key, verified on `main` and is refused here. `Sequence` is
+  never generated by the store, so that shape is the attacker's to write. HEAD accepts everything
+  `main` accepted. The narrowing exists only once a rotation has been recorded.)*
+- **And it is defeasible by whoever holds the configuration.** The refusal happens at VERIFICATION,
+  never at write time, and the verdict says so itself — *"Raising LastSequence can turn this verdict
+  green under either reading, and going green does not tell you which was true"*. ⚠️ **Which
+  direction defeats it depends on which end of the epoch was crossed**, and this bullet quoted only
+  the verdict for one of them: a row ABOVE a retired key's boundary is admitted by RAISING that
+  boundary, while a row BELOW the current key's start is admitted by LOWERING the last retirement's
+  — raising it moves that start further away and refuses the row harder. Both are one edit to one
+  number by whoever holds the configuration, which is the point the bullet is making; naming only
+  the raise made it read as one remedy for two different failures. A read-side setting an operator
+  can turn green is not the same kind of object as a hash; the anchor is still the thing that would
+  change the picture.
 
 ## What is wired, and what is not
 

@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Text.RegularExpressions;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
 using Microsoft.Extensions.Options;
@@ -21,6 +23,28 @@ namespace AzureBank.Tests.Unit.Tools;
 /// </remarks>
 public class AuditVerifierReportTests
 {
+    /// <summary>
+    /// Walks up from the test assembly until it finds the repository root.
+    /// </summary>
+    /// <remarks>
+    /// Same shape as <c>AuditProseGuardTests.RepoRoot</c>, and here for the same reason: a guard
+    /// that derives its expectation from a source file must FAIL when it cannot find that file
+    /// rather than quietly assert something weaker.
+    /// </remarks>
+    private static DirectoryInfo RepoRoot()
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".github")))
+        {
+            dir = dir.Parent;
+        }
+
+        dir.Should().NotBeNull(
+            because: "the expected path count is read out of AuditChain.cs; a run that cannot find "
+            + "it must say so rather than pass");
+        return dir!;
+    }
+
     [Fact]
     public async Task AnUnreachableDatabase_IsNoVerdict_AndMustNotLookLikeABrokenChain()
     {
@@ -306,10 +330,32 @@ public class AuditVerifierReportTests
             1, 5);
 
         exitCode.Should().Be(VerifyCommand.Broken);
-        string.Join(" ", lines).Should().Contain(
-            "Audit:ChainKey",
-            "a wrong key mismatches on the first row of the table, every time, because the first "
-            + "hash it recomputes is already different");
+
+        /*
+          ⚠️ THE ASSERTION BELOW USED TO BE Contain("Audit:ChainKey") AND STAYED GREEN THROUGH A
+          REWRITE OF THE SENTENCE IT WAS WRITTEN FOR. It now asserts the key this branch actually
+          names, which is the one applied to a row recording no identity.
+
+          The explanation here was that "Audit:ChainKey" is a SUBSTRING of "Audit:FoundingChainKey".
+          It is not -- the colon is followed by "Founding", so only the bare "ChainKey" nests. The
+          real reason is simpler and worse: the replacement block prints the literal on its own,
+          "Audit:FoundingChainKey, which is Audit:ChainKey only while nothing / has been retired",
+          so the old assertion matches the second mention and would be green TODAY. A stale
+          assertion was diagnosed with a mechanism that does not exist, which left the actual
+          weakness -- an assertion satisfied by a word the verdict happens to mention -- unnamed.
+        */
+        var text = string.Join(" ", lines);
+        text.Should().Contain(
+            "Audit:FoundingChainKey",
+            "a LEGACY row that records no key identity is answered for by the FOUNDING key, so that "
+            + "is the one to confirm — Audit:ChainKey is it only while nothing has been retired, and "
+            + "the row is accepted only inside that key's inherited epoch. "
+            + "The qualifier is load-bearing: a CURRENT-version row recording none is refused "
+            + "before any hash, so this verdict can only be about a legacy one");
+        text.Should().Contain(
+            "Confirm the key before escalating",
+            "and the hint has to survive as one phrase: a re-wrap that split it would leave the "
+            + "sibling test's NotContain passing over a sentence that is still printed");
     }
 
     [Fact]
@@ -500,6 +546,207 @@ public class AuditVerifierReportTests
     }
 
     [Fact]
+    public void TheUnknownSchemeBlockEnumeratesEVERYWayToReachIt_NotTheThreeItUsedTo()
+    {
+        /*
+          THE PROSE WAS REWRITTEN AND NOTHING ASSERTED IT. The verdict block for UnknownScheme listed
+          THREE readings, led by "you hold a different key than the one that wrote this row". The key
+          ring added two causes in which the verification DOES hold the row's key -- above a retired
+          key's epoch, and above the founding key's -- and the epoch's lower bound added TWO more,
+          the mirror of each, for a class of FOUR. For those, the old first reading was false while
+          sitting at the top of the list an operator reads to decide what to check.
+
+          (This said the lower bound "added a third". It added both below-the-epoch paths in one
+          commit -- row below its own key's epoch, and identity-less row below the founding key's --
+          and every neighbour on the branch already says four: the enum doc's "four boundary paths",
+          the switch comment's "two paths and a single arm was left serving both", and the printed
+          "FOUR of the seven are boundary causes". This was the last place still counting one.)
+
+          The rewrite that fixed it shipped with no test at all: `git log` over
+          backend/tests/AzureBank.Tests/Unit/Tools/ shows the commit that changed this text touched
+          nothing here, while the commit BEFORE it had paired its change with assertions. This is
+          that pairing put back.
+
+          It asserts the SHAPE rather than the sentences: how many readings are offered, and that the
+          list does not lead with a claim that is false for most of them. Pinning the wording would
+          make every future rewrite red for no reason, which is how a test stops being read.
+        */
+        var (exitCode, lines) = VerifyCommand.Report(
+            new AuditChainVerification(
+                0, 1, "Row ... was written under key id 'ffffffffffffffff' and no key ...", 1, 5,
+                AuditChainBreakKind.UnknownScheme, "v3", "ffffffffffffffff", "b78e425e698034a4"),
+            1, 5);
+
+        exitCode.Should().Be(VerifyCommand.Broken);
+
+        /*
+          ⚠️ WHERE THE EXPECTED NUMBER COMES FROM, AND WHERE IT DOES NOT. The ACTUAL count is taken
+          from the block, which is unavoidable — the block is the thing under test. The EXPECTED
+          number is the part that can be got wrong, and the first version of this test got it by
+          counting the same block, so the assertion agreed with whatever was written there. It
+          asserted FIVE while the walk had six, then the enumeration below was left at six while the
+          assertion moved to seven — the same defect, one round later, inside the comment written to
+          prevent it.
+
+          So the expected number is derived HERE, from the walk's returns, and the derivation is
+          written out so the next person can check it rather than trust it:
+
+          The NINE paths, each a distinct return or switch arm in VerifyAsync, in
+          the order the walk reaches them:
+            1. the payload version cannot be rendered by this build;
+            2. a 'v2' row carries a key id, which that version has nowhere to keep;
+            3. no key in the ring has the row's id;
+            4. the ring holds the key, the row is ABOVE its epoch;
+            5. the ring holds the key, the row is BELOW its epoch;
+            6. the row records no id and is ABOVE Audit:FoundingChainKey's epoch;
+            7. the row records no id and is BELOW it, by designation;
+            8. the row records no id and is BELOW it because its sequence is under 1;
+            9. the row declares the current version and carries no id at all.
+
+          Nine paths, SEVEN printed causes: two PAIRS share a bullet, each pair because it takes one
+          action — the identity column contradicting the version (2 and 9), and the identity-less
+          row below the founding epoch (7 and 8), where 8 is a row stored under sequence 1 and gets
+          its own verdict TEXT while sharing 7's entry in the list. An overwritten column is not a
+          TENTH path: it is how several of them come about, since PayloadVersion and KeyId are both
+          inside the hashed payload.
+        */
+        var readings = lines.Count(line => line.TrimStart().StartsWith("- ", StringComparison.Ordinal));
+        /*
+          ⚠️ THE EXPECTED NUMBER IS READ OUT OF AuditChain.cs, NOT WRITTEN HERE. Both sides of this
+          comparison used to come from the printed block: the actual count from its bullets, the
+          expected count from a literal somebody typed after reading the same bullets. Nothing in
+          the test touched VerifyAsync, so it reddened when the BLOCK changed and never when the
+          WALK did -- the direction its own reason claims to protect. An engineer adding a tenth
+          path and forgetting the bullet shipped green.
+
+          The walk's paths are counted from two shapes in the source: the UnknownScheme returns
+          outside the reason switch, and the arms of that switch. Two pairs of paths share one
+          bullet each, because each pair takes one action -- the identity column contradicting the
+          version ('v2' with an id, 'v3' without one), and the identity-less row below the founding
+          epoch (a designation that is not the oldest, or a sequence below 1). So the bullets are
+          the paths minus those two collapses, and adding a path without a bullet reddens here.
+        */
+        var walk = File.ReadAllLines(Path.Combine(
+            RepoRoot().FullName, "backend", "src", "AzureBank.Infrastructure", "Data",
+            "AuditChain.cs"));
+
+        /*
+          ⚠️ EQUALITY, NOT Contains, AND THE DIFFERENCE IS THE WHOLE COUNT. AuditChain.cs mentions
+          AuditChainBreakKind.UnknownScheme five times: three returns, and twice inside XML doc
+          prose. A containment test would find all five and make this two too high. Comparing the
+          TRIMMED LINE for equality finds only the three returns, because a doc line trims to
+          "/// The version the breaking row declared..." and cannot equal the target. Minus one for
+          the switch's own return leaves the two refused before the switch is reached.
+
+          Written down because a reviewer read this as Contains and reported the miscount it would
+          have caused -- a reasonable misreading of a line whose correctness rests on one operator.
+        */
+        var returnsOutsideTheSwitch =
+            walk.Count(l => l.Trim() == "AuditChainBreakKind.UnknownScheme,") - 1;
+
+        var switchStart = Array.FindIndex(
+            walk, l => l.Contains("var reason = (expiredBoundary", StringComparison.Ordinal));
+
+        /*
+          ⚠️ THE ANCHORS ARE CHECKED BEFORE THEY ARE USED, because a guard that derives its
+          expectation from a source file has two ways to stop working and only one of them is a
+          failing assertion. If the anchor line is renamed, FindIndex returns -1 and the SECOND
+          FindIndex throws ArgumentOutOfRangeException -- the test still fails, but with an exception
+          that says nothing about what changed, during a run where somebody is looking at a different
+          diff. And the closing brace is found by text, so a nested initializer ending in "};" inside
+          an arm would truncate the slice and UNDERCOUNT the arms, which is the silent direction.
+          The default arm is always last, so requiring it inside the slice is what proves the slice
+          reached the end of the switch.
+        */
+        switchStart.Should().BeGreaterThanOrEqualTo(
+            0,
+            "the reason switch is found by the text \"var reason = (expiredBoundary\"; if that line "
+            + "was renamed this guard has to say so rather than fail on an index");
+
+        var switchEnd = Array.FindIndex(
+            walk, switchStart, walk.Length - switchStart, l => l.Trim() == "};");
+
+        switchEnd.Should().BeGreaterThan(
+            switchStart, "the switch has to close after it opens, or the slice below is meaningless");
+
+        var block = walk[switchStart..switchEnd];
+
+        block.Should().Contain(
+            l => l.Trim().StartsWith("_ =>", StringComparison.Ordinal),
+            "the default arm is the last one, so a slice that does not reach it stopped early -- "
+            + "which would UNDERCOUNT the paths and make this guard agree with a walk it never read");
+
+        var arms = block.Count(l => Regex.IsMatch(l, @"^\s+(\(|_ =>)"));
+
+        var paths = returnsOutsideTheSwitch + arms;
+
+        paths.Should().Be(
+            9,
+            "the walk's paths are derived from AuditChain.cs, not from this file: {0} returns "
+            + "outside the reason switch and {1} arms in it. If this number moved, a path was "
+            + "added or removed and the printed list has to move with it",
+            returnsOutsideTheSwitch, arms);
+
+        readings.Should().Be(
+            paths - 2,
+            "a list that offers fewer causes than the walk can return sends an operator looking for "
+            + "one it does not name. Two pairs of paths share a bullet because each pair takes one "
+            + "action; every other path takes its own");
+
+        var text = string.Join(" ", lines);
+
+        /*
+          ⚠️ THE BULLETS ARE PINNED TO THE WALK AND THE WORDS ABOVE THEM WERE NOT. The block opens
+          "SEVEN causes produce this verdict" and says "of the seven" twice more, all three as
+          spelled literals. Adding a path reddens the count above and leaves those words untouched,
+          which puts "SEVEN causes" in front of an operator over eight bullets. Raised in review, and
+          it is the same shape as everything else on this branch: a number asserted in one place and
+          narrated in another, with nothing tying the two.
+
+          The TOTAL is pinned here. The two sub-counts -- "FOUR of the seven are boundary causes",
+          "TWO of the seven are fixed in configuration" -- are NOT, and that is a decision rather
+          than an oversight: they classify causes by what an operator does about them, and nothing in
+          the block's shape carries that classification for a test to derive. Writing them down as
+          unpinned is the honest half of the fix.
+        */
+        var spelledNumbers = new[]
+        {
+            "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN",
+        };
+
+        readings.Should().BeLessThan(
+            spelledNumbers.Length,
+            "the spelled-number table has to cover the count, or the two assertions below cannot "
+            + "check the words and would fail on an index instead of on the thing they guard");
+
+        var spelled = spelledNumbers[readings];
+
+        text.Should().Contain(
+            $"{spelled} causes produce this verdict",
+            "the printed total is a literal, and nothing else stops it being left behind when a "
+            + "path and its bullet are added together");
+        text.Should().Contain(
+            $"of the {spelled.ToLowerInvariant()}",
+            "the same total is repeated twice more, in the boundary-cause line and the "
+            + "fixed-in-configuration line, and both have to move with it");
+
+        text.Should().NotContain(
+            "you hold a different key than the one that wrote this row",
+            "THE OLD LEADING READING, false for all four boundary causes: on every one of them the "
+            + "ring HOLDS the key and refuses the row anyway. Leading with it sent an operator to "
+            + "compare two ids that are not supposed to match. (This reason said \"three of the "
+            + "five\" — a count of the list as it stood two rewrites ago.)");
+        text.Should().Contain(
+            "not by itself the problem",
+            "and the block has to say so where it prints the two ids, or an operator reads the "
+            + "mismatch as the finding");
+        text.Should().Contain(
+            "BELOW the epoch it opens",
+            "the lower bound is a cause the walk returns, so the list has to offer it — it was "
+            + "missing for two commits while this test asserted the block's own count back at it");
+    }
+
+    [Fact]
     public void AnIntactChainReportsTheCOUNT_AndDoesNotOverclaim()
     {
         /*
@@ -541,5 +788,36 @@ public class AuditVerifierReportTests
             + "the key, except at the end of the table -- and records that the runbook had already "
             + "repeated the too-strong version once after that section withdrew it. This assertion "
             + "is what stops the tool from being the third place it comes back");
+        /*
+          ASSERT THE CLAIM, NOT A TOKEN, AND NOT THE LINE BREAKS EITHER. `Contain("RING")` passed on
+          a single word, so restoring the old current-key-only sentence while any other line said
+          "RING" would have kept this green. Asserting the whole phrase against the raw text is the
+          opposite mistake: the sentence is emitted as separate console lines, so the phrase spans a
+          break and a literal match pins where that break falls -- the review's own suggested literal,
+          "a key in the RING", does not appear in the output for exactly that reason. Collapsing the
+          whitespace first asserts what the sentence SAYS and lets it be re-wrapped freely.
+        */
+        var claim = Regex.Replace(text, @"\s+", " ");
+        claim.Should().Contain(
+            "does not hold the key whose EPOCH that row falls in",
+            "the narrowed claim has to be the one printed, not merely a word from it — and it "
+            + "narrowed twice: first from Audit:ChainKey to the ring, then from the ring to the one "
+            + "key whose epoch contains the row");
+        claim.Should().NotContain(
+            "a retired key for the rows at or below its boundary",
+            "the pre-lower-bound description of what a retired key answers for, printed on every "
+            + "intact verdict until the epoch gained a start");
+        claim.Should().NotContain(
+            "altered by anyone who does not hold Audit:ChainKey",
+            "and the sentence it replaced has to be absent, or a partial regression restores the "
+            + "overclaim while every assertion above still passes");
+        /*
+          THE SUBSUMED ASSERTION IS GONE, and its reason is worth keeping for one line: it asserted
+          the single token "RING" underneath an assertion that already required the whole phrase, so
+          it could never fail on its own. It then failed for the opposite reason — the claim narrowed
+          again, from "a key in the ring" to "the key whose epoch that row falls in", and the token
+          disappeared. An assertion that only ever fails when something ELSE has already failed is
+          noise until the day it misleads.
+        */
     }
 }

@@ -43,6 +43,34 @@ public static class VerifyCommand
     public const int Misconfigured = 3;
 
     /// <summary>
+    /// The verdict for a ring that cannot be built, shared by all three verbs.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ SHARED BECAUSE IT WAS NOT, AND THE TWO VERBS THAT LACKED IT ANSWERED 4. The ring's rules
+    /// are enforced in <see cref="AuditChain"/>'s constructor, so they surface wherever a caller
+    /// happens to resolve the chain — inside <c>verify</c>'s try, one line ABOVE the try in
+    /// <c>anchor</c> and <c>export</c>. Measured with one short retired key: <c>verify</c> 3 with
+    /// prose, the other two <b>4</b> with an unhandled stack trace, which this tool's own scale
+    /// defines as "the command line was wrong" while the command line was right.
+    /// <para>
+    /// The runbook records the identical defect from an earlier release, same two verbs, and closes
+    /// *"Both now answer 3, like `verify`."* — so this is that incident re-opened by the key ring,
+    /// and a verdict in one place is what stops it re-opening a third time.
+    /// </para>
+    /// </remarks>
+    internal static (int ExitCode, string[] Lines) RingNotConfigured(AuditKeyRingException failure) =>
+    (
+        Misconfigured,
+        [
+            "CANNOT PROCEED: this tool is not configured to read the chain.",
+            $"  {failure.Message}",
+            "  NOTHING WAS READ. The key ring is checked when the chain is BUILT, so this is a",
+            "  statement about the configuration and not about the audit table -- do not treat it",
+            "  as a finding about the data. Exit 3, the same code a missing key produces, because",
+            "  it is the same kind of problem.",
+        ]);
+
+    /// <summary>
     /// The command line itself was wrong: no command, a mistyped one, an unknown option.
     /// </summary>
     /// <remarks>
@@ -194,18 +222,30 @@ public static class VerifyCommand
                 // version. What decides the advice is whether the row named a key at all.
                 if (result.FirstBrokenSequence == 1 && result.RecordedKeyId is null)
                 {
-                    lines.Add("  Breaking at sequence 1 usually means the wrong Audit:ChainKey, not");
-                    lines.Add("  tampering -- a wrong key is well-formed, so validation cannot catch");
-                    lines.Add("  it. Confirm the key before escalating.");
+                    // NOT Audit:ChainKey. This branch fires on a row recording NO key identity,
+                    // and those are checked under Audit:FoundingChainKey -- which is Audit:ChainKey
+                    // only while nothing has been retired. Naming the current key here sends an
+                    // operator to a key that never touched the row: the same defect raised in
+                    // review on 9e92377 and corrected on fc1c496, in the sibling arm below, and
+                    // missed here. (This comment named 9e92377 as the CORRECTION until it was
+                    // checked -- that commit never touched this file. Raised on / corrected on are
+                    // different commits and this corpus keeps the two phrasings apart.)
+                    lines.Add("  Breaking at sequence 1 usually means the wrong key, not tampering");
+                    lines.Add("  -- a wrong key is well-formed, so validation cannot catch it. This");
+                    lines.Add("  row records no key identity, so the key applied to it is");
+                    lines.Add("  Audit:FoundingChainKey, which is Audit:ChainKey only while nothing");
+                    lines.Add("  has been retired.");
+                    lines.Add("  Confirm the key before escalating.");
                 }
                 else if (result.FirstBrokenSequence == 1)
                 {
                     // The opposite conclusion, and the stronger statement this tool could never make
                     // before: the key behind this row has already been confirmed by its own id.
-                    lines.Add("  The key is CONFIRMED for this row: it records the key id that the");
-                    lines.Add("  configured Audit:ChainKey derives, and a wrong key cannot reach a");
-                    lines.Add("  hash comparison on such a row. This is a WRITE, not a key problem.");
-                    lines.Add("  Preserve the table and escalate.");
+                    lines.Add("  The key is CONFIRMED for this row: it records a key id, the");
+                    lines.Add("  configured ring SELECTED the key by that id, and a key the ring");
+                    lines.Add("  cannot select never reaches a hash comparison. After a rotation");
+                    lines.Add("  that key is usually a RETIRED one, not Audit:ChainKey -- so this");
+                    lines.Add("  is a WRITE, not a key problem. Preserve the table and escalate.");
                 }
                 else
                 {
@@ -252,18 +292,92 @@ public static class VerifyCommand
             */
             if (result.Kind == AuditChainBreakKind.UnknownScheme)
             {
+                /*
+                  SEVEN CAUSES, AND THIS COMMENT HAS SAID THREE, THEN FIVE, THEN SIX. Each time the
+                  number moved, this paragraph -- the one that ARGUES for the number -- was left
+                  behind by a commit that changed the strings below it. That is the branch's own
+                  defect committed against its own explanation, so the count is now derived here
+                  rather than remembered:
+
+                  The NINE paths, each a distinct return or switch arm in VerifyAsync, in
+                  the order the walk reaches them:
+                    1. the payload version cannot be rendered by this build;
+                    2. a 'v2' row carries a key id, which that version has nowhere to keep;
+                    3. no key in the ring has the row's id;
+                    4. the ring holds the key, the row is ABOVE its epoch;
+                    5. the ring holds the key, the row is BELOW its epoch;
+                    6. the row records no id and is ABOVE Audit:FoundingChainKey's epoch;
+                    7. the row records no id and is BELOW it, by designation;
+                    8. the row records no id and is BELOW it because its sequence is under 1;
+                    9. the row declares the current version and carries no id at all.
+
+                  Nine paths, SEVEN printed causes. Two PAIRS share a bullet, each because it takes
+                  one action: the identity column contradicting the version (2 and 9), and the
+                  identity-less row below the founding epoch (7 and 8). The second pair prints
+                  different TEXT -- one sends the operator to the designation, the other to
+                  escalation -- but occupies one entry in the list, which names both. Every other
+                  path takes a different action.
+
+                  ⚠️ THE LIST ENUMERATES CAUSES, NOT READINGS. "The column was overwritten" used to
+                  sit among them as a peer; it is not something the walk can return, it is how
+                  several of them come about, so it is stated below the list instead.
+                */
                 lines.Add($"  This row declares payload version '{result.PayloadVersion ?? "(none)"}' and key id");
-                lines.Add($"  '{result.RecordedKeyId ?? "(none)"}'; this verification holds the key whose id is");
-                lines.Add($"  '{result.ConfiguredKeyId ?? "(none)"}'. Its hash was NOT checked -- so this is a row");
-                lines.Add("  left UNVERIFIED, never a row proved good.");
-                lines.Add("  Three readings, and the discriminator is POSITIONAL, not textual:");
-                lines.Add("    - you hold a different key than the one that wrote this row;");
-                lines.Add("    - this build cannot render the version the row declares;");
-                lines.Add("    - the column was overwritten, which is a modification inside the");
-                lines.Add("      hashed payload.");
-                lines.Add("  The first two fail at the LOWEST row of that scheme and at every one");
-                lines.Add("  after it. A single row failing among verified siblings is a write.");
-                lines.Add("  This is NEVER a configuration note. Treat it as a break.");
+                lines.Add($"  '{result.RecordedKeyId ?? "(none)"}'. The CURRENT key's id is");
+                lines.Add($"  '{result.ConfiguredKeyId ?? "(none)"}' -- and the ring may hold retired");
+                lines.Add("  keys besides it, so those two differing is not by itself the problem.");
+                lines.Add("  The hash was NOT checked, so this is a row left UNVERIFIED, never a");
+                lines.Add("  row proved good.");
+                lines.Add("  SEVEN causes produce this verdict. The SECOND line of this report --");
+                lines.Add("  the one directly under CHAIN BROKEN -- says which one. They are:");
+                lines.Add("    - no key in the ring has this row's id;");
+                lines.Add("    - the ring HAS that key, but the row sits ABOVE the epoch it closes;");
+                lines.Add("    - the ring HAS that key and the row sits BELOW the epoch it opens,");
+                lines.Add("      so an earlier key wrote this stretch;");
+                lines.Add("    - the row records no key id, so Audit:FoundingChainKey answers for");
+                lines.Add("      it, and the row sits ABOVE that key's epoch;");
+                lines.Add("    - the row records no key id and sits BELOW that key's epoch --");
+                lines.Add("      either a founding designation that is not the OLDEST key, or a");
+                lines.Add("      row stored below sequence 1, which no key is needed to insert and");
+                lines.Add("      no setting can fix;");
+                lines.Add("    - the row records a key id on a payload version that has no place");
+                lines.Add("      to keep one, or records none on a version that has;");
+                lines.Add("    - this build cannot render the version the row declares.");
+                lines.Add("  This walk stopped at the first row it could not answer for, and how");
+                lines.Add("  wide the damage is depends on which cause you have. The last TWO in");
+                lines.Add("  the list are ROW-LOCAL: no epoch and no key are involved, the row is");
+                lines.Add("  refused on its own, and the rows around it are untouched. For the");
+                lines.Add("  four boundary causes the failing row is OUTSIDE the epoch named above,");
+                lines.Add("  so that epoch is where the key was valid, not where the damage is.");
+                lines.Add("  For a key missing from the ring the affected rows ARE that key's");
+                lines.Add("  epoch -- which starts at sequence 1 when the missing key is the");
+                lines.Add("  oldest, so a break at row 1 with nothing verified is the ordinary");
+                lines.Add("  shape of forgetting to retire a key, not evidence of anything worse.");
+                lines.Add("  A missing entry and a single overwritten row can look alike. To tell");
+                lines.Add("  them apart, run again with that key in the ring: the id above says");
+                lines.Add("  WHICH key you need and cannot be pasted back -- it is derived from the");
+                lines.Add("  material -- so add the KEY as Audit:RetiredChainKeys:N:Key with");
+                lines.Add("  LastSequence from the rotation record, and set Audit:FoundingChainKey,");
+                lines.Add("  required as soon as anything is retired. A miss clears; a write does");
+                lines.Add("  not.");
+                lines.Add("  ⚠️ AN OVERWRITTEN COLUMN PRODUCES SEVERAL OF THESE and is not one more");
+                lines.Add("  entry in the list: PayloadVersion and KeyId are inside the hashed");
+                lines.Add("  payload, so changing either is a modification that then surfaces as");
+                lines.Add("  whichever of the causes above it happens to trip.");
+                lines.Add("  FOUR of the seven are boundary causes -- above and below, for a row");
+                lines.Add("  that names a key and for one that does not. On the two ABOVE-the-epoch");
+                lines.Add("  causes minting is a reading, and on the identity-less one it is the");
+                lines.Add("  LEADING reading -- the line above says so, because a 'v2' row is how a");
+                lines.Add("  forger reaches the founding key without naming it. The fourth, an");
+                lines.Add("  identity-less row BELOW the founding");
+                lines.Add("  epoch, does not -- there the fix is the DESIGNATION. A boundary edit");
+                lines.Add("  moves that start but cannot lower it past the designation's POSITION");
+                lines.Add("  in boundary order, so on a trail that begins at sequence 1 it never");
+                lines.Add("  clears. Read the runbook before touching the configuration.");
+                lines.Add("  TWO of the seven are fixed in configuration: a missing ring entry,");
+                lines.Add("  and the DESIGNATION for an identity-less row below the founding");
+                lines.Add("  epoch. The rest are not, and no reading here makes this a row proved");
+                lines.Add("  good. Treat it as a break.");
             }
 
             lines.Add("  Do NOT repair by deleting rows: see docs/runbooks/audit-chain-unavailable.md");
@@ -308,10 +422,19 @@ public static class VerifyCommand
         [
             $"CHAIN INTACT: {result.Verified:N0} rows verified.",
             $"  Sequence range: {lowest:N0} to {highest:N0}",
-            "  This proves no row was altered by anyone who does not hold Audit:ChainKey,",
-            "  and that none was removed from the MIDDLE. It does NOT prove none was removed",
-            "  from the END -- truncation needs no key and leaves every surviving row linking",
-            "  correctly. Compare the count against your own.",
+            "  This proves no row was altered by anyone who does not hold the key whose",
+            "  EPOCH that row falls in -- Audit:ChainKey for everything since the last",
+            "  retirement, and each retired key for its own stretch and no other -- and",
+            "  that none was removed from the MIDDLE. Retiring a key narrows what a",
+            "  verification ACCEPTS from it, never what it can write: inside its own epoch",
+            "  it still rewrites and recomputes as freely as it ever did.",
+            // "Compare the count against your own" STAYS ON ONE LINE. The uncovered-window text
+            // below points at it by name -- "the verdict above already tells you to compare
+            // counts" -- and UncoveredWindowTests asserts the phrase is contiguous, which is what
+            // caught the rewrap that split it while every word was still on the screen.
+            "  It does NOT prove none was removed from the END -- truncation needs no key and",
+            "  leaves every surviving row linking correctly.",
+            "  Compare the count against your own.",
             string.Empty,
             .. UncoveredWindow(coverage, highest),
         ]);
@@ -347,11 +470,18 @@ public static class VerifyCommand
           ⚠️ THE ARITHMETIC IS IN SEQUENCE SPACE, AND THAT IS A ROW COUNT ONLY BY ASSUMPTION.
           `Sequence` is assigned as tail + 1 and never reused while rows are only appended, so on an
           intact chain the span between two sequences is the number of rows between them. What makes
-          it an assumption rather than a fact is that VerifyAsync never checks contiguity: measured,
-          its per-row checks are the link, the payload version, the key identity and the hash, and
-          `Sequence` is read only for the range it reports. Someone holding Audit:ChainKey can
-          therefore delete an interior row and recompute the links behind it, leaving an INTACT chain
-          with a hole in its numbering -- and the window then counts a sequence that has no row.
+          it an assumption rather than a fact is that VerifyAsync never checks CONTIGUITY. It does
+          now read `Sequence` for more than the range: since the epoch gained two ends the walk
+          compares every row's sequence against the bounds of the key answering for it, four
+          comparisons in all. What it never does is check that one row's sequence follows the last.
+          So somebody holding the keys covering a stretch can delete an interior row from it and
+          recompute the links behind it, leaving an INTACT chain with a hole in its numbering -- and
+          the window then counts a sequence that has no row.
+
+          (This said the per-row checks are "the link, the payload version, the key identity and the
+          hash, and `Sequence` is read only for the range it reports", and named Audit:ChainKey as
+          the key that makes the deletion possible. Both were true before the ring; the same file
+          corrected the identical singular-key overclaim fifty lines above and left this one.)
 
           That error is conservative: the window reads larger than the truth, never smaller. It is
           still stated in the printed text, because a number whose unit is wrong under one adversary
@@ -425,9 +555,12 @@ public static class VerifyCommand
             "  AT LEAST, because rows can be appended while this walk runs. And it is not an upper",
             "  bound on anything: nothing here schedules an anchor, so the window has no ceiling and",
             "  a small number now says nothing about tomorrow. A missing anchor is not evidence.",
-            "  Counted in SEQUENCE NUMBERS, which is a row count unless somebody holding",
-            "  Audit:ChainKey removed rows and recomputed the links behind them -- the walk checks",
-            "  the links, never the contiguity. Against anyone else the two are the same number.",
+            "  Counted in SEQUENCE NUMBERS, which is a row count unless somebody holding the KEYS",
+            "  COVERING A STRETCH removed rows from it and recomputed the links behind them -- the",
+            "  walk checks the links, never the contiguity. Since the ring those keys are not",
+            "  only Audit:ChainKey: a retired key answers for its own epoch, so its holder can do",
+            "  this inside that epoch. Against anyone holding none of them the two are the same",
+            "  number.",
             "  So if your own COUNT(*) over this range disagrees with this span, that gap is the",
             "  finding, not a fault in this tool: it is the one trace a key-holding interior",
             "  deletion leaves. The verdict above already tells you to compare counts -- this is",
@@ -622,6 +755,14 @@ public static class VerifyCommand
                 "  was already signalled arrives here too. If you stopped it because it seemed to",
                 "  hang, the hang is the thing to look at. Otherwise run it again.",
             });
+        }
+        catch (AuditKeyRingException ring)
+        {
+            // BEFORE the generic handler, which would print "the audit store could not be read" --
+            // a sentence about the table, for a problem in the configuration, on a run that never
+            // opened the table. That mislabelling arrived with the ring guards and is fixed here
+            // rather than apologised for in the runbook.
+            return RingNotConfigured(ring);
         }
         catch (Exception failure)
         {

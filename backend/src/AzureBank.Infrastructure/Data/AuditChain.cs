@@ -37,10 +37,13 @@ public interface IAuditChain
 /// verdict carries the kind instead of leaving callers to match on the wording of a sentence.
 /// <para>
 /// A WRONG KEY USED TO PRODUCE ONLY <see cref="HashMismatch"/>, AND THAT IS NOW A v2-ONLY
-/// STATEMENT. It still holds for a row that records no key identity: a wrong key cannot make such a
-/// row unreadable and cannot change what it records as its predecessor, so the hash is the only
-/// thing left to break. A row that DOES name its key is checked against that name before its hash is
-/// recomputed, so a wrong key produces <see cref="UnknownScheme"/> there and never reaches the hash.
+/// STATEMENT. It still holds for a <c>v2</c> row, which records no key identity because its version
+/// had nowhere to keep one: a wrong key cannot make such a row unreadable and cannot change what it
+/// records as its predecessor, so the hash is the only thing left to break. (Naming the version
+/// rather than the absent identity is deliberate — a CURRENT-version row that records none is
+/// refused before its hash, so "records no key identity" no longer selects one behaviour.)
+/// A row that DOES name its key is checked against that name before its hash is recomputed, so a
+/// wrong key produces <see cref="UnknownScheme"/> there and never reaches the hash.
 /// The practical consequence is the useful one: on such a row a hash mismatch is no longer
 /// ambiguous, because the key behind it has already been confirmed.
 /// </para>
@@ -72,11 +75,71 @@ public enum AuditChainBreakKind
     /// payload, so a stored value that is not what the schema says it must be is itself a
     /// modification — the same reasoning <see cref="Unreadable"/> already carries.
     /// <para>
-    /// It says nothing about WHY. A verifier holding a different key, an older build that cannot
-    /// render this version, and an overwritten column all print this, and the discriminator is
-    /// positional rather than textual: the first two fail at the lowest-sequence row of that scheme
-    /// and at every one after it, while a single interior row failing among verified siblings is a
-    /// write.
+    /// It says nothing about WHY, and the walk reaches it by NINE paths: this build cannot render
+    /// the version the row declares; a <c>v2</c> row carries a key id, which that version has
+    /// nowhere to keep; a <c>v3</c> row carries none, which its version does keep; no key in the
+    /// ring has the row's id; four boundary paths — the row sits ABOVE or BELOW the epoch of the key
+    /// that answers for it, once for a row that NAMES that key and once for a row that records no
+    /// identity and is answered for by <c>Audit:FoundingChainKey</c>; and one that is not a boundary
+    /// at all — an identity-less row stored BELOW sequence 1, which reaches the same comparison
+    /// because the founding epoch starts at 1 on a ring that has never rotated.
+    /// <para>
+    /// The verifier prints SEVEN causes rather than nine, because two PAIRS of paths take one action
+    /// each. The identity-column pair — a <c>v2</c> row carrying an id and a <c>v3</c> row carrying
+    /// none — says the column contradicts the version, so the value was written after the fact. The
+    /// below-the-founding-epoch pair prints different TEXT, one sending the operator to the
+    /// designation and the other to escalation, but occupies one entry in the printed list, which
+    /// names both. Every other path takes a different action, which is why they are separate.
+    /// </para>
+    /// <para>
+    /// ⚠️ THIS PARAGRAPH ENUMERATED EIGHT ITEMS UNDER A HEADING THAT SAID NINE, and closed with
+    /// "rather than eight". The ninth path was added in the same commit that changed the heading and
+    /// nowhere else. The count is DERIVED from this file by
+    /// <c>AuditVerifierReportTests.TheUnknownSchemeBlockEnumeratesEVERYWayToReachIt…</c>, which
+    /// reddens when a path is added; the ENUMERATION is not, and this is what that costs.
+    /// </para>
+    /// <para>
+    /// An overwritten column is not a TENTH path: it is how several of those come about, because
+    /// both columns are inside the hashed payload.
+    /// <para>
+    /// The nine paths fall into THREE shapes, and how wide the damage is depends on which:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>ROW-LOCAL — an unrenderable payload version, and the identity column contradicting the
+    /// version. These concern no epoch and no key: the row is refused on its own, and the rows
+    /// around it are untouched.</item>
+    /// <item>A WHOLE EPOCH — a key the ring does not hold. The rows it answers for ARE its stretch,
+    /// so the walk stops at the first of them.</item>
+    /// <item>OUTSIDE an epoch — the four boundary paths, plus the below-sequence-1 one. The failing
+    /// row is by definition NOT in the epoch the verdict names, so that epoch says where the key was
+    /// valid, never where the damage is.</item>
+    /// </list>
+    /// <para>
+    /// ⚠️ THIS SAID "each path applies to an INTERVAL — the epoch of the key it concerns", which is
+    /// true of ONE of the three shapes. Raised in review on the runbook's copy of the same sentence;
+    /// the verifier's printed copy had already been narrowed to five of the seven causes and still
+    /// said nothing about the two row-local ones.
+    /// </para>
+    /// <para>
+    /// ⚠️ SO THE POSITIONAL DISCRIMINATOR IS GONE, AND THIS PARAGRAPH SOLD IT TWICE. It said each
+    /// path "fails at the lowest-sequence row it applies to and at every one after it, while a
+    /// single interior row failing among verified siblings is a write" — true when one key answered
+    /// for every <c>v3</c> row, false with a ring: a key missing from <c>Audit:RetiredChainKeys</c>
+    /// fails over its own epoch and nothing above it, so it breaks in the middle with verified rows
+    /// beneath, which is exactly the shape attributed to a write. It then said the below-the-epoch
+    /// paths apply to a PREFIX, "every row from the bottom of the table up to the previous key's
+    /// boundary" — they apply to the rows naming that key, not to everything beneath. What separates
+    /// a configuration miss from a write is a second run after adding the named id to the ring.
+    /// </para>
+    /// </para>
+    /// <para>
+    /// This paragraph said "three" and led with "a verifier holding a different key", which the
+    /// boundary verdicts make false — the ring HOLDS the key in all four. It then said "six" while
+    /// the walk had eight, because the count was corrected in the verifier's output and in the
+    /// runbook and this copy was missed AGAIN, one commit after the paragraph below it says that is
+    /// the shape of every stale claim on this branch. Counted from the returns now, and the returns
+    /// are listed above so the next person can count them too.
+    /// </para>
     /// </para>
     /// </remarks>
     UnknownScheme,
@@ -199,10 +262,60 @@ public sealed class AuditChain : IAuditChain
       anything. Publishing it is not a widening -- a database-only attacker already has an offline
       oracle for guessing the key in every row's RowHash.
     */
+    /// <summary>
+    /// The strength floor every key in the ring is held to, mirroring the value both composition
+    /// roots apply to <c>Audit:ChainKey</c>. Stated once here because the ring is the only place
+    /// that sees retired keys at all.
+    /// </summary>
+    internal const int MinimumKeyLength = 32;
+
     private const string KeyIdDomain = "AzureBank.Audit.KeyId.v1";
     private const int KeyIdHexLength = 16;
 
     private readonly string _keyId;
+
+    /// <summary>
+    /// Key id to (material, FIRST sequence it answers for, LAST sequence it answers for), for
+    /// VERIFICATION only — writing always uses the current key. Every entry is bounded BELOW,
+    /// including the current key, whose epoch starts one past the last retirement; only the current
+    /// key is unbounded above, because it answers for whatever it writes next. The bounds stop a row
+    /// signed outside a key's epoch from being ACCEPTED — nothing stops it being written, which is a
+    /// different sentence and the one that is true.
+    /// <para>
+    /// This said "(material, highest sequence it may answer for)" and "the current key is
+    /// unbounded". The value has been a three-tuple since the epoch gained a lower end, and that
+    /// same change bounded the current key below.
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<string, (string Key, long FirstSequence, long? LastSequence)> _keyRing;
+
+    /// <summary>
+    /// The key that wrote the LEGACY rows, the ones whose payload version had nowhere to record a
+    /// key identity. Never assumed; see below. It does NOT answer for a current-version row that
+    /// records none — that one is refused as a modification, since its version does keep the value.
+    /// </summary>
+    private readonly string _foundingKey;
+
+    /// <summary>
+    /// The sequence the FOUNDING key stopped writing at, or null while it is still the current key.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ WITHOUT THIS, THE BOUNDARY ON EVERY OTHER KEY IS OPTIONAL — a forger picks the payload
+    /// version. A 'v2' row records no key identity, so it is checked under the founding key without
+    /// naming it; bounding retired keys by <c>KeyId</c> alone therefore left a route to the founding
+    /// key that skipped the bound entirely. MEASURED before this field existed: a row minted with the
+    /// retired founding key, at the tail, above its boundary, labelled 'v2' — verified clean,
+    /// <c>IsIntact = True</c>. Before the ring the same row needed the CURRENT key, so this was the
+    /// ring handing an old key a power it did not have, which is what the bound exists to prevent.
+    /// </remarks>
+    private readonly long? _foundingLastSequence;
+
+    /// <summary>
+    /// The sequence the FOUNDING key started at. 1 whenever the designation is what it should be —
+    /// the oldest key in the ring — and higher only when the configuration says something it cannot
+    /// mean, which the walk then refuses instead of quietly accepting.
+    /// </summary>
+    private readonly long _foundingFirstSequence;
 
     public AuditChain(IOptions<AuditOptions> options, ILogger<AuditChain> logger)
     {
@@ -212,6 +325,296 @@ public sealed class AuditChain : IAuditChain
         // Once, here, and never inside the walk or inside the UPDLOCK/HOLDLOCK window that every
         // business write waits behind.
         _keyId = DeriveKeyId(options.Value.ChainKey);
+
+        /*
+          THE RING IS BUILT HERE AND VALIDATED HERE, rather than in an options Validate() at startup,
+          because there are two composition roots -- the API and the operator verifier -- and a
+          structural rule enforced in one of them is a rule the other does not have. A constructor
+          throw covers both, and the verifier already learned this lesson the other way round: a
+          guard added to only one place is a guard with a hole the shape of the other place.
+
+          IDS ARE DERIVED, never configured, for the reason DeriveKeyId records: a configured id is a
+          second place to state the same fact and the two drift with nothing detecting it. That
+          applies with more force to a retired key, whose rows can never be rewritten to correct a
+          drifted id.
+        */
+        /*
+          ⚠️ AN EPOCH HAS TWO ENDS. THE FIRST VERSION OF THIS RING GAVE IT NONE, THE SECOND GAVE
+          IT ONE. Every boundary
+          check was `row.Sequence > last` -- an upper bound only -- so a retired key answered for
+          EVERY sequence from the bottom of the table up to its own retirement, including the
+          stretches earlier keys wrote.
+
+          MEASURED before this: with A retired at 2 and B retired at 4, the holder of B re-authored
+          sequences 1 through 4 -- relabelling A's two rows as B's -- and the walk returned
+          IsIntact = True. So compromising the NEWEST retired key handed over the whole history, not
+          that key's own epoch, and each further rotation made the prize larger rather than smaller.
+          That inverts the reason to rotate for the second time on this branch.
+
+          THE LOWER BOUND IS DERIVED, NEVER CONFIGURED. The recorded boundaries already partition the
+          sequence space: a key that stopped at N was preceded by one that stopped at N', so its
+          epoch is (N', N]. Asking an operator for the start as well would be a second place to state
+          one fact -- the same objection DeriveKeyId records against configured ids -- and the two
+          would drift with nothing detecting it.
+        */
+        /*
+          THE CONFIGURATION INDEX IS CARRIED THROUGH THE SORT, because the messages below name it and
+          a sorted position is not the position an operator edits. Ordering by boundary is what makes
+          the epochs derivable; reporting by that order would send somebody to `:1` for a mistake
+          they made in `:0`.
+        */
+        /*
+          THE FLOOR APPLIES TO THE CURRENT KEY TOO, and it did not. Both composition roots hold
+          Audit:ChainKey to the same length, so this looked covered -- but that is precisely the
+          argument the block above rejects for everything else in the ring: "a structural rule
+          enforced in one of them is a rule the other does not have." The current key was the one
+          member governed only by the roots, so a caller constructing AuditChain directly got no
+          check at all. Measured: ChainKey = "" built a ring.
+        */
+        if (string.IsNullOrWhiteSpace(options.Value.ChainKey)
+            || options.Value.ChainKey.Length < MinimumKeyLength)
+        {
+            /*
+              TWO REASONS REACH THIS AND THE MESSAGE HAS TO SAY WHICH. The guard is blank OR short,
+              and a key of forty spaces is blank while satisfying the only remedy a length-only
+              message gives -- "Audit:ChainKey is 40 characters. It must be at least 32" tells the
+              operator to lengthen something already long enough.
+            */
+            throw new AuditKeyRingException(
+                (string.IsNullOrWhiteSpace(options.Value.ChainKey)
+                    ? "Audit:ChainKey is blank. "
+                    : $"Audit:ChainKey is {options.Value.ChainKey.Length} characters. ")
+                + $"It must be non-blank and at least {MinimumKeyLength} characters, the same floor "
+                + "every retired key is held to: it authenticates every row written from here on, "
+                + "and a key weak enough to guess makes them forgeable by anyone holding the "
+                + "database.");
+        }
+
+        var retiredEntries = (options.Value.RetiredChainKeys ?? [])
+            .Select((entry, index) => (Entry: entry, Index: index))
+            .OrderBy(e => e.Entry?.LastSequence ?? long.MinValue)
+            .ToList();
+
+        /*
+          A NULL ENTRY IS REFUSED, NOT DROPPED, and it used to be dropped by a Where() one line up.
+          Silently is the problem: a dropped entry left the ring with one key, so the deployment read
+          as "never rotated" and the Audit:FoundingChainKey requirement never fired. A configuration
+          that says a rotation happened would have produced a verifier that believed none had.
+
+          ⚠️ THE SHAPE THAT REACHES THIS IS A CALLER PASSING null, NOT A JSON null. This comment said
+          the entry came from `"RetiredChainKeys": [ null ]`; measured with the real binder, that
+          element binds to a NON-null RetiredChainKey whose Key is empty and whose LastSequence is 0,
+          so it was already refused by the blank-key guard above. What was dropped silently is a null
+          the caller supplies directly — which every test in this file does, and which is one of the
+          two ways this type is constructed.
+        */
+        foreach (var (entry, configIndex) in retiredEntries)
+        {
+            if (entry is null)
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} is null. An entry that binds to nothing "
+                    + "cannot describe a rotation, and dropping it would leave the ring claiming "
+                    + "fewer rotations than the configuration states.");
+            }
+        }
+
+        _keyRing = new Dictionary<string, (string Key, long FirstSequence, long? LastSequence)>(
+            StringComparer.Ordinal)
+        {
+            /*
+              The current key answers from ONE PAST the last retirement and has no upper bound: it
+              is the key in use, so it answers for whatever it writes next. Its FIRST sequence is not
+              open either -- a row AT OR BELOW the last retirement was written by a key that had
+              already stopped, so naming the current key there is as wrong as naming a retired key
+              above its own boundary, and for the same reason.
+
+              (This said "from the last retirement onwards", which is off by one in the permissive
+              direction: the entry is built with LastSequence + 1, so a row at exactly the retirement
+              sequence naming the current key is refused, and a reader trusting the sentence would
+              have called that a bug.)
+            */
+            [_keyId] = (
+                options.Value.ChainKey,
+                retiredEntries.Count == 0 ? 1 : retiredEntries[^1].Entry!.LastSequence + 1,
+                null),
+        };
+
+        // Walks in boundary order, so each entry's epoch starts where the previous one ended.
+        long nextEpochStart = 1;
+
+        foreach (var (entry, configIndex) in retiredEntries)
+        {
+            var retired = entry!.Key ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(retired))
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} is blank. A blank key cannot have written "
+                    + "any row, so its presence is a configuration mistake rather than a no-op.");
+            }
+
+            /*
+              THE SAME STRENGTH FLOOR THE CURRENT KEY HAS, and it was missing. Both composition roots
+              hold Audit:ChainKey to 32 characters -- see each root's ServiceCollectionExtensions --
+              while a retired key was checked only for being
+              non-blank. A three-character retired key would have been accepted and would then have
+              been the only thing standing behind every row in its epoch, which is the stretch of the
+              trail nobody can rewrite to repair. A key weak enough to guess makes its epoch forgeable
+              by anyone holding the database, which is the attacker the chain is built for.
+
+              The floor lives here rather than in each root's options validation for the reason the
+              block above gives: a structural rule enforced in one root is a rule the other lacks.
+            */
+            if (retired.Length < MinimumKeyLength)
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} holds a key of {retired.Length} "
+                    + "characters. A retired "
+                    + $"key must be at least {MinimumKeyLength}, the same floor Audit:ChainKey is "
+                    + "held to in both composition roots: it authenticates every row in its epoch, "
+                    + "and those rows can never be rewritten under a stronger key.");
+            }
+
+            // A retired key with no boundary is the unbounded ring this bound exists to prevent, so
+            // it is refused rather than defaulted -- a default here would be silently permissive,
+            // and the permissive direction is the one that hands an old key a new power.
+            if (entry!.LastSequence < 1)
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} has LastSequence {entry.LastSequence}. A "
+                    + "retired key answers only for rows at or below the sequence it stopped writing "
+                    + "at; without that boundary it could authenticate rows minted after it was "
+                    + "retired, which is the regression the boundary exists to prevent.");
+            }
+
+            /*
+              TWO RETIRED KEYS CLAIMING THE SAME BOUNDARY CANNOT BOTH BE ANSWERED FOR, because the
+              rows beneath it would belong to whichever happened to sort first -- and sort order
+              between equal keys is not something a configuration file states. It is refused rather
+              than resolved, since resolving it means guessing which key wrote history.
+
+              ⚠️ AND A KEY THAT WROTE NOTHING IS THE SAME CONFIGURATION, not a different one. This
+              paragraph used to say a zero-write rotation "gives the second key an EMPTY epoch …
+              and that key correctly answers for no rows", one line above the guard that makes it
+              impossible. Measured: 512 boundary triples, ZERO produce an empty epoch — entries are
+              sorted ascending, so only equality is reachable, and equality is what this refuses.
+
+              Refusing is right, and not merely what the code happens to do. A key that wrote nothing
+              has no row naming its id, so a ring entry for it answers for nothing; its only effect
+              is to make the boundary beneath it ambiguous. The honest configuration for a rotation
+              with no writes is to leave that key OUT of the ring entirely.
+            */
+            if (entry.LastSequence == nextEpochStart - 1 && nextEpochStart > 1)
+            {
+                /*
+                  ⚠️ AND THIS GUARD RUNS BEFORE THE DUPLICATE-ID ONE, so it sees a wholly duplicated
+                  entry first -- the same key material pasted into slot 1 with the same boundary --
+                  and used to call that "two keys ending at the same row". It is one key listed
+                  twice, and the operator who edits a boundary on that advice is changing a number
+                  every other message on this branch tells them to take only from the rotation
+                  record. The message says which it is, from the material, rather than assuming.
+                */
+                var duplicateOfPrevious = _keyRing.ContainsKey(DeriveKeyId(retired));
+
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} ends at {entry.LastSequence}, the same "
+                    + "sequence as the entry before it. "
+                    + (duplicateOfPrevious
+                        ? "It also holds a key the ring already has, so this is ONE key listed "
+                          + "twice rather than two keys colliding: remove the duplicate entry. "
+                          + "Editing the boundary would change a number that must come from the "
+                          + "rotation record."
+                        : "Boundaries partition the sequence space, so two keys ending at the same "
+                          + "row leaves the rows beneath claimed by both and the ring cannot tell "
+                          + "which one wrote them."));
+            }
+
+            /*
+              ⚠️ THE EPOCH ARITHMETIC IS UNCHECKED, AND long.MaxValue MAKES IT WRAP THE WRONG WAY.
+              Every epoch start is `previous LastSequence + 1`, including the CURRENT key's. C# is
+              unchecked by default, so a boundary of long.MaxValue produces long.MinValue silently --
+              and the current key would then answer for every row in the table, which is the one key
+              a bound is supposed to be able to constrain from below.
+
+              Refused rather than computed with `checked`, because an OverflowException escapes the
+              AuditKeyRingException family and would leave `anchor` and `export` exiting 4 again.
+              Refused rather than bounded to the table's tail, because a boundary above the tail is
+              legitimate -- the runbook's triage table has a row for exactly that.
+            */
+            if (entry.LastSequence == long.MaxValue)
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} has LastSequence {entry.LastSequence}, "
+                    + "the largest a sequence can be. Every epoch begins one past the previous "
+                    + "boundary, so there is no room for an epoch above this one and the arithmetic "
+                    + "that derives it would wrap.");
+            }
+
+            var id = DeriveKeyId(retired);
+
+            // A retired key equal to the current one is not harmless: it reads as "we rotated" while
+            // the ring holds one key, so the deployment believes history is covered when nothing
+            // changed. Refused loudly rather than deduplicated quietly.
+            if (!_keyRing.TryAdd(id, (retired, nextEpochStart, entry.LastSequence)))
+            {
+                throw new AuditKeyRingException(
+                    $"Audit:RetiredChainKeys:{configIndex} holds a key whose id '{id}' is already "
+                    + "in the ring — "
+                    + (id == _keyId
+                        ? "it is the CURRENT Audit:ChainKey. Retiring the key still in use would let "
+                          + "the deployment believe it had rotated when it has not."
+                        : "the same retired key is listed twice."));
+            }
+
+            nextEpochStart = entry.LastSequence + 1;
+        }
+
+        /*
+          THE FOUNDING KEY IS NAMED, NEVER ASSUMED, and ADR-0044 chose that word before this code
+          existed: "whatever adds a second key must add a ring entry for the FOUNDING key rather than
+          silently re-point history at whatever is current." A null KeyId means no identity was
+          recorded, not that the current key wrote it — so defaulting to the current key would
+          re-attribute history at the moment of rotation and then report those rows as tampered.
+
+          Empty is allowed ONLY while nothing has been retired, because then the current key is the
+          only one there has ever been. The first rotation makes the designation required.
+        */
+        var founding = options.Value.FoundingChainKey;
+        if (string.IsNullOrWhiteSpace(founding))
+        {
+            if (_keyRing.Count > 1)
+            {
+                throw new AuditKeyRingException(
+                    "Audit:FoundingChainKey is required once a key has been retired. Rows written "
+                    + "before the key-identity column record no identity, and verifying them under "
+                    + "whatever Audit:ChainKey holds today would silently re-attribute history to a "
+                    + "key that did not write it.");
+            }
+
+            // Nothing retired, so the current key is the founding key and has no epoch to end.
+            _foundingKey = options.Value.ChainKey;
+            _foundingLastSequence = null;
+            _foundingFirstSequence = 1;
+        }
+        else if (!_keyRing.ContainsKey(DeriveKeyId(founding)))
+        {
+            throw new AuditKeyRingException(
+                "Audit:FoundingChainKey names a key that is neither Audit:ChainKey nor one of "
+                + "Audit:RetiredChainKeys. It is a designation, not a second copy — the key's "
+                + "material must live in exactly one place.");
+        }
+        else
+        {
+            _foundingKey = founding;
+
+            // ITS EPOCH COMES FROM THE RING ENTRY, because the founding key is a DESIGNATION of a
+            // key already in the ring rather than a second copy -- so whatever bound that entry
+            // carries is the bound here too. Null when the designation points at the current key,
+            // which is unbounded by definition.
+            var foundingEntry = _keyRing[DeriveKeyId(founding)];
+            _foundingLastSequence = foundingEntry.LastSequence;
+            _foundingFirstSequence = foundingEntry.FirstSequence;
+        }
     }
 
     /// <summary>
@@ -327,6 +730,32 @@ public sealed class AuditChain : IAuditChain
 
         foreach (var row in pending)
         {
+            /*
+              ⚠️ THE OVERFLOW GUARD FOUR COMMITS AGO WENT ON THE WRONG NUMBER. It refuses a CONFIGURED
+              LastSequence of long.MaxValue, and the configured number is the one an operator types.
+              The number that matters here is the STORED tail, and that is the one an attacker with
+              write access controls.
+
+              MEASURED: plant a single row at long.MaxValue and the next honest write receives
+              long.MinValue, because ++ is unchecked. Sequence is the column the walk ORDERS BY, so
+              every row written afterwards sorts BELOW the entire history, and the verdict becomes
+              LinkBroken with nothing verified. One UPDATE, and the trail reads as destroyed.
+
+              Refusing is the D1 trade, deliberately: an audit write that cannot be made honestly
+              fails the business action rather than being made dishonestly. It also leaves the
+              planted row in place as the evidence of what happened, which a wrap does not.
+            */
+            if (sequence == long.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"The audit trail's tail is at sequence {sequence}, the largest a sequence can "
+                    + "be, so the next row has nowhere to go. Nothing this deployment writes reaches "
+                    + "that value: it is assigned as tail + 1 from an empty table. A tail there was "
+                    + "PUT there, and continuing would wrap the next sequence to the bottom of the "
+                    + "range and reorder the whole trail beneath it. Preserve the table and "
+                    + "escalate.");
+            }
+
             row.Sequence = ++sequence;
             row.PreviousHash = previous;
 
@@ -341,7 +770,9 @@ public sealed class AuditChain : IAuditChain
             row.PayloadVersion = CurrentPayloadVersion;
             row.KeyId = _keyId;
 
-            row.RowHash = ComputeRowHash(row);
+            // The CURRENT key, always. A retired key is read-side only: it exists so its rows stay
+            // verifiable, never so it can write another one.
+            row.RowHash = ComputeRowHash(row, _options.Value.ChainKey);
             previous = row.RowHash;
         }
     }
@@ -722,17 +1153,327 @@ public sealed class AuditChain : IAuditChain
                     _keyId);
             }
 
-            if (row.PayloadVersion == CurrentPayloadVersion && row.KeyId != _keyId)
+            /*
+              THE ROW NAMES ITS KEY AND THE RING LOOKS IT UP. It does not try keys in turn, and the
+              difference is the whole safety of rotating: a trial-keyring verifier accepts a row a
+              RETIRED key could have minted at any sequence, so every rotation would widen the
+              forgery surface instead of narrowing it. The id is inside the hashed payload, so a row
+              cannot lie about which key to check it with without breaking the hash that check
+              produces.
+
+              ⚠️ A 'v2' ROW SELECTS NOTHING, and this is where that shows. That version records no
+              key identity, so there is no id to look up: the FOUNDING key is the only one that
+              answers for those rows, which is why it has to be named rather than assumed -- and
+              answering is not accepting, since the designation inherits its entry's epoch and a row
+              outside it is refused at either end. They are
+              not stranded by a rotation -- naming the founding key is exactly what keeps them
+              verifiable -- but they can never be rotated either, because rotation needs a per-row
+              identity to select on. That is not an oversight in the ring; it is why the tail-anchor
+              decision required KeyId as a stored column BEFORE the first anchor rather than
+              alongside rotation.
+
+              THE FOUNDING KEY'S EPOCH BINDS THEM AT BOTH ENDS, like every other. Above it a 'v2'
+              row is minting -- that version is the one shape that reaches the founding key without
+              naming it. Below it the reading is entirely different and is not an attack at all:
+              identity-less rows are the OLDEST rows there are, so an epoch starting above them
+              means the designation names a ring member that is not the oldest. The two get separate
+              verdicts below, because their remedies have nothing in common.
+
+              (This comment said "checked under the current key alone -- meaning a rotation strands
+              every legacy row", and the founding key that makes both halves false landed in the
+              SAME commit, fifteen lines below it. Not a sentence outlived by later work: one that
+              was already false when it was written, in the same diff as the code contradicting it.
+              (The distance was given twice and given differently -- "fifteen lines below" here and
+              "three lines above" one clause later -- so one of the two had to be wrong. Measured in
+              9ea4e80: the sentence ends on line 823, selectedKey = _foundingKey is on 838.) Raised
+              in review on 9ea4e80.)
+            */
+            string? selectedKey;
+
+            /*
+              ⚠️ TWO WAYS TO HAVE NO KEY, AND THEY NEED OPPOSITE REMEDIES, so they are not allowed to
+              produce the same sentence. Both used to land on `selectedKey = null` and report "no key
+              in this ring has that id" -- which is FALSE for the second one, because the ring does
+              have it.
+
+              UNKNOWN ID: the key that wrote this row was never retired into the configuration. Add
+              it, and the row verifies.
+
+              EXPIRED BOUNDARY: the ring holds that key, and the row sits ABOVE the sequence the key
+              stopped writing at. The remediation is the opposite of the first one and the wrong move
+              is available: raising LastSequence can make the verdict go green, and if the row was
+              minted after the retirement, raising it is completing the attack. So the message has to
+              name the boundary and both readings rather than send anybody to the config.
+
+              ⚠️ "MAKES THE VERDICT GO GREEN" WAS UNCONDITIONAL HERE AND IN BOTH VERDICT STRINGS.
+              It is conditional in the minting reading: raising this entry's boundary also raises the
+              NEXT epoch's start, because a start is derived as the previous boundary plus one, so
+              every row the newer key wrote in the range just handed back is refused and the break
+              moves DOWN rather than clearing. It goes green only when that range is empty -- which
+              is the state a deployment sits in between the rotation and the newer key's first
+              write, and the state the minting attack needs.
+            */
+            long? expiredBoundary = null;
+            long? unbegunBoundary = null;
+
+            if (row.PayloadVersion == CurrentPayloadVersion)
             {
+                if (row.KeyId is not null && _keyRing.TryGetValue(row.KeyId, out var found))
+                {
+                    // A correct hash under a key that had stopped writing by this sequence is not
+                    // history -- it is what minting looks like. The same is true underneath: a key
+                    // that had not STARTED by this sequence did not write here either, and a ring
+                    // that only bounded the top let the newest retired key re-author everything
+                    // below it.
+                    if (found.LastSequence is { } last && row.Sequence > last)
+                    {
+                        selectedKey = null;
+                        expiredBoundary = last;
+                    }
+                    else if (row.Sequence < found.FirstSequence)
+                    {
+                        selectedKey = null;
+                        unbegunBoundary = found.FirstSequence;
+                    }
+                    else
+                    {
+                        selectedKey = found.Key;
+                    }
+                }
+                else
+                {
+                    selectedKey = null;
+                }
+            }
+            else
+            {
+                /*
+                  The FOUNDING key, not the current one. See AuditOptions.FoundingChainKey: a null
+                  identity means none was recorded, and re-pointing those rows at whatever is current
+                  is the one thing ADR-0044 named and refused in advance.
+
+                  ⚠️ AND BOUNDED BY THE SAME EPOCH, because the forger picks the payload version.
+                  Selecting by KeyId bounds every key a row can NAME; a 'v2' row names none, so
+                  labelling a minted row 'v2' reached the founding key without naming it and skipped
+                  the bound. Measured: such a row, at the tail, above the boundary, verified clean.
+                  A boundary that one payload version can walk around is not a boundary.
+                */
+                if (_foundingLastSequence is { } foundingLast && row.Sequence > foundingLast)
+                {
+                    selectedKey = null;
+                    expiredBoundary = foundingLast;
+                }
+                else if (row.Sequence < _foundingFirstSequence)
+                {
+                    /*
+                      TWO SHAPES REACH THIS, AND THEY NEED OPPOSITE RESPONSES.
+
+                      (a) Audit:FoundingChainKey designates something other than the OLDEST key in
+                          the ring. Identity-less rows are the oldest rows there are, so a founding
+                          key whose epoch starts above them is a designation that cannot mean what it
+                          says, and saying so is better than checking those rows under it.
+
+                      (b) ⚠️ THE ROW'S SEQUENCE IS BELOW 1. On a deployment that has never rotated
+                          _foundingFirstSequence is hard-set to 1, so this branch fires for any 'v2'
+                          row stored at 0 or below -- with ONE key in the ring and no designation
+                          configured at all. The comment here used to say (a) was the only way in.
+                          Link() assigns `++sequence` from a tail of 0, so nothing this deployment
+                          writes can produce a non-positive sequence and no CHECK constraint stops
+                          one being inserted; it is a modification, and re-pointing a designation
+                          that does not exist cannot change the verdict. At the base commit the same
+                          row reached the hash and came back HashMismatch, which told the operator to
+                          preserve the table and escalate -- so getting this wrong is a regression
+                          against what the tool used to say, not merely a gap.
+
+                      The arm below picks between them on the sequence, which it already has.
+                    */
+                    selectedKey = null;
+                    unbegunBoundary = _foundingFirstSequence;
+                }
+                else
+                {
+                    selectedKey = _foundingKey;
+                }
+            }
+
+            // NO VERSION GATE HERE. It used to read `PayloadVersion == CurrentPayloadVersion &&
+            // selectedKey is null`, which was safe only while the v2 arm could not produce null.
+            // Now that it can, the gate would let a refused row fall through to a hash comparison
+            // against a null key -- turning a security refusal into a crash.
+            if (selectedKey is null)
+            {
+                /*
+                  SEVEN WAYS TO HAVE NO KEY, AND NO TWO OF THEM TAKE THE SAME ACTION. Four are a
+                  product of two axes: the row is ABOVE the epoch or BELOW it, and it either NAMES a
+                  key or records no identity and is answered for by Audit:FoundingChainKey. The
+                  fifth is a row that names an id the ring does not hold; the sixth is a row on the
+                  current version carrying no id at all, which is the mirror of the 'v2' row carrying
+                  one and is refused higher up. The seventh is not a boundary at all -- an
+                  identity-less row stored BELOW sequence 1, which reaches the same comparison
+                  because the founding epoch starts at 1 on a ring that has never rotated, and which
+                  no setting can fix.
+
+                  (This said FIVE, then SIX, each time in the commit that added the arm. Counted from
+                  the arms below, not from memory.)
+
+                  They are spelled out separately because collapsing any pair produces a sentence
+                  that is false for one of them and points its reader at the wrong setting -- which
+                  on the minting readings means the prescribed fix completes the attack.
+
+                  ⚠️ THIS SAID THREE, AND THE COLLAPSE IT WARNS ABOUT WAS SITTING IN IT. The count was
+                  written when the boundary had one end. Giving the epoch a start added two paths and
+                  a single arm was left serving both, so a row that names NOTHING was told it "names
+                  a key" and sent to edit a LastSequence that cannot move it.
+
+                  ⚠️ THE COUNT COMES FROM THE ARMS, AND THE DERIVATION WRITTEN HERE ONCE SAID
+                  OTHERWISE. This block claimed it enumerated them "from the assignments to
+                  selectedKey above, not from the arms below", while eleven lines higher it said the
+                  opposite. The assignments give FIVE: two of them each serve two situations that the
+                  tuple separates downstream -- a 'v3' row naming an id the ring does not hold versus
+                  one carrying no id at all, and an identity-less row below the founding epoch by
+                  DESIGNATION versus one below sequence 1. So the arms are the only place the number
+                  can be counted, which is the procedure this comment claimed to have avoided.
+                  Counting them is safe BECAUSE the five assignments are reconciled against them:
+                  five assignments, seven arms, and both splits are named above.
+                */
+                /*
+                  ⚠️ BLANK IS NOT AN IDENTITY, AND THE TUPLE USED row.KeyId RAW. A 'v3' row whose
+                  KeyId column was emptied rather than nulled is not null, so it missed the
+                  records-none arm and fell through to the default one -- which told the operator a
+                  key was missing from Audit:RetiredChainKeys and to go and add it. The right reading
+                  is the opposite: the column is inside the hashed payload, nothing this deployment
+                  writes leaves it empty on this version, so the value was removed after the fact.
+                  Normalised here rather than at the lookup, because _keyRing.TryGetValue fails on
+                  either shape and only the VERDICT needs to tell them apart.
+                */
+                var recordedIdentity =
+                    string.IsNullOrWhiteSpace(row.KeyId) ? null : row.KeyId;
+
+                var reason = (expiredBoundary, unbegunBoundary, recordedIdentity) switch
+                {
+                    // NAMES a key, BELOW that key's epoch. The mirror of the expired case and the
+                    // one that made the boundary half a boundary: a key answering from the bottom of
+                    // the table meant compromising the NEWEST retired key handed over the history.
+                    (null, { } start, not null) =>
+                        $"Row {row.Id} is sequence {row.Sequence:N0} and names key id "
+                        + $"'{row.KeyId}', whose epoch begins at {start:N0} — so it names a key that "
+                        + "had not started writing when this row was written. Its hash was NOT "
+                        + "checked. An earlier key wrote this stretch; a row here that claims a later "
+                        + "one is either a boundary recorded too HIGH for that earlier key, or a row "
+                        + "RE-AUTHORED by whoever holds the later one. ⚠️ Epochs are derived from the "
+                        + "recorded boundaries, so moving one moves two — check the rotation record "
+                        + "before changing anything.",
+
+                    /*
+                      NAMES NOTHING, below the FOUNDING key's epoch — and this arm exists because the
+                      one above was serving both. A 'v2' row records no key identity, so the sentence
+                      "names a key" was false for it, and worse, both remedies it offered were the
+                      wrong ones: _foundingFirstSequence is INHERITED from the designated entry, so
+                      the only boundary that moves it is the PRECEDING entry's, and moving that
+                      cannot lower the start past the designation's position in boundary order. An
+                      operator following the old verdict would have
+                      changed retirement boundaries — which the same sentence warns changes verdicts
+                      for rows they did not think they were touching — while the actual
+                      misconfiguration stayed exactly where it was.
+
+                      There is only one way to get here, and it is not an attack: the designation
+                      names a ring member that is not the OLDEST, so the epoch it opens starts above
+                      the identity-less rows, which are the oldest rows there are.
+                    */
+                    (null, { } start, null) when row.Sequence < 1 =>
+                        $"Row {row.Id} is a '{LegacyPayloadVersion}' row stored at sequence "
+                        + $"{row.Sequence:N0}, which is below the first sequence this trail can "
+                        + "have. Its hash was NOT checked. ⚠️ THIS IS NOT A CONFIGURATION PROBLEM. "
+                        + "Writing assigns each row the tail plus one, starting from 1, so nothing "
+                        + "this deployment writes lands here and no key needs to be held to put it "
+                        + "there — the row was inserted. Do NOT edit Audit:FoundingChainKey or any "
+                        + "boundary: on a deployment that has never rotated the founding epoch "
+                        + "starts at 1 whatever you point it at, and this row is below 1 either way. "
+                        + "Preserve the table and escalate.",
+
+                    (null, { } start, null) =>
+                        $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
+                        + "identity, so it is checked under Audit:FoundingChainKey — and the epoch "
+                        + $"that key opens begins at {start:N0}, while this row is sequence "
+                        + $"{row.Sequence:N0}. Its hash was NOT checked. Rows recording no identity "
+                        + "are the OLDEST rows there are, so a founding key whose epoch starts above "
+                        + "them is a designation that cannot mean what it says. ⚠️ The fix is "
+                        + "Audit:FoundingChainKey — point it at the OLDEST key in the ring. Lowering "
+                        + "the boundary of the entry BEFORE it would move this epoch's start, "
+                        + "because the start is derived from that boundary — but it cannot move it "
+                        + "far enough. Boundaries are at least 1 and strictly increase, so this "
+                        + "epoch's start cannot fall below the designation's POSITION in that order: "
+                        + "2 for the second key, 3 for the third. The edit clears this row only if "
+                        + "its sequence is at or above that number, and identity-less rows are the "
+                        + "OLDEST there are — so if it clears, the trail does not begin at sequence "
+                        + "1, which is a second finding rather than a fix.",
+
+                    // Named a key the ring holds, above that key's epoch.
+                    ({ } bound, _, not null) =>
+                        $"Row {row.Id} names key id '{row.KeyId}', which this verification DOES "
+                        + $"hold — but that key was retired at sequence {bound:N0} and this row is "
+                        + $"sequence {row.Sequence:N0}. Its hash was NOT checked. Two readings, and "
+                        + "they need opposite responses: either the recorded boundary is too LOW "
+                        + "and this row is genuine history, or the row was MINTED with a retired "
+                        + "key after the rotation. ⚠️ Raising LastSequence can turn this verdict "
+                        + "green under either reading, and going green does not tell you which was "
+                        + "true — so establish which it is from the rotation record "
+                        + "before touching the configuration.",
+
+                    // Named NOTHING, above the founding key's epoch. The dangerous one: the v2
+                    // payload records no key identity, so this is how a forger reaches the founding
+                    // key without naming it, and the boundary is the only thing that sees it.
+                    ({ } bound, _, null) =>
+                        $"Row {row.Id} is a '{LegacyPayloadVersion}' row, which records no key "
+                        + "identity, so it is checked under Audit:FoundingChainKey — and that key "
+                        + $"was retired at sequence {bound:N0} while this row is sequence "
+                        + $"{row.Sequence:N0}. Its hash was NOT checked. A row above the founding "
+                        + "key's boundary that names no key is the one shape that reaches that key "
+                        + "without naming it, so treat MINTING as the leading reading here rather "
+                        + "than as the alternative. The benign reading is that the boundary is too "
+                        + "LOW. ⚠️ Raising LastSequence can turn this verdict green under either "
+                        + "reading, and going green does not tell you which was true — establish "
+                        + "which it is from the rotation record, outside this database, before "
+                        + "touching the configuration.",
+
+                    /*
+                      Declares the CURRENT version, which has a place to record a key identity, and
+                      carries none. The exact mirror of the 'v2' row carrying an id, refused higher
+                      up: one version has nowhere to keep the value, the other has nowhere to get it
+                      from, and neither is something the writer produces.
+                    */
+                    (null, null, null) =>
+                        $"Row {row.Id} declares payload version '{CurrentPayloadVersion}', which "
+                        + "records the identity of the key that wrote it, and records none. Its hash "
+                        + "was NOT checked: there is nothing to select a key by. Nothing this "
+                        + "deployment writes leaves that column empty on this version, so the value "
+                        + "was removed after the fact — and the column is inside the hashed payload, "
+                        + "which makes removing it a modification rather than a configuration note.",
+
+                    // Names an id the ring does not hold at all.
+                    _ =>
+                        $"Row {row.Id} was written under key id '{row.KeyId}' and no key "
+                        + $"in this verification's ring has that id — it holds '{_keyId}'"
+                        + (_keyRing.Count > 1
+                            ? $" and {_keyRing.Count - 1} retired key(s)"
+                            : " and no retired keys")
+                        + ". Its hash was NOT checked. Either the key that wrote this row was never "
+                        + "added to Audit:RetiredChainKeys, or the column was overwritten. Which one "
+                        + "is NOT positional -- a missing key fails over its own epoch and nothing "
+                        + "above it, so it breaks in the middle with verified rows beneath, which is "
+                        + "what a write looks like as well. To tell them apart, run again with that "
+                        + "key in the ring: the id above says WHICH retired key you need — it is "
+                        + "derived from the material and cannot be pasted back — so take that key "
+                        + "from wherever they are kept, add it as Audit:RetiredChainKeys:N:Key with "
+                        + "LastSequence from the rotation record, and set Audit:FoundingChainKey, "
+                        + "which becomes required as soon as anything is retired. A configuration "
+                        + "miss clears. A write does not.",
+                };
+
                 return new AuditChainVerification(
                     verified,
                     row.Sequence,
-                    $"Row {row.Id} was written under key id '{row.KeyId ?? "(none)"}' and this "
-                    + $"verification holds the key whose id is '{_keyId}', so its hash was NOT "
-                    + "checked. Either this is the wrong key for this row, or the column was "
-                    + "overwritten. Which one is positional: a wrong key fails at the LOWEST "
-                    + $"'{CurrentPayloadVersion}' row and every one after it, while a single row "
-                    + "failing among verified siblings is a write.",
+                    reason,
                     lowest,
                     highest,
                     AuditChainBreakKind.UnknownScheme,
@@ -741,7 +1482,7 @@ public sealed class AuditChain : IAuditChain
                     _keyId);
             }
 
-            var expected = ComputeRowHash(row);
+            var expected = ComputeRowHash(row, selectedKey!);
             if (!CryptographicOperations.FixedTimeEquals(
                     Encoding.ASCII.GetBytes(row.RowHash), Encoding.ASCII.GetBytes(expected)))
             {
@@ -753,6 +1494,14 @@ public sealed class AuditChain : IAuditChain
                   and two tests were green over it, because both built the record by hand instead of
                   taking one from this method.
                 */
+                /*
+                  "NAMES A KEY" AND "THE RING SELECTED ITS KEY" ARE THE SAME CONDITION HERE, and the
+                  two guards above are what make them the same. A 'v2' row carrying a key id is
+                  refused before this point, and a 'v3' row whose id the ring cannot select returns
+                  above -- so a row reaching the hash comparison with a non-null KeyId is exactly a
+                  row the ring answered for. Reading it off KeyId keeps the condition next to the
+                  sentence it justifies.
+                */
                 var confirmed = row.KeyId is not null;
                 return new AuditChainVerification(
                     verified,
@@ -760,13 +1509,15 @@ public sealed class AuditChain : IAuditChain
                     $"Row {row.Id} does not match its own hash. "
                     + (confirmed
                         ? "It was altered after it was written. The key is not in question: this "
-                          + "row records the key identity that the configured Audit:ChainKey "
-                          + "derives, and a row naming a key this verification does not hold is "
+                          + "row names a key id and the verification ring SELECTED that key by "
+                          + "that id — which after a rotation is usually a RETIRED key rather than "
+                          + "Audit:ChainKey — and a row naming an id the ring cannot select is "
                           + "refused before its hash is ever recomputed."
-                        : "Either it was altered after it was written, or this verification is "
-                          + "using a different Audit:ChainKey from the one it was written with. "
-                          + "This row records no key identity, so the two cannot be told apart "
-                          + "here."),
+                        : "Either it was altered after it was written, or this verification holds "
+                          + "different key material from the one that wrote it. This row records "
+                          + "no key identity, so it was checked under Audit:FoundingChainKey — "
+                          + "which is Audit:ChainKey only while nothing has been retired — and the "
+                          + "two cannot be told apart here."),
                     lowest,
                     highest,
                     AuditChainBreakKind.HashMismatch,
@@ -844,9 +1595,9 @@ public sealed class AuditChain : IAuditChain
       column and the prefix the same thing rather than two copies of it: overwrite the column and the
       hash stops matching, so the declaration is protected by the very hash it selects.
     */
-    private string ComputeRowHash(AuditEvent row) => row.PayloadVersion switch
+    private static string ComputeRowHash(AuditEvent row, string key) => row.PayloadVersion switch
     {
-        CurrentPayloadVersion => Hmac(string.Join('|',
+        CurrentPayloadVersion => Hmac(key, string.Join('|',
             row.PayloadVersion,
             row.KeyId ?? string.Empty,
             row.Id.ToString("N"),
@@ -863,7 +1614,7 @@ public sealed class AuditChain : IAuditChain
 
         // Byte-identical to what shipped, with the sole change that element one reads the column
         // instead of a literal -- so historical rows keep the hashes they were written with.
-        LegacyPayloadVersion => Hmac(string.Join('|',
+        LegacyPayloadVersion => Hmac(key, string.Join('|',
             row.PayloadVersion,
             row.Id.ToString("N"),
             row.Sequence.ToString(CultureInfo.InvariantCulture),
@@ -885,9 +1636,13 @@ public sealed class AuditChain : IAuditChain
             + "recomputing a hash; reaching here means that check was bypassed."),
     };
 
-    private string Hmac(string payload)
+    // The key is a PARAMETER rather than a field read, because the write path and the verify path
+    // now disagree about which key is correct: writing is always the current one, verifying is
+    // whichever key the row names. A method that reached for _options here would silently make every
+    // historical row fail after a rotation.
+    private static string Hmac(string key, string payload)
     {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.Value.ChainKey));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
         return Convert.ToHexStringLower(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
     }
 }

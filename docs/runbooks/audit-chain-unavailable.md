@@ -81,8 +81,13 @@ whole signal.
 ## Triage, in order
 
 **1. Is the database reachable at all?** If the body you just printed also reports `database`
-unhealthy, this is not an audit problem — it is the database, and the audit chain is simply the
-first thing to notice. Treat it as a database outage.
+unhealthy, that USED to settle it. ⚠️ **It no longer does.** Since the ring's rules moved into
+`AuditChain`'s constructor, and `AzureBankDbContext` takes an `IAuditChain`, a refusal to build the
+ring fails the `database` check too — both readiness checks resolve the context, so a typo in
+`Audit__RetiredChainKeys__0__LastSequence` reports exactly like an outage. Before treating it as
+one, read the failure text: a ring refusal names an `Audit:` setting and says so in prose, while a
+real outage carries a connection or timeout error. If it names a setting, go to step 5 and leave the
+database alone.
 
 **2. Does it say `A timeout occurred while running check.`?** That wording is the framework's, not
 ours, and it means the check was cancelled rather than that it found anything. Usually the readiness
@@ -253,8 +258,9 @@ ORDER BY at.transaction_begin_time;
 
 ⚠️ **The time comes from `dm_tran_active_transactions`, and it did not used to.** This query read
 `dt.database_transaction_begin_time`, and that column is **NULL until the transaction writes a log
-record** — while the tail is read under `UPDLOCK, HOLDLOCK` **before** anything is inserted
-(`AuditChain.cs:356`). So on exactly the blocked writer step 4 constructs, the age column was blank,
+record** — while the tail is read under `UPDLOCK, HOLDLOCK` **before** anything is inserted (the
+`TailSql` constant in `AuditChain`). So on exactly the blocked writer step 4 constructs, the age
+column was blank,
 `held_seconds` was blank, and `ORDER BY` ordered nothing. Measured 2026-08-28, one session holding
 that same statement in an open transaction:
 
@@ -342,8 +348,268 @@ a deletion of the OLDEST rows from outside the application — an archival job, 
 restore of a partial backup. Both are measured below and neither involves an attacker, but they are
 not equally likely. A wrong key happens on any deploy or rotation that exports the wrong value, and
 it is the first thing to rule out. The other is not routine here: this application never deletes an
-audit row, and ADR-0044 D5 leaves retention unsolved — so it is benign only if you can name the job
-or the restore that did it.
+audit row, and ADR-0044 **D6** records retention as an unsolved problem rather than a scheduled job —
+so it is benign only if you can name the job or the restore that did it. *(Was "D5" until 2026-08-29;
+D5 is the no-personal-data decision and D6 is retention, added the day before this correction.)*
+
+⚠️ **A WRONG KEY NOW HAS A REMEDY AND NOT ONLY A DIAGNOSIS.** The verifier holds a RING of chain keys
+and picks the one each row names, so a rotation no longer strands history — provided the retired key
+was added to `Audit:RetiredChainKeys`. The message says which case you are in: it names the row's key
+id and reports how many keys the ring holds. If the ring has no retired keys and the row names
+something else, the key that wrote it was never retired into the configuration, and adding it is the
+fix. **Adding a key you cannot account for is not** — the ring is how an honest rotation stays
+verifiable, never a way to make a verdict go green.
+
+⚠️ **RETIRING A KEY TAKES THREE VALUES, NOT ONE.** An earlier version of this paragraph said
+"adding it is the fix" and stopped there; following that literally produces a deployment that
+starts and then fails the first request that opens the database — measured below, and wider than an
+audited write. All three:
+
+- `Audit:RetiredChainKeys:N:Key` — the retired key material.
+- `Audit:RetiredChainKeys:N:LastSequence` — the **highest `AuditEvents.Sequence` that key legitimately
+  wrote**, which is the tail at the moment the new key took over. Rows above it that name this key
+  are refused even when their hash is correct, because a valid hash under a key that had stopped
+  writing is what MINTING looks like rather than history. Getting it wrong costs on BOTH sides: too high
+  re-opens that window by the difference, and also pushes the NEXT key's epoch start above rows that
+  key genuinely wrote, so it refuses real rows too — just later ones. Too low refuses this key's own
+  real rows, at the first row above the boundary. There is no safe direction to err in; take the
+  number from the rotation record. *(This read "Too high re-opens that window; too low refuses real
+  rows, which is loud and correctable. **Err low.**" — the single-edge version of the advice. The
+  same advice was standing in `RetiredChainKey.cs` too, one paragraph after that file withdrew the
+  single-edge framing, and the footnote here claimed it had already been removed from there. It had
+  not. Both are corrected now, and the reason "err low" is wrong at all is that too HIGH is SILENT
+  while the range it over-claims is empty.)*
+- `Audit:FoundingChainKey` — required as soon as anything is retired. Rows older than the key-identity
+  column record no key, so something has to say which key wrote them; it must name material already
+  in the ring. **It INHERITS that entry's `LastSequence`**, and there is nothing to set separately:
+  it is a designation of a key in the ring, so the epoch bounding that key bounds it here too. A
+  `v2` row above the boundary is refused for the same reason a keyed one is.
+
+Through the environment each `:` becomes `__` and `N` is a zero-based index, so the first retired key
+is `Audit__RetiredChainKeys__0__Key` and `Audit__RetiredChainKeys__0__LastSequence`. The recovery
+blocks under **After recovery** read all three; this is the same list stated as configuration.
+
+```bash
+dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
+```
+
+Run it after configuring, before believing it — and run it because **NOTHING ELSE WILL TELL YOU IN
+TIME**.
+
+⚠️ **A HALF-CONFIGURED RING DOES NOT STOP EITHER PROCESS FROM STARTING, AND THIS PAGE SAID IT DID.**
+The claim was "the process refuses to start without them"; measured, that is false in both
+composition roots, and the wrong direction to be wrong in — an operator who deploys, sees the service
+come up, and concludes the ring is right.
+
+- **The API starts normally, then fails the first request that touches the database.** Run with a
+  retired key and no `Audit__FoundingChainKey`:
+
+  ```
+  [INF] Microsoft.Hosting.Lifetime: Now listening on: http://127.0.0.1:5399
+  [INF] Microsoft.Hosting.Lifetime: Application started. Press Ctrl+C to shut down.
+
+  POST /api/auth/login  ->  HTTP 500
+  [ERR] GlobalExceptionHandler: Unhandled exception: AuditKeyRingException -
+        Audit:FoundingChainKey is required once a key has been retired. ...
+  ```
+
+  `IAuditChain` is registered `AddScoped` and nothing resolves it at startup — `ValidateOnStart`
+  covers the OPTIONS, while the ring's rules live in the `AuditChain` constructor, which runs when
+  something first opens a `AzureBankDbContext`. That is a LOGIN, before any authentication, not
+  merely an audited write. And by **D1** an audited operation whose audit write fails takes the
+  business action down with it, so past the login the same typo surfaces as failed money movements —
+  at request time, however long after the deploy that caused it.
+- **The verifier says so plainly, and all three verbs say the same thing.** A ring that will not
+  construct answers `CANNOT PROCEED: this tool is not configured to read the chain` — **exit 3** —
+  with the reason on the next line. Where the refusal is about a particular entry it names that
+  entry by its CONFIGURATION index rather than its position after the boundary sort. Three of the
+  refusals are not about an entry — a blank or short `Audit:ChainKey`, and either
+  `Audit:FoundingChainKey` failure — and those name the setting instead. The scenario in this very
+  bullet, a retired key with no `Audit__FoundingChainKey`, is one of the three.
+
+  *(This bullet described something worse until it was measured. `verify` reported the refusal as
+  `the audit store could not be read` — a sentence about the table, on a run that never opened the
+  table — and `anchor` and `export` did not catch it at all: **exit 4**, which the list below defines
+  as "the command line was wrong", with an unhandled stack trace. That is the identical incident
+  recorded further down this page from an earlier release, same two verbs, closing with "Both now
+  answer 3, like `verify`" — re-opened by the ring guards, because a constructor throw surfaces
+  wherever a verb happens to resolve the chain. All three now share one verdict.)*
+
+Neither is a reason to skip `verify`; both are reasons not to read a clean startup as evidence that
+the ring is right. *(Making it refuse at startup in both roots is worth doing and is not this change:
+it needs a place that covers both roots without stating the rules twice, and its own measurement.)*
+
+⚠️ **A RING THAT CONSTRUCTS BUT IS WRONG DOES NOT ALWAYS COME BACK AS `UnknownScheme`, AND THIS
+PARAGRAPH SAID IT DID.** That was the comfortable version and it is the dangerous one, because the
+worst of the six outcomes is the one that reports nothing at all. Which you get depends on HOW the
+ring is wrong:
+
+| what is wrong | verdict | where it breaks |
+| --- | --- | --- |
+| the key that wrote a row is not in the ring | `UnknownScheme` | lowest row that key wrote |
+| a `LastSequence` is too LOW | `UnknownScheme` | first row above the recorded boundary |
+| `FoundingChainKey` names the wrong ring member | `UnknownScheme` | lowest `v2` row |
+| a `LastSequence` is too HIGH, nothing written above the real boundary yet | **`CHAIN INTACT`** | nowhere — nothing is reported |
+| a `LastSequence` is too HIGH, the newer key has already written above it | `UnknownScheme` | first row the newer key wrote |
+| two retired keys share a `LastSequence` | refused at construction | before any row is read |
+
+⚠️ **THE TWO `too HIGH` ROWS ARE ONE MISCONFIGURATION, AND THIS TABLE USED TO GIVE IT TWO
+CONTRADICTORY ANSWERS.** It carried `too HIGH` → `CHAIN INTACT`, *nothing is reported*, and directly
+beneath it `too LOW for the key BELOW it` → `UnknownScheme` at the *first row of the next epoch*. The
+second row's cause was backwards. What breaks at **the first row the newer key wrote** is a boundary
+recorded too **HIGH**: the next key's epoch STARTS at this one's `LastSequence + 1`, so
+over-claiming here pushes the newer key's epoch above rows that key genuinely wrote. Too LOW breaks
+somewhere else entirely — at the first row above the recorded boundary, which is row 2 of this
+table. *(The
+correction that replaced the backwards row said too HIGH breaks at "the next epoch's first row". It
+does not: it breaks at the first row the NEWER key wrote, which sits BELOW the inflated epoch start.
+The table says it correctly; this sentence did not.)*
+
+The two rows were the same error seen from both sides, filed as different errors with opposite
+verdicts, and an operator triaging by symptom would have read the wrong one.
+
+What decides which answer you get is whether the over-claimed range is EMPTY. Measured, both states,
+same ring:
+
+```
+retired key truly stopped at 2, boundary recorded 4
+  the newer key has already written rows 3 and 4  ->  IsIntact=False  UnknownScheme  breaks at 3
+  nothing written above 2                         ->  IsIntact=True   nothing reported
+```
+
+The silent state is not the harmless one. It is the window an attacker needs — the range is empty,
+so a holder of the retired key can mint into it and the walk accepts every row — and it is the state
+a deployment is in for exactly as long as it takes the new key to write. The loud state is how the
+same mistake surfaces once the system is in use, and it surfaces as rows the CURRENT key wrote being
+refused, which reads like tampering and is not.
+
+*(The note here said "All six rows were run, not reasoned about". Two of them had not been, and that
+is how one of them ended up backwards and the other unconditional. The two states above were run —
+the block is the output. THREE of the six verdicts name the setting at fault on their own: the
+shared-boundary refusal names the configuration index, the wrong-designation verdict names
+`Audit:FoundingChainKey`, and the not-in-the-ring verdict names `Audit:RetiredChainKeys` twice and
+prescribes the edit. The rest have to be read positionally.)*
+
+**`LastSequence` too HIGH is why "run it and see" is not a check on the ring** — while the
+over-claimed range is still empty. In that state it does not fail; it silently admits rows a retired
+key had no business writing, which is the whole hazard the boundary exists to catch, and nothing in
+the verdict distinguishes it from an honest one. Only the rotation record does — see **RAISING
+`LastSequence` CAN TURN THAT VERDICT GREEN UNDER EITHER READING** below. Once the newer key has
+written into
+that range the same misconfiguration is loud, and running it and seeing DOES catch it; what it cannot
+do is tell you the ring is right before anything has been written under it, which is precisely when
+you are deciding to trust it. *(This paragraph stated the silence unconditionally, and this page's
+own table now shows both states. It also opened "The last row is why…" and meant the too-high row,
+which stopped being last when two more were appended below it.)*
+
+**The third row USED to be the one that read like tampering, and no longer is.** While an epoch had
+only an upper end, a founding key the ring HOLDS was applied to the identity-less rows and its hash
+recomputed, so a wrong designation reached a hash comparison and failed it as a `HashMismatch` —
+positionally identical to a write, and the reason this row told you to check the designation before
+escalating.
+
+**The epoch's lower end made that case unreachable.** Identity-less rows are the oldest rows there
+are, so only the OLDEST ring entry's epoch contains them; designating anything else puts them BELOW
+that key's epoch and the walk refuses them before any hash is recomputed. Measured: with two retired
+keys and the designation pointed at the second, the verdict is `UnknownScheme` reading *"the epoch
+that key opens begins at 3, while this row is sequence 1"*, and it names `Audit:FoundingChainKey` as
+the fix. Strictly better — the verdict now says which setting is wrong instead of looking like an
+attack.
+
+*(A `HashMismatch` on the lowest `v2` row still means something, but something else: the ring entry
+the designation names holds the wrong key MATERIAL. The epoch is right, so the walk gets as far as
+the hash and the hash disagrees. That is a wrong retired key, not a wrong designation.)*
+
+⚠️ **AND THE `UnknownScheme` VERDICTS LOOK ALIKE AND NEED DIFFERENT RESPONSES. READ WHICH ONE YOU
+HAVE BEFORE TOUCHING ANYTHING.** The walk can print **nine** distinct `UnknownScheme` messages,
+which the exit-code section below groups into **seven causes** because two PAIRS of them share an
+action. Seven come out of the reason switch: the five below, which a ring misconfiguration can
+produce, a sixth at the end of this section that nothing in the configuration causes, and a seventh
+that shares the fifth's entry in the printed list — an identity-less row stored below sequence 1,
+which is a planted row rather than a designation mistake and says so in its own text. The other two
+are refused before the switch is reached — an unrenderable payload version, and a `v2` row carrying
+a key id — and they are causes 1 and 2 in that list.
+
+*(This heading said "THE TWO" while five bullets followed, then "six", which counted the switch arms
+and no more, then "eight", which counted them before a seventh arm was added. FOUR censuses of the
+same thing on one page is what this branch keeps producing; they are reconciled here rather than
+replaced by a fifth. The number itself is derived from `AuditChain.cs` by a test — this page is the
+copy that has to be moved by hand, and this is the fourth time it was not.)*
+
+- *"…and no key in this verification's ring has that id"* — the key that wrote the row was never
+  retired into the configuration. Adding it, with its boundary, is the fix.
+- *"…which this verification DOES hold — but that key was retired at sequence N and this row is
+  sequence M"* — the ring HAS the key. The row sits above the sequence that key stopped writing at,
+  so its hash is correct under a key that had no business writing by then.
+- *"…is a `v2` row, which records no key identity, so it is checked under `Audit:FoundingChainKey`
+  — and that key was retired at sequence N"* — the same boundary, reached WITHOUT a key id. Treat
+  minting as the leading reading rather than the alternative: a `v2` row records no key, so
+  labelling a new row `v2` is the one way to reach the founding key without naming it, and the
+  boundary is the only thing that sees it.
+- *"…names key id 'X', whose epoch begins at N"* — the OTHER end of the same boundary, and it is
+  not a variation on the three above. The row sits BELOW the epoch of the key it names, so an earlier
+  key wrote that stretch. Two readings again: the EARLIER key's `LastSequence` is recorded too
+  **HIGH** — it claims rows up to at least this one, which the named key actually wrote — or the rows
+  were
+  **re-authored by whoever holds the later key**. ⚠️ **Epochs are derived from the boundaries, so
+  moving one moves two**: LOWERING the earlier key's boundary lowers the start of the next epoch, and
+  the verdict changes for rows you did not think you were touching. Establish the rotation points
+  from outside this database before editing any of them.
+
+  *(This bullet gave the benign reading as "too LOW" and said raising a boundary lowers the next
+  start. Both are backwards, and it is the one verdict where the direction decides which number an
+  operator edits. Reasoned from the derivation: the epoch begins at the previous key's boundary plus
+  one, so a start that is too high means the boundary beneath it is too high.)*
+- *"…is a `v2` row … the epoch that key opens begins at N"* — the FOURTH boundary verdict, and the
+  only one with no minting reading at all. An identity-less row is among the oldest in the table, so
+  an epoch starting above it means `Audit:FoundingChainKey` designates a ring member that is **not
+  the oldest**. ⚠️ **A row stored BELOW sequence 1 reaches this check too**, on a ring with one key
+  and no designation at all, because the founding epoch starts at 1 there. That row gets a different
+  verdict — *"below the first sequence this trail can have … Preserve the table and escalate"* — and
+  nothing in the configuration causes it or can fix it.
+
+  ⚠️ **For the designation reading, a `LastSequence` edit is not the fix either.** The founding
+  epoch's start IS derived from the preceding entry's boundary, so lowering that boundary does move
+  it — and it cannot move it far enough on an honest table. Boundaries are at least 1 and strictly
+  increase, so the start cannot fall below the designation's POSITION in that order: **2** for the
+  second key, **3** for the third. The edit clears this row only if its sequence reaches that
+  number, and identity-less rows are the oldest there are — **so if it clears, the trail does not
+  begin at sequence 1, and that is a second finding rather than a fix.** Re-point the
+  designation.
+
+  *(This said the edit gets you "a different break rather than a clear verdict … the walk fails on
+  the link instead — measured". It was not measured and it is not true. A configuration edit cannot
+  produce a link break at all: the link test compares this row's stored `PreviousHash` against the
+  previous row's stored `RowHash` — two columns, no key, no epoch, no recomputed hash — and it runs
+  before a key is ever selected. Handing a row to a key that did not write it produces a HASH
+  MISMATCH, not a link break. And in the shape this verdict fires on, no row is handed to anybody:
+  the floor above keeps it below the epoch.)*
+
+⚠️ **THE SIXTH VERDICT IS NOT A CONFIGURATION PROBLEM AT ALL, AND THIS PAGE DID NOT LIST IT.**
+
+- *"…declares payload version `v3`, which records the identity of the key that wrote it, and records
+  none"* — there is nothing to select a key by, so the hash is not checked. Nothing this deployment
+  writes leaves that column empty on this version, and the column is inside the hashed payload, so
+  the value was removed after the fact. **Do not look for a missing ring entry.** It is the mirror of
+  a `v2` row CARRYING an identity, and it is a modification. Treat it as a break.
+
+**The second of the five, `retired at sequence N`, has two readings and they are not equally
+benign.** Either the recorded `LastSequence` is too LOW and the row is genuine history written
+before the rotation, or the row was
+**minted with a retired key after the rotation** — which is the attack the boundary exists to catch.
+
+🔒 **RAISING `LastSequence` CAN TURN THAT VERDICT GREEN UNDER EITHER READING, WHICH IS EXACTLY WHY IT
+IS NOT THE FIRST MOVE — AND GOING GREEN IS NOT EVIDENCE THAT THE BENIGN READING WAS THE TRUE ONE.**
+If the row was minted, raising the boundary completes the attack and the trail then attests to it.
+*(This said "IN BOTH CASES", flatly. Measured, the minting case is conditional: raising this entry's
+boundary also raises the NEXT key's epoch start, so it goes green only when nothing was written under
+the newer key in the range you just handed back. When something was, the break MOVES DOWN to the
+first row that key wrote — a lower sequence than the one you started from — which is the same pair of
+states the triage table above measures. The reason not to raise it is unchanged; the reason given
+was wrong.)* Establish which reading is true from something outside this database — the change
+record for the rotation, the deployment that carried it, the ticket that ordered it — and only then
+correct the configuration. If nothing outside can say when the key was retired, the honest position
+is that this row cannot be verified, and that is a finding rather than a configuration task.
 
 **Classify first — it costs one command, and the tool already prints the two things that decide
 it:** the KIND of break, and `Rows verified before the break`. The verifier only ever reads, so
@@ -373,13 +639,106 @@ row count never moved.
   recomputed. So a hash mismatch on such a row is not ambiguous any more — the key behind it has
   already been confirmed. Rows written before key identity existed (`PayloadVersion` = `v2`) keep
   the old reading, and only those.
-- `declares payload version ... which this build cannot render` or `was written under key id ...` —
-  the row was **NOT CHECKED**, which is never the same as checked and found good. Three readings:
-  you hold a different key than the one that wrote it, this build is older than the row, or the
-  column was overwritten — and that column is inside the hashed payload, so overwriting it is a
-  modification. **The discriminator is positional, not textual:** the first two fail at the LOWEST
-  row of that scheme and at every one after it, while a single row failing among verified siblings
-  is a write. Exit code is 1. ⚠️ **Never triage this as a configuration note.**
+- `declares payload version ... which this build cannot render`, `was written under key id ...`, or
+  any of the four boundary verdicts — the row was **NOT CHECKED**, which is never the same as checked
+  and found good. **SEVEN causes produce it since the ring**, and the verdict line itself says which:
+
+  1. this build cannot render the version the row declares;
+  2. the identity column contradicts the version — a `v2` row carrying a key id, or a `v3` row
+     carrying none;
+  3. no key in the ring has this row's id;
+  4. the ring HAS that key and the row sits **above** the epoch it closes;
+  5. the ring HAS that key and the row sits **below** the epoch it opens;
+  6. the row records no key id, so `Audit:FoundingChainKey` answers for it, and the row sits
+     **above** that key's epoch;
+  7. the same, **below** that key's epoch.
+
+  ⚠️ **THE DISCRIMINATOR USED TO BE POSITIONAL AND THE RING BROKE IT.** How wide the damage is
+  depends on WHICH of the seven you have, and they come in three shapes:
+
+  - **Row-local** — causes 1 and 2, an unrenderable payload version and the identity column
+    contradicting the version. No epoch and no key are involved: the row is refused on its own and
+    the rows around it are untouched.
+  - **A whole epoch** — cause 3, a key the ring does not hold. The rows it answers for ARE its
+    stretch, so the walk stops at the first of them.
+  - **Outside an epoch** — causes 4 to 7. The failing row is by definition NOT inside the epoch the
+    verdict names, so **that epoch tells you where the key was valid, never where the damage is.**
+    Scoping an incident from it scopes the wrong rows.
+
+  So a key missing from `Audit:RetiredChainKeys` breaks at the first row of THAT key's epoch, with
+  rows above it that would verify if the walk went on — the same signature a single overwritten row
+  produces. When the missing key is the OLDEST, its epoch starts at 1, so the break is at row 1 with
+  nothing verified: that is the ordinary shape of "we rotated once and forgot to retire the old
+  key", not evidence of anything worse. **A configuration mistake and a write can look identical in
+  one run.**
+
+  What separates them is a second run **with that key in the ring**, and it takes **three** values.
+  Supply fewer and the ring refuses to build — exit 3, with neither reading confirmed, which is the
+  one outcome this run exists to avoid:
+
+  - `Audit:RetiredChainKeys:N:Key` — the retired key's **material**. ⚠️ **Not the id the verdict
+    prints.** The id is 16 hex characters derived one-way from the material, so it cannot be pasted
+    back; it tells you WHICH key to fetch from wherever your keys are kept. Pasting it here fails
+    the 32-character floor and you get a third error instead of an answer.
+  - `Audit:RetiredChainKeys:N:LastSequence` — the sequence that key stopped writing at, **from the
+    rotation record**. It is a plain `long` with no default worth having: leave it out and it binds
+    to `0`, which the constructor refuses outright.
+  - `Audit:FoundingChainKey` — **required as soon as anything is retired.** Add the first retired
+    entry without it and the ring refuses to build for a different reason.
+
+  *(This said "two settings, not one" and listed the material and the designation. The boundary is
+  not optional and its absence is not benign: the procedure as written exited 3 every time.)*
+
+  Then verify again. A configuration miss clears. A write does not.
+
+  *(This page said "each fails at the LOWEST row it
+  applies to and at EVERY ONE AFTER IT … a single row failing among verified siblings is a write" —
+  the rule from before the ring, when one key answered for every `v3` row and a wrong key therefore
+  failed at the first one. It also said the below-the-epoch causes apply to a PREFIX, "every row from
+  the bottom of the table up to the previous key's boundary": they apply only to the rows naming that
+  key, which is its epoch, not everything beneath it.)*
+
+  ⚠️ **An overwritten column is not an eighth cause** — `PayloadVersion` and `KeyId` are both inside
+  the hashed payload, so changing either is a modification that then surfaces as whichever of the
+  seven it happens to trip. Exit code is 1.
+
+  ⚠️ **TWO of the seven are fixed in configuration — a missing ring entry, and the DESIGNATION for
+  cause 7. The rest are not, and none of it makes the row proved good.** *(This said "a missing ring
+  entry is fixed in configuration; nothing else here is", two lines above naming the designation as
+  the fix for cause 7. `Audit:FoundingChainKey` is configuration.)*
+
+  **FOUR of the seven are boundary causes** — 4, 5, 6 and 7 — and **which edge was crossed decides
+  which edit is even available**, so they do not share one remedy:
+
+  - **4 and 6 sit ABOVE an epoch.** Raising that key's `LastSequence` admits the row, which is the
+    dangerous edit and the one to read about first: see **RAISING `LastSequence` CAN TURN THAT
+    VERDICT GREEN UNDER EITHER READING**, **ABOVE**, before changing anything.
+  - **5 sits BELOW one.** Raising anything moves that epoch's start *later* and refuses the row
+    harder; the number that could admit it is the PRECEDING entry's boundary, moved DOWN. The
+    verdict says so itself — *"epochs are derived from the recorded boundaries, so moving one moves
+    two"* — and the readings are a boundary recorded too HIGH for the earlier key, or a row
+    re-authored by whoever holds the later one.
+  - **7** is the designation, below.
+
+  *(This grouped 5 with the raising advice, and the raising advice is the one paragraph on this page
+  whose whole point is not to make the edit — so it pointed an operator at the wrong warning for the
+  wrong edge. It also said "below" for a section some seventy lines earlier.)*
+
+  **The fourth, cause 7, does not** — an identity-less row below the founding epoch has **two**
+  causes and neither is minting. Either the designation is not the ring's oldest key, or the row is
+  stored **below sequence 1**, which nothing this deployment writes can produce and no key is needed
+  to insert. The second has its own verdict text and its own instruction — preserve and escalate,
+  and edit nothing. For the first, no `LastSequence` edit clears it. The
+  boundary before it does move this epoch's start, and moving it achieves nothing an operator can
+  use on a trail that begins at sequence 1. Boundaries are at least 1 and strictly increase, so this
+  epoch's start cannot fall below the designation's POSITION in that order — 2 for the second key,
+  3 for the third — and the identity-less rows this fires on are the oldest in the table. The same
+  verdict prints again with a smaller number in it. **If the edit DOES clear it, the trail does not
+  start at sequence 1, and that is a second finding rather than a fix.** *(This said the start
+  "floors at 2, and the identity-less row that gets here is sequence 1". The floor depends on where
+  the designation sits in boundary order, and nothing in the code constrains the row to sequence 1 —
+  only the shape of an honest table does. It also said moving it "trades this verdict for a link
+  break"; no configuration value can produce a link break.)*
 - `expected to follow ... A row was deleted, reordered, or inserted` with **`Rows verified before
   the break: 0`** — the first row read names a predecessor that is not there. **The sequence it
   broke at says which of two things happened, and they are not the same incident.** At **sequence
@@ -445,8 +804,19 @@ because it was written when there was one.
 Neither `export` nor the window below is a substitute for the number you wrote down elsewhere. They
 are cheaper to produce and they are not testimony from anybody else.
 
-Same three environment variables as the recovery block below — **both keys, or it exits 3** — and a
-destination that is not this machine:
+The same environment as the recovery block below, and a destination that is not this machine.
+**Both keys, or it exits 3** — and after a rotation, the whole ring too: every
+`Audit__RetiredChainKeys__N__Key` with its `__LastSequence`, and `Audit__FoundingChainKey`.
+
+An incomplete ring
+stops `export` for the same reason it stops `verify` — the ring is built when the chain is RESOLVED,
+before either verb reads anything — so a retired key without the founding designation refuses at the
+same point in both. *(What `export` does NOT do is verify the audit chain: it copies the ANCHOR
+chain, and its exit code speaks for that one. A sentence here said it "verifies the chain before it
+copies anything", which is true of the anchor chain and false of the one this page is about.)*
+
+*(This line said "same three environment variables" and was written before the ring existed. It kept
+pointing at a block that has since grown to six.)*
 
 ```bash
 dotnet run --project backend/tools/AzureBank.AuditVerifier -- export /mnt/evidence/anchors-$(date +%FT%H%M%S).jsonl
@@ -483,7 +853,10 @@ elsewhere and to nobody who did not.
 So truncation is the cheapest attack on this table — it needs **no key at all**, only write access —
 and it is also the easiest thing to do by accident while trying to clear a stuck table at three in
 the morning. ADR-0044 states the same limit and the honest claim it leaves: this chain detects
-tampering by someone holding the database but not the key, **except at the end of the table**.
+tampering by someone holding the database but not **the key whose epoch that row falls in**,
+**except at the end of the table**. *(Singular "the key" until 2026-08-30, then "any key in the ring"
+for as long as an epoch had one end; a retired key recomputes its own epoch and no other, so naming
+the epoch is the honest form.)*
 
 ~~Until the tail is anchored outside the system, the only witness to how many rows there should be is
 somebody who wrote the number down.~~ *(Corrected 2026-08-28: there are now three witnesses, and only
@@ -526,8 +899,20 @@ know the anchor table was there, now leaves a number that does not add up.
   read -rsp 'Audit:ChainKey: ' Audit__ChainKey && export Audit__ChainKey && echo
   read -rsp 'Audit:AnchorKey: ' Audit__AnchorKey && export Audit__AnchorKey && echo
   read -rsp 'Connection string: ' ConnectionStrings__DefaultConnection && export ConnectionStrings__DefaultConnection && echo
+
+  # ONLY IF A KEY HAS EVER BEEN RETIRED -- see "Retiring a key takes three values" above.
+  # Repeat the two RetiredChainKeys lines, incrementing the 0, for each key retired.
+  read -rsp 'Retired chain key #0: ' Audit__RetiredChainKeys__0__Key && export Audit__RetiredChainKeys__0__Key && echo
+  read -rp  '  its LastSequence: ' Audit__RetiredChainKeys__0__LastSequence && export Audit__RetiredChainKeys__0__LastSequence
+  read -rsp 'Audit:FoundingChainKey: ' Audit__FoundingChainKey && export Audit__FoundingChainKey && echo
+
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
+
+  `LastSequence` is read with `-rp` rather than `-rsp` on purpose: it is not key material, and
+  getting it wrong is the hazard the value exists to bound, so it should be on screen to be checked.
+  The founding key IS material — it names which key wrote the rows that record none — so it is read
+  like the others even though it is a designation of a key already in the ring.
 
   ⚠️ **TWO KEYS, AND THIS PROCEDURE STOPPED WORKING WHEN THE SECOND ONE ARRIVED.** The tool validates
   both at startup and refuses to run without either. Running the version of this block that read only
@@ -563,6 +948,47 @@ know the anchor table was there, now leaves a number that does not add up.
   method that would have found it: the tool's own suite passes either way, because no test ran a verb
   against a missing key and asserted the NUMBER an operator would see.
 
+  ⚠️ **AND IT HAPPENED A SECOND TIME, THE SAME WAY, WHEN THE KEY RING ARRIVED.** The ring lines above
+  are not optional decoration on a rotated deployment: without them this procedure accuses an intact
+  chain. Three rows written under one key, the key then rotated, each configuration run against the
+  same untouched database:
+
+  ```
+  ChainKey (the NEW key) + AnchorKey, exactly as this block read before the ring:
+    EXIT=1   CHAIN BROKEN at sequence 1.
+             Row ... was written under key id '7057da02943bb1e6' and no key in this
+             verification's ring has that id — it holds 'e7bca259f5837226' and no
+             retired keys.
+
+  + Audit__RetiredChainKeys__0__Key and __LastSequence, founding key still unset:
+    EXIT=3   CANNOT PROCEED: this tool is not configured to read the chain.
+             Audit:FoundingChainKey is required once a key has been retired. ...
+             (verify, anchor and export all answer this, identically)
+
+  + Audit__FoundingChainKey:
+    EXIT=0   CHAIN INTACT: 3 rows verified.
+  ```
+
+  **1 is the code this document tells you to alert on as CHAIN BROKEN**, and the middle run shows
+  what the same procedure answers when the ring is merely INCOMPLETE: 3, which says the tool is not
+  configured to read the chain and names the setting to add. The same procedure, two runs apart,
+  sending an operator to opposite places — 3 to the configuration, 1 to an incident. The anchor-key
+  omission a release
+  earlier also answered 3, which is what makes this one the worse of the two: the first rotation
+  would have paged somebody, from the page written to stop exactly that, and the verdict would have
+  named a key id as evidence.
+
+  *(That sentence read "worse than the exit 3 the missing anchor key produced" until review. True of
+  the earlier incident, and wrong where it sits: the 3 in the block above is the middle run's, a
+  FOUNDING-key 3, so it sent a reader to check `Audit:AnchorKey`, which that run supplies and which
+  is fine. A page read under pressure is read locally. The first correction of this sentence said
+  "six lines above" and counted wrong — which is why it now names the run instead of counting lines,
+  the same rule this page states for the exit-code cross-reference further up.)*
+
+  That refusal is deliberate: the ring will not construct rather than guess which key wrote the
+  identity-less rows, so a HALF-configured ring cannot silently verify history under the wrong key.
+  It is why `Audit:FoundingChainKey` is listed above as required rather than recommended.
+
   PowerShell, since it is the history file this paragraph cites. **`-AsPlainText` on
   `ConvertFrom-SecureString` is PowerShell 7 or later**; on Windows PowerShell 5.1 it does not exist
   and both assignments end up EMPTY, which the verifier then reports as a missing key. Check with
@@ -574,22 +1000,60 @@ know the anchor table was there, now leaves a number that does not add up.
   $env:Audit__AnchorKey = (Read-Host 'Audit:AnchorKey' -AsSecureString | ConvertFrom-SecureString -AsPlainText)
   $env:ConnectionStrings__DefaultConnection = (Read-Host 'Connection string' -AsSecureString |
   ConvertFrom-SecureString -AsPlainText)
+
+  # Only if a key has ever been retired. Repeat the pair, incrementing the 0, for each one.
+  $env:Audit__RetiredChainKeys__0__Key = (Read-Host 'Retired chain key #0' -AsSecureString |
+  ConvertFrom-SecureString -AsPlainText)
+  $env:Audit__RetiredChainKeys__0__LastSequence = Read-Host '  its LastSequence'
+  $env:Audit__FoundingChainKey = (Read-Host 'Audit:FoundingChainKey' -AsSecureString |
+  ConvertFrom-SecureString -AsPlainText)
+
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
 
+  ⚠️ **`SecureStringToBSTR` HANDS YOU PLAINTEXT IN UNMANAGED MEMORY AND NOBODY FREES IT FOR YOU.**
+  Every version of this block above called it and threw the pointer away, so each key stayed in
+  cleartext in the process's unmanaged heap for as long as the session lived — which on this page is
+  a shell somebody keeps open through an incident. `ZeroFreeBSTR` is the documented counterpart: it
+  overwrites the buffer before releasing it. It belongs in a `finally`, so an interrupted `Read-Host`
+  does not leave the allocation behind, and once it is in a `finally` it is worth writing once:
+
   ```powershell
   # Windows PowerShell 5.1
-  $key = Read-Host 'Audit:ChainKey' -AsSecureString
-  $env:Audit__ChainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($key))
-  $anchorKey = Read-Host 'Audit:AnchorKey' -AsSecureString
-  $env:Audit__AnchorKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($anchorKey))
-  $cs = Read-Host 'Connection string' -AsSecureString
-  $env:ConnectionStrings__DefaultConnection = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($cs))
+  function ConvertFrom-SecureStringPlain {
+      param([Security.SecureString]$Secure)
+      $bstr = [IntPtr]::Zero
+      try {
+          $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+          [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+      }
+      finally {
+          if ($bstr -ne [IntPtr]::Zero) {
+              [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+          }
+      }
+  }
+
+  $env:Audit__ChainKey = ConvertFrom-SecureStringPlain (Read-Host 'Audit:ChainKey' -AsSecureString)
+  $env:Audit__AnchorKey = ConvertFrom-SecureStringPlain (Read-Host 'Audit:AnchorKey' -AsSecureString)
+  $env:ConnectionStrings__DefaultConnection = ConvertFrom-SecureStringPlain (
+      Read-Host 'Connection string' -AsSecureString)
+
+  # Only if a key has ever been retired. Repeat, incrementing the 0, for each one.
+  $env:Audit__RetiredChainKeys__0__Key = ConvertFrom-SecureStringPlain (
+      Read-Host 'Retired chain key #0' -AsSecureString)
+  $env:Audit__RetiredChainKeys__0__LastSequence = Read-Host '  its LastSequence'
+  $env:Audit__FoundingChainKey = ConvertFrom-SecureStringPlain (
+      Read-Host 'Audit:FoundingChainKey' -AsSecureString)
+
   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
   ```
+
+  Run, not reasoned about: the function round-trips a 42-character key on **Windows PowerShell
+  5.1.26100.9278**, which is the edition this block exists for, and on PowerShell 7.6.5 beside it.
+  **None of this makes the value private from the process** — an environment variable is readable by
+  anything running as you, and the PowerShell 7 block above hands `-AsPlainText` a managed string
+  that the GC may copy. What it removes is the one copy nothing ever reclaims.
 
   ⚠️ **AND IT PRINTS AN UNCOVERED WINDOW, which is new and is the line most likely to be misread.**
   It says how far the table runs past the deepest sequence any anchor claims to cover — "at least N
@@ -604,10 +1068,12 @@ know the anchor table was there, now leaves a number that does not add up.
     no longer exists, and nothing legitimate produces it. Preserve the database, `export`, and
     escalate before running anything that writes.
 
-  It is counted in SEQUENCE numbers. That is a row count unless somebody holding `Audit:ChainKey`
-  removed rows and recomputed the links behind them — the walk checks the links, never the
-  contiguity — so **a `SELECT COUNT(*)` that disagrees with the span is the finding, not a fault in
-  the tool.** It is the only trace that particular deletion leaves.
+  It is counted in SEQUENCE numbers. That is a row count unless somebody holding **the keys covering
+  a stretch** removed rows from it and recomputed the links behind them — the walk checks the links,
+  never the contiguity — so **a `SELECT COUNT(*)` that disagrees with the span is the finding, not a
+  fault in the tool.** It is the only trace that particular deletion leaves. *(This named
+  `Audit:ChainKey` alone. Since the ring a retired key answers for its own epoch, so its holder can
+  do the same inside that epoch — the same narrowing the intact verdict already carries.)*
 
   It prints the verdict WITH the row count and the sequence range, because "intact" on its own is
   not an answer — a chain of zero rows links perfectly, and a table truncated to nothing reports
@@ -635,12 +1101,19 @@ know the anchor table was there, now leaves a number that does not add up.
     that table exists to make loud — reaches a script keyed on the exit code as **green**. **Read the
     UNCOVERED WINDOW block, not just the verdict line.** Anything other than a number there is
     something to act on.
+  - **`THE ANCHOR CHAIN DID NOT VERIFY` on an `export` run is a verdict, not a note about the
+    file.** `export` writes the copy anyway and says so underneath: a chain that has stopped
+    verifying is when an off-machine copy is worth the most, and copying asserts nothing about what
+    it copies. **Read the `Kind` and the anchor sequence printed below that line** — that is the
+    finding. The file is evidence of the broken state, not a repair of it.
   - **`1` from `export` is about the ANCHOR chain, not this one.** `ExportCommand` takes its code
     from the anchor verification it just wrote out, so it can exit 1 while `verify` on the same
     database exits 0. Read `1` as "the chain THIS VERB is about is broken", and the verb decides
     which.
 
-  Both are confirmed in `VerifyCommand.Report` and at `ExportCommand.cs:516`, and neither is a defect
+  Both are confirmed in `VerifyCommand.Report` and in the return `ExportCommand.RunAsync` makes once
+  it has walked the anchor chain — not its LAST return, which is the exit-3 refusal for an audit
+  store it could not read. Neither is a defect
   in this page — the page is where they become visible, because it is the only document that treats
   the codes as one vocabulary shared by every verb. **Whether the tool should instead give the anchor
   chain its own code is a change to what alerts fire, and is not decided here.** Until it is, an
@@ -648,10 +1121,32 @@ know the anchor table was there, now leaves a number that does not add up.
 
   **`3` is the one to wire an alert on separately from `1`.** It covers everything that stopped the
   walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey` **or
-  `Audit:AnchorKey` — both are validated at startup and either alone stops all three verbs, which is
-  the failure this page's own recovery procedure produced until 2026-08-28** — an unreachable
-  server, a connection string that is malformed or absent, **and the states step 6 is about — the
-  `AuditEvents` table renamed, dropped or never migrated, or a login that cannot SELECT from it.**
+  `Audit:AnchorKey` — either alone stops all three verbs, which is the failure this page's own
+  recovery procedure produced until 2026-08-28** — an unreachable server, a connection string that is
+  malformed or absent, **the states step 6 is about — the `AuditEvents` table renamed, dropped or
+  never migrated, or a login that cannot SELECT from it** — **and every way the KEY RING refuses to
+  build**, which is ten guards in the constructor: a blank or under-32-character `Audit:ChainKey`;
+  a `Audit:RetiredChainKeys:N` entry that is null, blank, or under 32 characters; a `LastSequence`
+  below 1, at the top of the range, or equal to the entry before it; the same key listed twice or
+  equal to the current one; and `Audit:FoundingChainKey` missing once anything is retired or naming
+  material the ring does not hold. *(This list claimed to be every way and omitted two: the
+  `Audit:ChainKey` floor, and the null entry — which is the one a caller reaches by passing a null
+  directly, since a JSON `null` binds to a non-null entry with an empty key and is caught by the
+  blank guard instead.)*
+
+  All of those answer 3 in all three verbs. The per-entry ones name the offending
+  `Audit:RetiredChainKeys:N` by its CONFIGURATION index — which is not its position after the
+  boundary sort, so it is the one to edit. The three that are not per-entry — a short or missing
+  `Audit:ChainKey`, and either founding-key refusal — have no index to give and name the setting
+  instead.
+
+  ⚠️ **"Validated at startup" is not true of the ring, and this paragraph used to say it of both
+  keys.** The two audit KEYS are options validation and do stop the verifier before it reads. The
+  RING's rules live in `AuditChain`'s constructor, so they fire when something first resolves the
+  chain — in the API that is the first request that opens the database, not the deploy. The measured
+  transcript is in the bullet on the verifier's three verbs, further up this page, where the
+  `Now listening on` / `POST /api/auth/login -> HTTP 500` output is quoted. *(This pointed at
+  **RETIRING A KEY TAKES THREE VALUES**, which holds a command to run and no output at all.)*
   That last group is why the tool no longer stops at "check the connection string and the key": it
   now says that a vanished `AuditEvents` exits the same way and is the most complete tamper there
   is, and that the remedy step 6 points at — re-running migrations — would recreate the table and
