@@ -734,6 +734,18 @@ database, which is precisely the attacker D2 is written against. The floor lives
 construction rather than in each root's options validation, for the reason the ring itself lives
 there: a structural rule enforced in one root is a rule the other does not have.
 
+**And because the rules live there, something has to RESOLVE the ring for them to run — so the API
+now does, once, at startup.** `IAuditChain` is registered scoped and nothing resolved it early, so a
+deployment with a retired key and no `Audit:FoundingChainKey` came up clean, logged
+`Now listening on`, and threw on the first request that opened a `AzureBankDbContext` — a LOGIN,
+before any authentication, and by **D1** every audited operation after it. Measured, the API now
+stops during startup instead, naming the setting and the constructor that refused. The fix is a
+hosted service that resolves the chain and nothing else, registered beside the scoped registration
+so a second host inherits it; it is deliberately NOT an options validator, since that would put the
+ring's rules in the second place this section just argued against, and two copies of a structural
+rule drift. Cheap to do at startup because the constructor takes options and a logger and no
+database. *(The verifier needed nothing: all three verbs already resolve the chain per run.)*
+
 **What this does not do.**
 
 - **A `v2` row cannot be rotated at all.** It records no key identity, so there is nothing to select

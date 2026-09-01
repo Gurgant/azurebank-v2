@@ -396,29 +396,38 @@ dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
 Run it after configuring, before believing it — and run it because **NOTHING ELSE WILL TELL YOU IN
 TIME**.
 
-⚠️ **A HALF-CONFIGURED RING DOES NOT STOP EITHER PROCESS FROM STARTING, AND THIS PAGE SAID IT DID.**
-The claim was "the process refuses to start without them"; measured, that is false in both
-composition roots, and the wrong direction to be wrong in — an operator who deploys, sees the service
-come up, and concludes the ring is right.
+⚠️ **THE API REFUSES TO START ON A RING IT CANNOT BUILD, AND THIS PAGE HAS NOW BEEN WRONG IN BOTH
+DIRECTIONS.** It first claimed "the process refuses to start without them" while nothing checked;
+that was corrected to "starts normally, then fails the first request", which was measured and true
+until `AuditKeyRingStartupCheck` began resolving the ring during startup. Trust the transcript below
+over the prose around it, and re-measure before believing either.
 
-- **The API starts normally, then fails the first request that touches the database.** Run with a
-  retired key and no `Audit__FoundingChainKey`:
+- **The API stops during startup and never listens.** Run with a retired key and no
+  `Audit__FoundingChainKey`:
 
   ```
-  [INF] Microsoft.Hosting.Lifetime: Now listening on: http://127.0.0.1:5399
-  [INF] Microsoft.Hosting.Lifetime: Application started. Press Ctrl+C to shut down.
-
-  POST /api/auth/login  ->  HTTP 500
-  [ERR] GlobalExceptionHandler: Unhandled exception: AuditKeyRingException -
-        Audit:FoundingChainKey is required once a key has been retired. ...
+  [INF] Starting AzureBank API...
+  [ERR] Microsoft.Extensions.Hosting.Internal.Host: Hosting failed to start
+  AzureBank.Infrastructure.Data.AuditKeyRingException: Audit:FoundingChainKey is required once a
+        key has been retired. ...
+     at AzureBank.Infrastructure.Data.AuditChain..ctor(...) in AuditChain.cs:line 587
+  [FTL] Application terminated unexpectedly
   ```
 
-  `IAuditChain` is registered `AddScoped` and nothing resolves it at startup — `ValidateOnStart`
-  covers the OPTIONS, while the ring's rules live in the `AuditChain` constructor, which runs when
-  something first opens a `AzureBankDbContext`. That is a LOGIN, before any authentication, not
-  merely an audited write. And by **D1** an audited operation whose audit write fails takes the
-  business action down with it, so past the login the same typo surfaces as failed money movements —
-  at request time, however long after the deploy that caused it.
+  No `Now listening on`, no `Application started`: the port never opens, so nothing reaches a login.
+  `IAuditChain` is still `AddScoped` and `ValidateOnStart` still covers only the OPTIONS — what
+  changed is that one hosted service resolves the chain once during startup, so the constructor
+  guards fire there instead of on the first request that opens a `AzureBankDbContext`. That request
+  was a LOGIN, before any authentication; and by **D1** an audited operation whose audit write fails
+  takes the business action down with it, so past the login the same typo used to surface as failed
+  money movements, at request time and however long after the deploy that caused it.
+
+  ⚠️ **AND THE PROCESS STILL EXITS 0.** `Program.cs` catches every startup exception, logs
+  `Application terminated unexpectedly` and falls off the end of `Main`, so a supervisor reading
+  exit codes sees a clean shutdown rather than a crash-loop. This is older than the ring and not
+  specific to it: the same holds for every `ValidateOnStart` failure, measured the same day against
+  a missing `Audit:AnchorKey`. **Alert on the absence of `Application started`, never on the exit
+  code.**
 - **The verifier says so plainly, and all three verbs say the same thing.** A ring that will not
   construct answers `CANNOT PROCEED: this tool is not configured to read the chain` — **exit 3** —
   with the reason on the next line. Where the refusal is about a particular entry it names that
@@ -1140,12 +1149,15 @@ know the anchor table was there, now leaves a number that does not add up.
   `Audit:ChainKey`, and either founding-key refusal — have no index to give and name the setting
   instead.
 
-  ⚠️ **"Validated at startup" is not true of the ring, and this paragraph used to say it of both
-  keys.** The two audit KEYS are options validation and do stop the verifier before it reads. The
-  RING's rules live in `AuditChain`'s constructor, so they fire when something first resolves the
-  chain — in the API that is the first request that opens the database, not the deploy. The measured
-  transcript is in the bullet on the verifier's three verbs, further up this page, where the
-  `Now listening on` / `POST /api/auth/login -> HTTP 500` output is quoted. *(This pointed at
+  ⚠️ **"Validated at startup" IS true of the ring in the API now — by a different mechanism than
+  that phrase suggests.** The two audit KEYS are options validation and do stop the verifier before
+  it reads. The RING's rules live in `AuditChain`'s constructor and still do: nothing was moved into
+  a validator, deliberately, because two copies of a structural rule drift and one root then holds a
+  rule the other does not. What changed is that the API resolves the chain once during startup, so
+  the constructor fires at the deploy rather than on the first request that opens the database. In
+  the VERIFIER it still fires per verb, which is the same guarantee for a tool with no startup to
+  speak of. The measured transcript is in the bullet on the verifier's three verbs, further up this
+  page. *(This pointed at
   **RETIRING A KEY TAKES THREE VALUES**, which holds a command to run and no output at all.)*
   That last group is why the tool no longer stops at "check the connection string and the key": it
   now says that a vanished `AuditEvents` exits the same way and is the most complete tamper there

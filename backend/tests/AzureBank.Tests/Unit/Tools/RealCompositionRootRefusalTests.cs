@@ -1,4 +1,5 @@
 using AzureBank.Api.Extensions;
+using AzureBank.Api.Services;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
 using AzureBank.AuditVerifier.Extensions;
@@ -192,6 +193,58 @@ public class RealCompositionRootRefusalTests
       Only the ring is exercised, and deliberately: the API's root wires dozens of services this test
       has no business in. Resolving IAuditChain from it is the whole assertion.
     */
+    [Fact]
+    public async Task TheAPIRootRefusesToSTART_NotMerelyToRESOLVE()
+    {
+        /*
+          THE SIBLING BELOW PROVES THE RING REFUSES WHEN SOMETHING RESOLVES IT. That was the whole
+          guarantee until now, and it is weaker than it reads: IAuditChain is registered SCOPED and
+          nothing resolved it at startup, so a deployment with a retired key and no
+          Audit:FoundingChainKey came up clean, printed "Now listening on", and threw on the first
+          request that opened a AzureBankDbContext -- a LOGIN, before any authentication. By
+          ADR-0044 D1 an audited operation whose audit write fails takes the business action down
+          with it, so past the login the same typo surfaces as failed money movements. The runbook
+          carried the measured transcript of exactly that.
+
+          ValidateOnStart never covered it: it validates the audit OPTIONS -- the two keys present
+          and long enough -- while the ring's rules live in AuditChain's constructor.
+
+          So the claim under test is narrow and it is the one that was missing: the real API root
+          registers something that RESOLVES the chain at startup, and that thing fails. Not that a
+          validator was added -- deliberately not, since the rules would then exist in two places,
+          which ADR-0044 refused in advance and this repository has paid for repeatedly.
+
+          THE REGISTRATION IS READ OFF THE DESCRIPTOR, NOT RESOLVED, and that is not fastidiousness:
+          GetServices<IHostedService>() CONSTRUCTS EVERY hosted service, and this fixture is a broken
+          RING, not a broken configuration -- measured, it died on "Idempotency:HashKey must be
+          configured with at least 32 characters" from an unrelated sweep service, which is a green
+          test one day and a puzzle about idempotency the next. Widening the shared fixture to feed
+          services this test does not care about would have hidden that instead of separating it.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplicationServices(BadRingConfiguration());
+
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(AuditKeyRingStartupCheck),
+            "the check has to be registered BY THE REAL ROOT -- wiring it in Program.cs would "
+            + "leave any second host without it, which is the shape of defect ADR-0044 names");
+
+        using var provider = services.BuildServiceProvider();
+        var check = ActivatorUtilities.CreateInstance<AuditKeyRingStartupCheck>(provider);
+
+        var start = async () => await check.StartAsync(CancellationToken.None);
+
+        (await start.Should().ThrowAsync<AuditKeyRingException>(
+            "a host that starts on a ring it cannot build tells an operator the configuration is "
+            + "good, and the first person to find out otherwise is a user logging in"))
+            .WithMessage("*holds a key of*",
+                "and it fails for the reason the CONSTRUCTOR gives, which is the point of resolving "
+                + "the rule rather than restating it: this message is not written here, and adding "
+                + "a guard there needs no change in this file");
+    }
+
     [Fact]
     public void TheAPIRootRefusesTheSameRingTheVerifierRootDoes()
     {
