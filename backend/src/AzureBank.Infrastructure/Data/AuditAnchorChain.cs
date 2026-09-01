@@ -130,7 +130,22 @@ public enum AuditAnchorCheck
 public class AuditAnchorChain : IAuditAnchorChain
 {
     /// <summary>The anchor payload rendering new records are written with.</summary>
-    internal const string CurrentPayloadVersion = "a1";
+    internal const string CurrentPayloadVersion = "a2";
+
+    /// <summary>
+    /// The rendering records were written with while <c>VerifiedUnderChainKeyId</c> named the key
+    /// the RUN held rather than the key that authenticated the tail.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ THE SHAPE DID NOT CHANGE, THE MEANING DID — which is exactly why the version had to move.
+    /// Twelve elements in the same order render identically under both, and an <c>a1</c> record's
+    /// bytes still authenticate: there is ONE renderer and it is right for both. What an <c>a1</c>
+    /// record cannot do is say which of the two things its ninth element meant, and that element
+    /// travels inside <c>AnchoredValue</c> — the one value here meant to be attested by somebody
+    /// outside this system. Two imprints under one scheme string, meaning different things, is the
+    /// ambiguity anchoring exists to remove.
+    /// </remarks>
+    internal const string LegacyPayloadVersion = "a1";
 
     /*
       A SEPARATE DOMAIN STRING FROM THE ROW KEY'S, and the reason is not collision-avoidance. Each of
@@ -174,7 +189,19 @@ public class AuditAnchorChain : IAuditAnchorChain
 
     public AuditAnchorCheck Check(AuditAnchor anchor)
     {
-        if (anchor.PayloadVersion != CurrentPayloadVersion)
+        /*
+          THE GATE WIDENED WHEN THE VERSION MOVED, AND THE TWO ARE ONE CHANGE. A bare bump refuses
+          every record already written -- at record ONE, which is where the anchor walk starts -- and
+          `anchor` then refuses to append forever with no --force to get past it. So the ladder is a
+          ONE-WAY DOOR: the legacy arm ships in the same commit as the bump or the bump does not
+          ship. Pinned by the sample-ladder test, which checks four genuine 'a1' records written
+          under the key this repository publishes.
+
+          There is no renderer fork below this line and there must not be one. Both versions render
+          the same twelve elements in the same order; only what element nine MEANS differs, and the
+          version string is the record of that.
+        */
+        if (anchor.PayloadVersion is not (CurrentPayloadVersion or LegacyPayloadVersion))
         {
             return AuditAnchorCheck.UnknownScheme;
         }
@@ -336,7 +363,23 @@ public class AuditAnchorChain : IAuditAnchorChain
             CoveredThroughSequence = anchorable ? verification.HighestSequence : null,
             CoveredRowCount = anchorable ? verification.Verified : null,
             TailRowHash = anchorable ? verification.TailRowHash : null,
-            VerifiedUnderChainKeyId = AuditChain.DeriveKeyId(_options.Value.ChainKey),
+            /*
+              THE KEY THAT AUTHENTICATED THE TAIL, NOT THE KEY THIS RUN HOLDS. Those are the same
+              string on every deployment that has never rotated, which is why this read as correct
+              for so long: it is wrong only in the window a rotation opens, between the rotation and
+              the first row written under the new key. In that window the walk certifies a tail a
+              RETIRED key authenticated, and the old code filed it under the current key's identity
+              -- an anchor naming one key beside a hash only another key can check.
+
+              NOT gated on `anchorable`. The walk already decided whether there is a tail, and it
+              hands out the hash and the key together or neither: restating that condition here
+              would be the second place the ring rule forbids, and the two places would be free to
+              disagree. The fallback is reached only when there is no tail at all -- a gap marker or
+              an empty table -- where the run's own key is the only honest answer, since a run
+              always holds one.
+            */
+            VerifiedUnderChainKeyId = verification.TailChainKeyId
+                ?? AuditChain.DeriveKeyId(_options.Value.ChainKey),
             PreviousAnchorPayloadHash = tail?.PayloadHash,
             CreatedAt = createdAtUtc,
         };

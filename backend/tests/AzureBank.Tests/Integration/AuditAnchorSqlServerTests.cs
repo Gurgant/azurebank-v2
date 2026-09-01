@@ -105,7 +105,11 @@ public sealed class AuditAnchorSqlServerTests : IDisposable
         var readBack = await context.Set<AuditAnchor>().AsNoTracking()
             .SingleAsync(a => a.AnchorSequence == written.AnchorSequence);
 
-        readBack.PayloadVersion.Should().Be("a1", "padding would make this a scheme no build renders");
+        readBack.PayloadVersion.Should().Be(
+            AuditAnchorChain.CurrentPayloadVersion,
+            "padding would make this a scheme no build renders. Read from the constant, not from a "
+            + "literal: this assertion is about the round trip through nchar, not about which "
+            + "version is current, and the literal turned it into a second place the version lives");
         readBack.CreatedAt.Ticks.Should().Be(
             written.CreatedAt.Ticks, "the payload hashes ticks, so a lossy round-trip breaks the code");
         anchors.Check(readBack).Should().Be(AuditAnchorCheck.Authentic);

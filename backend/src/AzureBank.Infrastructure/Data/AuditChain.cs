@@ -169,6 +169,23 @@ public enum AuditChainBreakKind
 /// <param name="TailRowHash">
 /// The <c>RowHash</c> of the last row this walk verified, and null on every break.
 /// </param>
+/// <param name="TailChainKeyId">
+/// The identity of the chain key that AUTHENTICATED <paramref name="TailRowHash"/> — not the key
+/// this verification happens to hold. After a rotation and before the first write under the new
+/// key those are different keys, and that window is the whole reason this exists.
+/// <para>
+/// ⚠️ IT IS NULL EXACTLY WHEN <paramref name="TailRowHash"/> IS, and the two must stay that way.
+/// They leave the walk together so that a tail hash can never be reported beside a key that did
+/// not authenticate it — which is the shape of the defect this replaced, and the shape it would
+/// come back in. Pinned by <c>ABROKENWalkNamesNoTailKey_ForTheSameReasonItNamesNoTailHash</c>.
+/// </para>
+/// <para>
+/// ONE KEY FOR A WALK THAT MAY HAVE APPLIED SEVERAL, and that is not a residue of the old defect.
+/// The interior rows are covered TRANSITIVELY: each one's hash is recomputed under the key it
+/// names, and the tail's hash links back through all of them. This names the key needed to check
+/// the one value an anchor publishes; it does not enumerate the ring.
+/// </para>
+/// </param>
 /// <remarks>
 /// THE RANGE COMES FROM THE WALK ITSELF, and it is here rather than left to the caller because the
 /// caller cannot get it right. Asking the database separately for MIN and MAX is two more statements
@@ -192,7 +209,8 @@ public readonly record struct AuditChainVerification(
     string? PayloadVersion = null,
     string? RecordedKeyId = null,
     string? ConfiguredKeyId = null,
-    string? TailRowHash = null)
+    string? TailRowHash = null,
+    string? TailChainKeyId = null)
 {
     /// <summary>True when every row read hashed and linked correctly.</summary>
     public bool IsIntact => FirstBrokenSequence is null;
@@ -295,6 +313,13 @@ public sealed class AuditChain : IAuditChain
     /// records none — that one is refused as a modification, since its version does keep the value.
     /// </summary>
     private readonly string _foundingKey;
+
+    /// <summary>
+    /// The identity of <see cref="_foundingKey"/>. Held because the walk has to NAME the key it
+    /// applied to a row that records no identity, and deriving it there would be an HMAC per row
+    /// for a value that cannot change between rows.
+    /// </summary>
+    private readonly string _foundingKeyId;
 
     /// <summary>
     /// The sequence the FOUNDING key stopped writing at, or null while it is still the current key.
@@ -593,6 +618,10 @@ public sealed class AuditChain : IAuditChain
 
             // Nothing retired, so the current key is the founding key and has no epoch to end.
             _foundingKey = options.Value.ChainKey;
+
+            // ...and its identity is the current key's, already derived. Deriving it a second time
+            // here would be a second place for the same value to come from.
+            _foundingKeyId = _keyId;
             _foundingLastSequence = null;
             _foundingFirstSequence = 1;
         }
@@ -611,7 +640,12 @@ public sealed class AuditChain : IAuditChain
             // key already in the ring rather than a second copy -- so whatever bound that entry
             // carries is the bound here too. Null when the designation points at the current key,
             // which is unbounded by definition.
-            var foundingEntry = _keyRing[DeriveKeyId(founding)];
+            // Derived ONCE and used twice. The guard above needed this same value to decide the
+            // designation names a key the ring holds, and the ring is indexed by derived identity,
+            // so the lookup and the field are the same string.
+            _foundingKeyId = DeriveKeyId(founding);
+
+            var foundingEntry = _keyRing[_foundingKeyId];
             _foundingLastSequence = foundingEntry.LastSequence;
             _foundingFirstSequence = foundingEntry.FirstSequence;
         }
@@ -995,6 +1029,7 @@ public sealed class AuditChain : IAuditChain
             .AsAsyncEnumerable();
 
         string? previous = null;
+        string? previousKeyId = null;
         long verified = 0;
 
         // Recorded as the walk goes, so the range and the count are two facts about ONE read.
@@ -1527,6 +1562,23 @@ public sealed class AuditChain : IAuditChain
             }
 
             previous = row.RowHash;
+
+            /*
+              THE TAIL'S KEY LEAVES THE WALK BESIDE THE TAIL'S HASH, on the same line, for the same
+              reason the hash comes from the walk at all: any second place to compute it is a second
+              instant, and here it would be a second RULE -- the caller would have to re-decide which
+              key answered for this row, which is the ring's job and is settled three hundred lines
+              above.
+
+              This RESOLVES the selection rather than restating it. `_keyRing` is indexed by derived
+              identity, so for a 'v3' row `row.KeyId` IS `DeriveKeyId(selectedKey)`: the entry was
+              looked up BY that id, and the id is inside the payload whose hash the line above just
+              recomputed, so it is authenticated rather than merely recorded. The only arm that
+              reaches here without an id on the row is the founding one, and `_foundingKeyId` is
+              exactly the key that arm selected.
+            */
+            previousKeyId = row.KeyId ?? _foundingKeyId;
+
             verified++;
         }
 
@@ -1541,7 +1593,8 @@ public sealed class AuditChain : IAuditChain
           never be anchorable.
         */
         return new AuditChainVerification(
-            verified, null, null, lowest, highest, TailRowHash: previous);
+            verified, null, null, lowest, highest, TailRowHash: previous,
+            TailChainKeyId: previousKeyId);
     }
 
     /// <summary>

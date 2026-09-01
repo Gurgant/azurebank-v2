@@ -755,18 +755,36 @@ database. *(The verifier needed nothing: all three verbs already resolve the cha
   hash. *(This said they "verify under the founding key and no other", which names the key and
   silently promises the outcome.)* This is not a gap in the ring; it is why the key-identity column
   was required *before* the first anchor rather than alongside rotation.
-- **An anchor records ONE key id for a walk that may have used several, and this change does not
-  fix it.** `AuditAnchor.VerifiedUnderChainKeyId` is written from the current key unconditionally, so
-  after a rotation it names the key the RUN held rather than the keys the walk actually applied — and
-  `TailRowHash` is an HMAC under whichever key the tail row named. So the field answers which key
-  the RUN held and nothing more: an anchor taken after a rotation but before the first write under
-  the new key records the current id beside a tail a RETIRED key authenticated. *(This bullet first
-  said the field "still answers the question it was added for, because the tail is written under the
-  current key" — true whenever anything has been written since the rotation, false in exactly the
-  window a rotation opens.)* Left as it is deliberately: the anchor half of rotation is deferred
-  below, and changing the anchor schema for a field nothing reads yet would be schema churn ahead of
-  the decision that should shape it. Stated here because an omission decided is different from one
-  forgotten, and only one of the two is safe to find later.
+- **An anchor now names the key that authenticated its tail — this was deferred here and is done.**
+  `AuditAnchor.VerifiedUnderChainKeyId` was written from the current key unconditionally, so after a
+  rotation it named the key the RUN held while `TailRowHash` was an HMAC under whichever key the
+  tail row named: an anchor taken after a rotation but before the first write under the new key
+  recorded the current id beside a tail a RETIRED key authenticated. *(This bullet first said the
+  field "still answers the question it was added for, because the tail is written under the current
+  key" — true whenever anything has been written since the rotation, false in exactly the window a
+  rotation opens.)*
+  The walk now carries the tail's key out beside the tail's hash and the anchor writes that. It
+  RESOLVES the ring rather than restating it: the ring is indexed by derived identity, so a `v3`
+  row's own `KeyId` is the identity of the key selected for it — and it is inside the payload whose
+  hash was just recomputed, so it is authenticated rather than merely recorded — while the one arm
+  that reaches the hash without an id on the row is the founding one, which the founding key's
+  identity answers. The two values leave the walk on adjacent lines and are null together; a tail
+  hash beside a key that did not authenticate it is the defect, and the biconditional is what stops
+  it coming back.
+  **The deferral's own reason no longer applied.** It was priced as "schema churn ahead of the
+  decision that should shape it", and there is no schema change here: the field is an ELEMENT of the
+  anchor payload, not a shape, so `Check` re-renders every existing record from its stored values
+  and they all still authenticate. What did change is what the field MEANS, and since it travels
+  inside `AnchoredValue` — the one value here meant to be attested by somebody outside this system —
+  two imprints under one scheme string would mean different things forever. So the anchor payload
+  version moves `a1` → `a2`, and `a1` is retained as `LegacyPayloadVersion` in the same change,
+  because a bare bump refuses every existing record at record one and leaves `anchor` refusing to
+  append with no `--force` past it. The gate widened; there is no renderer fork and must not be one.
+  **What it still does not do**: name every key a walk applied. The interior rows are covered
+  transitively — each recomputed under the key it names, with the tail's hash linking back through
+  them — so one identity is what the published value needs. On a gap marker there is no tail, and
+  the field names the key the run held; that `Kind`-dependence is deliberate and documented on the
+  entity.
 - **Nothing forces the anchor a rotation should trigger.** A rotation ought to force an immediate
   anchor carrying the key-epoch boundary, and this change does not implement it, because nothing
   here runs unattended to notice a rotation happened —

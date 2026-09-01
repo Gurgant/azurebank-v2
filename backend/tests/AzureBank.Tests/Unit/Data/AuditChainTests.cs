@@ -775,6 +775,115 @@ public class AuditChainTests : IDisposable
             + "for an id that is not an id, during an incident that is a write");
     }
 
+    [Fact]
+    public async Task AWalkOverARotatedTable_NamesTheKeyThatAuthenticatedTheTail()
+    {
+        /*
+          THE FIXTURE HAS TO ROTATE OR THE TEST PROVES NOTHING, and that is not a stylistic point:
+          on a deployment that has never rotated the key the run holds and the key that wrote the
+          tail are the SAME STRING, so every assertion about this passes under both the old code and
+          the new one. Measured before this test existed: mutating the anchor writer to hard-code the
+          current key reddened exactly ONE test in 942. The inequality below is the half that bites.
+        */
+        var rows = await WriteAsync("First", "Second", "Third");
+
+        var verification = await RotatedRing(rows[^1].Sequence).VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeTrue("the rows are untouched; only the RING moved on");
+        verification.TailChainKeyId.Should().Be(
+            AuditChain.DeriveKeyId(TestKey),
+            "TestKey wrote every row here and is now RETIRED, so it is the key that authenticated "
+            + "the tail hash -- and the tail hash is the value an anchor publishes");
+        verification.TailChainKeyId.Should().NotBe(
+            AuditChain.DeriveKeyId(RotatedKey),
+            "naming the key the RUN holds is the defect this replaced: it is right on every "
+            + "deployment that never rotated and wrong in exactly the window a rotation opens");
+    }
+
+    [Fact]
+    public async Task AWalkWhoseTailIsALEGACYRow_NamesTheFOUNDINGKey()
+    {
+        /*
+          THE OTHER ARM, AND IT IS A SEPARATE TEST BECAUSE THE OBVIOUS WRONG FIX PASSES THE FIRST
+          ONE. A 'v2' row records no key identity at all, so there is nothing on the row to read: the
+          walk checks it under the FOUNDING key, and the id has to come from the ring rather than
+          from the row. Writing `row.KeyId ?? _keyId` -- the current key as the fallback -- leaves
+          the sibling above green and this one red, which is the whole reason both exist.
+        */
+        await WriteAsync("First", "Second");
+        var boundary = await _context.AuditEvents.MaxAsync(e => e.Sequence);
+
+        _context.AuditEvents.Add(NewEvent("WrittenBeforeKeyIdentityExisted"));
+        await _context.SaveChangesAsync();
+
+        // Demote the tail to the legacy scheme and hash it as one: Pending() filters
+        // EntityState.Added, so a Modified row is never re-hashed on the way out.
+        var legacy = await _context.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
+        legacy.PayloadVersion = "v2";
+        legacy.KeyId = null;
+        legacy.RowHash = LegacyHash(TestKey, legacy);
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        legacy.Sequence.Should().Be(
+            boundary + 1, "the legacy row has to BE the tail, or this measures the row below it");
+
+        var verification = await RotatedRing(legacy.Sequence).VerifyAsync(_context);
+
+        verification.IsIntact.Should().BeTrue(
+            "a 'v2' row inside the founding epoch verifies under the founding key");
+        verification.TailChainKeyId.Should().Be(
+            AuditChain.DeriveKeyId(TestKey),
+            "the founding key is the only one that answers for a row recording no identity, so it "
+            + "is the key this walk applied -- and TestKey is the designation here");
+        verification.TailChainKeyId.Should().NotBe(
+            AuditChain.DeriveKeyId(RotatedKey),
+            "the current key never touched this row and cannot check its hash");
+    }
+
+    [Fact]
+    public async Task ABROKENWalkNamesNoTailKey_ForTheSameReasonItNamesNoTailHash()
+    {
+        /*
+          THE BICONDITIONAL, AND IT IS THE ONE THING HOLDING THE ANCHOR WRITER UP. That writer reads
+          `verification.TailChainKeyId ?? DeriveKeyId(current)`, which is correct only while the two
+          are null together. If some later edit reports a tail HASH on a path that reports no tail
+          KEY, the fallback silently files a genuine tail under the run's key -- the exact defect
+          this branch removed, restored with no error anywhere and every other test still green.
+
+          So the rule is: they leave the walk on adjacent lines and they are asserted together.
+          Falsified by adding `TailChainKeyId: previousKeyId` to the HashMismatch return.
+        */
+        var empty = await _chain.VerifyAsync(_context);
+
+        empty.TailRowHash.Should().BeNull("nothing was read, so there is no tail");
+        empty.TailChainKeyId.Should().BeNull(
+            "and no key applied to a row that does not exist. An empty table is a GAP MARKER, "
+            + "where the anchor falls back to the key the run held");
+
+        var rows = await WriteAsync("First", "Second");
+
+        var intact = await _chain.VerifyAsync(_context);
+
+        intact.TailRowHash.Should().NotBeNull("the control: an intact walk certifies a tail");
+        intact.TailChainKeyId.Should().NotBeNull("and names the key it checked that tail under");
+
+        var tampered = await _context.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
+        tampered.Event = "AlteredAfterItWasWritten";
+        await _context.SaveChangesAsync();
+        _context.ChangeTracker.Clear();
+
+        var broken = await _chain.VerifyAsync(_context);
+
+        broken.IsIntact.Should().BeFalse();
+        broken.FirstBrokenSequence.Should().Be(rows[^1].Sequence);
+        broken.TailRowHash.Should().BeNull(
+            "the hash of a tail this walk did not certify must never be anchorable");
+        broken.TailChainKeyId.Should().BeNull(
+            "and the key must go with it. A key beside no hash is harmless; a hash beside the "
+            + "WRONG key is the defect, and only asserting both directions keeps them together");
+    }
+
     private static RetiredChainKey Retired(string key, long lastSequence) =>
         new() { Key = key, LastSequence = lastSequence };
 

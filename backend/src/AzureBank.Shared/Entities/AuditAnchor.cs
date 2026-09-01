@@ -116,27 +116,43 @@ public class AuditAnchor
     /// </remarks>
     public string? TailRowHash { get; set; }
 
-    /// <summary>Identity of the CURRENT <c>Audit:ChainKey</c> the run behind this record held.</summary>
+    /// <summary>
+    /// Identity of the chain key that AUTHENTICATED <see cref="TailRowHash"/>. On a gap marker
+    /// there is no tail, so it names the key the run held.
+    /// </summary>
     /// <remarks>
-    /// The key a run HELD, recorded so that the record names something more than a hex string.
-    /// Present on gap markers too: a run always holds a chain key, whatever the walk found.
+    /// It comes from the WALK, which is the only place that knows: the walk applies whichever key
+    /// each row names, so it hands out the tail's hash and the tail's key together, on adjacent
+    /// lines, and this is written from the second of those.
     /// <para>
-    /// ⚠️ IT DOES NOT IDENTIFY THE KEY BEHIND <see cref="TailRowHash"/>, and this paragraph used to
-    /// imply that it did — "without this the record names a hex string with no way to know which key
-    /// produced it" reads as a claim about the tail's key, which the paragraph below then denies.
-    /// Two sentences, one remarks block, opposite claims.
+    /// ⚠️ ITS MEANING DEPENDS ON <see cref="Kind"/>, deliberately. An <c>Anchor</c> names the key
+    /// behind the tail; a <c>GapMarker</c> has no tail to name and falls back to the key the run
+    /// held, because a run always holds one. That is legible rather than sly: <see cref="Kind"/>
+    /// and five NULL coverage columns already say there is no tail, and <c>CK_AuditAnchors_Shape</c>
+    /// enforces exactly that partition at the engine. NULL was not available — the column is
+    /// <c>IsRequired</c> and changing it costs a migration — and an empty string in an
+    /// <c>nchar(16)</c> reads back as sixteen spaces and silently breaks the code.
     /// </para>
     /// <para>
-    /// ⚠️ ONE ID FOR A WALK THAT MAY HAVE USED SEVERAL. This said "the key the walk verified under",
-    /// which stopped being accurate when the key ring landed: a walk over a rotated table applies
-    /// whichever key each row names, and this field is written from the current key unconditionally.
-    /// It answers which key the RUN held, and nothing beyond that. It does NOT necessarily identify
-    /// the key behind <see cref="TailRowHash"/>: an anchor taken after a rotation but before the
-    /// first row is written under the new key finds a tail that a RETIRED key authenticated, while
-    /// this field says the current one. The first version of this paragraph claimed the two were the
-    /// same "because the tail is written under the current key" — true whenever anything has been
-    /// written since the rotation, and false in exactly the window a rotation opens. See ADR-0044 D7,
-    /// which records the anchor half of rotation as deferred rather than done.
+    /// ONE KEY FOR A WALK THAT MAY HAVE APPLIED SEVERAL, and that is the honest limit rather than a
+    /// residue of the defect below. The interior rows are covered TRANSITIVELY — each is recomputed
+    /// under the key it names, and the tail's hash links back through all of them — so this names
+    /// the key needed to check the one value this record publishes. It does not enumerate the ring.
+    /// </para>
+    /// <para>
+    /// ⚠️ IT USED TO NAME THE KEY THE RUN HELD, UNCONDITIONALLY, AND THAT WAS WRONG IN EXACTLY ONE
+    /// WINDOW. Between a rotation and the first row written under the new key, the walk certifies a
+    /// tail a RETIRED key authenticated while the run holds the new one — so the record named one
+    /// key beside a hash only another key can check. Everywhere else the two strings are identical,
+    /// which is why it read as correct for as long as it did, and why the assertion that looked like
+    /// it pinned this field could not tell the two writers apart. ADR-0044 D7 recorded it as
+    /// deferred rather than forgotten; it is now done, and records written under the old meaning are
+    /// the ones carrying <c>AuditAnchorChain.LegacyPayloadVersion</c>.
+    /// </para>
+    /// <para>
+    /// ⚠️ AN EARLIER VERSION OF THIS BLOCK HELD TWO SENTENCES THAT CONTRADICTED EACH OTHER — one
+    /// implying the field identified the tail's key, the next denying it. Kept as a note because the
+    /// contradiction was invisible for as long as both halves were plausible.
     /// </para>
     /// </remarks>
     public string VerifiedUnderChainKeyId { get; set; } = string.Empty;
