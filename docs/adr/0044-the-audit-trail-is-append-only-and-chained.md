@@ -194,8 +194,9 @@ external anchor exists, because the first token would freeze the rendering and t
 
 **A NULL key identity means no identity was recorded, not some particular key** — and what happens
 to such a row depends on the version it declares. A legacy `v2` row records none because that
-version had nowhere to keep one, so it is verified under the FOUNDING key, which
-`Audit:FoundingChainKey` names and which is `Audit:ChainKey` only while nothing has been retired. A
+version had nowhere to keep one, so it is answered for by the FOUNDING key, which
+`Audit:FoundingChainKey` names and which is `Audit:ChainKey` only while nothing has been retired —
+and only inside that key's inherited epoch, outside which the row is refused at either end. A
 `v3` row is the opposite: its version DOES keep an identity, so an empty one was removed after the
 fact, and the walk refuses it as `UnknownScheme` before recomputing anything. Reading the second as
 the first would file a modification as historical data, which is the wrong direction to be wrong in.
@@ -736,9 +737,12 @@ there: a structural rule enforced in one root is a rule the other does not have.
 **What this does not do.**
 
 - **A `v2` row cannot be rotated at all.** It records no key identity, so there is nothing to select
-  on, and trying keys is the one thing the ring must not do. Those rows verify under the founding key
-  and no other. This is not a gap in the ring; it is why the key-identity column was required *before*
-  the first anchor rather than alongside rotation.
+  on, and trying keys is the one thing the ring must not do. The founding key is the only one that
+  answers for those rows — **and answering is not accepting**: the designation INHERITS its entry's
+  epoch, so a `v2` row outside that epoch, at either end, is refused as `UnknownScheme` before any
+  hash. *(This said they "verify under the founding key and no other", which names the key and
+  silently promises the outcome.)* This is not a gap in the ring; it is why the key-identity column
+  was required *before* the first anchor rather than alongside rotation.
 - **An anchor records ONE key id for a walk that may have used several, and this change does not
   fix it.** `AuditAnchor.VerifiedUnderChainKeyId` is written from the current key unconditionally, so
   after a rotation it names the key the RUN held rather than the keys the walk actually applied — and

@@ -140,7 +140,7 @@ public class AuditEvent
     /// <para>
     /// ⚠️ WHAT HAPPENS TO SUCH A ROW DEPENDS ON THE VERSION IT DECLARES, and this paragraph said it
     /// did not. A legacy <c>v2</c> row records no identity because that version had nowhere to keep
-    /// one, so it is verified under the FOUNDING key, which <c>Audit:FoundingChainKey</c> names —
+    /// one, so it is answered for by the FOUNDING key, which <c>Audit:FoundingChainKey</c> names —
     /// and that is <c>Audit:ChainKey</c> only while nothing has been retired, because until then it
     /// is the only key there has ever been. A <c>v3</c> row is the opposite case: its version DOES
     /// keep an identity, so an empty one was removed after the fact. The walk refuses it as
@@ -160,8 +160,9 @@ public class AuditEvent
     /// key rather than silently re-point every historical row at whatever is current", as future
     /// work. That work landed with the key ring: the designation is REQUIRED as soon as anything is
     /// retired, it must name material already in the ring, and it INHERITS that entry's epoch — so a
-    /// row recording no identity is refused above the founding key's boundary exactly as a keyed row
-    /// is above its own.
+    /// row recording no identity is refused OUTSIDE that epoch exactly as a keyed row is outside its
+    /// own, at either end. (This named only the upper one, "refused above the founding key's
+    /// boundary", in the file that carries the two-ends lesson.)
     /// </para>
     /// </remarks>
     public string? KeyId { get; set; }

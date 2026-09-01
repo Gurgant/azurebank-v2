@@ -1162,8 +1162,10 @@ public sealed class AuditChain : IAuditChain
               produces.
 
               ⚠️ A 'v2' ROW SELECTS NOTHING, and this is where that shows. That version records no
-              key identity, so there is no id to look up: those rows are checked under the FOUNDING
-              key and no other, which is why that key has to be named rather than assumed. They are
+              key identity, so there is no id to look up: the FOUNDING key is the only one that
+              answers for those rows, which is why it has to be named rather than assumed -- and
+              answering is not accepting, since the designation inherits its entry's epoch and a row
+              outside it is refused at either end. They are
               not stranded by a rotation -- naming the founding key is exactly what keeps them
               verifiable -- but they can never be rotated either, because rotation needs a per-row
               identity to select on. That is not an oversight in the ring; it is why the tail-anchor

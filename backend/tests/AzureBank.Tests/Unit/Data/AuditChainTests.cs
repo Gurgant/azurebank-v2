@@ -1395,8 +1395,9 @@ public class AuditChainTests : IDisposable
     {
         /*
           THE OTHER HALF OF THE SAME DEFECT, one `if` away and not raised in review. A LEGACY row
-          recording no key identity is checked under Audit:FoundingChainKey -- that is the whole
-          reason the founding key has to be named rather than assumed. (The version matters: a
+          recording no key identity is answered for by Audit:FoundingChainKey -- that is the whole
+          reason the founding key has to be named rather than assumed -- and only inside that key's
+          inherited epoch, outside which the row is refused at either end. (The version matters: a
           CURRENT-version row recording none is refused as UnknownScheme instead, since its version
           does keep the value.) The ambiguity arm still told the operator
           the alternative was "a different Audit:ChainKey from the one it was written with", which

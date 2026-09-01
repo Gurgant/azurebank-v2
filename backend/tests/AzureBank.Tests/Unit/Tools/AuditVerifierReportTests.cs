@@ -347,8 +347,9 @@ public class AuditVerifierReportTests
         var text = string.Join(" ", lines);
         text.Should().Contain(
             "Audit:FoundingChainKey",
-            "a LEGACY row that records no key identity is checked under the FOUNDING key, so that "
-            + "is the one to confirm — Audit:ChainKey is it only while nothing has been retired. "
+            "a LEGACY row that records no key identity is answered for by the FOUNDING key, so that "
+            + "is the one to confirm — Audit:ChainKey is it only while nothing has been retired, and "
+            + "the row is accepted only inside that key's inherited epoch. "
             + "The qualifier is load-bearing: a CURRENT-version row recording none is refused "
             + "before any hash, so this verdict can only be about a legacy one");
         text.Should().Contain(
