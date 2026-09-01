@@ -164,7 +164,18 @@ try
     // RUN APPLICATION
     // ═══════════════════════════════════════════════════════════════════════════
 
-    Log.Information("AzureBank API started successfully");
+    // ⚠️ LOGGED FROM THE LIFETIME CALLBACK, NOT FROM ABOVE app.Run(). It used to sit here
+    // unconditionally, where it was merely premature -- the host came up a moment later, so the line
+    // was early but true. This branch ended that: AuditKeyRingStartupCheck resolves the key ring
+    // during startup and a ring that cannot be built aborts it. Measured, with a retired key and no
+    // Audit:FoundingChainKey, the log read "AzureBank API started successfully" and then "Hosting
+    // failed to start" four lines later. A false success line is precisely the defect
+    // docs/runbooks/audit-chain-unavailable.md exists to prevent, reintroduced by the change meant
+    // to fix it. The BFF has the same premature line at its Program.cs:410 and is deliberately left
+    // alone: nothing in that host can fail startup, so there it is early-but-true, not false.
+    app.Lifetime.ApplicationStarted.Register(() =>
+        Log.Information("AzureBank API started successfully"));
+
     app.Run();
 }
 catch (Exception ex)

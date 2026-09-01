@@ -206,6 +206,13 @@ public static class ServiceCollectionExtensions
         // so it must be registered for any host that saves an AuditEvent — the context refuses to
         // write an unchained row rather than writing one with an empty hash.
         services.AddScoped<IAuditChain, AuditChain>();
+
+        // ...and resolved ONCE at startup, so a ring that cannot be built stops the host instead of
+        // the first login. The check lives here rather than in Program.cs deliberately: it travels
+        // with the registration, so a second host that calls AddApplicationServices inherits the
+        // guarantee instead of having to remember it. See AuditKeyRingStartupCheck for why it
+        // resolves the rule rather than restating it.
+        services.AddHostedService<Services.AuditKeyRingStartupCheck>();
         // The API never anchors -- anchoring is a mode of the operator tool -- but the chain
         // type is registered here so a host that validates its options validates both keys.
         services.AddScoped<IAuditAnchorChain, AuditAnchorChain>();
