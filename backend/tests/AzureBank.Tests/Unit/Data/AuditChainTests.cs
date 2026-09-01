@@ -1394,9 +1394,11 @@ public class AuditChainTests : IDisposable
     public async Task AWriteOnAnIDENTITYLESSRow_PointsAtTheFOUNDINGKey_NotTheCurrentOne()
     {
         /*
-          THE OTHER HALF OF THE SAME DEFECT, one `if` away and not raised in review. A row recording
-          no key identity is checked under Audit:FoundingChainKey -- that is the whole reason the
-          founding key has to be named rather than assumed. The ambiguity arm still told the operator
+          THE OTHER HALF OF THE SAME DEFECT, one `if` away and not raised in review. A LEGACY row
+          recording no key identity is checked under Audit:FoundingChainKey -- that is the whole
+          reason the founding key has to be named rather than assumed. (The version matters: a
+          CURRENT-version row recording none is refused as UnknownScheme instead, since its version
+          does keep the value.) The ambiguity arm still told the operator
           the alternative was "a different Audit:ChainKey from the one it was written with", which
           after a rotation sends them to a key that never touched the row.
 

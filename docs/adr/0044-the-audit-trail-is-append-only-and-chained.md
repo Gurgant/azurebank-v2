@@ -192,9 +192,18 @@ makes a payload change or a key rotation survivable at all — until now either 
 reject correctly written rows and report them the way it reports tampering. It lands before any
 external anchor exists, because the first token would freeze the rendering and the key permanently.
 
-**A NULL key identity means no identity was recorded, not some particular key.** Such rows are
-verified under the FOUNDING key, which `Audit:FoundingChainKey` names and which is `Audit:ChainKey`
-only while nothing has been retired. The word was deliberate before the ring existed: "whatever adds
+**A NULL key identity means no identity was recorded, not some particular key** — and what happens
+to such a row depends on the version it declares. A legacy `v2` row records none because that
+version had nowhere to keep one, so it is verified under the FOUNDING key, which
+`Audit:FoundingChainKey` names and which is `Audit:ChainKey` only while nothing has been retired. A
+`v3` row is the opposite: its version DOES keep an identity, so an empty one was removed after the
+fact, and the walk refuses it as `UnknownScheme` before recomputing anything. Reading the second as
+the first would file a modification as historical data, which is the wrong direction to be wrong in.
+*(This sentence applied the founding key to every null identity. The arm that gives a null its
+second meaning was added by the branch that added the ring, and this copy is the fourth place to
+carry the unqualified version — the others are corrected in the same commit family.)*
+
+The word was deliberate before the ring existed: "whatever adds
 a second key must add a ring entry for the FOUNDING key rather than silently re-point history at
 whatever is current". The ring kept that promise, and the constructor now refuses to build without
 one. *(That sentence is quoted verbatim by four other files. A rewrite here dropped its opening words
