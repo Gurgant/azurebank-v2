@@ -37,10 +37,13 @@ public interface IAuditChain
 /// verdict carries the kind instead of leaving callers to match on the wording of a sentence.
 /// <para>
 /// A WRONG KEY USED TO PRODUCE ONLY <see cref="HashMismatch"/>, AND THAT IS NOW A v2-ONLY
-/// STATEMENT. It still holds for a row that records no key identity: a wrong key cannot make such a
-/// row unreadable and cannot change what it records as its predecessor, so the hash is the only
-/// thing left to break. A row that DOES name its key is checked against that name before its hash is
-/// recomputed, so a wrong key produces <see cref="UnknownScheme"/> there and never reaches the hash.
+/// STATEMENT. It still holds for a <c>v2</c> row, which records no key identity because its version
+/// had nowhere to keep one: a wrong key cannot make such a row unreadable and cannot change what it
+/// records as its predecessor, so the hash is the only thing left to break. (Naming the version
+/// rather than the absent identity is deliberate — a CURRENT-version row that records none is
+/// refused before its hash, so "records no key identity" no longer selects one behaviour.)
+/// A row that DOES name its key is checked against that name before its hash is recomputed, so a
+/// wrong key produces <see cref="UnknownScheme"/> there and never reaches the hash.
 /// The practical consequence is the useful one: on such a row a hash mismatch is no longer
 /// ambiguous, because the key behind it has already been confirmed.
 /// </para>
@@ -287,7 +290,9 @@ public sealed class AuditChain : IAuditChain
     private readonly Dictionary<string, (string Key, long FirstSequence, long? LastSequence)> _keyRing;
 
     /// <summary>
-    /// The key that wrote the rows recording no key identity. Never assumed; see below.
+    /// The key that wrote the LEGACY rows, the ones whose payload version had nowhere to record a
+    /// key identity. Never assumed; see below. It does NOT answer for a current-version row that
+    /// records none — that one is refused as a modification, since its version does keep the value.
     /// </summary>
     private readonly string _foundingKey;
 

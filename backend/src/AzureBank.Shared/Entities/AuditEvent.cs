@@ -134,11 +134,26 @@ public class AuditEvent
     /// name the wrong key and nothing detects it; a derived one lets a verifier confirm that the key
     /// it holds is the key that wrote the row, and say so when it does not.
     /// <para>
-    /// NULL MEANS "NO KEY IDENTITY WAS RECORDED", not "some particular key". Such a row is verified
-    /// under the FOUNDING key, which <c>Audit:FoundingChainKey</c> names — and that is
-    /// <c>Audit:ChainKey</c> only while nothing has been retired, because until then it is the only
-    /// key there has ever been. NULL asserts nothing, hashes nothing, and is the absence of a claim
-    /// rather than a claim.
+    /// NULL MEANS "NO KEY IDENTITY WAS RECORDED", not "some particular key". NULL asserts nothing,
+    /// hashes nothing, and is the absence of a claim rather than a claim.
+    /// </para>
+    /// <para>
+    /// ⚠️ WHAT HAPPENS TO SUCH A ROW DEPENDS ON THE VERSION IT DECLARES, and this paragraph said it
+    /// did not. A legacy <c>v2</c> row records no identity because that version had nowhere to keep
+    /// one, so it is verified under the FOUNDING key, which <c>Audit:FoundingChainKey</c> names —
+    /// and that is <c>Audit:ChainKey</c> only while nothing has been retired, because until then it
+    /// is the only key there has ever been. A <c>v3</c> row is the opposite case: its version DOES
+    /// keep an identity, so an empty one was removed after the fact. The walk refuses it as
+    /// <c>UnknownScheme</c> before recomputing anything — a modification
+    /// rather than a configuration note — and the column is inside the hashed payload, which is what
+    /// makes that reading available at all.
+    /// <c>AuditChainTests.ACurrentVersionRowWithNOKeyIdentity_GetsItsOwnVerdict_NotTheUnknownIdOne</c>
+    /// pins the distinction.
+    /// </para>
+    /// <para>
+    /// The unqualified version of this was written before the ring, when a null identity had exactly
+    /// one meaning. The arm that gives the second meaning was added by the same branch that left
+    /// this paragraph generalising over both.
     /// </para>
     /// <para>
     /// This paragraph used to end "whatever adds a second key must add a ring entry for the founding
