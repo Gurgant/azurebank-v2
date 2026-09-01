@@ -98,6 +98,19 @@ behind it, and ADR-0044's argument that publishing a key identity "is not a wide
 attacker who already holds the table — which a reader on GitHub does not. Publishing the key removes
 the question rather than answering it: there is nothing to guess.
 
-To regenerate it, run `export` against a database anchored the same way and replace the file. The
-guard that keeps it honest is `ExportedSampleTests`, which reads this exact file and checks its
-shape, its chain and its bytes rather than comparing it to a stored copy of itself.
+🔒 **Do not regenerate this file.** It stopped being only an illustration when the anchor payload
+gained a second rendering: these records were written under the older one, they are the only records
+in the tree under it, and `ExportedSampleLadderTests` reads them to prove this build still
+authenticates a scheme it no longer writes. Re-exporting would delete what that test checks and
+leave it green — the shape of failure this repository treats as the worst one. If the documentation
+needs a fresher illustration, add a second file and leave this one alone.
+
+Two tests read this exact file. `ExportedSampleTests` checks its shape, its chain and its bytes as
+properties it must have on its own terms, rather than against a stored copy of itself.
+`ExportedSampleLadderTests` checks the version ladder, and pins the record count, so a regenerated
+sample fails it twice over.
+
+*(This paragraph used to open "to regenerate it, run `export` … and replace the file", and named
+`ExportedSampleTests` as "the guard that keeps it honest". Both were true until the ladder gained a
+second rung. A document that instructs is more dangerous than one that merely describes, because it
+is followed.)*
