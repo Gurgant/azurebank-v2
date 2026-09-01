@@ -64,9 +64,17 @@ public class AuditAnchor
 
     /// <summary>Which rendering of the anchor payload wrote this record.</summary>
     /// <remarks>
-    /// A SEPARATE LADDER FROM THE ROW PAYLOAD'S. Rows read <c>v2</c>/<c>v3</c>; anchors read
-    /// <c>a1</c>. They version independently because they change for independent reasons, and a
-    /// shared ladder would force a bump on one to invalidate the other.
+    /// A SEPARATE LADDER FROM THE ROW PAYLOAD'S. Each side writes under its own
+    /// <c>CurrentPayloadVersion</c> and still reads its own <c>LegacyPayloadVersion</c> — rows from
+    /// <c>AuditChain</c>, anchors from <c>AuditAnchorChain</c>. They version independently because
+    /// they change for independent reasons, and a shared ladder would force a bump on one to
+    /// invalidate the other.
+    /// <para>
+    /// ⚠️ THIS NAMED THE LITERALS — "rows read v2/v3; anchors read a1" — and the anchor half went
+    /// false the day a second anchor rendering landed. A version written into prose is a second
+    /// place the version lives, and the copy that is not compiled is the one nobody updates. Naming
+    /// the constants costs a reader one hop and cannot go stale.
+    /// </para>
     /// </remarks>
     public string PayloadVersion { get; set; } = string.Empty;
 

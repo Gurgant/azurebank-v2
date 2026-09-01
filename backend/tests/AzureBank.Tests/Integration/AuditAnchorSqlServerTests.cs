@@ -90,7 +90,12 @@ public sealed class AuditAnchorSqlServerTests : IDisposable
           because its identity map hands back the very object that was written.
 
           FALSIFIED by declaring PayloadVersion as nchar(8) instead of nvarchar(8): SQL Server pads
-          it, the record reads back declaring "a1      ", and this reddens.
+          it, the record reads back with trailing blanks hung off the version, and this reddens.
+
+          The transcript quoted "a1      " while that was the current rendering, and kept quoting it
+          after it was not. Padding is the finding here and the version is incidental to it, so the
+          sentence no longer names one -- which also matches the assertion below, which reads the
+          constant rather than a literal for the same reason.
         */
         var services = CreateSqlServices();
         await ClearAsync(services);

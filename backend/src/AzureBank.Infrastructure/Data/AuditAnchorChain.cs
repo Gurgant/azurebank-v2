@@ -401,8 +401,10 @@ public class AuditAnchorChain : IAuditAnchorChain
       protected by the very thing it selects.
 
       '|' is safe here without the row payload's "put the free-text field last" rule, because no
-      element is caller-supplied -- every one is hex, a digit string, a fixed enum name, or "a1".
-      That is the single respect in which this payload is simpler than the row's.
+      element is caller-supplied -- every one is hex, a digit string, a fixed enum name, or a
+      version string this class owns. That is the single respect in which this payload is simpler
+      than the row's. (It ended on the literal "a1" until a second rendering existed, which is the
+      whole argument for naming the kind of thing rather than the value of the day.)
     */
     private static string RenderPayload(AuditAnchor a) => string.Join('|',
         a.PayloadVersion,
