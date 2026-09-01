@@ -203,7 +203,28 @@ describe('the query parameters the mock used to ignore', () => {
 
   it('GET /api/transactions honours FromDate and ToDate, inclusively', async () => {
     const all = await fetch('/api/transactions?Page=1&PageSize=100').then((r) => r.json());
-    // Same reason: take a day the seed actually occupies rather than naming one.
+
+    /*
+      THE SEED SPREADS THE FEED OVER INSTANTS, NOT NECESSARILY OVER DAYS, and this test used to
+      assume otherwise. `redateIntoCurrentMonth` places every entry inside the ELAPSED part of the
+      current month, so on the FIRST DAY of any month the whole feed shares one calendar date —
+      measured on 2026-09-01: 25 distinct instants, 1 distinct day. The old control here was
+      "strictly fewer than the unfiltered feed" over a DAY window, which on that day compares 25
+      with 25 and fails. It failed in CI for the first time this morning, with the frontend
+      unchanged since the previous green run twelve hours earlier; the variable was the calendar.
+
+      Its comment calls that case "the first milliseconds of a month". It is the first DAY, every
+      month, and this assertion is the thing that was measuring it.
+
+      So the exclusion is proved at INSTANT granularity, which is what the API actually offers:
+      `TransactionFilter` takes `DateTime?` and `TransactionService` compares
+      `t.CreatedAt >= FromDate` and `<= ToDate`, both inclusive. A window that ends at one row's
+      own timestamp must therefore contain that row and exclude every newer one — a claim no
+      calendar can degenerate, and a stronger one than the count comparison it replaces.
+    */
+    const distinctInstants = new Set(mockState.transactions.map((t) => t.createdAt));
+    expect(distinctInstants.size).toBe(mockState.transactions.length);
+
     const day = mockState.transactions[2].createdAt.slice(0, 10);
     const scoped = await fetch(
       `/api/transactions?Page=1&PageSize=100&FromDate=${day}T00:00:00Z&ToDate=${day}T23:59:59Z`,
@@ -212,8 +233,17 @@ describe('the query parameters the mock used to ignore', () => {
     const expected = mockState.transactions.filter((t) => t.createdAt.startsWith(day));
     expect(expected.length).toBeGreaterThan(0);
     expect(scoped.pagination.totalItems).toBe(expected.length);
-    // Strictly fewer than the unfiltered feed — proof the window did something.
-    expect(scoped.pagination.totalItems).toBeLessThan(all.pagination.totalItems);
+
+    // The feed is newest-first, so [2] has exactly two rows above it.
+    const boundary = mockState.transactions[2].createdAt;
+    const upTo = await fetch(
+      `/api/transactions?Page=1&PageSize=100&ToDate=${encodeURIComponent(boundary)}`,
+    ).then((r) => r.json());
+
+    const returned = (upTo.data as { id: string }[]).map((t) => t.id);
+    expect(upTo.pagination.totalItems).toBe(all.pagination.totalItems - 2);
+    expect(returned).toContain(mockState.transactions[2].id);
+    expect(returned).not.toContain(mockState.transactions[0].id);
   });
 
   it('reports ZERO pages for an empty result, not one', async () => {
