@@ -223,7 +223,16 @@ describe('the query parameters the mock used to ignore', () => {
       calendar can degenerate, and a stronger one than the count comparison it replaces.
     */
     const distinctInstants = new Set(mockState.transactions.map((t) => t.createdAt));
-    expect(distinctInstants.size).toBe(mockState.transactions.length);
+    expect(
+      distinctInstants.size,
+      `the boundary check below needs distinct instants. This can only fail in the first ` +
+        `${mockState.transactions.length - 1} MILLISECONDS of a month, and it is not a filtering ` +
+        `defect: N distinct millisecond instants need a window at least N-1 ms wide, and the seed ` +
+        `is required to stay inside [monthStart, now]. Below that it is arithmetically impossible, ` +
+        `and the seed already yields the maximum available — min(elapsed, N). Dating a row outside ` +
+        `the month to buy uniqueness would reintroduce the EUR 0.00 dashboard bug the re-dating ` +
+        `exists to prevent`,
+    ).toBe(mockState.transactions.length);
 
     const day = mockState.transactions[2].createdAt.slice(0, 10);
     const scoped = await fetch(
@@ -243,7 +252,10 @@ describe('the query parameters the mock used to ignore', () => {
     const returned = (upTo.data as { id: string }[]).map((t) => t.id);
     expect(upTo.pagination.totalItems).toBe(all.pagination.totalItems - 2);
     expect(returned).toContain(mockState.transactions[2].id);
+    // The count says two rows are gone; these say WHICH two. Without them a regression that
+    // dropped an unrelated older row and kept a newer one would still satisfy the count.
     expect(returned).not.toContain(mockState.transactions[0].id);
+    expect(returned).not.toContain(mockState.transactions[1].id);
   });
 
   it('reports ZERO pages for an empty result, not one', async () => {

@@ -707,11 +707,22 @@ row count never moved.
   entry is fixed in configuration; nothing else here is", two lines above naming the designation as
   the fix for cause 7. `Audit:FoundingChainKey` is configuration.)*
 
-  **FOUR of the seven are boundary causes** — 4, 5, 6 and 7. Three of those have MINTING as their
-  alternative: see **RAISING `LastSequence` CAN TURN THAT VERDICT GREEN UNDER EITHER READING**,
-  **ABOVE**, before changing anything. *(This said "below". The section is some seventy lines
-  earlier, so an operator scrolling down from here during an incident never reaches the one
-  paragraph that tells them not to make the edit.)*
+  **FOUR of the seven are boundary causes** — 4, 5, 6 and 7 — and **which edge was crossed decides
+  which edit is even available**, so they do not share one remedy:
+
+  - **4 and 6 sit ABOVE an epoch.** Raising that key's `LastSequence` admits the row, which is the
+    dangerous edit and the one to read about first: see **RAISING `LastSequence` CAN TURN THAT
+    VERDICT GREEN UNDER EITHER READING**, **ABOVE**, before changing anything.
+  - **5 sits BELOW one.** Raising anything moves that epoch's start *later* and refuses the row
+    harder; the number that could admit it is the PRECEDING entry's boundary, moved DOWN. The
+    verdict says so itself — *"epochs are derived from the recorded boundaries, so moving one moves
+    two"* — and the readings are a boundary recorded too HIGH for the earlier key, or a row
+    re-authored by whoever holds the later one.
+  - **7** is the designation, below.
+
+  *(This grouped 5 with the raising advice, and the raising advice is the one paragraph on this page
+  whose whole point is not to make the edit — so it pointed an operator at the wrong warning for the
+  wrong edge. It also said "below" for a section some seventy lines earlier.)*
 
   **The fourth, cause 7, does not** — an identity-less row below the founding epoch has **two**
   causes and neither is minting. Either the designation is not the ring's oldest key, or the row is
@@ -1114,10 +1125,16 @@ know the anchor table was there, now leaves a number that does not add up.
   recovery procedure produced until 2026-08-28** — an unreachable server, a connection string that is
   malformed or absent, **the states step 6 is about — the `AuditEvents` table renamed, dropped or
   never migrated, or a login that cannot SELECT from it** — **and every way the KEY RING refuses to
-  build**: a blank or under-32-character retired key, a `LastSequence` below 1 or at the top of the
-  range, two retired entries sharing a boundary, the same key listed twice or equal to the current
-  one, and `Audit:FoundingChainKey` missing once anything is retired or naming material the ring does
-  not hold. All of those answer 3 in all three verbs. The per-entry ones name the offending
+  build**, which is ten guards in the constructor: a blank or under-32-character `Audit:ChainKey`;
+  a `Audit:RetiredChainKeys:N` entry that is null, blank, or under 32 characters; a `LastSequence`
+  below 1, at the top of the range, or equal to the entry before it; the same key listed twice or
+  equal to the current one; and `Audit:FoundingChainKey` missing once anything is retired or naming
+  material the ring does not hold. *(This list claimed to be every way and omitted two: the
+  `Audit:ChainKey` floor, and the null entry — which is the one a caller reaches by passing a null
+  directly, since a JSON `null` binds to a non-null entry with an empty key and is caught by the
+  blank guard instead.)*
+
+  All of those answer 3 in all three verbs. The per-entry ones name the offending
   `Audit:RetiredChainKeys:N` by its CONFIGURATION index — which is not its position after the
   boundary sort, so it is the one to edit. The three that are not per-entry — a short or missing
   `Audit:ChainKey`, and either founding-key refusal — have no index to give and name the setting
