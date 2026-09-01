@@ -71,7 +71,7 @@ public class AuditAnchor
     /// invalidate the other.
     /// <para>
     /// ⚠️ THIS NAMED THE LITERALS — "rows read v2/v3; anchors read a1" — and the anchor half went
-    /// false the day a second anchor rendering landed. A version written into prose is a second
+    /// false the day a second anchor payload version landed. A version written into prose is a second
     /// place the version lives, and the copy that is not compiled is the one nobody updates. Naming
     /// the constants costs a reader one hop and cannot go stale.
     /// </para>

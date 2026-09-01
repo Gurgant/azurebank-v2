@@ -133,10 +133,15 @@ public class AuditAnchorChain : IAuditAnchorChain
     internal const string CurrentPayloadVersion = "a2";
 
     /// <summary>
-    /// The rendering records were written with while <c>VerifiedUnderChainKeyId</c> named the key
-    /// the RUN held rather than the key that authenticated the tail.
+    /// The payload version records were written under while <c>VerifiedUnderChainKeyId</c> named
+    /// the key the RUN held rather than the key that authenticated the tail.
     /// </summary>
     /// <remarks>
+    /// ⚠️ NOTHING HERE CALLS <c>a1</c> AND <c>a2</c> TWO RENDERINGS, AND THAT IS DELIBERATE. This
+    /// repository uses that word for a format that DIFFERS — the row chain's <c>v2</c> and <c>v3</c>
+    /// earn it, since <c>v3</c> added the key identity to the payload — and borrowing it here would
+    /// import exactly the difference the next sentence denies. Two versions, one rendering.
+    /// <para>
     /// ⚠️ THE SHAPE DID NOT CHANGE, THE MEANING DID — which is exactly why the version had to move.
     /// Twelve elements in the same order render identically under both, and an <c>a1</c> record's
     /// bytes still authenticate: there is ONE renderer and it is right for both. What an <c>a1</c>
@@ -144,6 +149,7 @@ public class AuditAnchorChain : IAuditAnchorChain
     /// travels inside <c>AnchoredValue</c> — the one value here meant to be attested by somebody
     /// outside this system. Two imprints under one scheme string, meaning different things, is the
     /// ambiguity anchoring exists to remove.
+    /// </para>
     /// </remarks>
     internal const string LegacyPayloadVersion = "a1";
 
@@ -403,7 +409,7 @@ public class AuditAnchorChain : IAuditAnchorChain
       '|' is safe here without the row payload's "put the free-text field last" rule, because no
       element is caller-supplied -- every one is hex, a digit string, a fixed enum name, or a
       version string this class owns. That is the single respect in which this payload is simpler
-      than the row's. (It ended on the literal "a1" until a second rendering existed, which is the
+      than the row's. (It ended on the literal "a1" until a second version existed, which is the
       whole argument for naming the kind of thing rather than the value of the day.)
     */
     private static string RenderPayload(AuditAnchor a) => string.Join('|',

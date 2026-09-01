@@ -61,10 +61,10 @@ public class AuditAnchorConfiguration : IEntityTypeConfiguration<AuditAnchor>
         builder.Property(a => a.AnchorSequence).ValueGeneratedNever();
 
         // nvarchar, NOT nchar: a version string's length is not invariant, so padding to the column
-        // width would hang blanks off whatever the current rendering is called and read it back as a
+        // width would hang blanks off whatever the current version string is and read it back as a
         // scheme no build can render -- on every record ever written. Stated without naming a
         // version on purpose: the hazard outlives every bump, and the literal that used to be here
-        // was silently describing a rendering that had stopped being the current one.
+        // was silently describing a version that had stopped being the current one.
         builder.Property(a => a.PayloadVersion)
             .IsRequired()
             .HasMaxLength(8);

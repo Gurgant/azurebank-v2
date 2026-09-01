@@ -99,7 +99,7 @@ attacker who already holds the table — which a reader on GitHub does not. Publ
 the question rather than answering it: there is nothing to guess.
 
 🔒 **Do not regenerate this file.** It stopped being only an illustration when the anchor payload
-gained a second rendering: these records were written under the older one, they are the only records
+gained a second payload version: these records were written under the older one, they are the only
 in the tree under it, and `ExportedSampleLadderTests` reads them to prove this build still
 authenticates a scheme it no longer writes. Re-exporting would delete what that test checks and
 leave it green — the shape of failure this repository treats as the worst one. If the documentation

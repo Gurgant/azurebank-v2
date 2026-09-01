@@ -34,7 +34,7 @@ public class ExportedSampleTests
     /// ⚠️ THAT IS A STATEMENT ABOUT THIS CLASS ONLY, AND IT USED TO READ AS A LICENCE — "does not
     /// fail A guard", unqualified — which stopped being true when the sample became a fixture.
     /// <c>ExportedSampleLadderTests</c> now pins this file's exact record count AND requires a
-    /// record under a superseded payload rendering, so regenerating fails there whichever number of
+    /// record under a superseded payload version, so regenerating fails there whichever number of
     /// rounds is used. Do not regenerate it; see <c>docs/audit/README.md</c>.
     /// </para>
     /// </summary>

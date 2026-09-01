@@ -57,8 +57,8 @@ public class ExportedSampleLadderTests
             + "silently reads zero lines would pass while checking nothing");
         records.Should().Contain(
             r => r.PayloadVersion == AuditAnchorChain.LegacyPayloadVersion,
-            "this fixture exists to exercise the OLDER rendering; if every record here is current, "
-            + "the sample was regenerated and the ladder is unguarded again");
+            "this fixture exists to exercise the OLDER payload version; if every record here is "
+            + "current, the sample was regenerated and the ladder is unguarded again");
 
         foreach (var record in records)
         {
