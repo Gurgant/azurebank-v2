@@ -28,8 +28,15 @@ public class ExportedSampleTests
     /// <summary>
     /// Below this the scan is not reporting a clean sample, it is reporting that it found almost
     /// nothing to read. The file is generated with a gap marker and three anchors; the floor is set
-    /// under that on purpose, so regenerating with a different number of rounds does not fail a
-    /// guard that is about content rather than about size.
+    /// under that on purpose, so a different number of rounds does not fail THIS guard, which is
+    /// about content rather than about size.
+    /// <para>
+    /// ⚠️ THAT IS A STATEMENT ABOUT THIS CLASS ONLY, AND IT USED TO READ AS A LICENCE — "does not
+    /// fail A guard", unqualified — which stopped being true when the sample became a fixture.
+    /// <c>ExportedSampleLadderTests</c> now pins this file's exact record count AND requires a
+    /// record under a superseded payload version, so regenerating fails there whichever number of
+    /// rounds is used. Do not regenerate it; see <c>docs/audit/README.md</c>.
+    /// </para>
     /// </summary>
     private const int Floor = 3;
 

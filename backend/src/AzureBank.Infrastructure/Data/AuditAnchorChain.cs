@@ -129,8 +129,34 @@ public enum AuditAnchorCheck
 /// <inheritdoc cref="IAuditAnchorChain"/>
 public class AuditAnchorChain : IAuditAnchorChain
 {
-    /// <summary>The anchor payload rendering new records are written with.</summary>
-    internal const string CurrentPayloadVersion = "a1";
+    /// <summary>The anchor payload version new records are written under.</summary>
+    /// <remarks>
+    /// Said "rendering" while there was only one value, where it was vacuous rather than wrong. A
+    /// second value made it a claim, and the claim is false: see <c>LegacyPayloadVersion</c> below,
+    /// which is where this ladder's vocabulary is settled and why it differs from the row chain's.
+    /// </remarks>
+    internal const string CurrentPayloadVersion = "a2";
+
+    /// <summary>
+    /// The payload version records were written under while <c>VerifiedUnderChainKeyId</c> named
+    /// the key the RUN held rather than the key that authenticated the tail.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ NOTHING HERE CALLS <c>a1</c> AND <c>a2</c> TWO RENDERINGS, AND THAT IS DELIBERATE. This
+    /// repository uses that word for a format that DIFFERS — the row chain's <c>v2</c> and <c>v3</c>
+    /// earn it, since <c>v3</c> added the key identity to the payload — and borrowing it here would
+    /// import exactly the difference the next sentence denies. Two versions, one rendering.
+    /// <para>
+    /// ⚠️ THE SHAPE DID NOT CHANGE, THE MEANING DID — which is exactly why the version had to move.
+    /// Twelve elements in the same order render identically under both, and an <c>a1</c> record's
+    /// bytes still authenticate: there is ONE renderer and it is right for both. What an <c>a1</c>
+    /// record cannot do is say which of the two things its ninth element meant, and that element
+    /// travels inside <c>AnchoredValue</c> — the one value here meant to be attested by somebody
+    /// outside this system. Two imprints under one scheme string, meaning different things, is the
+    /// ambiguity anchoring exists to remove.
+    /// </para>
+    /// </remarks>
+    internal const string LegacyPayloadVersion = "a1";
 
     /*
       A SEPARATE DOMAIN STRING FROM THE ROW KEY'S, and the reason is not collision-avoidance. Each of
@@ -174,7 +200,19 @@ public class AuditAnchorChain : IAuditAnchorChain
 
     public AuditAnchorCheck Check(AuditAnchor anchor)
     {
-        if (anchor.PayloadVersion != CurrentPayloadVersion)
+        /*
+          THE GATE WIDENED WHEN THE VERSION MOVED, AND THE TWO ARE ONE CHANGE. A bare bump refuses
+          every record already written -- at record ONE, which is where the anchor walk starts -- and
+          `anchor` then refuses to append forever with no --force to get past it. So the ladder is a
+          ONE-WAY DOOR: the legacy arm ships in the same commit as the bump or the bump does not
+          ship. Pinned by the sample-ladder test, which checks four genuine 'a1' records written
+          under the key this repository publishes.
+
+          There is no renderer fork below this line and there must not be one. Both versions render
+          the same twelve elements in the same order; only what element nine MEANS differs, and the
+          version string is the record of that.
+        */
+        if (anchor.PayloadVersion is not (CurrentPayloadVersion or LegacyPayloadVersion))
         {
             return AuditAnchorCheck.UnknownScheme;
         }
@@ -326,6 +364,35 @@ public class AuditAnchorChain : IAuditAnchorChain
         */
         var anchorable = verification.IsIntact && verification.Verified > 0;
 
+        /*
+          AN ANCHORABLE WALK MUST HAND OVER BOTH TAIL VALUES, AND THIS REFUSES RATHER THAN GUESSES.
+          The hash and the key that authenticated it leave the walk on adjacent lines precisely so
+          they cannot disagree -- but `Build` is public, takes a public record struct, and
+          `TailChainKeyId` is a trailing OPTIONAL parameter, so any caller can hand over a tail hash
+          with no key by simply not passing one. That is not hypothetical carelessness: it is the
+          shape every construction of this type had before the field existed.
+
+          What it would produce is the exact defect this design was written to remove, restored
+          silently. The anchor would take the hash and fall back to the key the RUN holds, and after
+          a rotation that is a different key -- a record naming one key beside a hash only another
+          can check, carrying a VALID MAC over the lie, published inside AnchoredValue for a third
+          party to attest. Nothing downstream can detect it, because everything downstream trusts
+          this record.
+
+          ArgumentException rather than an operator sentence: no code in this tree can reach it --
+          `VerifyAsync` is the only producer and it sets both or neither -- so this is a programming
+          error at a public boundary, not a configuration an operator can fix.
+        */
+        if (anchorable && (verification.TailRowHash is null || verification.TailChainKeyId is null))
+        {
+            throw new ArgumentException(
+                "An intact walk over a non-empty table must carry both TailRowHash and "
+                + "TailChainKeyId. Anchoring a tail hash without the identity of the key that "
+                + "authenticated it would record the key this run happens to hold, which after a "
+                + "rotation is not the key behind the hash.",
+                nameof(verification));
+        }
+
         var anchor = new AuditAnchor
         {
             AnchorSequence = (tail?.AnchorSequence ?? 0) + 1,
@@ -336,7 +403,33 @@ public class AuditAnchorChain : IAuditAnchorChain
             CoveredThroughSequence = anchorable ? verification.HighestSequence : null,
             CoveredRowCount = anchorable ? verification.Verified : null,
             TailRowHash = anchorable ? verification.TailRowHash : null,
-            VerifiedUnderChainKeyId = AuditChain.DeriveKeyId(_options.Value.ChainKey),
+            /*
+              THE KEY THAT AUTHENTICATED THE TAIL, NOT THE KEY THIS RUN HOLDS. Those are the same
+              string on every deployment that has never rotated, which is why this read as correct
+              for so long: it is wrong only in the window a rotation opens, between the rotation and
+              the first row written under the new key. In that window the walk certifies a tail a
+              RETIRED key authenticated, and the old code filed it under the current key's identity
+              -- an anchor naming one key beside a hash only another key can check.
+
+              ⚠️ GATED ON `anchorable`, THE SAME CONDITION AS THE HASH ONE LINE ABOVE, and the first
+              version of this was not. It read `TailChainKeyId ?? DeriveKeyId(current)` and argued
+              that gating it would be "the second place the rule lives" -- which is refuted by the
+              line directly above, where that identical condition already decides the very value
+              this one is supposed to travel with. One place, applied to one of the two fields, is
+              not one place; it is a seam.
+
+              What the seam allowed was narrow and bad: a verification carrying a tail key but NOT
+              intact got its hash discarded by the gate and its key taken by the fallback, so a GAP
+              MARKER came out naming the tail's key. This field means "the key the run held" on a
+              gap marker, and the record would have said otherwise while authenticating perfectly.
+
+              Now both come from `anchorable` or neither does. Above it, the guard refuses the other
+              half -- anchorable with no key -- rather than falling back, because falling back there
+              is the original defect wearing this change's clothes.
+            */
+            VerifiedUnderChainKeyId = anchorable
+                ? verification.TailChainKeyId!
+                : AuditChain.DeriveKeyId(_options.Value.ChainKey),
             PreviousAnchorPayloadHash = tail?.PayloadHash,
             CreatedAt = createdAtUtc,
         };
@@ -358,8 +451,10 @@ public class AuditAnchorChain : IAuditAnchorChain
       protected by the very thing it selects.
 
       '|' is safe here without the row payload's "put the free-text field last" rule, because no
-      element is caller-supplied -- every one is hex, a digit string, a fixed enum name, or "a1".
-      That is the single respect in which this payload is simpler than the row's.
+      element is caller-supplied -- every one is hex, a digit string, a fixed enum name, or a
+      version string this class owns. That is the single respect in which this payload is simpler
+      than the row's. (It ended on the literal "a1" until a second version existed, which is the
+      whole argument for naming the kind of thing rather than the value of the day.)
     */
     private static string RenderPayload(AuditAnchor a) => string.Join('|',
         a.PayloadVersion,

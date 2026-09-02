@@ -17,6 +17,7 @@ public class AuditAnchorChainTests : IDisposable
 {
     private const string ChainKey = "unit-test-audit-chain-key-0123456789abcdef";
     private const string AnchorKey = "unit-test-anchor-key-quite-unlike-the-other-one";
+    private const string RotatedChainKey = "unit-test-chain-key-AFTER-the-rotation-9876543210";
 
     private readonly AzureBankDbContext _context;
     private readonly AuditChain _chain;
@@ -99,7 +100,14 @@ public class AuditAnchorChainTests : IDisposable
         record.LowestCoveredSequence.Should().Be(1);
         record.PreviousAnchorPayloadHash.Should().BeNull("nothing precedes the first record");
         record.AnchoredValue.Should().NotBeNull();
-        record.VerifiedUnderChainKeyId.Should().Be(AuditChain.DeriveKeyId(ChainKey));
+        record.VerifiedUnderChainKeyId.Should().Be(
+            AuditChain.DeriveKeyId(ChainKey),
+            "⚠️ AND THIS PASSES UNDER BOTH WRITERS, so it is not the test that pins the field. This "
+            + "fixture holds ONE key, so the key the run holds and the key that wrote the tail are "
+            + "the same string, and the version of this line that named the CURRENT key "
+            + "unconditionally was green here for as long as it existed. It is a correct statement "
+            + "about a deployment that never rotated and nothing more. The test that can tell them "
+            + "apart is AnAnchorTakenAfterARotation_NamesTheRETIREDKeyThatAuthenticatedTheTail");
 
         var tail = await _context.AuditEvents.OrderByDescending(e => e.Sequence).FirstAsync();
         record.TailRowHash.Should().Be(
@@ -212,6 +220,166 @@ public class AuditAnchorChainTests : IDisposable
         record.AnchorKeyId = AuditAnchorChain.DeriveAnchorKeyId(AnchorKey);
         record.PayloadVersion = "a9";
         _anchors.Check(record).Should().Be(AuditAnchorCheck.UnknownScheme);
+    }
+
+    [Fact]
+    public async Task AnAnchorTakenAfterARotation_NamesTheRETIREDKeyThatAuthenticatedTheTail()
+    {
+        /*
+          THE WINDOW A ROTATION OPENS, WHICH IS THE ONLY PLACE THIS FIELD WAS EVER WRONG. Between
+          rotating Audit:ChainKey and writing the first row under the new key, a walk certifies a
+          tail that a RETIRED key authenticated. The old writer filed that tail under the CURRENT
+          key's identity -- an anchor naming one key beside a hash only another key can check, in
+          the record whose AnchoredValue is meant to be handed to somebody outside this system.
+
+          ADR-0044 D7 recorded it as deferred rather than forgotten. This is the test that closes it.
+
+          The anchor key must be IDENTICAL across both rings or Check refuses at the AnchorKeyId
+          gate before it ever renders the payload, and the assertion below would pass for the wrong
+          reason. Only the CHAIN key rotates here.
+        */
+        await WriteRowsAsync(3);
+
+        var rotated = Options.Create(new AuditOptions
+        {
+            ChainKey = RotatedChainKey,
+            AnchorKey = AnchorKey,
+            RetiredChainKeys = [new RetiredChainKey { Key = ChainKey, LastSequence = 3 }],
+            FoundingChainKey = ChainKey,
+        });
+
+        var chainAfter = new AuditChain(rotated, NullLogger<AuditChain>.Instance);
+        var anchorsAfter = new AuditAnchorChain(rotated);
+
+        var record = anchorsAfter.Build(
+            await chainAfter.VerifyAsync(_context), tail: null, DateTime.UtcNow);
+
+        record.Kind.Should().Be(AuditAnchorKind.Anchor, "the rows are untouched");
+        record.VerifiedUnderChainKeyId.Should().Be(
+            AuditChain.DeriveKeyId(ChainKey),
+            "ChainKey wrote all three rows and is now retired, so it is the key that authenticated "
+            + "the tail hash this record publishes");
+        record.VerifiedUnderChainKeyId.Should().NotBe(
+            AuditChain.DeriveKeyId(RotatedChainKey),
+            "the current key has never written a row here and cannot check the tail. Naming it was "
+            + "the defect: right on every deployment that never rotated, wrong in this window");
+        anchorsAfter.Check(record).Should().Be(
+            AuditAnchorCheck.Authentic,
+            "the new value has to round-trip through the payload and the MAC, not merely be "
+            + "assigned -- element nine travels inside AnchoredValue");
+    }
+
+    [Fact]
+    public async Task AGapMarkerNamesTheKeyTheRUNHeld_BecauseThereIsNoTailToName()
+    {
+        /*
+          THE FALLBACK, AND IT IS NOT A LEFTOVER OF THE OLD BEHAVIOUR. Where the walk certifies no
+          tail there is no key that authenticated one, and the run's own key is the only honest
+          answer -- a run always holds one. So the field's meaning depends on Kind, deliberately:
+          Anchor means "the key behind TailRowHash", GapMarker means "the key this run held".
+
+          That asymmetry is legible because Kind and five NULL coverage columns already say there is
+          no tail. The alternatives are worse: NULL needs a migration off IsRequired, and
+          string.Empty in an nchar(16) reads back as sixteen spaces and breaks the MAC.
+        */
+        var record = _anchors.Build(
+            await _chain.VerifyAsync(_context), tail: null, DateTime.UtcNow);
+
+        record.Kind.Should().Be(AuditAnchorKind.GapMarker, "the table is empty");
+        record.TailRowHash.Should().BeNull("there is no tail");
+        record.VerifiedUnderChainKeyId.Should().Be(
+            AuditChain.DeriveKeyId(ChainKey),
+            "with no tail to name, the key the run held is what the field can honestly say");
+        _anchors.Check(record).Should().Be(AuditAnchorCheck.Authentic);
+    }
+
+    [Fact]
+    public async Task OverwritingTheChainKeyIdentity_BreaksItsAuthenticationCode()
+    {
+        /*
+          ELEMENT NINE IS IN THE PAYLOAD, AND NOTHING PROVED IT WAS. Measured while this change was
+          designed: deleting VerifiedUnderChainKeyId from BOTH RenderPayload and ComputeAnchoredValue
+          left the whole audit suite green -- 112 of 112 -- with Kind used as a positive control that
+          did redden. AlteringAnyFieldOfARecord_BreaksItsAuthenticationCode mutates one field only,
+          so it does not cover this one despite its name.
+
+          That matters more now than it did yesterday: this change is the reason to trust the field,
+          and a field outside the MAC is one anybody with the database can rewrite.
+        */
+        await WriteRowsAsync(2);
+        var record = await AnchorAsync();
+
+        record.VerifiedUnderChainKeyId = "ffffffffffffffff";
+
+        _anchors.Check(record).Should().Be(
+            AuditAnchorCheck.MacMismatch,
+            "the key identity is element nine of the payload, so rewriting it has to invalidate the "
+            + "code -- otherwise the record says which key covered the tail and nothing defends it");
+    }
+
+    [Fact]
+    public void ATailHashWithNoTailKey_IsREFUSED_NotFilledInFromTheRunningKey()
+    {
+        /*
+          THE SEAM AT THE PUBLIC BOUNDARY, WHICH NO TEST COULD REACH THROUGH THE WALK. Every other
+          test here gets its verification from VerifyAsync, which sets the tail hash and the tail
+          key on adjacent lines and therefore cannot produce this shape. But Build is public, takes
+          a public record struct, and TailChainKeyId is a TRAILING OPTIONAL parameter -- so omitting
+          it is not an act of sabotage, it is the default, and it was the shape of every
+          construction of this type before the field existed.
+
+          Falling back there would rebuild the original defect exactly: the hash of a tail a RETIRED
+          key authenticated, filed under the key the run holds, with a valid MAC over it and the
+          whole thing published inside AnchoredValue. Refusing is the only safe answer, because
+          there is no way to derive the missing key from what is left.
+        */
+        var anchorableWithNoKey = new AuditChainVerification(
+            3, null, null, LowestSequence: 1, HighestSequence: 3, TailRowHash: "deadbeef");
+
+        anchorableWithNoKey.IsIntact.Should().BeTrue("otherwise this fixture is a gap marker and "
+            + "proves nothing about the anchorable branch");
+
+        var build = () => _anchors.Build(anchorableWithNoKey, tail: null, DateTime.UtcNow);
+
+        build.Should().Throw<ArgumentException>(
+            "a tail hash without the identity of the key that authenticated it is not something to "
+            + "guess at -- the guess is the defect")
+            .WithMessage("*must carry both TailRowHash and TailChainKeyId*");
+    }
+
+    [Fact]
+    public void AGapMarkerNeverNamesATailKey_EvenWhenTheVerificationCarriesOne()
+    {
+        /*
+          THE OTHER HALF OF THE SAME SEAM, AND IT IS THE SUBTLER ONE. The tail HASH has always been
+          gated on `anchorable`, so a broken walk carrying one has it discarded. The tail KEY was
+          not gated, and took a fallback instead -- so a verification that was NOT intact but
+          carried a key produced a GAP MARKER naming the tail's key.
+
+          That record authenticates perfectly and reads as a statement about a tail it does not
+          have. This field means "the key the run held" on a gap marker, which is documented on the
+          entity and is what an operator reading a gap marker is entitled to assume.
+
+          The planted key here is deliberately NOT a key this deployment holds: if the assertion
+          ever passed by coincidence, the coincidence would have to be a hash collision.
+        */
+        var brokenButCarryingAKey = new AuditChainVerification(
+            2, FirstBrokenSequence: 3, "planted", TailChainKeyId: "ffffffffffffffff");
+
+        brokenButCarryingAKey.IsIntact.Should().BeFalse("the walk broke, so this is a gap marker");
+
+        var record = _anchors.Build(brokenButCarryingAKey, tail: null, DateTime.UtcNow);
+
+        record.Kind.Should().Be(AuditAnchorKind.GapMarker);
+        record.TailRowHash.Should().BeNull("a break certifies no tail");
+        record.VerifiedUnderChainKeyId.Should().Be(
+            AuditChain.DeriveKeyId(ChainKey),
+            "with no tail, the only honest answer is the key the RUN held");
+        record.VerifiedUnderChainKeyId.Should().NotBe(
+            "ffffffffffffffff",
+            "taking the key while discarding the hash is the seam: the two travel together or the "
+            + "record says something about a tail it never certified");
+        _anchors.Check(record).Should().Be(AuditAnchorCheck.Authentic);
     }
 
     [Fact]

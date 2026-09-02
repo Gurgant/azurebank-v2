@@ -90,7 +90,12 @@ public sealed class AuditAnchorSqlServerTests : IDisposable
           because its identity map hands back the very object that was written.
 
           FALSIFIED by declaring PayloadVersion as nchar(8) instead of nvarchar(8): SQL Server pads
-          it, the record reads back declaring "a1      ", and this reddens.
+          it, the record reads back with trailing blanks hung off the version, and this reddens.
+
+          The transcript quoted "a1      " while that was the current version, and kept quoting it
+          after it was not. Padding is the finding here and the version is incidental to it, so the
+          sentence no longer names one -- which also matches the assertion below, which reads the
+          constant rather than a literal for the same reason.
         */
         var services = CreateSqlServices();
         await ClearAsync(services);
@@ -105,7 +110,11 @@ public sealed class AuditAnchorSqlServerTests : IDisposable
         var readBack = await context.Set<AuditAnchor>().AsNoTracking()
             .SingleAsync(a => a.AnchorSequence == written.AnchorSequence);
 
-        readBack.PayloadVersion.Should().Be("a1", "padding would make this a scheme no build renders");
+        readBack.PayloadVersion.Should().Be(
+            AuditAnchorChain.CurrentPayloadVersion,
+            "padding would make this a scheme no build renders. Read from the constant, not from a "
+            + "literal: this assertion is about the round trip through nchar, not about which "
+            + "version is current, and the literal turned it into a second place the version lives");
         readBack.CreatedAt.Ticks.Should().Be(
             written.CreatedAt.Ticks, "the payload hashes ticks, so a lossy round-trip breaks the code");
         anchors.Check(readBack).Should().Be(AuditAnchorCheck.Authentic);
