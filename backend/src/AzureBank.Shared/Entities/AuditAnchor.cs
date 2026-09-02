@@ -62,13 +62,22 @@ public class AuditAnchor
     /// </remarks>
     public long AnchorSequence { get; set; }
 
-    /// <summary>Which rendering of the anchor payload wrote this record.</summary>
+    /// <summary>Which version of the anchor payload this record was written under.</summary>
     /// <remarks>
+    /// ⚠️ "VERSION" HERE, "RENDERING" ON THE ROW SIDE, AND THE TWO WORDS ARE NOT INTERCHANGEABLE.
+    /// <c>AuditEvent</c> says "which rendering of the hashed payload wrote this row" and is right to:
+    /// its <c>v3</c> added an element to the payload, so the formats genuinely differ. The anchor
+    /// versions render IDENTICALLY — same elements, same order, one renderer — and differ only in
+    /// what one of them MEANS. This summary said "which rendering" too, which was vacuous while one
+    /// value existed and became a claim about a difference the moment a second one did. Do not
+    /// harmonise the two entities; the asymmetry is the accurate part.
+    /// <para>
     /// A SEPARATE LADDER FROM THE ROW PAYLOAD'S. Each side writes under its own
     /// <c>CurrentPayloadVersion</c> and still reads its own <c>LegacyPayloadVersion</c> — rows from
     /// <c>AuditChain</c>, anchors from <c>AuditAnchorChain</c>. They version independently because
     /// they change for independent reasons, and a shared ladder would force a bump on one to
     /// invalidate the other.
+    /// </para>
     /// <para>
     /// ⚠️ THIS NAMED THE LITERALS — "rows read v2/v3; anchors read a1" — and the anchor half went
     /// false the day a second anchor payload version landed. A version written into prose is a second

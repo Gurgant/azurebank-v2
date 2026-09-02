@@ -129,7 +129,12 @@ public enum AuditAnchorCheck
 /// <inheritdoc cref="IAuditAnchorChain"/>
 public class AuditAnchorChain : IAuditAnchorChain
 {
-    /// <summary>The anchor payload rendering new records are written with.</summary>
+    /// <summary>The anchor payload version new records are written under.</summary>
+    /// <remarks>
+    /// Said "rendering" while there was only one value, where it was vacuous rather than wrong. A
+    /// second value made it a claim, and the claim is false: see <c>LegacyPayloadVersion</c> below,
+    /// which is where this ladder's vocabulary is settled and why it differs from the row chain's.
+    /// </remarks>
     internal const string CurrentPayloadVersion = "a2";
 
     /// <summary>
