@@ -553,8 +553,17 @@ describe('model binding runs before the action, and the action before the servic
  * is — so the guard was green while the property it named was false for every viewer west of
  * Greenwich, and false for everyone for the first hours of each month. The assertion now uses the
  * page's own expression, imported from the same library, so the two cannot drift apart again; and
- * the third test below sets the clock to 00:30 local on the 1st, where the old seed fails in ANY
- * zone, so the failure is reproducible on this machine rather than only on someone else's.
+ * the third test below sets the clock to 00:30 local on the 1st, where the old seed fails in every
+ * zone EXCEPT the one CI runs in.
+ *
+ * ⚠️ THAT EXCEPTION IS THE WHOLE REASON CI GAINED TWO NON-UTC LEGS. At 00:30 on the 1st in UTC,
+ * `Date.UTC(y, m, 1)` and `startOfMonth(new Date())` are the same instant, so a UTC runner cannot
+ * tell the old seed from the new one. The first version of this paragraph claimed the old seed
+ * "fails in ANY zone" — generalised from the one zone it had been run in. Measured on a Linux
+ * worker with the anchor put back on Date.UTC: America/Los_Angeles 2 red (this test and the one
+ * above), Asia/Tokyo 1 red (this test), UTC 73 green. With the fix, 73 green in all three. The
+ * `frontend-tz` job in ci.yml runs the suite in the first two, so this guard is now real where it
+ * was previously only true.
  */
 describe('the seeded ledger stays inside the window the app asks about', () => {
   it('places every entry inside the month the PAGE asks about — the local one', () => {
@@ -578,8 +587,10 @@ describe('the seeded ledger stays inside the window the app asks about', () => {
       This machine is in one zone and CI in another, so the instant is FAKED rather than waited
       for, and the seed is re-imported under it because it dates itself at module load.
 
-      Falsified by putting the seed's anchor back on Date.UTC: red here in every zone this has
-      been run in, which the plain-assertion test above cannot say for itself.
+      Falsified by putting the seed's anchor back on Date.UTC: red in America/Los_Angeles and in
+      Asia/Tokyo on a Linux worker, and on this UTC+2 machine — and GREEN in UTC, where the two
+      anchors coincide. The plain-assertion test above reddens only west of Greenwich (rows land
+      before local midnight); this one reddens on both sides, which is why it exists.
     */
     const now = new Date();
     vi.useFakeTimers();
