@@ -770,7 +770,12 @@ database. *(The verifier needed nothing: all three verbs already resolve the cha
   that reaches the hash without an id on the row is the founding one, which the founding key's
   identity answers. The two values leave the walk on adjacent lines and are null together; a tail
   hash beside a key that did not authenticate it is the defect, and the biconditional is what stops
-  it coming back.
+  it coming back. **The anchor writer does not TRUST that biconditional, it enforces it**: the key
+  is taken under the same `anchorable` condition that already decided the hash, and an intact walk
+  arriving without a key is refused rather than filled in from the running key. Gating only one of
+  the two was a seam wide enough for a gap marker to name a tail key while authenticating perfectly
+  — `Build` is public and takes a public record struct whose key field is a trailing optional, so
+  the walk's guarantee does not reach its callers.
   **The deferral's own reason no longer applied.** It was priced as "schema churn ahead of the
   decision that should shape it", and there is no schema change here: the field is an ELEMENT of the
   anchor payload, not a shape, so `Check` re-renders every existing record from its stored values

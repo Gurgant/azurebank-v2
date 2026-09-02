@@ -359,6 +359,35 @@ public class AuditAnchorChain : IAuditAnchorChain
         */
         var anchorable = verification.IsIntact && verification.Verified > 0;
 
+        /*
+          AN ANCHORABLE WALK MUST HAND OVER BOTH TAIL VALUES, AND THIS REFUSES RATHER THAN GUESSES.
+          The hash and the key that authenticated it leave the walk on adjacent lines precisely so
+          they cannot disagree -- but `Build` is public, takes a public record struct, and
+          `TailChainKeyId` is a trailing OPTIONAL parameter, so any caller can hand over a tail hash
+          with no key by simply not passing one. That is not hypothetical carelessness: it is the
+          shape every construction of this type had before the field existed.
+
+          What it would produce is the exact defect this design was written to remove, restored
+          silently. The anchor would take the hash and fall back to the key the RUN holds, and after
+          a rotation that is a different key -- a record naming one key beside a hash only another
+          can check, carrying a VALID MAC over the lie, published inside AnchoredValue for a third
+          party to attest. Nothing downstream can detect it, because everything downstream trusts
+          this record.
+
+          ArgumentException rather than an operator sentence: no code in this tree can reach it --
+          `VerifyAsync` is the only producer and it sets both or neither -- so this is a programming
+          error at a public boundary, not a configuration an operator can fix.
+        */
+        if (anchorable && (verification.TailRowHash is null || verification.TailChainKeyId is null))
+        {
+            throw new ArgumentException(
+                "An intact walk over a non-empty table must carry both TailRowHash and "
+                + "TailChainKeyId. Anchoring a tail hash without the identity of the key that "
+                + "authenticated it would record the key this run happens to hold, which after a "
+                + "rotation is not the key behind the hash.",
+                nameof(verification));
+        }
+
         var anchor = new AuditAnchor
         {
             AnchorSequence = (tail?.AnchorSequence ?? 0) + 1,
@@ -377,15 +406,25 @@ public class AuditAnchorChain : IAuditAnchorChain
               RETIRED key authenticated, and the old code filed it under the current key's identity
               -- an anchor naming one key beside a hash only another key can check.
 
-              NOT gated on `anchorable`. The walk already decided whether there is a tail, and it
-              hands out the hash and the key together or neither: restating that condition here
-              would be the second place the ring rule forbids, and the two places would be free to
-              disagree. The fallback is reached only when there is no tail at all -- a gap marker or
-              an empty table -- where the run's own key is the only honest answer, since a run
-              always holds one.
+              ⚠️ GATED ON `anchorable`, THE SAME CONDITION AS THE HASH ONE LINE ABOVE, and the first
+              version of this was not. It read `TailChainKeyId ?? DeriveKeyId(current)` and argued
+              that gating it would be "the second place the rule lives" -- which is refuted by the
+              line directly above, where that identical condition already decides the very value
+              this one is supposed to travel with. One place, applied to one of the two fields, is
+              not one place; it is a seam.
+
+              What the seam allowed was narrow and bad: a verification carrying a tail key but NOT
+              intact got its hash discarded by the gate and its key taken by the fallback, so a GAP
+              MARKER came out naming the tail's key. This field means "the key the run held" on a
+              gap marker, and the record would have said otherwise while authenticating perfectly.
+
+              Now both come from `anchorable` or neither does. Above it, the guard refuses the other
+              half -- anchorable with no key -- rather than falling back, because falling back there
+              is the original defect wearing this change's clothes.
             */
-            VerifiedUnderChainKeyId = verification.TailChainKeyId
-                ?? AuditChain.DeriveKeyId(_options.Value.ChainKey),
+            VerifiedUnderChainKeyId = anchorable
+                ? verification.TailChainKeyId!
+                : AuditChain.DeriveKeyId(_options.Value.ChainKey),
             PreviousAnchorPayloadHash = tail?.PayloadHash,
             CreatedAt = createdAtUtc,
         };

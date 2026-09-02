@@ -318,6 +318,71 @@ public class AuditAnchorChainTests : IDisposable
     }
 
     [Fact]
+    public void ATailHashWithNoTailKey_IsREFUSED_NotFilledInFromTheRunningKey()
+    {
+        /*
+          THE SEAM AT THE PUBLIC BOUNDARY, WHICH NO TEST COULD REACH THROUGH THE WALK. Every other
+          test here gets its verification from VerifyAsync, which sets the tail hash and the tail
+          key on adjacent lines and therefore cannot produce this shape. But Build is public, takes
+          a public record struct, and TailChainKeyId is a TRAILING OPTIONAL parameter -- so omitting
+          it is not an act of sabotage, it is the default, and it was the shape of every
+          construction of this type before the field existed.
+
+          Falling back there would rebuild the original defect exactly: the hash of a tail a RETIRED
+          key authenticated, filed under the key the run holds, with a valid MAC over it and the
+          whole thing published inside AnchoredValue. Refusing is the only safe answer, because
+          there is no way to derive the missing key from what is left.
+        */
+        var anchorableWithNoKey = new AuditChainVerification(
+            3, null, null, LowestSequence: 1, HighestSequence: 3, TailRowHash: "deadbeef");
+
+        anchorableWithNoKey.IsIntact.Should().BeTrue("otherwise this fixture is a gap marker and "
+            + "proves nothing about the anchorable branch");
+
+        var build = () => _anchors.Build(anchorableWithNoKey, tail: null, DateTime.UtcNow);
+
+        build.Should().Throw<ArgumentException>(
+            "a tail hash without the identity of the key that authenticated it is not something to "
+            + "guess at -- the guess is the defect")
+            .WithMessage("*must carry both TailRowHash and TailChainKeyId*");
+    }
+
+    [Fact]
+    public void AGapMarkerNeverNamesATailKey_EvenWhenTheVerificationCarriesOne()
+    {
+        /*
+          THE OTHER HALF OF THE SAME SEAM, AND IT IS THE SUBTLER ONE. The tail HASH has always been
+          gated on `anchorable`, so a broken walk carrying one has it discarded. The tail KEY was
+          not gated, and took a fallback instead -- so a verification that was NOT intact but
+          carried a key produced a GAP MARKER naming the tail's key.
+
+          That record authenticates perfectly and reads as a statement about a tail it does not
+          have. This field means "the key the run held" on a gap marker, which is documented on the
+          entity and is what an operator reading a gap marker is entitled to assume.
+
+          The planted key here is deliberately NOT a key this deployment holds: if the assertion
+          ever passed by coincidence, the coincidence would have to be a hash collision.
+        */
+        var brokenButCarryingAKey = new AuditChainVerification(
+            2, FirstBrokenSequence: 3, "planted", TailChainKeyId: "ffffffffffffffff");
+
+        brokenButCarryingAKey.IsIntact.Should().BeFalse("the walk broke, so this is a gap marker");
+
+        var record = _anchors.Build(brokenButCarryingAKey, tail: null, DateTime.UtcNow);
+
+        record.Kind.Should().Be(AuditAnchorKind.GapMarker);
+        record.TailRowHash.Should().BeNull("a break certifies no tail");
+        record.VerifiedUnderChainKeyId.Should().Be(
+            AuditChain.DeriveKeyId(ChainKey),
+            "with no tail, the only honest answer is the key the RUN held");
+        record.VerifiedUnderChainKeyId.Should().NotBe(
+            "ffffffffffffffff",
+            "taking the key while discarding the hash is the seam: the two travel together or the "
+            + "record says something about a tail it never certified");
+        _anchors.Check(record).Should().Be(AuditAnchorCheck.Authentic);
+    }
+
+    [Fact]
     public async Task ARecordMACedUnderADifferentKey_IsUNCHECKED_NotWrong()
     {
         await WriteRowsAsync(2);
