@@ -286,7 +286,7 @@ type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter'>;
  * Re-dates the seed into the CURRENT calendar month, preserving the authored order exactly.
  *
  * The dates written in `seedEntries` are a RELATIVE ORDER SPECIFICATION, not absolute instants —
- * this converts them. Why it has to exist: the dashboard summarises the current UTC calendar month,
+ * this converts them. Why it has to exist: the dashboard summarises the current calendar month,
  * and the seed used to be hardcoded to July 2026. From 1 August every figure on that card read
  * €0.00, in the demo as well as in the tests, and `DashboardPage.test.tsx` went red and stayed red.
  * That is a time bomb with a monthly fuse, and it went off in CI three days after being written.
@@ -300,14 +300,31 @@ type SeedEntry = Omit<MockLedgerEntry, 'balanceAfter'>;
  * span is smaller than the number of entries, so several clamp onto the same instant and their
  * relative order stops being strict. They stay inside the window, which is the property that
  * matters; a demo opened in the first second of a month is not worth more machinery than that.
+ *
+ * ⚠️ "THE CURRENT MONTH" IS THE VIEWER'S LOCAL MONTH, NOT THE UTC ONE, AND THIS ANCHORED ON UTC.
+ * The page sends `fromDate: startOfMonth(new Date())` — local midnight of the 1st — and both the
+ * real API and the mock honour whatever window the client sends. So the window the card asks
+ * about starts at LOCAL midnight while this spread the rows from UTC midnight, and the two agree
+ * on exactly one meridian. Measured with the real seed on 2026-09-02: a viewer at UTC-8 lost 5 of
+ * the 25 rows from the card while the ledger beneath it still showed all 25; at 00:30 local on
+ * the 1st the same viewer lost 24 of 25. East of UTC it is worse and shorter: at 00:30 local on
+ * the 1st in UTC+2 the UTC month has not started, this seeded the PREVIOUS month, and the card
+ * read €0.00 over a full ledger — the exact bug this function exists to prevent, back for two
+ * hours a month. CI runs in UTC, the one zone where none of it shows.
+ *
+ * So the anchor is the local 1st, computed the way the page computes it. The summary's DEFAULT
+ * window in the mock stays UTC on purpose: that mirrors the API's default for callers that send
+ * no window, and the page is not one of them.
  */
 function redateIntoCurrentMonth(entries: SeedEntry[]): SeedEntry[] {
   // Newest first, by the authored dates — this is the order being preserved.
   const ordered = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const now = Date.now();
+  // LOCAL midnight of the 1st — `new Date(y, m, 1)` with no time component is what date-fns'
+  // `startOfMonth` returns, and it is what DashboardPage sends as `fromDate`. See the docblock.
   const today = new Date(now);
-  const monthStart = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
   const span = Math.max(now - monthStart, ordered.length);
   const step = Math.max(1, Math.floor(span / (ordered.length + 1)));
 

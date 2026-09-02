@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { startOfMonth } from 'date-fns';
 import { MAIN_ACCOUNT_ID, MOCK_PIN, mockState, resetMockState, seedMockSession } from './state';
 import { transactionSummarySchema } from '../api/responseSchemas';
 
@@ -545,17 +546,60 @@ describe('model binding runs before the action, and the action before the servic
  *
  * These two assert the property directly, so the next re-dating that gets it wrong fails HERE, with
  * a reason, instead of surfacing as an unrelated page test.
+ *
+ * ⚠️ AND THE FIRST VERSION OF THE GUARD MEASURED THE WRONG WINDOW. Its title said "the window the
+ * app asks about" and its assertion checked the UTC month, while the app asks for the LOCAL one
+ * (`startOfMonth(new Date())` in DashboardPage). The two coincide only on a UTC runner — which CI
+ * is — so the guard was green while the property it named was false for every viewer west of
+ * Greenwich, and false for everyone for the first hours of each month. The assertion now uses the
+ * page's own expression, imported from the same library, so the two cannot drift apart again; and
+ * the third test below sets the clock to 00:30 local on the 1st, where the old seed fails in ANY
+ * zone, so the failure is reproducible on this machine rather than only on someone else's.
  */
 describe('the seeded ledger stays inside the window the app asks about', () => {
-  it('places every entry inside the CURRENT calendar month', () => {
-    const now = new Date();
-    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+  it('places every entry inside the month the PAGE asks about — the local one', () => {
+    // The page's own expression, not a re-derivation of it: if DashboardPage ever changes how it
+    // anchors the window, this must change with it or it is measuring a window nobody asks for.
+    const monthStart = startOfMonth(new Date()).getTime();
 
     expect(mockState.transactions.length).toBeGreaterThan(0);
     for (const t of mockState.transactions) {
       const at = Date.parse(t.createdAt);
       expect(at, `${t.transactionNumber} is before this month`).toBeGreaterThanOrEqual(monthStart);
       expect(at, `${t.transactionNumber} is in the future`).toBeLessThanOrEqual(Date.now());
+    }
+  });
+
+  it('still does at 00:30 local on the 1st, when the UTC month is a different month', async () => {
+    /*
+      THE HOUR THAT TOLD THE TWO ANCHORS APART. At 00:30 local on the 1st, a UTC-anchored seed
+      believes it is still last month (east of Greenwich) or spreads rows across the hours before
+      local midnight (west of it). Either way the page's window — from local midnight — misses them.
+      This machine is in one zone and CI in another, so the instant is FAKED rather than waited
+      for, and the seed is re-imported under it because it dates itself at module load.
+
+      Falsified by putting the seed's anchor back on Date.UTC: red here in every zone this has
+      been run in, which the plain-assertion test above cannot say for itself.
+    */
+    const now = new Date();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(now.getFullYear(), now.getMonth(), 1, 0, 30));
+      vi.resetModules();
+      const fresh = await import('./state');
+
+      const monthStart = startOfMonth(new Date()).getTime();
+      expect(fresh.mockState.transactions.length).toBeGreaterThan(0);
+      for (const t of fresh.mockState.transactions) {
+        const at = Date.parse(t.createdAt);
+        expect(at, `${t.transactionNumber} is before the local 1st`).toBeGreaterThanOrEqual(
+          monthStart,
+        );
+        expect(at, `${t.transactionNumber} is in the future`).toBeLessThanOrEqual(Date.now());
+      }
+    } finally {
+      vi.useRealTimers();
+      vi.resetModules();
     }
   });
 
