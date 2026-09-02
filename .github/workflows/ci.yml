@@ -280,12 +280,18 @@ jobs:
       # The zone must reach the WORKER, not just this shell: vitest forks its workers and they
       # inherit the environment, but that is the claim under test, so it is asserted rather than
       # assumed. A runner that silently ran in UTC would make both legs of this matrix a lie.
+      #
+      # Concatenation, not a template literal, and it is not style: `${process.env.TZ}` inside a
+      # single-quoted shell argument is what ShellCheck SC2016 flags, and the flag names a real
+      # trap -- the obvious "fix" is to switch to double quotes, at which point the SHELL expands
+      # `${process.env.TZ}` to nothing before Node ever runs, and the assertion logs an empty
+      # zone while still passing. No `$` in the script means neither the lint nor the trap.
       - name: Assert the zone reached Node
         working-directory: frontend
         run: |
           node -e '
             const off = new Date().getTimezoneOffset();
-            console.log(`TZ=${process.env.TZ} offset=${off}`);
+            console.log("TZ=" + process.env.TZ + " offset=" + off);
             if (off === 0) {
               console.error("Node is still in UTC; TZ was not honoured");
               process.exit(1);
