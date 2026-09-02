@@ -30,9 +30,23 @@ namespace AzureBank.Tests.Unit.Data;
 /// <c>docs/audit/README.md</c> — which makes it the only place an older scheme is exercised at all.
 /// </para>
 /// <para>
-/// 🔒 DO NOT REGENERATE THE SAMPLE. Re-exporting it under the current version would delete the only
-/// legacy artifact in the tree and turn this test green forever by removing what it checks. If the
-/// documentation needs a fresher illustration, add a second file and leave this one alone.
+/// 🔒 DO NOT REGENERATE THE SAMPLE. These are the only records in the tree under the older payload
+/// version, and re-exporting replaces them with current ones. If the documentation needs a fresher
+/// illustration, add a second file and leave this one alone.
+/// </para>
+/// <para>
+/// ⚠️ THIS SAID REGENERATING WOULD "TURN THIS TEST GREEN FOREVER", WHICH IS THE OPPOSITE OF WHAT
+/// HAPPENS. Measured by rewriting the sample's version field and running it: the <c>Contain</c>
+/// assertion below fires and the test goes RED, while the count assertion PASSES because the count
+/// did not change — so it fails ONCE, not twice as the README also claimed. The sentence reached
+/// for green-and-false, this repository's favourite failure mode, instead of looking at the failure
+/// actually in front of it.
+/// </para>
+/// <para>
+/// What the loudness does not protect against is the step after it: somebody meets a red they did
+/// not expect, reads it as a stale fixture, and deletes the assertion to clear it. No assertion can
+/// defend against being deleted, which is why the prohibition is stated here and in the README
+/// rather than left to the test to enforce.
 /// </para>
 /// </remarks>
 public class ExportedSampleLadderTests

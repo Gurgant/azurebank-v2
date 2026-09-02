@@ -100,15 +100,23 @@ the question rather than answering it: there is nothing to guess.
 
 🔒 **Do not regenerate this file.** It stopped being only an illustration when the anchor payload
 gained a second payload version: these records were written under the older one, they are the only
-in the tree under it, and `ExportedSampleLadderTests` reads them to prove this build still
-authenticates a scheme it no longer writes. Re-exporting would delete what that test checks and
-leave it green — the shape of failure this repository treats as the worst one. If the documentation
-needs a fresher illustration, add a second file and leave this one alone.
+records in the tree under it, and `ExportedSampleLadderTests` reads them to prove this build still
+authenticates a scheme it no longer writes. If the documentation needs a fresher illustration, add
+a second file and leave this one alone.
+
+**Regenerating does not slip past anything, and the danger is not silence.** Measured by rewriting
+the version field of all four records and running the test: it goes RED at the assertion requiring
+a record under the older version — *"this fixture exists to exercise the OLDER payload version; if
+every record here is current, the sample was regenerated and the ladder is unguarded again"* — while
+the record-count assertion PASSES in that same run, because regenerating the same rounds does not
+change the count. So the hazard is the next step, not that one: somebody meets a red they did not
+expect, reads it as a stale fixture, and clears it by deleting the assertion. That is the move that
+actually unguards the ladder, and nothing in the code can stop it.
 
 Two tests read this exact file. `ExportedSampleTests` checks its shape, its chain and its bytes as
 properties it must have on its own terms, rather than against a stored copy of itself.
-`ExportedSampleLadderTests` checks the version ladder, and pins the record count, so a regenerated
-sample fails it twice over.
+`ExportedSampleLadderTests` checks the version ladder and, separately, pins the record count: the
+first fails on ANY regeneration, the second only when the number of rounds changes too.
 
 *(This paragraph used to open "to regenerate it, run `export` … and replace the file", and named
 `ExportedSampleTests` as "the guard that keeps it honest". Both were true until the ladder gained a
