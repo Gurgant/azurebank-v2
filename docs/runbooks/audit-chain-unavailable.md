@@ -797,8 +797,8 @@ eventual failure, and holds a connection while it does. If the queue is legitima
 — a genuine burst — the fix is capacity, not patience.
 
 **Do not run `anchor` during an incident. Run `export` instead, and run it FIRST.** The tool has
-three verbs and only two of them are safe here, which the rest of this page could not tell you
-because it was written when there was one.
+four verbs and three of them are safe here, which the rest of this page could not tell you because
+it was written when there was one.
 
 - `verify` READS. Safe, and it is the verdict everything below hangs on.
 - `export <path>` READS the anchor table and writes a FILE. Safe against the database, and it is the
@@ -809,6 +809,9 @@ because it was written when there was one.
   below, this page tells you the table is evidence and not to write to it; `anchor` is a write. It
   will also record a GAP MARKER over a chain it cannot vouch for, which is honest and is still a new
   row in the evidence, dated during your incident.
+- `evidence <transactionNumber>` READS. Safe, and it is the verb for the question a regulator asks
+  after the incident rather than during it: *was THIS transfer strongly authenticated, and is the
+  record of it intact?* See **The evidence pack** under **After recovery**.
 
 Neither `export` nor the window below is a substitute for the number you wrote down elsewhere. They
 are cheaper to produce and they are not testimony from anybody else.
@@ -881,6 +884,47 @@ know the anchor table was there, now leaves a number that does not add up.
 ---
 
 ## After recovery
+
+### The evidence pack (B3, PSD2 Art. 72)
+
+```bash
+dotnet run --project backend/tools/AzureBank.AuditVerifier -- evidence TXN-20260902-0000000101X
+```
+
+The argument is the `TXN-…` number the transfer response returned — the thing a customer, an
+operator or a regulator actually holds; the tool never asks for a GUID. It prints one pack, top to
+bottom: the ledger row, the step-up authorisation that paid for it, the audit rows that name it, and
+then the chain verdict `verify` would print, rendered by the same code. **The exit code is the
+chain's** — a pack over a broken chain prints the pack and exits **1**, because the break is the
+incident and the pack is a reading of a table that has stopped verifying.
+
+What the second section can say, and what it cannot:
+
+- `STRONGLY AUTHENTICATED` — a consumed authorisation names this transaction, with the instant the
+  PIN was proved and the instant it was spent. ⚠️ **That row is NOT inside the chain.** Minting
+  writes no audit row (measured: the step-up service never calls the audit service), so the second
+  factor is vouched for by a mutable table, not by a hash. The chain covers the `MoneyTransferred`
+  row naming the movement; it does not cover the authorisation. The pack says so under the line.
+- `NOT STRONGLY AUTHENTICATED` — a transfer with no consumed authorisation naming it. A transfer
+  cannot be accepted without one since ADR-0042, so either the movement predates that rule or the
+  row that paid for it is gone — and because that table is unchained, its absence leaves no break
+  for `verify` to find. Treat it as a finding.
+- `NO AUTHORISATION APPLIES` — a deposit, a withdrawal, or the INCOMING leg of a transfer. ADR-0042
+  binds an authorisation to the two transfer endpoints only; ask for the OUTGOING leg's number.
+- `NO AUDIT ROW` — a ledger row with no audit row naming it. Every money movement writes one in the
+  same transaction as the ledger row (D1), so this is a movement recorded without its record: a
+  write around the application, or a purge. A finding whatever the chain verdict below it says.
+
+An intact verdict under the pack says the rows are in a chain that verified at that instant. **It is
+not an inclusion proof**: the anchor is a tail hash, not a tree, so proving to a third party that
+ONE row is in the set means handing over the range — `docs/audit-trail-against-real-practice.md`
+names the gap, and the pack repeats it rather than implying the proof.
+
+Refusals, none of them about the chain: `NOT ASSEMBLED` is **4** — a blank argument, or a number the
+store does not hold (checked before the walk, so nothing is read); `CANNOT ASSEMBLE` is **3** — the
+tool is not configured, the ring will not build, or the store could not be read, the same three
+causes as `CANNOT VERIFY`; `INTERRUPTED` is **5**. `EVIDENCE PACK for <number>` is the first line of
+every successful assembly, and the line to search a transcript for.
 
 - **Verify the chain. Run this FROM THE REPOSITORY ROOT** — the `--project` path is relative to it,
   and from anywhere else `dotnet run` fails to find the project and exits **1**, which this document
@@ -1092,6 +1136,8 @@ know the anchor table was there, now leaves a number that does not add up.
   Exit codes, for scripting it: **0** intact, **1** broken, **2** nothing to verify, **3** no verdict
   (the store could not be read), **4** the command line was wrong, **5** interrupted, **6** there WAS
   a verdict but nothing could be recorded from it. Only 0, 1 and 2 are statements about the CHAIN.
+  `evidence` adds no code of its own: it exits with the chain's verdict, and a number the store does
+  not hold is 4.
 
   ⚠️ **This list stopped at 5 until 2026-08-28, and 6 had existed since the `anchor` mode shipped.**
   A script written from it treated 6 as an unknown code. The list lives in FOUR places —

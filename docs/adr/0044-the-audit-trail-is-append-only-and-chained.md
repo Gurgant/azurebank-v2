@@ -840,6 +840,40 @@ database. *(The verifier needed nothing: all three verbs already resolve the cha
   can turn green is not the same kind of object as a hash; the anchor is still the thing that would
   change the picture.
 
+### D8 — the evidence pack reads by transaction, and says which half the chain vouches for
+
+`AzureBank.AuditVerifier evidence <transactionNumber>` assembles, for one movement, what PSD2 Art. 72
+asks an institution to be able to reconstruct: the ledger row, the consumed `StepUpAuthorization`
+that paid for it, the audit rows that name it, and the chain verdict those rows sit inside — the last
+rendered by `VerifyCommand.Report`, so there is one renderer of a verdict and not two. B3's join, as
+ADR-0042 and the retention plan described it, with the verdict underneath.
+
+**By transaction NUMBER, not GUID.** The transfer response carries `TransactionNumber` and no id, so
+the number is what a customer, an operator or a regulator holds. It resolves through the unique index
+on `TransactionNumber`, the owner through the account, the authorisation through the index on the
+authorisation's `UserId` filtered on `ConsumedByTransactionId`, and the audit rows through the index
+on `SubjectId`. Every hop uses an index that already existed; **no migration**. The number is not
+validated by shape, because `IsValidTransactionNumber` rejects the rows written before the check
+symbol widened them — exactly the rows an evidence request may name years later.
+
+⚠️ **THE AUTHORISATION ROW IS NOT INSIDE THE CHAIN, AND THE PACK SAYS SO ON EVERY POSITIVE ANSWER.**
+Measured before this was designed: `StepUpAuthorizationService` calls `IAuditService` zero times and
+the mint endpoints audit nothing, so the PIN proof lives only in a table anybody holding the database
+can rewrite. What the chain vouches for is the `MoneyTransferred` row naming the movement; what ties
+that row to a second factor is a pointer in an unchained table. The pack reports each half with the
+guarantee it actually has — and the test that deletes the consumed row pins the honest shape: NOT
+STRONGLY AUTHENTICATED beside CHAIN INTACT, both true, neither implying the other. Wiring an audit
+event at consumption would close that gap and is a separate decision with its own tests.
+
+⚠️ **AN INTACT VERDICT IS NOT AN INCLUSION PROOF.** The anchor is a tail hash, not a Merkle tree
+(`docs/audit-trail-against-real-practice.md` names the gap), so the pack can say these rows are in a
+chain that verified at this instant and cannot hand a third party a proof that one row is in the set
+without handing over the range. It prints the rows and the verdict; it claims nothing more.
+
+**No exit code of its own.** The chain's verdict is the verdict — a pack over a broken chain prints
+the pack and exits 1, export's rule inherited — and a number the store does not hold is 4, a fact
+about the command line. The ring-refusal test now asks all four verbs.
+
 ## What is wired, and what is not
 
 **Thirteen events write a row today.** Seven are administrative: `AccountDeleted`,
@@ -962,9 +996,11 @@ because an ADR is a record: `tools/AzureBank.AuditVerifier` reads this table, an
 now called from production code rather than only from tests. The second half still holds — nothing
 verifies the chain on a schedule.
 
-Two further gaps, named rather than left implicit: **nothing reads this table yet** — there is no
-endpoint, no access control and no operator view, which is B3's work — and **`VerifyAsync` is called
-only by tests**, so nothing verifies the chain on a schedule.
+Two further gaps, named rather than left implicit — and narrowed since. **Nothing reads this table
+through the API**: there is no endpoint and no access control, and that half stands. What reads it is
+the operator tool — `verify` walks it, and since D8 `evidence` reads it by subject for one movement —
+so "no operator view" is no longer true and this sentence used to say it was. **`VerifyAsync` is
+called only by tests** was withdrawn above; nothing verifies the chain on a schedule, still.
 
 ## Consequences
 
