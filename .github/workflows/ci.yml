@@ -228,6 +228,81 @@ jobs:
         run: npm run build
 
   # ---------------------------------------------------------------------------------------
+  # The unit suite AGAIN, in two zones that are not Greenwich.
+  #
+  # Every other job here runs in UTC, and UTC is the one zone in which a whole class of defect
+  # cannot be seen: anything that anchors on the LOCAL calendar while its oracle anchors on the
+  # UTC one agrees with itself on exactly this meridian. The mock ledger did precisely that for a
+  # month -- seeded from UTC midnight of the 1st while the dashboard asks for local midnight --
+  # and the guard that should have caught it measured the UTC window too. Measured 2026-09-02
+  # with the real seed: a viewer at UTC-8 lost 5 of 25 rows from the month card, 24 of 25 at
+  # 00:30 local on the 1st; at UTC+2 on the 1st the card read EUR 0.00 over a full ledger. Green
+  # in CI throughout.
+  #
+  # Two zones, one each side, chosen for having NO daylight-saving transition to land on:
+  # Asia/Tokyo is UTC+9 all year, and America/Los_Angeles is included because it is the common
+  # western case -- its DST change is at 02:00 local on a Sunday in March/November, which the
+  # month-boundary tests never sit on.
+  #
+  # Only `npm test` runs here. Lint, format, schema drift and the build are zone-independent and
+  # already ran above; repeating them would triple that job's cost for nothing.
+  #
+  # Linux honours TZ= for Node. Windows does not -- measured, both bare `node` and vitest ignore
+  # it there -- which is why this exists as a CI job rather than an npm script.
+  # ---------------------------------------------------------------------------------------
+  frontend-tz:
+    name: Frontend tests (TZ=${{ matrix.tz }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        tz: [America/Los_Angeles, Asia/Tokyo]
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      # The zone must reach the WORKER, not just this shell: vitest forks its workers and they
+      # inherit the environment, but that is the claim under test, so it is asserted rather than
+      # assumed. A runner that silently ran in UTC would make both legs of this matrix a lie.
+      #
+      # Concatenation, not a template literal, and it is not style: `${process.env.TZ}` inside a
+      # single-quoted shell argument is what ShellCheck SC2016 flags, and the flag names a real
+      # trap -- the obvious "fix" is to switch to double quotes, at which point the SHELL expands
+      # `${process.env.TZ}` to nothing before Node ever runs, and the assertion logs an empty
+      # zone while still passing. No `$` in the script means neither the lint nor the trap.
+      - name: Assert the zone reached Node
+        working-directory: frontend
+        run: |
+          node -e '
+            const off = new Date().getTimezoneOffset();
+            console.log("TZ=" + process.env.TZ + " offset=" + off);
+            if (off === 0) {
+              console.error("Node is still in UTC; TZ was not honoured");
+              process.exit(1);
+            }
+          '
+
+      - name: Test
+        working-directory: frontend
+        run: npm test
+
+  # ---------------------------------------------------------------------------------------
   # Phase 4 (ADR-0032): the three REAL-BACKEND layers, against a stack this job owns.
   #
   # ADR-0029/0030/0031 each shipped with the same two caveats — money accumulates in a shared
