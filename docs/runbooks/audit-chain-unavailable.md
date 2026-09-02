@@ -920,11 +920,12 @@ not an inclusion proof**: the anchor is a tail hash, not a tree, so proving to a
 ONE row is in the set means handing over the range — `docs/audit-trail-against-real-practice.md`
 names the gap, and the pack repeats it rather than implying the proof.
 
-Refusals, none of them about the chain: `NOT ASSEMBLED` is **4** — a blank argument, or a number the
-store does not hold (checked before the walk, so nothing is read); `CANNOT ASSEMBLE` is **3** — the
-tool is not configured, the ring will not build, or the store could not be read, the same three
-causes as `CANNOT VERIFY`; `INTERRUPTED` is **5**. `EVIDENCE PACK for <number>` is the first line of
-every successful assembly, and the line to search a transcript for.
+Refusals, none of them about the chain: `NOT ASSEMBLED` is **4** — a blank argument, refused before
+the store is touched, or a number the store does not hold, which is one lookup of the transaction
+row made before the chain walk, so no verdict is produced; `CANNOT ASSEMBLE` is **3** — the tool is
+not configured, the ring will not build, or the store could not be read, the same three causes as
+`CANNOT VERIFY`; `INTERRUPTED` is **5**. `EVIDENCE PACK for <number>` is the first line of every
+successful assembly, and the line to search a transcript for.
 
 - **Verify the chain. Run this FROM THE REPOSITORY ROOT** — the `--project` path is relative to it,
   and from anywhere else `dotnet run` fails to find the project and exits **1**, which this document

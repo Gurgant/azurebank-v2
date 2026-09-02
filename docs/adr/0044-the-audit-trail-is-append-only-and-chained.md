@@ -996,11 +996,15 @@ because an ADR is a record: `tools/AzureBank.AuditVerifier` reads this table, an
 now called from production code rather than only from tests. The second half still holds — nothing
 verifies the chain on a schedule.
 
-Two further gaps, named rather than left implicit — and narrowed since. **Nothing reads this table
-through the API**: there is no endpoint and no access control, and that half stands. What reads it is
-the operator tool — `verify` walks it, and since D8 `evidence` reads it by subject for one movement —
-so "no operator view" is no longer true and this sentence used to say it was. **`VerifyAsync` is
-called only by tests** was withdrawn above; nothing verifies the chain on a schedule, still.
+Two further gaps, named rather than left implicit: **nothing reads this table yet** — there is no
+endpoint, no access control and no operator view, which is B3's work — and **`VerifyAsync` is called
+only by tests**, so nothing verifies the chain on a schedule.
+
+**"No operator view, which is B3's work" was closed on 2026-09-02 by D8**, and the sentence above is
+left as written for the reason the correction before it gives. `verify` walks this table and
+`evidence` reads it by subject for one movement: the operator view exists. What still stands is
+narrower than the sentence says — nothing reads the table through the API, there is no endpoint and
+no access control — and nothing verifies the chain on a schedule.
 
 ## Consequences
 
