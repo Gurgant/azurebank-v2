@@ -18,11 +18,16 @@ namespace AzureBank.AuditVerifier;
 // Usage, from the repository root:
 //   dotnet run --project backend/tools/AzureBank.AuditVerifier -- verify
 //   dotnet run --project backend/tools/AzureBank.AuditVerifier -- anchor
+//   dotnet run --project backend/tools/AzureBank.AuditVerifier -- export <path>
+//   dotnet run --project backend/tools/AzureBank.AuditVerifier -- evidence <transactionNumber>
 //
 // `verify` walks the chain and reports. `anchor` walks it once and RECORDS what it found, chained to
 // the record before it and authenticated under a key the database does not hold. It detects no
 // truncation on its own -- see AnchorCommand -- and it is a mode of this tool rather than a scheduled
-// job, because nothing in this deployment runs between sessions.
+// job, because nothing in this deployment runs between sessions. `export` copies the anchor chain to
+// a file. `evidence` assembles, for one transaction, the consumed step-up authorisation and the audit
+// rows that name it, under the chain verdict -- the PSD2 Art. 72 read (B3), and it adds no exit code:
+// the chain's verdict is the verdict, a number the store does not hold is 4.
 //
 // Exit codes: 0 intact, 1 broken, 2 nothing to verify, 3 no verdict (the store could not be read),
 // 4 the command line was wrong, 5 interrupted, 6 there WAS a verdict but nothing could be recorded
@@ -91,6 +96,7 @@ internal static class Program
         rootCommand.AddCommand(VerifyCommand.Create(host.Services));
         rootCommand.AddCommand(AnchorCommand.Create(host.Services));
         rootCommand.AddCommand(ExportCommand.Create(host.Services));
+        rootCommand.AddCommand(EvidenceCommand.Create(host.Services));
 
         var parsed = await rootCommand.InvokeAsync(args);
 

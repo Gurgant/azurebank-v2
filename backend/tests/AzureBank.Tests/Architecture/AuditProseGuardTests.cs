@@ -69,7 +69,7 @@ public class AuditProseGuardTests
     private const string Runbook = "docs/runbooks/audit-chain-unavailable.md";
 
     private static readonly string[] CommandFiles =
-        ["VerifyCommand.cs", "AnchorCommand.cs", "ExportCommand.cs"];
+        ["VerifyCommand.cs", "AnchorCommand.cs", "ExportCommand.cs", "EvidenceCommand.cs"];
 
     /*
       HEADLINES THE RUNBOOK DOES NOT COVER, WRITTEN DOWN SO THE ABSENCE IS A DECISION.
@@ -282,7 +282,7 @@ public class AuditProseGuardTests
           moving, whatever the runbook happens to say.
         */
         headlines.Should().HaveCount(
-            16,
+            23,
             "the extraction found {0}, from {1}. FEWER means the regex or the comment stripper "
             + "regressed -- the first version of this guard shipped blind to four verdicts for want "
             + "of a colon, and the second to any headline behind a warning prefix. MORE means a "
@@ -392,6 +392,7 @@ public class AuditProseGuardTests
         "backend/tools/AzureBank.AuditVerifier/Commands/VerifyCommand.cs",
         "backend/tools/AzureBank.AuditVerifier/Commands/AnchorCommand.cs",
         "backend/tools/AzureBank.AuditVerifier/Commands/ExportCommand.cs",
+        "backend/tools/AzureBank.AuditVerifier/Commands/EvidenceCommand.cs",
         "backend/tests/AzureBank.Tests/Unit/Data/AuditChainTests.cs",
         "backend/tests/AzureBank.Tests/Unit/Tools/AuditVerifierReportTests.cs",
         "backend/tests/AzureBank.Tests/Unit/Tools/UncoveredWindowTests.cs",
