@@ -165,10 +165,12 @@ public static class SecurityEvents
     ///
     /// <para>
     /// ⚠️ This is a DETECTIVE record in the operator's log. It is NOT the notification NIST
-    /// SP 800-63-4B §4.1.2 requires ("the CSP SHALL notify the subscriber via a mechanism
-    /// INDEPENDENT of the transaction binding the new authenticator") — that has to reach the
-    /// account owner, not the operator, and this codebase has no email transport at all. Tracked
-    /// separately; do not let this line stand in for it.
+    /// SP 800-63B-4 §4.1.2.1 requires ("When an authenticator is added, the CSP SHALL notify the
+    /// subscriber via a mechanism independent of the transaction binding the new authenticator, as
+    /// described in Sec. 4.6.") — that has to reach the account owner, not the operator. Since
+    /// ADR-0045 that notice is a <c>SubscriberNotice</c> row written in the same save as this
+    /// record and rendered by the operator tool; what this codebase still lacks is a relay that
+    /// delivers it. Do not let this line stand in for either.
     /// </para>
     /// </remarks>
     public const string PinEnrolled = "PinEnrolled";

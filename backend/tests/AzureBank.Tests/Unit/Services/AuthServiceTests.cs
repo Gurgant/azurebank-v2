@@ -825,6 +825,54 @@ public class AuthServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetPinAsync_WhenEnrolling_TracksTheNoticeBeforeUpdateAsync()
+    {
+        /*
+          THE ORDER, NOT THE ROW. UserManager.UpdateAsync is the save that persists the enrolment
+          (Identity saves through this same context), so the owed-notice row must already be
+          TRACKED when that call happens — a row added afterwards is discarded with the scope, which
+          is exactly how the PinEnrolled audit row was once lost while every mock stayed green.
+
+          This proves the ordering with a callback reading the change tracker at call time. It does
+          NOT prove that a row reaches the table: that is SubscriberNoticePersistenceTests, through
+          the real host, and the two are deliberately paired (docs/engineering-traps.md: "the writer
+          was called" is not evidence that a row exists).
+        */
+        var user = CreateTestUser();
+        var request = new SetPinRequest { Pin = "123456", Password = "TestPass123!" };
+
+        _userManagerMock
+            .Setup(x => x.FindByIdAsync(user.Id.ToString()))
+            .ReturnsAsync(user);
+        _userManagerMock
+            .Setup(x => x.CheckPasswordAsync(user, request.Password!))
+            .ReturnsAsync(true);
+        _passwordHasherMock
+            .Setup(x => x.HashPin(request.Pin))
+            .Returns("hashed-new-pin");
+
+        var noticesTrackedWhenTheSaveRan = -1;
+        _userManagerMock
+            .Setup(x => x.UpdateAsync(user))
+            .Callback(() => noticesTrackedWhenTheSaveRan = _context.ChangeTracker
+                .Entries<SubscriberNotice>()
+                .Count(e => e.State == EntityState.Added))
+            .ReturnsAsync(IdentityResult.Success);
+
+        await _sut.SetPinAsync(user.Id, request);
+
+        noticesTrackedWhenTheSaveRan.Should().Be(
+            1, "the notice must ride the save that persists the enrolment, so it has to be tracked "
+               + "BEFORE UpdateAsync runs — after it, nothing saves again and the row is discarded");
+
+        var notice = _context.ChangeTracker.Entries<SubscriberNotice>().Single().Entity;
+        notice.UserId.Should().Be(user.Id);
+        notice.Event.Should().Be(SecurityEvents.PinEnrolled);
+        notice.DeliveredAt.Should().BeNull("nothing in the request renders it");
+        notice.DeliveryReceipt.Should().BeNull();
+    }
+
+    [Fact]
     public async Task SetPinAsync_Enrolling_WithoutPassword_NeverTouchesTheHash()
     {
         // The cheapest possible statement of T7's rule: refused BEFORE anything is hashed or

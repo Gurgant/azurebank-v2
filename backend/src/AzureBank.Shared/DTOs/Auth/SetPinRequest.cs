@@ -46,7 +46,7 @@ public class SetPinRequest
       session cookie was the entire proof — the full measured chain is in `AuthService.SetPinAsync`,
       next to the branch that enforces it, and in ADR terms it is the half ADR-0040 deferred.
 
-      NIST SP 800-63-4B §4.1.2 sets the bar and also caps it: bind at the maximum AAL currently
+      NIST SP 800-63B-4 §4.1.2.1 sets the bar and also caps it: bind at the maximum AAL currently
       available on the account, or the maximum the new authenticator will be used at, WHICHEVER IS
       LOWER. With no PIN enrolled the account's maximum is the password — required, and nothing
       heavier.
