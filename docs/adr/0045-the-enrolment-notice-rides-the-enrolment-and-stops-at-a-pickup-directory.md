@@ -180,8 +180,12 @@ is written, then the row is marked, and an interruption between the two leaves a
 still owed; the next run into the same directory is refused by `CreateNew`, and into a different one
 writes a second copy with the same `Message-ID`. The directory is personal data at rest, unencrypted
 and unpurged — the verb's refusal of a repository path and the runbook's delete-after sentence are
-the mitigations. And the remedy behind the contact is incomplete: an operator can null the PIN by
-hand, but no password reset exists, so the attacker who proved the password still holds it.
+the mitigations. CodeQL says the same thing in its own words —
+`cs/cleartext-storage-of-sensitive-information` on the line that writes the file — and the alert is
+dismissed as won't-fix with this paragraph as the reason: the recipient's address is the message's
+`To:` header, a message without one cannot be delivered by anything, and encrypting the file would
+make it not a message. And the remedy behind the contact is incomplete: an operator can null the PIN
+by hand, but no password reset exists, so the attacker who proved the password still holds it.
 
 ## What is wired
 
