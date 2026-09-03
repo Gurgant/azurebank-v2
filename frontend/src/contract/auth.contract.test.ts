@@ -251,7 +251,8 @@ describe('contract: a cookie the BFF has forgotten', () => {
         POST /api/transfers `{}`            -> 401, the same body, instance "/api/transfers"
       A cookie that was never issued, and no cookie at all, answered identically. The BFF writes
       this 401 before the proxy — the middleware returns without calling next, and
-      AuthLevelMiddlewareTests pins the forwarded paths empty for these requests.
+      AuthLevelMiddlewareTests pins the forwarded paths empty for the reveal with a revoked and
+      with a never-issued cookie and for POST /api/transfers with a never-issued one.
 
       A REAL dead cookie rather than a forged one, so a BFF that began to treat the two differently
       — a signed-out id it still remembers, say — would be noticed here and not only in the mock.

@@ -119,7 +119,8 @@ describe('contract: endpoints that require a session', () => {
       live session before proxying, with the API's own AUTH_TOKEN_MISSING members, and since
       d74603c (2026-08-20) on every /api path whatever the method. This case sends the anonymous
       form; `auth.contract.test.ts` replays a dead cookie on the reveal and on a transfer, and the
-      2026-09-03 transcript has the forged and the dead cookie on /api/accounts too — all identical:
+      work log's transcript for item 232 (`measure-2026-09-03.txt`, the one client.ts cites) has
+      the forged and the dead cookie on /api/accounts too — all identical:
 
         401 {"type":"https://httpstatuses.com/401","title":"Unauthorized",
              "detail":"Authentication is required to access this resource.",

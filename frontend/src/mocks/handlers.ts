@@ -1585,8 +1585,8 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
  * POST /api/transactions/withdraw — the deposit protocol PLUS the PIN-in-body gate (D1).
  * NOT step-up: the PIN travels in the request body and is verified here, so this endpoint
  * never returns the 403 STEP_UP_REQUIRED shape (since ADR-0041 only the account-number reveal
- * does; no money move is gated at level 2 any more). Failure order
- * mirrors the backend (TransactionService.WithdrawAsync): idempotency → PIN_REQUIRED →
+ * does; no money move is gated at level 2 any more). Failure order mirrors the backend
+ * (TransactionService.WithdrawAsync): idempotency → PIN_REQUIRED →
  * PIN_LOCKED → INVALID_PIN → INSUFFICIENT_FUNDS → success. Side effects (balance debit,
  * transaction, stored idempotency record) run ONLY on the success path.
  */
@@ -2581,14 +2581,14 @@ const authoriseInternalTransfer = api.post(
 );
 
 /**
- * POST /api/transfers — the API's idempotency protocol plus the in-band PIN check.
+ * POST /api/transfers — the API's idempotency protocol plus the authorisation check (ADR-0042).
  *
  * The level-2 step-up gate that used to open this handler is GONE (ADR-0041): the BFF no longer
- * answers 403 for a transfer, because the PIN now travels in the body and the API verifies it.
- * Failure order mirrors the real path: idempotency → PIN → SELF_TRANSFER_NOT_ALLOWED → recipient
- * not found (ACCOUNT_NOT_FOUND, the real code) → INSUFFICIENT_FUNDS → success (debit sender, push
- * a TransferOut row; the recipient is off-ledger). A missing fromAccount is tolerated (debit only
- * if found).
+ * answers 403 for a transfer; the PIN is presented to the mint and the transfer carries the
+ * authorisation it produced. Failure order mirrors the real path: idempotency →
+ * AUTHORIZATION_REQUIRED → SELF_TRANSFER_NOT_ALLOWED → recipient not found (ACCOUNT_NOT_FOUND, the
+ * real code) → INSUFFICIENT_FUNDS → success (debit sender, push a TransferOut row; the recipient
+ * is off-ledger). A missing fromAccount is tolerated (debit only if found).
  */
 const transfer = api.post('/api/transfers', async ({ request, response }) => {
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
@@ -2848,8 +2848,9 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
  * authorisation + idempotency protocol as the external transfer (no level-2 gate on either since
  * ADR-0041), but double-entry ON-ledger: debit the source, credit the destination, push BOTH a
  * TransferOut and a TransferIn row. Failure order mirrors the backend: idempotency →
- * SAME_ACCOUNT_TRANSFER (from==to) → ownership (either account missing → ACCOUNT_NOT_FOUND) →
- * AUTHORIZATION_REQUIRED / AUTHORIZATION_INVALID (ADR-0042) → INSUFFICIENT_FUNDS → success.
+ * same-account 400 (validator envelope, `errors.toAccountId`) → ownership (either account missing
+ * → ACCOUNT_NOT_FOUND) → AUTHORIZATION_REQUIRED / AUTHORIZATION_INVALID (ADR-0042) →
+ * INSUFFICIENT_FUNDS → success.
  */
 const transferInternal = api.post('/api/transfers/internal', async ({ request, response }) => {
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
@@ -3142,8 +3143,8 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
   // NOT under the BFF's `auth` rate-limit policy: `VerifyPin` carries no `[EnableRateLimiting]`
   // (login, register, reauthenticate and the azure-tag rename do), and twelve calls in a row with a
   // dead cookie answered 401 every time on 2026-09-03, never 429. The mock counted this route
-  // against the ten-permit budget until then. The only 429 the route emits is the API's PIN
-  // lockout (PIN_LOCKED, ADR-0010), relayed.
+  // against the ten-permit budget until then. Short of the 300/min global backstop, the only
+  // 429 the route emits is the API's PIN lockout (PIN_LOCKED, ADR-0010), relayed.
   runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
@@ -3749,9 +3750,12 @@ const sessionActivity = http.all('*/api/*', ({ request }) => {
       The 401 carries the API's AUTH_TOKEN_MISSING members and values (`instance` = the path, a
       fresh `traceId`) and no X-Auth-Level-* header. The BFF writes it before the proxy: the
       middleware returns without calling next, and `AuthLevelMiddlewareTests` pins the recorder's
-      forwarded paths empty for exactly these requests. `auth.contract.test.ts` replays a dead
-      cookie on the real stack; the flag that once told the two states apart is gone from
-      `state.ts` because it no longer changed any answer.
+      forwarded paths empty for the reveal with a forged and with a revoked cookie and for POST
+      /api/transfers with a forged one; the internal and /api/accounts rows follow from the same
+      branch (`RequiresSession` covers every /api path) and are pinned without a cookie by the
+      sessionless theory and the spec sweep. `auth.contract.test.ts` replays a dead cookie on the
+      real stack; the flag that once told the two states apart is gone from `state.ts` because it
+      no longer changed any answer.
 
       Why it mattered: 401 drives the global sign-out, 403 STEP_UP_REQUIRED opens the PIN modal. A
       session that timed out mid-transfer met a PIN prompt under MSW and a sign-out in production.

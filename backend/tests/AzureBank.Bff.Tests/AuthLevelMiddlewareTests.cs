@@ -123,7 +123,10 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         return (sessionId, cookieName, sessions);
     }
 
-    /// <summary>A session id the store has never issued — the cookie of a session that is gone.</summary>
+    /// <summary>
+    /// A session id the store has never issued: a forged cookie, as distinct from the revoked one
+    /// the AfterTheSessionIsRevoked test replays.
+    /// </summary>
     private const string NeverIssuedSessionId = "never-issued-0123456789abcdef";
 
     private static string CookieName(WebApplicationFactory<Program> factory) =>
@@ -218,11 +221,11 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
       A COOKIE THE STORE CANNOT RESOLVE IS NOT A SESSION AT LEVEL 0 — it is no session.
 
       The three tests below pin the row the mock got wrong for three and a half weeks (work-log
-      item 232). The SPA's
-      MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for a cookie that had
-      outlived its session, quoting a measurement from before ADR-0038 removed the "no cookie —
-      let the API handle 401" fall-through. Nothing on this side pinned the other half: every
-      cookie this file sent came from CreateSession. Measured 2026-09-03 on BFF :5000 -> API :7215
+      item 232). The SPA's MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for
+      a cookie that had outlived its session, quoting a measurement from before ADR-0038 removed
+      the "No session cookie - let the API handle 401" fall-through. Nothing on this side pinned
+      the other half: every cookie this file sent came from CreateSession. Measured 2026-09-03 on
+      BFF :5000 -> API :7215
       with a never-issued id and with a real cookie replayed after logout, identically:
 
         GET  /api/accounts/{id}/full-number -> 401 AUTH_TOKEN_MISSING, no X-Auth-Level-* header
@@ -286,7 +289,8 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         AssertNoStepUpHeaders(response);
         await AssertLooksLikeTheApisOwn401(response);
         backend.ForwardedPaths.Should().BeEmpty(
-            "the session check runs here for every /api path; a cookie the store cannot resolve is refused before the proxy");
+            "the session check runs here for every /api path; " +
+            "a cookie the store cannot resolve is refused before the proxy");
     }
 
     [Fact]
@@ -397,8 +401,9 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
       already placed the client's on the outbound request.
 
       The class docstring above is the reason this is severe rather than untidy: this middleware is
-      the only PIN gate in the system, so bypassing it leaves NO second factor on a transfer or a
-      reveal for anyone holding the password.
+      the only PIN gate in the system, so bypassing it leaves NO second factor on the reveal — and,
+      before ADR-0041 moved the transfer PIN into the API, on a transfer too — for anyone holding
+      the password.
     */
 
     [Fact]

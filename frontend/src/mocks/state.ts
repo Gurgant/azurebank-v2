@@ -143,7 +143,10 @@ interface MockState {
    * reveal reads it; money moves carry their authorisation in-band.
    */
   authLevel: 1 | 2;
-  /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
+  /**
+   * BFF session: null = no live session — no cookie, or a cookie the BFF no longer resolves; the
+   * answer is the same 401 either way (default — tests seed or log in explicitly).
+   */
   session: MockSessionUser | null;
   /**
    * The server-side session clock, modelled the way the BFF actually keeps it.
@@ -532,7 +535,10 @@ export function expireMockSessionIfDue(now: number = Date.now()): boolean {
     // silently absent rather than visibly broken.
     mockState.authLevel = 1;
     // Expiry is SERVER-side; the browser still holds the cookie, and the BFF answers that cookie
-    // exactly as it answers none: 401 AUTH_TOKEN_MISSING on every /api route (measured 2026-09-03).
+    // exactly as it answers none: 401 AUTH_TOKEN_MISSING on every /api route. Measured 2026-09-03
+    // for a forged and a revoked cookie; clock expiry is the same answer by construction —
+    // `InMemoryTokenStore.GetSessionAsync` removes an expired session and returns null, and
+    // `GetAuthLevel` maps null to 0 — not by measurement.
     return true;
   }
   return false;

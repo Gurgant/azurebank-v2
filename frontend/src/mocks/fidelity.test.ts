@@ -151,7 +151,6 @@ describe('failure ordering matches the service, not the handler that was easiest
     //        System.Guid. Path: $.fromAccountId …"]}
     // and the mock's own 404 was what this test had pinned. A WELL-FORMED unknown id is what
     // exercises the ordering the test is named for; the malformed case is asserted just below.
-    mockState.authLevel = 2;
     const res = await fetch('/api/transfers', {
       method: 'POST',
       headers: {
@@ -174,7 +173,6 @@ describe('failure ordering matches the service, not the handler that was easiest
     // The other half of the pair above, and a THIRD envelope for the same field: absent or all-zero
     // is `[NotEmptyGuid]`'s PascalCase model-state 400; unparseable is System.Text.Json's, keyed by
     // JSON path; a well-formed unknown id is the 404. Measured, all three.
-    mockState.authLevel = 2;
     const res = await fetch('/api/transfers', {
       method: 'POST',
       headers: {
@@ -996,7 +994,7 @@ describe('a session that DIED answers exactly like one that never was', () => {
    * the same `GetAuthLevel` == 0.
    *
    * This describe used to assert the opposite: 403 STEP_UP_REQUIRED with currentLevel 0 on the
-   * level-2 routes for a cookie that no longer resolved, from a 2026-08-05 measurement. Four days
+   * level-2 routes for a cookie that no longer resolved, from a 2026-08-05 measurement. Five days
    * later ADR-0038 (01c0e31, 2026-08-10) put the no-session 401 before the level-2 check for a
    * missing, unknown and expired cookie alike; ADR-0041 (2026-08-13) emptied the transfer gate and
    * d74603c (2026-08-20) widened the session check to every /api path. The mock kept quoting the
