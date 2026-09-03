@@ -977,6 +977,25 @@ The headlines, and what each means from THIS verb:
 The address never appears on the console, in a receipt, or in a file name; it is in the file, in the
 `To:` header, because the file is the message.
 
+Measured 2026-09-03, one enrolment on a throwaway store, the verb run twice:
+
+```
+NOTIFIED 1 of 1 waiting notices into C:\Users\Drako\AppData\Local\Temp\azurebank-notices-t13
+  Each file is a complete message addressed to the email held on the account, and it has
+  reached this machine's disk and nobody else: nothing here sends. Point a relay at the
+  directory or move the files yourself, and delete the spool afterwards.
+  01a064a9806078ea97ab2aba54d4cc37.eml <- notice 01a064a9806078ea97ab2aba54d4cc37, PinEnrolled at 2026-09-03 00:27:05Z
+exit 0
+
+NOTHING TO NOTIFY: no notice is owed.
+  Every recorded notice has been rendered, or none was ever recorded. Not a success
+  and not a failure: nothing was waiting.
+exit 2
+```
+
+What a recipient does with the reference, and what the contact can do about it, is
+`docs/runbooks/pin-enrolment-repudiated.md`.
+
 - **Verify the chain. Run this FROM THE REPOSITORY ROOT** — the `--project` path is relative to it,
   and from anywhere else `dotnet run` fails to find the project and exits **1**, which this document
   defines under **Exit codes, for scripting it** below as CHAIN BROKEN. (That pointer used to count

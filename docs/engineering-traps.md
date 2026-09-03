@@ -628,3 +628,31 @@ Same words, same length, different reader.
 it constrains something that still exists. When the gate, flag or branch it protects is removed, the
 text goes in the same commit. Kept past that point it stops being a guard and becomes what it merely
 looked like all along.
+
+## A notice that reaches the session holder is not a notification
+
+NIST SP 800-63B-4 §4.1.2.1 asks that the subscriber be notified of a new authenticator "via a
+mechanism independent of the transaction binding" it. The cheap reading is a line on the success
+screen, a toast, an inbox item — and every one of them reaches whoever holds the session, which in
+the threat model is the attacker who just enrolled the PIN. §4.1.2.2 says where in-session text
+belongs: *in addition to* the notice, as instructions for a mishap, never instead of it. The same
+goes for the operator's log line and the audit row: durable, chained, and read by the wrong person.
+ADR-0045 records what does count — a message addressed to the email held on the account, on a path
+the session cannot read, redirect or suppress — and, honestly, where that stops.
+
+The test for any candidate channel is one question: **could the attacker who caused the event see or
+prevent the notice?** If yes, it is a receipt, not a notification.
+
+## A send inside the request inverts D1 — write the row, deliver later
+
+The obvious place to send a notice is the request that caused it, and both places to put it there
+are wrong. AFTER the save: a crash, a kill or a lost connection between the commit and the call
+loses the notice with no record that it was ever owed — the enrolment stands, the owner is never
+told, and nothing can tell later. INSIDE the save: the request holds the audit tail lock
+(`UPDLOCK, HOLDLOCK`) for as long as the I/O takes, and a slow or failing relay stalls every audited
+write behind it, while a rollback after the send leaves a message about an enrolment that never
+happened.
+
+The shape that works is the one ADR-0044 D1 already uses for the audit row: record the OBLIGATION in
+the same transaction as the action, and deliver from somewhere else, later, from the row. What
+"later" means is a decision about runners (ADR-0045 D3), not about the request.

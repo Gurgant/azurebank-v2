@@ -29,6 +29,11 @@ for MVP`, no `IEmailSender` / SMTP), so the standards-prescribed closure — an 
 "check your email" that is identical for new and existing accounts — is not currently
 buildable without a new subsystem and the loss of the auto-login-on-register UX.
 
+*(Narrowed 2026-09-03, ADR-0045: the operator tool can now render a message to the account's
+email and write it to a pickup directory, so "no email infrastructure" is no longer the whole
+sentence — "no relay" is. The conclusion stands: an out-of-band confirmation needs a message the
+registrant actually receives, and nothing here sends one.)*
+
 ### What the standards actually require (graduated, not absolute)
 
 - **OWASP ASVS v5.0.0 §6.3.8** is the only requirement that explicitly names registration
@@ -107,7 +112,8 @@ unverified-provisioning finding.
   fully open.
 - **Full email-confirmation flow now (Option 3).** The only true closure and the
   OWASP-prescribed technique, but disproportionate for an MVP with no email infrastructure,
-  and it would forfeit the auto-login-on-register demo. Deferred, not discarded.
+  and it would forfeit the auto-login-on-register demo. Deferred, not discarded. *(Still deferred
+  after ADR-0045, which renders but does not send; see the note above.)*
 
 ## Consequences
 

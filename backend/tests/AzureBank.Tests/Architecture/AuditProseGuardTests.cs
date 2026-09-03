@@ -399,8 +399,11 @@ public class AuditProseGuardTests
         "backend/tests/AzureBank.Tests/Unit/Tools/UncoveredWindowTests.cs",
         "backend/tests/AzureBank.Tests/Unit/Tools/RealCompositionRootRefusalTests.cs",
         "docs/adr/0044-the-audit-trail-is-append-only-and-chained.md",
+        "docs/adr/0045-the-enrolment-notice-rides-the-enrolment-and-stops-at-a-pickup-directory.md",
         "docs/runbooks/audit-chain-unavailable.md",
+        "docs/runbooks/pin-enrolment-repudiated.md",
         "docs/deferred/anchoring-the-audit-trail.md",
+        "docs/deferred/relaying-the-enrolment-notice.md",
         "docs/audit-trail-against-real-practice.md",
     ];
 
