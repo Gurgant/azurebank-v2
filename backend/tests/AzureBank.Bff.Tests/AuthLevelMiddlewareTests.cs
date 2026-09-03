@@ -202,6 +202,84 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         backend.ForwardedPaths.Should().BeEmpty();
     }
 
+    /*
+      A COOKIE THE STORE CANNOT RESOLVE IS NOT A SESSION AT LEVEL 0 — it is no session.
+
+      The three tests below pin the row the mock got wrong for a month (backlog #232). The SPA's
+      MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for a cookie that had
+      outlived its session, quoting a measurement from before ADR-0038 removed the "no cookie —
+      let the API handle 401" fall-through. Nothing on this side pinned the other half: every
+      cookie this file sent came from CreateSession. Measured 2026-09-03 on BFF :5000 -> API :7215
+      with a never-issued id and with a real cookie replayed after logout, identically:
+
+        GET  /api/accounts/{id}/full-number -> 401 AUTH_TOKEN_MISSING, no X-Auth-Level-* header
+        POST /api/transfers                 -> 401 AUTH_TOKEN_MISSING
+        the same two routes with no cookie  -> the same body
+
+      GetAuthLevel folds missing, unknown and expired into 0, and the 401 branch precedes the
+      level-2 check unconditionally, so X-Auth-Level-Current: 0 cannot be produced at all. A 403
+      here would open the PIN modal for a session that no longer exists; the 401 signs the user
+      out, which is the only honest recovery.
+    */
+    [Fact]
+    public async Task FullNumber_WithACookieTheStoreCannotResolve_Is401NotStepUp_AndTheBackendIsNeverCalled()
+    {
+        var (factory, backend) = WithRecorder();
+        var cookieName = factory.Services
+            .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+        var client = factory.CreateClient();
+
+        var response = await client.SendAsync(Request(
+            HttpMethod.Get, $"/api/accounts/{Guid.NewGuid()}/full-number",
+            cookieName, "never-issued-0123456789abcdef"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.Headers.Should().NotContainKey("X-Auth-Level-Required",
+            "a dead cookie is no session, and no session is never a step-up");
+        response.Headers.Should().NotContainKey("X-Auth-Level-Current");
+        await AssertLooksLikeTheApisOwn401(response);
+        backend.ForwardedPaths.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FullNumber_AfterTheSessionIsRevoked_Is401_ExactlyLikeANeverIssuedId()
+    {
+        // The cookie was real once. Logout revokes the session and deletes the cookie, but a
+        // browser tab that kept the old value — or a client that never saw the Set-Cookie — still
+        // sends it. That is the state the mock modelled as a step-up.
+        var (factory, backend) = WithRecorder();
+        var (sessionId, cookieName, sessions) = CreateSession(factory);
+        var client = factory.CreateClient();
+        sessions.RevokeSession(sessionId);
+
+        var response = await client.SendAsync(Request(
+            HttpMethod.Get, $"/api/accounts/{Guid.NewGuid()}/full-number", cookieName, sessionId));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.Headers.Should().NotContainKey("X-Auth-Level-Required");
+        await AssertLooksLikeTheApisOwn401(response);
+        backend.ForwardedPaths.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TransfersPost_WithACookieTheStoreCannotResolve_Is401_AndTheBackendIsNeverCalled()
+    {
+        var (factory, backend) = WithRecorder();
+        var cookieName = factory.Services
+            .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+        var client = factory.CreateClient();
+
+        var request = Request(HttpMethod.Post, "/api/transfers", cookieName, "never-issued-0123456789abcdef");
+        request.Content = JsonContent.Create(new { });
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.Headers.Should().NotContainKey("X-Auth-Level-Required");
+        await AssertLooksLikeTheApisOwn401(response);
+        backend.ForwardedPaths.Should().BeEmpty(
+            "the session check runs here for every /api path; a cookie the store cannot resolve is refused before the proxy");
+    }
+
     [Fact]
     public async Task TransfersPost_WithTrailingSlashAndNoSession_IsStillRefusedLocally()
     {

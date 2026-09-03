@@ -30,6 +30,16 @@ export function resetJar(): void {
   jar = '';
 }
 
+/** The jar as it stands, so a test can hand a cookie back AFTER the server has forgotten it. */
+export function snapshotJar(): string {
+  return jar;
+}
+
+/** Put a snapshot back. The one legitimate use is replaying a cookie the BFF no longer knows. */
+export function restoreJar(snapshot: string): void {
+  jar = snapshot;
+}
+
 export async function call(
   path: string,
   init: RequestInit & { anonymous?: boolean } = {},
@@ -81,8 +91,10 @@ export async function call(
  * The mock has no limiter at all, so this is a constraint only the real target could have taught,
  * and it is why `login()` is called once per FILE.
  *
- * Shared by BOTH auth calls on purpose: `verify-pin` sits under the same policy, so a rate-limited
- * step-up would otherwise surface as a bare 429 while login got the explanation.
+ * Kept on `elevate()` too, though `verify-pin` is NOT under the policy today: it carries no
+ * `[EnableRateLimiting]`, and twelve calls in a row with a dead cookie answered 401 every time on
+ * 2026-09-03, never 429. The wrapper stays so that a policy change there surfaces with this
+ * explanation rather than as a bare 429.
  */
 function rejectIfRateLimited(result: Wire): Wire {
   if (result.status === 429) {
@@ -113,6 +125,16 @@ export async function login(): Promise<Wire> {
     jar = '.AzureBank.Session=mock-session';
   }
   return result;
+}
+
+/**
+ * End the session. Not under the auth rate-limit policy — measured 2026-09-03: twelve logouts in
+ * a row with a dead cookie all answered 200, never 429. On the real target the deleting
+ * Set-Cookie replaces the jar with an empty value;
+ * the mock sends no Set-Cookie and its jar stays the hand-seeded one, which it ignores anyway.
+ */
+export async function logout(): Promise<Wire> {
+  return call('/bff/auth/logout', { method: 'POST' });
 }
 
 /** Raise the session to AuthLevel 2, which the money and reveal endpoints demand. */

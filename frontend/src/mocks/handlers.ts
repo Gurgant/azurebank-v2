@@ -96,7 +96,7 @@ function fingerprint(raw: string): string {
 /**
  * The BFF AuthLevelMiddleware 403 for a level-2 route — its BARE shape (deliberately NOT
  * ProblemDetails) plus the X-Auth-Level-* headers the client normalizes into STEP_UP_REQUIRED.
- * Shared by the transfer, internal-transfer, and reveal handlers.
+ * Used by the reveal handler alone: since ADR-0041 it is the only level-2 route.
  */
 function stepUp403(currentLevel: number) {
   return HttpResponse.json(
@@ -1584,7 +1584,8 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
 /**
  * POST /api/transactions/withdraw — the deposit protocol PLUS the PIN-in-body gate (D1).
  * NOT step-up: the PIN travels in the request body and is verified here, so this endpoint
- * never returns the 403 STEP_UP_REQUIRED shape (that gates transfers only). Failure order
+ * never returns the 403 STEP_UP_REQUIRED shape (since ADR-0041 only the account-number reveal
+ * does; no money move is gated at level 2 any more). Failure order
  * mirrors the backend (TransactionService.WithdrawAsync): idempotency → PIN_REQUIRED →
  * PIN_LOCKED → INVALID_PIN → INSUFFICIENT_FUNDS → success. Side effects (balance debit,
  * transaction, stored idempotency record) run ONLY on the success path.
@@ -2843,11 +2844,12 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
 });
 
 /**
- * POST /api/transfers/internal — move money between the caller's OWN accounts. Same level-2
- * step-up gate + idempotency as the external transfer, but double-entry ON-ledger: debit the
- * source, credit the destination, push BOTH a TransferOut and a TransferIn row. Failure order
- * mirrors the backend: 403 gate → idempotency → SAME_ACCOUNT_TRANSFER (from==to) → ownership
- * (either account missing → ACCOUNT_NOT_FOUND) → INSUFFICIENT_FUNDS → success.
+ * POST /api/transfers/internal — move money between the caller's OWN accounts. Same
+ * authorisation + idempotency protocol as the external transfer (no level-2 gate on either since
+ * ADR-0041), but double-entry ON-ledger: debit the source, credit the destination, push BOTH a
+ * TransferOut and a TransferIn row. Failure order mirrors the backend: idempotency →
+ * SAME_ACCOUNT_TRANSFER (from==to) → ownership (either account missing → ACCOUNT_NOT_FOUND) →
+ * INSUFFICIENT_FUNDS → success.
  */
 const transferInternal = api.post('/api/transfers/internal', async ({ request, response }) => {
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
@@ -3461,7 +3463,6 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
   // A correct password clears the counter — an expired lock then starts a fresh window at 1.
   delete mockState.loginFailures[account];
   mockState.session = { ...MOCK_USER };
-  mockState.staleSessionCookie = false; // a fresh cookie replaces the stale one
   /*
     A FRESH SESSION IS ALWAYS LEVEL 1. `SessionService.CreateSession` hardcodes
     `AuthLevel = 1, // Level 1 = authenticated via email/password` (SessionService.cs:45) and mints
@@ -3523,7 +3524,6 @@ const register = http.post('*/bff/auth/register', async ({ request }) => {
     hasPin: false,
   };
   mockState.session = user;
-  mockState.staleSessionCookie = false; // registration issues a cookie too
   mockState.authLevel = 1; // fresh session, level 1 — see the login handler above
   // Registration IS a login: the BFF sets the cookie on the 201, so the clock starts here too.
   mockState.sessionCreatedAt = Date.now();
@@ -3639,9 +3639,9 @@ const me = http.get('*/bff/auth/me', ({ request }) => {
 
 const logout = http.post('*/bff/auth/logout', () => {
   mockState.session = null;
-  // Logout DELETES the cookie, so the next request carries none — which is a different state from
-  // a session that died on its own, and answers 401 rather than 403 on the level-2 routes.
-  mockState.staleSessionCookie = false;
+  // Logout deletes the cookie; the next request carries none and answers 401 on every /api route,
+  // which is also what a cookie that outlived its session gets (measured 2026-09-03, see
+  // `sessionActivity`). The mock once drew a 401/403 line between the two; the BFF never did.
   mockState.authLevel = 1;
   return HttpResponse.json({ message: 'Logged out successfully' });
 });
@@ -3715,60 +3715,40 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
  * session — and all three measured forms of that agree, so it is modelled the same way and the gap
  * is named here rather than hidden.
  */
-/**
- * The three routes `AuthLevelMiddleware` gates, mirrored from its own table
- * (`AuthLevelMiddleware.cs:18-34, 115-146`) rather than from a guess:
- *
- *   POST /api/transfers            POST /api/transfers/internal
- *   any method on a path that starts `/api/accounts/` AND ends `/full-number`
- *
- * The trailing slash is trimmed first, and that is not decoration: endpoint routing serves
- * `/api/transfers/` too, so matching the raw path would let a slash bypass step-up entirely. That
- * bypass was a real fix in the BFF (PR R3); modelling the gate without it would put the hole back
- * in the mock, where a test could then "prove" the bypass is safe.
- */
-function requiresPinVerification(method: string, pathname: string): boolean {
-  const path = pathname.replace(/\/+$/, '').toLowerCase();
-  if (
-    method.toUpperCase() === 'POST' &&
-    (path === '/api/transfers' || path === '/api/transfers/internal')
-  ) {
-    return true;
-  }
-  return path.startsWith('/api/accounts/') && path.endsWith('/full-number');
-}
-
 const sessionActivity = http.all('*/api/*', ({ request }) => {
   expireMockSessionIfDue();
   if (!mockState.session) {
     const { pathname } = new URL(request.url);
     /*
-      A DEAD SESSION AND NO SESSION ARE DIFFERENT ANSWERS, and only on these three routes.
+      A DEAD SESSION ANSWERS EXACTLY LIKE ONE THAT NEVER WAS, on every /api route.
 
-      `AuthLevelMiddleware` acts only when a cookie is PRESENT (`Cookies.TryGetValue`); with none
-      it logs "let the API handle 401" and falls through to the proxy, which forwards no bearer.
-      So the cookie — not the session — decides which of the two answers you get. Measured
-      2026-08-05, with the no-cookie row as the control that makes the distinction real:
+      This branch used to answer 403 STEP_UP_REQUIRED with currentLevel 0 when a cookie was still
+      in the browser but no longer resolved, on the three level-2 routes, quoting a 2026-08-05
+      measurement. Two BFF changes after that date made the quote false. ADR-0041 (2026-08-13)
+      moved the transfer PIN into the API, so `AuthLevelMiddleware.PinRequiredPaths` is EMPTY and
+      only the reveal is still level-2. And the middleware's no-session branch stopped "letting the
+      API handle 401": it refuses every `/api/` path itself, and `GetAuthLevel` returns 0 for a
+      missing, unknown and expired session alike, so the cookie's presence selects nothing.
 
-        level-2 route, cookie that no longer resolves
-          -> 403  X-Auth-Level-Required: 2, X-Auth-Level-Current: 0
-             {"type":"STEP_UP_REQUIRED",…,"currentLevel":0,"status":403}
-        level-2 route, NO cookie          -> 401 AUTH_TOKEN_MISSING
-        ordinary /api route, either       -> 401 AUTH_TOKEN_MISSING
+      Measured 2026-09-03 through the BFF (:5000 -> :7215, Development). Forged = a cookie never
+      issued; dead = the cookie a registration issued, replayed after logout answered 200:
 
-      An expired session and an unknown one are the same code path, not merely similar:
-      `InMemoryTokenStore.GetSessionAsync` (:40-56) REMOVES an expired session and returns null,
-      exactly as it does for an id it never knew, and `GetAuthLevel` maps null to 0.
+        POST /api/transfers            no cookie / forged / dead -> 401 AUTH_TOKEN_MISSING
+        POST /api/transfers/internal   forged / dead             -> 401 AUTH_TOKEN_MISSING
+        GET  …/full-number             no cookie / forged / dead -> 401 AUTH_TOKEN_MISSING
+        GET  /api/accounts             forged / dead             -> 401 AUTH_TOKEN_MISSING
+        GET  …/full-number             LIVE level 1              -> 403 X-Auth-Level-Current: 1
+        POST /api/transfers `{}`       LIVE level 1              -> 400 model-state (reaches the API)
 
-      Why it matters to the client: 401 triggers the global sign-out, 403 STEP_UP_REQUIRED opens
-      the PIN modal. The mock answered 401 here, so a session that timed out mid-transfer looked
-      like a hard logout under MSW and like a step-up prompt in production — the two most
-      different recoveries the app has.
+      The 401 body is the API's AUTH_TOKEN_MISSING problem byte for byte (`instance` = the path),
+      carries no X-Auth-Level-* header, and the API log recorded none of those requests: the BFF
+      wrote them without proxying. `auth.contract.test.ts` pins the dead-cookie rows on the real
+      stack; the flag that once told the two states apart is gone from `state.ts` because it no
+      longer changed any answer.
+
+      Why it mattered: 401 drives the global sign-out, 403 STEP_UP_REQUIRED opens the PIN modal. A
+      session that timed out mid-transfer met a PIN prompt under MSW and a sign-out in production.
     */
-    if (mockState.staleSessionCookie && requiresPinVerification(request.method, pathname)) {
-      // 0, not `mockState.authLevel`: the level belongs to the session, and there is no session.
-      return stepUp403(0);
-    }
     return authTokenMissing(pathname);
   }
   markMockActivity();

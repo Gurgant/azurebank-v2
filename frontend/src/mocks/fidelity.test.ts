@@ -981,48 +981,67 @@ describe('the internal transfer names a real ledger row', () => {
   });
 });
 
-describe('a session that DIED is not a session that never was', () => {
+describe('a session that DIED answers exactly like one that never was', () => {
   beforeEach(() => {
     resetMockState();
     seedMockSession();
   });
 
   /**
-   * Mock-only, and deliberately so. The contract suite runs the same file against the real stack,
-   * and there is no safe way to produce this state there: the session must actually expire, which
-   * means waiting out the ten-minute inactivity window inside the test run. So the real behaviour
-   * is quoted from a live measurement and the mock is pinned against the quote.
+   * Mock-only for the EXPIRY half, and deliberately so: producing a clock-expired session on the
+   * real stack means waiting out the ten-minute inactivity window inside the run. The real
+   * behaviour is therefore measured with the other way a cookie stops resolving — replayed after
+   * logout — and `auth.contract.test.ts` pins that on the real stack; `InMemoryTokenStore` REMOVES
+   * an expired session and returns null, exactly as for an id it never knew, so the two arrive at
+   * the same `GetAuthLevel` == 0.
    *
-   * Measured 2026-08-05 with a cookie that no longer resolves (an unknown id — the same code path
-   * as an expired one, since `InMemoryTokenStore.GetSessionAsync` REMOVES an expired session and
-   * returns null for both):
+   * This describe used to assert the opposite: 403 STEP_UP_REQUIRED with currentLevel 0 on the
+   * level-2 routes for a cookie that no longer resolved, from a 2026-08-05 measurement. ADR-0041
+   * emptied the BFF's transfer gate a week later and the middleware's no-session branch stopped
+   * deferring to the API; the mock kept quoting the old table for a month. Measured 2026-09-03
+   * through the BFF with a forged cookie and with a real one replayed after logout, identically:
    *
-   *   GET /api/accounts/{id}/full-number   -> 403, X-Auth-Level-Required: 2, X-Auth-Level-Current: 0
-   *   POST /api/transfers                  -> 403, same headers
-   *   POST /api/transfers/internal         -> 403, same headers
+   *   GET /api/accounts/{id}/full-number   -> 401 AUTH_TOKEN_MISSING, no X-Auth-Level-* header
+   *   POST /api/transfers                  -> 401 AUTH_TOKEN_MISSING
+   *   POST /api/transfers/internal         -> 401 AUTH_TOKEN_MISSING
    *   GET /api/accounts                    -> 401 AUTH_TOKEN_MISSING
-   *   the same three routes with NO cookie  -> 401 AUTH_TOKEN_MISSING
+   *   the same routes with NO cookie        -> 401 AUTH_TOKEN_MISSING
+   *   GET …/full-number, LIVE level 1      -> 403, X-Auth-Level-Current: 1  (the only 403)
    */
   const expireTheSession = () => {
     // Push last activity past the inactivity window; the next request triggers the sweep.
     mockState.sessionLastActivity = Date.now() - mockState.sessionInactivityWindowMs - 1;
   };
 
-  it('answers the level-2 routes with 403 STEP_UP_REQUIRED and level 0', async () => {
+  it('answers the reveal with 401 AUTH_TOKEN_MISSING and NO level headers once the session expired', async () => {
     expireTheSession();
 
     const reveal = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`);
-    expect(reveal.status).toBe(403);
-    expect(reveal.headers.get('X-Auth-Level-Required')).toBe('2');
-    // ZERO, not 1. The level belongs to the session and there is no session — a client showing
-    // "you are at level 1" would be describing a session that no longer exists.
-    expect(reveal.headers.get('X-Auth-Level-Current')).toBe('0');
-    expect((await reveal.json()).currentLevel).toBe(0);
+    expect(reveal.status).toBe(401);
+    expect((await reveal.json()).errorCode).toBe('AUTH_TOKEN_MISSING');
+    // A 403 here would open the PIN modal for a session that no longer exists; production signs
+    // the user out. The headers are asserted absent because the client reads step-up from THEM
+    // before it reads any body (problemBaseQuery, decision D2).
+    expect(reveal.headers.get('X-Auth-Level-Required')).toBeNull();
+    expect(reveal.headers.get('X-Auth-Level-Current')).toBeNull();
+  });
+
+  it('answers a transfer the same way: transfers left the session gate with ADR-0041', async () => {
+    expireTheSession();
+
+    const transfer = await fetch('/api/transfers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: '{}',
+    });
+    expect(transfer.status).toBe(401);
+    expect((await transfer.json()).errorCode).toBe('AUTH_TOKEN_MISSING');
+    expect(transfer.headers.get('X-Auth-Level-Required')).toBeNull();
   });
 
   it('still answers ORDINARY api routes with 401, which is the control', async () => {
-    // Without this the first test passes just as happily against a mock that 403s everything,
-    // which would be a different and equally wrong system.
+    // Without this the two tests above pass just as happily against a mock that 401s everything
+    // for a reason unrelated to the session — the control keeps the claim about the session.
     expireTheSession();
 
     const list = await fetch('/api/accounts');
@@ -1030,23 +1049,21 @@ describe('a session that DIED is not a session that never was', () => {
     expect((await list.json()).errorCode).toBe('AUTH_TOKEN_MISSING');
   });
 
-  it('answers 401 on the level-2 routes when there was never a cookie at all', async () => {
-    /*
-      The distinction the mock could not previously express. `AuthLevelMiddleware` only gates when
-      `Cookies.TryGetValue` SUCCEEDS; with no cookie it logs "let the API handle 401" and falls
-      through to the proxy, which forwards no bearer. So the discriminator is the cookie, not the
-      session — and logging out deletes the cookie, where expiring does not.
-    */
-    resetMockState(); // no session, and no stale cookie either
+  it('answers 401 on the reveal when there was never a cookie at all', async () => {
+    // Kept as the second half of "exactly like": the state this file once distinguished from
+    // expiry. `AuthLevelMiddleware` computes level 0 for a missing, unknown and expired session in
+    // one call and refuses all three itself, so no cookie and a dead cookie are one answer.
+    resetMockState(); // no session
 
     const reveal = await fetch(`/api/accounts/${MAIN_ACCOUNT_ID}/full-number`);
     expect(reveal.status).toBe(401);
     expect((await reveal.json()).errorCode).toBe('AUTH_TOKEN_MISSING');
   });
 
-  it('treats a LOGOUT as no cookie, not as a dead one', async () => {
-    // Logout deletes the cookie server-side AND in the browser, so the next request carries none.
-    // Conflating it with expiry would make a signed-out user meet a PIN prompt.
+  it('treats a LOGOUT after expiry as the same 401', async () => {
+    // Logout deletes the cookie server-side AND in the browser. Once a signed-out user and a
+    // timed-out one get the same answer there is nothing left to conflate, but the sequence stays
+    // pinned so a mock that grew a 403 branch on either path would be caught on this route.
     expireTheSession();
     await fetch('/bff/auth/logout', { method: 'POST' });
 

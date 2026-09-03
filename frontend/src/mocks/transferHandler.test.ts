@@ -3,9 +3,9 @@ import { MOCK_PIN, mockState, seedMockSession } from './state';
 
 /**
  * Executable contract for the recipient-lookup + stateful transfer handlers: the exact-match
- * lookup (self/unknown masked as exists:false), the level-2 403 gate, and the post-elevation
- * failure order (SELF_TRANSFER → recipient ACCOUNT_NOT_FOUND → INSUFFICIENT_FUNDS → success),
- * plus namespaced idempotency.
+ * lookup (self/unknown masked as exists:false), the authorisation protocol that replaced the
+ * level-2 403 gate (ADR-0041/0042), and the failure order after it (SELF_TRANSFER → recipient
+ * ACCOUNT_NOT_FOUND → INSUFFICIENT_FUNDS → success), plus namespaced idempotency.
  */
 
 const T_URL = '/api/transfers';

@@ -1,5 +1,15 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { call, firstAccountId, login, type Wire } from './client';
+import {
+  asProblem,
+  call,
+  firstAccountId,
+  idempotencyKey,
+  login,
+  logout,
+  restoreJar,
+  snapshotJar,
+  type Wire,
+} from './client';
 
 /**
  * Auth-shaped contract points.
@@ -59,6 +69,54 @@ describe('contract: authentication', () => {
     // Asserted too, because the comment above documents it: a missing or wrong CURRENT level would
     // otherwise sail through a test that claims to pin the step-up handshake.
     expect(headers.get('x-auth-level-current')).toBe('1');
+  });
+
+  it('answers a cookie the BFF has FORGOTTEN with 401 — on the step-up route too, never 403', async () => {
+    /*
+      The mock said otherwise for a month. Its `sessionActivity` quoted a 2026-08-05 measurement in
+      which a cookie that no longer resolved met 403 STEP_UP_REQUIRED with currentLevel 0 on the
+      level-2 routes, so under MSW a session that died mid-transfer opened the PIN modal, while in
+      production the same moment is the global sign-out. Two BFF changes after that date made the
+      quote false: ADR-0041 emptied the transfer gate, and the no-session branch of
+      `AuthLevelMiddleware` stopped deferring to the API and refuses every /api path itself.
+
+      Measured 2026-09-03 with the cookie a registration issued, replayed after logout answered 200:
+        GET  /api/accounts/{id}/full-number -> 401 {"type":"https://httpstatuses.com/401",
+             "title":"Unauthorized","status":401,"detail":"Authentication is required to access
+             this resource.","instance":"/api/accounts/…/full-number",
+             "errorCode":"AUTH_TOKEN_MISSING","traceId":"…"}  and NO X-Auth-Level-* header
+        POST /api/transfers `{}`            -> 401, the same body, instance "/api/transfers"
+      A cookie that was never issued, and no cookie at all, answered identically. The API log
+      recorded none of these requests: the BFF wrote the 401 without proxying.
+
+      A REAL dead cookie rather than a forged one, so a BFF that began to treat the two differently
+      — a signed-out id it still remembers, say — would be noticed here and not only in the mock.
+    */
+    const id = await firstAccountId();
+    const dead = snapshotJar();
+    expect((await logout()).status).toBe(200);
+    restoreJar(dead);
+
+    try {
+      const reveal = await call(`/api/accounts/${id}/full-number`);
+      expect(reveal.status).toBe(401);
+      expect(asProblem(reveal.body).errorCode).toBe('AUTH_TOKEN_MISSING');
+      // The client reads step-up from these headers before any body: their absence is the half of
+      // the answer that keeps the PIN modal shut.
+      expect(reveal.headers.get('x-auth-level-required')).toBeNull();
+      expect(reveal.headers.get('x-auth-level-current')).toBeNull();
+
+      const transfer = await call('/api/transfers', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey() },
+        body: '{}',
+      });
+      expect(transfer.status).toBe(401);
+      expect(asProblem(transfer.body).errorCode).toBe('AUTH_TOKEN_MISSING');
+    } finally {
+      // The file shares one session; the cases after this one need theirs back.
+      expect((await login()).status).toBe(200);
+    }
   });
 });
 
