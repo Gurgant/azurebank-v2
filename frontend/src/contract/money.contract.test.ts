@@ -227,7 +227,8 @@ describe('contract: money', () => {
       expect(problem.available).toBe(0);
       expect(problem.requested).toBe(1);
     } finally {
-      // Leave no probe account behind on a seeded database.
+      // The API soft-deletes (IsDeleted), so the row stays but the account leaves every listing;
+      // on a seeded database that is the most this probe can clean up after itself.
       await call(`/api/accounts/${emptyId}`, { method: 'DELETE' });
     }
   });
@@ -264,7 +265,8 @@ describe('contract: money', () => {
       expect(problem.errorCode).toBe('NON_ZERO_BALANCE');
       expect(problem.detail).toBe('Cannot delete an account with a non-zero balance.');
     } finally {
-      // Drain with the PIN, then delete: the probe must not accumulate on a seeded database.
+      // Drain with the PIN, then delete (a soft delete on the API): the probe must not stay
+      // listed on a seeded database.
       await call('/api/transactions/withdraw', {
         method: 'POST',
         headers: { 'Idempotency-Key': idempotencyKey() },
