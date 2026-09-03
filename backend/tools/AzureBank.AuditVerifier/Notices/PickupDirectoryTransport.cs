@@ -60,7 +60,7 @@ public sealed class PickupDirectoryTransport : INoticeTransport
           window between the check above and the publish. The directory is NOT created here: a
           missing one is the operator's mistake, refused by the command before anything is read.
         */
-        var staging = path + ".partial";
+        var staging = StagingPathFor(path);
         try
         {
             await using (var file = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -87,6 +87,21 @@ public sealed class PickupDirectoryTransport : INoticeTransport
 
         return notice.FileName;
     }
+
+    /// <summary>
+    /// Where this invocation writes before it publishes: beside the final name, with a suffix that
+    /// no other invocation shares.
+    /// </summary>
+    /// <remarks>
+    /// UNIQUE PER CALL, and the reason is Unix. Two runs aimed at one notice would both derive the
+    /// same staging name from the final one; the second's exclusive create fails, its cleanup then
+    /// deletes the staging file — and on Unix, unlike Windows, deleting a file another process holds
+    /// open succeeds — so the first run's move finds no source and the notice is lost by the run
+    /// that was winning. A per-call suffix means the cleanup can only ever remove this call's own
+    /// file, and the two runs meet, as intended, at the move.
+    /// </remarks>
+    internal static string StagingPathFor(string finalPath) =>
+        $"{finalPath}.{Guid.NewGuid():N}.partial";
 
     /// <summary>
     /// The message text, headers first, exactly as a mail client expects to read it.

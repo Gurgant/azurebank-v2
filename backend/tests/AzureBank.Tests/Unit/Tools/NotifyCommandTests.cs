@@ -480,4 +480,22 @@ public class NotifyCommandTests : IDisposable
 
         act.Should().Throw<ArgumentException>().WithMessage("*line break*");
     }
+
+    [Fact]
+    public void TheStagingName_IsUniqueToEachCall_SoOneRunCannotDeleteAnothers()
+    {
+        /*
+          On Unix a file another process holds open can be deleted, so two runs sharing one staging
+          name would let the loser's cleanup remove the winner's half-written file. The name is what
+          keeps them apart; this pins that it differs per call and still sits beside the final name.
+        */
+        var final = Path.Combine(_directory, "abc.eml");
+
+        var first = PickupDirectoryTransport.StagingPathFor(final);
+        var second = PickupDirectoryTransport.StagingPathFor(final);
+
+        first.Should().NotBe(second);
+        first.Should().StartWith(final + ".").And.EndWith(".partial");
+        Path.GetDirectoryName(first).Should().Be(_directory, "the staging file lives beside the message, on the same volume, so the move is a rename");
+    }
 }

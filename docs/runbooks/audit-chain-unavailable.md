@@ -803,8 +803,8 @@ it was written when there was one.
 - `verify` READS. Safe, and it is the verdict everything below hangs on.
 - `export <path>` READS the anchor table and writes a FILE. Safe against the database, and it is the
   one thing on this page that gets evidence somewhere the incident cannot reach. Run it before you
-  touch anything: it refuses to overwrite an existing file, so it cannot destroy an earlier copy, and
-  a chain that has stopped verifying is exactly when an off-machine copy is worth the most.
+  touch anything: it refuses to overwrite an existing file, so it cannot destroy an earlier copy,
+  and a chain that has stopped verifying is exactly when an off-machine copy is worth the most.
 - `anchor` WRITES a record into `AuditAnchors`. **That is the one to leave alone.** Two paragraphs
   below, this page tells you the table is evidence and not to write to it; `anchor` is a write. It
   will also record a GAP MARKER over a chain it cannot vouch for, which is honest and is still a new
@@ -813,10 +813,13 @@ it was written when there was one.
   after the incident rather than during it: *was THIS transfer strongly authenticated, and is the
   record of it intact?* See **The evidence pack** under **After recovery**.
 - `notify <directory> --contact "<text>"` READS `Users`, `SubscriberNotices` and `AuditEvents`, and
-  WRITES `DeliveredAt` on notices plus one FILE per notice. Safe against the chain — it touches no
-  audit row and walks no chain, so it never says 1 — but it is a write, and a run during an incident
-  renders notices from rows nothing has vouched for yet. Run it after recovery, after `verify`. See
-  **The enrolment notice** under **After recovery**.
+  WRITES: it attempts one FILE per waiting notice and sets `DeliveredAt` on a row only after that
+  row's file is published (a notice with no usable address or an event this build cannot render is
+  skipped and stays owed; a failed write stays owed; two concurrent runs can leave a duplicate file
+  and say so). Safe against the chain — it touches no audit row and walks no chain, so it never
+  says 1 — but it is a write, and a run during an incident renders notices from rows nothing has
+  vouched for yet. Run it after recovery, after `verify`. See **The enrolment notice** under
+  **After recovery**.
 
 Neither `export` nor the window below is a substitute for the number you wrote down elsewhere. They
 are cheaper to produce and they are not testimony from anybody else.
@@ -967,8 +970,11 @@ The headlines, and what each means from THIS verb:
   SQL). Nothing is rendered for it and it stays owed.
 - `NO AUDIT ROW backs notice …` — from THIS verb it means the enrolment row the notice belongs to is
   missing for that user. The notice is rendered anyway — the account holder is not punished for the
-  gap — and the absence is the finding: run `verify`, then `evidence`, on that account's rows.
-  (From `evidence` the same words mean a LEDGER row with no audit row naming it; see above.)
+  gap — and the absence is the finding: run `verify` for the chain's verdict, then read the notice
+  row and that user's `AuditEvents` by `ActorUserId` (the first two statements of
+  `docs/runbooks/pin-enrolment-repudiated.md`). `evidence` does not apply here — it reads by a
+  transfer's `TXN-…` number, and an enrolment has none. (From `evidence` the same words mean a
+  LEDGER row with no audit row naming it; see above.)
 - `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, a directory
   that does not exist (the verb never creates one), or a directory inside a git working tree — where
   it sits or where a link on its path points. Per notice, counted toward **6**: the file could not
@@ -977,11 +983,11 @@ The headlines, and what each means from THIS verb:
   while this one wrote the file: that file is a duplicate, and the row is not owed.
 - **An orphan file** — a complete `.eml` whose row is still owed. It happens when the run is
   interrupted, or the store refuses the mark, between the publish and the `UPDATE`; the file is
-  written to a staging name (`<reference>.eml.partial`) and moved into place only when complete, so
-  an orphan is never a truncated message — a leftover `.partial` is a write that failed, and can be
-  deleted. The row is the truth: delete or move the orphan and run again, and the notice is
-  rendered afresh under the same reference. A second run into the same directory refuses to
-  overwrite it and says so.
+  written to a staging name (`<reference>.eml.<run>.partial`, the suffix unique to the run) and
+  moved into place only when complete, so an orphan is never a truncated message — a leftover
+  `.partial` is a write that failed, and can be deleted. The row is the truth: delete or move the
+  orphan and run again, and the notice is rendered afresh under the same reference. A second run
+  into the same directory refuses to overwrite it and says so.
 - `CANNOT NOTIFY` — exit **3**: the tool is not configured, the ring will not build, or the store
   could not be read or written. Not a statement about any notice.
 - `INTERRUPTED` — exit **5**. Notices written and marked before the interruption stay marked.
