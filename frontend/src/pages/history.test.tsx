@@ -6,6 +6,7 @@ import { server } from '../mocks/server';
 import { problem } from '../mocks/problem';
 import { mockState } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { formatDateHeading } from '../utils/format';
 import { HistoryPage } from './HistoryPage';
 
 /**
@@ -35,15 +36,19 @@ describe('history feed (T1)', () => {
       It used to read 'July 20, 2026', which stopped existing the moment the ledger was re-dated
       into the current month — and would have gone stale every month even if it had not been. What
       the test actually means is "the group heading is the day of the row above it", so it says that.
+
+      FORMATTED WITH THE PAGE'S OWN FORMATTER, the transaction-detail test's rule, and this file
+      had not followed it: the expectation was built with `toLocaleDateString(..., { timeZone:
+      'UTC' })` while `groupByDate` uses date-fns `format()`, which is LOCAL. The two name different
+      days whenever the newest row's instant falls on a different calendar day in UTC than in the
+      viewer's zone — for America/Los_Angeles that is every day from 00:00 to 07:00 UTC, which is why
+      the zone leg PR #145 added went red only on a run that happened to start at 02:02Z, on a PR
+      that had not touched the frontend. A guard measuring the wrong window, again: the same instant
+      through the same function cannot drift.
     */
-    const newest = new Date(mockState.transactions[0].createdAt);
-    const heading = newest.toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-      timeZone: 'UTC',
-    });
-    expect(screen.getByText(heading)).toBeInTheDocument();
+    expect(
+      screen.getByText(formatDateHeading(mockState.transactions[0].createdAt)),
+    ).toBeInTheDocument();
   });
 
   it('computes the summary from TYPES over loaded pages, excluding Reversed', async () => {
