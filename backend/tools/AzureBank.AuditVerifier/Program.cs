@@ -20,6 +20,7 @@ namespace AzureBank.AuditVerifier;
 //   dotnet run --project backend/tools/AzureBank.AuditVerifier -- anchor
 //   dotnet run --project backend/tools/AzureBank.AuditVerifier -- export <path>
 //   dotnet run --project backend/tools/AzureBank.AuditVerifier -- evidence <transactionNumber>
+//   dotnet run --project backend/tools/AzureBank.AuditVerifier -- notify <directory> --contact "<text>"
 //
 // `verify` walks the chain and reports. `anchor` walks it once and RECORDS what it found, chained to
 // the record before it and authenticated under a key the database does not hold. It detects no
@@ -27,11 +28,15 @@ namespace AzureBank.AuditVerifier;
 // job, because nothing in this deployment runs between sessions. `export` copies the anchor chain to
 // a file. `evidence` assembles, for one transaction, the consumed step-up authorisation and the audit
 // rows that name it, under the chain verdict -- the PSD2 Art. 72 read (B3), and it adds no exit code:
-// the chain's verdict is the verdict, a number the store does not hold is 4.
+// the chain's verdict is the verdict, a number the store does not hold is 4. `notify` renders every
+// notice the API has recorded as owed to an account holder (ADR-0045) into one .eml file each, in a
+// directory outside any git repository, and marks the row delivered -- a pickup directory, not a
+// relay: nothing here sends. It walks no chain and never says 1.
 //
 // Exit codes: 0 intact, 1 broken, 2 nothing to verify, 3 no verdict (the store could not be read),
 // 4 the command line was wrong, 5 interrupted, 6 there WAS a verdict but nothing could be recorded
-// from it. Only 0, 1 and 2 are statements about the chain.
+// from it -- and, from `notify`, at least one notice is still owed after the run. Only 0, 1 and 2
+// are statements about the chain, and from `notify` 0 and 2 are statements about notices.
 //
 // THE LIST LIVES IN THREE PLACES, not two, and this comment used to say "both" while naming three:
 // VerifyCommand's constants carry 0 to 5, AnchorCommand carries 6, and this header repeats them all.
@@ -97,6 +102,7 @@ internal static class Program
         rootCommand.AddCommand(AnchorCommand.Create(host.Services));
         rootCommand.AddCommand(ExportCommand.Create(host.Services));
         rootCommand.AddCommand(EvidenceCommand.Create(host.Services));
+        rootCommand.AddCommand(NotifyCommand.Create(host.Services));
 
         var parsed = await rootCommand.InvokeAsync(args);
 

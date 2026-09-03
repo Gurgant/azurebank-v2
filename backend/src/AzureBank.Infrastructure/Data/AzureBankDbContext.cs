@@ -57,6 +57,13 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// </summary>
     public DbSet<AuditAnchor> AuditAnchors => Set<AuditAnchor>();
 
+    /// <summary>
+    /// What an account holder is owed and has not yet been told (ADR-0045). Written by the API in
+    /// the same save as the action that owes the notice; read and marked by the operator tool;
+    /// purged by nothing.
+    /// </summary>
+    public DbSet<SubscriberNotice> SubscriberNotices => Set<SubscriberNotice>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

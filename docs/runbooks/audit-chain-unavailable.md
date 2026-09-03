@@ -428,7 +428,7 @@ over the prose around it, and re-measure before believing either.
   specific to it: the same holds for every `ValidateOnStart` failure, measured the same day against
   a missing `Audit:AnchorKey`. **Alert on the absence of `Application started`, never on the exit
   code.**
-- **The verifier says so plainly, and all three verbs say the same thing.** A ring that will not
+- **The verifier says so plainly, and all five verbs say the same thing.** A ring that will not
   construct answers `CANNOT PROCEED: this tool is not configured to read the chain` — **exit 3** —
   with the reason on the next line. Where the refusal is about a particular entry it names that
   entry by its CONFIGURATION index rather than its position after the boundary sort. Three of the
@@ -797,14 +797,14 @@ eventual failure, and holds a connection while it does. If the queue is legitima
 — a genuine burst — the fix is capacity, not patience.
 
 **Do not run `anchor` during an incident. Run `export` instead, and run it FIRST.** The tool has
-four verbs and three of them are safe here, which the rest of this page could not tell you because
+five verbs and three of them are safe here, which the rest of this page could not tell you because
 it was written when there was one.
 
 - `verify` READS. Safe, and it is the verdict everything below hangs on.
 - `export <path>` READS the anchor table and writes a FILE. Safe against the database, and it is the
   one thing on this page that gets evidence somewhere the incident cannot reach. Run it before you
-  touch anything: it refuses to overwrite an existing file, so it cannot destroy an earlier copy, and
-  a chain that has stopped verifying is exactly when an off-machine copy is worth the most.
+  touch anything: it refuses to overwrite an existing file, so it cannot destroy an earlier copy,
+  and a chain that has stopped verifying is exactly when an off-machine copy is worth the most.
 - `anchor` WRITES a record into `AuditAnchors`. **That is the one to leave alone.** Two paragraphs
   below, this page tells you the table is evidence and not to write to it; `anchor` is a write. It
   will also record a GAP MARKER over a chain it cannot vouch for, which is honest and is still a new
@@ -812,6 +812,14 @@ it was written when there was one.
 - `evidence <transactionNumber>` READS. Safe, and it is the verb for the question a regulator asks
   after the incident rather than during it: *was THIS transfer strongly authenticated, and is the
   record of it intact?* See **The evidence pack** under **After recovery**.
+- `notify <directory> --contact "<text>"` READS `Users`, `SubscriberNotices` and `AuditEvents`, and
+  WRITES: it attempts one FILE per waiting notice and sets `DeliveredAt` on a row only after that
+  row's file is published (a notice with no usable address or an event this build cannot render is
+  skipped and stays owed; a failed write stays owed; two concurrent runs can leave a duplicate file
+  and say so). Safe against the chain — it touches no audit row and walks no chain, so it never
+  says 1 — but it is a write, and a run during an incident renders notices from rows nothing has
+  vouched for yet. Run it after recovery, after `verify`. See **The enrolment notice** under
+  **After recovery**.
 
 Neither `export` nor the window below is a substitute for the number you wrote down elsewhere. They
 are cheaper to produce and they are not testimony from anybody else.
@@ -926,6 +934,85 @@ row made before the chain walk, so no verdict is produced; `CANNOT ASSEMBLE` is 
 not configured, the ring will not build, or the store could not be read, the same three causes as
 `CANNOT VERIFY`; `INTERRUPTED` is **5**. `EVIDENCE PACK for <number>` is the first line of every
 successful assembly, and the line to search a transcript for.
+
+### The enrolment notice (T13, NIST SP 800-63B-4 §4.1.2.1)
+
+When a PIN is enrolled, the API records — in the same save as the enrolment and its audit row — that
+the account holder is OWED a notice (ADR-0045). Nothing in the API sends it. This verb renders every
+owed notice as one RFC 5322 `.eml` file, addressed to the email held on the account, into a
+directory you name, and marks the row delivered:
+
+```bash
+dotnet run --project backend/tools/AzureBank.AuditVerifier -- notify ../azurebank-notices \
+  --contact "security@your-bank.example, +00 000 0000"
+```
+
+The directory must exist (the verb never creates one) and must be OUTSIDE any git repository — the
+verb refuses one inside a working tree, where it sits or where a link on its path points, because a
+spool of addresses is one commit away from being published. `--contact` is
+what a recipient uses to say "this was not me"; NIST §4.6 makes it mandatory content, so the verb
+renders nothing without it. What that contact can actually do is a separate runbook.
+
+**A file in a pickup directory has reached the edge of this machine and nobody else.** Nothing here
+sends: a relay pointed at the directory, or a person, is what moves it — and neither exists in this
+deployment, which is the gap `docs/deferred/` records with its trigger. Delete the spool after the
+demonstration; it holds addresses in clear.
+
+The headlines, and what each means from THIS verb:
+
+- `NOTIFIED n of m waiting notices into <directory>` — the summary line, first. Exit **0** when
+  every waiting notice was written and marked; **6** when at least one is still owed, with a line
+  per notice saying why. A marked notice is never rewritten: fix what the line names and run again.
+- `NOTHING TO NOTIFY` — exit **2**: no notice is owed. Its own answer, not a success, for the reason
+  `verify`'s **2** is.
+- `NO ADDRESS` — that notice's account holds no email, or one that cannot head a message because it
+  contains a line break (either is unreachable through registration and reachable by seed or raw
+  SQL). Nothing is rendered for it and it stays owed.
+- `NO AUDIT ROW backs notice …` — from THIS verb it means the enrolment row the notice belongs to is
+  missing for that user. The notice is rendered anyway — the account holder is not punished for the
+  gap — and the absence is the finding: run `verify` for the chain's verdict, then read the notice
+  row and that user's `AuditEvents` by `ActorUserId` (the first two statements of
+  `docs/runbooks/pin-enrolment-repudiated.md`). `evidence` does not apply here — it reads by a
+  transfer's `TXN-…` number, and an enrolment has none. (From `evidence` the same words mean a
+  LEDGER row with no audit row naming it; see above.)
+- `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, a directory
+  that does not exist (the verb never creates one), or a directory inside a git working tree — where
+  it sits or where a link on its path points. Per notice, counted toward **6**: the file could not
+  be written (the exception TYPE is named, never its message — a message can echo the address), or
+  the build cannot render that event. `NOT NOTIFIED by this run` means another run marked the row
+  while this one wrote the file: that file is a duplicate, and the row is not owed.
+- **An orphan file** — a complete `.eml` whose row is still owed. It happens when the run is
+  interrupted, or the store refuses the mark, between the publish and the `UPDATE`; the file is
+  written to a staging name (`<reference>.eml.<run>.partial`, the suffix unique to the run) and
+  moved into place only when complete, so an orphan is never a truncated message — a leftover
+  `.partial` is a write that failed, and can be deleted. The row is the truth: delete or move the
+  orphan and run again, and the notice is rendered afresh under the same reference. A second run
+  into the same directory refuses to overwrite it and says so.
+- `CANNOT NOTIFY` — exit **3**: the tool is not configured, the ring will not build, or the store
+  could not be read or written. Not a statement about any notice.
+- `INTERRUPTED` — exit **5**. Notices written and marked before the interruption stay marked.
+
+The address never appears on the console, in a receipt, or in a file name; it is in the file, in the
+`To:` header, because the file is the message.
+
+Measured 2026-09-03, one enrolment on a throwaway store, the verb run twice:
+
+```
+NOTIFIED 1 of 1 waiting notices into C:\Users\Drako\AppData\Local\Temp\azurebank-notices-t13
+  Each file is a complete message addressed to the email held on the account, and it has
+  reached this machine's disk and nobody else: nothing here sends. Point a relay at the
+  directory or move the files yourself, and delete the spool afterwards.
+  01a064a9806078ea97ab2aba54d4cc37.eml <- notice 01a064a9806078ea97ab2aba54d4cc37, PinEnrolled at 2026-09-03 00:27:05Z
+exit 0
+
+NOTHING TO NOTIFY: no notice is owed.
+  Every recorded notice has been rendered, or none was ever recorded. Not a success
+  and not a failure: nothing was waiting.
+exit 2
+```
+
+What a recipient does with the reference, and what the contact can do about it, is
+`docs/runbooks/pin-enrolment-repudiated.md`.
 
 - **Verify the chain. Run this FROM THE REPOSITORY ROOT** — the `--project` path is relative to it,
   and from anywhere else `dotnet run` fails to find the project and exits **1**, which this document
@@ -1138,7 +1225,8 @@ successful assembly, and the line to search a transcript for.
   (the store could not be read), **4** the command line was wrong, **5** interrupted, **6** there WAS
   a verdict but nothing could be recorded from it. Only 0, 1 and 2 are statements about the CHAIN.
   `evidence` adds no code of its own: it exits with the chain's verdict, and a number the store does
-  not hold is 4.
+  not hold is 4. `notify` adds none either and walks no chain, so from it 0 and 2 are statements
+  about NOTICES (all written; none waiting), 6 means at least one is still owed, and 1 never occurs.
 
   ⚠️ **This list stopped at 5 until 2026-08-28, and 6 had existed since the `anchor` mode shipped.**
   A script written from it treated 6 as an unknown code. The list lives in FOUR places —
@@ -1177,7 +1265,7 @@ successful assembly, and the line to search a transcript for.
 
   **`3` is the one to wire an alert on separately from `1`.** It covers everything that stopped the
   walk before it could reach a verdict: a MISSING or too-short `Audit:ChainKey` **or
-  `Audit:AnchorKey` — either alone stops all three verbs, which is the failure this page's own
+  `Audit:AnchorKey` — either alone stops all five verbs, which is the failure this page's own
   recovery procedure produced until 2026-08-28** — an unreachable server, a connection string that is
   malformed or absent, **the states step 6 is about — the `AuditEvents` table renamed, dropped or
   never migrated, or a login that cannot SELECT from it** — **and every way the KEY RING refuses to
@@ -1190,7 +1278,7 @@ successful assembly, and the line to search a transcript for.
   directly, since a JSON `null` binds to a non-null entry with an empty key and is caught by the
   blank guard instead.)*
 
-  All of those answer 3 in all three verbs. The per-entry ones name the offending
+  All of those answer 3 in all five verbs. The per-entry ones name the offending
   `Audit:RetiredChainKeys:N` by its CONFIGURATION index — which is not its position after the
   boundary sort, so it is the one to edit. The three that are not per-entry — a short or missing
   `Audit:ChainKey`, and either founding-key refusal — have no index to give and name the setting
@@ -1203,7 +1291,7 @@ successful assembly, and the line to search a transcript for.
   rule the other does not. What changed is that the API resolves the chain once during startup, so
   the constructor fires at the deploy rather than on the first request that opens the database. In
   the VERIFIER it still fires per verb, which is the same guarantee for a tool with no startup to
-  speak of. The measured transcript is in the bullet on the verifier's three verbs, further up this
+  speak of. The measured transcript is in the bullet on the verifier's five verbs, further up this
   page. *(This pointed at
   **RETIRING A KEY TAKES THREE VALUES**, which holds a command to run and no output at all.)*
   That last group is why the tool no longer stops at "check the connection string and the key": it

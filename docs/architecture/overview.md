@@ -128,7 +128,8 @@ number never appears in a list response.
 **Honest residual:** registration auto-logs-in, which means the account-existence oracle is
 narrowed rather than closed. Closing it needs out-of-band email confirmation, which needs email
 infrastructure this project does not have. That is a bounded, accepted risk, written down as a
-decision rather than left as an oversight.
+decision rather than left as an oversight. *(Since ADR-0045 the operator tool can render a message
+to the account's email into a pickup directory; nothing sends it, so the sentence still holds.)*
 
 *Depth: ADR-0013, ADR-0014, ADR-0020, ADR-0012.*
 

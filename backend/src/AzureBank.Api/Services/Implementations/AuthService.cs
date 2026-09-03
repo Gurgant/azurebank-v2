@@ -593,9 +593,9 @@ public class AuthService : IAuthService
               A session cookie was the entire proof required to mint the credential that authorises
               every money movement.
 
-              The password is the bar and also the CEILING: NIST SP 800-63-4B §4.1.2 requires binding
-              at the maximum AAL currently available on the account or the maximum at which the new
-              authenticator will be used, WHICHEVER IS LOWER. With no PIN enrolled, the account's
+              The password is the bar and also the CEILING: NIST SP 800-63B-4 §4.1.2.1 requires
+              binding at the maximum AAL currently available on the account or the maximum at which
+              the new authenticator will be used, WHICHEVER IS LOWER. With no PIN enrolled, the account's
               maximum is the password — so demanding anything heavier would be invention, not rigour.
             */
             if (string.IsNullOrEmpty(request.Password))
@@ -673,6 +673,32 @@ public class AuthService : IAuthService
                 SecurityEvents.PinEnrolled, AuditOutcome.Succeeded,
                 actorUserId: userId, subjectType: "User", subjectId: userId,
                 detail: "{\"passwordProved\":true}");
+
+            /*
+              THE NOTICE THE OWNER IS OWED, recorded here and not sent from here (ADR-0045).
+
+              NIST SP 800-63B-4 §4.1.2.1: "When an authenticator is added, the CSP SHALL notify the
+              subscriber via a mechanism independent of the transaction binding the new
+              authenticator, as described in Sec. 4.6." Nothing in this process can send, and a send
+              inside the request would be worse than none: after UpdateAsync it can be lost between
+              the commit and the call with no record that it was owed, and inside the save it would
+              hold the audit tail lock across I/O. So the request records the OBLIGATION, beside the
+              evidence and for the same reason it sits before UpdateAsync: the row rides the save
+              below and cancels itself with it. The operator tool's `notify` verb renders it later,
+              addressed to the email held on the account — a path the session that enrolled the
+              PIN cannot read, redirect or suppress. Not a BackgroundService: nothing in this API
+              runs a correctness-bearing loop, and the anchor sets the precedent of a mode of the
+              tool, not a scheduled job.
+
+              No address is written: it is joined from the account when the notice is rendered.
+            */
+            _context.SubscriberNotices.Add(new SubscriberNotice
+            {
+                Id = Guid.CreateVersion7(),
+                UserId = userId,
+                Event = SecurityEvents.PinEnrolled,
+                OccurredAt = DateTime.UtcNow,
+            });
         }
 
         var result = await _userManager.UpdateAsync(user);
@@ -688,8 +714,10 @@ public class AuthService : IAuthService
             /*
               Detective control, in the OPERATOR's log — see SecurityEvents.PinEnrolled: this is
               deliberately NOT the independent notification to the account owner that NIST
-              SP 800-63-4B §4.1.2 also requires, because there is no mail transport in this system
-              to send one with. Saying so here rather than letting the line read as compliance.
+              SP 800-63B-4 §4.1.2.1 also requires. That notice is the SubscriberNotice row added
+              above, rendered later by the operator tool; what this system still lacks is a relay
+              that delivers it (ADR-0045). Saying so here rather than letting the line read as
+              compliance.
 
               AFTER the update, unlike the audit row above, and the asymmetry is deliberate rather
               than an oversight: the row lives inside the transaction and cancels itself when the

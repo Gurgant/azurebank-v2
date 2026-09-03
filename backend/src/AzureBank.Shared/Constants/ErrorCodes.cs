@@ -13,8 +13,8 @@ public static class ErrorCodes
 
     /// <summary>
     /// The account password is required for this action. Today: ENROLLING a PIN, where there is no
-    /// previous PIN to ask for and the session alone is not a proof of identity (NIST SP 800-63-4B
-    /// §4.1.2 — bind an authenticator behind authentication, not behind a session).
+    /// previous PIN to ask for and the session alone is not a proof of identity (NIST SP 800-63B-4
+    /// §4.1.2.1 — bind an authenticator behind authentication, not behind a session).
     /// </summary>
     public const string PasswordRequired = "PASSWORD_REQUIRED";
     public const string InvalidPin = "INVALID_PIN";

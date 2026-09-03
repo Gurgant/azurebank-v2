@@ -58,17 +58,23 @@ every error shape ride through untouched.
 
 ## What this does not close
 
-**Enrolling the FIRST PIN still requires only a session.** An attacker holding a stolen session on
+~~**Enrolling the FIRST PIN still requires only a session.** An attacker holding a stolen session on
 an account that has never set a PIN can enrol one of their choosing and elevate. Stated plainly
-rather than left to be rediscovered.
+rather than left to be rediscovered.~~
 
-It is narrower than what this ADR closes — it needs an account with no PIN yet, and the window shuts
-the moment the real user enrols — but it is the same shape of escalation. What would close it is
-requiring the account password at enrolment. Not done here because registration hands the user
+~~It is narrower than what this ADR closes — it needs an account with no PIN yet, and the window
+shuts the moment the real user enrols — but it is the same shape of escalation. What would close it
+is requiring the account password at enrolment. Not done here because registration hands the user
 straight to the PIN wizard seconds after authenticating with that same password, so the prompt would
 be asking again for something just proven, and the exposure is a stolen session rather than a
 credential gap. That reasoning is worth re-examining if the enrolment entry point ever moves away
-from the post-registration handoff.
+from the post-registration handoff.~~
+
+*(Struck 2026-09-03. Closed by T8 on 2026-08-15 (`8f0abba`): enrolling the first PIN costs the
+account password, in the same request. The trigger this paragraph named — the entry point moving —
+never fired; what fired was the measurement, a session cookie minting the credential that authorises
+every money movement, which was too cheap a hole to leave for a UX argument. The notification half
+of the same standard clause is ADR-0045.)*
 
 Also unchanged: the **direct-API step-up bypass** for transfers and `/full-number`
 (ADR-0020/ADR-0038 residual). The API has no auth-level concept; enforcement for those two lives

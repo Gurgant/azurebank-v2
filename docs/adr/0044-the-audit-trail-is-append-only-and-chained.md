@@ -744,7 +744,8 @@ hosted service that resolves the chain and nothing else, registered beside the s
 so a second host inherits it; it is deliberately NOT an options validator, since that would put the
 ring's rules in the second place this section just argued against, and two copies of a structural
 rule drift. Cheap to do at startup because the constructor takes options and a logger and no
-database. *(The verifier needed nothing: all three verbs already resolve the chain per run.)*
+database. *(The verifier needed nothing: all ~~three~~ five verbs already resolve the chain per run —
+struck 2026-09-03, the count moved twice since; the property held each time.)*
 
 **What this does not do.**
 
@@ -872,7 +873,8 @@ without handing over the range. It prints the rows and the verdict; it claims no
 
 **No exit code of its own.** The chain's verdict is the verdict — a pack over a broken chain prints
 the pack and exits 1, export's rule inherited — and a number the store does not hold is 4, a fact
-about the command line. The ring-refusal test now asks all four verbs.
+about the command line. The ring-refusal test now asks all ~~four~~ five verbs *(struck 2026-09-03:
+`notify` arrived with ADR-0045 and is asked too)*.
 
 ## What is wired, and what is not
 

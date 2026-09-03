@@ -1,0 +1,4 @@
+# A rendered notice is an RFC 5322 message: CRLF is part of the format, and the sample in
+# docs/notices/ is committed byte for byte as the verb wrote it (ADR-0045). Without this line
+# core.autocrlf would store it as LF and hand a Linux checkout a file the transport never produces.
+*.eml -text

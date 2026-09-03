@@ -43,7 +43,7 @@ public static class VerifyCommand
     public const int Misconfigured = 3;
 
     /// <summary>
-    /// The verdict for a ring that cannot be built, shared by all three verbs.
+    /// The verdict for a ring that cannot be built, shared by all five verbs.
     /// </summary>
     /// <remarks>
     /// ⚠️ SHARED BECAUSE IT WAS NOT, AND THE TWO VERBS THAT LACKED IT ANSWERED 4. The ring's rules

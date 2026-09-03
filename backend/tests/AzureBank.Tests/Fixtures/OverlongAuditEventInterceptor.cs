@@ -33,9 +33,20 @@ public sealed class OverlongAuditEventInterceptor : DbCommandInterceptor
     private static readonly string TooLong = new('X', 400);
 
     private readonly string _eventName;
+    private readonly string _table;
     private int _fired;
 
-    public OverlongAuditEventInterceptor(string eventName) => _eventName = eventName;
+    /// <param name="eventName">The event-name value whose insert is made to fail.</param>
+    /// <param name="table">
+    /// Which table's insert to target. Defaults to <c>AuditEvents</c>; <c>SubscriberNotices</c> carries
+    /// the same 40-character <c>Event</c> column (ADR-0045), so the same overflow proves D1 in the
+    /// other direction — an enrolment whose notice cannot be recorded does not happen.
+    /// </param>
+    public OverlongAuditEventInterceptor(string eventName, string table = "AuditEvents")
+    {
+        _eventName = eventName;
+        _table = table;
+    }
 
     /// <summary>True once the failure has actually been injected.</summary>
     public bool Fired => Volatile.Read(ref _fired) == 1;
@@ -63,7 +74,7 @@ public sealed class OverlongAuditEventInterceptor : DbCommandInterceptor
     private void Rewrite(DbCommand command)
     {
         if (Volatile.Read(ref _fired) == 1
-            || !command.CommandText.Contains("INSERT INTO [AuditEvents]", StringComparison.Ordinal))
+            || !command.CommandText.Contains($"INSERT INTO [{_table}]", StringComparison.Ordinal))
         {
             return;
         }

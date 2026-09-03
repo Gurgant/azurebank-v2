@@ -1,0 +1,29 @@
+From: no-reply@azurebank.invalid
+To: subscriber@example.com
+Subject: AzureBank: a transfer PIN was set on your account
+Date: Thu, 03 Sep 2026 00:27:09 +0000
+Message-ID: <01a064a9806078ea97ab2aba54d4cc37@azurebank.invalid>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+Auto-Submitted: auto-generated
+
+AzureBank — security notice
+
+On 2026-09-03 00:27 UTC a 6-digit transfer PIN was set on your account for the first time.
+
+That PIN is what authorises withdrawals and transfers from your account. Your account
+password was proved in the same request.
+
+If this was you, nothing further is needed.
+
+IF THIS WAS NOT YOU: do not use the account for transfers or withdrawals, and contact
+security@your-bank.example, +00 000 0000 quoting reference 01a064a9806078ea97ab2aba54d4cc37.
+
+This message asks you for nothing. It contains no link, and you will never be asked for
+your password or PIN by message. It cannot be replied to.
+
+It was addressed to the email address held on your account. If that address is not
+yours, contact security@your-bank.example, +00 000 0000.
+
+Reference: 01a064a9806078ea97ab2aba54d4cc37
