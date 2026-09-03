@@ -154,7 +154,9 @@ describe('contract: money', () => {
     /*
       The bound the form promises is the contract's, and the contract is what this reads first:
       `DepositRequest.properties.amount.maximum` in the committed document. Then the stack is asked
-      one cent above it. Nothing here mutates a balance — a refused deposit writes nothing.
+      one cent above it. Nothing here mutates a balance — a refused deposit leaves no ledger row;
+      the only rows touched are the idempotency claim, inserted before model validation, and its
+      fenced delete on the 400 (ADR-0009).
 
       Why a real-stack pin exists for this sentence at all: the mock quoted "$0.01 and $100,000.00"
       as observed for a fortnight after the server had stopped rendering currency symbols (3769dc9),

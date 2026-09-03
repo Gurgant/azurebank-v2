@@ -984,7 +984,9 @@ describe('step-up authorisations (ADR-0042)', () => {
   });
 
   it('applies the amount annotation at the mint, in the framework envelope', async () => {
-    // OBSERVED, amount 0: 400 {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]} —
+    // OBSERVED on the mint (2026-08-04), amount 0: 400 {"Amount":[...]} — the sentence in it is the
+    // 2026-09-03 deposit-endpoint measurement ("Amount must be between 0.01 EUR and 100000.00 EUR");
+    // the mint shares the annotation, so it is the same string, though not re-measured there —
     // PascalCase, no `detail`. `[MoneyRange]` is a DataAnnotation, so it fires in model state
     // before the action, and the mint answers it identically to the transfer.
     seedMockSession();

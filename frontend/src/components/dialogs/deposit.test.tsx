@@ -259,7 +259,7 @@ describe('deposit (T3 — idempotent mutation)', () => {
   });
 
   it('shows an inline hint and disables the CTA for an over-limit amount', async () => {
-    // 100,001: one cent above the CONTRACT's bound and well inside the 1,000,000 the form used to
+    // 100,001: one euro above the CONTRACT's bound and well inside the 1,000,000 the form used to
     // allow, so this is red on the old constant and green on the new — the old '1000001' proved
     // nothing about the fix, being above both.
     renderDeposit();

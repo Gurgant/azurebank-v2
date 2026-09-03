@@ -22,9 +22,9 @@ describes the file as keeping every form's exact legacy copy; the figure came fr
 deposit dialog (PR #23, "the original DepositPage is the UX spec"), which took it from an original
 UI file that contradicted the original's own contract schema (100,000, citing the OpenAPI maximum).
 No ADR, plan, log entry or pull-request body ever decided 1,000,000. The backend suite pins it as
-refused. The balance-guard decision that "a deposit is an inflow" is about the balance bound —
-which a deposit rightly lacks — not about the amount maximum, and reading it as support for a
-higher inflow cap is a category error.
+refused. The balance guard (PR #111) bounds an outflow by its source account's balance, and the
+deposit form passes no balance because a deposit rightly has none; that is about the balance bound,
+not the amount maximum, and reading it as support for a higher inflow cap is a category error.
 
 **Measured on the running API, 2026-09-03.** Deposits of 500,000, 1,000,000 and 100,000.01 answer
 `400` in the framework's model-state envelope, `{"Amount":["Amount must be between 0.01 EUR and
@@ -104,9 +104,10 @@ A user typing between 100,000 and 1,000,000 into the deposit form is now told th
 pressing the button, in the same words as every other money form, instead of after a round trip in
 the server's words. The form's copy has changed from "€1,000,000" to "€100,000" — a behaviour
 change for anyone who believed the old figure, and the reason this is an ADR rather than a
-one-character fix. Two tests replace three that asserted the client's own literal; two guards go
-red on the two ways this can drift again (the contract regenerated under the forms, and the
-constant changed without a regen).
+one-character fix. The tests that asserted the client's own literal now assert the contract's
+bound, on every form; two guards go red on the two ways this can drift again (the contract
+regenerated under the forms, and the constant changed without a regen), and a third case — one
+form's literal edited away from the constant — is the same tripwire, run through each form.
 
 ## What would change this
 

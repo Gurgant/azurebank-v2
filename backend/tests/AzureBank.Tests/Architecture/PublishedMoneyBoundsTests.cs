@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using AzureBank.Shared.Constants;
@@ -17,7 +16,8 @@ namespace AzureBank.Tests.Architecture;
 /// has one manual step: <c>node scripts/openapi-spec.mjs regen</c>, which is deliberately not in
 /// CI. So a constant changed without a regen would leave the committed document, and every client
 /// generated from it, promising the OLD bound while the server enforced the new one. That is the
-/// deposit-cap shape of PR #147's successor in reverse, and nothing else in the pipeline can see it:
+/// second of the two drifts ADR-0046 names — the constant changed without a regen — and nothing else
+/// in the pipeline can see it:
 /// the drift gate proves generated == committed, never committed == server.
 /// </para>
 /// <para>
@@ -92,13 +92,15 @@ public class PublishedMoneyBoundsTests
         // The affirmative half of ADR-0046: there is no inflow-specific bound on the server and the
         // document, so a client that gives deposits a higher cap is promising what the server refuses.
         var schemas = Document().GetProperty("components").GetProperty("schemas");
+        // Compared as decimals, not as rendered strings: a scale difference between two equal values
+        // (100000 and 100000.00) is not two bounds.
         var maxima = MoneyRequestSchemas
             .Select(n => schemas.GetProperty(n).GetProperty("properties").GetProperty("amount")
-                .GetProperty("maximum").GetDecimal().ToString(CultureInfo.InvariantCulture))
+                .GetProperty("maximum").GetDecimal())
             .Distinct()
             .ToList();
 
         maxima.Should().ContainSingle(because: "one per-transaction cap applies to every money move")
-            .Which.Should().Be(ValidationRules.TransactionMaxAmount.ToString(CultureInfo.InvariantCulture));
+            .Which.Should().Be(ValidationRules.TransactionMaxAmount);
     }
 }

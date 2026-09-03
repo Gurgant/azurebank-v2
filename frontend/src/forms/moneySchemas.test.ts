@@ -46,6 +46,63 @@ describe('the money bound is the contract’s, on every form', () => {
       const amount = schema.shape.amount;
       expect(amount.maxValue).toBe(MONEY_MAX);
       expect(amount.minValue).toBe(MIN_MONEY_AMOUNT);
+      // The getters collapse `.max()` and `.lt()` into one number, so only a parse proves the bound
+      // is INCLUSIVE — which is what amountSchema.ts enforces (`n <= max`, `n >= min`). A regenerated
+      // schema carrying `exclusiveMaximum` would keep the two lines above green and fail here.
+      expect(amount.safeParse(MONEY_MAX).success).toBe(true);
+      expect(amount.safeParse(MONEY_MAX + 1).success).toBe(false);
+      expect(amount.safeParse(MIN_MONEY_AMOUNT).success).toBe(true);
+      expect(amount.safeParse(0).success).toBe(false);
+    },
+  );
+
+  // Every FORM enforces that constant, not only the deposit one: the balance bound is set so it
+  // cannot fire, and only the max refinement decides. Red the day any one form's literal drifts
+  // from MONEY_MAX — the exact shape of the deposit form's 1,000,000.
+  const forms = [
+    [
+      'deposit',
+      'deposit',
+      (amount: string) => depositFormSchema().safeParse({ accountId: 'a1', amount }),
+    ],
+    [
+      'withdraw',
+      'withdrawal',
+      (amount: string) => withdrawFormSchema(Infinity).safeParse({ accountId: 'a1', amount }),
+    ],
+    [
+      'transfer',
+      'transfer',
+      (amount: string) =>
+        transferFormSchema(Infinity).safeParse({
+          fromAccountId: 'a1',
+          recipientTag: 'friend',
+          amount,
+        }),
+    ],
+    [
+      'internal',
+      'transfer',
+      (amount: string) =>
+        internalTransferFormSchema(Infinity).safeParse({
+          fromAccountId: 'a1',
+          toAccountId: 'a2',
+          amount,
+        }),
+    ],
+  ] as const;
+
+  it.each(forms)(
+    'the %s form accepts MONEY_MAX and refuses one cent above it with the derived copy',
+    (_name, noun, parse) => {
+      expect(parse(String(MONEY_MAX)).success).toBe(true);
+      const over = parse(String(MONEY_MAX + 0.01));
+      expect(over.success).toBe(false);
+      if (!over.success) {
+        expect(over.error.issues.map((i) => i.message)).toContain(
+          `Maximum ${noun} is ${describeMoneyBound(MONEY_MAX)}.`,
+        );
+      }
     },
   );
 
@@ -114,7 +171,7 @@ describe('money form schemas', () => {
     }
   });
 
-  it('deposit: refuses one cent above the contract bound with the deposit copy', () => {
+  it('deposit: refuses one euro above the contract bound with the deposit copy', () => {
     // 100,001 sits inside the 1,000,000 the form used to allow and above the 100,000 the contract
     // publishes — red on the old constant, green on the new one (ADR-0046).
     const over = depositFormSchema().safeParse({ accountId: 'a1', amount: '100001' });
