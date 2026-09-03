@@ -5,6 +5,8 @@
   //   dotnet user-secrets set "Jwt:Secret" "<random string, 64+ chars>"
   //   dotnet user-secrets set "Idempotency:HashKey" "<random string, 32+ chars>"
   //   dotnet user-secrets set "StepUp:BindingKey" "<random string, 32+ chars>"
+  //   dotnet user-secrets set "Audit:ChainKey" "<random string, 32+ chars>"
+  //   dotnet user-secrets set "Audit:AnchorKey" "<random string, 32+ chars>"
   //   dotnet user-secrets set "Security:PinPepper" "<random string, 32+ chars>"
   //   dotnet user-secrets set "ConnectionStrings:DefaultConnection" "<connection string>"
   "ConnectionStrings": {
@@ -27,6 +29,18 @@
     // DISTINCT from Idempotency:HashKey on purpose — the two hashes answer different
     // questions, and one leaked key must not forge the other's answer.
     "BindingKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
+  },
+
+  "Audit": {
+    // HMAC key chaining the audit trail's row hashes (ADR-0044). Server-side only, never
+    // stored in the database. Generate a random string, 32+ chars. DISTINCT from the two keys
+    // above: one leaked key must not forge another mechanism's answer.
+    "ChainKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>",
+    // HMAC key authenticating the anchor records that say what the chain looked like at an
+    // instant. DISTINCT from ChainKey on purpose: the anchor constrains whoever holds the
+    // database, and the row chain already concedes that database + ChainKey can rewrite a row.
+    // TailTimeoutSeconds is not a secret and stays in appsettings.json.
+    "AnchorKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
   },
 
   "Security": {

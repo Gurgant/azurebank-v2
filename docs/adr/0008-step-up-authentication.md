@@ -229,8 +229,10 @@ public enum AuthLevel
 > plain `UseMiddleware` with no `UseWhen`), and does two
 > unrelated jobs. First, on **every** request, it short-circuits a raw proxied
 > `/api/auth/refresh` to 404 — nothing to do with PINs; only the BFF may rotate refresh tokens
-> (ADR-0021). Second, it gates **three** paths behind level 2: `POST /api/transfers`,
-> `POST /api/transfers/internal`, and any `*/full-number` under `/api/accounts/`. It answers **401**
+> (ADR-0021). Second, it gates ~~**three** paths behind level 2: `POST /api/transfers`,
+> `POST /api/transfers/internal`, and any `*/full-number` under `/api/accounts/`~~ one path behind
+> level 2, any `*/full-number` under `/api/accounts/` (struck 2026-09-04; the correction of that
+> date under Protected Operations, ADR-0041). It answers **401**
 > when there is no session at all and **403 + `X-Auth-Level-Required`** when the session exists at
 > level 1 — see the Validation correction below. The API is not involved: a grep of `AzureBank.Api`
 > for `authlevel|acr|amr` returns only comments.
@@ -332,9 +334,10 @@ sequenceDiagram
 >
 > The real mechanism is **lazy evaluation, not a timer**: `SessionService.GetAuthLevel` checks expiry
 > **when something reads it** and downgrades the session in place at that moment. The downgrade is a
-> side effect of the read, and there are only three readers — `AuthLevelMiddleware` on the three
-> PIN-protected paths (and only when a session cookie is present), plus `GET /bff/auth/me` and
-> `GET /bff/auth/session-status`.
+> side effect of the read, and there are only three readers — `AuthLevelMiddleware` on ~~the three
+> PIN-protected paths~~ every cookie-bearing `/api` request (struck 2026-09-04; the correction of
+> that date under Protected Operations) (and only when a session cookie is present), plus
+> `GET /bff/auth/me` and `GET /bff/auth/session-status`.
 >
 > **No timer and no sweeper does this.** `SessionCleanupService` runs on a five-minute interval — the
 > same number as `PinValidityMinutes` in production, which is a coincidence that invites exactly this
@@ -409,8 +412,9 @@ public class ApplicationUser : IdentityUser<Guid>
 > **1 — Withdraw reaches the same level by a different route**, so a withdraw survives a direct call
 > to the API and a transfer does not. One decision, two implementations.
 >
-> **2 — Delete account is an open hole**, not a mechanism choice: the middleware gates three paths
-> and deletion is not one of them, and the API has no auth-level concept to fall back on. Worth
+> **2 — Delete account is an open hole**, not a mechanism choice: the middleware gates ~~three
+> paths~~ one path at level 2 (struck 2026-09-04; correction below) and deletion is not one of them,
+> and the API has no auth-level concept to fall back on. Worth
 > weighing when it is closed: deletion here is a *soft* delete (`Account.IsDeleted` behind a global
 > query filter), so the operation is recoverable — an argument about how heavy the gate should be,
 > not about whether there should be one.
@@ -490,6 +494,59 @@ public class ApplicationUser : IdentityUser<Guid>
 > `StepUpAuthorization` binds its fields inside an HMAC rather than in columns, and
 > `ToAccountId`/`RecipientUserId`/`ConsumedByTransactionId` are already nullable, so a third
 > `StepUpOperation` needs no migration.
+>
+> ---
+>
+> **Correction (2026-09-04): "three PIN-protected paths" is one, and the middleware reads the level
+> on every cookie-bearing `/api` request.**
+>
+> Two sentences in the 2026-08-12 notes still count three gated paths: the Timeout Handling note
+> (*"`AuthLevelMiddleware` on the three PIN-protected paths (and only when a session cookie is
+> present)"*) and point 2 above (*"the middleware gates three paths and deletion is not one of
+> them"*). The Middleware note's *"gates **three** paths behind level 2"* and the Related list's
+> *"the third level-2 surface"* say the same thing. All four were true when written; they are struck
+> in place above, per this file's convention, and this is what is true now.
+>
+> **One level-2 path, since [ADR-0041](0041-the-api-verifies-the-transfer-pin.md) (`dd84179`,
+> 2026-08-13).** `PinRequiredPaths` is empty; only the prefix/suffix rule (`/api/accounts/` +
+> `/full-number`) still asks for level 2, so `GET /api/accounts/{id}/full-number` is the single path
+> that can answer 403 `STEP_UP_REQUIRED`. Transfers carry their PIN in the body and the API verifies
+> it (ADR-0041, [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md)); the
+> 2026-08-13 table above already records this for the Protected Operations rows.
+>
+> **Every `/api` request reads the level, since `d74603c` (2026-08-20).** `RequiresSession` matches
+> the `/api/` prefix with no method condition and no exemption list, so the gate is entered on every
+> proxied request, not on three paths. When a session cookie is present the middleware calls
+> `SessionService.GetAuthLevel` — the lazy-downgrade reader the Timeout Handling note describes
+> — on all of them, so an expired elevation is now written back to the store by the first
+> proxied request after the deadline, not only by the next step-up attempt. The reader count is
+> still three (`AuthLevelMiddleware`, `GET /bff/auth/me`, `GET /bff/auth/session-status`); what
+> widened is the first one's footprint. The BFF's own `/bff/*` controllers are mapped after this
+> middleware and are not gated by it.
+>
+> **The 401 comes before the level check, on every path.** `GetAuthLevel` returns 0 for a missing,
+> unknown or expired session, and the `authLevel == 0` branch answers 401 `AUTH_TOKEN_MISSING` —
+> the API's own body, no `X-Auth-Level-*` header — and returns without proxying; only a live
+> session at level 1 on the reveal reaches the 403 branch. `01c0e31` (ADR-0038, 2026-08-10) put
+> the 401 first on the gated paths; `d74603c` extended it to every method and path under `/api/`.
+> A sessionless hit on the reveal still logs `StepUpWithoutSession`; the routine case has its own
+> event, `SessionRequired`, so the security stream does not report every expired cookie as a
+> step-up probe. Measured 2026-09-03 through the BFF, PR #149 (`070803f`) — *dead* is a cookie a
+> registration issued, replayed after logout:
+>
+> ```
+> POST /api/transfers          none/forged/dead -> 401 AUTH_TOKEN_MISSING
+> POST /api/transfers/internal forged/dead      -> 401 AUTH_TOKEN_MISSING
+> GET  .../full-number         none/forged/dead -> 401 AUTH_TOKEN_MISSING
+> GET  /api/accounts           forged/dead      -> 401 AUTH_TOKEN_MISSING
+> GET  .../full-number         LIVE level 1     -> 403 X-Auth-Level-Current 1
+> POST /api/transfers {}       LIVE level 1     -> 400 model-state, API hit
+> ```
+>
+> **Point 2's premise moved; its conclusion did not.** `DELETE /api/accounts/{id}` is now behind
+> the session gate like everything else under `/api/` — sessionless it answers 401 at the BFF,
+> measured in `d74603c` — but it is still not behind the level-2 gate, so the hole the 2026-08-18
+> note records is unchanged and still open.
 
 ## Validation
 
@@ -537,7 +594,8 @@ point:
 
 - [ADR-0010: PIN attempt-limiting](./0010-pin-attempt-limiting.md) — the lockout every PIN check
   shares, including the in-band one on withdraw.
-- [ADR-0020: Account-number reveal](./0020-account-number-reveal.md) — the third level-2 surface,
+- [ADR-0020: Account-number reveal](./0020-account-number-reveal.md) — ~~the third level-2 surface~~
+  the only level-2 surface since ADR-0041 (struck 2026-09-04),
   and the row missing from the Protected Operations table above.
 - [ADR-0022: Client money-mutation protocol](./0022-client-money-mutation-protocol.md) — states the
   consequence of putting the auth level in the session rather than the JWT: step-up becomes a

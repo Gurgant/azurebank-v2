@@ -73,9 +73,14 @@ performs and settles the same controller promise. What runs underneath is produc
 PIN verification against SQL, real replay.
 
 **7. The reveal endpoint is the step-up probe, not a transfer.** The BFF gates
-`/api/accounts/{id}/full-number` at level 2 through the identical code path as `/api/transfers`, so
-the interceptor is exercised the same way — but no money moves, so the suite can run as often as it
-likes and its assertions stay about the protocol.
+`/api/accounts/{id}/full-number` at level 2 ~~through the identical code path as `/api/transfers`~~
+(struck 2026-09-04; note below), so the interceptor is exercised the same way — but no money moves,
+so the suite can run as often as it likes and its assertions stay about the protocol.
+
+*(Correction 2026-09-04: "through the identical code path as `/api/transfers`" was true on
+2026-08-04. ADR-0041 (dd84179, 2026-08-13) emptied `PinRequiredPaths`, so the reveal is now the
+ONLY level-2 route and a transfer never 403s — it carries an in-band authorisation (ADR-0042). The
+choice of probe stands; the parity argument for it is history.)*
 
 ## Consequences
 

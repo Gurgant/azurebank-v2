@@ -313,14 +313,17 @@ tests are silent:
 1. `appsettings.json` — the non-secret parts (the window, the TTL).
 2. `appsettings.Development.json.example` — the section **and** the `user-secrets` command list in
    its header comment; a developer who reads only the list gets a crash.
-3. `README.md` and `docs/engineering-practices.md` — both carry the same setup recipe.
+3. `README.md` and `docs/engineering-practices.md` — both carry the same setup recipe — and the
+   env-var tables in `backend/README.md` and `backend/src/AzureBank.Api/README.md`, which drifted
+   to one secret of six because they were not on this list.
 4. `.github/workflows/*.yml` — an env var plus **every** "Start API" step. `ci.yml` has one,
    `contract-tests.yml` has two.
 5. `CustomWebApplicationFactory` — `UseSetting`, which is the one that makes the tests pass while
    everything above is still missing.
 
-Grep for an existing required secret (`Idempotency__HashKey`) and mirror every hit. That grep is the
-cheapest form of this checklist, and it finds all five.
+Grep for an existing required secret in BOTH spellings (`Idempotency__HashKey` and
+`Idempotency:HashKey`) and mirror every hit. That grep is the cheapest form of this checklist; the
+`__` form alone misses the three user-secrets recipes.
 
 ## The dev database goes stale and EVERY money endpoint answers 500
 
@@ -350,8 +353,21 @@ dotnet ef database update --no-build --connection "Server=(localdb)\MSSQLLocalDB
 ```
 
 The `--connection` is not optional: the plain form fails with *"The ConnectionString property has
-not been initialized"*, because user-secrets are not picked up in that host build even with
-`ASPNETCORE_ENVIRONMENT=Development`.
+not been initialized"*, and `ASPNETCORE_ENVIRONMENT=Development` does not change that. The host is
+not the reason. `dotnet ef` does build it — the `HostAbortedException` in the output is that probe
+— and then prefers `DesignTimeDbContextFactory` (`AzureBank.Infrastructure/Data`); `--verbose`
+prints `Using DbContext factory 'DesignTimeDbContextFactory'`. That factory reads
+`appsettings.json`, where `DefaultConnection` is `""`, plus the git-ignored
+`appsettings.Development.json`, and never user-secrets. It also resolves `../AzureBank.Api` from
+the current directory, which is why the `cd` above is part of the recipe. `migrations list` takes
+the same `--connection` and then marks each migration `(Pending)` against the real database, so the
+diagnosis is one command rather than a comparison.
+
+Hit a third time. On 2026-09-04 `dbo.__EFMigrationsHistory` on `AzureBankDev` topped out at
+`AddAuditEvents` while `dotnet ef migrations list` ended at `AddSubscriberNotices` — three behind
+(`AddAuditPayloadVersionAndKeyId`, `AddAuditAnchors`, `AddSubscriberNotices`), accumulated over
+three merges since 2026-08-19 because nothing after a merge touches the dev database. The same
+day `database update --connection` brought `AzureBankDev` and `AzureBankE2E` to head, data intact.
 
 ## A tool that writes source can inject a control character the compiler accepts
 
@@ -449,9 +465,11 @@ the assembly. Rebuild between every EF operation and both symptoms disappear.
 Two neighbours of the same trap:
 
 - `dotnet ef migrations remove` dies with *"The ConnectionString property has not been initialized"*
-  — user-secrets are not picked up there, the same failure this file already records for
-  `database update`. Deleting the migration files by hand and rebuilding is the way out.
-- `--connection` is **not** a valid option for `migrations add`; it exists only on `database update`.
+  — the same design-time-factory failure this file already records for `database update`, and
+  `remove` has no `--connection` to route around it. Deleting the migration files by hand and
+  rebuilding is the way out.
+- `--connection` is **not** a valid option for `migrations add` or `migrations remove`; it exists on
+  `database update` and `migrations list`.
 
 ## `datetime2` stores no `DateTimeKind`, so a hash over a formatted timestamp changes on read
 

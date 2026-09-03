@@ -66,3 +66,16 @@ only address that exists.
 When those hold, the change is a second `INoticeTransport`, registered in the tool's composition
 root in place of the pickup directory, and ADR-0045 D7 — delivery recorded on the row rather than in
 the chain — is the decision to reopen, because "delivered" will then mean something.
+
+## Ratified 2026-09-04
+
+Vlad's decision, recorded here so the deferral above reads as history rather than as an open
+question: **the API is the runner first.** A hosted background service inside the API process claims
+pending `SubscriberNotices` rows under a lease and hands each to the registered `INoticeTransport` —
+retry on failure, at-least-once, the claim column being what keeps "at least" from meaning "twice".
+No second deployable, no credential beyond the six secrets. Later, as a feature before the UI/UX
+train, the same claim protocol runs as an Azure Function developed and exercised locally against
+Azurite (`func start`), so the deployment shape is rehearsed without a deployment; a configuration
+flag names which runner is live, so the two never both send. The preconditions above are unchanged:
+a provider credential, addresses the project may write to, a second contact and a remedy behind it
+are still what "delivered" needs before it can mean anything.
