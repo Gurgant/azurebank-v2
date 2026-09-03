@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DepositRequest,
+  InternalTransferAuthorizationRequest,
+  InternalTransferRequest,
+  TransferAuthorizationRequest,
+  TransferRequest,
+  WithdrawRequest,
+} from '../api/generated/apiSchemas';
+import { MIN_MONEY_AMOUNT } from '../utils/amountSchema';
+import {
+  MONEY_MAX,
   depositFormSchema,
+  describeMoneyBound,
   internalTransferFormSchema,
   normalizeAzureTag,
   parseAmountInput,
@@ -8,6 +19,50 @@ import {
   transferFormSchema,
   withdrawFormSchema,
 } from './moneySchemas';
+
+/**
+ * THE TRIPWIRE (ADR-0046). The forms hold the money bound as a literal; the contract holds it as
+ * `maximum: 100000.00` on every money request schema, regenerated into `api/generated/apiSchemas.ts`
+ * as `.max(100000)`. This is the only thing that turns the forms red when the server's constant
+ * changes and the contract is regenerated — the way the deposit form promised 1,000,000 for two
+ * months against a contract that said 100,000, with three green tests asserting its own literal.
+ *
+ * In the tripwire suite on purpose (package.json `test:tripwire`), so it runs under `npm test` and
+ * under both zone legs.
+ */
+describe('the money bound is the contract’s, on every form', () => {
+  const generated = {
+    DepositRequest,
+    WithdrawRequest,
+    TransferRequest,
+    InternalTransferRequest,
+    TransferAuthorizationRequest,
+    InternalTransferAuthorizationRequest,
+  };
+
+  it.each(Object.entries(generated))(
+    '%s.amount publishes exactly the bounds the forms enforce',
+    (_name, schema) => {
+      const amount = schema.shape.amount;
+      expect(amount.maxValue).toBe(MONEY_MAX);
+      expect(amount.minValue).toBe(MIN_MONEY_AMOUNT);
+    },
+  );
+
+  it('states the bound in whole euro, so the copy follows the number', () => {
+    expect(describeMoneyBound(MONEY_MAX)).toBe('€100,000');
+    const over = depositFormSchema().safeParse({ accountId: 'a1', amount: String(MONEY_MAX + 1) });
+    expect(over.success).toBe(false);
+    if (!over.success) {
+      expect(over.error.issues.map((i) => i.message)).toContain(
+        `Maximum deposit is ${describeMoneyBound(MONEY_MAX)}.`,
+      );
+    }
+    expect(
+      depositFormSchema().safeParse({ accountId: 'a1', amount: String(MONEY_MAX) }).success,
+    ).toBe(true);
+  });
+});
 
 describe('sanitizeAmountInput', () => {
   it('strips non-numerics and collapses to a single decimal point', () => {
@@ -59,11 +114,13 @@ describe('money form schemas', () => {
     }
   });
 
-  it('deposit: keeps the exact legacy bound messages', () => {
-    const over = depositFormSchema().safeParse({ accountId: 'a1', amount: '1000001' });
+  it('deposit: refuses one cent above the contract bound with the deposit copy', () => {
+    // 100,001 sits inside the 1,000,000 the form used to allow and above the 100,000 the contract
+    // publishes — red on the old constant, green on the new one (ADR-0046).
+    const over = depositFormSchema().safeParse({ accountId: 'a1', amount: '100001' });
     expect(over.success).toBe(false);
     if (!over.success) {
-      expect(over.error.issues.some((i) => i.message === 'Maximum deposit is €1,000,000.')).toBe(
+      expect(over.error.issues.some((i) => i.message === 'Maximum deposit is €100,000.')).toBe(
         true,
       );
     }

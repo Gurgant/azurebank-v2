@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
@@ -68,6 +69,50 @@ public class TransactionEndpointTests : IntegrationTestBase
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Deposit_OneCentAboveTheMaximum_IsRefusedByModelState_KeyedAmount()
+    {
+        /*
+          The bound through the real pipeline, not the validator in isolation: [MoneyRange] is a
+          DataAnnotation, so the refusal is the framework's model-state envelope — key `Amount`, the
+          CLR property, one sentence for both bounds — and FluentValidation's "Amount cannot exceed"
+          never reaches the wire for a magnitude failure. The sentence is what the frontend surfaces
+          verbatim and what its mock quotes (ADR-0046). Measured on the running API, 2026-09-03:
+          500000 / 1000000 / 100000.01 -> 400, 100000 -> 201.
+        */
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        var response = await PostMonetaryAsync("/api/transactions/deposit", new DepositRequest
+        {
+            AccountId = accountId,
+            Amount = ValidationRules.TransactionMaxAmount + 0.01m,
+            Description = "One cent over"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("title").GetString().Should().Be("One or more validation errors occurred.");
+        body.GetProperty("errors").GetProperty("Amount").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal("Amount must be between 0.01 EUR and 100000.00 EUR");
+    }
+
+    [Fact]
+    public async Task Deposit_ExactlyTheMaximum_IsAccepted()
+    {
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+
+        var response = await PostMonetaryAsync("/api/transactions/deposit", new DepositRequest
+        {
+            AccountId = accountId,
+            Amount = ValidationRules.TransactionMaxAmount,
+            Description = "At the bound"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created, "the bound is inclusive: 100000 answered 201 on the running API");
     }
 
     [Fact]

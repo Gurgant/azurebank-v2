@@ -342,7 +342,8 @@ public class MoneyFormattingTests
 
         ValidationRules.DescribeAmount(ValidationRules.TransactionMaxAmount)
             .Should().Be("100000.00 EUR",
-                "invariant digits and the ISO code — the exact text published on the four money schemas");
+                "invariant digits and the ISO code — the exact text published on the six money schemas "
+                + "(PublishedMoneyBoundsTests pins each)");
 
         ValidationRules.DescribeAmount(ValidationRules.TransactionMinAmount)
             .Should().Be("0.01 EUR");

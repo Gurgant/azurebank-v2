@@ -392,13 +392,16 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
     /*
       `Amount`, PascalCase. `[MoneyRange]` is a DataAnnotation, so an out-of-range amount is a
       model-state failure keyed by the CLR property — measured on the real stack (2026-08-04) for
-      amounts 0, 0.005, 100000.01 and 250000, all four answering identically:
+      amounts 0, 0.005, 100000.01 and 250000, all four answering identically, in dollars at the
+      time; the server dropped the symbol on 2026-08-18 (3769dc9) and this assertion went on
+      quoting the old sentence as observed. Re-measured 2026-09-03 on the deposit endpoint, which
+      shares the annotation:
         {"title":"One or more validation errors occurred.",
-         "errors":{"Amount":["Amount must be between $0.01 and $100,000.00"]}}
+         "errors":{"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}}
       (A bad decimal SCALE is the other envelope, keyed lowercase `amount` — see `rejectBadAmount`.)
     */
     expect((await zero.json()).errors.Amount).toEqual([
-      'Amount must be between $0.01 and $100,000.00',
+      'Amount must be between 0.01 EUR and 100000.00 EUR',
     ]);
 
     // A negative amount must NOT invert the transfer (credit source / debit destination).
@@ -589,9 +592,10 @@ describe('the PIN gates at the MINT, in the order the API applies them (ADR-0042
 
   it('model state AGGREGATES every bad field, it does not stop at the first', async () => {
     /*
-      OBSERVED: amount -5 AND pin "12" ->
+      OBSERVED (2026-08-04; the amount sentence has since lost its dollar signs — see above):
+      amount -5 AND pin "12" ->
         400 {"Pin":["PIN must be exactly 6 digits."],
-             "Amount":["Amount must be between $0.01 and $100,000.00"]}
+             "Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}
       One pass, one map. The mock used to early-return from the amount check before the pin gate
       ever ran, so a doubly-invalid body got an amount-only answer and a form could highlight one
       field where the API highlights two.
@@ -980,7 +984,7 @@ describe('step-up authorisations (ADR-0042)', () => {
   });
 
   it('applies the amount annotation at the mint, in the framework envelope', async () => {
-    // OBSERVED, amount 0: 400 {"Amount":["Amount must be between $0.01 and $100,000.00"]} —
+    // OBSERVED, amount 0: 400 {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]} —
     // PascalCase, no `detail`. `[MoneyRange]` is a DataAnnotation, so it fires in model state
     // before the action, and the mint answers it identically to the transfer.
     seedMockSession();

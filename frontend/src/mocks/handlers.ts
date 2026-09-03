@@ -135,20 +135,26 @@ function stepUp403(currentLevel: number) {
  * they cannot drift apart again.
  *
  * The bounds are the contract's own — `ValidationRules.TransactionMinAmount/MaxAmount`, which the
- * generated Zod schema mirrors as `.min(0.01).max(100000)`. The message reads in dollars because
- * the API's own does; this is the mock quoting the contract, not the app's EUR display.
+ * generated Zod schema mirrors as `.min(0.01).max(100000)`. The message quotes the server's
+ * wording, invariant digits and the ISO code (`ValidationRules.DescribeAmount`), not the app's
+ * EUR display.
  *
  * THE ENVELOPE, THE KEY AND THE WORDING WERE ALL WRONG, and are now measured. `[MoneyRange]` is a
  * DataAnnotation, so an out-of-range amount is a MODEL-STATE failure: framework envelope, key
  * `Amount` (the CLR property), and ONE message for both bounds — not the two the mock invented.
  * Observed 2026-08-04 on `POST /api/transactions/deposit`, for amounts 0, 0.005, 100000.01 and
- * 250000 — all four identical:
+ * 250000 — all four identical, and at that date still in dollars. THE SENTENCE CHANGED UNDER THE
+ * MOCK: the server stopped rendering currency symbols (3769dc9, 2026-08-18) and this file kept
+ * quoting the old one as observed for a fortnight. Re-measured 2026-09-03 for 500000, 1000000 and
+ * 100000.01 — all three identical — with 100000 answering 201:
  *
  *   title "One or more validation errors occurred."
- *   {"Amount":["Amount must be between $0.01 and $100,000.00"]}
+ *   {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}
  *
  * Note there is NO trailing period on the wire, although `schema.d.ts`'s description carries one.
- * The OpenAPI description and the runtime message are different strings; the wire wins.
+ * The OpenAPI description and the runtime message are different strings; the wire wins. The
+ * contract suite now pins this sentence on the real stack (`money.contract.test.ts`), which is what
+ * was missing while it drifted.
  *
  * A bad SCALE is the other envelope entirely — `[MoneyRange]` does not check decimals, so
  * `.ValidMoneyScale()` catches it inside the action and answers "Validation Failed" keyed
@@ -156,7 +162,7 @@ function stepUp403(currentLevel: number) {
  */
 function amountErrors(amount: unknown): string[] {
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0.01 || amount > 100_000) {
-    return ['Amount must be between $0.01 and $100,000.00'];
+    return ['Amount must be between 0.01 EUR and 100000.00 EUR'];
   }
   return [];
 }
@@ -691,8 +697,11 @@ const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
  *   "Cannot delete account with non-zero balance. Current balance: $50,042.00"
  *   "Amount must be between $0.01 and $100,000.00"        (already handled in rejectBadAmount)
  *
- * NOT the app's EUR display — this is the mock quoting the server's wording, and the server
- * formats in dollars regardless of what the UI later chooses to render.
+ * NOT the app's EUR display — this is the mock quoting the server's wording as measured on that
+ * date. ⚠️ The server has since stopped rendering currency in prose (3769dc9, 2026-08-18): the
+ * amount-bound sentence was re-measured on 2026-09-03 and realigned in `amountErrors`; the two
+ * `detail` sentences below were NOT re-measured and are kept as the 2026-08-04 observation until
+ * they are — a client asserting them is asserting this mock, not the server.
  */
 function serverCurrency(amount: number): string {
   return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -2356,7 +2365,9 @@ function spendAuthorization(held: StoredStepUpAuthorization | null): void {
  *
  * MEASURED on the running API, `POST /api/transfers/authorizations`:
  *
- *   amount 0     -> 400 {"Amount":["Amount must be between $0.01 and $100,000.00"]}   (framework)
+ *   amount 0     -> 400 {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]} (framework;
+ *                       sentence re-measured 2026-09-03 on the deposit endpoint — the mint shares
+ *                       the annotation, so it is the same string)
  *   amount 10.00001 -> 400 "Validation Failed" {"amount":["Amount cannot have more than 2 decimal
  *                     places."]}                                                     (validator)
  *

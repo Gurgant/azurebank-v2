@@ -17,9 +17,36 @@ import { formatCurrency } from '../utils/format';
  * - The PIN never enters RHF (plan D5): the withdraw PIN step machine is untouched.
  */
 
-/** Deposit keeps the higher inflow cap; every outflow form caps at €100k. */
-export const DEPOSIT_MAX = 1_000_000;
-export const OUTFLOW_MAX = 100_000;
+/**
+ * ONE per-transaction cap for every money move, deposits included — the contract's bound, not a
+ * product choice of this file's own.
+ *
+ * `docs/api/openapiv1.json` publishes `maximum: 100000.00` on all six money request schemas, from
+ * `ValidationRules.TransactionMaxAmount` through `[MoneyRange]`, and the generated
+ * `api/generated/apiSchemas.ts` carries it as `.max(100000)`. Until 2026-09-03 the deposit form said
+ * 1,000,000 under a comment calling the higher inflow cap deliberate; no decision record ever did,
+ * the figure was legacy copy carried from the original UI, and the backend suite pins 1,000,000 as
+ * REFUSED. Measured on the running API that day: 500,000 → 400 `{"Amount":["Amount must be between
+ * 0.01 EUR and 100000.00 EUR"]}`, 100,000 → 201 (ADR-0046).
+ *
+ * A literal, on purpose — importing the generated request schema into the forms would couple them
+ * to Zod's getter API for a number that changes once a year at most. What keeps it honest is the
+ * tripwire in `moneySchemas.test.ts`: every generated request schema's `amount` bound must equal
+ * this constant, so a server change that regenerates the contract turns this file red.
+ */
+export const MONEY_MAX = 100_000;
+
+/**
+ * The bound as the copy states it — whole euro, no decimals — so the sentence and the number cannot
+ * drift apart the way "€1,000,000." and a 100,000 contract did.
+ */
+export function describeMoneyBound(amount: number): string {
+  return new Intl.NumberFormat('en-IE', {
+    style: 'currency',
+    currency: 'EUR',
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
 
 /**
  * Sanitize raw amount text exactly like the legacy handlers: strip non-numerics, collapse to a
@@ -99,17 +126,17 @@ const descriptionField = z
   .transform((value) => (value ? value : undefined));
 
 // ============================================
-// PER-FORM SCHEMAS (exact legacy copy preserved)
+// PER-FORM SCHEMAS (legacy copy preserved, except the deposit bound — see MONEY_MAX)
 // ============================================
 
 export function depositFormSchema() {
   return z.object({
     accountId: z.string().min(1),
     amount: amountField({
-      max: DEPOSIT_MAX,
+      max: MONEY_MAX,
       messages: {
         min: 'Minimum deposit is €0.01.',
-        max: 'Maximum deposit is €1,000,000.',
+        max: `Maximum deposit is ${describeMoneyBound(MONEY_MAX)}.`,
       },
     }),
     description: descriptionField,
@@ -120,11 +147,11 @@ export function withdrawFormSchema(availableBalance: number) {
   return z.object({
     accountId: z.string().min(1),
     amount: amountField({
-      max: OUTFLOW_MAX,
+      max: MONEY_MAX,
       balance: availableBalance,
       messages: {
         min: 'Minimum withdrawal is €0.01.',
-        max: 'Maximum withdrawal is €100,000.',
+        max: `Maximum withdrawal is ${describeMoneyBound(MONEY_MAX)}.`,
         balance: exceedsBalanceMessage(availableBalance),
       },
     }),
@@ -139,11 +166,11 @@ export function transferFormSchema(availableBalance: number) {
     // requires a non-empty normalized handle; the verified-recipient gate lives outside RHF.
     recipientTag: z.string().transform(normalizeAzureTag).pipe(z.string().min(1)),
     amount: amountField({
-      max: OUTFLOW_MAX,
+      max: MONEY_MAX,
       balance: availableBalance,
       messages: {
         min: 'Minimum transfer is €0.01.',
-        max: 'Maximum transfer is €100,000.',
+        max: `Maximum transfer is ${describeMoneyBound(MONEY_MAX)}.`,
         balance: exceedsBalanceMessage(availableBalance),
       },
     }),
@@ -156,11 +183,11 @@ export function internalTransferFormSchema(availableBalance: number) {
       fromAccountId: z.string().min(1),
       toAccountId: z.string().min(1),
       amount: amountField({
-        max: OUTFLOW_MAX,
+        max: MONEY_MAX,
         balance: availableBalance,
         messages: {
           min: 'Minimum transfer is €0.01.',
-          max: 'Maximum transfer is €100,000.',
+          max: `Maximum transfer is ${describeMoneyBound(MONEY_MAX)}.`,
           balance: exceedsBalanceMessage(availableBalance),
         },
       }),
