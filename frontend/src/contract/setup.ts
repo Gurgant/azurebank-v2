@@ -19,8 +19,8 @@ if (CONTRACT_TARGET === 'mock') {
     The unit suite resets mock state after every test and should keep doing so. Here it would break
     the symmetry that makes these assertions meaningful: the real target signs in once per file
     because the BFF rate-limits auth to 10 requests per 60s, so wiping the mock's session between
-    tests would leave the mock authenticating eleven times while the real stack authenticates four
-    — two different tests wearing one name.
+    tests would leave the mock authenticating once per test while the real stack authenticates once
+    per file — two different tests wearing one name.
   */
   afterAll(() => {
     server.resetHandlers();

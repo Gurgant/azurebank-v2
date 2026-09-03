@@ -138,29 +138,16 @@ interface MockState {
   idempotency: Map<string, StoredIdempotentResponse>;
   /** authorizationId -> the authorisation minted for it (ADR-0042). Spendable exactly once. */
   stepUpAuthorizations: Map<string, StoredStepUpAuthorization>;
-  /** BFF session auth level: 1 = password, 2 = PIN-verified (transfers need 2). */
-  authLevel: 1 | 2;
-  /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
-  session: MockSessionUser | null;
   /**
-   * The browser still sends a cookie, but it no longer resolves to a session.
-   *
-   * `session: null` conflated two states the real stack answers DIFFERENTLY, because expiry is
-   * server-side and deleting a cookie is not:
-   *
-   *   no cookie at all       -> `AuthLevelMiddleware` never gates (it only acts when
-   *                             `Cookies.TryGetValue` succeeds), the request is proxied without a
-   *                             bearer, and the API answers 401 AUTH_TOKEN_MISSING.
-   *   cookie, dead session   -> the middleware DOES gate, `GetAuthLevel` returns 0, and the three
-   *                             level-2 routes answer 403 STEP_UP_REQUIRED with
-   *                             `X-Auth-Level-Current: 0`.
-   *
-   * Set when a session expires by clock, cleared on login/register (a fresh cookie) and on logout
-   * (the cookie is deleted). Everything else — ordinary `/api` routes included — is 401 either
-   * way, so this flag only changes the answer on the level-2 three.
+   * BFF session auth level: 1 = password, 2 = PIN-verified. Since ADR-0041 only the account-number
+   * reveal reads it; money moves carry their authorisation in-band.
    */
-  staleSessionCookie: boolean;
-
+  authLevel: 1 | 2;
+  /**
+   * BFF session: null = no live session — no cookie, or a cookie the BFF no longer resolves; the
+   * answer is the same 401 either way (default — tests seed or log in explicitly).
+   */
+  session: MockSessionUser | null;
   /**
    * The server-side session clock, modelled the way the BFF actually keeps it.
    *
@@ -479,7 +466,6 @@ export const mockState: MockState = {
   idempotency: new Map(),
   authLevel: 1,
   session: null,
-  staleSessionCookie: false,
   sessionInactivityWindowMs: MOCK_INACTIVITY_WINDOW_MS,
   sessionAbsoluteWindowMs: MOCK_ABSOLUTE_WINDOW_MS,
   sessionCreatedAt: 0,
@@ -500,8 +486,6 @@ export const mockState: MockState = {
 /** Test helper: start authenticated without walking the login flow. */
 export function seedMockSession(user: MockSessionUser = MOCK_USER): void {
   mockState.session = { ...user };
-  // A fresh session means a fresh cookie: whatever was stale is not any more.
-  mockState.staleSessionCookie = false;
   setMockSessionCookie(true);
   // And a fresh session is level 1: `SessionService.CreateSession` hardcodes it. A helper that
   // left an inherited 2 in place would hand a test elevation it never verified a PIN for.
@@ -550,8 +534,11 @@ export function expireMockSessionIfDue(now: number = Date.now()): boolean {
     // PIN-verified, so a test could walk past step-up without ever verifying a PIN — the gate
     // silently absent rather than visibly broken.
     mockState.authLevel = 1;
-    // Expiry is SERVER-side; the browser still holds the cookie. See `staleSessionCookie`.
-    mockState.staleSessionCookie = true;
+    // Expiry is SERVER-side; the browser still holds the cookie, and the BFF answers that cookie
+    // exactly as it answers none: 401 AUTH_TOKEN_MISSING on every /api route. Measured 2026-09-03
+    // for a forged and a revoked cookie; clock expiry is the same answer by construction —
+    // `InMemoryTokenStore.GetSessionAsync` removes an expired session and returns null, and
+    // `GetAuthLevel` maps null to 0 — not by measurement.
     return true;
   }
   return false;
@@ -577,7 +564,6 @@ export function resetMockState(): void {
   mockState.stepUpAuthorizations.clear();
   mockState.authLevel = 1;
   mockState.session = null;
-  mockState.staleSessionCookie = false;
   setMockSessionCookie(false);
   mockState.sessionInactivityWindowMs = MOCK_INACTIVITY_WINDOW_MS;
   mockState.sessionAbsoluteWindowMs = MOCK_ABSOLUTE_WINDOW_MS;

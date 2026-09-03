@@ -3,9 +3,9 @@ import { MOCK_PIN, mockState, seedMockSession } from './state';
 
 /**
  * Executable contract for the recipient-lookup + stateful transfer handlers: the exact-match
- * lookup (self/unknown masked as exists:false), the level-2 403 gate, and the post-elevation
- * failure order (SELF_TRANSFER → recipient ACCOUNT_NOT_FOUND → INSUFFICIENT_FUNDS → success),
- * plus namespaced idempotency.
+ * lookup (self/unknown masked as exists:false), the authorisation protocol that replaced the
+ * level-2 403 gate (ADR-0041/0042), and the failure order after it (SELF_TRANSFER → recipient
+ * ACCOUNT_NOT_FOUND → INSUFFICIENT_FUNDS → success), plus namespaced idempotency.
  */
 
 const T_URL = '/api/transfers';
@@ -97,10 +97,6 @@ async function autoAuthorise(url: string, body: unknown): Promise<string> {
   return payload.data.authorizationId;
 }
 
-function elevate() {
-  mockState.authLevel = 2; // stand-in for a successful /bff/auth/verify-pin
-}
-
 function acct() {
   return mockState.accounts[0].id;
 }
@@ -188,7 +184,6 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
 
   it('422 SELF_TRANSFER_NOT_ALLOWED when the recipient is the caller', async () => {
     seedMockSession(); // demo_user
-    elevate();
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'demo_user',
@@ -200,7 +195,6 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
   });
 
   it('404 ACCOUNT_NOT_FOUND for an unknown recipient', async () => {
-    elevate();
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'ghost',
@@ -212,7 +206,6 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
   });
 
   it('422 INSUFFICIENT_FUNDS when the amount exceeds the balance', async () => {
-    elevate();
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
@@ -226,7 +219,6 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
   });
 
   it('debits the sender and replays same key+body; 422s on same key+different body', async () => {
-    elevate();
     const body = { fromAccountId: acct(), recipientAzureTag: 'friend', amount: 100, pin: MOCK_PIN };
     const first = await transfer(FIXED, body);
     const firstText = await first.text();
@@ -262,7 +254,6 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
 
       Falsified by restoring `?? null`.
     */
-    elevate();
     await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
@@ -276,7 +267,6 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
   });
 
   it('keeps a description the caller DID send, rather than overwriting it with the default', async () => {
-    elevate();
     await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
@@ -328,7 +318,6 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
              "errors":{"toAccountId":["Cannot transfer to the same account."]}}
       with NO errorCode. The test was pinning an invented code as if it were the contract.
     */
-    elevate();
     const res = await internal(crypto.randomUUID(), {
       fromAccountId: acct(),
       toAccountId: acct(),
@@ -342,7 +331,6 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
   });
 
   it('404 ACCOUNT_NOT_FOUND for an unknown destination OR source account', async () => {
-    elevate();
     const badTo = await internal(crypto.randomUUID(), {
       fromAccountId: acct(),
       toAccountId: '019f7b3f-0000-7000-8000-0000000000ff',
@@ -364,7 +352,6 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
   });
 
   it('422 INSUFFICIENT_FUNDS when the amount exceeds the source balance', async () => {
-    elevate();
     const res = await internal(crypto.randomUUID(), {
       fromAccountId: acct(),
       toAccountId: acct2(),
@@ -378,7 +365,6 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
   });
 
   it('400 VALIDATION_ERROR for a non-positive amount, BEFORE any balance change', async () => {
-    elevate();
     const fromBefore = mockState.accounts[0].balance;
     const toBefore = mockState.accounts[1].balance;
 
@@ -417,7 +403,6 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
   });
 
   it('double-entry: debits source, credits destination, writes both ledger rows, replays bytes', async () => {
-    elevate();
     const fromBefore = mockState.accounts[0].balance; // 1250.5
     const toBefore = mockState.accounts[1].balance; // 830
     const body = { fromAccountId: acct(), toAccountId: acct2(), amount: 100, pin: MOCK_PIN };
@@ -446,7 +431,6 @@ describe('internal transfer handler (own accounts, double-entry)', () => {
   });
 
   it('the internal| idempotency namespace does not cross-replay the external transfer|', async () => {
-    elevate();
     const ext = await transfer(FIXED, {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',

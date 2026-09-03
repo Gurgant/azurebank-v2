@@ -410,9 +410,10 @@ jobs:
         # (ReverseProxy__Clusters__backend-api__...), which is not a portable shell identifier. The
         # command-line provider takes colon-separated keys and has no such restriction.
         #
-        # RateLimiting:AuthPermitLimit is environmental, NOT a weakened assertion. The three suites
-        # together spend about ten auth requests, which is exactly the production limit of 10 per
-        # 60s per IP — back-to-back in one job they would rate-limit each other and go red for a
+        # RateLimiting:AuthPermitLimit is environmental, NOT a weakened assertion. The contract
+        # suite alone spends eleven auth requests against the production limit of 10 per 60s per
+        # IP, the three suites together more — back-to-back in one job they would rate-limit each
+        # other and go red for a
         # reason unrelated to the code under test. The limiter itself is proven by
         # AzureBank.Bff.Tests' own rate-limiter test; nothing in these three suites asserts it.
         run: |

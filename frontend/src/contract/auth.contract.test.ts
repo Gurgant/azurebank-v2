@@ -1,13 +1,23 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { call, firstAccountId, login, type Wire } from './client';
+import {
+  asProblem,
+  call,
+  firstAccountId,
+  idempotencyKey,
+  login,
+  logout,
+  restoreJar,
+  snapshotJar,
+  type Wire,
+} from './client';
 
 /**
  * Auth-shaped contract points.
  *
  * Every expected value here was MEASURED against the running stack (API :7215 + BFF :5000, seeded
- * dev database) on 2026-07-31 and pasted in, never inferred from the mock or from the ADR. The
- * observed responses are quoted next to each assertion so a future reader can tell a deliberate
- * contract from a guess that happened to pass.
+ * dev database) and pasted in with its date — first pass 2026-07-31 — never inferred from the mock
+ * or from the ADR. The observed responses are quoted next to each assertion so a future reader can
+ * tell a deliberate contract from a guess that happened to pass.
  */
 
 /*
@@ -212,5 +222,60 @@ describe('contract: the inactivity clock', () => {
     }
 
     expect(moved, 'a rejected-but-authenticated request did not slide the clock').toBe(true);
+  });
+});
+
+/**
+ * LAST in the file on purpose. This case kills the session and does not sign in again: the seven
+ * contract files already spend eleven requests against the local auth budget of ten per minute
+ * (CI raises RateLimiting:AuthPermitLimit to 1000; a local whole-suite run needs the same), so it
+ * must not add one, and vitest runs a file's cases in declaration order, so nothing after it needs
+ * the cookie.
+ */
+describe('contract: a cookie the BFF has forgotten', () => {
+  it('answers 401 AUTH_TOKEN_MISSING on the step-up route too, not 403', async () => {
+    /*
+      The mock said otherwise for three and a half weeks. Its `sessionActivity` quoted a 2026-08-05
+      measurement in which a cookie that no longer resolved met 403 STEP_UP_REQUIRED with
+      currentLevel 0 on the level-2 routes, so under MSW a session that died mid-transfer opened the
+      PIN modal, while in production the same moment is the global sign-out. ADR-0038 (01c0e31,
+      2026-08-10) had already put the no-session 401 before the level-2 check for a missing, unknown
+      and expired cookie alike; ADR-0041 (2026-08-13) then emptied the transfer gate and d74603c
+      (2026-08-20) widened the session check to every /api path.
+
+      Measured 2026-09-03 with the cookie a registration issued, replayed after logout answered 200:
+        GET  /api/accounts/{id}/full-number -> 401 {"type":"https://httpstatuses.com/401",
+             "title":"Unauthorized","status":401,"detail":"Authentication is required to access
+             this resource.","instance":"/api/accounts/…/full-number",
+             "errorCode":"AUTH_TOKEN_MISSING","traceId":"…"}  and NO X-Auth-Level-* header
+        POST /api/transfers `{}`            -> 401, the same body, instance "/api/transfers"
+      A cookie that was never issued, and no cookie at all, answered identically. The BFF writes
+      this 401 before the proxy — the middleware returns without calling next, and
+      AuthLevelMiddlewareTests pins the forwarded paths empty for the reveal with a revoked and
+      with a never-issued cookie and for POST /api/transfers with a never-issued one.
+
+      A REAL dead cookie rather than a forged one, so a BFF that began to treat the two differently
+      — a signed-out id it still remembers, say — would be noticed here and not only in the mock.
+    */
+    const id = await firstAccountId();
+    const dead = snapshotJar();
+    expect((await logout()).status).toBe(200);
+    restoreJar(dead);
+
+    const reveal = await call(`/api/accounts/${id}/full-number`);
+    expect(reveal.status).toBe(401);
+    expect(asProblem(reveal.body).errorCode).toBe('AUTH_TOKEN_MISSING');
+    // The client reads step-up from these headers before any body: their absence is the half of
+    // the answer that keeps the PIN modal shut.
+    expect(reveal.headers.get('x-auth-level-required')).toBeNull();
+    expect(reveal.headers.get('x-auth-level-current')).toBeNull();
+
+    const transfer = await call('/api/transfers', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey() },
+      body: '{}',
+    });
+    expect(transfer.status).toBe(401);
+    expect(asProblem(transfer.body).errorCode).toBe('AUTH_TOKEN_MISSING');
   });
 });

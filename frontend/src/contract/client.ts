@@ -30,6 +30,16 @@ export function resetJar(): void {
   jar = '';
 }
 
+/** The jar as it stands, so a test can hand a cookie back AFTER the server has forgotten it. */
+export function snapshotJar(): string {
+  return jar;
+}
+
+/** Put a snapshot back. The one legitimate use is replaying a cookie the BFF no longer knows. */
+export function restoreJar(snapshot: string): void {
+  jar = snapshot;
+}
+
 export async function call(
   path: string,
   init: RequestInit & { anonymous?: boolean } = {},
@@ -75,24 +85,47 @@ export async function call(
 /**
  * Turn a puzzling red into an actionable one rather than letting it read as contract drift.
  *
- * The BFF applies an `auth` rate-limiter policy of 10 requests per 60s per IP to the login and PIN
- * routes. The first draft of this suite signed in in `beforeEach` — eleven logins across four files
- * — and the run tripped it, failing two tests with a 429 that had nothing to do with any contract.
- * The mock has no limiter at all, so this is a constraint only the real target could have taught,
- * and it is why `login()` is called once per FILE.
+ * The BFF applies an `auth` rate-limiter policy of 10 requests per 60s per IP to the credential
+ * routes: login, register, reauthenticate and the azure-tag rename carry `[EnableRateLimiting]`,
+ * and the YARP `/api/auth/login|register` pair shares the bucket. The first draft of this suite
+ * signed in in `beforeEach` — eleven logins across four files — and the run tripped it, failing
+ * two tests with a 429 that had nothing to do with any contract. The mock had no limiter then (it
+ * models the same budget since U4), so this is a constraint only the real target could have
+ * taught, and it is why `login()` is called once per FILE and the dead-cookie case in
+ * auth.contract.test.ts runs LAST without signing in again.
  *
- * Shared by BOTH auth calls on purpose: `verify-pin` sits under the same policy, so a rate-limited
- * step-up would otherwise surface as a bare 429 while login got the explanation.
+ * `verify-pin` is NOT under the policy: `VerifyPin` carries no `[EnableRateLimiting]`, and twelve
+ * calls in a row with a dead cookie answered 401 every time on 2026-09-03, never 429 (the run is
+ * in the work log's plan for item 232, `measure-2026-09-03.txt`). Short of the 300/min global
+ * backstop, the 429s these routes do emit are the API's lockouts relayed by the BFF — PIN_LOCKED
+ * on verify-pin (ADR-0010), ACCOUNT_LOCKED on login (ADR-0012) — so `elevate()` keeps the wrapper
+ * and the message names the cause by errorCode rather than blaming the limiter for a locked
+ * fixture.
  */
 function rejectIfRateLimited(result: Wire): Wire {
-  if (result.status === 429) {
+  if (result.status !== 429) return result;
+  const code = asProblem(result.body).errorCode;
+  if (code === 'PIN_LOCKED') {
     throw new Error(
-      'Auth request was rate-limited (429). The BFF allows 10 auth requests per 60s per IP ' +
-        '(RateLimiting:AuthPermitLimit), and login + verify-pin both count. ' +
-        'Wait about a minute and re-run.',
+      "The fixture user's PIN is locked (429 PIN_LOCKED): three wrong PINs lock it for fifteen " +
+        'minutes (ADR-0010). Wait it out or re-seed the user; the auth limiter is not involved.',
     );
   }
-  return result;
+  if (code === 'ACCOUNT_LOCKED') {
+    throw new Error(
+      "The fixture user's password is locked (429 ACCOUNT_LOCKED): repeated wrong passwords lock " +
+        'it for fifteen minutes (ADR-0012). Wait it out or re-seed the user; the auth limiter is ' +
+        'not involved.',
+    );
+  }
+  const tag = code ? ' ' + code : '';
+  throw new Error(
+    'Auth request was rate-limited (429' +
+      tag +
+      '). The BFF allows 10 auth requests per 60s per ' +
+      'IP (RateLimiting:AuthPermitLimit); login, register, reauthenticate and the azuretag rename ' +
+      'count, verify-pin and logout do not. Wait about a minute and re-run.',
+  );
 }
 
 export async function login(): Promise<Wire> {
@@ -115,7 +148,19 @@ export async function login(): Promise<Wire> {
   return result;
 }
 
-/** Raise the session to AuthLevel 2, which the money and reveal endpoints demand. */
+/**
+ * End the session. Not under the auth rate-limit policy — measured 2026-09-03 (the transcript
+ * `rejectIfRateLimited` cites): twelve logouts in a row with a dead cookie all answered 200, never
+ * 429. On the real target the deleting Set-Cookie replaces the jar with an empty value, and the
+ * BFF's logout reaches the API, which revokes every refresh token the fixture user holds
+ * (`AuthService.LogoutAsync`); each file signs in afresh, so nothing in the suite notices. The
+ * mock sends no Set-Cookie and its jar stays the hand-seeded one, which it ignores anyway.
+ */
+export async function logout(): Promise<Wire> {
+  return call('/bff/auth/logout', { method: 'POST' });
+}
+
+/** Raise the session to AuthLevel 2, which only the account-number reveal demands (ADR-0041). */
 export async function elevate(): Promise<Wire> {
   return rejectIfRateLimited(
     await call('/bff/auth/verify-pin', {
@@ -146,7 +191,10 @@ export function asProblem(body: unknown): {
   detail?: string;
   status?: number;
   errorCode?: string;
-  /** The requested path, echoed back. Emitted by the API's own problem responses, not the BFF's. */
+  /**
+   * The requested path, echoed back. Emitted by the API's problem responses and by the BFF's copy
+   * of the API 401 (AuthLevelMiddleware); absent from the /bff/auth controller's three-member 401.
+   */
   instance?: string;
   errors?: Record<string, string[]>;
 } {

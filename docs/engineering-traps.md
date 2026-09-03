@@ -197,6 +197,17 @@ in `dev:mock` it reaches Vite and dies on an HTML parse error. Two real API rout
 for months behind exported hooks because of it. A sentinel handler registered LAST answers
 `501 MOCK_HANDLER_MISSING` and names the route.
 
+**A measurement quoted in a mock comment is dated evidence, not a contract.** `sessionActivity`
+carried a table "Measured 2026-08-05" in which a cookie that no longer resolved met a 403 step-up
+on the level-2 routes, and `fidelity.test.ts` pinned the mock to that quote — so the pair stayed
+green for three and a half weeks after ADR-0038 (2026-08-10) put the BFF's no-session 401 before
+its level-2 check, ADR-0041 (2026-08-13) emptied the transfer gate, and d74603c (2026-08-20)
+widened the session check to every `/api` path. Under MSW a session that died mid-transfer opened
+the PIN modal; in production the same moment is the sign-out. A quoted number proves the mock
+matched the stack ON THAT DAY; only a case that runs against the real target
+(`test:contract:real`) proves it still does. When an ADR moves a gate, grep the mock for the old
+table before trusting any test that cites it.
+
 ## jsdom
 
 **jsdom's missing layout is a wrong answer, not a missing API — and Fluent's focus trap reads it.**
