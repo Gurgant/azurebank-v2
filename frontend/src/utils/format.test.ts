@@ -28,8 +28,17 @@ describe('date formatters', () => {
     expect(formatDateHeading(instant)).toBe(`March ${localDay}, 2026`);
   });
 
-  it('formatTime is a 12-hour clock with the meridiem', () => {
-    expect(formatTime('2026-03-15T12:00:00Z')).toMatch(/^\d{1,2}:\d{2} (AM|PM)$/);
+  it("formatTime is the viewer's 12-hour clock with the meridiem", () => {
+    // The exact string, derived from the same instant through the platform's local clock: noon UTC
+    // is 5:00 AM in Los Angeles, 9:00 PM in Tokyo and 12:00 PM in UTC, and a shape-only match would
+    // have accepted any of them anywhere.
+    const instant = '2026-03-15T12:00:00Z';
+    const date = new Date(instant);
+    const hour24 = date.getHours();
+    const expected = `${hour24 % 12 || 12}:${String(date.getMinutes()).padStart(2, '0')} ${
+      hour24 >= 12 ? 'PM' : 'AM'
+    }`;
+    expect(formatTime(instant)).toBe(expected);
   });
 
   it('formatDateTime is the heading and the time, joined by a middle dot', () => {
