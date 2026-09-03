@@ -977,9 +977,10 @@ The headlines, and what each means from THIS verb:
   while this one wrote the file: that file is a duplicate, and the row is not owed.
 - **An orphan file** — a complete `.eml` whose row is still owed. It happens when the run is
   interrupted, or the store refuses the mark, between the publish and the `UPDATE`; the file is
-  written to a staging name and moved into place only when complete, so an orphan is never a
-  truncated message. The row is the truth: delete or move the orphan and run again, and the notice
-  is rendered afresh under the same reference. A second run into the same directory refuses to
+  written to a staging name (`<reference>.eml.partial`) and moved into place only when complete, so
+  an orphan is never a truncated message — a leftover `.partial` is a write that failed, and can be
+  deleted. The row is the truth: delete or move the orphan and run again, and the notice is
+  rendered afresh under the same reference. A second run into the same directory refuses to
   overwrite it and says so.
 - `CANNOT NOTIFY` — exit **3**: the tool is not configured, the ring will not build, or the store
   could not be read or written. Not a statement about any notice.
