@@ -137,7 +137,7 @@ public static class EvidenceCommand
         /*
           RESOLVED INSIDE A TRY, for the transitive reason export records: building the context
           builds the ring, the ring can refuse, and an unguarded refusal here would exit 4 with a
-          stack trace for a correct command line. All four verbs answer that refusal with 3.
+          stack trace for a correct command line. All five verbs answer that refusal with 3.
         */
         IAuditChain chain;
         AzureBankDbContext context;

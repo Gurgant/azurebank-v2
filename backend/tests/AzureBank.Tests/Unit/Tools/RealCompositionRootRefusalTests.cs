@@ -368,23 +368,25 @@ public class RealCompositionRootRefusalTests
 
       So the fixture has to break the RING rather than a key, and every verb has to be asked. A
       guard that covers two of the three is the shape of this defect both times it happened -- and
-      the fourth verb arrived with B3, so it is asked here too rather than trusted to have copied
-      the guard correctly.
+      the fourth verb arrived with B3, and the fifth with T13, so each is asked here too rather
+      than trusted to have copied the guard correctly.
     */
     [Fact]
-    public async Task AllFourVerbsAnswerTheSameWayToARingThatWillNotCONSTRUCT()
+    public async Task AllFiveVerbsAnswerTheSameWayToARingThatWillNotCONSTRUCT()
     {
         await using var provider = RealProvider(BadRingConfiguration());
         var path = Path.Combine(Path.GetTempPath(), $"ring-{Guid.NewGuid():N}.jsonl");
+        var directory = Path.Combine(Path.GetTempPath(), $"ring-notices-{Guid.NewGuid():N}");
 
         var verify = await VerifyCommand.RunAsync(provider, CancellationToken.None);
         var export = await ExportCommand.RunAsync(provider, path, CancellationToken.None);
         var anchor = await AnchorCommand.RunAsync(provider, CancellationToken.None);
         var evidence = await EvidenceCommand.RunAsync(
             provider, "TXN-20260101-0000000000Z", CancellationToken.None);
+        var notify = await NotifyCommand.RunAsync(provider, directory, "contact", CancellationToken.None);
 
-        new[] { verify.ExitCode, export.ExitCode, anchor.ExitCode, evidence.ExitCode }.Should()
-            .AllBeEquivalentTo(
+        new[] { verify.ExitCode, export.ExitCode, anchor.ExitCode, evidence.ExitCode, notify.ExitCode }
+            .Should().AllBeEquivalentTo(
                 VerifyCommand.Misconfigured,
                 "a ring that cannot be built is a configuration problem in every verb, and 4 would tell "
                 + "an operator their command line was wrong when it was not");
@@ -393,6 +395,7 @@ public class RealCompositionRootRefusalTests
                  {
                      ("verify", verify.Lines), ("export", export.Lines), ("anchor", anchor.Lines),
                      ("evidence", (IReadOnlyList<string>)evidence.Lines),
+                     ("notify", (IReadOnlyList<string>)notify.Lines),
                  })
         {
             var text = string.Join(" ", lines);
