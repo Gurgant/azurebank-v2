@@ -104,10 +104,11 @@ describe('integration: the idempotency protocol against the real API', () => {
 
 describe('integration: the step-up interceptor against a real 403', () => {
   /*
-    The reveal endpoint is the probe rather than a transfer, deliberately: the BFF gates
-    `/api/accounts/{id}/full-number` at level 2 exactly as it gates `/api/transfers`, so the
-    interceptor path is identical — but no money moves, so the assertions stay about the protocol
-    and the suite can run as often as it likes.
+    The reveal endpoint is the probe rather than a transfer, and since ADR-0041 (dd84179,
+    2026-08-13) it is the only one there is: `/api/accounts/{id}/full-number` is the sole route the
+    BFF still gates at level 2 — transfers carry their authorisation in-band (ADR-0042) and never
+    403 — and no money moves, so the assertions stay about the protocol and the suite can run as
+    often as it likes.
 
     Measured at level 1: 403 with `X-Auth-Level-Required: 2`, which problemBaseQuery turns into
     STEP_UP_REQUIRED by reading the HEADER before touching the body (D2 — the 403 body is a bare

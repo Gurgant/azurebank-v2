@@ -51,9 +51,10 @@ interface SuccessData {
  * PR-11b — move money between the caller's OWN accounts, now on RHF+Zod (the money-forms
  * rewrite): source, destination and amount live in react-hook-form with
  * `internalTransferFormSchema` as resolver — including the ONE genuinely local cross-field
- * rule (source ≠ destination) as a Zod superRefine. Rides the same step-up interceptor as
- * the external transfer (level-2 gated → the root StepUpModal pops on Send, invisible to
- * this page) and the same idempotency spine + keyLive money-safety guards.
+ * rule (source ≠ destination) as a Zod superRefine. Collects the PIN in its own step, like the
+ * external transfer: since ADR-0041/0042 the PIN mints a one-shot authorisation sent in the
+ * `Step-Up-Authorization` header — no level-2 gate, no root StepUpModal — and shares the same
+ * idempotency spine + keyLive money-safety guards.
  */
 const PIN_LENGTH = 6;
 const DEFAULT_PIN_LOCK_SECONDS = 15 * 60;

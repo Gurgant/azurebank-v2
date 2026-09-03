@@ -190,4 +190,87 @@ describe('contract: money', () => {
     expect(problem.title).toBe('One or more validation errors occurred.');
     expect(problem.errors?.Amount).toEqual(['Amount must be between 0.01 EUR and 100000.00 EUR']);
   });
+
+  it('refuses a withdrawal from an empty account with a figure-free sentence and numeric extensions', async () => {
+    /*
+      A fresh account starts at 0 on both targets. The mock quoted "Insufficient funds. Available:
+      $…, Requested: $…" from a 2026-08-04 measurement for a fortnight after 3769dc9 had removed
+      the figures, and nothing on the real stack pinned the sentence. Measured 2026-09-03 through
+      the BFF on POST /api/transactions/withdraw (balance 6, amount 10):
+        422 {"type":"https://httpstatuses.com/422","title":"Unprocessable Entity","status":422,
+             "detail":"Insufficient funds.","instance":"/api/transactions/withdraw",
+             "errorCode":"INSUFFICIENT_FUNDS","traceId":"…","available":6.0000,"requested":10}
+      The amounts are numeric extension members, compared here as numbers (the wire spells the
+      decimal as 0.0000; JSON.parse makes it 0).
+    */
+    const created = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Contract Empty', type: 'Savings' }),
+    });
+    expect(created.status).toBe(201);
+    const emptyId = (created.body as { data: { id: string } }).data.id;
+
+    try {
+      const { status, body } = await call('/api/transactions/withdraw', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey() },
+        body: JSON.stringify({ accountId: emptyId, amount: 1, pin: FIXTURES.pin }),
+      });
+      const problem = asProblem(body) as {
+        available?: number;
+        requested?: number;
+        detail?: string;
+      };
+
+      expect(status).toBe(422);
+      expect(problem.detail).toBe('Insufficient funds.');
+      expect(problem.available).toBe(0);
+      expect(problem.requested).toBe(1);
+    } finally {
+      // Leave no probe account behind on a seeded database.
+      await call(`/api/accounts/${emptyId}`, { method: 'DELETE' });
+    }
+  });
+
+  it('refuses to delete a funded account with a figure-free sentence', async () => {
+    /*
+      Measured 2026-09-03 through the BFF on DELETE /api/accounts/{id} with a balance of 16:
+        422 {"type":"https://httpstatuses.com/422","title":"Unprocessable Entity","status":422,
+             "detail":"Cannot delete an account with a non-zero balance.","instance":"/api/accounts/…",
+             "errorCode":"NON_ZERO_BALANCE","traceId":"…"}
+      No balance in the body: the caller already holds it from GET /api/accounts. The mock quoted
+      "Cannot delete account with non-zero balance. Current balance: $…" until this was measured;
+      the server had reworded the sentence as well as dropping the figure (3769dc9).
+    */
+    const created = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Contract Funded', type: 'Savings' }),
+    });
+    expect(created.status).toBe(201);
+    const fundedId = (created.body as { data: { id: string } }).data.id;
+
+    try {
+      const deposited = await call('/api/transactions/deposit', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey() },
+        body: JSON.stringify({ accountId: fundedId, amount: 25 }),
+      });
+      expect(deposited.status).toBe(201);
+
+      const { status, body } = await call(`/api/accounts/${fundedId}`, { method: 'DELETE' });
+      const problem = asProblem(body);
+
+      expect(status).toBe(422);
+      expect(problem.errorCode).toBe('NON_ZERO_BALANCE');
+      expect(problem.detail).toBe('Cannot delete an account with a non-zero balance.');
+    } finally {
+      // Drain with the PIN, then delete: the probe must not accumulate on a seeded database.
+      await call('/api/transactions/withdraw', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey() },
+        body: JSON.stringify({ accountId: fundedId, amount: 25, pin: FIXTURES.pin }),
+      });
+      await call(`/api/accounts/${fundedId}`, { method: 'DELETE' });
+    }
+  });
 });

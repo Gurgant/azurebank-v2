@@ -382,7 +382,7 @@ export const apiSlice = createApi({
             ],
     }),
 
-    // ========== TRANSFERS (level-2 step-up — interceptor rides the base query) ==========
+    // ========== TRANSFERS (in-band authorisation, ADR-0041/0042 — no level-2 gate) ==========
 
     // Confirm a transfer recipient by EXACT AzureTag (ADR-0014 — no directory/substring).
     // Level-1 (not step-up gated); a nonexistent or self tag returns 200 { exists:false }.

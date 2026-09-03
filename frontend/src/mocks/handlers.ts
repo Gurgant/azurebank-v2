@@ -685,27 +685,18 @@ function parseAccountType(value: unknown): AccountType | null {
 }
 const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
-/**
- * Money as the API's own messages render it: C#'s `:C` on the server's ambient culture, which on
- * this stack is en-US — `$50,042.00`, grouped, two decimals, a leading `$`.
- *
- * Three separate `detail` strings embed a formatted amount and the mock omitted all three, so the
- * user saw a sentence with the numbers under MSW and a different sentence without them in
- * production. Measured 2026-08-04:
- *
- *   "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
- *   "Cannot delete account with non-zero balance. Current balance: $50,042.00"
- *   "Amount must be between $0.01 and $100,000.00"        (already handled in rejectBadAmount)
- *
- * NOT the app's EUR display — this is the mock quoting the server's wording as measured on that
- * date. ⚠️ The server has since stopped rendering currency in prose (3769dc9, 2026-08-18): the
- * amount-bound sentence was re-measured on 2026-09-03 and realigned in `amountErrors`; the two
- * `detail` sentences below were NOT re-measured and are kept as the 2026-08-04 observation until
- * they are — a client asserting them is asserting this mock, not the server.
- */
-function serverCurrency(amount: number): string {
-  return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+/*
+  THE SERVER NO LONGER PUTS A FIGURE IN EITHER SENTENCE. Measured 2026-08-04 the API rendered `:C`
+  on its process culture — "Insufficient funds. Available: $50,042.00, Requested: $99,000.00" and
+  "Cannot delete account with non-zero balance. Current balance: $50,042.00" — and this file quoted
+  both, then kept quoting them after 3769dc9 (2026-08-18) had removed the figures:
+  `InsufficientFundsException` says "Insufficient funds." and carries `available`/`requested` as
+  NUMERIC extensions (the client formats them in the user's locale), and
+  `AccountService.DeleteAccountAsync` says "Cannot delete an account with a non-zero balance." —
+  reworded, not merely shortened. `MoneyFormattingTests` forbids `:C` and currency symbols in Api
+  and Shared, so a symbol cannot return without a red backend build. Re-measured 2026-09-03 (23:25Z)
+  through the BFF; the four sites below and `money.contract.test.ts` quote that run.
+*/
 
 /**
  * A bad account name, in the framework's exact answer — which is NOT one message, and NOT keyed
@@ -1046,9 +1037,10 @@ const deleteAccount = api.delete('/api/accounts/{id}', ({ params, request, respo
         instance: pathOf(request),
         status: 422,
         errorCode: 'NON_ZERO_BALANCE',
-        // The API always appends the amount, so the user is told WHAT to empty, not just that
-        // they must. Measured: "Cannot delete account with non-zero balance. Current balance: $50,042.00"
-        detail: `Cannot delete account with non-zero balance. Current balance: ${serverCurrency(account.balance)}`,
+        // No figure since 3769dc9 — the caller already holds the balance from GET /api/accounts
+        // (AccountService.DeleteAccountAsync). Measured 2026-09-03, balance 16:
+        //   422 NON_ZERO_BALANCE "Cannot delete an account with a non-zero balance."
+        detail: 'Cannot delete an account with a non-zero balance.',
       }),
     );
   }
@@ -1716,9 +1708,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
         instance: pathOf(request),
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
-        // The API embeds BOTH amounts so the user knows the shortfall without doing the
-        // arithmetic. Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
-        detail: `Insufficient funds. Available: ${serverCurrency(available)}, Requested: ${serverCurrency(amount)}`,
+        // No figures in the sentence since 3769dc9: both amounts travel as the numeric
+        // `available`/`requested` extensions below. Measured 2026-09-03 (balance 6, amount 10):
+        //   422 {"detail":"Insufficient funds.","errorCode":"INSUFFICIENT_FUNDS",
+        //        "available":6.0000,"requested":10}
+        detail: 'Insufficient funds.',
         extensions: { available, requested: amount },
       }),
     );
@@ -2777,9 +2771,11 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
         instance: pathOf(request),
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
-        // The API embeds BOTH amounts so the user knows the shortfall without doing the
-        // arithmetic. Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
-        detail: `Insufficient funds. Available: ${serverCurrency(available)}, Requested: ${serverCurrency(amount)}`,
+        // No figures in the sentence since 3769dc9: both amounts travel as the numeric
+        // `available`/`requested` extensions below. Measured 2026-09-03 (balance 6, amount 10):
+        //   422 {"detail":"Insufficient funds.","errorCode":"INSUFFICIENT_FUNDS",
+        //        "available":6.0000,"requested":10}
+        detail: 'Insufficient funds.',
         extensions: { available, requested: amount },
       }),
     );
@@ -3023,9 +3019,11 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
         instance: pathOf(request),
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
-        // The API embeds BOTH amounts so the user knows the shortfall without doing the
-        // arithmetic. Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00"
-        detail: `Insufficient funds. Available: ${serverCurrency(from.balance)}, Requested: ${serverCurrency(amount)}`,
+        // No figures in the sentence since 3769dc9: both amounts travel as the numeric
+        // `available`/`requested` extensions below. Measured 2026-09-03 on the external transfer
+        // (balance 16, amount 1000, minted authorisation): 422 "Insufficient funds.",
+        // "available":16.0000,"requested":1000 — the same exception serves the internal one.
+        detail: 'Insufficient funds.',
         extensions: { available: from.balance, requested: amount },
       }),
     );
@@ -3170,7 +3168,10 @@ const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
 
     The mock used to skip the session entirely, so a caller with NO session got a 200 and, worse,
     `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
-    to push a full transfer through, since the level is the only thing the money handlers consult.
+    to push a full transfer through: at the time the level was the only thing the money handlers
+    consulted. Since ADR-0041 (dd84179, 2026-08-13) only the account-number reveal reads it, and a
+    money move carries its authorisation in-band (ADR-0042) — the same bug today would hand a
+    session-less caller the reveal, not a transfer.
   */
   if (!mockState.session) {
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
@@ -3254,7 +3255,10 @@ const setPin = http.post('*/bff/auth/set-pin', async ({ request }) => {
 
     The mock used to skip the session entirely, so a caller with NO session got a 200 and, worse,
     `mockState.authLevel = 2` — a nonexistent session could be walked up to elevated and then used
-    to push a full transfer through, since the level is the only thing the money handlers consult.
+    to push a full transfer through: at the time the level was the only thing the money handlers
+    consulted. Since ADR-0041 (dd84179, 2026-08-13) only the account-number reveal reads it, and a
+    money move carries its authorisation in-band (ADR-0042) — the same bug today would hand a
+    session-less caller the reveal, not a transfer.
   */
   if (!mockState.session) {
     return bffProblem({ status: 401, title: 'Unauthorized', detail: 'Session expired or invalid' });
@@ -3473,7 +3477,8 @@ const login = http.post('*/bff/auth/login', async ({ request }) => {
     a NEW session id, so any elevation the previous session earned is orphaned with it.
 
     The mock overwrote `session` and left `authLevel` alone, so signing in while already elevated
-    kept level 2 — a step-up bypass, since the level is the only thing the money handlers consult.
+    kept level 2 — a step-up bypass. Since ADR-0041 (dd84179, 2026-08-13) the level gates only the
+    account-number reveal; money moves carry their authorisation in-band (ADR-0042).
     Every other route to a dead session (logout, clock expiry, resetMockState) already reset it;
     these two were the gap.
   */

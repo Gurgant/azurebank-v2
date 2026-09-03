@@ -665,21 +665,19 @@ describe('the mock quotes the server, it does not paraphrase it', () => {
     expect((await deposited.json()).message).toBe('Deposit successful');
   });
 
-  it('embeds the amounts in INSUFFICIENT_FUNDS, as the API does', async () => {
+  it('names no amount in INSUFFICIENT_FUNDS and carries both as numbers, as the API does', async () => {
     /*
-      Measured: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00" — the server
-      formats with C#'s `:C` on en-US, so grouped, two decimals, a leading `$`. NOT the app's EUR
-      display: this is the mock quoting the server's own sentence.
+      Measured 2026-08-04: "Insufficient funds. Available: $50,042.00, Requested: $99,000.00" — and
+      this test pinned that shape for a fortnight after 3769dc9 (2026-08-18) had removed the figures
+      and the `$`. Re-measured 2026-09-03 on POST /api/transactions/withdraw through the BFF,
+      balance 6, amount 10:
+        422 {"title":"Unprocessable Entity","detail":"Insufficient funds.",
+             "errorCode":"INSUFFICIENT_FUNDS","available":6.0000,"requested":10}
+      The amounts are NUMERIC extensions; the client formats them in the user's locale.
+      `money.contract.test.ts` pins the same shape on the real stack from a fresh account.
     */
     const account = mockState.accounts.find((a) => a.id === MAIN_ACCOUNT_ID);
     const available = account?.balance ?? 0;
-
-    const res = await fetch('/api/transactions/deposit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
-      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 1 }),
-    });
-    expect(res.status).toBe(201);
 
     const withdrawn = await fetch('/api/transactions/withdraw', {
       method: 'POST',
@@ -687,10 +685,10 @@ describe('the mock quotes the server, it does not paraphrase it', () => {
       body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: available + 1000, pin: '123456' }),
     });
     expect(withdrawn.status).toBe(422);
-    const { detail } = await withdrawn.json();
-    expect(detail).toMatch(
-      /^Insufficient funds\. Available: \$[\d,]+\.\d{2}, Requested: \$[\d,]+\.\d{2}$/,
-    );
+    const body = await withdrawn.json();
+    expect(body.detail).toBe('Insufficient funds.');
+    expect(body.available).toBe(available);
+    expect(body.requested).toBe(available + 1000);
   });
 
   it('reports a refused PIN as authLevel 1, not the caller’s current level', async () => {
@@ -1158,8 +1156,9 @@ describe('a fresh session does not inherit an elevation', () => {
     /*
       `SessionService.CreateSession` hardcodes `AuthLevel = 1` and mints a NEW session id, so
       whatever the previous session had earned is orphaned with it. The mock replaced `session` and
-      left `authLevel` alone, so signing in while elevated stayed at 2 — a step-up bypass, since
-      the level is the only thing the money handlers consult.
+      left `authLevel` alone, so signing in while elevated stayed at 2 — a step-up bypass of the
+      reveal, the only route that reads the level since ADR-0041 (dd84179, 2026-08-13); money
+      moves carry their authorisation in-band (ADR-0042) — hence the reveal as the probe below.
 
       Measured on the running stack rather than read off that line, because "found by reading" is
       not "observed":

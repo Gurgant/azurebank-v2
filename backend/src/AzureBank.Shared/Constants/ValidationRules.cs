@@ -103,7 +103,6 @@ public static class ValidationRules
 
     public const decimal TransactionMinAmount = 0.01m;
     public const decimal TransactionMaxAmount = 100_000.00m;  // 100k per transaction, in Currency
-    public const decimal DailyTransferLimit = 1_000.00m;      // 1k daily limit (standard user)
     public const int MoneyDecimalPlaces = 2;
 
     // Database precision for DECIMAL type - DECIMAL(19,4)
