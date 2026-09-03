@@ -797,7 +797,7 @@ eventual failure, and holds a connection while it does. If the queue is legitima
 — a genuine burst — the fix is capacity, not patience.
 
 **Do not run `anchor` during an incident. Run `export` instead, and run it FIRST.** The tool has
-five verbs and four of them are safe here, which the rest of this page could not tell you because
+five verbs and three of them are safe here, which the rest of this page could not tell you because
 it was written when there was one.
 
 - `verify` READS. Safe, and it is the verdict everything below hangs on.
@@ -936,14 +936,17 @@ successful assembly, and the line to search a transcript for.
 
 When a PIN is enrolled, the API records — in the same save as the enrolment and its audit row — that
 the account holder is OWED a notice (ADR-0045). Nothing in the API sends it. This verb renders every
-owed notice as one RFC 5322 `.eml` file, addressed to the email held on the account, into a directory
-you name, and marks the row delivered:
+owed notice as one RFC 5322 `.eml` file, addressed to the email held on the account, into a
+directory you name, and marks the row delivered:
 
-    dotnet run --project backend/tools/AzureBank.AuditVerifier -- notify ../azurebank-notices \
-      --contact "security@your-bank.example, +00 000 0000"
+```bash
+dotnet run --project backend/tools/AzureBank.AuditVerifier -- notify ../azurebank-notices \
+  --contact "security@your-bank.example, +00 000 0000"
+```
 
-The directory must exist and must be OUTSIDE any git repository — the verb refuses one inside a
-working tree, because a spool of addresses is one commit away from being published. `--contact` is
+The directory must exist (the verb never creates one) and must be OUTSIDE any git repository — the
+verb refuses one inside a working tree, where it sits or where a link on its path points, because a
+spool of addresses is one commit away from being published. `--contact` is
 what a recipient uses to say "this was not me"; NIST §4.6 makes it mandatory content, so the verb
 renders nothing without it. What that contact can actually do is a separate runbook.
 
@@ -954,22 +957,30 @@ demonstration; it holds addresses in clear.
 
 The headlines, and what each means from THIS verb:
 
-- `NOTIFIED n of m waiting notices into <directory>` — the summary line, first. Exit **0** when every
-  waiting notice was written and marked; **6** when at least one is still owed, with a line per
-  notice saying why. A marked notice is never rewritten: fix what the line names and run again.
+- `NOTIFIED n of m waiting notices into <directory>` — the summary line, first. Exit **0** when
+  every waiting notice was written and marked; **6** when at least one is still owed, with a line
+  per notice saying why. A marked notice is never rewritten: fix what the line names and run again.
 - `NOTHING TO NOTIFY` — exit **2**: no notice is owed. Its own answer, not a success, for the reason
   `verify`'s **2** is.
-- `NO ADDRESS` — that notice's account holds no email (unreachable through registration, reachable by
-  seed or raw SQL). Nothing is rendered for it and it stays owed.
+- `NO ADDRESS` — that notice's account holds no email, or one that cannot head a message because it
+  contains a line break (either is unreachable through registration and reachable by seed or raw
+  SQL). Nothing is rendered for it and it stays owed.
 - `NO AUDIT ROW backs notice …` — from THIS verb it means the enrolment row the notice belongs to is
   missing for that user. The notice is rendered anyway — the account holder is not punished for the
   gap — and the absence is the finding: run `verify`, then `evidence`, on that account's rows.
   (From `evidence` the same words mean a LEDGER row with no audit row naming it; see above.)
-- `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, or a directory
-  inside a git repository. Per notice, counted toward **6**: the file could not be written (the
-  exception TYPE is named, never its message — a message can echo the address), or the build cannot
-  render that event. `NOT NOTIFIED by this run` means another run marked the row while this one wrote
-  the file: that file is a duplicate, and the row is not owed.
+- `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, a directory
+  that does not exist (the verb never creates one), or a directory inside a git working tree — where
+  it sits or where a link on its path points. Per notice, counted toward **6**: the file could not
+  be written (the exception TYPE is named, never its message — a message can echo the address), or
+  the build cannot render that event. `NOT NOTIFIED by this run` means another run marked the row
+  while this one wrote the file: that file is a duplicate, and the row is not owed.
+- **An orphan file** — a complete `.eml` whose row is still owed. It happens when the run is
+  interrupted, or the store refuses the mark, between the publish and the `UPDATE`; the file is
+  written to a staging name and moved into place only when complete, so an orphan is never a
+  truncated message. The row is the truth: delete or move the orphan and run again, and the notice
+  is rendered afresh under the same reference. A second run into the same directory refuses to
+  overwrite it and says so.
 - `CANNOT NOTIFY` — exit **3**: the tool is not configured, the ring will not build, or the store
   could not be read or written. Not a statement about any notice.
 - `INTERRUPTED` — exit **5**. Notices written and marked before the interruption stay marked.

@@ -362,6 +362,8 @@ public class NotifyCommandTests : IDisposable
 
         var stored = await _context.SubscriberNotices.SingleAsync(n => n.Id == notice.Id);
         stored.DeliveryReceipt.Should().Be($"{notice.Id:N}.eml");
+        Directory.EnumerateFiles(_directory).Select(Path.GetFileName).Should().Equal(
+            [$"{notice.Id:N}.eml"], "the staging file is moved into place, never left beside the message");
 
         /*
           THE SECOND RUN INTO THE SAME DIRECTORY. Reset the row so the notice is owed again — the
@@ -379,5 +381,103 @@ public class NotifyCommandTests : IDisposable
         (await File.ReadAllBytesAsync(path)).Should().Equal(bytes, "the earlier copy was not touched");
         (await _context.SubscriberNotices.AsNoTracking().SingleAsync(n => n.Id == notice.Id))
             .DeliveredAt.Should().BeNull();
+        Directory.EnumerateFiles(_directory).Should().HaveCount(1, "the refused run leaves no staging file either");
+    }
+
+    [Fact]
+    public async Task AMissingDirectory_IsRefusedBeforeTheStoreIsTouched()
+    {
+        await using var provider = UnreachableProvider();
+        var missing = Path.Combine(Path.GetTempPath(), "azurebank-notify-missing-" + Guid.NewGuid().ToString("N"));
+        var started = DateTime.UtcNow;
+
+        var (exitCode, lines) = await NotifyCommand.RunAsync(provider, missing, Contact, CancellationToken.None);
+
+        exitCode.Should().Be(VerifyCommand.UsageError, "the verb never creates a directory, and says so before reading anything");
+        lines[0].Should().StartWith("NOT NOTIFIED").And.Contain("not an existing directory");
+        Directory.Exists(missing).Should().BeFalse();
+        (DateTime.UtcNow - started).Should().BeLessThan(TimeSpan.FromSeconds(1.5));
+    }
+
+    [Fact]
+    public async Task ALinkPointingIntoAGitWorkingTree_IsRefused_WhereverItSits()
+    {
+        /*
+          The link sits under the temp directory, outside every repository; it points at this test's
+          own build output, which is inside one. A lexical walk of the link's ancestors finds no
+          .git, and the files would land in the working tree anyway -- on Windows git stages what is
+          inside a junction as ordinary directories. Both walks are done, and this is the one that
+          catches it.
+        */
+        var link = Path.Combine(_directory, "into-the-repo");
+        var target = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
+        NotifyCommand.InsideAGitRepository(_directory).Should().BeFalse("the temp directory itself must sit outside any repository, or this test proves nothing");
+
+        CreateDirectoryLink(link, target);
+        Directory.Exists(link).Should().BeTrue("the link was created, or this test proves nothing");
+
+        NotifyCommand.PhysicalPath(link).Should().BeEquivalentTo(target, "the link resolves to where it points");
+        NotifyCommand.InsideAGitRepository(link).Should().BeTrue();
+
+        await using var provider = UnreachableProvider();
+        var (exitCode, lines) = await NotifyCommand.RunAsync(provider, link, Contact, CancellationToken.None);
+
+        exitCode.Should().Be(VerifyCommand.UsageError);
+        lines[0].Should().StartWith("NOT NOTIFIED").And.Contain("inside a git repository");
+    }
+
+    private static void CreateDirectoryLink(string link, string target)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // A junction needs no privilege, unlike a symbolic link; git stages its contents as files.
+            using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+            {
+                ArgumentList = { "/c", "mklink", "/J", link, target },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            mklink!.WaitForExit();
+            mklink.ExitCode.Should().Be(0, "mklink /J refused: {0}", mklink.StandardError.ReadToEnd());
+            return;
+        }
+
+        Directory.CreateSymbolicLink(link, target);
+    }
+
+    [Fact]
+    public async Task AnAddressWithALineBreak_IsNotUsed_AndTheNoticeStaysOwed()
+    {
+        /*
+          RFC 5322 headers end at CRLF. An address holding one would end the To: header and start
+          whatever followed -- a Bcc: to the attacker, say. Unreachable through registration,
+          reachable by anybody who can write the table, which is the adversary the whole audit
+          design already assumes.
+        */
+        var owner = await OwnerAsync(email: "owner@example.com\r\nBcc: attacker@example.com");
+        var notice = await OwedAsync(owner);
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await RunAsync(provider);
+
+        exitCode.Should().Be(AnchorCommand.NotRecorded);
+        _transport.Envelopes.Should().BeEmpty("nothing is rendered for an address that cannot head a message");
+        lines.Should().Contain(l => l.StartsWith("NO ADDRESS") && l.Contains("line break"));
+        string.Join("\n", lines).Should().NotContain("attacker");
+        (await _context.SubscriberNotices.AsNoTracking().SingleAsync(n => n.Id == notice.Id))
+            .DeliveredAt.Should().BeNull();
+    }
+
+    [Fact]
+    public void TheTransportRefusesALineBreakInTheAddress_OnItsOwn()
+    {
+        // The second lock on the same door: a caller that skipped the command's check still cannot
+        // inject a header through the transport.
+        var rendered = new RenderedNotice("ref", "Subject", "body", "ref.eml");
+
+        var act = () => PickupDirectoryTransport.Compose(rendered, "owner@example.com\nBcc: x@example.com", DateTime.UtcNow);
+
+        act.Should().Throw<ArgumentException>().WithMessage("*line break*");
     }
 }

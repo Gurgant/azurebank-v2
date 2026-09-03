@@ -44,11 +44,46 @@ public sealed class PickupDirectoryTransport : INoticeTransport
         var path = Path.Combine(directory, notice.FileName);
         var bytes = Utf8NoBom.GetBytes(Compose(notice, toAddress, DateTime.UtcNow));
 
-        // The directory is NOT created here: a missing one is the operator's mistake, and it lands
-        // in the write-failure branch as a DirectoryNotFoundException rather than being papered over.
-        await using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        await file.WriteAsync(bytes, cancellationToken);
-        await file.FlushAsync(cancellationToken);
+        // The refusal to overwrite, first and by name: an existing file at the notice's path is an
+        // earlier copy, and it is never truncated. (The move below refuses it too.)
+        if (File.Exists(path))
+        {
+            throw new IOException("A file already exists at the notice's path; the earlier copy is kept.");
+        }
+
+        /*
+          WRITTEN BESIDE, THEN PUBLISHED. The bytes go to a staging file next to the final name and
+          are moved into place only once they are all on disk, so a write that fails or is cancelled
+          half-way can never leave a truncated message under the name a relay would collect. The
+          staging file is created exclusively (FileMode.CreateNew) and removed on any failure; the
+          move refuses an existing target, which keeps the "never overwrite" property across the
+          window between the check above and the publish. The directory is NOT created here: a
+          missing one is the operator's mistake, refused by the command before anything is read.
+        */
+        var staging = path + ".partial";
+        try
+        {
+            await using (var file = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                await file.WriteAsync(bytes, cancellationToken);
+                await file.FlushAsync(cancellationToken);
+            }
+
+            File.Move(staging, path, overwrite: false);
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(staging);
+            }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+            {
+                // The staging file is the lesser evil: its name says it is partial.
+            }
+
+            throw;
+        }
 
         return notice.FileName;
     }
@@ -56,8 +91,18 @@ public sealed class PickupDirectoryTransport : INoticeTransport
     /// <summary>
     /// The message text, headers first, exactly as a mail client expects to read it.
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// The address contains a line break, which would end the <c>To:</c> header and start another.
+    /// The command refuses such an address before rendering; this is the second lock on the same door.
+    /// </exception>
     internal static string Compose(RenderedNotice notice, string toAddress, DateTime nowUtc)
     {
+        if (toAddress.AsSpan().IndexOfAny('\r', '\n', '\0') >= 0)
+        {
+            throw new ArgumentException(
+                "A recipient address cannot contain a line break: it would become a header.", nameof(toAddress));
+        }
+
         var headers = new StringBuilder()
             .Append("From: ").Append(Sender).Append("\r\n")
             .Append("To: ").Append(toAddress).Append("\r\n")

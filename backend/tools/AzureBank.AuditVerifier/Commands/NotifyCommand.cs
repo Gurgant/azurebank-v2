@@ -151,6 +151,16 @@ public static class NotifyCommand
             });
         }
 
+        if (!Directory.Exists(fullDirectory))
+        {
+            return (VerifyCommand.UsageError, new[]
+            {
+                $"NOT NOTIFIED: {fullDirectory} is not an existing directory.",
+                "  `notify` does not create it: a spool of addresses should land only where somebody",
+                "  meant it to. Create the directory, outside any git repository, and run again.",
+            });
+        }
+
         if (InsideAGitRepository(fullDirectory))
         {
             return (VerifyCommand.UsageError, new[]
@@ -236,6 +246,20 @@ public static class NotifyCommand
                 }
 
                 /*
+                  A LINE BREAK IN THE ADDRESS WOULD BECOME A HEADER. The address heads the message,
+                  and RFC 5322 headers end at CRLF, so an email holding one -- unreachable through
+                  registration, reachable by anybody who can write the table -- would inject whatever
+                  followed it (a Bcc:, say). Refused here as unusable, and refused again by the
+                  transport in case a second caller ever skips this check.
+                */
+                if (address.AsSpan().IndexOfAny('\r', '\n', '\0') >= 0)
+                {
+                    lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has an email on the account that cannot head a message (it contains a line break); still owed.");
+                    owed++;
+                    continue;
+                }
+
+                /*
                   JOINED BY (ACTOR, EVENT), NEVER BY TIME: the notice and the audit row read two
                   clocks milliseconds apart. An absent row is reported and the notice is still
                   rendered -- see the class remarks.
@@ -273,7 +297,9 @@ public static class NotifyCommand
                     continue;
                 }
 
-                notice.DeliveredAt = now;
+                // Per notice, read after the write: a batch rendered slowly would otherwise date every
+                // file to the moment the run began rather than the moment each was produced.
+                notice.DeliveredAt = DateTime.UtcNow;
                 notice.DeliveryReceipt = receipt;
                 try
                 {
@@ -334,13 +360,35 @@ public static class NotifyCommand
     }
 
     /// <summary>
-    /// True when the directory, or any directory above it, is a git working tree.
+    /// True when the directory, or any directory above it, is a git working tree — where it SITS and
+    /// where it POINTS.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The mechanical half of "never commit a spool of addresses"; the runbook's delete-after
     /// sentence is the other half. A <c>.git</c> FILE counts too — that is what a worktree carries.
+    /// </para>
+    /// <para>
+    /// LINKS ARE FOLLOWED. A symbolic link or a junction sitting outside every repository can point
+    /// into one, and the files would land where it points; on Windows git treats a junction as an
+    /// ordinary directory and stages what is inside it. So the walk is done twice: over the path as
+    /// typed, and over its physical target once every link on it is resolved. Either being inside a
+    /// working tree refuses the directory.
+    /// </para>
     /// </remarks>
     internal static bool InsideAGitRepository(string fullDirectory)
+    {
+        if (AncestorHoldsGit(fullDirectory))
+        {
+            return true;
+        }
+
+        var physical = PhysicalPath(fullDirectory);
+        return !string.Equals(physical, fullDirectory, StringComparison.OrdinalIgnoreCase)
+               && AncestorHoldsGit(physical);
+    }
+
+    private static bool AncestorHoldsGit(string fullDirectory)
     {
         for (var current = new DirectoryInfo(fullDirectory); current is not null; current = current.Parent)
         {
@@ -352,5 +400,52 @@ public static class NotifyCommand
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// The directory with every link on its path resolved to what it points at.
+    /// </summary>
+    /// <remarks>
+    /// Walks upward to the deepest link, replaces that segment by its final target, and repeats on
+    /// the result until no segment is a link. Bounded, so a link loop ends the walk instead of the
+    /// process; an unreadable segment is left as it is rather than guessed at.
+    /// </remarks>
+    internal static string PhysicalPath(string fullDirectory)
+    {
+        var path = fullDirectory;
+        for (var hops = 0; hops < 32; hops++)
+        {
+            string? resolved = null;
+            for (var current = new DirectoryInfo(path); current is not null; current = current.Parent)
+            {
+                FileSystemInfo? target;
+                try
+                {
+                    target = current.Exists ? current.ResolveLinkTarget(returnFinalTarget: true) : null;
+                }
+                catch (IOException)
+                {
+                    target = null;
+                }
+
+                if (target is null)
+                {
+                    continue;
+                }
+
+                var relative = Path.GetRelativePath(current.FullName, path);
+                resolved = relative == "." ? target.FullName : Path.Combine(target.FullName, relative);
+                break;
+            }
+
+            if (resolved is null)
+            {
+                return path;
+            }
+
+            path = Path.GetFullPath(resolved);
+        }
+
+        return path;
     }
 }

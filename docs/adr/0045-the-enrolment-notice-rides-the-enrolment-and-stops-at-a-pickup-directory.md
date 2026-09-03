@@ -62,10 +62,12 @@ reads the change tracker at the moment `UpdateAsync` is called.
 
 **D2 — No address in the row.** The recipient is joined from the account when the notice is
 rendered. Nothing personal lives in a table that grows for the life of the account; erasure happens
-by cascade with the user; there is no retention question to answer. A snapshot taken at enrolment
-was considered and declined: it would not defend against an attacker who changed the address BEFORE
-enrolling — only notifying the OLD address of the change does that — and no change-email endpoint
-exists today. The day one does, this paragraph is the trigger to revisit.
+by cascade with the user; the TABLE raises no retention question. The rendered file does — it holds
+the address in clear, and "Where it stops" says what is done about that: nothing automatic, a
+refusal of any repository path, and an instruction to delete the spool. A snapshot taken at
+enrolment was considered and declined: it would not defend against an attacker who changed the
+address BEFORE enrolling — only notifying the OLD address of the change does that — and no
+change-email endpoint exists today. The day one does, this paragraph is the trigger to revisit.
 
 **D3 — Rendered on demand by the operator tool, never by the API.** `notify <directory> --contact
 "<text>"` is the fifth verb of `AzureBank.AuditVerifier`: it reads every row still owed, renders
@@ -176,10 +178,14 @@ NIST clause by choice, because it is the clearest statement of the property, and
 The independence is real; the delivery is not. A file this machine wrote to this machine's disk has
 been seen by nobody, and the notice waits until the operator runs `notify`, which may be never — so
 in the threat model the attacker's window is the whole interval. Delivery is at-least-once: the file
-is written, then the row is marked, and an interruption between the two leaves a file whose row is
-still owed; the next run into the same directory is refused by `CreateNew`, and into a different one
-writes a second copy with the same `Message-ID`. The directory is personal data at rest, unencrypted
-and unpurged — the verb's refusal of a repository path and the runbook's delete-after sentence are
+is written to a staging name and moved into place only when complete, then the row is marked, and
+an interruption between the publish and the mark leaves a complete file whose row is still owed —
+an orphan the runbook says how to clear (the row is the truth; delete or move the file and run
+again). The next run into the same directory refuses to overwrite it, and into a different one
+writes a second copy with the same `Message-ID`. A durable claim on the row before the write is the
+upgrade a second runner would need, and it is not built for one. The directory is personal data at
+rest, unencrypted and unpurged — the verb's refusal of a repository path (where it sits and where a
+link on it points) and the runbook's delete-after sentence are
 the mitigations. CodeQL says the same thing in its own words —
 `cs/cleartext-storage-of-sensitive-information` on the line that writes the file — and the alert is
 dismissed as won't-fix with this paragraph as the reason: the recipient's address is the message's

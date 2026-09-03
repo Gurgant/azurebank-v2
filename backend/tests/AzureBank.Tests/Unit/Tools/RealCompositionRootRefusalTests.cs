@@ -376,7 +376,10 @@ public class RealCompositionRootRefusalTests
     {
         await using var provider = RealProvider(BadRingConfiguration());
         var path = Path.Combine(Path.GetTempPath(), $"ring-{Guid.NewGuid():N}.jsonl");
-        var directory = Path.Combine(Path.GetTempPath(), $"ring-notices-{Guid.NewGuid():N}");
+        // An EXISTING directory outside any repository: `notify` refuses a missing one with 4 before
+        // it touches the ring, and this test is about the ring.
+        var directory = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), $"ring-notices-{Guid.NewGuid():N}")).FullName;
 
         var verify = await VerifyCommand.RunAsync(provider, CancellationToken.None);
         var export = await ExportCommand.RunAsync(provider, path, CancellationToken.None);

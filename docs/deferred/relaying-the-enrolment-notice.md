@@ -14,7 +14,10 @@ This document is about the thing that would send it, and why it is not here.
 expects: headers, a blank line, a body, CRLF throughout. Postfix's pickup daemon, the IIS SMTP
 service's pickup folder and a dozen commercial gateways read exactly this shape from a directory and
 hand it on. Pointing one at the directory closes the last hop without changing a line of this
-repository, which is what the pickup directory was chosen for.
+repository — to the extent the collector is durable. The row calls the notice delivered when the
+file is published, so a collector that loses a file loses a notice nothing will render again; that
+is ADR-0045 D7's reason to move "delivered" from the row to the relay's own receipt the day one
+exists. The pickup directory was chosen because the file is already the message.
 
 **Or a transport that speaks to a relay.** The seam is one interface, `INoticeTransport`, with one
 implementation. A second one would hand the rendered notice to an SMTP host or a provider's API. The
