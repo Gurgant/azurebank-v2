@@ -106,8 +106,7 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
         WebApplicationFactory<Program> factory)
     {
         var sessions = factory.Services.GetRequiredService<ISessionService>();
-        var cookieName = factory.Services
-            .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+        var cookieName = CookieName(factory);
         var sessionId = sessions.CreateSession(
             "fake-jwt",
             DateTime.UtcNow.AddHours(1),
@@ -122,6 +121,19 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
                 HasPin = true
             });
         return (sessionId, cookieName, sessions);
+    }
+
+    /// <summary>A session id the store has never issued — the cookie of a session that is gone.</summary>
+    private const string NeverIssuedSessionId = "never-issued-0123456789abcdef";
+
+    private static string CookieName(WebApplicationFactory<Program> factory) =>
+        factory.Services.GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+
+    private static void AssertNoStepUpHeaders(HttpResponseMessage response)
+    {
+        response.Headers.Should().NotContainKey("X-Auth-Level-Required",
+            "a dead cookie is no session, and no session is never a step-up");
+        response.Headers.Should().NotContainKey("X-Auth-Level-Current");
     }
 
     private static HttpRequestMessage Request(
@@ -205,7 +217,8 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     /*
       A COOKIE THE STORE CANNOT RESOLVE IS NOT A SESSION AT LEVEL 0 — it is no session.
 
-      The three tests below pin the row the mock got wrong for a month (backlog #232). The SPA's
+      The three tests below pin the row the mock got wrong for three and a half weeks (work-log
+      item 232). The SPA's
       MSW mock answered 403 STEP_UP_REQUIRED with X-Auth-Level-Current: 0 for a cookie that had
       outlived its session, quoting a measurement from before ADR-0038 removed the "no cookie —
       let the API handle 401" fall-through. Nothing on this side pinned the other half: every
@@ -225,18 +238,15 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     public async Task FullNumber_WithACookieTheStoreCannotResolve_Is401NotStepUp_AndTheBackendIsNeverCalled()
     {
         var (factory, backend) = WithRecorder();
-        var cookieName = factory.Services
-            .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+        var cookieName = CookieName(factory);
         var client = factory.CreateClient();
 
         var response = await client.SendAsync(Request(
             HttpMethod.Get, $"/api/accounts/{Guid.NewGuid()}/full-number",
-            cookieName, "never-issued-0123456789abcdef"));
+            cookieName, NeverIssuedSessionId));
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        response.Headers.Should().NotContainKey("X-Auth-Level-Required",
-            "a dead cookie is no session, and no session is never a step-up");
-        response.Headers.Should().NotContainKey("X-Auth-Level-Current");
+        AssertNoStepUpHeaders(response);
         await AssertLooksLikeTheApisOwn401(response);
         backend.ForwardedPaths.Should().BeEmpty();
     }
@@ -256,7 +266,7 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
             HttpMethod.Get, $"/api/accounts/{Guid.NewGuid()}/full-number", cookieName, sessionId));
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        response.Headers.Should().NotContainKey("X-Auth-Level-Required");
+        AssertNoStepUpHeaders(response);
         await AssertLooksLikeTheApisOwn401(response);
         backend.ForwardedPaths.Should().BeEmpty();
     }
@@ -265,16 +275,15 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     public async Task TransfersPost_WithACookieTheStoreCannotResolve_Is401_AndTheBackendIsNeverCalled()
     {
         var (factory, backend) = WithRecorder();
-        var cookieName = factory.Services
-            .GetRequiredService<IOptions<BffSessionOptions>>().Value.CookieName;
+        var cookieName = CookieName(factory);
         var client = factory.CreateClient();
 
-        var request = Request(HttpMethod.Post, "/api/transfers", cookieName, "never-issued-0123456789abcdef");
+        var request = Request(HttpMethod.Post, "/api/transfers", cookieName, NeverIssuedSessionId);
         request.Content = JsonContent.Create(new { });
         var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        response.Headers.Should().NotContainKey("X-Auth-Level-Required");
+        AssertNoStepUpHeaders(response);
         await AssertLooksLikeTheApisOwn401(response);
         backend.ForwardedPaths.Should().BeEmpty(
             "the session check runs here for every /api path; a cookie the store cannot resolve is refused before the proxy");

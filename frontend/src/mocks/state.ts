@@ -138,7 +138,10 @@ interface MockState {
   idempotency: Map<string, StoredIdempotentResponse>;
   /** authorizationId -> the authorisation minted for it (ADR-0042). Spendable exactly once. */
   stepUpAuthorizations: Map<string, StoredStepUpAuthorization>;
-  /** BFF session auth level: 1 = password, 2 = PIN-verified (transfers need 2). */
+  /**
+   * BFF session auth level: 1 = password, 2 = PIN-verified. Since ADR-0041 only the account-number
+   * reveal reads it; money moves carry their authorisation in-band.
+   */
   authLevel: 1 | 2;
   /** BFF session: null = no cookie/anonymous (default — tests seed or log in explicitly). */
   session: MockSessionUser | null;

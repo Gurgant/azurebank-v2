@@ -115,9 +115,11 @@ describe('contract: endpoints that require a session', () => {
       mock with no session at all, so page tests ran in a state the product cannot produce and
       nothing anywhere proved they were protected.
 
-      The BFF does not answer for itself here — it forwards whatever token the session yields, and
-      the API rejects a request that arrives without one. Measured three ways, all identical:
-      anonymous, an unresolvable cookie, and a cookie revoked by logout:
+      The BFF answers this itself: since ADR-0038 `AuthLevelMiddleware` refuses a request with no
+      live session before proxying, with the API's own AUTH_TOKEN_MISSING members, and since
+      d74603c (2026-08-20) on every /api path whatever the method. This case sends the anonymous
+      form; `auth.contract.test.ts` replays a dead cookie on the reveal and on a transfer, and the
+      2026-09-03 transcript has the forged and the dead cookie on /api/accounts too — all identical:
 
         401 {"type":"https://httpstatuses.com/401","title":"Unauthorized",
              "detail":"Authentication is required to access this resource.",

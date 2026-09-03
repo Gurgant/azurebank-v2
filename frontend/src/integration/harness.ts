@@ -82,8 +82,8 @@ export async function signIn(store: IntegrationStore): Promise<void> {
     if (problem.status === 429) {
       throw new Error(
         'Login was rate-limited (429). The BFF allows 10 auth requests per 60s per IP ' +
-          '(RateLimiting:AuthPermitLimit) and verify-pin counts against the same budget. ' +
-          'Wait about a minute and re-run.',
+          '(RateLimiting:AuthPermitLimit); register and reauthenticate share the budget, ' +
+          'verify-pin does not. Wait about a minute and re-run.',
       );
     }
     throw new Error(`Login failed: ${JSON.stringify(result.error)}`);

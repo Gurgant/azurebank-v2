@@ -2849,7 +2849,7 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
  * ADR-0041), but double-entry ON-ledger: debit the source, credit the destination, push BOTH a
  * TransferOut and a TransferIn row. Failure order mirrors the backend: idempotency →
  * SAME_ACCOUNT_TRANSFER (from==to) → ownership (either account missing → ACCOUNT_NOT_FOUND) →
- * INSUFFICIENT_FUNDS → success.
+ * AUTHORIZATION_REQUIRED / AUTHORIZATION_INVALID (ADR-0042) → INSUFFICIENT_FUNDS → success.
  */
 const transferInternal = api.post('/api/transfers/internal', async ({ request, response }) => {
   // Middleware, so it precedes the key checks below. See `payloadTooLarge`.
@@ -3139,8 +3139,11 @@ function pinPayloadProblem(dto: 'VerifyPinRequest' | 'SetPinRequest', pin: unkno
 }
 
 const verifyPin = http.post('*/bff/auth/verify-pin', async ({ request }) => {
-  const limited = authRateLimited(request);
-  if (limited) return limited;
+  // NOT under the BFF's `auth` rate-limit policy: `VerifyPin` carries no `[EnableRateLimiting]`
+  // (login, register, reauthenticate and the azure-tag rename do), and twelve calls in a row with a
+  // dead cookie answered 401 every time on 2026-09-03, never 429. The mock counted this route
+  // against the ten-permit budget until then. The only 429 the route emits is the API's PIN
+  // lockout (PIN_LOCKED, ADR-0010), relayed.
   runSessionActivityMiddleware(request);
   const authBody = await readJsonBody(request);
   if (!authBody) {
@@ -3697,9 +3700,11 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
  * mock with no session at all, so page tests ran in a state the product cannot produce and nothing
  * anywhere proved those routes were protected.
  *
- * ONE 401, not two, and that is measured rather than reasoned. The proxy does not answer for itself:
- * it forwards whatever token the session yields, and the API rejects a request that arrives without
- * one. Three ways of having no usable session all produce the SAME body:
+ * ONE 401, not two, and the BFF writes it itself. Since ADR-0038 (01c0e31, 2026-08-10)
+ * `AuthLevelMiddleware` refuses a request with no live session before proxying, with the API's own
+ * AUTH_TOKEN_MISSING members, and since d74603c (2026-08-20) it does so on every /api path whatever
+ * the method. Three ways of having no usable session all produce the SAME body (measured
+ * 2026-09-03):
  *
  *   anonymous            -> 401 errorCode AUTH_TOKEN_MISSING
  *   unresolvable cookie  -> 401 errorCode AUTH_TOKEN_MISSING
@@ -3710,10 +3715,10 @@ const sessionStatus = http.get('*/bff/auth/session-status', () => {
  * reads the session itself — on a proxied `/api/*` route it never appears. So the expiry branch was
  * drift of exactly the kind this gate exists to catch.
  *
- * Not directly produced: a session that dies by CLOCK rather than by revocation, which needs the
- * inactivity window to elapse. It is the same condition — a cookie that no longer resolves to a live
- * session — and all three measured forms of that agree, so it is modelled the same way and the gap
- * is named here rather than hidden.
+ * Not measured directly: a session that dies by CLOCK rather than by revocation, which needs the
+ * inactivity window to elapse. `GetAuthLevel` folds a missing, unknown and expired session into the
+ * same 0, so `expireMockSessionIfDue` models it as the same condition, and the gap is named here
+ * rather than hidden.
  */
 const sessionActivity = http.all('*/api/*', ({ request }) => {
   expireMockSessionIfDue();
@@ -3724,11 +3729,12 @@ const sessionActivity = http.all('*/api/*', ({ request }) => {
 
       This branch used to answer 403 STEP_UP_REQUIRED with currentLevel 0 when a cookie was still
       in the browser but no longer resolved, on the three level-2 routes, quoting a 2026-08-05
-      measurement. Two BFF changes after that date made the quote false. ADR-0041 (2026-08-13)
-      moved the transfer PIN into the API, so `AuthLevelMiddleware.PinRequiredPaths` is EMPTY and
-      only the reveal is still level-2. And the middleware's no-session branch stopped "letting the
-      API handle 401": it refuses every `/api/` path itself, and `GetAuthLevel` returns 0 for a
-      missing, unknown and expired session alike, so the cookie's presence selects nothing.
+      measurement. Three BFF changes after that date made the quote false. ADR-0038 (01c0e31,
+      2026-08-10) put the no-session 401 BEFORE the level-2 check, for a missing, unknown and
+      expired cookie alike — `GetAuthLevel` folds all three into 0 — so a dead cookie stopped
+      being a level-0 step-up that day. ADR-0041 (dd84179, 2026-08-13) then emptied
+      `PinRequiredPaths`, leaving the reveal as the only level-2 route, and d74603c (2026-08-20)
+      extended the session check to every /api path whatever the method.
 
       Measured 2026-09-03 through the BFF (:5000 -> :7215, Development). Forged = a cookie never
       issued; dead = the cookie a registration issued, replayed after logout answered 200:
@@ -3740,11 +3746,12 @@ const sessionActivity = http.all('*/api/*', ({ request }) => {
         GET  …/full-number             LIVE level 1              -> 403 X-Auth-Level-Current: 1
         POST /api/transfers `{}`       LIVE level 1              -> 400 model-state (reaches the API)
 
-      The 401 body is the API's AUTH_TOKEN_MISSING problem byte for byte (`instance` = the path),
-      carries no X-Auth-Level-* header, and the API log recorded none of those requests: the BFF
-      wrote them without proxying. `auth.contract.test.ts` pins the dead-cookie rows on the real
-      stack; the flag that once told the two states apart is gone from `state.ts` because it no
-      longer changed any answer.
+      The 401 carries the API's AUTH_TOKEN_MISSING members and values (`instance` = the path, a
+      fresh `traceId`) and no X-Auth-Level-* header. The BFF writes it before the proxy: the
+      middleware returns without calling next, and `AuthLevelMiddlewareTests` pins the recorder's
+      forwarded paths empty for exactly these requests. `auth.contract.test.ts` replays a dead
+      cookie on the real stack; the flag that once told the two states apart is gone from
+      `state.ts` because it no longer changed any answer.
 
       Why it mattered: 401 drives the global sign-out, 403 STEP_UP_REQUIRED opens the PIN modal. A
       session that timed out mid-transfer met a PIN prompt under MSW and a sign-out in production.
