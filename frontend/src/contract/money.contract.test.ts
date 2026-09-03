@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { asProblem, call, firstAccountId, idempotencyKey, login } from './client';
 import { FIXTURES } from './target';
+
+/** The committed contract, read as a third party would — the number the client promises. */
+const SPEC_URL = new URL('../../../docs/api/openapiv1.json', import.meta.url);
 
 /**
  * The money endpoints, where a wrong error shape is a wrong screen on a payment.
@@ -143,5 +148,46 @@ describe('contract: money', () => {
     expect(problem.instance).toBeUndefined();
     expect(Object.keys(problem.errors ?? {})).toContain('Pin');
     expect(Object.keys(problem.errors ?? {})).not.toContain('toAccountId');
+  });
+
+  it('refuses a deposit one cent above the PUBLISHED maximum, in the framework envelope', async () => {
+    /*
+      The bound the form promises is the contract's, and the contract is what this reads first:
+      `DepositRequest.properties.amount.maximum` in the committed document. Then the stack is asked
+      one cent above it. Nothing here mutates a balance — a refused deposit leaves no ledger row;
+      the only rows touched are the idempotency claim, inserted before model validation, and its
+      fenced delete on the 400 (ADR-0009).
+
+      Why a real-stack pin exists for this sentence at all: the mock quoted "$0.01 and $100,000.00"
+      as observed for a fortnight after the server had stopped rendering currency symbols (3769dc9),
+      and every mock-side test agreed with the mock. Measured 2026-09-03 on POST
+      /api/transactions/deposit for 500000, 1000000 and 100000.01 — identical:
+        400 {"title":"One or more validation errors occurred.",
+             "errors":{"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}}
+      and 100000 -> 201. No trailing period on the wire; the document's description carries one.
+    */
+    const spec = JSON.parse(readFileSync(fileURLToPath(SPEC_URL), 'utf8')) as {
+      components: { schemas: Record<string, { properties: Record<string, { maximum?: number }> }> };
+    };
+    const maximum = spec.components.schemas.DepositRequest.properties.amount.maximum;
+    if (maximum === undefined) {
+      throw new Error('DepositRequest.amount.maximum is missing from the committed contract');
+    }
+    expect(maximum).toBe(100000);
+
+    const { status, body } = await call('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey() },
+      body: JSON.stringify({
+        accountId: await firstAccountId(),
+        amount: maximum + 0.01,
+        description: 'contract probe: one cent over',
+      }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(400);
+    expect(problem.title).toBe('One or more validation errors occurred.');
+    expect(problem.errors?.Amount).toEqual(['Amount must be between 0.01 EUR and 100000.00 EUR']);
   });
 });

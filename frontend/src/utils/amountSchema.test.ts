@@ -18,7 +18,7 @@ describe('amountSchema', () => {
   it('rejects above the available balance when one is given', () => {
     expect(amountIsValid(1500, { min: 0.01, max: 100_000, balance: 1000 })).toBe(false);
     // No balance provided (deposit) → the balance rule does not apply.
-    expect(amountIsValid(1500, { min: 0.01, max: 1_000_000 })).toBe(true);
+    expect(amountIsValid(1500, { min: 0.01, max: 100_000 })).toBe(true);
   });
 
   it('rejects non-finite input', () => {

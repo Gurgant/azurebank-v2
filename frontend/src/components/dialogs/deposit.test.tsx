@@ -259,10 +259,13 @@ describe('deposit (T3 — idempotent mutation)', () => {
   });
 
   it('shows an inline hint and disables the CTA for an over-limit amount', async () => {
+    // 100,001: one euro above the CONTRACT's bound and well inside the 1,000,000 the form used to
+    // allow, so this is red on the old constant and green on the new — the old '1000001' proved
+    // nothing about the fix, being above both.
     renderDeposit();
-    await userEvent.type(screen.getByLabelText('Deposit amount'), '1000001');
+    await userEvent.type(screen.getByLabelText('Deposit amount'), '100001');
 
-    expect(screen.getByText('Maximum deposit is €1,000,000.')).toBeInTheDocument();
+    expect(screen.getByText('Maximum deposit is €100,000.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Deposit/ })).toBeDisabled();
   });
 
