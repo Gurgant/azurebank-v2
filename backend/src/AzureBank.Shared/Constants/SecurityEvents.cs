@@ -175,6 +175,22 @@ public static class SecurityEvents
     /// </remarks>
     public const string PinEnrolled = "PinEnrolled";
 
+    /// <summary>An EXISTING PIN was replaced, behind a proof of the current one.</summary>
+    /// <remarks>
+    /// The same OWASP gap as <see cref="PinEnrolled"/>, and a different threat. An enrolment costs
+    /// the account PASSWORD; a change costs only the CURRENT PIN, so this is the event an attacker
+    /// who has watched a PIN entered — and never learned the password — leaves behind. ASVS 4.0.3
+    /// 2.5.5 asks for a notification when an authenticator is "changed or replaced", which is the
+    /// clause this event answers where <see cref="PinEnrolled"/> answers NIST SP 800-63B-4 §4.1.2.1.
+    ///
+    /// <para>
+    /// ⚠️ Detective record in the operator's log, exactly as above: NOT the notification the
+    /// subscriber is owed. That is the second <c>SubscriberNotice</c> row written in the same save
+    /// as this record (ADR-0047), and the relay that would deliver it still does not exist.
+    /// </para>
+    /// </remarks>
+    public const string PinChanged = "PinChanged";
+
     /// <summary>A self-registration was refused because the email or handle already exists.</summary>
     /// <remarks>
     /// No OWASP counterpart: <c>user_created</c> covers the success only. This exists because the

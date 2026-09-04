@@ -1,12 +1,16 @@
-# The rendered enrolment notice
+# The rendered notices
 
-`pin-enrolled.sample.eml` is what `AzureBank.AuditVerifier notify <directory> --contact "<text>"`
+`pin-enrolled.sample.eml` and `pin-changed.sample.eml` are what
+`AzureBank.AuditVerifier notify <directory> --contact "<text>"`
 writes: one RFC 5322 message per notice the API recorded as owed to an account holder, rendered
-from the row and addressed to the email held on the account (ADR-0045).
+from the row and addressed to the email held on the account. One per kind: an enrolment
+(ADR-0045) and a change of an existing PIN (ADR-0047). They are deliberately not the same words —
+a change costs the current PIN and never the password, so the enrolment's "for the first time" and
+"your account password was proved" would both be false in it.
 
-This is a **sample**. It was produced by the real verb against a throwaway database, so that a
-reader can see the shape without running anything. The address and the contact line are
-placeholders; the reference in it is a real notice id from that run and names nothing that exists
+These are **samples**. Each was produced by the real verb against a throwaway database, so that a
+reader can see the shape without running anything. The addresses and the contact line are
+placeholders; the reference in each is a real notice id from that run and names nothing that exists
 anywhere else.
 
 ## What this does NOT show

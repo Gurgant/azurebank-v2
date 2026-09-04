@@ -488,10 +488,10 @@ public class SecurityEventConstantTests
         var refusals = sources.Sum(t => CountOccurrences(t, "_audit.RecordRefusalAsync("));
 
         enlisted.Should().Be(
-            8,
-            "ADR-0044's \"What is wired\" section counts the events that write a row: four were "
-            + "administrative and B1 added four money movements. Moving this means moving that "
-            + "section in the same commit");
+            9,
+            "ADR-0044's \"What is wired\" section counts the events that write a row: four sites were "
+            + "administrative, B1 added four money movements, and ADR-0047 added the PIN change. "
+            + "Moving this means moving that section in the same commit");
         refusals.Should().Be(
             7,
             "the out-of-band half is counted separately because it answers a different question — "

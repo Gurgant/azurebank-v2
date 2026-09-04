@@ -46,11 +46,57 @@ public static class NoticeRenderer
                 Body: PinEnrolled(notice, contact, reference),
                 FileName: $"{reference}.eml"),
 
+            SecurityEvents.PinChanged => new RenderedNotice(
+                MessageId: reference,
+                Subject: $"{ServiceName}: the transfer PIN on your account was changed",
+                Body: PinChanged(notice, contact, reference),
+                FileName: $"{reference}.eml"),
+
             // A notice this build cannot render is a finding, not a blank message: the row stays
             // owed and the operator sees the event name.
             _ => throw new InvalidOperationException(
                 $"No notice text exists for event '{notice.Event}'; the row stays owed."),
         };
+    }
+
+    /// <summary>
+    /// The change notice (ADR-0047). Deliberately NOT the enrolment's words: a change costs the
+    /// CURRENT PIN and never the password, so "for the first time" and "your account password was
+    /// proved" would both be false, and the second one would tell a reader whose PIN was watched
+    /// that their password had been used. The remedy differs too — re-enrolling costs the password,
+    /// which a PIN-only attacker does not have — so the recovery sentence is stronger here than in
+    /// the enrolment notice, and says so without naming a procedure the reader cannot run.
+    /// </summary>
+    private static string PinChanged(SubscriberNotice notice, string contact, string reference)
+    {
+        var when = notice.OccurredAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+        return string.Join('\n',
+            $"{ServiceName} — security notice",
+            "",
+            $"On {when} UTC the 6-digit transfer PIN on your account was changed.",
+            "",
+            "That PIN is what authorises withdrawals and transfers from your account. Whoever made",
+            "this change proved the PIN that was in place before it. Your account password was not",
+            "used and has not changed.",
+            "",
+            "If this was you, nothing further is needed.",
+            "",
+            "IF THIS WAS NOT YOU: someone knows the PIN you had been using. Do not use the account",
+            "for transfers or withdrawals, and contact",
+            $"{contact} quoting reference {reference}.",
+            "",
+            "Ask for that PIN to be removed. Setting a new one costs your account password, which",
+            "this change did not.",
+            "",
+            "This message asks you for nothing. It contains no link, and you will never be asked for",
+            "your password or PIN by message. It cannot be replied to.",
+            "",
+            "It was addressed to the email address held on your account. If that address is not",
+            $"yours, contact {contact}.",
+            "",
+            $"Reference: {reference}",
+            "");
     }
 
     private static string PinEnrolled(SubscriberNotice notice, string contact, string reference)

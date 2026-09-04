@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Forty-five decisions is more than anyone reads cold. These four carry the architecture; the rest is
+Forty-seven decisions is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -111,7 +111,9 @@ as a correction rather than a new policy: the decisions were already made, the d
 did not say them. ADR-0045 strikes the residual ADR-0040 left open (closed by T8) and narrows the
 "no email infrastructure" sentence in ADR-0013 to "no relay", without changing its conclusion.
 ADR-0046 is the first decision on money caps: one bound for every move, and the client's bound tied
-to the published contract by a tripwire rather than typed beside a comment. The 2026-09-04 sweep
+to the published contract by a tripwire rather than typed beside a comment. ADR-0047 reverses ADR-0045's D8 and fires the trigger that ADR listed for itself: a PIN change owes
+its own notice, because a change costs only the current PIN and is therefore the one event a
+PIN-only attacker must produce. The 2026-09-04 sweep
 corrects seven records at once. Six — ADR-0008, 0022, 0029, 0030, 0031 and 0040 — carry one fact:
 ADR-0041 left `GET /api/accounts/{id}/full-number` as the only level-2 route, so every sentence that
 counted three of them, or called the reveal "the third", is struck in place with a dated note beside
@@ -144,7 +146,7 @@ two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`, 
 leaving them as they are; from here the wording is struck in place instead, which costs less and
 reads better.
 
-The next free number is **0047**.
+The next free number is **0048**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -198,6 +200,7 @@ The next free number is **0047**.
 | [ADR-0044](0044-the-audit-trail-is-append-only-and-chained.md) | Security events go to an append-only, hash-chained table | Accepted | 2026-08-19 |
 | [ADR-0045](0045-the-enrolment-notice-rides-the-enrolment-and-stops-at-a-pickup-directory.md) | The enrolment notice rides the enrolment, and stops at a pickup directory | Accepted | 2026-09-03 |
 | [ADR-0046](0046-one-money-cap-for-every-move-and-the-client-promises-what-the-contract-publishes.md) | One money cap for every move, and the client promises what the contract publishes | Accepted | 2026-09-03 |
+| [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md) | A PIN change owes the same notice an enrolment does | Accepted | 2026-09-04 |
 
 </details>
 ## Creating a New ADR

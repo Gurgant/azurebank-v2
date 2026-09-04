@@ -48,7 +48,9 @@ public class SubscriberNotice
 
     /// <summary>
     /// Which event owes the notice — a <c>SecurityEvents</c> constant, the same vocabulary as the
-    /// audit row written beside it. Today exactly one value is written: <c>PinEnrolled</c>.
+    /// audit row written beside it. Two values are written today: <c>PinEnrolled</c> when a PIN is
+    /// bound for the first time (ADR-0045) and <c>PinChanged</c> when an existing one is replaced
+    /// (ADR-0047). Until 2026-09-04 this sentence said there was exactly one.
     /// </summary>
     public required string Event { get; set; }
 

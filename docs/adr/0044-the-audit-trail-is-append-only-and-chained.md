@@ -878,10 +878,12 @@ about the command line. The ring-refusal test now asks all ~~four~~ five verbs *
 
 ## What is wired, and what is not
 
-**Thirteen events write a row today.** Seven are administrative: `AccountDeleted`,
-`AccountNumberRevealed`, `AzureTagRenamed`, `PinEnrolled`, `RefreshTokenUnknown`,
+**Fourteen events write a row today.** Eight are administrative: `AccountDeleted`,
+`AccountNumberRevealed`, `AzureTagRenamed`, `PinChanged`, `PinEnrolled`, `RefreshTokenUnknown`,
 `RefreshTokenReuse` and `RefreshTokenReuseRevokeFailed`. For those the log line is kept alongside the
-row — two destinations, two jobs.
+row — two destinations, two jobs. `PinChanged` is the exception to that pairing and was **added
+2026-09-04** (ADR-0047): it writes a row and NO log line, following the money precedent below,
+because a PIN change is evidence to keep rather than an alert to raise.
 
 **Four are money movements, added by B1** (2026-08-20): `MoneyDeposited`, `MoneyWithdrawn`,
 `MoneyTransferred` and `MoneyTransferredInternally`. Until then this table recorded a renamed handle
