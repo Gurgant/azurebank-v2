@@ -102,7 +102,7 @@ for the two reasons it had given for leaving it open, which were wrong; ADR-0040
 left both ADR-0008's step-up gate and ADR-0010's attempt-limiting inoperative; and ADR-0041 moves
 transfers off that gate entirely, which makes ADR-0022's step-up-replay verification step true of
 no live caller — recorded there rather than quietly left to rot. ADR-0008's own
-corrections follow the same rule — eight inline notes, nothing deleted — and one of them records an
+corrections follow the same rule — nine inline notes, nothing deleted — and one of them records an
 open hole rather than a supersession: **account deletion is listed as level 2 and is gated nowhere
 at that level** (the endpoint is still `[Authorize]`; what is missing is the step-up).
 ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consume, and is filed
@@ -110,7 +110,10 @@ as a correction rather than a new policy: the decisions were already made, the d
 did not say them. ADR-0045 strikes the residual ADR-0040 left open (closed by T8) and narrows the
 "no email infrastructure" sentence in ADR-0013 to "no relay", without changing its conclusion.
 ADR-0046 is the first decision on money caps: one bound for every move, and the client's bound tied
-to the published contract by a tripwire rather than typed beside a comment.
+to the published contract by a tripwire rather than typed beside a comment. The 2026-09-04 sweep
+corrects six records at once — ADR-0008, 0022, 0029, 0030, 0031 and 0040 — for one fact: ADR-0041
+left `GET /api/accounts/{id}/full-number` as the only level-2 route, so every sentence that counted
+three of them, or called the reveal "the third", is struck in place with a dated note beside it.
 
 HOW A CORRECTION IS RECORDED, written down because it had never been stated and a review round went
 on it. **The note goes immediately against what it corrects.** That is the load-bearing half: a note
