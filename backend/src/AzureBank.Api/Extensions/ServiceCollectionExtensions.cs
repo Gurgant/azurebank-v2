@@ -7,6 +7,7 @@ using AzureBank.Api.Transformers;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Infrastructure.Notices;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Services.Implementations;
 using AzureBank.Shared.Entities;
@@ -223,6 +224,47 @@ public static class ServiceCollectionExtensions
 
         // Background sweep of expired refresh tokens (hygiene — reads are expiry-filtered)
         services.AddHostedService<Services.RefreshTokenCleanupService>();
+
+        /*
+          THE NOTICE RELAY (ADR-0048) — the API's first correctness-bearing loop, and the one the
+          two sweeps above are not. Off unless Notices:Runner names this process, because the pickup
+          directory is a spool of addresses at rest and no default path can ship. When it is on, a
+          partial configuration stops the host here rather than failing on the first sweep: the
+          directory must exist and sit outside any git tree (the verb's own guard), and the contact
+          is mandatory content of every notice (NIST SP 800-63B-4 §4.6). Nothing here is a secret.
+        */
+        services.AddOptions<NoticeRelayOptions>()
+            .Bind(configuration.GetSection(NoticeRelayOptions.SectionName))
+            .Validate(
+                o => o.Runner != NoticeRunner.Api || !string.IsNullOrWhiteSpace(o.Contact),
+                "Notices:Contact must be set when Notices:Runner is Api — it is mandatory content of "
+                + "every notice (NIST SP 800-63B-4 §4.6): an address or a number a recipient uses to "
+                + "say \"this was not me\".")
+            .Validate(
+                o => o.Runner != NoticeRunner.Api
+                     || (!string.IsNullOrWhiteSpace(o.PickupDirectory)
+                         && !o.PickupDirectory.Contains('\0')
+                         && Directory.Exists(o.PickupDirectory)),
+                "Notices:PickupDirectory must name an EXISTING directory when Notices:Runner is Api. "
+                + "The relay does not create it: a spool of addresses should land only where somebody "
+                + "meant it to.")
+            .Validate(
+                o => o.Runner != NoticeRunner.Api
+                     || string.IsNullOrWhiteSpace(o.PickupDirectory)
+                     || !Directory.Exists(o.PickupDirectory)
+                     || !PickupDirectoryGuard.InsideAGitRepository(Path.GetFullPath(o.PickupDirectory)),
+                "Notices:PickupDirectory is inside a git repository. A pickup directory is a spool of "
+                + "addresses at rest, and one under a repository is one commit away from being "
+                + "published. Name a directory outside the tree.")
+            .Validate(
+                o => o.LeaseSeconds > o.PeriodSeconds,
+                "Notices:LeaseSeconds must exceed Notices:PeriodSeconds, or a slow sweep is overtaken "
+                + "by the next and its rows go out twice.")
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // Always registered, so a second host inherits it; it steps aside unless the flag names it.
+        services.AddHostedService<Services.NoticeRelayService>();
 
         return services;
     }

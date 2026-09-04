@@ -26,6 +26,13 @@ public class SubscriberNoticeConfiguration : IEntityTypeConfiguration<Subscriber
                 "CK_SubscriberNotices_Delivery",
                 "([DeliveredAt] IS NULL AND [DeliveryReceipt] IS NULL) "
                 + "OR ([DeliveredAt] IS NOT NULL AND [DeliveryReceipt] IS NOT NULL)");
+
+            // The lease is a pair for the same reason (ADR-0048): a row held until a time by nobody,
+            // or by somebody until no time, is a state no runner produces.
+            t.HasCheckConstraint(
+                "CK_SubscriberNotices_Lease",
+                "([LeasedUntil] IS NULL AND [LeasedBy] IS NULL) "
+                + "OR ([LeasedUntil] IS NOT NULL AND [LeasedBy] IS NOT NULL)");
         });
 
         // Assigned by the writer, never by the store (see the entity's remarks).
@@ -52,6 +59,10 @@ public class SubscriberNoticeConfiguration : IEntityTypeConfiguration<Subscriber
 
         // A file name today; wide enough for a message id if a relay ever supplies one.
         builder.Property(n => n.DeliveryReceipt)
+            .HasMaxLength(64);
+
+        // The runner's name: host, process and a short id. Not an address, not a secret.
+        builder.Property(n => n.LeasedBy)
             .HasMaxLength(64);
 
         // Erasure by cascade: the notice is the account holder's and goes with them (ADR-0045).

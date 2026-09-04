@@ -69,4 +69,19 @@ public class SubscriberNotice
     /// exactly when <see cref="DeliveredAt"/> is; the database refuses one without the other.
     /// </summary>
     public string? DeliveryReceipt { get; set; }
+
+    /// <summary>
+    /// Until when a runner holds this row (UTC), or null when nobody does (ADR-0048). A claim is a
+    /// set-based UPDATE that takes every owed row whose lease is null or expired, so two runners
+    /// cannot hold one row at the same moment. It cannot stop a runner that delivers, dies before
+    /// marking, and is succeeded after the lease lapses: that row is delivered again, and the ADR
+    /// calls the transport at-least-once rather than letting this column imply otherwise.
+    /// </summary>
+    public DateTime? LeasedUntil { get; set; }
+
+    /// <summary>
+    /// Which runner holds the lease — a name for the log, never a secret. Present exactly when
+    /// <see cref="LeasedUntil"/> is; the database refuses one without the other.
+    /// </summary>
+    public string? LeasedBy { get; set; }
 }
