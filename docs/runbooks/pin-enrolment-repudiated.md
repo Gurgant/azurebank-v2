@@ -26,10 +26,17 @@ not equally partial.
 The reference is the notice id as the notice prints it: 32 hex digits, no hyphens.
 `SubscriberNotices.Id` is a `uniqueidentifier`, and SQL Server does not convert that form — pasted
 bare into a comparison it fails with `Msg 8169, Conversion failed` (measured 2026-09-04). The
-statement below inserts the hyphens itself, so paste the reference exactly as printed; one of the
-wrong length fails the same way rather than matching anything. Run against the API's database:
+statement below inserts the hyphens itself, so paste the reference exactly as printed. It also
+checks the paste before looking anything up: anything that is not exactly 32 hex digits — a
+filename with `.eml` still attached, a Message-ID with its angle brackets, a digit dropped or
+doubled — stops with the error message below instead of matching. That check is there because a
+`char(32)` variable would silently keep the first 32 characters of a longer paste and look up
+whatever they happened to spell. Run against the API's database:
 
-    DECLARE @ref char(32) = '<reference, exactly as printed>';
+    DECLARE @ref varchar(100) = '<reference, exactly as printed>';
+    SET @ref = TRIM(@ref);
+    IF LEN(@ref) <> 32 OR @ref LIKE '%[^0-9A-Fa-f]%'
+        THROW 50000, 'The reference must be exactly the 32 hex digits the notice prints.', 1;
     SELECT n.Id, n.UserId, n.Event, n.OccurredAt, n.DeliveredAt, n.DeliveryReceipt
     FROM SubscriberNotices n
     WHERE n.Id = CONVERT(uniqueidentifier,
