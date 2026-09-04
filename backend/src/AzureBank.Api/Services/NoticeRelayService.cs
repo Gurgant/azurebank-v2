@@ -184,6 +184,7 @@ public sealed class NoticeRelayService : BackgroundService
         var run = new NoticeDeliveryRun(context, transport);
         var delivered = 0;
         var owed = 0;
+        var attempted = 0;
 
         foreach (var notice in mine)
         {
@@ -191,14 +192,18 @@ public sealed class NoticeRelayService : BackgroundService
 
             if (UtcNow >= leaseEnd)
             {
+                // Attempted is the count that matters: a row another runner marked first was
+                // attempted too, and is nobody's to owe.
+                var unreached = mine.Count - attempted;
                 _logger.LogWarning(
-                    "Notice relay: lease lapsed mid-sweep after {Delivered} of {Held} row(s); the rest are "
+                    "Notice relay: lease lapsed mid-sweep after {Attempted} of {Held} row(s); the rest are "
                     + "free to the next claim rather than delivered under a lease this runner no longer holds",
-                    delivered, mine.Count);
-                owed += mine.Count - delivered - owed;
+                    attempted, mine.Count);
+                owed += unreached;
                 break;
             }
 
+            attempted++;
             var result = await run.DeliverAsync(notice, _options.Contact!, _directory, cancellationToken);
 
             if (result.AuditRowMissing)
