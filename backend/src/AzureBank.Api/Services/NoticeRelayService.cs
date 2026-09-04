@@ -159,7 +159,12 @@ public sealed class NoticeRelayService : BackgroundService
           remaining capacity is claimed afresh; otherwise a runner that kept failing would claim a
           full batch on top of what it held, sweep after sweep, until it held more than one lease
           could deliver.
+
+          AND THE HELD ROWS ARE RENEWED FIRST, to this sweep's lease end. The per-row check below
+          compares against that end; a row still carrying an earlier sweep's end could lapse in the
+          middle of its delivery, and another runner could claim it while this one was writing it.
         */
+        await NoticeClaim.RenewAsync(context, RunnerName, now, leaseEnd, cancellationToken);
         var held = await NoticeClaim.HeldBy(context, RunnerName, now).ToListAsync(cancellationToken);
         var capacity = Math.Max(0, _options.BatchSize - held.Count);
         var claimed = await NoticeClaim.ClaimAsync(

@@ -49,8 +49,9 @@ pair already is. A claim stamps up to `Notices:BatchSize` of the oldest owed row
 null or lapsed with the runner's name and a lease end in ONE set-based UPDATE, so the database
 serialises two claims and the second finds nothing free among them; the batch caps a runner's LIVE
 work, rows it still holds from a failed delivery included, so a runner that keeps failing never
-holds more than one lease can deliver. The runner then re-reads what it holds BY NAME — never by
-the instant it wrote, so a
+holds more than one lease can deliver; and those held rows are RENEWED to the new sweep's lease
+end before anything is delivered, so nothing this sweep writes can lapse before the sweep's own
+check says so. The runner then re-reads what it holds BY NAME — never by the instant it wrote, so a
 store that rounded a timestamp could not make it claim N and read back none — and delivers that.
 The protocol is `NoticeClaim` in Infrastructure, and the verb uses it too (D5). Proved on SQL
 Server: a claim held open in an uncommitted transaction blocks a second runner's sweep — it had not

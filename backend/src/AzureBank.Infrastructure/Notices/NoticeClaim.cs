@@ -113,6 +113,37 @@ public static class NoticeClaim
     }
 
     /// <summary>
+    /// Extends the lease on every owed row this runner still holds to <paramref name="leaseEnd"/>,
+    /// and returns how many. A sweep calls it before it reads its holdings, so a row held from an
+    /// earlier sweep — delivered to a transport that refused it — expires WITH this sweep's lease
+    /// and not before it: otherwise the per-row check, which compares against this sweep's end,
+    /// could let a delivery run past the row's own earlier end, and another runner claim the row
+    /// while this one was still writing it. Only live leases are renewed; a lapsed one is somebody
+    /// else's to claim.
+    /// </summary>
+    public static async Task<int> RenewAsync(
+        AzureBankDbContext context, string runner, DateTime now, DateTime leaseEnd, CancellationToken cancellationToken)
+    {
+        var mine = context.SubscriberNotices
+            .Where(n => n.DeliveredAt == null && n.LeasedBy == runner && n.LeasedUntil > now);
+
+        if (context.Database.IsRelational())
+        {
+            return await mine.ExecuteUpdateAsync(
+                set => set.SetProperty(n => n.LeasedUntil, leaseEnd), cancellationToken);
+        }
+
+        var rows = await mine.ToListAsync(cancellationToken);
+        foreach (var row in rows)
+        {
+            row.LeasedUntil = leaseEnd;
+        }
+
+        await context.SaveChangesAsync(cancellationToken);
+        return rows.Count;
+    }
+
+    /// <summary>
     /// The owed rows this runner holds under a live lease, oldest first — keyed on the NAME the
     /// claim wrote, never on the instant, so a store that rounded a timestamp could not make a
     /// runner claim N and read back none. Includes rows held from an earlier sweep whose delivery

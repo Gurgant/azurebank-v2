@@ -338,6 +338,33 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AHeldRowIsRenewedToTheNewSweepsLease_BeforeItIsRetried()
+    {
+        /*
+          A row held from an earlier sweep carries that sweep's lease end. The per-row check
+          compares against THIS sweep's end, so without a renewal the row could lapse in the middle
+          of its retry and another runner claim it while this one was still writing it.
+        */
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner);
+        await using var provider = Provider();
+        var relay = Relay(provider);
+
+        _transport.Fails = new IOException("refused");
+        await relay.SweepAsync(CancellationToken.None);
+        var firstEnd = (await StoredAsync(notice.Id)).LeasedUntil!.Value;
+        firstEnd.Should().Be(Now.AddSeconds(120));
+
+        _clock.Advance(TimeSpan.FromSeconds(100));
+        await relay.SweepAsync(CancellationToken.None);
+
+        var stored = await StoredAsync(notice.Id);
+        stored.LeasedBy.Should().Be(relay.RunnerName, "still held: the transport refused again");
+        stored.LeasedUntil.Should().Be(Now.AddSeconds(120), "renewed to the second sweep's lease end, not left at the first's");
+        stored.LeasedUntil.Should().BeAfter(firstEnd);
+    }
+
+    [Fact]
     public async Task TheVerbAttemptsEachRowOncePerRun_AcrossBatches()
     {
         // Batch of one, two rows, the first refused: the second batch's re-read by name would also

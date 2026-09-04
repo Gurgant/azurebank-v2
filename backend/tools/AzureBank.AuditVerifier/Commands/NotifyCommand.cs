@@ -349,9 +349,10 @@ public static class NotifyCommand
             lines.Insert(0, $"NOTIFIED {written} of {claimedTotal} waiting notices into {fullDirectory}");
             if (lapsed)
             {
-                var unreached = claimedTotal - written - owed - lines.Count(l => l.StartsWith("NOT NOTIFIED by this run"));
+                // Attempted is the count that matters: a row another run marked first was attempted too.
+                var unreached = claimedTotal - attempted.Count;
                 owed += unreached;
-                lines.Add($"LEASE LAPSED after {written + owed - unreached} of {claimedTotal}: the verb held its rows for {VerbLease.TotalMinutes:0} minutes and "
+                lines.Add($"LEASE LAPSED after {attempted.Count} of {claimedTotal}: the verb held its rows for {VerbLease.TotalMinutes:0} minutes and "
                           + $"{unreached} were not reached. They are free to the next claim — this verb again, or the relay. Run again.");
             }
             if (leased > 0)

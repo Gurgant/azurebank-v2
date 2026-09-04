@@ -76,7 +76,7 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
         return _factory;
     }
 
-    private NoticeRelayService Runner(int leaseSeconds = 120, int batchSize = 100) =>
+    private NoticeRelayService Runner(int leaseSeconds = 120, int batchSize = 100, TimeProvider? clock = null) =>
         new(
             Factory().Services.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new NoticeRelayOptions
@@ -88,7 +88,31 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
                 LeaseSeconds = leaseSeconds,
                 BatchSize = batchSize,
             }),
-            Factory().Services.GetRequiredService<ILogger<NoticeRelayService>>());
+            Factory().Services.GetRequiredService<ILogger<NoticeRelayService>>(),
+            clock);
+
+    [SqlServerFact]
+    public async Task AHeldRowIsRenewedByTheSetBasedStatement()
+    {
+        // The renewal's ExecuteUpdate, translated and run by the real engine: a row held after a
+        // refused delivery carries the second sweep's lease end, not the first's.
+        var id = await EnrolAsync();
+        await QuarantineOthersAsync([id]);
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, 4, 22, 0, 0, TimeSpan.Zero));
+        var runner = Runner(clock: clock);
+        Directory.Delete(_directory, recursive: true); // the real transport refuses: no directory
+
+        (await runner.SweepAsync(CancellationToken.None)).Owed.Should().Be(1);
+        var first = (await RowAsync(id)).LeasedUntil!.Value;
+
+        clock.Advance(TimeSpan.FromSeconds(100));
+        (await runner.SweepAsync(CancellationToken.None)).Owed.Should().Be(1);
+
+        var row = await RowAsync(id);
+        row.LeasedBy.Should().Be(runner.RunnerName);
+        row.LeasedUntil.Should().Be(first.AddSeconds(100), "renewed to the second sweep's end");
+        Directory.CreateDirectory(_directory);
+    }
 
     /// <summary>One real enrolment per call: one owed row, written by the API in the enrolment's save.</summary>
     private async Task<Guid> EnrolAsync()
