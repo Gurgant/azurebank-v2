@@ -123,7 +123,9 @@ the wrong-password path already counts toward the login lockout.
 
 > **Correction (2026-09-04): a PIN change owes a notice.** See
 > [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md).
-> Three of the four reasons above were true and stayed true; none of them was a reason to stay
+> Two of the four reasons above were true and stayed true — the wording of the two standards, and
+> that a change costs the current PIN. A third fell when the change path started writing an audit
+> row; the fourth, the missing suppression rule, is denied by ADR-0047 D4. None was a reason to stay
 > silent. Measured before the change was written: an enrolment wrote one notice and one audit row, a
 > change wrote NEITHER, and verify-pin with the new PIN answered 200 — a PIN could be replaced
 > leaving the owner no trace. The change path now writes its own audit row, so "writes no audit row

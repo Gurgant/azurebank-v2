@@ -12,7 +12,10 @@ writes a `SubscriberNotices` row inside the enrolment's own save, and the operat
 verb renders the pending rows into a pickup directory. Its D8 named what did **not** owe a notice,
 and a PIN CHANGE was first on that list, for four reasons.
 
-Three of the four were true when written and are still true. They were also not reasons to stay
+Two of the four were true when written and are still true: the wording of the two standards, and
+that a change costs the current PIN. A third stopped being true the moment this decision was
+implemented — the change path writes an audit row now. The fourth, that a notice here would need a
+suppression rule that does not exist, is denied by D4 below. None of them was a reason to stay
 silent, which is what measuring showed.
 
 Measured 2026-09-04 through the BFF (`:5000`) in front of the API (`:7215`), Development, against a
@@ -49,10 +52,13 @@ a second value in the `Event` column `SubscriberNotice` already carries. No migr
 **D2 — And the audit row it is joined to.** Not symmetry, and not a nice-to-have. `notify` matches a
 notice to its evidence by `(ActorUserId, Event)` and prints `NO AUDIT ROW backs notice …` when it
 cannot, so a change notice without an audit row of the same name would raise that finding on every
-run — a permanent false alarm in the runbook's most alarming line. The owned chain transaction also
-opens only when an `AuditEvent` is Added, so without one the change path would not have the
-both-directions rollback ADR-0045 D1 proved for the enrolment. Its detail is
-`{"currentPinProved":true}`, because `{"passwordProved":true}` would be false here.
+run — a permanent false alarm in the runbook's most alarming line. The audit row is also what puts
+this save under the OWNED chain transaction, which opens only when an `AuditEvent` is Added; the
+change therefore rides the same locking path the enrolment does, and the both-directions rollback
+ADR-0045 D1 proved for the enrolment is proved for the change by two SQL-gated tests rather than
+inherited by assertion. Remove the `_audit.Record` and the first of them fails on `fault.Fired`,
+which is the assertion that says why. Its detail is `{"currentPinProved":true}`, because
+`{"passwordProved":true}` would be false here.
 
 **D3 — No `SecurityEvent` log line.** The row is evidence to keep, not an alert to wake someone for.
 This follows the money-movement precedent ADR-0044 records: a durable row with no operator alert. It

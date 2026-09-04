@@ -184,9 +184,12 @@ public static class SecurityEvents
     /// clause this event answers where <see cref="PinEnrolled"/> answers NIST SP 800-63B-4 §4.1.2.1.
     ///
     /// <para>
-    /// ⚠️ Detective record in the operator's log, exactly as above: NOT the notification the
-    /// subscriber is owed. That is the second <c>SubscriberNotice</c> row written in the same save
-    /// as this record (ADR-0047), and the relay that would deliver it still does not exist.
+    /// ⚠️ Detective record in the AUDIT TABLE only. Unlike <see cref="PinEnrolled"/> this event
+    /// writes NO <c>SecurityEvent</c> log line (ADR-0047 D3): a PIN change is evidence to keep, not
+    /// an alert to raise, which is the precedent the money movements set. And, like the enrolment,
+    /// the row is NOT the notification the subscriber is owed — that is the second
+    /// <c>SubscriberNotice</c> written in the same save, and the relay that would deliver it still
+    /// does not exist.
     /// </para>
     /// </remarks>
     public const string PinChanged = "PinChanged";

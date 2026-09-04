@@ -912,8 +912,11 @@ already in the system, so naming it adds no new personal data and keeps the row 
 Three things about the four movements are decisions rather than details.
 
 **They emit NO `SecurityEvent` log line, and that is the first event class to do so.** The
-administrative seven are worth waking an operator for; a deposit is not, and the money paths already
-carry their own operational log lines. So a movement gets durable evidence without flooding the
+administrative events that pair with a log line — ~~seven~~ seven of the eight, `PinChanged`
+excepted (struck 2026-09-04: ADR-0047 made the set eight and its newest member is the second class
+to write a row with no log line) — are worth waking an operator for; a deposit is not, and the money
+paths already carry their own operational log lines. So a movement gets durable evidence without
+flooding the
 alert stream. It also means the two inventories — logged sites, and rows written — moved
 independently for the first time, which is why
 `SecurityEventConstantTests.TheEventInventoryThisAdrStatesIsStillTheOneInTheSource` now counts

@@ -190,7 +190,7 @@ public class NotifyCommandTests : IDisposable
         var (exitCode, lines) = await RunAsync(provider);
 
         exitCode.Should().Be(VerifyCommand.Intact);
-        var (rendered, _, _) = _transport.Envelopes[0];
+        var (rendered, _, _) = _transport.Envelopes.Should().ContainSingle().Subject;
 
         rendered.Subject.Should().Contain("was changed")
             .And.NotContain("was set", "a change is not an enrolment, and the subject is what a reader sees first");
@@ -244,7 +244,9 @@ public class NotifyCommandTests : IDisposable
         var (exitCode, lines) = await RunAsync(provider);
         var text = string.Join("\n", lines);
 
-        exitCode.Should().NotBe(VerifyCommand.Intact, "an unrenderable notice is a finding, not a run that worked");
+        exitCode.Should().Be(
+            AnchorCommand.NotRecorded,
+            "an unrenderable notice is a finding, not a run that worked, and 6 is what 'still owed' means");
         _transport.Envelopes.Should().BeEmpty();
         text.Should().Contain("PinAbdicated", "the operator is told which kind this build cannot render");
 

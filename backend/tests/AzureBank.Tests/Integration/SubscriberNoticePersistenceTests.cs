@@ -98,6 +98,59 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task ChangingAPinTwice_OwesTwoNotices_BecauseRepeatsAreTheSignal()
+    {
+        /*
+          ADR-0047 D4 has no other guard. It decided AGAINST a suppression rule — repeats are what an
+          attacker holding a PIN produces, so N changes must stay N notices — and a later collapse at
+          write or render time would turn nothing else in the suite red.
+        */
+        var (token, userId, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token, pin: "123456");
+
+        foreach (var (from, to) in new[] { ("123456", "999999"), ("999999", "424242") })
+        {
+            var change = await Client.PostAsJsonAsync(
+                "/api/auth/pin", new SetPinRequest { Pin = to, CurrentPin = from }, JsonOptions);
+            change.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+
+        (await NoticesForAsync(userId)).Select(n => n.Event).Should().Equal(
+            [SecurityEvents.PinEnrolled, SecurityEvents.PinChanged, SecurityEvents.PinChanged],
+            "two changes owe two notices: ADR-0047 D4 declined to collapse them");
+    }
+
+    [Fact]
+    public async Task ARefusedChange_OwesNoNotice()
+    {
+        /*
+          The obligation belongs to the action, not to the request. Measured 2026-09-04 on the
+          running stack: a missing current PIN answers 422 PIN_REQUIRED, a wrong one 401 INVALID_PIN,
+          and the notice count did not move for either. As with ARefusedEnrolment_OwesNoNotice, what
+          this can prove on InMemory is that nothing was ADDED — not that a rollback would remove it.
+        */
+        var (token, userId, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token, pin: "123456");
+
+        var noCurrent = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "999999" }, JsonOptions);
+        noCurrent.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var wrongCurrent = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "999999", CurrentPin = "000000" }, JsonOptions);
+        wrongCurrent.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        (await NoticesForAsync(userId)).Select(n => n.Event).Should().Equal(
+            [SecurityEvents.PinEnrolled], "a refused change is not a change, and owes nothing");
+
+        using var scope = Factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await context.AuditEvents.AsNoTracking()
+            .CountAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.PinChanged))
+            .Should().Be(0, "no evidence claims a change that was refused");
+    }
+
+    [Fact]
     public async Task ChangingAPin_WritesTheAuditRowItsNoticeIsJoinedTo()
     {
         /*
@@ -161,6 +214,9 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
         return await context.SubscriberNotices
             .AsNoTracking()
             .Where(n => n.UserId == userId)
+            // Ordered because two tests assert the sequence of kinds. Without it they would be
+            // pinning the provider's scan order, which is not a property of the system.
+            .OrderBy(n => n.OccurredAt)
             .ToListAsync();
     }
 }

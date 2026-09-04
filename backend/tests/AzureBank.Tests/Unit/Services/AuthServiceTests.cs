@@ -873,6 +873,50 @@ public class AuthServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetPinAsync_WhenChanging_TracksBothRowsBeforeUpdateAsync()
+    {
+        /*
+          THE SAME ORDER FOR THE CHANGE (ADR-0047), and the integration test cannot stand in for it.
+          That one only notices when the rows never persist at all; this one fails for the refactor
+          that moves both Adds below UpdateAsync and adds a second SaveChangesAsync — the rows would
+          then exist, InMemory would go green, and the change would no longer be atomic with them.
+        */
+        var user = CreateTestUser();
+        user.PinHash = "an-existing-pin-hash";
+        var request = new SetPinRequest { Pin = "999999", CurrentPin = "123456" };
+
+        _userManagerMock
+            .Setup(x => x.FindByIdAsync(user.Id.ToString()))
+            .ReturnsAsync(user);
+        _pinVerifierMock
+            .Setup(x => x.VerifyPinAsync(user.Id, request.CurrentPin!))
+            .ReturnsAsync(true);
+        _passwordHasherMock
+            .Setup(x => x.HashPin(request.Pin))
+            .Returns("hashed-new-pin");
+
+        var noticesTracked = -1;
+        _userManagerMock
+            .Setup(x => x.UpdateAsync(user))
+            .Callback(() => noticesTracked = _context.ChangeTracker
+                .Entries<SubscriberNotice>()
+                .Count(e => e.State == EntityState.Added))
+            .ReturnsAsync(IdentityResult.Success);
+
+        await _sut.SetPinAsync(user.Id, request);
+
+        noticesTracked.Should().Be(
+            1, "the change's notice rides the save that persists the new hash, so it has to be "
+               + "tracked BEFORE UpdateAsync runs");
+
+        var notice = _context.ChangeTracker.Entries<SubscriberNotice>().Single().Entity;
+        notice.UserId.Should().Be(user.Id);
+        notice.Event.Should().Be(
+            SecurityEvents.PinChanged, "a change is not an enrolment and must not borrow its name");
+        notice.DeliveredAt.Should().BeNull("nothing in the request renders it");
+    }
+
+    [Fact]
     public async Task SetPinAsync_Enrolling_WithoutPassword_NeverTouchesTheHash()
     {
         // The cheapest possible statement of T7's rule: refused BEFORE anything is hashed or

@@ -818,7 +818,7 @@ it was written when there was one.
   skipped and stays owed; a failed write stays owed; two concurrent runs can leave a duplicate file
   and say so). Safe against the chain — it touches no audit row and walks no chain, so it never
   says 1 — but it is a write, and a run during an incident renders notices from rows nothing has
-  vouched for yet. Run it after recovery, after `verify`. See **The enrolment notice** under
+  vouched for yet. Run it after recovery, after `verify`. See **The PIN notices** under
   **After recovery**.
 
 Neither `export` nor the window below is a substitute for the number you wrote down elsewhere. They

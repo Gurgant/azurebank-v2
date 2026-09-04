@@ -43,7 +43,8 @@ but read two clocks:
 Use the notice's own `Event` in that WHERE clause. Filtering on `PinEnrolled` for a change reference
 returns zero rows, which reads exactly like the finding below and is not one.
 
-For `PinEnrolled`, exactly one row is expected: an enrolment happens once per account. For
+For `PinEnrolled`, one row per enrolment — normally exactly one, and more only where §2 below has
+been run and the subscriber has since re-enrolled; the trail keeps both. For
 `PinChanged` there is one row per change, and several is not a fault — it is the account holder's
 PIN being replaced repeatedly, which is what an attacker holding a PIN does. `Detail` names what was
 proved: `{"passwordProved":true}` for an enrolment, `{"currentPinProved":true}` for a change.

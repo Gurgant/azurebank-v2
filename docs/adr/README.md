@@ -84,7 +84,7 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All forty-five **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+All forty-seven **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
