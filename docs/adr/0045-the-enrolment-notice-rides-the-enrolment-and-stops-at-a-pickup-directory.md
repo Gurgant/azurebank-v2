@@ -69,14 +69,24 @@ enrolment was considered and declined: it would not defend against an attacker w
 address BEFORE enrolling — only notifying the OLD address of the change does that — and no
 change-email endpoint exists today. The day one does, this paragraph is the trigger to revisit.
 
-**D3 — Rendered on demand by the operator tool, never by the API.** `notify <directory> --contact
-"<text>"` is the fifth verb of `AzureBank.AuditVerifier`: it reads every row still owed, renders
-each, hands it to a transport, and marks the row delivered under a concurrency token. A mode of the
-tool, not a scheduled job — the anchor's decision for the anchor's reason: nothing in this
-deployment runs between sessions, so a control that needs a runner names the operator, and says in
+**D3 — Rendered on demand by the operator tool, ~~never by the API~~.** `notify <directory>
+--contact "<text>"` is the fifth verb of `AzureBank.AuditVerifier`: it reads every row still owed,
+renders each, hands it to a transport, and marks the row delivered under a concurrency token. ~~A
+mode of the tool, not a scheduled job — the anchor's decision for the anchor's reason: nothing in
+this deployment runs between sessions, so a control that needs a runner names the operator, and says
+in
 the same breath that a control depending on somebody choosing to run it does not constrain that
 person. The API gains no hosted service, timer or pump; both of its existing sweeps are hygiene, and
-this would have been its first correctness-bearing loop.
+this would have been its first correctness-bearing loop.~~ (struck 2026-09-04; correction below.)
+
+> **Correction (2026-09-04): the API is the runner — ADR-0048.** Measured with API and BFF running:
+> a notice enrolled at 18:42:09Z was still owed at 18:42:54Z, and nothing in the process read the
+> table. The deferral record this ADR pointed at was ratified the same day in the other direction,
+> and ADR-0048 adds the hosted loop this clause declined: it claims owed rows under a lease and
+> delivers them through the same transport, within one period. The verb stays, for a store where
+> nothing runs and for the day the runner is down, and it now steps aside for a row a live runner
+> holds. The reasoning here was sound for the deployment it described; what changed is the decision
+> that the deployment should have a runner.
 
 **D4 — The last hop is a pickup directory, and the ADR says so rather than the file.** The
 transport writes one RFC 5322 message per notice — `From: no-reply@azurebank.invalid` (RFC 2606: it

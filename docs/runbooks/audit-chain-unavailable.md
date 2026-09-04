@@ -939,7 +939,11 @@ successful assembly, and the line to search a transcript for.
 
 When a PIN is enrolled, and again when an existing one is CHANGED, the API records — in the same
 save as the action and its audit row — that the account holder is OWED a notice (ADR-0045 for the
-enrolment, ADR-0047 for the change). Nothing in the API sends either. This verb renders every
+enrolment, ADR-0047 for the change). Nothing in the API sends either. Since ADR-0048 the API can
+DELIVER them to the pickup directory itself — `Notices:Runner=Api` plus a directory and a contact —
+and when it does, this verb steps aside for every row the relay holds under a live lease and says
+how many. Run it when no runner is live, or when one is down: a lapsed lease is free to the
+verb. This verb renders every
 owed notice as one RFC 5322 `.eml` file, addressed to the email held on the account, into a
 directory you name, and marks the row delivered:
 

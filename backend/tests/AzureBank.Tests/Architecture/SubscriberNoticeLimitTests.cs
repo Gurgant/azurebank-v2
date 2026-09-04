@@ -42,9 +42,11 @@ public class SubscriberNoticeLimitTests
                 .GetResult();
 
             result.IsSuccessful.Should().BeTrue(
-                "{0} must not be able to send: the notice is RECORDED in the request and rendered by "
-                + "the operator tool (ADR-0045); a send inside the request would be lost between the "
-                + "commit and the call or would hold the audit tail lock across I/O. Offending types: {1}",
+                "{0} must not be able to send: the notice is RECORDED in the request and rendered later, "
+                + "by the operator tool (ADR-0045) or by the API's own relay (ADR-0048) — both into a "
+                + "pickup directory, neither through a mail library; a send inside the request would be "
+                + "lost between the commit and the call or would hold the audit tail lock across I/O. "
+                + "Offending types: {1}",
                 assembly.GetName().Name,
                 string.Join(", ", result.FailingTypes?.Select(t => t.FullName) ?? []));
         }

@@ -263,6 +263,10 @@ public static class ServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        // The last hop, the same one the operator verb uses: a pickup directory on this machine. It
+        // is the only place a notice's address goes, and the seam a sending transport would replace.
+        services.AddSingleton<INoticeTransport, PickupDirectoryTransport>();
+
         // Always registered, so a second host inherits it; it steps aside unless the flag names it.
         services.AddHostedService<Services.NoticeRelayService>();
 

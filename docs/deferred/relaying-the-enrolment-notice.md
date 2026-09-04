@@ -44,6 +44,13 @@ provide.
 
 ## Why not here
 
+> **Correction (2026-09-04, evening): the runner is here — ADR-0048.** The paragraphs below were
+> true of the deployment they describe and are kept as its record. The ratification at the foot of
+> this page landed the same day: a hosted loop in the API now claims owed rows under a lease and
+> delivers them through the pickup transport. What is still not here is the SENDING half — a
+> provider, a credential, addresses the project may write to — and the preconditions listed under
+> "What would have to be true" are unchanged for it.
+
 The project's rule: a control whose value depends on a process running unattended, on a third party
 watching, or on a paid subscription is out of scope on its own, because there is nothing here to run
 it. A relay is all three — it runs unattended, it is a third party's service, and outside a demo it
@@ -75,7 +82,8 @@ the chain — is the decision to reopen, because "delivered" will then mean some
 Decided, and recorded here so the deferral above reads as history rather than as an open
 question: **the API is the runner first.** A hosted background service inside the API process claims
 pending `SubscriberNotices` rows under a lease and hands each to the registered `INoticeTransport`,
-retrying on failure. **At-least-once, and the lease does not make it once.** A claim stops two
+retrying on failure. Shipped as ADR-0048 the same day: `NoticeRelayService`,
+`Notices:Runner=Api`. **At-least-once, and the lease does not make it once.** A claim stops two
 runners owning the same row at the same moment; it cannot stop a worker that sends a notice and
 then dies before recording that it did, whose lease expires and whose row is picked up and sent
 again. Exactly-once is not the runner's to give: it needs an idempotency key the transport or the

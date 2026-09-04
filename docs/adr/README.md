@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Forty-seven decisions is more than anyone reads cold. These four carry the architecture; the rest is
+Forty-eight decisions is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -84,7 +84,7 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All forty-seven **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+All forty-eight **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
@@ -113,7 +113,9 @@ did not say them. ADR-0045 strikes the residual ADR-0040 left open (closed by T8
 ADR-0046 is the first decision on money caps: one bound for every move, and the client's bound tied
 to the published contract by a tripwire rather than typed beside a comment. ADR-0047 reverses ADR-0045's D8 and fires the trigger that ADR listed for itself: a PIN change owes
 its own notice, because a change costs only the current PIN and is therefore the one event a
-PIN-only attacker must produce. The 2026-09-04 sweep
+PIN-only attacker must produce. ADR-0048 reverses ADR-0045's D3 the same day: the API gains its
+first correctness-bearing loop, a relay that claims owed notices under a lease and delivers them
+through the pickup transport, at-least-once and said so. The 2026-09-04 sweep
 corrects seven records at once. Six — ADR-0008, 0022, 0029, 0030, 0031 and 0040 — carry one fact:
 ADR-0041 left `GET /api/accounts/{id}/full-number` as the only level-2 route, so every sentence that
 counted three of them, or called the reveal "the third", is struck in place with a dated note beside
@@ -146,7 +148,7 @@ two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`, 
 leaving them as they are; from here the wording is struck in place instead, which costs less and
 reads better.
 
-The next free number is **0048**.
+The next free number is **0049**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -201,6 +203,7 @@ The next free number is **0048**.
 | [ADR-0045](0045-the-enrolment-notice-rides-the-enrolment-and-stops-at-a-pickup-directory.md) | The enrolment notice rides the enrolment, and stops at a pickup directory | Accepted | 2026-09-03 |
 | [ADR-0046](0046-one-money-cap-for-every-move-and-the-client-promises-what-the-contract-publishes.md) | One money cap for every move, and the client promises what the contract publishes | Accepted | 2026-09-03 |
 | [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md) | A PIN change owes the same notice an enrolment does | Accepted | 2026-09-04 |
+| [ADR-0048](0048-the-api-is-the-runner-that-delivers-owed-notices.md) | The API is the runner that delivers owed notices | Accepted | 2026-09-04 |
 
 </details>
 ## Creating a New ADR

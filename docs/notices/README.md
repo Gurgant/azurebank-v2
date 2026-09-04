@@ -2,7 +2,8 @@
 
 `pin-enrolled.sample.eml` and `pin-changed.sample.eml` are what
 `AzureBank.AuditVerifier notify <directory> --contact "<text>"`
-writes: one RFC 5322 message per notice the API recorded as owed to an account holder, rendered
+writes — and what the API's own relay writes when `Notices:Runner=Api` (ADR-0048), through the same
+transport: one RFC 5322 message per notice the API recorded as owed to an account holder, rendered
 from the row and addressed to the email held on the account. One per kind: an enrolment
 (ADR-0045) and a change of an existing PIN (ADR-0047). They are deliberately not the same words —
 a change costs the current PIN and never the password, so the enrolment's "for the first time" and
