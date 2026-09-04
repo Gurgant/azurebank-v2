@@ -138,7 +138,7 @@ AzureBank.Bff/
 │   ├── SecurityHeadersMiddleware.cs    # OWASP security headers
 │   ├── FetchMetadataMiddleware.cs      # Sec-Fetch-* cross-site isolation (ADR-0018)
 │   ├── SessionActivityMiddleware.cs    # Update last activity
-│   └── AuthLevelMiddleware.cs          # 404 the proxied auth pair, 401 no session, 403 step-up
+│   └── AuthLevelMiddleware.cs          # 404 the proxied auth paths, 401 no session, 403 step-up
 │
 ├── 📁 Options/
 │   ├── SessionOptions.cs               # BffSessionOptions (+ BffSessionOptionsValidator.cs)
@@ -177,7 +177,7 @@ AzureBank.Bff/
 |----------|--------|-------------|------|
 | `/bff/auth/login` | POST | Login, create session, return cookie | No |
 | `/bff/auth/register` | POST | Register user, create session | No |
-| `/bff/auth/reauthenticate` | POST | Prove the password at the absolute cap; mints a NEW session at level 1, no PIN elevation carried over | Yes (401 with no resolvable session) |
+| `/bff/auth/reauthenticate` | POST | Prove the password BEFORE the absolute cap and take a new session: `IsSessionValid` fails at the cap, so this answers 401 after it. Mints a NEW session at level 1, no PIN elevation carried over | Yes (401 with no resolvable session) |
 | `/bff/auth/logout` | POST | Destroy session, clear cookie | Yes |
 | `/bff/auth/me` | GET | User info (read through to the API, cache as fallback — ADR-0039) + session details | Yes |
 | `/bff/auth/session-status` | GET | Check if authenticated | No |

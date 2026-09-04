@@ -96,7 +96,9 @@ Server, three deterministic rounds per run, in CI.
 
 ## A second factor that is actually a second factor
 
-Sensitive operations need a PIN, and the PIN is verified by the API, never by the BFF alone. Money
+Three operations need a PIN — a withdrawal, a transfer, and the account-number reveal — and it is
+verified by the API, never by the BFF alone. Closing an account is the gap: it is authenticated and
+owned, but nothing asks for a second factor (ADR-0008 records it as an open hole). Money
 moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is part of
 what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** — bound to
 payer, payee and amount, valid two minutes, spent once — presented in a `Step-Up-Authorization`

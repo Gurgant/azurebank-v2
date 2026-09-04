@@ -354,9 +354,22 @@ dotnet ef database update --no-build --connection "Server=(localdb)\MSSQLLocalDB
 
 The `--connection` is not optional: the plain form fails with *"The ConnectionString property has
 not been initialized"*, and `ASPNETCORE_ENVIRONMENT=Development` does not change that. The host is
-not the reason. `dotnet ef` does build it — the `HostAbortedException` in the output is that probe
-— and then prefers `DesignTimeDbContextFactory` (`AzureBank.Infrastructure/Data`); `--verbose`
-prints `Using DbContext factory 'DesignTimeDbContextFactory'`. That factory reads
+not the reason, and it IS started: `dotnet ef` runs the entry point, takes the service provider
+from Hosting, aborts the host, and only then resolves the context through the factory. Measured
+2026-09-04 with `--verbose`, in this order:
+
+```
+[02:57:50 INF] Starting AzureBank API...
+Using application service provider from Microsoft.Extensions.Hosting.
+Microsoft.Extensions.Hosting.HostAbortedException: The host was aborted.
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.ThrowHostAborted()
+Found DbContext 'AzureBankDbContext'.
+Using DbContext factory 'DesignTimeDbContextFactory'.
+```
+
+So the `HostAbortedException` is that probe rather than a failure, and
+`DesignTimeDbContextFactory` (`AzureBank.Infrastructure/Data`) is what finally builds the context.
+That factory reads
 `appsettings.json`, where `DefaultConnection` is `""`, plus the git-ignored
 `appsettings.Development.json`, and never user-secrets. It also resolves `../AzureBank.Api` from
 the current directory, which is why the `cd` above is part of the recipe. `migrations list` takes
