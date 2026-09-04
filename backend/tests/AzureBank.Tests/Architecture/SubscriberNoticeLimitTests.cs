@@ -12,9 +12,10 @@ namespace AzureBank.Tests.Architecture;
 /// <para>
 /// The first is the mechanical half of "the request records the obligation and never sends": a
 /// mail dependency appearing in Api, Infrastructure or Shared is the one change that could quietly
-/// move a send inside <c>POST /api/auth/pin</c>. The operator tool is EXCLUDED on purpose — it is
-/// the one place a notice is rendered, and it hand-writes RFC 5322 rather than referencing a mail
-/// library, which this test does not police.
+/// move a send inside <c>POST /api/auth/pin</c>. Since ADR-0048 the renderer and the pickup
+/// transport live in Infrastructure, which this test DOES police: they hand-write RFC 5322 rather
+/// than referencing a mail library, and the guard stays green because of that. The operator tool
+/// is excluded because it only calls them.
 /// </para>
 /// <para>
 /// WATCHED REFUSING before it shipped: with <c>_ = new System.Net.Mail.SmtpClient();</c> placed in

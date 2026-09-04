@@ -9,16 +9,19 @@ namespace AzureBank.Shared.Entities;
 /// A ROW IS NOT A NOTICE. What this table records is the FACT that a notice is owed, written in the
 /// same save as the action that owes it — the PIN enrolment and its <see cref="AuditEvent"/> — so
 /// the obligation cannot be lost when the enrolment commits and cannot survive when it rolls back
-/// (ADR-0044 D1, applied to a second row). The notice itself is rendered later, by the operator
-/// tool's <c>notify</c> verb, on a different process and a different connection: the session that
-/// enrolled the PIN cannot read this table, cannot change the address the notice will be addressed
-/// to, and cannot suppress the run. That independence is the clause the design meets; delivery is
+/// (ADR-0044 D1, applied to a second row). The notice itself is rendered later — by the API's own
+/// relay on a period (ADR-0048), or by the operator tool's <c>notify</c> verb — on a different
+/// connection and outside the request: the session that enrolled the PIN cannot read this table,
+/// cannot change the address the notice will be addressed to, and cannot suppress the sweep or the
+/// run. That independence is the clause the design meets; delivery is
 /// the clause it does not, and ADR-0045 says where it stops.
 /// </para>
 /// <para>
-/// THIS IS NOT AN OUTBOX WITH A PUMP. Nothing in the API reads it, nothing drains it on a timer, and
-/// that is a decision rather than an omission: the same one <c>AuditAnchor</c> records — nothing in
-/// this deployment runs between sessions, so a control that needs a runner names the operator.
+/// AN OUTBOX WITH A PUMP, since 2026-09-04. Until then this paragraph said the opposite — nothing
+/// in the API read it, nothing drained it on a timer, the anchor's decision for the anchor's reason
+/// — and ADR-0048 reversed it: <c>NoticeRelayService</c> claims the free owed rows under the lease
+/// below and delivers them, when <c>Notices:Runner</c> names the API. The verb remains for a store
+/// where nothing runs.
 /// </para>
 /// <para>
 /// NO ADDRESS COLUMN, on purpose. The recipient is joined from the account at rendering time, which
@@ -58,7 +61,8 @@ public class SubscriberNotice
     public DateTime OccurredAt { get; set; }
 
     /// <summary>
-    /// When the operator tool rendered the notice (UTC). Null while the notice is still owed.
+    /// When a runner — the API's relay or the operator tool — rendered the notice (UTC). Null while
+    /// the notice is still owed.
     /// A concurrency token, so two runs cannot both claim to have rendered one notice: the second
     /// UPDATE carries <c>WHERE DeliveredAt IS NULL</c> and loses loudly.
     /// </summary>
@@ -74,8 +78,10 @@ public class SubscriberNotice
     /// Until when a runner holds this row (UTC), or null when nobody does (ADR-0048). A claim is a
     /// set-based UPDATE that takes every owed row whose lease is null or expired, so two runners
     /// cannot hold one row at the same moment. It cannot stop a runner that delivers, dies before
-    /// marking, and is succeeded after the lease lapses: that row is delivered again, and the ADR
-    /// calls the transport at-least-once rather than letting this column imply otherwise.
+    /// marking, and is succeeded after the lease lapses. With a sending transport that row would go
+    /// out twice; with the pickup directory the second attempt is refused by the exclusive create
+    /// and the row stays owed beside the file it produced, for the runbook to clear. The ADR calls
+    /// the protocol at-least-once rather than letting this column imply otherwise.
     /// </summary>
     public DateTime? LeasedUntil { get; set; }
 

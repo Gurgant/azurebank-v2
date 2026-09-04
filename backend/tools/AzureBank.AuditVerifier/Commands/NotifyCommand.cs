@@ -15,11 +15,14 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A MODE OF THIS TOOL, NOT A SCHEDULED JOB — the anchor's decision, for the anchor's reason:
-/// nothing in this deployment runs between sessions, so a control that needs a runner names the
-/// operator, and says in the same breath that a control depending on somebody choosing to run it
-/// does not constrain that person. The API writes the row (in the same save as the enrolment, so
-/// the obligation is never lost and never survives a rollback); this verb is what reads it.
+/// ONE OF TWO RUNNERS since ADR-0048, and the one that needs a person. Until 2026-09-04 this was
+/// "a mode of this tool, not a scheduled job" — the anchor's decision, for a deployment in which
+/// nothing ran between sessions. The API now runs a relay that claims and delivers the same rows
+/// on a period when <c>Notices:Runner</c> names it; this verb is for a store where it does not, and
+/// for the day it is down. Both use <see cref="NoticeClaim"/>: the verb CLAIMS what it delivers,
+/// under its own name and a short lease, so the two cannot both hold a row at the same moment.
+/// The API writes the row (in the same save as the enrolment, so the obligation is never lost and
+/// never survives a rollback); this verb and the relay are what read it.
 /// </para>
 /// <para>
 /// ⚠️ WHAT THIS DOES NOT DO. It does not send. The transport writes an RFC 5322 message into a
@@ -45,9 +48,10 @@ namespace AzureBank.AuditVerifier.Commands;
 /// can echo the path it was writing, and a relay's refusal can echo the recipient).
 /// </para>
 /// <para>
-/// EXIT CODES, none of them new. 0: every waiting notice was written and marked. 2: nothing was
-/// waiting — its own answer, not a success, for the reason <see cref="VerifyCommand.NothingToVerify"/>
-/// gives. 3: the tool is not configured, the ring will not build, or the store could not be read.
+/// EXIT CODES, none of them new. 0: every notice this run claimed was written and marked. 2:
+/// nothing was FREE — no notice is owed, or every owed one is leased by a live runner, and the
+/// line says which — its own answer, not a success, for the reason
+/// <see cref="VerifyCommand.NothingToVerify"/> gives. 3: the tool is not configured, the ring will not build, or the store could not be read.
 /// 4: the command line was wrong — no contact, no directory, or a directory inside a git
 /// repository. 5: interrupted. 6: at least one notice is still owed after the run — a reuse of
 /// <see cref="AnchorCommand.NotRecorded"/>, whose meaning ("there was work to do and it could not
@@ -57,6 +61,12 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </remarks>
 public static class NotifyCommand
 {
+    /// <summary>
+    /// How long this run holds what it claims. Long enough to render a large spool, short enough
+    /// that a verb killed half-way frees its rows to the relay within minutes.
+    /// </summary>
+    internal static readonly TimeSpan VerbLease = TimeSpan.FromMinutes(2);
+
     public static Command Create(IServiceProvider services)
     {
         var command = new Command(
@@ -211,20 +221,20 @@ public static class NotifyCommand
         try
         {
             var now = DateTime.UtcNow;
+            var runner = NoticeClaim.RunnerNameFor(
+                "verb", Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
 
             /*
-              A ROW A LIVE RUNNER HOLDS IS NOT THIS RUN'S (ADR-0048). The in-process relay leases what
-              it is delivering; a verb that rendered those too would produce the duplicate the lease
-              exists to prevent. They are counted and named, not touched: if the runner dies, its
-              lease lapses and the next run — this verb or the relay — takes them.
+              THE VERB CLAIMS TOO (ADR-0048). A row a live runner holds is not this run's: rendering it
+              would produce the duplicate the lease exists to prevent, and a row this run read without
+              claiming could be taken by the relay between the read and the write. So the verb takes
+              the same lease the relay takes, under its own name, and delivers only what it holds.
+              Rows another runner holds are counted and named, not touched: if that runner dies, its
+              lease lapses and the next claim — this verb or the relay — takes them.
             */
-            var leased = await context.SubscriberNotices
-                .CountAsync(n => n.DeliveredAt == null && n.LeasedUntil != null && n.LeasedUntil > now, cancellationToken);
-
-            var waiting = await context.SubscriberNotices
-                .Where(n => n.DeliveredAt == null && (n.LeasedUntil == null || n.LeasedUntil <= now))
-                .OrderBy(n => n.OccurredAt)
-                .ToListAsync(cancellationToken);
+            await NoticeClaim.ClaimAsync(context, runner, now, now.Add(VerbLease), cancellationToken);
+            var leased = await NoticeClaim.HeldByOthersAsync(context, runner, now, cancellationToken);
+            var waiting = await NoticeClaim.HeldBy(context, runner, now).ToListAsync(cancellationToken);
 
             if (waiting.Count == 0)
             {
@@ -253,7 +263,7 @@ public static class NotifyCommand
             foreach (var notice in waiting)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var result = await run.DeliverAsync(notice, contact, fullDirectory, now, cancellationToken);
+                var result = await run.DeliverAsync(notice, contact, fullDirectory, cancellationToken);
                 var reference = result.Reference;
 
                 if (result.AuditRowMissing)

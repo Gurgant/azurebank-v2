@@ -73,10 +73,10 @@ change-email endpoint exists today. The day one does, this paragraph is the trig
 --contact "<text>"` is the fifth verb of `AzureBank.AuditVerifier`: it reads every row still owed,
 renders each, hands it to a transport, and marks the row delivered under a concurrency token. ~~A
 mode of the tool, not a scheduled job — the anchor's decision for the anchor's reason: nothing in
-this deployment runs between sessions, so a control that needs a runner names the operator, and says
-in
-the same breath that a control depending on somebody choosing to run it does not constrain that
-person. The API gains no hosted service, timer or pump; both of its existing sweeps are hygiene, and
+this deployment runs between sessions, so a control that needs a runner names the operator, and
+says in the same breath that a control depending on somebody choosing to run it does not constrain
+that person. The API gains no hosted service, timer or pump; both of its existing sweeps are
+hygiene, and
 this would have been its first correctness-bearing loop.~~ (struck 2026-09-04; correction below.)
 
 > **Correction (2026-09-04): the API is the runner — ADR-0048.** Measured with API and BFF running:
@@ -158,7 +158,7 @@ the exit-code list rather than a fifth copy of it.
 | Clause | Status | Why |
 |---|---|---|
 | §4.1 — record the date and time of authenticator life-cycle events | **Met** (before this ADR) | `AuditEvents.OccurredAt` on the `PinEnrolled` row, same transaction as the enrolment; now also proven with an injected insert failure on the enrolment path |
-| §4.1.2.1 — notify via a mechanism INDEPENDENT of the binding transaction | **Met** | The row is committed with the enrolment on a path the session cannot read; it is rendered on another process and connection; the session cannot change the address it is addressed to or suppress the run |
+| §4.1.2.1 — notify via a mechanism INDEPENDENT of the binding transaction | **Met** | The row is committed with the enrolment on a path the session cannot read; it is rendered outside the request — by the operator tool, or since ADR-0048 by the API's own relay, on another connection and a period — and the session cannot change the address it is addressed to or suppress the run or the sweep _(until 2026-09-04 this cell said "on another process")_ |
 | §4.1.2.1 — "notify the subscriber … as described in Sec. 4.6" | **Not met** | Nothing is sent. The message reaches a directory on this machine |
 | §4.6 — to the notification addresses stored in the account | **Partly**: one address, self-asserted | The one address is used; there is no second |
 | §4.6 — support at least two notification addresses | **Not met** | The data model holds one |
@@ -180,10 +180,12 @@ NIST clause by choice, because it is the clearest statement of the property, and
   security reviewer preferred: a notice can only become owed while the API is up, so a
   `BackgroundService` draining the table is never "unattended" in the sense the project's rule
   forbids, and it bounds the attacker's window to seconds instead of "until somebody runs a verb".
-  Declined: it would be the first correctness-bearing loop in the API, it is scheduled rather than
-  on demand, and the anchor set the precedent the other way. If that argument is ratified, the
-  row/verb split still holds: the relay becomes a later change behind the same table and the same
-  transport seam.
+  ~~Declined: it would be the first correctness-bearing loop in the API, it is scheduled rather
+  than on demand, and the anchor set the precedent the other way.~~ If that argument is ratified,
+  the row/verb split still holds: the relay becomes a later change behind the same table and the
+  same transport seam. _(Ratified and adopted 2026-09-04 — ADR-0048. The last sentence was right
+  about the shape: the row, the verb and the transport seam stayed; the relay is a loop behind them,
+  and the claim it needed became two columns on the row.)_
 - **Send inside the request.** After `UpdateAsync` it can be lost between the commit and the call
   with no record that it was owed; inside the save it holds the audit tail lock across I/O. Either
   inverts ADR-0044 D1. The row is the fix for both.
@@ -206,7 +208,9 @@ an interruption between the publish and the mark leaves a complete file whose ro
 an orphan the runbook says how to clear (the row is the truth; delete or move the file and run
 again). The next run into the same directory refuses to overwrite it, and into a different one
 writes a second copy with the same `Message-ID`. A durable claim on the row before the write is the
-upgrade a second runner would need, and it is not built for one. The directory is personal data at
+upgrade a second runner would need, ~~and it is not built for one~~ — built 2026-09-04 as the
+lease of ADR-0048, which every runner, this verb included, now takes before it writes. The
+directory is personal data at
 rest, unencrypted and unpurged — the verb's refusal of a repository path (where it sits and where a
 link on it points) and the runbook's delete-after sentence are
 the mitigations. CodeQL says the same thing in its own words —
@@ -222,8 +226,10 @@ by hand, but no password reset exists, so the attacker who proved the password s
   rows, cascade to the user), the `SubscriberNotices` set, the `AddSubscriberNotices` migration.
 - The `Add` in `AuthService.SetPinAsync`, and the corrected comments beside it and in
   `SecurityEvents.PinEnrolled`.
-- `NotifyCommand`, `NoticeRenderer`, `INoticeTransport` and `PickupDirectoryTransport` in the
-  operator tool; the verb wired in `Program.cs`; the transport registered in the tool's root.
+- `NotifyCommand` in the operator tool, the verb wired in `Program.cs`; ~~`NoticeRenderer`,
+  `INoticeTransport` and `PickupDirectoryTransport` in the operator tool … the transport registered
+  in the tool's root~~ — since 2026-09-04 (ADR-0048) those three live in
+  `AzureBank.Infrastructure.Notices`, and the transport is registered in both roots.
 - Tests: `SubscriberNoticePersistenceTests` (the table, through the real host);
   `SubscriberNoticeSqlServerTests` (both D1 directions, the token, the CHECK);
   `AuthServiceTests.SetPinAsync_WhenEnrolling_TracksTheNoticeBeforeUpdateAsync` (the order);
@@ -294,8 +300,11 @@ sentence it did not have: the subscriber is not reached, and here is exactly why
 
 ## What would change this
 
-- **A relay** — the deferred document's trigger. The seam is `INoticeTransport`; the row, the verb
-  and the notice text do not move.
+- ~~**A relay** — the deferred document's trigger. The seam is `INoticeTransport`; the row, the verb
+  and the notice text do not move.~~ Fired 2026-09-04 by ADR-0048, in the shape the alternatives
+  section called "the API is the runner": the notice text did not move, the row gained a lease, and
+  the verb now claims. What is still open is the SENDING transport behind the same seam, and the
+  deferral record's preconditions for it.
 - **A change-email endpoint** — D2's trigger: the old address must then be notified of the change,
   and the join-at-delivery decision is reopened.
 - **A PIN reset or revocation flow** — completes the repudiation path the contact currently cannot.

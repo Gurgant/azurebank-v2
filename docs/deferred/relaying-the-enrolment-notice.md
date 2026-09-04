@@ -1,4 +1,8 @@
-# Relaying the enrolment notice, and why this deployment cannot
+# Relaying the enrolment notice, and what this deployment still cannot do
+
+_Title until 2026-09-04: "…and why this deployment cannot". It can now DELIVER to a pickup directory
+on its own (ADR-0048); what it still cannot do is SEND, and that is what the rest of this page is
+about._
 
 When a transfer PIN is enrolled, and again when an existing one is changed, the API records that the
 account holder is owed a notice, in the same transaction as the action — until 2026-09-04 this said
@@ -37,8 +41,9 @@ the pickup directory already lets the ADR say.
 
 Detection. In the threat model — an attacker with a stolen session enrols a PIN behind the account
 password, or changes an existing one behind the PIN alone (ADR-0047) — the notice is the only thing
-that reaches the legitimate owner, and today it reaches them
-only if somebody runs a verb and then moves a file. A relay turns "when the operator remembers" into
+that reaches the legitimate owner, and — until the API's relay landed (ADR-0048) — it reached them
+only if somebody ran a verb and then moved a file; now the file is written within a period, and a
+person still has to move it. A sending relay turns "when the operator remembers" into
 "within seconds of the enrolment", which is the property NIST SP 800-63B-4 §4.6 is written to
 provide.
 
@@ -73,8 +78,9 @@ only address that exists.
   is amended to say that one address is the whole design.
 - The repudiation path has a remedy: a PIN reset or revocation flow behind the contact.
 
-When those hold, the change is a second `INoticeTransport`, registered in the tool's composition
-root in place of the pickup directory, and ADR-0045 D7 — delivery recorded on the row rather than in
+When those hold, the change is a second `INoticeTransport`, registered in place of the pickup
+directory in both composition roots — the tool's and, since ADR-0048, the API's — and ADR-0045
+D7 — delivery recorded on the row rather than in
 the chain — is the decision to reopen, because "delivered" will then mean something.
 
 ## Ratified 2026-09-04

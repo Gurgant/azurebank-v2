@@ -1,9 +1,10 @@
 # A subscriber says "this was not me" about a PIN notice
 
 Two kinds of notice are owed to an account holder: one when a transfer PIN is set for the first
-time (ADR-0045) and one when an existing PIN is changed (ADR-0047). Nothing in the system delivers
-either. `notify` renders each owed notice to a file in a pickup directory, and getting that file to
-the holder is an operator's step — the relay is deferred. Once a notice has been passed on, it tells
+time (ADR-0045) and one when an existing PIN is changed (ADR-0047). Nothing in the system SENDS
+either. The API's relay (ADR-0048), or the operator's `notify`, renders each owed notice to a file
+in a pickup directory, and getting that file to the holder is an operator's step. Once a notice
+has been passed on, it tells
 the holder to contact the address or number the operator put behind `--contact`, quoting a
 reference. This page is what that contact does with the reference. It is short because the remedy
 is short — and it ends with the sentence that says where the remedy stops.
@@ -43,8 +44,8 @@ whatever they happened to spell. Run against the API's database:
         STUFF(STUFF(STUFF(STUFF(@ref, 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-'));
 
 `Event` is which of the two kinds this is, and it decides how the paragraphs above and §4 read.
-`OccurredAt` is when the PIN was set or changed (UTC). `DeliveredAt` is when `notify` rendered it;
-if
+`OccurredAt` is when the PIN was set or changed (UTC). `DeliveredAt` is when a runner — the relay
+or `notify` — rendered it; if
 it is NULL the subscriber cannot be holding a rendered notice for this reference, and the reference
 came from somewhere else — treat that as its own finding.
 

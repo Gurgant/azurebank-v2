@@ -15,16 +15,18 @@ namespace AzureBank.Api.Services;
 /// <para>
 /// WHAT RUNS AND WHAT DOES NOT. Always registered, so a second host that calls the same extension
 /// inherits it; it reads <see cref="NoticeRelayOptions.Runner"/> once at start and, unless that is
-/// <see cref="NoticeRunner.Api"/>, logs that no runner is live in this process and returns. That
-/// flag — not the lease — is what keeps two runners from both sending.
+/// <see cref="NoticeRunner.Api"/>, says so and returns — at Information for <c>None</c>, at Warning
+/// for <c>Function</c>, because nothing in this repository implements that runner yet and an
+/// operator who named it believes something is delivering. The flag, not the lease, is what keeps
+/// two KINDS of runner from both sending; two hosts of this API with the flag set both run the
+/// loop, and the lease keeps them off each other's rows.
 /// </para>
 /// <para>
-/// THE CLAIM IS ONE SET-BASED UPDATE: every owed row whose lease is null or expired is stamped with
-/// this runner's name and a lease end, in one statement, so two runners cannot hold one row at the
-/// same moment — the database serialises the two UPDATEs and the second finds nothing free. What
-/// the claim cannot do is make delivery once: a runner that delivers and dies before marking is
-/// succeeded when its lease lapses, and that row goes out again. At-least-once, said here and in
-/// the ADR rather than implied away by the column.
+/// THE CLAIM is <see cref="NoticeClaim"/>'s: one set-based UPDATE, then a re-read of what this
+/// runner holds BY NAME. A sweep that outlives its own lease stops delivering: the rows it has not
+/// reached are free to the next claimant, and finishing them here would produce exactly the
+/// duplicate the lease exists to prevent. The lease is validated to be at least twice the period
+/// for the same reason. At-least-once is still the honest word — see the claim's remarks.
 /// </para>
 /// <para>
 /// THE HOUSE SHAPE for a loop (the two hygiene sweeps): <see cref="PeriodicTimer"/>, so the first
@@ -34,8 +36,14 @@ namespace AzureBank.Api.Services;
 /// </para>
 /// <para>
 /// THE ADDRESS NEVER REACHES A LOG LINE. <see cref="NoticeDeliveryRun"/> returns outcomes without it,
-/// and every line below names the reference, the kind and the receipt only. No SecurityEvent: an
-/// owed notice is not a security event (ADR-0045's precedent), and a delivered one is a receipt.
+/// and every line below names the reference, the kind, the receipt and the exception TYPE only.
+/// The pickup directory IS logged: it is the operator's own configuration and the thing the rule
+/// protects is the recipient, not the path. No SecurityEvent: an owed notice is not a security
+/// event (ADR-0045's precedent), and a delivered one is a receipt.
+/// </para>
+/// <para>
+/// Clock: <see cref="TimeProvider"/>, defaulting to the system one as <c>AuditService</c> does, so
+/// a test can lapse a lease by advancing time rather than by rewriting the row.
 /// </para>
 /// </remarks>
 public sealed class NoticeRelayService : BackgroundService
@@ -43,29 +51,49 @@ public sealed class NoticeRelayService : BackgroundService
     private readonly IServiceScopeFactory _scopes;
     private readonly NoticeRelayOptions _options;
     private readonly ILogger<NoticeRelayService> _logger;
+    private readonly TimeProvider _clock;
+    private readonly string? _directory;
 
     /// <summary>
-    /// Host, process and a short random suffix: distinguishes two runners on one machine, and is a
-    /// name for the log, never a secret. Bounded to the column width.
+    /// <c>api/{host}/{pid}/{8 hex}</c>: distinguishes two runners on one machine, and is a name
+    /// for the log, never a secret. Bounded to the column width by <see cref="NoticeClaim.RunnerNameFor"/>.
     /// </summary>
     public string RunnerName { get; }
 
     public NoticeRelayService(
         IServiceScopeFactory scopes,
         IOptions<NoticeRelayOptions> options,
-        ILogger<NoticeRelayService> logger)
+        ILogger<NoticeRelayService> logger,
+        TimeProvider? clock = null)
     {
         _scopes = scopes;
         _options = options.Value;
         _logger = logger;
+        _clock = clock ?? TimeProvider.System;
+        RunnerName = NoticeClaim.RunnerNameFor(
+            "api", Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
 
-        var name = $"{Environment.MachineName}/{Environment.ProcessId}/{Guid.NewGuid():N}"[..^24];
-        RunnerName = name.Length > 64 ? name[..64] : name;
+        // Validated at start by the registration; resolved once so every sweep delivers to the same
+        // place, and only when this process is the runner — nothing else may hand the sweep a path.
+        _directory = _options.Runner == NoticeRunner.Api && !string.IsNullOrWhiteSpace(_options.PickupDirectory)
+            ? Path.GetFullPath(_options.PickupDirectory)
+            : null;
     }
+
+    private DateTime UtcNow => _clock.GetUtcNow().UtcDateTime;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (_options.Runner != NoticeRunner.Api)
+        if (_options.Runner == NoticeRunner.Function)
+        {
+            _logger.LogWarning(
+                "Notice relay: runner is {Runner}, which nothing in this repository implements yet; "
+                + "this process delivers nothing and notices stay owed until the verb runs (Notices:Runner)",
+                _options.Runner);
+            return;
+        }
+
+        if (_options.Runner != NoticeRunner.Api || _directory is null)
         {
             _logger.LogInformation(
                 "Notice relay: runner is {Runner}; this process delivers nothing (Notices:Runner)",
@@ -73,21 +101,18 @@ public sealed class NoticeRelayService : BackgroundService
             return;
         }
 
-        // Validated at start (registration); resolved once so every sweep delivers to the same place.
-        var directory = Path.GetFullPath(_options.PickupDirectory!);
-
         _logger.LogInformation(
             "Notice relay: live as {RunnerName}, every {PeriodSeconds}s, lease {LeaseSeconds}s, into {Directory}",
-            RunnerName, _options.PeriodSeconds, _options.LeaseSeconds, directory);
+            RunnerName, _options.PeriodSeconds, _options.LeaseSeconds, _directory);
 
-        using var timer = new PeriodicTimer(_options.Period);
+        using var timer = new PeriodicTimer(_options.Period, _clock);
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
                 try
                 {
-                    await SweepAsync(directory, stoppingToken);
+                    await SweepAsync(stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -106,27 +131,33 @@ public sealed class NoticeRelayService : BackgroundService
     }
 
     /// <summary>
-    /// One sweep: claim, deliver, report. Exposed so a test drives it without waiting a period.
+    /// One sweep: claim, deliver what this runner holds, report. Internal so a test drives it without
+    /// waiting a period; it delivers only into the directory the options validated.
     /// </summary>
-    /// <returns>How many rows this sweep claimed, delivered, and left owed.</returns>
-    public async Task<NoticeSweepSummary> SweepAsync(string directory, CancellationToken cancellationToken)
+    /// <returns>How many rows this sweep claimed, delivered, and left owed after a named failure.</returns>
+    internal async Task<NoticeSweepSummary> SweepAsync(CancellationToken cancellationToken)
     {
+        if (_directory is null)
+        {
+            throw new InvalidOperationException("The relay has no pickup directory: Notices:Runner is not Api.");
+        }
+
         using var scope = _scopes.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
         var transport = scope.ServiceProvider.GetRequiredService<INoticeTransport>();
 
-        var now = DateTime.UtcNow;
+        var now = UtcNow;
         var leaseEnd = now.Add(_options.Lease);
-        var claimed = await ClaimAsync(context, now, leaseEnd, cancellationToken);
-        if (claimed == 0)
-        {
-            return new NoticeSweepSummary(0, 0, 0);
-        }
+        var claimed = await NoticeClaim.ClaimAsync(context, RunnerName, now, leaseEnd, cancellationToken);
 
-        var mine = await context.SubscriberNotices
-            .Where(n => n.DeliveredAt == null && n.LeasedBy == RunnerName && n.LeasedUntil == leaseEnd)
-            .OrderBy(n => n.OccurredAt)
-            .ToListAsync(cancellationToken);
+        var mine = await NoticeClaim.HeldBy(context, RunnerName, now).ToListAsync(cancellationToken);
+        if (claimed > 0 && mine.Count == 0)
+        {
+            _logger.LogWarning(
+                "Notice relay: claimed {Claimed} row(s) but re-read none by name; the claim and the "
+                + "re-read disagree, and the rows stay leased until the lease lapses",
+                claimed);
+        }
 
         var run = new NoticeDeliveryRun(context, transport);
         var delivered = 0;
@@ -135,7 +166,18 @@ public sealed class NoticeRelayService : BackgroundService
         foreach (var notice in mine)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var result = await run.DeliverAsync(notice, _options.Contact!, directory, now, cancellationToken);
+
+            if (UtcNow >= leaseEnd)
+            {
+                _logger.LogWarning(
+                    "Notice relay: lease lapsed mid-sweep after {Delivered} of {Held} row(s); the rest are "
+                    + "free to the next claim rather than delivered under a lease this runner no longer holds",
+                    delivered, mine.Count);
+                owed += mine.Count - delivered - owed;
+                break;
+            }
+
+            var result = await run.DeliverAsync(notice, _options.Contact!, _directory, cancellationToken);
 
             if (result.AuditRowMissing)
             {
@@ -173,7 +215,7 @@ public sealed class NoticeRelayService : BackgroundService
                 case NoticeOutcome.TransportFailed:
                     owed++;
                     _logger.LogWarning(
-                        "Notice relay: notice {Reference} could not be delivered ({FailureType}); still owed, retried after the lease",
+                        "Notice relay: notice {Reference} could not be delivered ({FailureType}); still owed and held, retried next sweep",
                         result.Reference, result.FailureType);
                     break;
             }
@@ -181,38 +223,7 @@ public sealed class NoticeRelayService : BackgroundService
 
         return new NoticeSweepSummary(claimed, delivered, owed);
     }
-
-    /// <summary>
-    /// Stamps every free owed row with this runner's lease. Set-based on a relational store; the
-    /// load-and-save fallback exists for the InMemory test hosts, which cannot translate
-    /// ExecuteUpdate and register this service like any other.
-    /// </summary>
-    private async Task<int> ClaimAsync(
-        AzureBankDbContext context, DateTime now, DateTime leaseEnd, CancellationToken cancellationToken)
-    {
-        var free = context.SubscriberNotices
-            .Where(n => n.DeliveredAt == null && (n.LeasedUntil == null || n.LeasedUntil <= now));
-
-        if (context.Database.IsRelational())
-        {
-            return await free.ExecuteUpdateAsync(
-                set => set
-                    .SetProperty(n => n.LeasedUntil, leaseEnd)
-                    .SetProperty(n => n.LeasedBy, RunnerName),
-                cancellationToken);
-        }
-
-        var rows = await free.ToListAsync(cancellationToken);
-        foreach (var row in rows)
-        {
-            row.LeasedUntil = leaseEnd;
-            row.LeasedBy = RunnerName;
-        }
-
-        await context.SaveChangesAsync(cancellationToken);
-        return rows.Count;
-    }
 }
 
-/// <summary>What one sweep did: rows claimed, rows delivered, rows left owed after a named failure.</summary>
+/// <summary>What one sweep did: rows claimed, rows delivered, rows left owed after a named failure or a lapsed lease.</summary>
 public sealed record NoticeSweepSummary(int Claimed, int Delivered, int Owed);

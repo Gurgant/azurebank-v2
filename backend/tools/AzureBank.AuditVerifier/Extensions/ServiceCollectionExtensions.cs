@@ -82,8 +82,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuditChain, AuditChain>();
         services.AddScoped<IAuditAnchorChain, AuditAnchorChain>();
 
-        // The last hop of `notify` (ADR-0045): a pickup directory on this machine. The one place a
-        // notice's address goes, and the seam a relay would replace -- named in docs/deferred/.
+        // The last hop of `notify` (ADR-0045): a pickup directory on this machine, the same transport
+        // the API's relay registers (ADR-0048). The one place a notice's address goes, and the seam a
+        // SENDING transport would replace -- named in docs/deferred/.
         services.AddSingleton<INoticeTransport, PickupDirectoryTransport>();
 
         return services;

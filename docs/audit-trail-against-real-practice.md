@@ -47,8 +47,9 @@ recomputes its own epoch, and only its own. This note first said "not any key in
 was the shape of the claim for the hour before the epoch gained a lower end. The claim got narrower
 twice, and what the verifier prints got narrower with it both times.)*
 
-**Almost every divergence below is one premise expressed many times:** nothing here runs unattended,
-and one principal owns everything. Both are true of this deployment and both are labelled where they
+**Almost every divergence below is one premise expressed many times:** nothing here runs unattended
+(since ADR-0048 one loop does, inside the API and only while it is up — the notice relay), and one
+principal owns everything. Both are true of this deployment and both are labelled where they
 occur rather than only in a plan.
 
 **Two things a reader of a banking piece will look for and not find.** Absence carries no
@@ -75,7 +76,7 @@ holds it in place; "named" means the document says the true thing and nothing wa
 | 6 | Separation of duties | **Named only** | One human, one Windows account |
 | 7 | Inclusion proofs for handing over a subset of rows | **Not named anywhere in the ADR** | A tail anchor yields none, and the ADR does not say so |
 | 8 | A retention and erasure policy | **Open by the ADR's own correction** | Unsolved, and the ADR says it is |
-| 9 | A notice to the account holder over a channel the session does not control | **Half built** — the row rides the enrolment (ADR-0045) or the PIN change (ADR-0047) and `notify` renders it to a message file | The last hop is a directory on this machine; one unvalidated address; no relay; no PIN reset behind the contact |
+| 9 | A notice to the account holder over a channel the session does not control | **Half built** — the row rides the enrolment (ADR-0045) or the PIN change (ADR-0047) and `notify`, or the API's relay (ADR-0048), renders it to a message file | The last hop is a directory on this machine; one unvalidated address; no relay; no PIN reset behind the contact |
 
 ---
 

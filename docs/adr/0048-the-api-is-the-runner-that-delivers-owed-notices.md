@@ -17,7 +17,7 @@ ratified in the other direction: **the API is the runner first**, with an in-pro
 that a later Azure Function will share, and a flag that names which runner is live.
 
 Measured before any of this was written, on the running stack (BFF `:5000` → API `:7215`, main
-`d79beb1`, a throwaway store):
+`d79beb1`, the `AzureBankT15` LocalDB store):
 
 ```
 18:42:09Z  enrol a PIN                    -> 200, one SubscriberNotices row, DeliveredAt NULL
@@ -38,24 +38,41 @@ correctness-bearing loop, after two hygiene sweeps. It follows their shape exact
 cancellation absorbed as shutdown — and it is registered where they are, beside its options in
 `AddApplicationServices`, so a second host inherits it. It is ALWAYS registered and reads
 `Notices:Runner` once at start; unless that names this process it logs that no runner is live and
-returns. That flag, not the lease, is what keeps two runners from both sending.
+returns — at Warning for `Function`, which nothing implements yet, so an operator who set it is told
+that notices stay owed. That flag, not the lease, is what keeps two KINDS of runner from both
+sending; two hosts of this API with the flag set both run the loop, and the lease keeps them off
+each other's rows.
 
-**D2 — The claim is a lease on the row, taken in one statement.** Two nullable columns,
-`LeasedUntil` and `LeasedBy`, paired by `CK_SubscriberNotices_Lease` the way the delivery pair
-already is. A sweep stamps every owed row whose lease is null or expired with its name and a lease
-end in ONE set-based UPDATE, so the database serialises two runners and the second finds nothing
-free; it then re-reads the rows it stamped and delivers them. Proved on SQL Server: two runners
-sweeping six fresh rows at the same moment delivered six files, each row marked once, none owed; a
-row under a live lease held by a third name is left alone; a row whose lease has lapsed is taken.
-`DeliveredAt` stays the concurrency token, and the mark clears the lease.
+**D2 — The claim is a lease on the row, taken in one statement, and shared.** Two nullable
+columns, `LeasedUntil` and `LeasedBy`, paired by `CK_SubscriberNotices_Lease` the way the delivery
+pair already is. A claim stamps every owed row whose lease is null or lapsed with the runner's name
+and a lease end in ONE set-based UPDATE, so the database serialises two claims and the second finds
+nothing free; the runner then re-reads what it holds BY NAME — never by the instant it wrote, so a
+store that rounded a timestamp could not make it claim N and read back none — and delivers that.
+The protocol is `NoticeClaim` in Infrastructure, and the verb uses it too (D5). Proved on SQL
+Server: a claim held open in an uncommitted transaction blocks a second runner's sweep — it had not
+returned 1.5 s later — and once the first commits the second claims zero; two runners sweeping six
+fresh rows back to back claim exactly six between them and deliver six files, none twice; a row
+under a live lease held by a third name is left alone; a row whose lease has lapsed is taken; the
+store refuses a lease with either half missing. `DeliveredAt` stays the concurrency token, and the
+mark clears the lease. A sweep that outlives its own lease stops delivering and says so: the rows it
+has not reached are free to the next claim, and the lease is validated to be at least twice the
+period so that is the exception, not the rule. The clocks compared are the runners' own: two hosts
+skewed by more than a lease would each see the other's live lease as lapsed, so a lease must exceed
+the period plus the skew a deployment tolerates.
 
 **D3 — At-least-once, and the lease does not make it once.** A runner that hands a message to the
-transport and dies before marking is succeeded when its lease lapses, and that row goes out again.
-Exactly-once is not the runner's to give: it needs an idempotency key the transport or the provider
-honours, or de-duplication at the recipient. Until one exists a duplicate is an accepted outcome,
-pinned by a test that fails a delivery, sees the row still leased, lapses the lease by hand and
-watches the same row go out. The verb already named this shape for its own duplicates; the relay
-inherits the honesty.
+transport and dies before marking is succeeded when its lease lapses. What happens then depends on
+the transport. With a sending one, that row goes out twice: exactly-once is not the runner's to
+give, it needs an idempotency key the transport or the provider honours, or de-duplication at the
+recipient, and until one exists a duplicate is an accepted outcome. With the pickup directory that
+ships, the file IS such a key: the second attempt into the same directory is refused by the
+exclusive create (ADR-0045 D4), nothing goes out twice, and the observable state is a row that
+stays owed beside the file it produced — held, retried and refused every lease, logged at Warning
+each time, exit 6 from the verb — until an operator applies the runbook (the row is the truth:
+move the file and run again, or mark the row). Both shapes are pinned: a recording transport shows
+the retry and the lapse; SQL Server and the real transport show the refusal and the row left owed.
+The verb already named this shape for its own duplicates; the relay inherits the honesty.
 
 **D4 — One unit of work, shared.** The verb's per-row steps — address, evidence, render, transport,
 mark — are `NoticeDeliveryRun` in Infrastructure, and the verb and the relay both call it. The verb
@@ -65,20 +82,25 @@ echo the path and a relay's refusal can echo the recipient. A test reads every l
 that delivered one notice and refused another for an injected `Bcc:` in its address, and finds
 neither address in any of them.
 
-**D5 — The verb steps aside for a live lease, and says so.** `notify` no longer renders a row a
-runner holds; it counts them and prints that they are leased by a live runner, and takes them only
-once the lease has lapsed. An operator running the verb beside a live relay therefore does not
-produce the duplicate the lease exists to prevent.
+**D5 — The verb claims too, and steps aside for what another runner holds.** `notify` takes the
+same lease the relay takes, under its own name (`verb/{host}/{pid}/{8 hex}`, two minutes), and
+delivers only what it holds; rows another runner holds under a live lease are counted and named,
+and taken only once that lease has lapsed. A verb that merely read free rows and delivered them
+would leave a window between its read and its write in which the relay's claim takes the same
+rows; claiming closes it. The verb's exit 2 now has two readings, and the line says which: nothing
+owed, or everything owed leased by a live runner.
 
 **D6 — Options, off by default, refused when partial.** The `Notices` section: `Runner`
 (`None|Api|Function`, default `None`), `PickupDirectory`, `Contact`, `PeriodSeconds` (15),
 `LeaseSeconds` (120). `None` is the default on purpose: a pickup directory is a spool of addresses
 at rest and must sit outside any git tree, so no default path can ship. When `Runner` is `Api` the
 directory must exist and pass the verb's own git-tree guard (now shared from Infrastructure), the
-contact is mandatory content of every notice (NIST SP 800-63B-4 §4.6), and the lease must exceed the
-period, or a slow sweep is overtaken and its rows go out twice. A partial set stops the host, with a
-message that names the key and the fix, which is the only thing an operator sees. Nothing in the
-section is a secret and none joins the six.
+contact is mandatory content of every notice (NIST SP 800-63B-4 §4.6), and the lease must be at
+least twice the period, or a slow sweep is overtaken and its rows go out twice. The ranges on the
+period and the lease apply whatever the runner: an out-of-range value is a misconfiguration even
+when nothing runs. A partial set stops the host, with a message that names the key and the fix,
+which is the only thing an operator sees. Nothing in the section is a secret and none joins the
+six.
 
 **D7 — Logging, and no `SecurityEvent`.** Information per delivered notice — reference, kind,
 receipt; Warning for an unusable address, an unrenderable kind, a transport failure and a missing
@@ -104,6 +126,11 @@ runner. One set-based statement is one chance, and the database takes it.
 **Deleting the verb.** It is the operator's tool for a store where nothing runs, and for the day a
 runner is down; it now coexists with the runner (D5) rather than competing with it.
 
+**Making the pickup transport idempotent** — treating a file already at the notice's path as the
+delivery and marking the row. It would close D3's stuck-owed state, and it reverses ADR-0045 D4
+(never overwrite; the row is the truth; the orphan is the operator's to clear) inside a change that
+does not ratify that reversal. Named here so the next relay item can take it deliberately.
+
 ## Consequences
 
 Measured after, on the same stack with `Notices__Runner=Api`, a 5-second period and a 60-second
@@ -111,22 +138,27 @@ lease, then again with `Notices__Runner=None` as the control:
 
 ```
 19:05:59Z  enrol                -> 200; the row is owed, no lease
-19:06:03Z  Date: in the file    -> delivered on the first sweep, 4 s after the enrolment
+19:06:03Z  Date: in the file    -> delivered within one period, 4 s after the enrolment
 19:07:10Z  enrol (second user)  -> 200
-19:07:15Z  the row              -> delivered, file present, lease cleared: 5 s, one period
+   +5 s    the row              -> delivered, file present, lease cleared: one period
            API log              -> "live as GURGANT/32384/bcc2330c, every 5s, lease 60s, into …"
                                    "delivered notice 01a06dd1… (PinEnrolled) as 01a06dd1….eml"
            the address in the API log: 0 occurrences
-           notify beside the live relay -> exit 2, "no notice is owed": it had taken them all
+           notify beside the live relay (before the second enrolment) -> exit 2, "no notice is
+           owed": the relay had taken every row; the "leased" reading of exit 2 was not observed
+           on the stack, and is pinned by tests instead
 19:08:02Z  enrol, Runner=None   -> 200; the row is still owed 16 s later, no lease
            API log              -> "runner is None; this process delivers nothing (Notices:Runner)"
 ```
 
+(The transcript's own 24-second file check reported NO for the first notice: it tested a path built
+from an id captured with a trailing newline. The `Date:` header and the row are the evidence.)
+
 An owed notice reaches the pickup directory within one period of being recorded, for as long as the
 API runs with the flag set; the verb remains for every other case. The last hop is unchanged: a file
-on this machine, seen by nobody, which is what the deferral record's preconditions — a provider
-credential, addresses the project may write to, a second contact and a remedy behind it — still
-stand between and "delivered".
+on this machine, seen by nobody, and the deferral record's preconditions — a provider credential,
+addresses the project may write to, a second contact and a remedy behind it — still stand between
+that file and "delivered".
 
 ADR-0045 D3 is reversed and struck in place. D7 — delivery recorded on the row, not in the chain —
 stands: it was the decision to reopen when "delivered" means something, and with a pickup directory

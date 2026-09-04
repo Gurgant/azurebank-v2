@@ -257,11 +257,16 @@ public static class ServiceCollectionExtensions
                 + "addresses at rest, and one under a repository is one commit away from being "
                 + "published. Name a directory outside the tree.")
             .Validate(
-                o => o.LeaseSeconds > o.PeriodSeconds,
-                "Notices:LeaseSeconds must exceed Notices:PeriodSeconds, or a slow sweep is overtaken "
-                + "by the next and its rows go out twice.")
+                o => o.Runner != NoticeRunner.Api || o.LeaseSeconds >= 2 * o.PeriodSeconds,
+                "Notices:LeaseSeconds must exceed Notices:PeriodSeconds — at least twice it — or a slow "
+                + "sweep is overtaken by the next claim and its rows go out twice.")
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        // The three Api-only rules touch the file system (Directory.Exists, the git walk). That is
+        // acceptable because the only consumer is IOptions<T>, which is built once and cached; a
+        // future IOptionsSnapshot/IOptionsMonitor consumer would pay the walk on every resolve.
+        // The [Range] annotations apply whatever the runner: a period or lease out of range is a
+        // misconfiguration even when nothing runs.
 
         // The last hop, the same one the operator verb uses: a pickup directory on this machine. It
         // is the only place a notice's address goes, and the seam a sending transport would replace.

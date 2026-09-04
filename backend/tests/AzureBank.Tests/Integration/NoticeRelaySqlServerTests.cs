@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AzureBank.Api.Services;
 using AzureBank.Infrastructure.Data;
-using AzureBank.Shared.Constants;
+using AzureBank.Infrastructure.Notices;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
@@ -18,15 +18,22 @@ using Xunit.Abstractions;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// What only SQL Server can prove about the claim protocol (ADR-0048): that two runners sweeping the
-/// same owed rows at the same moment never both hold one, that a lapsed lease is taken and a live one
-/// is not, and that the store refuses a half-set lease.
+/// What only SQL Server can prove about the claim protocol (ADR-0048): that a claim held open blocks
+/// a second runner until it commits and leaves it nothing; that two runners sweeping back to back
+/// deliver every row once; that a live lease is left alone and a lapsed one taken; and that the
+/// store refuses a half-set lease.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Real rows, written by real enrolments through the real host; real files, written by the real
 /// pickup transport into a temp directory outside any git tree. The transport creates each file
-/// exclusively, so a row delivered twice would fail its second write — the artefact itself detects
-/// a double delivery, which is why the count of files is asserted and not only the count of marks.
+/// exclusively, so a row delivered twice into one directory fails its second write — the artefact
+/// detects a double DELIVERY. A double CLAIM is caught by the exact claim counts, never by the files.
+/// </para>
+/// <para>
+/// This file is the only cover of the set-based claim statement; the unit suite runs InMemory's
+/// load-and-save fallback. A bug in one path is invisible to the other.
+/// </para>
 /// </remarks>
 [Trait("Category", "SqlServer")]
 [Collection(SqlServerProofsCollection.Name)]
@@ -86,7 +93,7 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
     private async Task<Guid> EnrolAsync()
     {
         var factory = Factory();
-        var client = factory.CreateClient();
+        using var client = factory.CreateClient();
         var unique = Guid.NewGuid().ToString("N")[..8];
         var email = $"relay{unique}@example.com";
         var register = await client.PostAsJsonAsync("/api/auth/register", new
@@ -112,9 +119,10 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
 
     /// <summary>
     /// The proofs share one database with every other SQL test, and those leave owed rows behind —
-    /// hundreds, measured. A relay takes every free owed row, as it should, so before a proof sweeps
-    /// it puts every row that is not its own under a live lease held by nobody real. The lease
-    /// lapses on its own; nothing is deleted, and no other test's evidence is touched.
+    /// measured 2026-09-04: a sweep claimed 500 of them. A relay takes every free owed row, as it
+    /// should, so before a proof sweeps it puts every row that is not its own under a live lease held
+    /// by nobody real. The lease lapses on its own; nothing is deleted, and no other test's evidence
+    /// is touched.
     /// </summary>
     private async Task QuarantineOthersAsync(IEnumerable<Guid> mine)
     {
@@ -126,7 +134,7 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
             .Where(n => n.DeliveredAt == null && !keep.Contains(n.Id))
             .ExecuteUpdateAsync(set => set
                 .SetProperty(n => n.LeasedUntil, until)
-                .SetProperty(n => n.LeasedBy, "TEST/quarantine/00000000"));
+                .SetProperty(n => n.LeasedBy, "test/quarantine/0/00000000"));
     }
 
     private async Task<(DateTime? DeliveredAt, string? LeasedBy, DateTime? LeasedUntil)> RowAsync(Guid id)
@@ -138,7 +146,48 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
     }
 
     [SqlServerFact]
-    public async Task TwoRunnersSweepingAtOnce_NeverBothHoldOneRow_AndEveryRowGoesOutOnce()
+    public async Task AClaimHeldOpen_BlocksTheSecondRunner_WhichThenFindsNothingFree()
+    {
+        /*
+          THE PROOF THAT TWO CLAIMS CANNOT BOTH HOLD A ROW, made with a transaction rather than a
+          race. Runner A's claim is the same set-based statement the service issues, executed inside
+          a transaction that is NOT committed; runner B's sweep must then block on A's row locks —
+          measured: it had not returned 1.5 s later — and, once A commits, find nothing free.
+        */
+        var ids = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            ids.Add(await EnrolAsync());
+        }
+
+        await QuarantineOthersAsync(ids);
+
+        using var held = Factory().Services.CreateScope();
+        var heldContext = held.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        await using var transaction = await heldContext.Database.BeginTransactionAsync();
+        var now = DateTime.UtcNow;
+        var claimedByA = await NoticeClaim.ClaimAsync(
+            heldContext, "api/PROOF/1/held0000", now, now.AddMinutes(2), CancellationToken.None);
+        claimedByA.Should().Be(ids.Count);
+
+        var b = Runner();
+        var bSweep = b.SweepAsync(CancellationToken.None);
+        var finishedWhileHeld = await Task.WhenAny(bSweep, Task.Delay(TimeSpan.FromMilliseconds(1500))) == bSweep;
+        finishedWhileHeld.Should().BeFalse("B's claim waits on A's row locks for as long as A's transaction is open");
+
+        await transaction.CommitAsync();
+        var bSummary = await bSweep;
+
+        bSummary.Claimed.Should().Be(0, "A's committed lease is what B's predicate sees");
+        bSummary.Delivered.Should().Be(0);
+        foreach (var id in ids)
+        {
+            (await RowAsync(id)).LeasedBy.Should().Be("api/PROOF/1/held0000");
+        }
+    }
+
+    [SqlServerFact]
+    public async Task TwoRunnersSweepingBackToBack_EveryRowGoesOutOnce()
     {
         var ids = new List<Guid>();
         for (var i = 0; i < 6; i++)
@@ -152,15 +201,13 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
         a.RunnerName.Should().NotBe(b.RunnerName);
 
         var sweeps = await Task.WhenAll(
-            a.SweepAsync(_directory, CancellationToken.None),
-            b.SweepAsync(_directory, CancellationToken.None));
+            a.SweepAsync(CancellationToken.None),
+            b.SweepAsync(CancellationToken.None));
 
-        var claimed = sweeps.Sum(s => s.Claimed);
-        var delivered = sweeps.Sum(s => s.Delivered);
         _output.WriteLine($"runner A claimed {sweeps[0].Claimed}, runner B claimed {sweeps[1].Claimed}");
 
-        claimed.Should().BeGreaterThanOrEqualTo(ids.Count, "every owed row was free and somebody took each");
-        delivered.Should().Be(ids.Count, "each row is delivered exactly as many times as it was claimed — once");
+        sweeps.Sum(s => s.Claimed).Should().Be(ids.Count, "exactly the free rows were claimed, each by one runner");
+        sweeps.Sum(s => s.Delivered).Should().Be(ids.Count);
         sweeps.Sum(s => s.Owed).Should().Be(0, "a second delivery would have failed the exclusive file create and been counted here");
         Directory.GetFiles(_directory, "*.eml").Should().HaveCount(ids.Count, "one artefact per row, and never two");
 
@@ -184,32 +231,66 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
         {
             var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
             await context.Database.ExecuteSqlAsync(
-                $"UPDATE SubscriberNotices SET LeasedUntil = DATEADD(minute, 2, SYSUTCDATETIME()), LeasedBy = 'OTHER/1/live0000' WHERE Id = {live}");
+                $"UPDATE SubscriberNotices SET LeasedUntil = DATEADD(minute, 2, SYSUTCDATETIME()), LeasedBy = 'api/OTHER/1/live0000' WHERE Id = {live}");
             await context.Database.ExecuteSqlAsync(
-                $"UPDATE SubscriberNotices SET LeasedUntil = DATEADD(minute, -1, SYSUTCDATETIME()), LeasedBy = 'OTHER/1/dead0000' WHERE Id = {lapsed}");
+                $"UPDATE SubscriberNotices SET LeasedUntil = DATEADD(minute, -1, SYSUTCDATETIME()), LeasedBy = 'api/OTHER/1/dead0000' WHERE Id = {lapsed}");
         }
 
-        var summary = await Runner().SweepAsync(_directory, CancellationToken.None);
+        var summary = await Runner().SweepAsync(CancellationToken.None);
 
         summary.Claimed.Should().Be(1, "only the lapsed lease was free");
         summary.Delivered.Should().Be(1);
         (await RowAsync(lapsed)).DeliveredAt.Should().NotBeNull();
         var untouched = await RowAsync(live);
         untouched.DeliveredAt.Should().BeNull("another runner holds it");
-        untouched.LeasedBy.Should().Be("OTHER/1/live0000");
+        untouched.LeasedBy.Should().Be("api/OTHER/1/live0000");
     }
 
     [SqlServerFact]
-    public async Task TheDatabaseRefusesAHalfSetLease()
+    public async Task AFileLeftByARunnerThatDiedBeforeMarking_IsRefused_AndTheRowStaysOwed()
+    {
+        /*
+          THE PICKUP DIRECTORY'S SHAPE OF AT-LEAST-ONCE (ADR-0048 D3). The row was delivered and its
+          mark lost — simulated by un-marking it — and the lease lapsed. The next claim takes it; the
+          exclusive create refuses the file that is already there; the row stays owed beside it, for
+          the runbook to clear. Nothing goes out twice, and nothing pretends the row is done.
+        */
+        var id = await EnrolAsync();
+        await QuarantineOthersAsync([id]);
+        (await Runner().SweepAsync(CancellationToken.None)).Delivered.Should().Be(1);
+
+        using (var scope = Factory().Services.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<AzureBankDbContext>().Database.ExecuteSqlAsync(
+                $"UPDATE SubscriberNotices SET DeliveredAt = NULL, DeliveryReceipt = NULL WHERE Id = {id}");
+        }
+
+        var again = await Runner().SweepAsync(CancellationToken.None);
+
+        again.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 0, Owed: 1));
+        Directory.GetFiles(_directory, "*.eml").Should().ContainSingle("the earlier copy is kept, never truncated");
+        var row = await RowAsync(id);
+        row.DeliveredAt.Should().BeNull();
+        row.LeasedBy.Should().NotBeNull("held until the lease lapses, then tried again — and refused again");
+    }
+
+    [SqlServerTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheDatabaseRefusesAHalfSetLease(bool holderOnly)
     {
         var id = await EnrolAsync();
         using var scope = Factory().Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
-        var act = () => context.Database.ExecuteSqlAsync(
-            $"UPDATE SubscriberNotices SET LeasedBy = 'HALF/1/00000000' WHERE Id = {id}");
+        // Both halves, as the delivery pair's sibling test drives both of its halves.
+        var act = () => holderOnly
+            ? context.Database.ExecuteSqlAsync(
+                $"UPDATE SubscriberNotices SET LeasedBy = 'api/HALF/1/00000000' WHERE Id = {id}")
+            : context.Database.ExecuteSqlAsync(
+                $"UPDATE SubscriberNotices SET LeasedUntil = SYSUTCDATETIME() WHERE Id = {id}");
 
         (await act.Should().ThrowAsync<SqlException>()).Which.Message
-            .Should().Contain("CK_SubscriberNotices_Lease", "a holder with no lease end is a state no runner produces");
+            .Should().Contain("CK_SubscriberNotices_Lease", "a holder with no lease end, or a lease end with no holder, is a state no runner produces");
     }
 }

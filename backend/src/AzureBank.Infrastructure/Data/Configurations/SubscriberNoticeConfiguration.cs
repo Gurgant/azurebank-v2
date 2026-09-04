@@ -71,7 +71,9 @@ public class SubscriberNoticeConfiguration : IEntityTypeConfiguration<Subscriber
             .HasForeignKey(n => n.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // What the operator tool reads: the rows still owed, oldest first.
+        // What a runner's claim and the operator tool read: the rows still owed, oldest first. The
+        // claim also filters on LeasedUntil, which this index does not carry; at this scale the
+        // residual filter over the owed rows is cheap, and the index stays as ADR-0045 shipped it.
         builder.HasIndex(n => n.OccurredAt)
             .HasDatabaseName("IX_SubscriberNotices_Pending")
             .HasFilter("[DeliveredAt] IS NULL");

@@ -959,8 +959,9 @@ what a recipient uses to say "this was not me"; NIST §4.6 makes it mandatory co
 renders nothing without it. What that contact can actually do is a separate runbook.
 
 **A file in a pickup directory has reached the edge of this machine and nobody else.** Nothing here
-sends: a relay pointed at the directory, or a person, is what moves it — and neither exists in this
-deployment, which is the gap `docs/deferred/` records with its trigger. Delete the spool after the
+sends: a collector pointed at the directory, or a person, is what moves it — and neither exists in
+this deployment (the API's relay, ADR-0048, writes the file; it does not move it), which is the
+gap `docs/deferred/` records with its trigger. Delete the spool after the
 demonstration; it holds addresses in clear.
 
 The headlines, and what each means from THIS verb:
@@ -968,8 +969,12 @@ The headlines, and what each means from THIS verb:
 - `NOTIFIED n of m waiting notices into <directory>` — the summary line, first. Exit **0** when
   every waiting notice was written and marked; **6** when at least one is still owed, with a line
   per notice saying why. A marked notice is never rewritten: fix what the line names and run again.
-- `NOTHING TO NOTIFY` — exit **2**: no notice is owed. Its own answer, not a success, for the reason
-  `verify`'s **2** is.
+- `NOTHING TO NOTIFY` — exit **2**, with two readings and the line says which: no notice is owed, or
+  every owed notice is leased by a live runner (the API's relay, ADR-0048) and none is free to this
+  run. Its own answer, not a success, for the reason `verify`'s **2** is. A row that stays owed
+  beside a file that already exists — a runner delivered it and died before the mark — is refused
+  again on every retry (`NOT NOTIFIED … (IOException)`, exit **6**): the row is the truth; move the
+  file out and run again, or mark the row by hand, as the repudiation runbook's §2 marks a PIN.
 - `NO ADDRESS` — that notice's account holds no email, or one that cannot head a message because it
   contains a line break (either is unreachable through registration and reachable by seed or raw
   SQL). Nothing is rendered for it and it stays owed.
@@ -1232,7 +1237,8 @@ What a recipient does with the reference, and what the contact can do about it, 
   a verdict but nothing could be recorded from it. Only 0, 1 and 2 are statements about the CHAIN.
   `evidence` adds no code of its own: it exits with the chain's verdict, and a number the store does
   not hold is 4. `notify` adds none either and walks no chain, so from it 0 and 2 are statements
-  about NOTICES (all written; none waiting), 6 means at least one is still owed, and 1 never occurs.
+  about NOTICES (all this run claimed written; none free to it), 6 means at least one is still
+  owed, and 1 never occurs.
 
   ⚠️ **This list stopped at 5 until 2026-08-28, and 6 had existed since the `anchor` mode shipped.**
   A script written from it treated 6 as an unknown code. The list lives in FOUR places —

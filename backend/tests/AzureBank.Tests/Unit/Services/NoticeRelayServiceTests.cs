@@ -13,15 +13,26 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
-/// The relay's one sweep, on InMemory (ADR-0048): what it claims, delivers, marks and logs, and
-/// what it leaves owed. What InMemory cannot prove — that two runners cannot hold one row — is
-/// <c>NoticeRelaySqlServerTests</c>.
+/// The relay's sweep and loop, on InMemory (ADR-0048): what a sweep claims, delivers, marks and
+/// logs; what it leaves owed; and that the loop ticks, survives a failed sweep, and steps aside for
+/// every runner value that is not this process.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Hand-built provider, the <c>NotifyCommandTests</c> idiom: the test's own context is the
+/// singleton every scope resolves, so every sweep here shares ONE tracked context — unlike the API,
+/// where each sweep opens a scope of its own. The claim runs InMemory's load-and-save fallback,
+/// never the set-based statement; that path is covered only by <c>NoticeRelaySqlServerTests</c>,
+/// and a bug in one is invisible to the other. What InMemory cannot prove — that two runners cannot
+/// hold one row — is that file's too.
+/// </para>
+/// </remarks>
 public sealed class NoticeRelayServiceTests : IDisposable
 {
     private const string ChainKey = "notice-relay-tests-chain-key-0123456789abcd";
@@ -32,6 +43,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
     private readonly AzureBankDbContext _context;
     private readonly RecordingTransport _transport = new();
     private readonly RecordingLoggerProvider _logs = new();
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 4, 19, 0, 0, TimeSpan.Zero));
     private readonly string _directory;
 
     public NoticeRelayServiceTests()
@@ -60,18 +72,18 @@ public sealed class NoticeRelayServiceTests : IDisposable
         }
     }
 
-    private ServiceProvider Provider()
+    private ServiceProvider Provider(INoticeTransport? transport = null)
     {
         var collection = new ServiceCollection();
         collection.AddSingleton<IOptions<AuditOptions>>(
             Options.Create(new AuditOptions { ChainKey = ChainKey, AnchorKey = AnchorKey }));
         collection.AddSingleton(_context);
-        collection.AddSingleton<INoticeTransport>(_transport);
+        collection.AddSingleton(transport ?? _transport);
         collection.AddLogging(b => b.AddProvider(_logs));
         return collection.BuildServiceProvider();
     }
 
-    private NoticeRelayService Relay(ServiceProvider provider, NoticeRunner runner = NoticeRunner.Api) =>
+    private NoticeRelayService Relay(ServiceProvider provider, NoticeRunner runner = NoticeRunner.Api, int periodSeconds = 5) =>
         new(
             provider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new NoticeRelayOptions
@@ -79,10 +91,11 @@ public sealed class NoticeRelayServiceTests : IDisposable
                 Runner = runner,
                 PickupDirectory = _directory,
                 Contact = Contact,
-                PeriodSeconds = 5,
+                PeriodSeconds = periodSeconds,
                 LeaseSeconds = 120,
             }),
-            provider.GetRequiredService<ILogger<NoticeRelayService>>());
+            provider.GetRequiredService<ILogger<NoticeRelayService>>(),
+            _clock);
 
     private async Task<Guid> OwnerAsync(string? email = Address)
     {
@@ -130,6 +143,8 @@ public sealed class NoticeRelayServiceTests : IDisposable
     private async Task<SubscriberNotice> StoredAsync(Guid id) =>
         await _context.SubscriberNotices.AsNoTracking().SingleAsync(n => n.Id == id);
 
+    private DateTime Now => _clock.GetUtcNow().UtcDateTime;
+
     [Fact]
     public async Task OneSweep_ClaimsDeliversAndMarks_AndClearsTheLease()
     {
@@ -138,7 +153,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
         await using var provider = Provider();
         var relay = Relay(provider);
 
-        var summary = await relay.SweepAsync(_directory, CancellationToken.None);
+        var summary = await relay.SweepAsync(CancellationToken.None);
 
         summary.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 1, Owed: 0));
         _transport.Envelopes.Should().ContainSingle().Which.ToAddress.Should().Be(Address);
@@ -153,7 +168,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TheAddressNeverReachesALogLine()
+    public async Task TheAddressNeverReachesALogLine_NotEvenInsideAFailure()
     {
         var owner = await OwnerAsync();
         await OwedAsync(owner);
@@ -161,43 +176,101 @@ public sealed class NoticeRelayServiceTests : IDisposable
         await OwedAsync(failing);
         await using var provider = Provider();
 
-        await Relay(provider).SweepAsync(_directory, CancellationToken.None);
+        await Relay(provider).SweepAsync(CancellationToken.None);
 
-        _logs.Lines.Should().NotBeEmpty();
+        // A refusal whose MESSAGE carries the address, the verb's own test shape: the type is logged, not it.
+        var third = await OwnerAsync();
+        await OwedAsync(third);
+        _transport.Fails = new IOException($"disk full while writing to {Address}");
+        await Relay(provider).SweepAsync(CancellationToken.None);
+
+        _logs.Lines.Should().Contain(l => l.Level == LogLevel.Warning && l.Message.Contains("UnusableAddress"),
+            "the refused row must be named, or a sweep that logs nothing for it would pass this test");
+        _logs.Lines.Should().Contain(l => l.Level == LogLevel.Warning && l.Message.Contains("IOException"));
         _logs.Lines.Should().OnlyContain(
-            l => !l.Message.Contains(Address) && !l.Message.Contains("attacker@"),
+            l => !l.Message.Contains(Address) && !l.Message.Contains("attacker@") && !l.Message.Contains("disk full"),
             "the address is read for the To: header and printed nowhere — not in a receipt, not in a "
-            + "failure, not in a warning about an unusable one");
+            + "failure's type, not in a warning about an unusable one");
     }
 
-    [Fact]
-    public async Task WhenTheRunnerIsNotThisProcess_TheLoopReturns_AndTouchesNothing()
+    [Theory]
+    [InlineData(NoticeRunner.None, LogLevel.Information)]
+    [InlineData(NoticeRunner.Function, LogLevel.Warning)]
+    public async Task WhenTheRunnerIsNotThisProcess_TheLoopReturns_AndTouchesNothing(NoticeRunner runner, LogLevel level)
     {
+        /*
+          The flag is the seam that keeps two KINDS of runner from both sending, so every value that
+          is not Api must step aside — Function loudly, because nothing implements it yet and an
+          operator who set it believes something is delivering.
+        */
         var owner = await OwnerAsync();
         var notice = await OwedAsync(owner);
         await using var provider = Provider();
-        var relay = Relay(provider, runner: NoticeRunner.None);
+        var relay = Relay(provider, runner: runner);
 
         await relay.StartAsync(CancellationToken.None);
         var finished = await Task.WhenAny(relay.ExecuteTask!, Task.Delay(TimeSpan.FromSeconds(5)));
 
-        finished.Should().BeSameAs(relay.ExecuteTask, "with Runner=None the loop must return at once, not wait a period");
+        finished.Should().BeSameAs(relay.ExecuteTask, "with Runner={0} the loop must return at once, not wait a period", runner);
         _transport.Envelopes.Should().BeEmpty();
         var stored = await StoredAsync(notice.Id);
         stored.DeliveredAt.Should().BeNull();
         stored.LeasedBy.Should().BeNull("nothing was claimed");
-        _logs.Lines.Should().Contain(l => l.Message.Contains("delivers nothing"));
+        _logs.Lines.Should().Contain(l => l.Level == level && l.Message.Contains("delivers nothing") && l.Message.Contains(runner.ToString()));
         await relay.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task ATransportFailure_LeavesTheRowOwedAndLeased_AndItIsRetriedAfterTheLease()
+    public async Task TheLoop_SweepsOncePerPeriod_AndStopsOnCancellation()
+    {
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner);
+        await using var provider = Provider();
+        var relay = Relay(provider, periodSeconds: 5);
+
+        await relay.StartAsync(CancellationToken.None);
+        (await StoredAsync(notice.Id)).DeliveredAt.Should().BeNull("the first look is one full period after start");
+
+        var ticks = await AdvanceUntilAsync(async () => (await StoredAsync(notice.Id)).DeliveredAt is not null);
+        ticks.Should().BeGreaterThanOrEqualTo(5, "nothing is delivered before one full period has passed on the clock");
+
+        await relay.StopAsync(CancellationToken.None);
+        relay.ExecuteTask!.IsCompleted.Should().BeTrue("cancellation ends the loop");
+        _logs.Lines.Should().NotContain(l => l.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task OneFailingSweep_IsLoggedAtError_AndTheNextTickStillDelivers()
     {
         /*
-          AT-LEAST-ONCE, PINNED. The lease is not cleared on failure: the row stays this runner's
-          until the lease lapses, so the next runner — or this one — takes it again. A row that had
-          been handed to the transport and whose mark then failed would go out twice; the ADR says
-          so, and this is the mechanism it says it about.
+          A non-I/O exception escapes the run's filter and reaches the loop's catch-all: logged at
+          Error, the loop survives, and the row — claimed but not delivered — stays LEASED to this
+          runner, so the next tick retries it by name rather than waiting out the lease.
+        */
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner);
+        await using var provider = Provider();
+        var relay = Relay(provider, periodSeconds: 5);
+        _transport.Fails = new InvalidOperationException("not an I/O failure");
+
+        await relay.StartAsync(CancellationToken.None);
+        await AdvanceUntilAsync(() => Task.FromResult(_logs.Lines.Any(l => l.Level == LogLevel.Error && l.Message.Contains("sweep failed"))));
+        (await StoredAsync(notice.Id)).LeasedBy.Should().Be(relay.RunnerName, "the row stays held until the lease lapses");
+
+        _transport.Fails = null;
+        await AdvanceUntilAsync(async () => (await StoredAsync(notice.Id)).DeliveredAt is not null);
+
+        await relay.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ATransportFailure_LeavesTheRowOwedAndHeld_RetriesItByName_AndFreesItWhenTheLeaseLapses()
+    {
+        /*
+          AT-LEAST-ONCE, PINNED, in the shape a recording transport can show: the lease is not
+          cleared on failure, the same runner retries what it still holds, and once the lease lapses
+          the row is free to any claim. With the pickup directory a retry after a completed write is
+          refused by the exclusive create; with a sending transport it would go out twice.
         */
         var owner = await OwnerAsync();
         var notice = await OwedAsync(owner);
@@ -205,33 +278,89 @@ public sealed class NoticeRelayServiceTests : IDisposable
         var relay = Relay(provider);
 
         _transport.Fails = new IOException("disk full — and this message must not surface");
-        var first = await relay.SweepAsync(_directory, CancellationToken.None);
+        var first = await relay.SweepAsync(CancellationToken.None);
 
         first.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 0, Owed: 1));
         var afterFailure = await StoredAsync(notice.Id);
         afterFailure.DeliveredAt.Should().BeNull("nothing was marked");
         afterFailure.LeasedBy.Should().Be(relay.RunnerName, "the lease stands until it lapses");
-        _logs.Lines.Should().Contain(l => l.Level == LogLevel.Warning && l.Message.Contains("IOException") && !l.Message.Contains("disk full"));
 
-        // The same runner, before the lease lapses: nothing free.
+        // The same runner, seconds later and before the lease lapses: nothing new is free, but what
+        // it holds is retried — found by NAME. The clock moves so that a re-read keyed on the instant
+        // the first claim wrote would find nothing; that is the bug the name-keyed re-read exists for.
         _transport.Fails = null;
-        (await relay.SweepAsync(_directory, CancellationToken.None)).Claimed.Should().Be(0, "its own live lease is not free either");
-
-        // The lease lapses.
-        var tracked = await _context.SubscriberNotices.SingleAsync(n => n.Id == notice.Id);
-        tracked.LeasedUntil = DateTime.UtcNow.AddSeconds(-1);
-        await _context.SaveChangesAsync();
-
-        var second = await relay.SweepAsync(_directory, CancellationToken.None);
-        second.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 1, Owed: 0));
+        _clock.Advance(TimeSpan.FromSeconds(7));
+        var second = await relay.SweepAsync(CancellationToken.None);
+        second.Should().Be(new NoticeSweepSummary(Claimed: 0, Delivered: 1, Owed: 0),
+            "a row this runner still holds is delivered by name without waiting out the lease");
         (await StoredAsync(notice.Id)).DeliveredAt.Should().NotBeNull();
+
+        // A second row, failed and then lapsed: free to a different runner's claim.
+        var other = await OwedAsync(owner);
+        _transport.Fails = new IOException("again");
+        await relay.SweepAsync(CancellationToken.None);
+        _transport.Fails = null;
+        _clock.Advance(TimeSpan.FromSeconds(121));
+        var stranger = Relay(provider);
+        (await stranger.SweepAsync(CancellationToken.None)).Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 1, Owed: 0));
+        (await StoredAsync(other.Id)).DeliveredAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ASweepThatOutlivesItsLease_StopsDelivering()
+    {
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        await OwedAsync(owner);
+        await using var provider = Provider(new LeaseLapsingTransport(_transport, _clock, TimeSpan.FromSeconds(121)));
+        var relay = Relay(provider);
+
+        var summary = await relay.SweepAsync(CancellationToken.None);
+
+        summary.Claimed.Should().Be(2);
+        summary.Delivered.Should().Be(1, "the first row went out; by the second the lease had lapsed");
+        summary.Owed.Should().Be(1, "the rest are free to the next claim, not delivered under a lease this runner no longer holds");
+        _logs.Lines.Should().Contain(l => l.Level == LogLevel.Warning && l.Message.Contains("lease lapsed mid-sweep"));
+    }
+
+    [Fact]
+    public async Task WhenTheDirectoryVanishesAfterStart_TheRowStaysOwedAndHeld_AndOnlyTheTypeIsLogged()
+    {
+        // Through the REAL transport: validation saw the directory at start; it is gone by the sweep.
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner);
+        await using var provider = Provider(new PickupDirectoryTransport());
+        var relay = Relay(provider);
+        Directory.Delete(_directory, recursive: true);
+
+        var summary = await relay.SweepAsync(CancellationToken.None);
+
+        summary.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 0, Owed: 1));
+        var stored = await StoredAsync(notice.Id);
+        stored.DeliveredAt.Should().BeNull();
+        stored.LeasedBy.Should().Be(relay.RunnerName);
+        _logs.Lines.Should().Contain(l => l.Level == LogLevel.Warning && l.Message.Contains("DirectoryNotFoundException"));
+        _logs.Lines.Should().OnlyContain(l => !l.Message.Contains(Address));
+    }
+
+    [Theory]
+    [InlineData("GURGANT")]
+    [InlineData("a-hostname-so-long-it-would-push-the-suffix-off-the-end-of-the-column-if-nothing-cut-it-first")]
+    public void TheRunnerName_FitsTheColumn_AndKeepsItsSuffix(string host)
+    {
+        var id = Guid.NewGuid();
+        var name = NoticeClaim.RunnerNameFor("api", host, 32384, id);
+
+        name.Length.Should().BeLessThanOrEqualTo(NoticeClaim.NameWidth);
+        name.Should().EndWith($"/32384/{id.ToString("N")[..8]}", "the disambiguating suffix survives; the host is what gets cut");
+        name.Should().StartWith("api/");
     }
 
     [Fact]
     public async Task TheVerbLeavesARowALiveRunnerHolds_AndSaysSo()
     {
         var owner = await OwnerAsync();
-        var notice = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: "HOST/1/abcdef12");
+        var notice = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: "api/HOST/1/abcdef12");
         await using var provider = Provider();
 
         var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
@@ -243,18 +372,62 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TheVerbTakesARowWhoseLeaseHasLapsed()
+    public async Task TheVerbClaimsWhatItDelivers_TakesALapsedLease_AndNamesWhatItLeft()
     {
         var owner = await OwnerAsync();
-        var notice = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddSeconds(-1), leasedBy: "HOST/1/dead0000");
+        var lapsed = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddSeconds(-1), leasedBy: "api/HOST/1/dead0000");
+        var held = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: "api/HOST/1/live0000");
         await using var provider = Provider();
 
         var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
 
         exitCode.Should().Be(VerifyCommand.Intact);
-        string.Join("\n", lines).Should().Contain("NOTIFIED 1 of 1");
-        var stored = await StoredAsync(notice.Id);
+        var text = string.Join("\n", lines);
+        text.Should().Contain("NOTIFIED 1 of 1").And.Contain("1 more owed notice(s) are leased by a live runner");
+        _transport.Envelopes.Should().ContainSingle();
+        var stored = await StoredAsync(lapsed.Id);
         stored.DeliveredAt.Should().NotBeNull();
-        stored.LeasedBy.Should().BeNull("the mark clears a lapsed lease too");
+        stored.LeasedBy.Should().BeNull("the mark clears the verb's own lease too");
+        (await StoredAsync(held.Id)).LeasedBy.Should().Be("api/HOST/1/live0000", "the other runner's row is untouched");
+    }
+
+    /// <summary>
+    /// Advances the fake clock one second per poll until the condition holds, and returns how many
+    /// seconds it took. One-second steps rather than one jump of a period: StartAsync returns before
+    /// ExecuteAsync has built its PeriodicTimer (measured on .NET 10 — a single Advance issued
+    /// straight after StartAsync landed before the timer existed and it never fired), so the clock
+    /// is walked forward while the loop catches up, and a tick lands within a period of the timer's
+    /// creation whichever thread got there first.
+    /// </summary>
+    private async Task<int> AdvanceUntilAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var ticks = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return ticks;
+            }
+
+            _clock.Advance(TimeSpan.FromSeconds(1));
+            ticks++;
+            await Task.Delay(25);
+        }
+
+        throw new TimeoutException(
+            "the condition did not become true within 10 s of wall clock; log so far: "
+            + string.Join(" || ", _logs.Lines.Select(l => $"[{l.Level}] {l.Message}")));
+    }
+
+    /// <summary>Delivers through the inner transport, then lapses the fake clock past the lease.</summary>
+    private sealed class LeaseLapsingTransport(INoticeTransport inner, FakeTimeProvider clock, TimeSpan advance) : INoticeTransport
+    {
+        public async Task<string> DeliverAsync(RenderedNotice notice, string toAddress, string directory, CancellationToken cancellationToken)
+        {
+            var receipt = await inner.DeliverAsync(notice, toAddress, directory, cancellationToken);
+            clock.Advance(advance);
+            return receipt;
+        }
     }
 }

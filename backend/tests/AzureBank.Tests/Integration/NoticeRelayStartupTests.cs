@@ -91,9 +91,13 @@ public sealed class NoticeRelayStartupTests : IDisposable
     [Fact]
     public void ByDefault_NoRunnerIsLive_AndTheHostStarts()
     {
+        // The default under test is appsettings.json's explicit "Runner": "None", which the Testing
+        // environment inherits; the class initialiser says the same, and a default of Function
+        // would also start, so the value is asserted rather than the start alone.
         using var factory = Host();
         using var client = factory.CreateClient();
-        client.Should().NotBeNull("Notices:Runner defaults to None, which needs no directory and no contact");
+        var options = factory.Services.GetRequiredService<IOptions<NoticeRelayOptions>>().Value;
+        options.Runner.Should().Be(NoticeRunner.None, "nothing delivers unless somebody names a runner");
     }
 
     [Fact]
@@ -115,15 +119,16 @@ public sealed class NoticeRelayStartupTests : IDisposable
     {
         // The repository's own tree: the one place a spool of addresses must never land.
         var repo = new DirectoryInfo(AppContext.BaseDirectory);
-        while (repo is not null && !Directory.Exists(Path.Combine(repo.FullName, ".git")))
+        while (repo is not null
+               && !Directory.Exists(Path.Combine(repo.FullName, ".git"))
+               && !File.Exists(Path.Combine(repo.FullName, ".git")))
         {
             repo = repo.Parent;
         }
 
-        if (repo is null)
-        {
-            return; // not a checkout (a packaged test run); the guard's own tests cover the walk
-        }
+        repo.Should().NotBeNull(
+            "this test runs from a checkout, as its sibling in NotifyCommandTests asserts; a run that "
+            + "found no .git would prove nothing and must not pass green");
 
         var inside = Path.Combine(AppContext.BaseDirectory, "relay-inside-repo-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(inside);
@@ -149,8 +154,16 @@ public sealed class NoticeRelayStartupTests : IDisposable
             ("Notices:PickupDirectory", _directory),
             ("Notices:Contact", "security@your-bank.example"),
             ("Notices:PeriodSeconds", "60"),
-            ("Notices:LeaseSeconds", "60"))
-            .Should().Contain("LeaseSeconds").And.Contain("exceed");
+            ("Notices:LeaseSeconds", "100"))
+            .Should().Contain("LeaseSeconds").And.Contain("exceed").And.Contain("twice");
+    }
+
+    [Fact]
+    public void APeriodBelowTheRange_IsRefused_WhateverTheRunner()
+    {
+        // Pins that ValidateDataAnnotations() is actually chained: the [Range] alone is decoration.
+        RefusalOf(("Notices:Runner", "None"), ("Notices:PeriodSeconds", "4"))
+            .Should().Contain("PeriodSeconds");
     }
 
     [Fact]
@@ -173,8 +186,8 @@ public sealed class NoticeRelayStartupTests : IDisposable
             ("Notices:Runner", "Api"),
             ("Notices:PickupDirectory", _directory),
             ("Notices:Contact", "security@your-bank.example, +00 000 0000"));
-        using var client = factory.CreateClient();
-        client.Should().NotBeNull(
-            "a directory outside git, a contact and a lease longer than the period is the whole of what the relay needs");
+        var start = () => factory.CreateClient();
+        start.Should().NotThrow(
+            "a directory outside git, a contact and a lease of at least twice the period is the whole of what the relay needs");
     }
 }

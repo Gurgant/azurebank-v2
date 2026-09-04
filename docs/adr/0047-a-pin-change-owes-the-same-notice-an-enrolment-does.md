@@ -101,7 +101,8 @@ matters most: repeated changes are what an attacker in possession of a PIN actua
 puts a policy decision inside a rendering step that has no state to make it with, and it would have
 to survive the relay, which claims the same pending set.
 
-**Wait for the relay.** The relay is ratified and unbuilt; see `docs/deferred/`. Recording the
+**Wait for the relay.** The relay is ratified and unbuilt _(as of this ADR's morning; built the
+same evening as ADR-0048)_; see `docs/deferred/`. Recording the
 obligation is what ADR-0045 decided is worth doing without delivery; a change is owed
 that same obligation now, and the row is what a later relay will find.
 

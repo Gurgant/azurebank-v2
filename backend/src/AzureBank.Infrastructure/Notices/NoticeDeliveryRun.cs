@@ -40,9 +40,11 @@ public enum NoticeOutcome
 /// notice belongs to was found, and the exception TYPE (never the message) when a transport failed.
 /// </summary>
 /// <remarks>
-/// The address is not here, and the failure message is not here, for the reason the transport
-/// interface gives: an I/O message can echo the path and a relay's refusal can echo the recipient.
-/// Callers turn this into console lines or log lines; neither ever sees the address.
+/// The address is not here, and the failure message is not here: an I/O message can echo the path
+/// it was writing, which is the case the catch below covers. A sending transport added later must
+/// throw <see cref="IOException"/> for a refusal, or be added to the filter — otherwise its
+/// exception, recipient and all, escapes to the caller's catch-all and is logged whole. Callers
+/// turn this into console lines or log lines; neither ever sees the address.
 /// </remarks>
 public sealed record NoticeResult(
     SubscriberNotice Notice,
@@ -95,13 +97,11 @@ public sealed class NoticeDeliveryRun
     /// <param name="notice">A row tracked by this run's context with <c>DeliveredAt</c> null.</param>
     /// <param name="contact">The repudiation contact the notice must carry (NIST SP 800-63B-4 §4.6).</param>
     /// <param name="directory">Where the transport delivers — the full path of the pickup directory.</param>
-    /// <param name="nowUtc">The clock for the message's Date header; read once per run by the caller.</param>
     /// <param name="cancellationToken">Stops between steps; a mark already saved stays saved.</param>
     public async Task<NoticeResult> DeliverAsync(
         SubscriberNotice notice,
         string contact,
         string directory,
-        DateTime nowUtc,
         CancellationToken cancellationToken)
     {
         var reference = notice.Id.ToString("N");
@@ -136,7 +136,7 @@ public sealed class NoticeDeliveryRun
         RenderedNotice rendered;
         try
         {
-            rendered = NoticeRenderer.Render(notice, contact, nowUtc);
+            rendered = NoticeRenderer.Render(notice, contact, DateTime.UtcNow);
         }
         catch (InvalidOperationException)
         {
@@ -150,7 +150,7 @@ public sealed class NoticeDeliveryRun
         }
         catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
         {
-            // The TYPE only: an I/O message can echo the path, and a relay's can echo the recipient.
+            // The TYPE only: an I/O message can echo the path it was writing.
             return new NoticeResult(
                 notice, reference, NoticeOutcome.TransportFailed, null, auditRowMissing, failure.GetType().Name);
         }
