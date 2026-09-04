@@ -75,7 +75,7 @@ holds it in place; "named" means the document says the true thing and nothing wa
 | 6 | Separation of duties | **Named only** | One human, one Windows account |
 | 7 | Inclusion proofs for handing over a subset of rows | **Not named anywhere in the ADR** | A tail anchor yields none, and the ADR does not say so |
 | 8 | A retention and erasure policy | **Open by the ADR's own correction** | Unsolved, and the ADR says it is |
-| 9 | A notice to the account holder over a channel the session does not control | **Half built** — the row rides the enrolment and `notify` renders it to a message file (ADR-0045) | The last hop is a directory on this machine; one unvalidated address; no relay; no PIN reset behind the contact |
+| 9 | A notice to the account holder over a channel the session does not control | **Half built** — the row rides the enrolment (ADR-0045) or the PIN change (ADR-0047) and `notify` renders it to a message file | The last hop is a directory on this machine; one unvalidated address; no relay; no PIN reset behind the contact |
 
 ---
 
