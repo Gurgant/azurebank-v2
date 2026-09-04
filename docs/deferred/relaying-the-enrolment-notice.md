@@ -69,7 +69,7 @@ the chain — is the decision to reopen, because "delivered" will then mean some
 
 ## Ratified 2026-09-04
 
-Vlad's decision, recorded here so the deferral above reads as history rather than as an open
+Decided, and recorded here so the deferral above reads as history rather than as an open
 question: **the API is the runner first.** A hosted background service inside the API process claims
 pending `SubscriberNotices` rows under a lease and hands each to the registered `INoticeTransport` —
 retry on failure, at-least-once, the claim column being what keeps "at least" from meaning "twice".
