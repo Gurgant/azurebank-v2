@@ -1,10 +1,12 @@
 # A subscriber says "this was not me" about a PIN notice
 
-Two notices reach an account holder: one when a transfer PIN is set for the first time (ADR-0045)
-and one when an existing PIN is changed (ADR-0047). Both tell the holder to contact the address or
-number the operator put behind `--contact`, quoting a reference. This page is what that contact does
-with the reference. It is short because the remedy is short — and it ends with the sentence that
-says where the remedy stops.
+Two kinds of notice are owed to an account holder: one when a transfer PIN is set for the first
+time (ADR-0045) and one when an existing PIN is changed (ADR-0047). Nothing in the system delivers
+either. `notify` renders each owed notice to a file in a pickup directory, and getting that file to
+the holder is an operator's step — the relay is deferred. Once a notice has been passed on, it tells
+the holder to contact the address or number the operator put behind `--contact`, quoting a
+reference. This page is what that contact does with the reference. It is short because the remedy
+is short — and it ends with the sentence that says where the remedy stops.
 
 **Read this first, and read the kind first.** The two kinds mean different things and the remedy is
 not equally partial.
@@ -21,11 +23,17 @@ not equally partial.
 
 ## 1. Find the notice and the event it belongs to
 
-The reference is the notice id, 32 hex digits. Run against the API's database:
+The reference is the notice id as the notice prints it: 32 hex digits, no hyphens.
+`SubscriberNotices.Id` is a `uniqueidentifier`, and SQL Server does not convert that form — pasted
+bare into a comparison it fails with `Msg 8169, Conversion failed` (measured 2026-09-04). The
+statement below inserts the hyphens itself, so paste the reference exactly as printed; one of the
+wrong length fails the same way rather than matching anything. Run against the API's database:
 
+    DECLARE @ref char(32) = '<reference, exactly as printed>';
     SELECT n.Id, n.UserId, n.Event, n.OccurredAt, n.DeliveredAt, n.DeliveryReceipt
     FROM SubscriberNotices n
-    WHERE n.Id = '<reference>';
+    WHERE n.Id = CONVERT(uniqueidentifier,
+        STUFF(STUFF(STUFF(STUFF(@ref, 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-'));
 
 `Event` is which of the two kinds this is, and it decides how the paragraphs above and §4 read.
 `OccurredAt` is when the PIN was set or changed (UTC). `DeliveredAt` is when `notify` rendered it;
