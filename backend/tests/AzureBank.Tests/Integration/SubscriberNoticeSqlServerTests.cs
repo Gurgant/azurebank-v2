@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -115,7 +116,7 @@ public sealed class SubscriberNoticeSqlServerTests : IDisposable
             "a PIN change that cannot be audited must not be reported as done");
         _output.WriteLine($"change audit insert refused -> {(int)response.StatusCode}");
 
-        await AssertTheChangeLeftNothingAsync(email);
+        await AssertTheChangeLeftNothingAsync(client, email);
     }
 
     [SqlServerFact]
@@ -142,7 +143,7 @@ public sealed class SubscriberNoticeSqlServerTests : IDisposable
             "a change whose notice cannot be recorded does not happen");
         _output.WriteLine($"change notice insert refused -> {(int)response.StatusCode}");
 
-        await AssertTheChangeLeftNothingAsync(email);
+        await AssertTheChangeLeftNothingAsync(client, email);
     }
 
     [SqlServerFact]
@@ -245,8 +246,27 @@ public sealed class SubscriberNoticeSqlServerTests : IDisposable
             .Should().Be(0, "no notice is owed for an enrolment that did not happen");
     }
 
-    private async Task AssertTheChangeLeftNothingAsync(string email)
+    private async Task AssertTheChangeLeftNothingAsync(HttpClient client, string email)
     {
+        /*
+          THE PIN FIRST, and by behaviour rather than by column. Counting rows would miss the
+          regression that matters most here: a save that commits `User.PinHash` while the audit and
+          notice inserts roll back would leave the holder with a PIN they never set and no message
+          telling them — the exact inversion this whole branch exists to prevent. The hash is
+          opaque, so the question is asked the way a caller would ask it.
+        */
+        var oldPin = await client.PostAsJsonAsync("/api/auth/pin/verify", new { pin = "424242" });
+        oldPin.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await oldPin.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("verified").GetBoolean()
+            .Should().BeTrue("the PIN in place before the failed change must still be the PIN");
+
+        var newPin = await client.PostAsJsonAsync("/api/auth/pin/verify", new { pin = "999999" });
+        newPin.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await newPin.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("verified").GetBoolean()
+            .Should().BeFalse("the PIN the failed change tried to set must not work");
+
         using var scope = _factory!.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 

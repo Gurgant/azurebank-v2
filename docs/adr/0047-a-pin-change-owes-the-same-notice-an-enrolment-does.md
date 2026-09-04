@@ -120,12 +120,25 @@ An unrenderable kind is still a finding, not a silent success: a row whose `Even
 arm stays owed and is named on the console. That branch had no test before this change and has one
 now: once a relay exists, a row wrongly marked delivered is a notice nobody will ever receive.
 
+**And one detective control gets weaker, which is the cost of a repeatable kind.** `notify` reports
+`NO AUDIT ROW` by asking whether a row of that kind EXISTS for the user, not by matching each notice
+to its own. While every kind happened once per account those were the same question. A change can
+happen many times, so where several change notices are owed, one surviving audit row answers for all
+of them and a missing one raises nothing. Making the check exact needs a per-notice reference on the
+row — which ADR-0045 deliberately did not add, so that a notice whose evidence has gone missing is
+found rather than refused. That is a schema decision and it is not taken here: the limit is pinned
+by a test that fails if anyone closes it without moving this paragraph, named in the repudiation
+runbook so an operator counts the rows themselves, and carried in the backlog.
+
 ## What would change this
 
 - **A relay that delivers.** Then "notified" means something, the repeatable surface has a cost per
   message, and D4's no-suppression decision is worth re-measuring rather than re-asserting.
 - **A PIN reset or revocation flow.** D5's remedy sentence currently asks the reader to contact a
   human; when the flow exists the notice should name it.
+- **An exact evidence join.** A per-notice reference from the notice to its audit row would restore
+  the `NO AUDIT ROW` finding to what it was when every kind was singular. It is a schema change and
+  it reopens ADR-0045's no-foreign-key decision, so it is a decision of its own rather than a fix.
 - **A change-email endpoint.** ADR-0045 D2's trigger, unchanged here: the old address would then
   have to be notified too, and this notice's "addressed to the email held on your account" line
   becomes the weaker of two claims.

@@ -49,9 +49,15 @@ been run and the subscriber has since re-enrolled; the trail keeps both. For
 PIN being replaced repeatedly, which is what an attacker holding a PIN does. `Detail` names what was
 proved: `{"passwordProved":true}` for an enrolment, `{"currentPinProved":true}` for a change.
 
-Zero rows with a notice present is the `NO AUDIT ROW` finding `notify` prints; run `verify`, then
-`evidence`, before going further — the question has become "is the record intact", not "was this the
-subscriber".
+Zero rows with a notice present is the `NO AUDIT ROW` finding `notify` prints; run `verify` before
+going further — the question has become "is the record intact", not "was this the subscriber". Do
+NOT reach for `evidence`: it reads by a transfer's `TXN-…` number and a PIN event has none. The
+query above, by `ActorUserId`, is the whole of what can be looked up here.
+
+One limit to know before trusting that finding for a change. `notify` asks only whether a row of
+that kind EXISTS for the user, and a change can happen many times — so where several `PinChanged`
+notices are owed, one surviving audit row answers for all of them and a missing one raises nothing.
+Count the rows against the notices yourself when the reference is a change (ADR-0047).
 
 ## 2. Remove the PIN the subscriber repudiates
 

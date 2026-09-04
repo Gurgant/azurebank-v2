@@ -229,6 +229,38 @@ public class NotifyCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ARepeatableKind_MakesTheMissingAuditRowFindingWeaker_AndThisPinsHowMuch()
+    {
+        /*
+          A LIMIT, PINNED RATHER THAN CLAIMED AWAY (ADR-0047 Consequences).
+
+          The evidence check is an EXISTENCE query — `AnyAsync(e.ActorUserId == n.UserId && e.Event
+          == n.Event)` — not a per-notice match. While every kind happened once per account that was
+          the same thing. `PinChanged` is repeatable, so two change notices with only ONE audit row
+          between them raise no finding: the surviving row answers for both.
+
+          This test exists to make that visible and to fail if it is ever fixed, so whoever fixes it
+          has to move the ADR too. The fix needs a per-notice reference on the row, which ADR-0045
+          deliberately did not add (no foreign key, so a notice whose evidence is missing is FOUND
+          rather than refused) — a schema decision, not a patch.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+        await OwedAsync(owner, withAuditRow: false, @event: SecurityEvents.PinChanged);
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await RunAsync(provider);
+        var text = string.Join("\n", lines);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+        _transport.Envelopes.Should().HaveCount(2, "both are rendered either way");
+        text.Should().NotContain(
+            "NO AUDIT ROW",
+            "the one surviving PinChanged row answers the existence query for both notices — this "
+            + "is the limit ADR-0047 records, not a property worth relying on");
+    }
+
+    [Fact]
     public async Task AKindThisBuildCannotRender_StaysOwed_AndIsNamed()
     {
         /*
