@@ -84,8 +84,12 @@ this in code, and nothing exposes it to an operator, so by hand:
     SET RevokedAt = SYSUTCDATETIME()
     WHERE UserId = '<UserId>' AND RevokedAt IS NULL;
 
-Access tokens already issued live until they expire; the BFF's own session cache has its own
-lifetime. Both are short. Neither is the point.
+Access tokens already issued live until they expire — 15 minutes (`Jwt:ExpirationMinutes`) — and the
+BFF's own session has its own windows (30 minutes idle, 60 absolute; 10 and 20 in Development).
+Whether that matters depends on which kind you are treating. For a `PinEnrolled` repudiation it does
+not: that attacker proved the password and can sign in again, so the window is not the point. For a
+`PinChanged` repudiation it IS the point — a session is the only thing that attacker still holds
+after step 2 — and §4 says what it reaches until it expires.
 
 ## 4. Where this stops
 
@@ -95,11 +99,20 @@ there is no reset flow to hand the subscriber. Until one exists, the honest inst
 subscriber is that the account cannot be made safe from here, and the honest note in the record is
 that the remedy was partial.
 
-**For a `PinChanged` repudiation the same steps go further.** That attacker proved a PIN and not the
-password, so removing the PIN takes back everything they held: setting a new one costs the password
-they never had. The remedy is only partial here if the subscriber ALSO repudiates the original
-enrolment, or if the PIN they lost is one they reuse elsewhere. Say which of the two situations the
-record is in rather than reusing the paragraph above.
+**For a `PinChanged` repudiation steps 2 and 3 go further, but not immediately.** That attacker
+proved a PIN and not the password, so clearing `PinHash` takes back the credential they used and
+setting a new one costs the password they never had. What it does NOT take back is the access token
+they are already holding. Clearing the PIN revokes no token, and step 3 revokes REFRESH tokens only,
+so until the current access token expires — 15 minutes at most — that session still reads the
+account, its transactions and `/api/auth/me`, can deposit, and can reveal the full number if the
+session was elevated before you acted. A transfer needs an authorisation that was minted with the
+OLD PIN, so one already minted and unspent can still be presented inside its own two-minute window.
+**Treat the account as contained only after that window has passed**, and note the time you ran
+step 2 so the record shows when it closed.
+
+After it, the remedy is complete for this attacker unless the subscriber ALSO repudiates the
+original enrolment, or the PIN they lost is one they reuse elsewhere. Say which of the three
+situations the record is in rather than reusing the paragraph above.
 
 **The other address.** If the subscriber says the email on the account is not theirs, nothing here
 can change it — no endpoint exists — and every future notice goes to the same address. That is a
