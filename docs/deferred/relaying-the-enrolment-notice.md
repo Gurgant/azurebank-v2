@@ -1,7 +1,9 @@
 # Relaying the enrolment notice, and why this deployment cannot
 
-When a transfer PIN is enrolled, the API records that the account holder is owed a notice, in the
-same transaction as the enrolment, and the operator tool's `notify` verb renders each owed notice as
+When a transfer PIN is enrolled, and again when an existing one is changed, the API records that the
+account holder is owed a notice, in the same transaction as the action — until 2026-09-04 this said
+the enrolment only, before ADR-0047 added the change. The operator tool's `notify` verb renders each
+owed notice as
 a complete RFC 5322 message addressed to the email held on the account, into a pickup directory the
 operator names. ADR-0045 sets out the design and, deliberately, its limit: the message reaches a
 directory on this machine and nobody else. Nothing here sends.
@@ -33,8 +35,9 @@ the pickup directory already lets the ADR say.
 
 ## What it would buy
 
-Detection. In the threat model — an attacker with a stolen session and the account password enrols
-a PIN — the notice is the only thing that reaches the legitimate owner, and today it reaches them
+Detection. In the threat model — an attacker with a stolen session enrols a PIN behind the account
+password, or changes an existing one behind the PIN alone (ADR-0047) — the notice is the only thing
+that reaches the legitimate owner, and today it reaches them
 only if somebody runs a verb and then moves a file. A relay turns "when the operator remembers" into
 "within seconds of the enrolment", which is the property NIST SP 800-63B-4 §4.6 is written to
 provide.

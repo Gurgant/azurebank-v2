@@ -102,15 +102,22 @@ public class NotifyCommandTests : IDisposable
         return id;
     }
 
-    private async Task<SubscriberNotice> OwedAsync(Guid userId, bool withAuditRow = true)
+    private async Task<SubscriberNotice> OwedAsync(
+        Guid userId, bool withAuditRow = true, string? @event = null)
     {
+        // Defaulted rather than required so every caller written before ADR-0047 still reads as a
+        // test about the enrolment. The audit row takes the SAME name on purpose: `notify` joins a
+        // notice to its evidence by (ActorUserId, Event), so a helper that let the two drift would
+        // make `ANoticeWithoutItsAuditRow_…` pass for the wrong reason.
+        @event ??= SecurityEvents.PinEnrolled;
+
         if (withAuditRow)
         {
             _context.AuditEvents.Add(new AuditEvent
             {
                 Id = Guid.CreateVersion7(),
                 OccurredAt = DateTime.UtcNow,
-                Event = SecurityEvents.PinEnrolled,
+                Event = @event,
                 Outcome = AuditOutcome.Succeeded,
                 ActorUserId = userId,
                 RowHash = string.Empty,
@@ -121,7 +128,7 @@ public class NotifyCommandTests : IDisposable
         {
             Id = Guid.CreateVersion7(),
             UserId = userId,
-            Event = SecurityEvents.PinEnrolled,
+            Event = @event,
             OccurredAt = new DateTime(2026, 9, 3, 10, 15, 0, DateTimeKind.Utc),
         };
         _context.SubscriberNotices.Add(notice);
@@ -163,6 +170,121 @@ public class NotifyCommandTests : IDisposable
         text.Should().Contain("NOTIFIED 1 of 1").And.Contain(notice.Id.ToString("N"));
         text.Should().NotContain("@", "the console never carries an address")
             .And.NotContain("owner", "nor anything that names the recipient");
+    }
+
+    [Fact]
+    public async Task AChangeNotice_IsRenderedWithItsOwnWords_NotTheEnrolments()
+    {
+        /*
+          The two kinds must not be interchangeable, and the assertions are written so that pointing
+          the change arm at `PinEnrolled(...)` — the cheapest wrong edit — turns this red. A change
+          costs the CURRENT PIN and never the password, so "for the first time" and "your account
+          password was proved" are both FALSE here; the second would also tell a reader whose PIN was
+          watched that their password had been used. Measured 2026-09-04 against the real verb, whose
+          output is the sample in docs/notices/.
+        */
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await RunAsync(provider);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+        var (rendered, _, _) = _transport.Envelopes.Should().ContainSingle().Subject;
+
+        rendered.Subject.Should().Contain("was changed")
+            .And.NotContain("was set", "a change is not an enrolment, and the subject is what a reader sees first");
+        rendered.Body.Should().Contain("was changed")
+            .And.Contain("proved the PIN that was in place before it")
+            .And.Contain("Your account password was not")
+            .And.Contain(Contact)
+            .And.Contain(notice.Id.ToString("N"));
+        rendered.Body.Should().NotContain("for the first time")
+            .And.NotContain("password was proved in the same request",
+                "the enrolment's proof sentence is false for a change");
+
+        string.Join("\n", lines).Should().Contain(SecurityEvents.PinChanged,
+            "the operator line names the kind, which is what a runbook is searched by");
+    }
+
+    [Fact]
+    public async Task BothKinds_AreEachRenderedOnce_AndEachRowMarked()
+    {
+        // The pending query is kind-blind and must stay so: the ratified relay claims the same set.
+        var owner = await OwnerAsync();
+        var enrolled = await OwedAsync(owner);
+        var changed = await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await RunAsync(provider);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+        _transport.Envelopes.Should().HaveCount(2);
+        string.Join("\n", lines).Should().Contain("NOTIFIED 2 of 2")
+            .And.NotContain("NO AUDIT ROW", "each kind has an audit row of its own name");
+
+        var stored = await _context.SubscriberNotices.AsNoTracking()
+            .Where(n => n.Id == enrolled.Id || n.Id == changed.Id).ToListAsync();
+        stored.Should().OnlyContain(n => n.DeliveredAt != null && n.DeliveryReceipt != null);
+    }
+
+    [Fact]
+    public async Task ARepeatableKind_MakesTheMissingAuditRowFindingWeaker_AndThisPinsHowMuch()
+    {
+        /*
+          A LIMIT, PINNED RATHER THAN CLAIMED AWAY (ADR-0047 Consequences).
+
+          The evidence check is an EXISTENCE query — `AnyAsync(e.ActorUserId == n.UserId && e.Event
+          == n.Event)` — not a per-notice match. While every kind happened once per account that was
+          the same thing. `PinChanged` is repeatable, so two change notices with only ONE audit row
+          between them raise no finding: the surviving row answers for both.
+
+          This test exists to make that visible and to fail if it is ever fixed, so whoever fixes it
+          has to move the ADR too. The fix needs a per-notice reference on the row, which ADR-0045
+          deliberately did not add (no foreign key, so a notice whose evidence is missing is FOUND
+          rather than refused) — a schema decision, not a patch.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+        await OwedAsync(owner, withAuditRow: false, @event: SecurityEvents.PinChanged);
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await RunAsync(provider);
+        var text = string.Join("\n", lines);
+
+        exitCode.Should().Be(VerifyCommand.Intact);
+        _transport.Envelopes.Should().HaveCount(2, "both are rendered either way");
+        text.Should().NotContain(
+            "NO AUDIT ROW",
+            "the one surviving PinChanged row answers the existence query for both notices — this "
+            + "is the limit ADR-0047 records, not a property worth relying on");
+    }
+
+    [Fact]
+    public async Task AKindThisBuildCannotRender_StaysOwed_AndIsNamed()
+    {
+        /*
+          Nothing covered this branch before ADR-0047, and it is the one that stops a future kind
+          shipping half-built: a row whose Event has no renderer arm must stay OWED and be named, not
+          be marked delivered and not be sent blank. Once a relay exists, a row marked delivered by
+          mistake is a notice nobody will ever get.
+        */
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner, @event: "PinAbdicated");
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await RunAsync(provider);
+        var text = string.Join("\n", lines);
+
+        exitCode.Should().Be(
+            AnchorCommand.NotRecorded,
+            "an unrenderable notice is a finding, not a run that worked, and 6 is what 'still owed' means");
+        _transport.Envelopes.Should().BeEmpty();
+        text.Should().Contain("PinAbdicated", "the operator is told which kind this build cannot render");
+
+        var stored = await _context.SubscriberNotices.AsNoTracking().SingleAsync(n => n.Id == notice.Id);
+        stored.DeliveredAt.Should().BeNull("the row stays owed");
+        stored.DeliveryReceipt.Should().BeNull();
     }
 
     [Fact]

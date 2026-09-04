@@ -878,10 +878,12 @@ about the command line. The ring-refusal test now asks all ~~four~~ five verbs *
 
 ## What is wired, and what is not
 
-**Thirteen events write a row today.** Seven are administrative: `AccountDeleted`,
-`AccountNumberRevealed`, `AzureTagRenamed`, `PinEnrolled`, `RefreshTokenUnknown`,
+**Fourteen events write a row today.** Eight are administrative: `AccountDeleted`,
+`AccountNumberRevealed`, `AzureTagRenamed`, `PinChanged`, `PinEnrolled`, `RefreshTokenUnknown`,
 `RefreshTokenReuse` and `RefreshTokenReuseRevokeFailed`. For those the log line is kept alongside the
-row — two destinations, two jobs.
+row — two destinations, two jobs. `PinChanged` is the exception to that pairing and was **added
+2026-09-04** (ADR-0047): it writes a row and NO log line, following the money precedent below,
+because a PIN change is evidence to keep rather than an alert to raise.
 
 **Four are money movements, added by B1** (2026-08-20): `MoneyDeposited`, `MoneyWithdrawn`,
 `MoneyTransferred` and `MoneyTransferredInternally`. Until then this table recorded a renamed handle
@@ -910,8 +912,11 @@ already in the system, so naming it adds no new personal data and keeps the row 
 Three things about the four movements are decisions rather than details.
 
 **They emit NO `SecurityEvent` log line, and that is the first event class to do so.** The
-administrative seven are worth waking an operator for; a deposit is not, and the money paths already
-carry their own operational log lines. So a movement gets durable evidence without flooding the
+administrative events that pair with a log line — ~~seven~~ seven of the eight, `PinChanged`
+excepted (struck 2026-09-04: ADR-0047 made the set eight and its newest member is the second class
+to write a row with no log line) — are worth waking an operator for; a deposit is not, and the money
+paths already carry their own operational log lines. So a movement gets durable evidence without
+flooding the
 alert stream. It also means the two inventories — logged sites, and rows written — moved
 independently for the first time, which is why
 `SecurityEventConstantTests.TheEventInventoryThisAdrStatesIsStillTheOneInTheSource` now counts

@@ -1,24 +1,50 @@
-# A subscriber says "this was not me" about a PIN enrolment
+# A subscriber says "this was not me" about a PIN notice
 
-The enrolment notice (ADR-0045) tells the account holder to contact the address or number the
-operator put behind `--contact`, quoting a reference. This page is what that contact does with the
-reference. It is short because the remedy is short — and it ends with the sentence that says where
-the remedy stops.
+Two kinds of notice are owed to an account holder: one when a transfer PIN is set for the first
+time (ADR-0045) and one when an existing PIN is changed (ADR-0047). Nothing in the system delivers
+either. `notify` renders each owed notice to a file in a pickup directory, and getting that file to
+the holder is an operator's step — the relay is deferred. Once a notice has been passed on, it tells
+the holder to contact the address or number the operator put behind `--contact`, quoting a
+reference. This page is what that contact does with the reference. It is short because the remedy
+is short — and it ends with the sentence that says where the remedy stops.
 
-**Read this first.** The attacker who enrolled the PIN proved the account password to do it (T8).
-Nulling the PIN removes the credential they minted; it does not remove the credential they used. No
-password reset exists in this system, so the account is not safe again until one does. Say that to
-the subscriber rather than implying otherwise.
+**Read this first, and read the kind first.** The two kinds mean different things and the remedy is
+not equally partial.
 
-## 1. Find the notice and the enrolment it belongs to
+- **`PinEnrolled`** — whoever set the PIN proved the account PASSWORD (T8). Nulling the PIN removes
+  the credential they minted; it does not remove the credential they used. No password reset exists
+  in this system, so the account is not safe again until one does. Say that to the subscriber rather
+  than implying otherwise.
+- **`PinChanged`** — whoever changed it proved only the PIN THAT WAS ALREADY THERE (ADR-0040). The
+  password was not used. Nulling the PIN forces re-enrolment, which costs the password — so against
+  this attacker the remedy is not partial in the same way, and the subscriber can be told so. If the
+  subscriber also says they never set the first PIN, look for a `PinEnrolled` notice as well and
+  treat that one by the rule above.
 
-The reference is the notice id, 32 hex digits. Run against the API's database:
+## 1. Find the notice and the event it belongs to
 
+The reference is the notice id as the notice prints it: 32 hex digits, no hyphens.
+`SubscriberNotices.Id` is a `uniqueidentifier`, and SQL Server does not convert that form — pasted
+bare into a comparison it fails with `Msg 8169, Conversion failed` (measured 2026-09-04). The
+statement below inserts the hyphens itself, so paste the reference exactly as printed. It also
+checks the paste before looking anything up: anything that is not exactly 32 hex digits — a
+filename with `.eml` still attached, a Message-ID with its angle brackets, a digit dropped or
+doubled — stops with the error message below instead of matching. That check is there because a
+`char(32)` variable would silently keep the first 32 characters of a longer paste and look up
+whatever they happened to spell. Run against the API's database:
+
+    DECLARE @ref varchar(100) = '<reference, exactly as printed>';
+    SET @ref = TRIM(@ref);
+    IF LEN(@ref) <> 32 OR @ref LIKE '%[^0-9A-Fa-f]%'
+        THROW 50000, 'The reference must be exactly the 32 hex digits the notice prints.', 1;
     SELECT n.Id, n.UserId, n.Event, n.OccurredAt, n.DeliveredAt, n.DeliveryReceipt
     FROM SubscriberNotices n
-    WHERE n.Id = '<reference>';
+    WHERE n.Id = CONVERT(uniqueidentifier,
+        STUFF(STUFF(STUFF(STUFF(@ref, 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-'));
 
-`OccurredAt` is when the PIN was set (UTC). `DeliveredAt` is when `notify` rendered the notice; if
+`Event` is which of the two kinds this is, and it decides how the paragraphs above and §4 read.
+`OccurredAt` is when the PIN was set or changed (UTC). `DeliveredAt` is when `notify` rendered it;
+if
 it is NULL the subscriber cannot be holding a rendered notice for this reference, and the reference
 came from somewhere else — treat that as its own finding.
 
@@ -27,11 +53,26 @@ but read two clocks:
 
     SELECT e.Sequence, e.OccurredAt, e.Outcome, e.Detail
     FROM AuditEvents e
-    WHERE e.ActorUserId = '<UserId from above>' AND e.Event = 'PinEnrolled';
+    WHERE e.ActorUserId = '<UserId from above>' AND e.Event = '<Event from above>';
 
-Exactly one row is expected: enrolment happens once per account. Zero rows with a notice present is
-the `NO AUDIT ROW` finding `notify` prints; run `verify`, then `evidence`, before going further —
-the question has become "is the record intact", not "was this the subscriber".
+Use the notice's own `Event` in that WHERE clause. Filtering on `PinEnrolled` for a change reference
+returns zero rows, which reads exactly like the finding below and is not one.
+
+For `PinEnrolled`, one row per enrolment — normally exactly one, and more only where §2 below has
+been run and the subscriber has since re-enrolled; the trail keeps both. For
+`PinChanged` there is one row per change, and several is not a fault — it is the account holder's
+PIN being replaced repeatedly, which is what an attacker holding a PIN does. `Detail` names what was
+proved: `{"passwordProved":true}` for an enrolment, `{"currentPinProved":true}` for a change.
+
+Zero rows with a notice present is the `NO AUDIT ROW` finding `notify` prints; run `verify` before
+going further — the question has become "is the record intact", not "was this the subscriber". Do
+NOT reach for `evidence`: it reads by a transfer's `TXN-…` number and a PIN event has none. The
+query above, by `ActorUserId`, is the whole of what can be looked up here.
+
+One limit to know before trusting that finding for a change. `notify` asks only whether a row of
+that kind EXISTS for the user, and a change can happen many times — so where several `PinChanged`
+notices are owed, one surviving audit row answers for all of them and a missing one raises nothing.
+Count the rows against the notices yourself when the reference is a change (ADR-0047).
 
 ## 2. Remove the PIN the subscriber repudiates
 
@@ -58,15 +99,42 @@ this in code, and nothing exposes it to an operator, so by hand:
     SET RevokedAt = SYSUTCDATETIME()
     WHERE UserId = '<UserId>' AND RevokedAt IS NULL;
 
-Access tokens already issued live until they expire; the BFF's own session cache has its own
-lifetime. Both are short. Neither is the point.
+Access tokens already issued live until they expire — 15 minutes (`Jwt:ExpirationMinutes`) — and the
+BFF's own session has its own windows (30 minutes idle, 60 absolute; 10 and 20 in Development).
+Whether that matters depends on which kind you are treating. For a `PinEnrolled` repudiation it does
+not: that attacker proved the password and can sign in again, so the window is not the point. For a
+`PinChanged` repudiation it IS the point — a session is the only thing that attacker still holds
+after step 2 — and §4 says what it reaches until it expires.
 
 ## 4. Where this stops
 
-**The password.** Whoever enrolled the PIN proved the account password. Steps 2 and 3 take back the
-PIN and the sessions; they do not take back the password, and there is no reset flow to hand the
-subscriber. Until one exists, the honest instruction to the subscriber is that the account cannot be
-made safe from here, and the honest note in the record is that the remedy was partial.
+**The password — for a `PinEnrolled` repudiation.** Whoever enrolled the PIN proved the account
+password. Steps 2 and 3 take back the PIN and the sessions; they do not take back the password, and
+there is no reset flow to hand the subscriber. Until one exists, the honest instruction to the
+subscriber is that the account cannot be made safe from here, and the honest note in the record is
+that the remedy was partial.
+
+**For a `PinChanged` repudiation steps 2 and 3 go further, but not immediately.** That attacker
+proved a PIN and not the password, so clearing `PinHash` takes back the credential they used and
+setting a new one costs the password they never had. What it does NOT take back is the access token
+they are already holding. Clearing the PIN revokes no token, and step 3 revokes REFRESH tokens only,
+so until that access token dies the session still reads the account, its transactions and
+`/api/auth/me`, can deposit, and can reveal the full number if the session was elevated before you
+acted. A transfer needs an authorisation that was minted with the OLD PIN, so one already minted and
+unspent can still be presented inside its own two-minute window.
+
+How long that is depends on what the attacker holds. A bearer token presented to the API directly
+lives its full 15 minutes — and a direct caller is who the change path is reachable by, since the
+client turns away anyone who already has a PIN. A BFF session ends sooner: inside the token's last
+60 seconds the BFF tries to refresh it, the API refuses the refresh token step 3 revoked, and the
+BFF drops the session there; `/bff/auth/me` may still answer from what it cached, but nothing more
+reaches the API. **Plan the clock on the 15 minutes** — the shorter case is a bonus, not the bound —
+treat the account as contained only after it has passed, and note the time you ran step 2 so the
+record shows when it closed.
+
+After it, the remedy is complete for this attacker unless the subscriber ALSO repudiates the
+original enrolment, or the PIN they lost is one they reuse elsewhere. Say which of the three
+situations the record is in rather than reusing the paragraph above.
 
 **The other address.** If the subscriber says the email on the account is not theirs, nothing here
 can change it — no endpoint exists — and every future notice goes to the same address. That is a

@@ -64,20 +64,121 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task ChangingAPin_OwesNoNotice_BecauseOnlyAnEnrolmentAddsOne()
+    public async Task ChangingAPin_OwesItsOwnNotice_WithItsOwnEventName()
     {
+        /*
+          THE INVERSION OF WHAT THIS TEST USED TO ASSERT, and the reason is measured rather than
+          argued. Until 2026-09-04 it read `HaveCount(1, "the change path adds nothing")`, pinning
+          ADR-0045 D8's decision to notify an enrolment only. Measured that day on the running stack
+          before the change branch was written: register -> enrol -> change all answered 200,
+          verify-pin with the NEW pin answered 200, and both SubscriberNotices and AuditEvents still
+          held exactly ONE row. A PIN could be replaced leaving the owner no trace at all.
+
+          A change costs the CURRENT PIN and never the password (ADR-0040), which is why it is a
+          different event with different words: it is what an attacker who watched a PIN entered —
+          and never learned the password — leaves behind. ADR-0047 reverses D8; ASVS 4.0.3 2.5.5
+          ("changed or replaced") is the clause it answers where the enrolment answers NIST
+          SP 800-63B-4 §4.1.2.1 ("added").
+        */
         var (token, userId, _) = await RegisterTestUserAsync();
         await SetPinAsync(token, pin: "123456");
 
-        // A change costs the current PIN, not the password (ADR-0040), and writes no notice: NIST
-        // SP 800-63B-4 §4.1.2.1 says "added"; whether a CHANGE should notify is a separate decision
-        // recorded in ADR-0045, and this test is what pins "once per account" now that no unique
-        // index does.
         var change = await Client.PostAsJsonAsync(
             "/api/auth/pin", new SetPinRequest { Pin = "999999", CurrentPin = "123456" }, JsonOptions);
         change.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        (await NoticesForAsync(userId)).Should().HaveCount(1, "the change path adds nothing");
+        var notices = await NoticesForAsync(userId);
+        notices.Should().HaveCount(2, "an enrolment and a change each owe their own notice");
+        notices.Select(n => n.Event).Should().Equal(
+            [SecurityEvents.PinEnrolled, SecurityEvents.PinChanged],
+            "the kinds are distinct, and in the order the two actions happened");
+        notices.Should().OnlyContain(
+            n => n.DeliveredAt == null && n.DeliveryReceipt == null,
+            "both are still owed: nothing in the API delivers one");
+    }
+
+    [Fact]
+    public async Task ChangingAPinTwice_OwesTwoNotices_BecauseRepeatsAreTheSignal()
+    {
+        /*
+          ADR-0047 D4 has no other guard. It decided AGAINST a suppression rule — repeats are what an
+          attacker holding a PIN produces, so N changes must stay N notices — and a later collapse at
+          write or render time would turn nothing else in the suite red.
+        */
+        var (token, userId, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token, pin: "123456");
+
+        foreach (var (from, to) in new[] { ("123456", "999999"), ("999999", "424242") })
+        {
+            var change = await Client.PostAsJsonAsync(
+                "/api/auth/pin", new SetPinRequest { Pin = to, CurrentPin = from }, JsonOptions);
+            change.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+
+        (await NoticesForAsync(userId)).Select(n => n.Event).Should().Equal(
+            [SecurityEvents.PinEnrolled, SecurityEvents.PinChanged, SecurityEvents.PinChanged],
+            "two changes owe two notices: ADR-0047 D4 declined to collapse them");
+    }
+
+    [Fact]
+    public async Task ARefusedChange_OwesNoNotice()
+    {
+        /*
+          The obligation belongs to the action, not to the request. Measured 2026-09-04 on the
+          running stack: a missing current PIN answers 422 PIN_REQUIRED, a wrong one 401 INVALID_PIN,
+          and the notice count did not move for either. As with ARefusedEnrolment_OwesNoNotice, what
+          this can prove on InMemory is that nothing was ADDED — not that a rollback would remove it.
+        */
+        var (token, userId, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token, pin: "123456");
+
+        var noCurrent = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "999999" }, JsonOptions);
+        noCurrent.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+
+        var wrongCurrent = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "999999", CurrentPin = "000000" }, JsonOptions);
+        wrongCurrent.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        (await NoticesForAsync(userId)).Select(n => n.Event).Should().Equal(
+            [SecurityEvents.PinEnrolled], "a refused change is not a change, and owes nothing");
+
+        using var scope = Factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await context.AuditEvents.AsNoTracking()
+            .CountAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.PinChanged))
+            .Should().Be(0, "no evidence claims a change that was refused");
+    }
+
+    [Fact]
+    public async Task ChangingAPin_WritesTheAuditRowItsNoticeIsJoinedTo()
+    {
+        /*
+          NOT SYMMETRY — the join. `notify` matches a notice to its evidence by (ActorUserId, Event)
+          and prints `NO AUDIT ROW backs notice …` when it cannot, so a change notice without an
+          audit row of the SAME name would raise that finding on every run. It is also what opens
+          the owned chain transaction (`NeedsOwnChainTransaction` fires on an Added AuditEvent), so
+          without it the change path would not have the rollback ADR-0045 D1 proved for enrolment.
+        */
+        var (token, userId, _) = await RegisterTestUserAsync();
+        await SetPinAsync(token, pin: "123456");
+
+        var change = await Client.PostAsJsonAsync(
+            "/api/auth/pin", new SetPinRequest { Pin = "999999", CurrentPin = "123456" }, JsonOptions);
+        change.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = Factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var audit = await context.AuditEvents.AsNoTracking()
+            .SingleAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.PinChanged);
+
+        audit.Detail.Should().Be(
+            "{\"currentPinProved\":true}",
+            "the change proves the CURRENT PIN; recording passwordProved here would be false");
+
+        var notice = (await NoticesForAsync(userId))
+            .Single(n => n.Event == SecurityEvents.PinChanged);
+        notice.OccurredAt.Should().BeCloseTo(audit.OccurredAt, TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -113,6 +214,9 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
         return await context.SubscriberNotices
             .AsNoTracking()
             .Where(n => n.UserId == userId)
+            // Ordered because two tests assert the sequence of kinds. Without it they would be
+            // pinning the provider's scan order, which is not a property of the system.
+            .OrderBy(n => n.OccurredAt)
             .ToListAsync();
     }
 }

@@ -700,6 +700,44 @@ public class AuthService : IAuthService
                 OccurredAt = DateTime.UtcNow,
             });
         }
+        else
+        {
+            /*
+              THE SAME TWO ROWS FOR A CHANGE, and the same placement rule (ADR-0047).
+
+              A change is not a smaller enrolment. It costs the CURRENT PIN and never the password
+              (the branch above proved it through IPinVerifier), so this is the event an attacker who
+              watched a PIN entered — and never learned the password — leaves behind. ASVS 4.0.3
+              2.5.5 asks for a notification when an authenticator is "changed or replaced"; ADR-0045
+              D8 declined it and this reverses that, with the reasons in ADR-0047.
+
+              Measured on the running stack 2026-09-04, BEFORE this block existed: register -> enrol
+              -> change all answered 200, verify-pin with the NEW pin answered 200, and both
+              SubscriberNotices and AuditEvents still held exactly ONE row each. A PIN could be
+              replaced leaving no notice, no audit row and no named event — only an unnamed
+              "User {UserId} set their PIN" log line.
+
+              THE AUDIT ROW IS NOT OPTIONAL HERE, for three mechanical reasons rather than symmetry:
+              the notify verb joins a notice to its evidence by (ActorUserId, Event), so a notice
+              with no audit row of the same name prints NO AUDIT ROW on every run; the owned chain
+              transaction opens only when an AuditEvent is Added (AzureBankDbContext), so without one
+              this path would not have the both-directions rollback ADR-0045 D1 proved for the
+              enrolment; and a subscriber told their PIN changed while the trail says nothing is the
+              inversion of what the trail is for.
+            */
+            _audit.Record(
+                SecurityEvents.PinChanged, AuditOutcome.Succeeded,
+                actorUserId: userId, subjectType: "User", subjectId: userId,
+                detail: "{\"currentPinProved\":true}");
+
+            _context.SubscriberNotices.Add(new SubscriberNotice
+            {
+                Id = Guid.CreateVersion7(),
+                UserId = userId,
+                Event = SecurityEvents.PinChanged,
+                OccurredAt = DateTime.UtcNow,
+            });
+        }
 
         var result = await _userManager.UpdateAsync(user);
 

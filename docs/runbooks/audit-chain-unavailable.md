@@ -818,7 +818,7 @@ it was written when there was one.
   skipped and stays owed; a failed write stays owed; two concurrent runs can leave a duplicate file
   and say so). Safe against the chain — it touches no audit row and walks no chain, so it never
   says 1 — but it is a write, and a run during an incident renders notices from rows nothing has
-  vouched for yet. Run it after recovery, after `verify`. See **The enrolment notice** under
+  vouched for yet. Run it after recovery, after `verify`. See **The PIN notices** under
   **After recovery**.
 
 Neither `export` nor the window below is a substitute for the number you wrote down elsewhere. They
@@ -935,10 +935,11 @@ not configured, the ring will not build, or the store could not be read, the sam
 `CANNOT VERIFY`; `INTERRUPTED` is **5**. `EVIDENCE PACK for <number>` is the first line of every
 successful assembly, and the line to search a transcript for.
 
-### The enrolment notice (T13, NIST SP 800-63B-4 §4.1.2.1)
+### The PIN notices (NIST SP 800-63B-4 §4.1.2.1, ASVS 4.0.3 2.5.5)
 
-When a PIN is enrolled, the API records — in the same save as the enrolment and its audit row — that
-the account holder is OWED a notice (ADR-0045). Nothing in the API sends it. This verb renders every
+When a PIN is enrolled, and again when an existing one is CHANGED, the API records — in the same
+save as the action and its audit row — that the account holder is OWED a notice (ADR-0045 for the
+enrolment, ADR-0047 for the change). Nothing in the API sends either. This verb renders every
 owed notice as one RFC 5322 `.eml` file, addressed to the email held on the account, into a
 directory you name, and marks the row delivered:
 
@@ -968,12 +969,13 @@ The headlines, and what each means from THIS verb:
 - `NO ADDRESS` — that notice's account holds no email, or one that cannot head a message because it
   contains a line break (either is unreachable through registration and reachable by seed or raw
   SQL). Nothing is rendered for it and it stays owed.
-- `NO AUDIT ROW backs notice …` — from THIS verb it means the enrolment row the notice belongs to is
-  missing for that user. The notice is rendered anyway — the account holder is not punished for the
+- `NO AUDIT ROW backs notice …` — from THIS verb it means the audit row the notice belongs to is
+  missing for that user: the join is by (actor, event), so it is the row named `PinEnrolled` or
+  `PinChanged` to match the notice's own kind. The notice is rendered anyway — the account holder is not punished for the
   gap — and the absence is the finding: run `verify` for the chain's verdict, then read the notice
   row and that user's `AuditEvents` by `ActorUserId` (the first two statements of
   `docs/runbooks/pin-enrolment-repudiated.md`). `evidence` does not apply here — it reads by a
-  transfer's `TXN-…` number, and an enrolment has none. (From `evidence` the same words mean a
+  transfer's `TXN-…` number, and a PIN event has none. (From `evidence` the same words mean a
   LEDGER row with no audit row naming it; see above.)
 - `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, a directory
   that does not exist (the verb never creates one), or a directory inside a git working tree — where

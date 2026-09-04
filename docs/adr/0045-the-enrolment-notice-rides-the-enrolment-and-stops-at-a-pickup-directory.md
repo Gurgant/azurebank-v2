@@ -114,12 +114,25 @@ row-writing event the source-only guards cannot count, and a chained NOTIFIED th
 a directory is the green-and-false shape this project treats as the worst one. When a relay exists
 and "delivered" means something, this is the decision to reopen.
 
-**D8 — What does NOT owe a notice.** A PIN CHANGE: NIST says "added", ASVS 4.0.3 2.5.5 says "changed
-or replaced", and the change path costs the current PIN, writes no audit row today, and is the
-repeatable surface — a notice there needs the suppression rule T7 §7 asked about, which does not
-exist; a separate decision. A FAILED attempt: it would mail the real owner on every attacker probe
-and open an enumeration side channel of the ADR-0013 shape; the wrong-password path already counts
-toward the login lockout.
+**D8 — What does NOT owe a notice.** ~~A PIN CHANGE: NIST says "added", ASVS 4.0.3 2.5.5 says
+"changed or replaced", and the change path costs the current PIN, writes no audit row today, and is
+the repeatable surface — a notice there needs the suppression rule T7 §7 asked about, which does not
+exist; a separate decision.~~ (struck 2026-09-04; correction below.) A FAILED attempt: it would mail
+the real owner on every attacker probe and open an enumeration side channel of the ADR-0013 shape;
+the wrong-password path already counts toward the login lockout.
+
+> **Correction (2026-09-04): a PIN change owes a notice.** See
+> [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md).
+> Two of the four reasons above were true and stayed true — the wording of the two standards, and
+> that a change costs the current PIN. A third fell when the change path started writing an audit
+> row; the fourth, the missing suppression rule, is denied by ADR-0047 D4. None was a reason to stay
+> silent. Measured before the change was written: an enrolment wrote one notice and one audit row, a
+> change wrote NEITHER, and verify-pin with the new PIN answered 200 — a PIN could be replaced
+> leaving the owner no trace. The change path now writes its own audit row, so "writes no audit row
+> today" is no longer true and the evidence join has something to find; the suppression rule turned
+> out not to be needed, because a change costs the current PIN and a wrong one is lockout-counted,
+> so N changes producing N notices is the signal rather than a flood. ASVS 4.0.3 2.5.5 is the
+> clause it answers, where this ADR answers NIST SP 800-63B-4 §4.1.2.1.
 
 **D9 — No exit code of its own, and no chain walk.** `notify` never says 1: a verb that could report
 CHAIN BROKEN while writing mail would make a tampered table read as a delivery problem, and `verify`
@@ -278,4 +291,6 @@ sentence it did not have: the subscriber is not reached, and here is exactly why
 - **A PIN reset or revocation flow** — completes the repudiation path the contact currently cannot.
 - **A second notification address** — the first §4.6 clause this system could meet by data model
   alone.
-- **A PIN-change notice** — D8, with the suppression rule it needs.
+- ~~**A PIN-change notice** — D8, with the suppression rule it needs.~~ Fired 2026-09-04:
+  [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md), which needed no
+  suppression rule and says why.

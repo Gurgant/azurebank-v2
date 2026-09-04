@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -86,6 +87,63 @@ public sealed class SubscriberNoticeSqlServerTests : IDisposable
         _output.WriteLine($"notice insert refused -> {(int)response.StatusCode}");
 
         await AssertNothingSurvivedAsync(email);
+    }
+
+    [SqlServerFact]
+    public async Task WhenTheChangeAuditRowCannotBeWritten_NeitherTheNewPinNorItsNoticeSurvives()
+    {
+        /*
+          THE SAME PROOF FOR THE CHANGE PATH (ADR-0047 D2), and it is the only thing that earns the
+          claim that the change rides the rollback D1 proved for the enrolment. The enrolment's pair
+          above cannot cover it: they drive `{pin, password}`, which takes the OTHER branch.
+
+          It also pins the reason the audit row is not optional. `NeedsOwnChainTransaction` fires on
+          an Added AuditEvent, so removing the change's `_audit.Record` would leave this fault with
+          nothing to hit and `fault.Fired` false — the assertion that fails first, and says why.
+        */
+        var (client, email) = await RegisterAsync();
+        (await client.PostAsJsonAsync("/api/auth/pin", new { pin = "424242", password = Password }))
+            .EnsureSuccessStatusCode();
+
+        var fault = new OverlongAuditEventInterceptor(SecurityEvents.PinChanged);
+        _factory!.AddInterceptor(fault);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/pin", new { pin = "999999", currentPin = "424242" });
+
+        fault.Fired.Should().BeTrue("the test proves nothing if the audit insert never actually failed");
+        response.IsSuccessStatusCode.Should().BeFalse(
+            "a PIN change that cannot be audited must not be reported as done");
+        _output.WriteLine($"change audit insert refused -> {(int)response.StatusCode}");
+
+        await AssertTheChangeLeftNothingAsync(client, email);
+    }
+
+    [SqlServerFact]
+    public async Task WhenTheChangeNoticeCannotBeWritten_TheChangeIsRefused_AndTheOldPinStillWorks()
+    {
+        /*
+          THE DIRECTION InMemory CAN NEVER SEE, because it has no transactions. A notice written in a
+          SECOND save after `UpdateAsync` would leave the PIN changed and the notice missing: the
+          owner would be holding a PIN they did not set and no message would ever tell them. Here the
+          notice insert is the statement that fails, and the change must go with it.
+        */
+        var (client, email) = await RegisterAsync();
+        (await client.PostAsJsonAsync("/api/auth/pin", new { pin = "424242", password = Password }))
+            .EnsureSuccessStatusCode();
+
+        var fault = new OverlongAuditEventInterceptor(SecurityEvents.PinChanged, table: "SubscriberNotices");
+        _factory!.AddInterceptor(fault);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/pin", new { pin = "999999", currentPin = "424242" });
+
+        fault.Fired.Should().BeTrue("the test proves nothing if the notice insert never actually failed");
+        response.IsSuccessStatusCode.Should().BeFalse(
+            "a change whose notice cannot be recorded does not happen");
+        _output.WriteLine($"change notice insert refused -> {(int)response.StatusCode}");
+
+        await AssertTheChangeLeftNothingAsync(client, email);
     }
 
     [SqlServerFact]
@@ -186,6 +244,47 @@ public sealed class SubscriberNoticeSqlServerTests : IDisposable
 
         (await context.SubscriberNotices.AsNoTracking().CountAsync(n => n.UserId == stored.Id))
             .Should().Be(0, "no notice is owed for an enrolment that did not happen");
+    }
+
+    private async Task AssertTheChangeLeftNothingAsync(HttpClient client, string email)
+    {
+        /*
+          THE PIN FIRST, and by behaviour rather than by column. Counting rows would miss the
+          regression that matters most here: a save that commits `User.PinHash` while the audit and
+          notice inserts roll back would leave the holder with a PIN they never set and no message
+          telling them — the exact inversion this whole branch exists to prevent. The hash is
+          opaque, so the question is asked the way a caller would ask it.
+        */
+        var oldPin = await client.PostAsJsonAsync("/api/auth/pin/verify", new { pin = "424242" });
+        oldPin.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await oldPin.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("verified").GetBoolean()
+            .Should().BeTrue("the PIN in place before the failed change must still be the PIN");
+
+        var newPin = await client.PostAsJsonAsync("/api/auth/pin/verify", new { pin = "999999" });
+        newPin.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await newPin.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("data").GetProperty("verified").GetBoolean()
+            .Should().BeFalse("the PIN the failed change tried to set must not work");
+
+        using var scope = _factory!.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+
+        var stored = await context.Users.AsNoTracking().SingleAsync(u => u.Email == email);
+
+        // The ENROLMENT survives — it committed in its own earlier save — so this asserts what the
+        // failed change left behind, not that the account is empty.
+        (await context.AuditEvents.AsNoTracking()
+            .CountAsync(e => e.ActorUserId == stored.Id && e.Event == SecurityEvents.PinChanged))
+            .Should().Be(0, "no evidence claims a change that did not happen");
+
+        (await context.SubscriberNotices.AsNoTracking()
+            .CountAsync(n => n.UserId == stored.Id && n.Event == SecurityEvents.PinChanged))
+            .Should().Be(0, "no notice is owed for a change that did not happen");
+
+        (await context.SubscriberNotices.AsNoTracking()
+            .CountAsync(n => n.UserId == stored.Id && n.Event == SecurityEvents.PinEnrolled))
+            .Should().Be(1, "the enrolment's own notice is untouched by the failed change");
     }
 
     public void Dispose() => _factory?.Dispose();
