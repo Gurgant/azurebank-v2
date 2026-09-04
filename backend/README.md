@@ -595,7 +595,7 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | -------------------------------------- | ---------------------------------------- | ----------- |
 | `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Development |
 | `ConnectionStrings__DefaultConnection` | Database connection                      | -           |
-| `Jwt__Secret`                          | JWT signing key (64+ chars)              | -           |
+| `Jwt__Secret`                          | JWT signing key (README recipe; unchecked) | -         |
 | `Idempotency__HashKey`                 | Idempotency HMAC key (32+, ADR-0009)     | -           |
 | `StepUp__BindingKey`                   | Step-up binding HMAC key (32+, ADR-0042) | -           |
 | `Audit__ChainKey`                      | Audit chain HMAC key (32+, ADR-0044)     | -           |

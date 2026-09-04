@@ -66,8 +66,8 @@ amount-bound message is the 2026-09-03 observation, dated in the comment; the mo
 asserted the dollar sentence now asserts the measured one; and the contract suite, which runs
 against the real stack, gains a case that reads the document's `maximum`, posts one cent above it,
 and asserts the envelope and the sentence. The two other server sentences the mock quotes with
-dollar signs (insufficient funds, non-zero balance on delete) were NOT re-measured here and are
-marked as such rather than guessed at.
+dollar signs (insufficient funds, non-zero balance on delete) ~~were NOT re-measured here and are
+marked as such rather than guessed at~~ (struck 2026-09-04; correction below).
 
 > **Correction (2026-09-04): the two sentences D4 left unmeasured have been measured, and neither
 > carries an amount.** `3769dc9` had not only dropped the `$`; it removed the figures altogether
@@ -85,8 +85,8 @@ marked as such rather than guessed at.
 >
 > The mint for 1000 on a balance of 16 answered 201: funds are checked at the transfer, not at the
 > mint (ADR-0042). The mock now quotes these, `serverCurrency` is gone, and the contract suite pins
-> the withdrawal and the delete on the real stack from a fresh account. Transcript: the work log's
-> plan for the sweep that followed PR #149.
+> the withdrawal and the delete on the real stack from a fresh account. Transcript:
+> `measure-2026-09-04.txt` in the work log's plan for the 2026-09-04 sweep.
 
 **D5 — The committed document is guarded against a constant changed without a regen.** The regen
 step is manual and deliberately outside CI, so a backend architecture test now reads the committed
@@ -96,11 +96,12 @@ step is manual and deliberately outside CI, so a backend architecture test now r
 server, for the one number the client promises.
 
 **D6 — `DailyTransferLimit` is declared and not enforced, and this ADR says so rather than
-promising it.** `ValidationRules.DailyTransferLimit = 1_000` has no consumer anywhere. It is left in
-place — deleting it is a separate, cheap change — but no document may cite it as a control.
+promising it.** `ValidationRules.DailyTransferLimit = 1_000` has no consumer anywhere. ~~It is left
+in place — deleting it is a separate, cheap change~~ (struck 2026-09-04; correction below) — but no
+document may cite it as a control.
 
 > **Correction (2026-09-04): the constant is gone.** `ValidationRules.DailyTransferLimit` was
-> deleted in the sweep that followed PR #149, after re-running the grep behind D6: one definition,
+> deleted in the 2026-09-04 sweep, after re-running the grep behind D6: one definition,
 > zero readers, across `backend/src`, `backend/tests`, `frontend/`, `docs/api/openapiv1.json` and
 > the generated `schema.d.ts`. No behaviour changed, because nothing ever read it. A daily or
 > aggregate limit remains unbuilt and undecided — D7 and the backlog's transaction-limits feature.

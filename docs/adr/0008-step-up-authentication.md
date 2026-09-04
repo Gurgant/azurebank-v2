@@ -227,7 +227,8 @@ public enum AuthLevel
 > **What actually enforces step-up:** `AzureBank.Bff/Middleware/AuthLevelMiddleware.cs`. It is
 > registered **globally** (`Bff/Program.cs` calls `UseAuthLevelEnforcement()`, whose extension is a
 > plain `UseMiddleware` with no `UseWhen`), and does two
-> unrelated jobs. First, on **every** request, it short-circuits a raw proxied
+> unrelated jobs (~~two~~ three since 2026-08-19; struck 2026-09-04, correction below). First, on
+> **every** request, it short-circuits a raw proxied
 > `/api/auth/refresh` to 404 — nothing to do with PINs; only the BFF may rotate refresh tokens
 > (ADR-0021). Second, it gates ~~**three** paths behind level 2: `POST /api/transfers`,
 > `POST /api/transfers/internal`, and any `*/full-number` under `/api/accounts/`~~ one path behind
@@ -510,9 +511,13 @@ public class ApplicationUser : IdentityUser<Guid>
 > **One level-2 path, since [ADR-0041](0041-the-api-verifies-the-transfer-pin.md) (`dd84179`,
 > 2026-08-13).** `PinRequiredPaths` is empty; only the prefix/suffix rule (`/api/accounts/` +
 > `/full-number`) still asks for level 2, so `GET /api/accounts/{id}/full-number` is the single path
-> that can answer 403 `STEP_UP_REQUIRED`. Transfers carry their PIN in the body and the API verifies
-> it (ADR-0041, [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md)); the
-> 2026-08-13 table above already records this for the Protected Operations rows.
+> that can answer 403 `STEP_UP_REQUIRED`. A transfer carries no PIN at all: ADR-0041 moved the
+> check to the API, and [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md)
+> (2026-08-16) then replaced the in-body PIN with a one-shot authorisation, minted at
+> `POST /api/transfers[/internal]/authorizations` and presented in the `Step-Up-Authorization`
+> header for the API to bind and spend. The 2026-08-13 table above records the intermediate state —
+> PIN in the request body — which stood for three days; a withdrawal is the one money move that
+> still works that way.
 >
 > **Every `/api` request reads the level, since `d74603c` (2026-08-20).** `RequiresSession` matches
 > the `/api/` prefix with no method condition and no exemption list, so the gate is entered on every
@@ -542,6 +547,12 @@ public class ApplicationUser : IdentityUser<Guid>
 > GET  .../full-number         LIVE level 1     -> 403 X-Auth-Level-Current 1
 > POST /api/transfers {}       LIVE level 1     -> 400 model-state, API hit
 > ```
+>
+> **A third refusal joined the two this note describes.** Since `76b737c` (2026-08-19) the
+> middleware also answers a raw proxied `POST /api/auth/login` or `/api/auth/register` with 404,
+> before the session is read — the SPA signs in through the BFF's own `/bff/auth/*` controller, and
+> a proxied login handed out the very JWT the BFF exists to withhold. Three short-circuits now:
+> the auth pair and refresh to 404, no live session to 401, level 1 on the reveal to 403.
 >
 > **Point 2's premise moved; its conclusion did not.** `DELETE /api/accounts/{id}` is now behind
 > the session gate like everything else under `/api/` — sessionless it answers 401 at the BFF,

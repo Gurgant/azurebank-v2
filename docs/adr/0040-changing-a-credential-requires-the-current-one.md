@@ -77,11 +77,11 @@ every money movement, which was too cheap a hole to leave for a UX argument. The
 of the same standard clause is ADR-0045.)*
 
 Also unchanged: the **direct-API step-up bypass** for ~~transfers and~~ `/full-number` (struck
-2026-09-04; note below) (ADR-0020/ADR-0038 residual). The API has no auth-level concept;
-enforcement for those two lives only in BFF middleware. Withdraw is unaffected because it carries
-the PIN in-band and the API verifies it. That inconsistency — two step-up models in one system, the
-weaker one guarding the higher-value operation — is a separate decision, and this ADR is a
-precondition for it rather than a substitute: hardening the API gate while the PIN can be replaced
+2026-09-04; note below, ADR-0020/ADR-0038 residual). The API has no auth-level concept;
+enforcement for ~~those two~~ it lives only in BFF middleware. Withdraw is unaffected because it
+carries the PIN in-band and the API verifies it. That inconsistency — two step-up models in one
+system, the weaker one guarding the higher-value operation — is a separate decision, and this ADR is
+a precondition for it rather than a substitute: hardening the API gate while the PIN can be replaced
 would be building a control that is not one.
 
 *(Correction 2026-09-04: the "separate decision" was taken the next day. ADR-0041 (dd84179,

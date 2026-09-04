@@ -32,6 +32,8 @@
   },
 
   "Audit": {
+    // Two secrets. `TailTimeoutSeconds` is a sibling key, not a secret, and stays in
+    // appsettings.json.
     // HMAC key chaining the audit trail's row hashes (ADR-0044). Server-side only, never
     // stored in the database. Generate a random string, 32+ chars. DISTINCT from the two keys
     // above: one leaked key must not forge another mechanism's answer.
@@ -39,7 +41,6 @@
     // HMAC key authenticating the anchor records that say what the chain looked like at an
     // instant. DISTINCT from ChainKey on purpose: the anchor constrains whoever holds the
     // database, and the row chain already concedes that database + ChainKey can rewrite a row.
-    // TailTimeoutSeconds is not a secret and stays in appsettings.json.
     "AnchorKey": "<GENERATE-A-RANDOM-KEY-AT-LEAST-32-CHARACTERS-LONG-DO-NOT-COMMIT-IT>"
   },
 

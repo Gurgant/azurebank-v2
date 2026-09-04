@@ -172,5 +172,4 @@ a reversal of this decision, not a test cleanup. The six behaviours they hold:
 - **ADR-0009** — the server protocol. This ADR is its client half; read them together.
 - **ADR-0019** — the SPA/BFF error channel this protocol routes on.
 - **ADR-0020** — ~~the third~~ the only (since ADR-0041; struck 2026-09-04) level-2 surface, and the
-  reason the interceptor rule is stated as "every
-  level-2 endpoint" rather than a count.
+  reason the interceptor rule is stated as "every level-2 endpoint" rather than a count.

@@ -51,7 +51,9 @@ const useStyles = makeStyles({
  * entirely by the module-level stepUpController: when a level-2-gated request 403s, the
  * base-query wrapper calls requestStepUp() and this modal appears. Since ADR-0041 the only
  * route that 403s this way is the account-number reveal — a transfer's PIN goes to the
- * authorisation mint instead (ADR-0042) and never through here. The user's PIN elevates the
+ * authorisation mint instead (ADR-0042) and never through here. ⚠️ The subtitle below still says
+ * "authorize this transfer": stale user-facing copy, and it belongs to the UI/UX train (U8), not
+ * to a comment sweep. The user's PIN elevates the
  * SESSION via /bff/auth/verify-pin; on success it settles 'elevated' and the wrapper replays
  * the original request. Because a
  * wrong PIN is HTTP 200 { verified:false } (never a 4xx), success is read from data.verified,

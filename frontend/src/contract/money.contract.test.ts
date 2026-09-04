@@ -48,16 +48,12 @@ describe('contract: money', () => {
         toAccountId: id,
         amount: 10,
         description: 'contract probe',
-        // ADR-0041 made `pin` a required member. WITHOUT it the request never reaches
-        // FluentValidation at all: System.Text.Json refuses to deserialise a missing required
-        // property, so the answer is the framework envelope keyed `$`/`request` — measured:
-        //   400 {"title":"One or more validation errors occurred.",
-        //        "errors":{"$":["JSON deserialization for type '…InternalTransferRequest' was
-        //                        missing required properties including: 'pin'."],
-        //                  "request":["The request field is required."]}}
-        // which is the OTHER envelope, and would silently turn this test into a check of the
-        // deserialiser rather than of the same-account rule it exists for.
-        pin: FIXTURES.pin,
+        // NO `pin` HERE, and the absence is the point. ADR-0041 briefly made it a required
+        // member — omitting it then answered the deserialiser's `$`/`request` envelope instead of
+        // the same-account rule this test exists for — but ADR-0042 deleted it three days later:
+        // `InternalTransferRequest` carries FromAccountId, ToAccountId, Amount and Description
+        // only, and the PIN goes to the mint (see the malformed-PIN case below). Sending one here
+        // would be an unbound member the API ignores, which is a worse kind of quiet.
       }),
     });
     const problem = asProblem(body);
@@ -84,16 +80,12 @@ describe('contract: money', () => {
         toAccountId: id,
         amount: 10,
         description: 'contract probe',
-        // ADR-0041 made `pin` a required member. WITHOUT it the request never reaches
-        // FluentValidation at all: System.Text.Json refuses to deserialise a missing required
-        // property, so the answer is the framework envelope keyed `$`/`request` — measured:
-        //   400 {"title":"One or more validation errors occurred.",
-        //        "errors":{"$":["JSON deserialization for type '…InternalTransferRequest' was
-        //                        missing required properties including: 'pin'."],
-        //                  "request":["The request field is required."]}}
-        // which is the OTHER envelope, and would silently turn this test into a check of the
-        // deserialiser rather than of the same-account rule it exists for.
-        pin: FIXTURES.pin,
+        // NO `pin` HERE, and the absence is the point. ADR-0041 briefly made it a required
+        // member — omitting it then answered the deserialiser's `$`/`request` envelope instead of
+        // the same-account rule this test exists for — but ADR-0042 deleted it three days later:
+        // `InternalTransferRequest` carries FromAccountId, ToAccountId, Amount and Description
+        // only, and the PIN goes to the mint (see the malformed-PIN case below). Sending one here
+        // would be an unbound member the API ignores, which is a worse kind of quiet.
       }),
     });
     const problem = asProblem(body);
@@ -201,35 +193,40 @@ describe('contract: money', () => {
              "detail":"Insufficient funds.","instance":"/api/transactions/withdraw",
              "errorCode":"INSUFFICIENT_FUNDS","traceId":"…","available":6.0000,"requested":10}
       The amounts are numeric extension members, compared here as numbers (the wire spells the
-      decimal as 0.0000; JSON.parse makes it 0).
+      decimal as 0.0000; JSON.parse makes it 0). The (0, 1) pair asserted below is DERIVED from
+      that run rather than observed in it: a created account starts at 0 (`AccountService`
+      `Balance = 0`) and `InsufficientFundsException` carries whatever balance and amount it was
+      thrown with. The shape is measured; this pair is arithmetic on it.
     */
     const created = await call('/api/accounts', {
       method: 'POST',
       body: JSON.stringify({ name: 'Contract Empty', type: 'Savings' }),
     });
     expect(created.status).toBe(201);
-    const emptyId = (created.body as { data: { id: string } }).data.id;
+    let emptyId = '';
 
     try {
+      emptyId = (created.body as { data: { id: string } }).data.id;
       const { status, body } = await call('/api/transactions/withdraw', {
         method: 'POST',
         headers: { 'Idempotency-Key': idempotencyKey() },
         body: JSON.stringify({ accountId: emptyId, amount: 1, pin: FIXTURES.pin }),
       });
-      const problem = asProblem(body) as {
+      const problem = asProblem(body) as ReturnType<typeof asProblem> & {
         available?: number;
         requested?: number;
-        detail?: string;
       };
 
       expect(status).toBe(422);
+      expect(problem.errorCode).toBe('INSUFFICIENT_FUNDS');
       expect(problem.detail).toBe('Insufficient funds.');
       expect(problem.available).toBe(0);
       expect(problem.requested).toBe(1);
     } finally {
       // The API soft-deletes (IsDeleted), so the row stays but the account leaves every listing;
-      // on a seeded database that is the most this probe can clean up after itself.
-      await call(`/api/accounts/${emptyId}`, { method: 'DELETE' });
+      // on a seeded database that is the most this probe can clean up after itself. Swallowed:
+      // a throwing cleanup would replace the contract mismatch above with a transport error.
+      if (emptyId) await call(`/api/accounts/${emptyId}`, { method: 'DELETE' }).catch(() => {});
     }
   });
 
@@ -248,9 +245,10 @@ describe('contract: money', () => {
       body: JSON.stringify({ name: 'Contract Funded', type: 'Savings' }),
     });
     expect(created.status).toBe(201);
-    const fundedId = (created.body as { data: { id: string } }).data.id;
+    let fundedId = '';
 
     try {
+      fundedId = (created.body as { data: { id: string } }).data.id;
       const deposited = await call('/api/transactions/deposit', {
         method: 'POST',
         headers: { 'Idempotency-Key': idempotencyKey() },
@@ -266,13 +264,16 @@ describe('contract: money', () => {
       expect(problem.detail).toBe('Cannot delete an account with a non-zero balance.');
     } finally {
       // Drain with the PIN, then delete (a soft delete on the API): the probe must not stay
-      // listed on a seeded database.
-      await call('/api/transactions/withdraw', {
-        method: 'POST',
-        headers: { 'Idempotency-Key': idempotencyKey() },
-        body: JSON.stringify({ accountId: fundedId, amount: 25, pin: FIXTURES.pin }),
-      });
-      await call(`/api/accounts/${fundedId}`, { method: 'DELETE' });
+      // listed on a seeded database. Each call swallows its own failure — an unguarded drain
+      // would both mask the assertion above and skip the delete that follows it.
+      if (fundedId) {
+        await call('/api/transactions/withdraw', {
+          method: 'POST',
+          headers: { 'Idempotency-Key': idempotencyKey() },
+          body: JSON.stringify({ accountId: fundedId, amount: 25, pin: FIXTURES.pin }),
+        }).catch(() => {});
+        await call(`/api/accounts/${fundedId}`, { method: 'DELETE' }).catch(() => {});
+      }
     }
   });
 });

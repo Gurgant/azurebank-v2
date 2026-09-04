@@ -100,14 +100,16 @@ Sensitive operations need a PIN, and the PIN is verified by the API, never by th
 moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is part of
 what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** — bound to
 payer, payee and amount, valid two minutes, spent once — presented in a `Step-Up-Authorization`
-header (ADR-0041, ADR-0042). Nothing in the session says "PIN entered"; one entry authorises one
-payment.
+header (ADR-0041, ADR-0042). Nothing in the session authorises a payment; one PIN entry authorises
+one payment.
 
-The account-number reveal is the one route that still uses the **session** level: hit at level 1 it
-returns `403` with `X-Auth-Level-Required`; the SPA opens the PIN modal, elevates the BFF session,
-and the original request is **replayed byte-identically at the transport layer** — same bytes, same
-idempotency key. The rule dates from when transfers rode the same path: rebuilding a request after
-elevation would change the fingerprint and strand a payment.
+The account-number reveal is the one route that still uses the **session** level, and the elevation
+lives there rather than in the token: hit at level 1 it returns `403` with `X-Auth-Level-Required`;
+the SPA opens the PIN modal, elevates the BFF session, and the original request is **replayed
+byte-identically at the transport layer** rather than rebuilt. For the reveal there is nothing to
+rebuild — it is a GET with no body and no idempotency key — but the rule dates from when transfers
+rode the same path, where rebuilding after elevation would have changed the idempotency fingerprint
+and stranded a payment. That is why the interceptor replays rather than re-issues.
 
 PINs are hashed with Argon2id **plus a server-side pepper** held outside the database, so a
 database dump alone cannot be brute-forced offline — six digits would otherwise fall instantly.

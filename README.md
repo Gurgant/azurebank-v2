@@ -18,7 +18,7 @@ If you want more after that:
 | | |
 |---|---|
 | [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) + [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves. The five-outcome table is the core of the project. |
-| [`docs/adr/`](docs/adr/README.md) | 25 decisions with their alternatives and residuals. The index names four to start with. |
+| [`docs/adr/`](docs/adr/README.md) | Every decision with its alternatives and residuals. The index names four to start with. |
 | [`docs/engineering-traps.md`](docs/engineering-traps.md) | The things that fail silently — each one cost a debugging session. |
 | [`SECURITY.md`](SECURITY.md) | The security posture in one place. |
 

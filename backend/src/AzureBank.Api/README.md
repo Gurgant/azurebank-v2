@@ -331,7 +331,7 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 |----------|-------------|
 | `ASPNETCORE_ENVIRONMENT` | Runtime environment (Development/Production) |
 | `ConnectionStrings__DefaultConnection` | Database connection string |
-| `Jwt__Secret` | JWT signing key (64+ chars) |
+| `Jwt__Secret` | JWT signing key — the root README's recipe; nothing validates its length at startup |
 | `Idempotency__HashKey` | Request-fingerprint HMAC key (32+ chars, ADR-0009) |
 | `StepUp__BindingKey` | Step-up binding HMAC key (32+ chars, ADR-0042) |
 | `Audit__ChainKey` | Audit hash-chain HMAC key (32+ chars, ADR-0044) |

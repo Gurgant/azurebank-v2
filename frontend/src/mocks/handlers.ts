@@ -2772,9 +2772,10 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
         status: 422,
         errorCode: 'INSUFFICIENT_FUNDS',
         // No figures in the sentence since 3769dc9: both amounts travel as the numeric
-        // `available`/`requested` extensions below. Measured 2026-09-03 (balance 6, amount 10):
+        // `available`/`requested` extensions below. Measured 2026-09-03 on POST /api/transfers
+        // (balance 16, amount 1000, minted authorisation):
         //   422 {"detail":"Insufficient funds.","errorCode":"INSUFFICIENT_FUNDS",
-        //        "available":6.0000,"requested":10}
+        //        "available":16.0000,"requested":1000}
         detail: 'Insufficient funds.',
         extensions: { available, requested: amount },
       }),

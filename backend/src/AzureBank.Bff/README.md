@@ -40,7 +40,7 @@ flowchart LR
         App["React App"]
     end
 
-    subgraph BFF["BFF Gateway :5001"]
+    subgraph BFF["BFF Gateway :5000"]
         Cookie["Session Cookie"]
         Session["Session Store"]
         YARP["YARP Proxy"]
@@ -96,7 +96,7 @@ sequenceDiagram
 flowchart TB
     subgraph AuthLevel1["Auth Level 1 (Session)"]
         Login["Login"]
-        BasicOps["View Accounts<br/>View Transactions<br/>Transfers (PIN verified by the API)"]
+        BasicOps["View Accounts<br/>View Transactions<br/>Transfers (authorisation, ADR-0042)"]
     end
 
     subgraph AuthLevel2["Auth Level 2 (PIN Verified)"]
@@ -199,13 +199,18 @@ AzureBank.Bff/
 | `/api/accounts/*/full-number` | `/api/accounts/*/full-number` | level 2 (PIN verified in this session) |
 | every other `/api/*` route, any method | same path | session (level 1) |
 
-Since [ADR-0041](../../../docs/adr/0041-the-api-verifies-the-transfer-pin.md) a transfer carries its
-PIN in the request body and the **API** verifies it. The BFF no longer gates one at level 2, because
+Since [ADR-0041](../../../docs/adr/0041-the-api-verifies-the-transfer-pin.md) the **API** verifies
+a transfer's PIN rather than the BFF, and since
+[ADR-0042](../../../docs/adr/0042-a-transfer-authorisation-is-bound-and-spent-once.md) the PIN does
+not travel with the transfer at all: it is presented to the authorisation mint
+(`POST /api/transfers[/internal]/authorizations`), which returns a one-shot id the transfer carries
+in the `Step-Up-Authorization` header for the API to bind and spend. A withdrawal is the one money
+move that still sends its PIN in the body. The BFF no longer gates a transfer at level 2, because
 double-gating would leave the weaker of the two checks in the path and keep the five-minute session
 window alive for money movement. `/full-number` is the only route behind the level-2 gate. The
-no-session refusal is not transfer-specific either: since `d74603c` (2026-08-20) EVERY `/api/*`
-request, any method, is refused at the BFF with the API's own 401 shape unless a live session
-resolves.
+no-session refusal is not transfer-specific either: since `d74603c` (2026-08-20) every `/api/*`
+request that is not one of the three 404'd auth paths above, any method, is refused at the BFF with
+the API's own 401 shape unless a live session resolves.
 
 ---
 
@@ -256,14 +261,15 @@ private static readonly string[] PinRequiredSuffixes = { "/full-number" };
 ```
 
 What a caller observes, measured through the BFF (:5000 → API :7215, Development) — rows 2–4 on
-2026-09-03 (`070803f`), row 1 on 2026-08-19 (ADR-0041 amendment):
+2026-09-03 (`070803f`) for GET and POST, row 1 on 2026-08-19 (ADR-0041 amendment), and the PATCH and
+DELETE verbs of row 2 on 2026-08-20 (`d74603c`):
 
 | Request | Session cookie | Answer |
 |---|---|---|
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/refresh` | any, even a live one | `404` |
 | any other `/api/*` route, any method | none, never issued, or replayed after logout | `401` — the API's own `AUTH_TOKEN_MISSING` body, no `X-Auth-Level-*` header |
 | `GET /api/accounts/{id}/full-number` | live, level 1 | `403 STEP_UP_REQUIRED`, `X-Auth-Level-Required: 2`, `X-Auth-Level-Current: 1` |
-| `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; the PIN is in the body and the API verifies it |
+| `POST /api/transfers` | live, level 1 | proxied — `400` model-state from the API on `{}`; its proof is the one-shot authorisation in the `Step-Up-Authorization` header, which the API binds and spends (ADR-0042) |
 
 The 401 carries the API's own members (apart from `traceId`), on purpose: a caller probing for the
 step-up gate learns nothing from the answer, and the SPA already knows the shape. 401 and 403 are
@@ -527,7 +533,7 @@ dotnet run --project src/AzureBank.Api &
 dotnet run --project src/AzureBank.Bff
 
 # Test session status
-curl -k https://localhost:5001/bff/auth/session-status
+curl http://localhost:5000/bff/auth/session-status
 # {"isAuthenticated":false,"authLevel":null,"isPinVerified":null}
 ```
 
