@@ -258,8 +258,8 @@ public static class ServiceCollectionExtensions
                 + "published. Name a directory outside the tree.")
             .Validate(
                 o => o.Runner != NoticeRunner.Api || o.LeaseSeconds >= 2 * o.PeriodSeconds,
-                "Notices:LeaseSeconds must exceed Notices:PeriodSeconds — at least twice it — or a slow "
-                + "sweep is overtaken by the next claim and its rows go out twice.")
+                "Notices:LeaseSeconds must exceed Notices:PeriodSeconds — at least twice it — so a sweep and "
+                + "the next claim do not overlap in the normal case.")
             .ValidateDataAnnotations()
             .ValidateOnStart();
         // The three Api-only rules touch the file system (Directory.Exists, the git walk). That is

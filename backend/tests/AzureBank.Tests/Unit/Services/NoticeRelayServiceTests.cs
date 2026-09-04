@@ -307,6 +307,62 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TheBatchCapsWhatARunnerHolds_FailedRowsIncluded()
+    {
+        /*
+          A runner whose deliveries keep failing holds its rows until the lease lapses. If every
+          sweep then claimed a full batch on top, the holdings would grow past what one lease can
+          deliver. The batch caps LIVE work: held rows are retried first, and only the remaining
+          capacity is claimed afresh.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        await OwedAsync(owner);
+        await OwedAsync(owner);
+        await using var provider = Provider();
+        var relay = Relay(provider, batchSize: 2);
+
+        _transport.Fails = new IOException("refused");
+        (await relay.SweepAsync(CancellationToken.None)).Should().Be(new NoticeSweepSummary(Claimed: 2, Delivered: 0, Owed: 2));
+
+        _clock.Advance(TimeSpan.FromSeconds(7));
+        (await relay.SweepAsync(CancellationToken.None)).Should().Be(
+            new NoticeSweepSummary(Claimed: 0, Delivered: 0, Owed: 2), "two held rows fill a batch of two; nothing more is claimed");
+        (await _context.SubscriberNotices.AsNoTracking().CountAsync(n => n.LeasedBy == relay.RunnerName))
+            .Should().Be(2, "the third row stays free for another runner");
+
+        _transport.Fails = null;
+        _clock.Advance(TimeSpan.FromSeconds(7));
+        (await relay.SweepAsync(CancellationToken.None)).Should().Be(new NoticeSweepSummary(Claimed: 0, Delivered: 2, Owed: 0));
+        (await relay.SweepAsync(CancellationToken.None)).Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 1, Owed: 0));
+    }
+
+    [Fact]
+    public async Task TheVerbAttemptsEachRowOncePerRun_AcrossBatches()
+    {
+        // Batch of one, two rows, the first refused: the second batch's re-read by name would also
+        // return the failed first row — still held, still owed — and must not attempt it again.
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        await OwedAsync(owner);
+        await using var provider = Provider(new FailingOnceTransport(_transport));
+        var previous = NotifyCommand.VerbBatch;
+        NotifyCommand.VerbBatch = 1;
+        try
+        {
+            var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+
+            exitCode.Should().Be(AnchorCommand.NotRecorded);
+            string.Join("\n", lines).Should().Contain("NOTIFIED 1 of 2");
+            _transport.Envelopes.Should().ContainSingle("the refused row was not attempted a second time in the same run");
+        }
+        finally
+        {
+            NotifyCommand.VerbBatch = previous;
+        }
+    }
+
+    [Fact]
     public async Task TheVerbStopsWhenItsLeaseLapses_AndNamesWhatItLeft()
     {
         var owner = await OwnerAsync();
@@ -493,6 +549,17 @@ public sealed class NoticeRelayServiceTests : IDisposable
             Interlocked.Increment(ref _calls) == 1
                 ? throw new InvalidOperationException("the store could not be opened — and this message carries nothing sensitive")
                 : inner.CreateScope();
+    }
+
+    /// <summary>Refuses the first delivery only, then hands the rest to the inner transport.</summary>
+    private sealed class FailingOnceTransport(INoticeTransport inner) : INoticeTransport
+    {
+        private int _calls;
+
+        public Task<string> DeliverAsync(RenderedNotice notice, string toAddress, string directory, CancellationToken cancellationToken) =>
+            Interlocked.Increment(ref _calls) == 1
+                ? throw new IOException("refused once")
+                : inner.DeliverAsync(notice, toAddress, directory, cancellationToken);
     }
 
     /// <summary>Delivers through the inner transport, then lapses the fake clock past the lease.</summary>

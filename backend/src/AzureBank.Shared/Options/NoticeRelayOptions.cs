@@ -60,8 +60,10 @@ public class NoticeRelayOptions
     public int PeriodSeconds { get; set; } = 15;
 
     /// <summary>
-    /// How long a claimed row stays this runner's before another may take it. Must exceed a sweep
-    /// comfortably, or a slow sweep is overtaken and its rows go out twice.
+    /// How long a claimed row stays this runner's before another may take it. Validated to be at
+    /// least twice the period, which keeps a sweep and the next claim from overlapping in the normal
+    /// case; what stops a delivery under a lapsed lease is the check before each row, and neither
+    /// makes the protocol more than at-least-once (ADR-0048 D3).
     /// </summary>
     [Range(30, 3600, ErrorMessage = "Notices:LeaseSeconds must be between 30 and 3600.")]
     public int LeaseSeconds { get; set; } = 120;

@@ -70,8 +70,9 @@ public static class NotifyCommand
     /// <summary>
     /// How many free rows one claim takes; the verb claims batch after batch until none is free or
     /// its lease lapses, so a backlog is still rendered whole while each claim stays small.
+    /// Settable so a test can drive a second batch with two rows instead of a hundred and one.
     /// </summary>
-    internal const int VerbBatch = 100;
+    internal static int VerbBatch { get; set; } = 100;
 
     public static Command Create(IServiceProvider services)
     {
@@ -265,6 +266,7 @@ public static class NotifyCommand
             var run = new NoticeDeliveryRun(context, transport);
             var claimedTotal = 0;
             var lapsed = false;
+            var attempted = new HashSet<Guid>();
 
             /*
               ONE UNIT PER ROW, SHARED WITH THE RELAY (ADR-0048): NoticeDeliveryRun reads the address,
@@ -288,6 +290,7 @@ public static class NotifyCommand
                         break;
                     }
 
+                    attempted.Add(notice.Id);
                     var result = await run.DeliverAsync(notice, contact, fullDirectory, cancellationToken);
                     var reference = result.Reference;
 
@@ -330,15 +333,17 @@ public static class NotifyCommand
                     break;
                 }
 
+                // The next batch. The re-read by name would also return rows this run already
+                // attempted and could not deliver — still owed, still held — so those are excluded:
+                // one attempt per row per run, and each row counted once.
                 var more = await NoticeClaim.ClaimAsync(
                     context, runner, clock.GetUtcNow().UtcDateTime, leaseEnd, VerbBatch, cancellationToken);
                 waiting = more == 0
                     ? []
-                    : await NoticeClaim.HeldBy(context, runner, clock.GetUtcNow().UtcDateTime)
-                        .Where(n => n.DeliveredAt == null)
-                        .ToListAsync(cancellationToken);
-                // Rows held from the batch just delivered are marked; only the new batch reads back.
-                waiting = waiting.Where(n => n.DeliveryReceipt is null).ToList();
+                    : (await NoticeClaim.HeldBy(context, runner, clock.GetUtcNow().UtcDateTime)
+                        .ToListAsync(cancellationToken))
+                        .Where(n => !attempted.Contains(n.Id))
+                        .ToList();
             }
 
             lines.Insert(0, $"NOTIFIED {written} of {claimedTotal} waiting notices into {fullDirectory}");

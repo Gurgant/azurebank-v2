@@ -60,7 +60,8 @@ public static class NoticeClaim
 
     /// <summary>
     /// Stamps up to <paramref name="batch"/> of the oldest free owed rows with this runner's name and
-    /// lease end, and returns how many. Set-based on a relational store; the load-and-save fallback
+    /// lease end, and returns how many; a batch of zero claims nothing, which is what a runner whose
+    /// holdings already fill its batch asks for. Set-based on a relational store; the load-and-save fallback
     /// exists for the InMemory test hosts, which cannot translate ExecuteUpdate. The two paths are
     /// not equally atomic and are not covered by the same tests: the unit suite runs the fallback,
     /// the SQL proofs the statement.
@@ -73,7 +74,11 @@ public static class NoticeClaim
         int batch,
         CancellationToken cancellationToken)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(batch, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(batch);
+        if (batch == 0)
+        {
+            return 0;
+        }
 
         var free = context.SubscriberNotices
             .Where(n => n.DeliveredAt == null && (n.LeasedUntil == null || n.LeasedUntil <= now));
@@ -82,7 +87,9 @@ public static class NoticeClaim
         {
             // The batch by subquery; the free predicate REPEATED on the outer statement, because that
             // is the one the engine re-evaluates under the row lock when two claims collide.
-            var oldest = free.OrderBy(n => n.OccurredAt).Take(batch).Select(n => n.Id);
+            // Oldest first, and the id — a UUIDv7, time-ordered — breaks a tie, so a batch is the
+            // same batch whichever engine sorts it.
+            var oldest = free.OrderBy(n => n.OccurredAt).ThenBy(n => n.Id).Take(batch).Select(n => n.Id);
             return await context.SubscriberNotices
                 .Where(n => oldest.Contains(n.Id)
                             && n.DeliveredAt == null
@@ -94,7 +101,7 @@ public static class NoticeClaim
                     cancellationToken);
         }
 
-        var rows = await free.OrderBy(n => n.OccurredAt).Take(batch).ToListAsync(cancellationToken);
+        var rows = await free.OrderBy(n => n.OccurredAt).ThenBy(n => n.Id).Take(batch).ToListAsync(cancellationToken);
         foreach (var row in rows)
         {
             row.LeasedUntil = leaseEnd;
@@ -114,7 +121,8 @@ public static class NoticeClaim
     public static IQueryable<SubscriberNotice> HeldBy(AzureBankDbContext context, string runner, DateTime now) =>
         context.SubscriberNotices
             .Where(n => n.DeliveredAt == null && n.LeasedBy == runner && n.LeasedUntil > now)
-            .OrderBy(n => n.OccurredAt);
+            .OrderBy(n => n.OccurredAt)
+            .ThenBy(n => n.Id);
 
     /// <summary>How many owed rows another runner holds under a live lease right now.</summary>
     public static Task<int> HeldByOthersAsync(

@@ -45,9 +45,12 @@ each other's rows.
 
 **D2 — The claim is a lease on the row, taken in one statement, and shared.** Two nullable
 columns, `LeasedUntil` and `LeasedBy`, paired by `CK_SubscriberNotices_Lease` the way the delivery
-pair already is. A claim stamps every owed row whose lease is null or lapsed with the runner's name
-and a lease end in ONE set-based UPDATE, so the database serialises two claims and the second finds
-nothing free; the runner then re-reads what it holds BY NAME — never by the instant it wrote, so a
+pair already is. A claim stamps up to `Notices:BatchSize` of the oldest owed rows whose lease is
+null or lapsed with the runner's name and a lease end in ONE set-based UPDATE, so the database
+serialises two claims and the second finds nothing free among them; the batch caps a runner's LIVE
+work, rows it still holds from a failed delivery included, so a runner that keeps failing never
+holds more than one lease can deliver. The runner then re-reads what it holds BY NAME — never by
+the instant it wrote, so a
 store that rounded a timestamp could not make it claim N and read back none — and delivers that.
 The protocol is `NoticeClaim` in Infrastructure, and the verb uses it too (D5). Proved on SQL
 Server: a claim held open in an uncommitted transaction blocks a second runner's sweep — it had not
@@ -96,11 +99,12 @@ owed, or everything owed leased by a live runner.
 spool of addresses at rest and must sit outside any git tree, so no default path can ship. When
 `Runner` is `Api` the directory must exist and pass the verb's own git-tree guard (now shared from
 Infrastructure), the contact is mandatory content of every notice (NIST SP 800-63B-4 §4.6), and the
-lease must be at least twice the period, or a slow sweep is overtaken and its rows go out twice. The
-ranges on the period and the lease apply whatever the runner: an out-of-range value is a
-misconfiguration even when nothing runs. A partial set stops the host, with a message that names the
-key and the fix, which is the only thing an operator sees. Nothing in the section is a secret and
-none joins the six.
+lease must be at least twice the period, so that a sweep and the next claim do not overlap in the
+normal case — a bound on overlap, not on duplicates: a delivery already in flight when a lease
+lapses still completes, and D3 is what says so. The ranges on the period and the lease apply
+whatever the runner: an out-of-range value is a misconfiguration even when nothing runs. A partial
+set stops the host, with a message that names the key and the fix, which is the only thing an
+operator sees. Nothing in the section is a secret and none joins the six.
 
 **D7 — Logging, and no `SecurityEvent`.** Information per delivered notice — reference, kind,
 receipt; Warning for an unusable address, an unrenderable kind, a transport failure and a missing

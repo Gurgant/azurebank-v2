@@ -27,8 +27,10 @@ namespace AzureBank.Api.Services;
 /// backlog is drained a sweep at a time and a second runner finds free rows beside this one. A
 /// sweep that outlives its own lease all the same stops delivering: the rows it has not reached are
 /// free to the next claimant, and finishing them here would produce exactly the duplicate the lease
-/// exists to prevent. The lease is validated to be at least twice the period for the same reason.
-/// At-least-once is still the honest word — see the claim's remarks.
+/// exists to prevent. The lease is validated to be at least twice the period so that a sweep and the
+/// next claim do not overlap in the normal case; that bounds the overlap, not the duplicates — a
+/// delivery already in flight when the lease lapses still completes, and at-least-once is still the
+/// honest word (see the claim's remarks).
 /// </para>
 /// <para>
 /// THE HOUSE SHAPE for a loop (the two hygiene sweeps): <see cref="PeriodicTimer"/>, so the first
@@ -150,10 +152,22 @@ public sealed class NoticeRelayService : BackgroundService
 
         var now = UtcNow;
         var leaseEnd = now.Add(_options.Lease);
-        var claimed = await NoticeClaim.ClaimAsync(
-            context, RunnerName, now, leaseEnd, _options.BatchSize, cancellationToken);
 
-        var mine = await NoticeClaim.HeldBy(context, RunnerName, now).ToListAsync(cancellationToken);
+        /*
+          THE BATCH CAPS LIVE WORK, not new claims. Rows this runner still holds from an earlier
+          sweep — delivered to a transport that refused them — are retried first, and only the
+          remaining capacity is claimed afresh; otherwise a runner that kept failing would claim a
+          full batch on top of what it held, sweep after sweep, until it held more than one lease
+          could deliver.
+        */
+        var held = await NoticeClaim.HeldBy(context, RunnerName, now).ToListAsync(cancellationToken);
+        var capacity = Math.Max(0, _options.BatchSize - held.Count);
+        var claimed = await NoticeClaim.ClaimAsync(
+            context, RunnerName, now, leaseEnd, capacity, cancellationToken);
+
+        var mine = claimed == 0
+            ? held
+            : await NoticeClaim.HeldBy(context, RunnerName, now).ToListAsync(cancellationToken);
         if (claimed > 0 && mine.Count == 0)
         {
             _logger.LogWarning(
