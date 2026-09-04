@@ -22,17 +22,10 @@ public static class PickupDirectoryGuard
 {
     /// <summary>True when the directory, or any directory above it, is a git working tree — where it
     /// SITS and where it POINTS.</summary>
-    public static bool InsideAGitRepository(string fullDirectory)
-    {
-        if (AncestorHoldsGit(fullDirectory))
-        {
-            return true;
-        }
-
-        var physical = PhysicalPath(fullDirectory);
-        return !string.Equals(physical, fullDirectory, StringComparison.OrdinalIgnoreCase)
-               && AncestorHoldsGit(physical);
-    }
+    public static bool InsideAGitRepository(string fullDirectory) =>
+        // Both walks, always. The earlier form skipped the physical walk when the two paths compared
+        // equal ignoring case, which on a case-sensitive file system is two different directories.
+        AncestorHoldsGit(fullDirectory) || AncestorHoldsGit(PhysicalPath(fullDirectory));
 
     private static bool AncestorHoldsGit(string fullDirectory)
     {

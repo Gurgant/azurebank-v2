@@ -5,17 +5,26 @@ using Microsoft.EntityFrameworkCore;
 namespace AzureBank.Infrastructure.Notices;
 
 /// <summary>
-/// The claim protocol every runner shares (ADR-0048): a name, one set-based lease over the free
-/// owed rows, and the queries that read what a runner holds and what others hold.
+/// The claim protocol every runner shares (ADR-0048): a name, one set-based lease over a bounded
+/// batch of the free owed rows, and the queries that read what a runner holds and what others hold.
 /// </summary>
 /// <remarks>
 /// <para>
-/// ONE STATEMENT, ONE CHANCE TO INTERLEAVE. The claim is a single UPDATE over every owed row whose
-/// lease is null or lapsed. The database serialises two such statements: the second waits on the
-/// first's row locks and re-evaluates the predicate on the committed row, so it finds the lease
-/// the first one wrote and takes nothing. A runner that claimed N rows in N round trips would spend
-/// N chances to interleave instead of one. Proved on SQL Server by a claim held open in a
-/// transaction, which blocks a second runner's sweep until it commits; the second then claims zero.
+/// ONE STATEMENT, ONE CHANCE TO INTERLEAVE. The claim is a single UPDATE over the oldest free owed
+/// rows — no lease, or a lapsed one — up to a batch. The batch is chosen by a subquery, and the
+/// UPDATE's own WHERE repeats the free predicate: the database serialises two such statements, the
+/// second waits on the first's row locks and re-evaluates that predicate on the committed row, so it
+/// finds the lease the first one wrote and takes nothing. A runner that claimed N rows in N round
+/// trips would spend N chances to interleave instead of one. Proved on SQL Server by a claim held
+/// open in a transaction, which blocks a second runner's sweep until it commits; the second then
+/// claims zero.
+/// </para>
+/// <para>
+/// BOUNDED, so a claim is proportional to what one lease can deliver. An unbounded claim over a
+/// backlog — five hundred rows, measured in the shared test store — would stamp the whole table,
+/// run out of lease part-way, and leave the rest held by a runner no longer delivering them until the
+/// lease lapsed, while a second runner found nothing free. A batch keeps the tail free for whoever
+/// sweeps next.
 /// </para>
 /// <para>
 /// WHAT A LEASE DOES NOT DO. It stops two runners holding one row at the same moment. It cannot stop
@@ -50,28 +59,42 @@ public static class NoticeClaim
     }
 
     /// <summary>
-    /// Stamps every free owed row — no lease, or a lapsed one — with this runner's name and lease
-    /// end, and returns how many. Set-based on a relational store; the load-and-save fallback exists
-    /// for the InMemory test hosts, which cannot translate ExecuteUpdate. The two paths are not
-    /// equally atomic and are not covered by the same tests: the unit suite runs the fallback, the
-    /// SQL proofs the statement.
+    /// Stamps up to <paramref name="batch"/> of the oldest free owed rows with this runner's name and
+    /// lease end, and returns how many. Set-based on a relational store; the load-and-save fallback
+    /// exists for the InMemory test hosts, which cannot translate ExecuteUpdate. The two paths are
+    /// not equally atomic and are not covered by the same tests: the unit suite runs the fallback,
+    /// the SQL proofs the statement.
     /// </summary>
     public static async Task<int> ClaimAsync(
-        AzureBankDbContext context, string runner, DateTime now, DateTime leaseEnd, CancellationToken cancellationToken)
+        AzureBankDbContext context,
+        string runner,
+        DateTime now,
+        DateTime leaseEnd,
+        int batch,
+        CancellationToken cancellationToken)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batch, 1);
+
         var free = context.SubscriberNotices
             .Where(n => n.DeliveredAt == null && (n.LeasedUntil == null || n.LeasedUntil <= now));
 
         if (context.Database.IsRelational())
         {
-            return await free.ExecuteUpdateAsync(
-                set => set
-                    .SetProperty(n => n.LeasedUntil, leaseEnd)
-                    .SetProperty(n => n.LeasedBy, runner),
-                cancellationToken);
+            // The batch by subquery; the free predicate REPEATED on the outer statement, because that
+            // is the one the engine re-evaluates under the row lock when two claims collide.
+            var oldest = free.OrderBy(n => n.OccurredAt).Take(batch).Select(n => n.Id);
+            return await context.SubscriberNotices
+                .Where(n => oldest.Contains(n.Id)
+                            && n.DeliveredAt == null
+                            && (n.LeasedUntil == null || n.LeasedUntil <= now))
+                .ExecuteUpdateAsync(
+                    set => set
+                        .SetProperty(n => n.LeasedUntil, leaseEnd)
+                        .SetProperty(n => n.LeasedBy, runner),
+                    cancellationToken);
         }
 
-        var rows = await free.ToListAsync(cancellationToken);
+        var rows = await free.OrderBy(n => n.OccurredAt).Take(batch).ToListAsync(cancellationToken);
         foreach (var row in rows)
         {
             row.LeasedUntil = leaseEnd;

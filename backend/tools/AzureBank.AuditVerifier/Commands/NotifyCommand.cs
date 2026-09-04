@@ -67,6 +67,12 @@ public static class NotifyCommand
     /// </summary>
     internal static readonly TimeSpan VerbLease = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// How many free rows one claim takes; the verb claims batch after batch until none is free or
+    /// its lease lapses, so a backlog is still rendered whole while each claim stays small.
+    /// </summary>
+    internal const int VerbBatch = 100;
+
     public static Command Create(IServiceProvider services)
     {
         var command = new Command(
@@ -220,7 +226,10 @@ public static class NotifyCommand
 
         try
         {
-            var now = DateTime.UtcNow;
+            // The clock is a seam so a test can lapse the verb's lease without waiting two minutes.
+            var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+            var now = clock.GetUtcNow().UtcDateTime;
+            var leaseEnd = now.Add(VerbLease);
             var runner = NoticeClaim.RunnerNameFor(
                 "verb", Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
 
@@ -228,11 +237,11 @@ public static class NotifyCommand
               THE VERB CLAIMS TOO (ADR-0048). A row a live runner holds is not this run's: rendering it
               would produce the duplicate the lease exists to prevent, and a row this run read without
               claiming could be taken by the relay between the read and the write. So the verb takes
-              the same lease the relay takes, under its own name, and delivers only what it holds.
-              Rows another runner holds are counted and named, not touched: if that runner dies, its
-              lease lapses and the next claim — this verb or the relay — takes them.
+              the same lease the relay takes, under its own name, batch by batch, and delivers only
+              what it holds. Rows another runner holds are counted and named, not touched: if that
+              runner dies, its lease lapses and the next claim — this verb or the relay — takes them.
             */
-            await NoticeClaim.ClaimAsync(context, runner, now, now.Add(VerbLease), cancellationToken);
+            await NoticeClaim.ClaimAsync(context, runner, now, leaseEnd, VerbBatch, cancellationToken);
             var leased = await NoticeClaim.HeldByOthersAsync(context, runner, now, cancellationToken);
             var waiting = await NoticeClaim.HeldBy(context, runner, now).ToListAsync(cancellationToken);
 
@@ -254,53 +263,92 @@ public static class NotifyCommand
             }
 
             var run = new NoticeDeliveryRun(context, transport);
+            var claimedTotal = 0;
+            var lapsed = false;
 
             /*
               ONE UNIT PER ROW, SHARED WITH THE RELAY (ADR-0048): NoticeDeliveryRun reads the address,
               checks the evidence, renders, delivers and marks. This verb owns the words, and the
               words are the ones it printed when it owned the steps too. The address is in none.
+              Batch after batch until nothing is free — or the verb's own lease lapses, after which
+              the rows it has not reached are free to the next claim and delivering them here would
+              be the duplicate the lease exists to prevent, exactly as the relay stops.
             */
-            foreach (var notice in waiting)
+            while (waiting.Count > 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var result = await run.DeliverAsync(notice, contact, fullDirectory, cancellationToken);
-                var reference = result.Reference;
+                claimedTotal += waiting.Count;
 
-                if (result.AuditRowMissing)
+                foreach (var notice in waiting)
                 {
-                    lines.Add($"NO AUDIT ROW backs notice {reference}: no {notice.Event} row exists for that user. "
-                              + "The notice is rendered anyway; the absence is the finding.");
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (clock.GetUtcNow().UtcDateTime >= leaseEnd)
+                    {
+                        lapsed = true;
+                        break;
+                    }
+
+                    var result = await run.DeliverAsync(notice, contact, fullDirectory, cancellationToken);
+                    var reference = result.Reference;
+
+                    if (result.AuditRowMissing)
+                    {
+                        lines.Add($"NO AUDIT ROW backs notice {reference}: no {notice.Event} row exists for that user. "
+                                  + "The notice is rendered anyway; the absence is the finding.");
+                    }
+
+                    switch (result.Outcome)
+                    {
+                        case NoticeOutcome.NoAddress:
+                            lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has no email on the account; still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.UnusableAddress:
+                            lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has an email on the account that cannot head a message (it contains a line break); still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.Unrenderable:
+                            lines.Add($"NOT NOTIFIED: notice {reference} names event {notice.Event}, which this build cannot render; still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.TransportFailed:
+                            lines.Add($"NOT NOTIFIED: notice {reference} could not be written ({result.FailureType}); still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.MarkedByAnother:
+                            lines.Add($"NOT NOTIFIED by this run: notice {reference} was marked by another run while this one wrote {result.Receipt}; that file is a duplicate.");
+                            break;
+                        case NoticeOutcome.Delivered:
+                            lines.Add($"  {result.Receipt} <- notice {reference}, {notice.Event} at {notice.OccurredAt:yyyy-MM-dd HH:mm:ss}Z");
+                            written++;
+                            break;
+                    }
                 }
 
-                switch (result.Outcome)
+                if (lapsed)
                 {
-                    case NoticeOutcome.NoAddress:
-                        lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has no email on the account; still owed.");
-                        owed++;
-                        break;
-                    case NoticeOutcome.UnusableAddress:
-                        lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has an email on the account that cannot head a message (it contains a line break); still owed.");
-                        owed++;
-                        break;
-                    case NoticeOutcome.Unrenderable:
-                        lines.Add($"NOT NOTIFIED: notice {reference} names event {notice.Event}, which this build cannot render; still owed.");
-                        owed++;
-                        break;
-                    case NoticeOutcome.TransportFailed:
-                        lines.Add($"NOT NOTIFIED: notice {reference} could not be written ({result.FailureType}); still owed.");
-                        owed++;
-                        break;
-                    case NoticeOutcome.MarkedByAnother:
-                        lines.Add($"NOT NOTIFIED by this run: notice {reference} was marked by another run while this one wrote {result.Receipt}; that file is a duplicate.");
-                        break;
-                    case NoticeOutcome.Delivered:
-                        lines.Add($"  {result.Receipt} <- notice {reference}, {notice.Event} at {notice.OccurredAt:yyyy-MM-dd HH:mm:ss}Z");
-                        written++;
-                        break;
+                    break;
                 }
+
+                var more = await NoticeClaim.ClaimAsync(
+                    context, runner, clock.GetUtcNow().UtcDateTime, leaseEnd, VerbBatch, cancellationToken);
+                waiting = more == 0
+                    ? []
+                    : await NoticeClaim.HeldBy(context, runner, clock.GetUtcNow().UtcDateTime)
+                        .Where(n => n.DeliveredAt == null)
+                        .ToListAsync(cancellationToken);
+                // Rows held from the batch just delivered are marked; only the new batch reads back.
+                waiting = waiting.Where(n => n.DeliveryReceipt is null).ToList();
             }
 
-            lines.Insert(0, $"NOTIFIED {written} of {waiting.Count} waiting notices into {fullDirectory}");
+            lines.Insert(0, $"NOTIFIED {written} of {claimedTotal} waiting notices into {fullDirectory}");
+            if (lapsed)
+            {
+                var unreached = claimedTotal - written - owed - lines.Count(l => l.StartsWith("NOT NOTIFIED by this run"));
+                owed += unreached;
+                lines.Add($"LEASE LAPSED after {written + owed - unreached} of {claimedTotal}: the verb held its rows for {VerbLease.TotalMinutes:0} minutes and "
+                          + $"{unreached} were not reached. They are free to the next claim — this verb again, or the relay. Run again.");
+            }
             if (leased > 0)
             {
                 lines.Add($"{leased} more owed notice(s) are leased by a live runner and were left to it.");

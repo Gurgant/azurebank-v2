@@ -92,15 +92,15 @@ owed, or everything owed leased by a live runner.
 
 **D6 — Options, off by default, refused when partial.** The `Notices` section: `Runner`
 (`None|Api|Function`, default `None`), `PickupDirectory`, `Contact`, `PeriodSeconds` (15),
-`LeaseSeconds` (120). `None` is the default on purpose: a pickup directory is a spool of addresses
-at rest and must sit outside any git tree, so no default path can ship. When `Runner` is `Api` the
-directory must exist and pass the verb's own git-tree guard (now shared from Infrastructure), the
-contact is mandatory content of every notice (NIST SP 800-63B-4 §4.6), and the lease must be at
-least twice the period, or a slow sweep is overtaken and its rows go out twice. The ranges on the
-period and the lease apply whatever the runner: an out-of-range value is a misconfiguration even
-when nothing runs. A partial set stops the host, with a message that names the key and the fix,
-which is the only thing an operator sees. Nothing in the section is a secret and none joins the
-six.
+`LeaseSeconds` (120), `BatchSize` (100). `None` is the default on purpose: a pickup directory is a
+spool of addresses at rest and must sit outside any git tree, so no default path can ship. When
+`Runner` is `Api` the directory must exist and pass the verb's own git-tree guard (now shared from
+Infrastructure), the contact is mandatory content of every notice (NIST SP 800-63B-4 §4.6), and the
+lease must be at least twice the period, or a slow sweep is overtaken and its rows go out twice. The
+ranges on the period and the lease apply whatever the runner: an out-of-range value is a
+misconfiguration even when nothing runs. A partial set stops the host, with a message that names the
+key and the fix, which is the only thing an operator sees. Nothing in the section is a secret and
+none joins the six.
 
 **D7 — Logging, and no `SecurityEvent`.** Information per delivered notice — reference, kind,
 receipt; Warning for an unusable address, an unrenderable kind, a transport failure and a missing
@@ -154,8 +154,14 @@ lease, then again with `Notices__Runner=None` as the control:
 (The transcript's own 24-second file check reported NO for the first notice: it tested a path built
 from an id captured with a trailing newline. The `Date:` header and the row are the evidence.)
 
-An owed notice reaches the pickup directory within one period of being recorded, for as long as the
-API runs with the flag set; the verb remains for every other case. The last hop is unchanged: a file
+The period bounds how often the relay LOOKS, not when a notice lands: a sweep delivers the rows it
+claimed one after another, so a backlog, a slow transport, a lapsed lease or a row refused and
+retried each push the next file later than one period. Measured with an empty backlog the file
+appeared within one period; that is the floor, not a promise. A claim is bounded to a batch
+(`Notices:BatchSize`, 100) so a backlog is drained a sweep at a time and a second runner finds free
+rows beside the first; the verb claims the same batches in a loop until nothing is free or its own
+lease lapses. Getting the file from the directory to the holder is still an operator's step, or a
+collector's. The verb remains for every other case. The last hop is unchanged: a file
 on this machine, seen by nobody, and the deferral record's preconditions — a provider credential,
 addresses the project may write to, a second contact and a remedy behind it — still stand between
 that file and "delivered".

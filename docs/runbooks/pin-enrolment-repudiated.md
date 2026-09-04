@@ -45,9 +45,13 @@ whatever they happened to spell. Run against the API's database:
 
 `Event` is which of the two kinds this is, and it decides how the paragraphs above and §4 read.
 `OccurredAt` is when the PIN was set or changed (UTC). `DeliveredAt` is when a runner — the relay
-or `notify` — rendered it; if
-it is NULL the subscriber cannot be holding a rendered notice for this reference, and the reference
-came from somewhere else — treat that as its own finding.
+or `notify` — rendered it and marked the row. NULL has two readings. Usually nobody has rendered it,
+and a subscriber quoting this reference got it from somewhere else — its own finding. But a runner
+can render the file and stop before the mark (ADR-0048 D3): then the file sits in the pickup
+directory, a person may already have moved it on, and the row still reads owed. Look in the
+directory for `<reference>.eml` before concluding anything; if it is there, the subscriber may well
+be holding it, and the row is the one to fix — mark it by hand, or move the file out and let the
+next sweep re-render it.
 
 The audit row is joined by (actor, event), never by time — the two are written in one transaction
 but read two clocks:

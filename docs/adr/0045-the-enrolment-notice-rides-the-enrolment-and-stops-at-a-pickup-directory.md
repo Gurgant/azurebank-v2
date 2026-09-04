@@ -83,7 +83,7 @@ this would have been its first correctness-bearing loop.~~ (struck 2026-09-04; c
 > a notice enrolled at 18:42:09Z was still owed at 18:42:54Z, and nothing in the process read the
 > table. The deferral record this ADR pointed at was ratified the same day in the other direction,
 > and ADR-0048 adds the hosted loop this clause declined: it claims owed rows under a lease and
-> delivers them through the same transport, within one period. The verb stays, for a store where
+> delivers them through the same transport, on a period. The verb stays, for a store where
 > nothing runs and for the day the runner is down, and it now steps aside for a row a live runner
 > holds. The reasoning here was sound for the deployment it described; what changed is the decision
 > that the deployment should have a runner.

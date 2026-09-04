@@ -66,6 +66,14 @@ public class NoticeRelayOptions
     [Range(30, 3600, ErrorMessage = "Notices:LeaseSeconds must be between 30 and 3600.")]
     public int LeaseSeconds { get; set; } = 120;
 
+    /// <summary>
+    /// How many free owed rows one sweep claims, oldest first. Bounds a claim to what one lease can
+    /// deliver: an unbounded claim over a backlog would hold the whole table while it ran out of
+    /// lease, and leave the rest to nobody until the lease lapsed.
+    /// </summary>
+    [Range(1, 10000, ErrorMessage = "Notices:BatchSize must be between 1 and 10000.")]
+    public int BatchSize { get; set; } = 100;
+
     public TimeSpan Period => TimeSpan.FromSeconds(PeriodSeconds);
 
     public TimeSpan Lease => TimeSpan.FromSeconds(LeaseSeconds);

@@ -76,7 +76,7 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
         return _factory;
     }
 
-    private NoticeRelayService Runner(int leaseSeconds = 120) =>
+    private NoticeRelayService Runner(int leaseSeconds = 120, int batchSize = 100) =>
         new(
             Factory().Services.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new NoticeRelayOptions
@@ -86,6 +86,7 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
                 Contact = Contact,
                 PeriodSeconds = 5,
                 LeaseSeconds = leaseSeconds,
+                BatchSize = batchSize,
             }),
             Factory().Services.GetRequiredService<ILogger<NoticeRelayService>>());
 
@@ -167,7 +168,7 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
         await using var transaction = await heldContext.Database.BeginTransactionAsync();
         var now = DateTime.UtcNow;
         var claimedByA = await NoticeClaim.ClaimAsync(
-            heldContext, "api/PROOF/1/held0000", now, now.AddMinutes(2), CancellationToken.None);
+            heldContext, "api/PROOF/1/held0000", now, now.AddMinutes(2), 100, CancellationToken.None);
         claimedByA.Should().Be(ids.Count);
 
         var b = Runner();
@@ -272,6 +273,29 @@ public sealed class NoticeRelaySqlServerTests : IDisposable
         var row = await RowAsync(id);
         row.DeliveredAt.Should().BeNull();
         row.LeasedBy.Should().NotBeNull("held until the lease lapses, then tried again — and refused again");
+    }
+
+    [SqlServerFact]
+    public async Task AClaimIsBoundedToTheBatch_OldestFirst_AndTheRestStaysFree()
+    {
+        // The set-based statement with its TOP(n) subquery, translated and run by the real engine.
+        var ids = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+        {
+            ids.Add(await EnrolAsync());
+        }
+
+        await QuarantineOthersAsync(ids);
+        var runner = Runner(batchSize: 2);
+
+        var first = await runner.SweepAsync(CancellationToken.None);
+        first.Should().Be(new NoticeSweepSummary(Claimed: 2, Delivered: 2, Owed: 0));
+        (await RowAsync(ids[2])).LeasedBy.Should().BeNull("the third, youngest row was left free for the next claim");
+        Directory.GetFiles(_directory, "*.eml").Should().HaveCount(2);
+
+        var second = await runner.SweepAsync(CancellationToken.None);
+        second.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 1, Owed: 0));
+        Directory.GetFiles(_directory, "*.eml").Should().HaveCount(3);
     }
 
     [SqlServerTheory]

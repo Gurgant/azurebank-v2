@@ -83,9 +83,14 @@ public sealed class NoticeRelayServiceTests : IDisposable
         return collection.BuildServiceProvider();
     }
 
-    private NoticeRelayService Relay(ServiceProvider provider, NoticeRunner runner = NoticeRunner.Api, int periodSeconds = 5) =>
+    private NoticeRelayService Relay(
+        ServiceProvider provider,
+        NoticeRunner runner = NoticeRunner.Api,
+        int periodSeconds = 5,
+        int batchSize = 100,
+        IServiceScopeFactory? scopes = null) =>
         new(
-            provider.GetRequiredService<IServiceScopeFactory>(),
+            scopes ?? provider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new NoticeRelayOptions
             {
                 Runner = runner,
@@ -93,6 +98,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
                 Contact = Contact,
                 PeriodSeconds = periodSeconds,
                 LeaseSeconds = 120,
+                BatchSize = batchSize,
             }),
             provider.GetRequiredService<ILogger<NoticeRelayService>>(),
             _clock);
@@ -243,24 +249,82 @@ public sealed class NoticeRelayServiceTests : IDisposable
     public async Task OneFailingSweep_IsLoggedAtError_AndTheNextTickStillDelivers()
     {
         /*
-          A non-I/O exception escapes the run's filter and reaches the loop's catch-all: logged at
-          Error, the loop survives, and the row — claimed but not delivered — stays LEASED to this
-          runner, so the next tick retries it by name rather than waiting out the lease.
+          A failure BEFORE any notice is reached — here the scope itself, the shape of a store that
+          cannot be opened — escapes to the loop's catch-all: logged at Error, and the loop survives
+          to deliver on the next tick. A transport failure never gets here; it is contained per
+          notice (the theory below).
         */
         var owner = await OwnerAsync();
         var notice = await OwedAsync(owner);
         await using var provider = Provider();
-        var relay = Relay(provider, periodSeconds: 5);
-        _transport.Fails = new InvalidOperationException("not an I/O failure");
+        var scopes = new ThrowingOnceScopeFactory(provider.GetRequiredService<IServiceScopeFactory>());
+        var relay = Relay(provider, periodSeconds: 5, scopes: scopes);
 
         await relay.StartAsync(CancellationToken.None);
         await AdvanceUntilAsync(() => Task.FromResult(_logs.Lines.Any(l => l.Level == LogLevel.Error && l.Message.Contains("sweep failed"))));
-        (await StoredAsync(notice.Id)).LeasedBy.Should().Be(relay.RunnerName, "the row stays held until the lease lapses");
+        (await StoredAsync(notice.Id)).LeasedBy.Should().BeNull("the sweep failed before it could claim");
 
-        _transport.Fails = null;
         await AdvanceUntilAsync(async () => (await StoredAsync(notice.Id)).DeliveredAt is not null);
 
         await relay.StopAsync(CancellationToken.None);
+    }
+
+    [Theory]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task ATransportFailureOfAnyType_IsContainedPerNotice_AndOnlyTheTypeIsLogged(Type failure)
+    {
+        // Whatever a transport throws short of cancellation — an I/O refusal today, a provider's
+        // refusal with the recipient in its message tomorrow — stays with the notice: owed, held, typed.
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner);
+        await using var provider = Provider();
+        var relay = Relay(provider);
+        _transport.Fails = (Exception)Activator.CreateInstance(failure, $"refused for {Address}")!;
+
+        var summary = await relay.SweepAsync(CancellationToken.None);
+
+        summary.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 0, Owed: 1));
+        (await StoredAsync(notice.Id)).LeasedBy.Should().Be(relay.RunnerName);
+        _logs.Lines.Should().Contain(l => l.Level == LogLevel.Warning && l.Message.Contains(failure.Name));
+        _logs.Lines.Should().NotContain(l => l.Level == LogLevel.Error, "a transport failure is never a failed sweep");
+        _logs.Lines.Should().OnlyContain(l => !l.Message.Contains(Address));
+    }
+
+    [Fact]
+    public async Task AClaimIsBoundedToTheBatch_AndTheNextSweepTakesTheRest()
+    {
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        await OwedAsync(owner);
+        await OwedAsync(owner);
+        await using var provider = Provider();
+        var relay = Relay(provider, batchSize: 2);
+
+        (await relay.SweepAsync(CancellationToken.None)).Should().Be(new NoticeSweepSummary(Claimed: 2, Delivered: 2, Owed: 0));
+        (await relay.SweepAsync(CancellationToken.None)).Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 1, Owed: 0));
+        (await relay.SweepAsync(CancellationToken.None)).Claimed.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task TheVerbStopsWhenItsLeaseLapses_AndNamesWhatItLeft()
+    {
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        await OwedAsync(owner);
+        var collection = new ServiceCollection();
+        collection.AddSingleton<IOptions<AuditOptions>>(Options.Create(new AuditOptions { ChainKey = ChainKey, AnchorKey = AnchorKey }));
+        collection.AddSingleton(_context);
+        collection.AddSingleton<INoticeTransport>(new LeaseLapsingTransport(_transport, _clock, TimeSpan.FromMinutes(3)));
+        collection.AddSingleton<TimeProvider>(_clock);
+        await using var provider = collection.BuildServiceProvider();
+
+        var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+
+        exitCode.Should().Be(AnchorCommand.NotRecorded, "one notice is still owed after the run");
+        var text = string.Join("\n", lines);
+        text.Should().Contain("NOTIFIED 1 of 2").And.Contain("LEASE LAPSED");
+        _transport.Envelopes.Should().ContainSingle("the second row was not delivered under a lease the verb no longer held");
     }
 
     [Fact]
@@ -418,6 +482,17 @@ public sealed class NoticeRelayServiceTests : IDisposable
         throw new TimeoutException(
             "the condition did not become true within 10 s of wall clock; log so far: "
             + string.Join(" || ", _logs.Lines.Select(l => $"[{l.Level}] {l.Message}")));
+    }
+
+    /// <summary>Throws on the first scope only: a store that could not be opened once.</summary>
+    private sealed class ThrowingOnceScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory
+    {
+        private int _calls;
+
+        public IServiceScope CreateScope() =>
+            Interlocked.Increment(ref _calls) == 1
+                ? throw new InvalidOperationException("the store could not be opened — and this message carries nothing sensitive")
+                : inner.CreateScope();
     }
 
     /// <summary>Delivers through the inner transport, then lapses the fake clock past the lease.</summary>

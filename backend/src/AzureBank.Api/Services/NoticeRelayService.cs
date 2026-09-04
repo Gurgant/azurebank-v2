@@ -22,11 +22,13 @@ namespace AzureBank.Api.Services;
 /// loop, and the lease keeps them off each other's rows.
 /// </para>
 /// <para>
-/// THE CLAIM is <see cref="NoticeClaim"/>'s: one set-based UPDATE, then a re-read of what this
-/// runner holds BY NAME. A sweep that outlives its own lease stops delivering: the rows it has not
-/// reached are free to the next claimant, and finishing them here would produce exactly the
-/// duplicate the lease exists to prevent. The lease is validated to be at least twice the period
-/// for the same reason. At-least-once is still the honest word — see the claim's remarks.
+/// THE CLAIM is <see cref="NoticeClaim"/>'s: one set-based UPDATE over a batch, then a re-read of
+/// what this runner holds BY NAME. The batch bounds a claim to what one lease can deliver, so a
+/// backlog is drained a sweep at a time and a second runner finds free rows beside this one. A
+/// sweep that outlives its own lease all the same stops delivering: the rows it has not reached are
+/// free to the next claimant, and finishing them here would produce exactly the duplicate the lease
+/// exists to prevent. The lease is validated to be at least twice the period for the same reason.
+/// At-least-once is still the honest word — see the claim's remarks.
 /// </para>
 /// <para>
 /// THE HOUSE SHAPE for a loop (the two hygiene sweeps): <see cref="PeriodicTimer"/>, so the first
@@ -102,8 +104,8 @@ public sealed class NoticeRelayService : BackgroundService
         }
 
         _logger.LogInformation(
-            "Notice relay: live as {RunnerName}, every {PeriodSeconds}s, lease {LeaseSeconds}s, into {Directory}",
-            RunnerName, _options.PeriodSeconds, _options.LeaseSeconds, _directory);
+            "Notice relay: live as {RunnerName}, every {PeriodSeconds}s, lease {LeaseSeconds}s, batch {BatchSize}, into {Directory}",
+            RunnerName, _options.PeriodSeconds, _options.LeaseSeconds, _options.BatchSize, _directory);
 
         using var timer = new PeriodicTimer(_options.Period, _clock);
         try
@@ -148,7 +150,8 @@ public sealed class NoticeRelayService : BackgroundService
 
         var now = UtcNow;
         var leaseEnd = now.Add(_options.Lease);
-        var claimed = await NoticeClaim.ClaimAsync(context, RunnerName, now, leaseEnd, cancellationToken);
+        var claimed = await NoticeClaim.ClaimAsync(
+            context, RunnerName, now, leaseEnd, _options.BatchSize, cancellationToken);
 
         var mine = await NoticeClaim.HeldBy(context, RunnerName, now).ToListAsync(cancellationToken);
         if (claimed > 0 && mine.Count == 0)

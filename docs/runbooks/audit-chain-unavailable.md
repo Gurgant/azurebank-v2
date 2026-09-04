@@ -999,6 +999,12 @@ The headlines, and what each means from THIS verb:
   `.partial` is a write that failed, and can be deleted. The row is the truth: delete or move the
   orphan and run again, and the notice is rendered afresh under the same reference. A second run
   into the same directory refuses to overwrite it and says so.
+- `LEASE LAPSED` — the verb claims what it renders, under its own name and a two-minute lease
+  (ADR-0048), batch after batch; a run too large or too slow to finish inside that lease stops
+  delivering and says how many it did not reach. Those rows are not lost: they are free to the next
+  claim — this verb again, or the API's relay — and delivering them here, under a lease the verb no
+  longer held, would be the duplicate the lease exists to prevent. Exit **6**, because notices are
+  still owed. Run again.
 - `CANNOT NOTIFY` — exit **3**: the tool is not configured, the ring will not build, or the store
   could not be read or written. Not a statement about any notice.
 - `INTERRUPTED` — exit **5**. Notices written and marked before the interruption stay marked.

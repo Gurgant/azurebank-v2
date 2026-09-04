@@ -42,8 +42,9 @@ the pickup directory already lets the ADR say.
 Detection. In the threat model — an attacker with a stolen session enrols a PIN behind the account
 password, or changes an existing one behind the PIN alone (ADR-0047) — the notice is the only thing
 that reaches the legitimate owner, and — until the API's relay landed (ADR-0048) — it reached them
-only if somebody ran a verb and then moved a file; now the file is written within a period, and a
-person still has to move it. A sending relay turns "when the operator remembers" into
+only if somebody ran a verb and then moved a file; now the file is written on a period, backlog
+permitting, and a person still has to move it. A sending relay turns "when the operator
+remembers" into
 "within seconds of the enrolment", which is the property NIST SP 800-63B-4 §4.6 is written to
 provide.
 

@@ -279,10 +279,12 @@ public class AuditProseGuardTests
           export section, and the coincidence is no longer what carries it.
 
           The exact count is what notices it: a new verdict cannot arrive without this number
-          moving, whatever the runbook happens to say.
+          moving, whatever the runbook happens to say. (It moved 28 -> 29 on 2026-09-04 when the
+          verb learned to claim under a lease and gained LEASE LAPSED, ADR-0048 — documented in the
+          notify section of the runbook, deliberately, before this number was touched.)
         */
         headlines.Should().HaveCount(
-            28,
+            29,
             "the extraction found {0}, from {1}. FEWER means the regex or the comment stripper "
             + "regressed -- the first version of this guard shipped blind to four verdicts for want "
             + "of a colon, and the second to any headline behind a warning prefix. MORE means a "

@@ -41,10 +41,9 @@ public enum NoticeOutcome
 /// </summary>
 /// <remarks>
 /// The address is not here, and the failure message is not here: an I/O message can echo the path
-/// it was writing, which is the case the catch below covers. A sending transport added later must
-/// throw <see cref="IOException"/> for a refusal, or be added to the filter — otherwise its
-/// exception, recipient and all, escapes to the caller's catch-all and is logged whole. Callers
-/// turn this into console lines or log lines; neither ever sees the address.
+/// it was writing, and a sending transport's refusal can echo the recipient, so every transport
+/// failure that is not a cancellation is contained per notice and reported by TYPE. Callers turn
+/// this into console lines or log lines; neither ever sees the address.
 /// </remarks>
 public sealed record NoticeResult(
     SubscriberNotice Notice,
@@ -148,9 +147,10 @@ public sealed class NoticeDeliveryRun
         {
             receipt = await _transport.DeliverAsync(rendered, address, directory, cancellationToken);
         }
-        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
+        catch (Exception failure) when (failure is not OperationCanceledException)
         {
-            // The TYPE only: an I/O message can echo the path it was writing.
+            // The TYPE only, whatever the transport threw: an I/O message can echo the path, a
+            // relay's refusal can echo the recipient. Cancellation is the caller's and passes.
             return new NoticeResult(
                 notice, reference, NoticeOutcome.TransportFailed, null, auditRowMissing, failure.GetType().Name);
         }
