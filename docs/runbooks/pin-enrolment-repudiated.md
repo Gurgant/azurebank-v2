@@ -103,12 +103,19 @@ that the remedy was partial.
 proved a PIN and not the password, so clearing `PinHash` takes back the credential they used and
 setting a new one costs the password they never had. What it does NOT take back is the access token
 they are already holding. Clearing the PIN revokes no token, and step 3 revokes REFRESH tokens only,
-so until the current access token expires — 15 minutes at most — that session still reads the
-account, its transactions and `/api/auth/me`, can deposit, and can reveal the full number if the
-session was elevated before you acted. A transfer needs an authorisation that was minted with the
-OLD PIN, so one already minted and unspent can still be presented inside its own two-minute window.
-**Treat the account as contained only after that window has passed**, and note the time you ran
-step 2 so the record shows when it closed.
+so until that access token dies the session still reads the account, its transactions and
+`/api/auth/me`, can deposit, and can reveal the full number if the session was elevated before you
+acted. A transfer needs an authorisation that was minted with the OLD PIN, so one already minted and
+unspent can still be presented inside its own two-minute window.
+
+How long that is depends on what the attacker holds. A bearer token presented to the API directly
+lives its full 15 minutes — and a direct caller is who the change path is reachable by, since the
+client turns away anyone who already has a PIN. A BFF session ends sooner: inside the token's last
+60 seconds the BFF tries to refresh it, the API refuses the refresh token step 3 revoked, and the
+BFF drops the session there; `/bff/auth/me` may still answer from what it cached, but nothing more
+reaches the API. **Plan the clock on the 15 minutes** — the shorter case is a bonus, not the bound —
+treat the account as contained only after it has passed, and note the time you ran step 2 so the
+record shows when it closed.
 
 After it, the remedy is complete for this attacker unless the subscriber ALSO repudiates the
 original enrolment, or the PIN they lost is one they reuse elsewhere. Say which of the three

@@ -13,10 +13,10 @@ verb renders the pending rows into a pickup directory. Its D8 named what did **n
 and a PIN CHANGE was first on that list, for four reasons.
 
 Two of the four were true when written and are still true: the wording of the two standards, and
-that a change costs the current PIN. A third stopped being true the moment this decision was
-implemented — the change path writes an audit row now. The fourth, that a notice here would need a
-suppression rule that does not exist, is denied by D4 below. None of them was a reason to stay
-silent, which is what measuring showed.
+that a change costs the current PIN. The third — that the change path wrote no audit row — was also
+true, and is the condition D2 below ends. The fourth, that a notice here would need a suppression
+rule that does not exist, is denied by D4 below. None of them was a reason to stay silent, which is
+what measuring showed.
 
 Measured 2026-09-04 through the BFF (`:5000`) in front of the API (`:7215`), Development, against a
 throwaway store, **before any of this ADR was implemented**:
