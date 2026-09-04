@@ -1,4 +1,5 @@
 using AzureBank.Infrastructure.Data;
+using AzureBank.Infrastructure.Notices;
 using AzureBank.Infrastructure.Extensions;
 using AzureBank.Shared.Options;
 using Microsoft.Extensions.Configuration;
@@ -83,7 +84,7 @@ public static class ServiceCollectionExtensions
 
         // The last hop of `notify` (ADR-0045): a pickup directory on this machine. The one place a
         // notice's address goes, and the seam a relay would replace -- named in docs/deferred/.
-        services.AddSingleton<Notices.INoticeTransport, Notices.PickupDirectoryTransport>();
+        services.AddSingleton<INoticeTransport, PickupDirectoryTransport>();
 
         return services;
     }

@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace AzureBank.AuditVerifier.Notices;
+namespace AzureBank.Infrastructure.Notices;
 
 /// <summary>
 /// Writes each notice as one RFC 5322 message file (<c>.eml</c>) into a directory the operator named.

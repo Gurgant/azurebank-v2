@@ -1,7 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Data.Common;
-using AzureBank.AuditVerifier.Notices;
+using AzureBank.Infrastructure.Notices;
 using AzureBank.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

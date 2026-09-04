@@ -1,4 +1,4 @@
-namespace AzureBank.AuditVerifier.Notices;
+namespace AzureBank.Infrastructure.Notices;
 
 /// <summary>
 /// The last hop: takes a rendered notice and the address it is for, and produces a receipt.

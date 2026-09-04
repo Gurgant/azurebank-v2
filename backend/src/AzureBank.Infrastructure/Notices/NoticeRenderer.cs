@@ -2,7 +2,7 @@ using System.Globalization;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 
-namespace AzureBank.AuditVerifier.Notices;
+namespace AzureBank.Infrastructure.Notices;
 
 /// <summary>
 /// Turns an owed-notice row into the words the account holder reads: an enrolment (ADR-0045) or a

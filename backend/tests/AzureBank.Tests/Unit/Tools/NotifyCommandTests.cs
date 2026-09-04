@@ -1,6 +1,6 @@
 using System.Text;
 using AzureBank.AuditVerifier.Commands;
-using AzureBank.AuditVerifier.Notices;
+using AzureBank.Infrastructure.Notices;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
