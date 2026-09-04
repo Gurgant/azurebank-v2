@@ -591,11 +591,19 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 
 ### Environment Variables
 
-| Variable                               | Description         | Default     |
-| -------------------------------------- | ------------------- | ----------- |
-| `ASPNETCORE_ENVIRONMENT`               | Runtime environment | Development |
-| `ConnectionStrings__DefaultConnection` | Database connection | -           |
-| `Jwt__Secret`                          | JWT signing key     | -           |
+| Variable                               | Description                              | Default     |
+| -------------------------------------- | ---------------------------------------- | ----------- |
+| `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Development |
+| `ConnectionStrings__DefaultConnection` | Database connection                      | -           |
+| `Jwt__Secret`                          | JWT signing key (README recipe; unchecked) | -         |
+| `Idempotency__HashKey`                 | Idempotency HMAC key (32+, ADR-0009)     | -           |
+| `StepUp__BindingKey`                   | Step-up binding HMAC key (32+, ADR-0042) | -           |
+| `Audit__ChainKey`                      | Audit chain HMAC key (32+, ADR-0044)     | -           |
+| `Audit__AnchorKey`                     | Audit anchor HMAC key (32+, ADR-0044)    | -           |
+| `Security__PinPepper`                  | PIN pepper (32+, ADR-0011) — also Seeder | -           |
+
+The six secrets are the root README's recipe spelled with `__` instead of `:`; in development they
+come from `dotnet user-secrets`. The Seeder needs only the connection string and the pepper.
 
 ---
 

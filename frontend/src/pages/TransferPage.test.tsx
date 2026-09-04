@@ -12,9 +12,10 @@ import { TransferPage } from './TransferPage';
 import { seedMockSession } from '../mocks/state';
 
 /**
- * PR-11 — the external transfer end to end, INCLUDING the step-up interceptor: pick an
- * account, confirm a recipient by exact AzureTag, enter an amount, review, Send → the level-2
- * 403 pops the root StepUpModal → PIN → the transfer replays and lands on the receipt.
+ * PR-11 — the external transfer end to end, PIN collected in the page (ADR-0041/0042): pick an
+ * account, confirm a recipient by exact AzureTag, enter an amount, review, PIN → the authorisation
+ * is minted and spent on Send → receipt. Until ADR-0041 Send met a level-2 403 and the root
+ * StepUpModal collected the PIN; it stays mounted below to prove it no longer appears.
  */
 
 function renderTransfer() {

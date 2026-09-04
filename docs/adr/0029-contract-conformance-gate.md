@@ -105,14 +105,21 @@ the first for everything — which is why `HistoryPage`, which renders `problem.
 that endpoint, showed a sentence under MSW and its generic fallback in production.
 
 **The PIN drift was the dangerous one, and it is worth being precise about why.** The mock answered
-`200` to a caller with no session at all AND elevated itself to level 2 — and the elevation level is
-the only thing the money handlers consult, so a nonexistent session could be walked up to elevated
+`200` to a caller with no session at all AND elevated itself to level 2 — and ~~the elevation level
+is the only thing the money handlers consult~~ (struck 2026-09-04; note below) the level was then
+the only thing the money handlers consulted, so a nonexistent session could be walked up to elevated
 and used to push a full transfer. **The real BFF is correct**, with one qualification this ADR
 should make rather than gloss: for a MODEL-VALID request it reads the session and never consults the
 PIN. A malformed body does not get that far at all — validation runs ahead of the action, so it is a
 400 whether or not a session exists (see the ordering measured below). Saying "reads the session
 first" flatly would contradict that, and this document is about being exact. Either way it was a
 mock-permissiveness problem, never a production hole.
+
+*(Correction 2026-09-04: "the only thing the money handlers consult" was true when this was written
+(2026-07-31). ADR-0041 (dd84179, 2026-08-13) emptied `PinRequiredPaths`, so the session level now
+gates only `GET /api/accounts/{id}/full-number`; a transfer carries its own authorisation in-band
+(ADR-0042). The drift and the mock fix stand as written — what the same bug would hand a
+session-less caller today is the reveal, not a transfer.)*
 
 **Three tests were pinning the mock's mistakes as if they were the contract** — two in
 `fidelity.test.ts`, one in `transferHandler.test.ts`. They are corrected, with the measured response

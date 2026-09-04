@@ -96,14 +96,22 @@ Server, three deterministic rounds per run, in CI.
 
 ## A second factor that is actually a second factor
 
-Sensitive operations need a PIN, and the elevation lives in the **BFF session**, not in the token.
-A level-2 route hit without elevation returns `403` with `X-Auth-Level-Required`; the SPA opens a
-PIN modal, elevates, and then the original request is **replayed byte-identically at the transport
-layer** — same body bytes, same idempotency key. Rebuilding the request after elevation would
-change the fingerprint and strand the payment.
+Three operations need a PIN — a withdrawal, a transfer, and the account-number reveal — and it is
+verified by the API, never by the BFF alone. Closing an account is the gap: it is authenticated and
+owned, but nothing asks for a second factor (ADR-0008 records it as an open hole). Money
+moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is part of
+what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** — bound to
+payer, payee and amount, valid two minutes, spent once — presented in a `Step-Up-Authorization`
+header (ADR-0041, ADR-0042). Nothing in the session authorises a payment; one PIN entry authorises
+one payment.
 
-Withdrawals are the exception: their PIN travels *inside* the request body, because it is part of
-what gets hashed. One component, two transports, and a third is not permitted.
+The account-number reveal is the one route that still uses the **session** level, and the elevation
+lives there rather than in the token: hit at level 1 it returns `403` with `X-Auth-Level-Required`;
+the SPA opens the PIN modal, elevates the BFF session, and the original request is **replayed
+byte-identically at the transport layer** rather than rebuilt. For the reveal there is nothing to
+rebuild — it is a GET with no body and no idempotency key — but the rule dates from when transfers
+rode the same path, where rebuilding after elevation would have changed the idempotency fingerprint
+and stranded a payment. That is why the interceptor replays rather than re-issues.
 
 PINs are hashed with Argon2id **plus a server-side pepper** held outside the database, so a
 database dump alone cannot be brute-forced offline — six digits would otherwise fall instantly.

@@ -306,7 +306,6 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
   "Jwt": {
     "Issuer": "AzureBank.Api",
     "Audience": "AzureBank.Bff",
-    "SecretKey": "your-secret-key-here-min-32-chars",
     "ExpirationMinutes": 15,
     "RefreshTokenExpirationDays": 7
   },
@@ -332,7 +331,15 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 |----------|-------------|
 | `ASPNETCORE_ENVIRONMENT` | Runtime environment (Development/Production) |
 | `ConnectionStrings__DefaultConnection` | Database connection string |
-| `Jwt__SecretKey` | JWT signing key (min 32 chars) |
+| `Jwt__Secret` | JWT signing key — the root README's recipe; nothing validates its length at startup |
+| `Idempotency__HashKey` | Request-fingerprint HMAC key (32+ chars, ADR-0009) |
+| `StepUp__BindingKey` | Step-up binding HMAC key (32+ chars, ADR-0042) |
+| `Audit__ChainKey` | Audit hash-chain HMAC key (32+ chars, ADR-0044) |
+| `Audit__AnchorKey` | Audit anchor-record HMAC key (32+ chars, ADR-0044) |
+| `Security__PinPepper` | PIN-hash pepper (32+ chars, ADR-0011); the Seeder needs the same value |
+
+In development the same six values come from `dotnet user-secrets` (`:` instead of `__`) — see the
+root README's recipe, which is the canonical one.
 
 ---
 

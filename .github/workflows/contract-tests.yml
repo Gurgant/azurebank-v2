@@ -1,8 +1,10 @@
 # Contract tests against a live API + SQL Server.
 # Manual trigger only (workflow_dispatch): heavier than CI and not part of the
 # push gate. Adapted from the January 2026 workflow; the API now needs the
-# Seeder to create/seed the database (no auto-migration at startup) and a JWT
-# secret via environment (appsettings.Development.json is not committed).
+# Seeder to create/seed the database (no auto-migration at startup) and its six
+# secrets via environment (appsettings.Development.json is not committed). The two
+# "Start API" steps below spell README.md's recipe with `__`, taking the throwaway
+# values from this workflow's `env:` block.
 name: Contract tests (manual)
 
 on:

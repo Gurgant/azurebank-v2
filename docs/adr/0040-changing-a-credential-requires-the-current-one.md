@@ -76,13 +76,20 @@ never fired; what fired was the measurement, a session cookie minting the creden
 every money movement, which was too cheap a hole to leave for a UX argument. The notification half
 of the same standard clause is ADR-0045.)*
 
-Also unchanged: the **direct-API step-up bypass** for transfers and `/full-number`
-(ADR-0020/ADR-0038 residual). The API has no auth-level concept; enforcement for those two lives
-only in BFF middleware. Withdraw is unaffected because it carries the PIN in-band and the API
-verifies it. That inconsistency — two step-up models in one system, the weaker one guarding the
-higher-value operation — is a separate decision, and this ADR is a precondition for it rather than a
-substitute: hardening the API gate while the PIN can be replaced would be building a control that is
-not one.
+Also unchanged: the **direct-API step-up bypass** for ~~transfers and~~ `/full-number` (struck
+2026-09-04; note below, ADR-0020/ADR-0038 residual). The API has no auth-level concept;
+enforcement for ~~those two~~ it lives only in BFF middleware. Withdraw is unaffected because it
+carries the PIN in-band and the API verifies it. That inconsistency — two step-up models in one
+system, the weaker one guarding the higher-value operation — is a separate decision, and this ADR is
+a precondition for it rather than a substitute: hardening the API gate while the PIN can be replaced
+would be building a control that is not one.
+
+*(Correction 2026-09-04: the "separate decision" was taken the next day. ADR-0041 (dd84179,
+2026-08-13) moved the transfer PIN into the request and the check into the API, and ADR-0042
+(2026-08-16) binds the resulting authorisation to payer, payee and amount and spends it once. The
+direct-API bypass now remains only for `/full-number`, which keeps the session gate by decision
+D3a (`frontend/src/mocks/stepup.test.ts`); "two step-up models" is now withdraw/transfer in-band
+versus the reveal on the session, with the in-band one guarding the money.)*
 
 ## Consequences
 

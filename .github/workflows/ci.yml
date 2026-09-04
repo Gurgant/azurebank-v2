@@ -343,9 +343,10 @@ jobs:
       # StepUp:BindingKey is ValidateOnStart, so an unset value is a startup crash, not a
       # degraded run.
       STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
-      # ADR-0044, and separate again for the same reason: this one keys the audit hash chain.
-      # Also ValidateOnStart, so leaving it unset does not degrade the audit trail — it stops
-      # the API from starting at all.
+      # ADR-0044, and separate again for the same reason: CHAIN_KEY keys the audit hash chain,
+      # ANCHOR_KEY authenticates the anchor records, and neither may forge the other's answer.
+      # Both ValidateOnStart, so leaving either unset does not degrade the audit trail — it
+      # stops the API from starting at all.
       AUDIT_CHAIN_KEY: "ci-only-throwaway-audit-chain-key-0123456789abcdef"
       AUDIT_ANCHOR_KEY: "ci-only-throwaway-audit-anchor-key-fedcba9876543210"
       PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"

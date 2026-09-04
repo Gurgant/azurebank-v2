@@ -18,7 +18,7 @@ If you want more after that:
 | | |
 |---|---|
 | [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) + [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves. The five-outcome table is the core of the project. |
-| [`docs/adr/`](docs/adr/README.md) | 25 decisions with their alternatives and residuals. The index names four to start with. |
+| [`docs/adr/`](docs/adr/README.md) | Every decision with its alternatives and residuals. The index names four to start with. |
 | [`docs/engineering-traps.md`](docs/engineering-traps.md) | The things that fail silently — each one cost a debugging session. |
 | [`SECURITY.md`](SECURITY.md) | The security posture in one place. |
 
@@ -37,6 +37,8 @@ PEPPER="$(openssl rand -base64 48)"
 dotnet user-secrets --project $API    set "Jwt:Secret" "$(openssl rand -base64 64)"
 dotnet user-secrets --project $API    set "Idempotency:HashKey" "$(openssl rand -base64 32)"
 dotnet user-secrets --project $API    set "StepUp:BindingKey" "$(openssl rand -base64 32)"
+dotnet user-secrets --project $API    set "Audit:ChainKey" "$(openssl rand -base64 32)"
+dotnet user-secrets --project $API    set "Audit:AnchorKey" "$(openssl rand -base64 32)"
 dotnet user-secrets --project $API    set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $API    set "ConnectionStrings:DefaultConnection" "$CONN"
 dotnet user-secrets --project $SEEDER set "Security:PinPepper" "$PEPPER"
@@ -46,6 +48,11 @@ dotnet user-secrets --project $SEEDER set "ConnectionStrings:DefaultConnection" 
 `Security:PinPepper` is mixed into the Argon2id PIN hash so a stolen database cannot brute-force
 the six-digit PIN space offline. It supports zero-downtime rotation through a keyring
 (`Security:PreviousPinPeppers`) — when rotating, keep the whole ring in one secret provider.
+
+`Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
+records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and
+deliberately separate: the anchor constrains whoever holds the database, so it must not be
+forgeable with the key the row chain uses.
 
 Then create and seed the database in one command. The three processes each run in **their own
 terminal and stay running** — but on a cold clone, let the API finish building before starting the

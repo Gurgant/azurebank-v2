@@ -18,8 +18,10 @@ describe('contract: endpoints that require a session', () => {
     /*
       The sharpest drift the audit found, and not a cosmetic one. The mock answered 200 and elevated
       itself, so a nonexistent session could be walked up to AuthLevel 2 and then used to push a
-      full transfer through — the elevation gate is the only gate the money handler consults. The
-      real BFF reads the session FIRST and never looks at the PIN.
+      full transfer through — at the time the elevation gate was the only gate the money handler
+      consulted. Since ADR-0041 (dd84179, 2026-08-13) the level gates only the account-number
+      reveal, and money moves carry their authorisation in-band (ADR-0042). The real BFF reads the
+      session FIRST and never looks at the PIN.
 
       Observed: 401 {"title":"Unauthorized","status":401,"detail":"Session expired or invalid"}
       — no errorCode member, so problemBaseQuery synthesises HTTP_401.

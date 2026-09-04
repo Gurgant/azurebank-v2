@@ -335,10 +335,10 @@ describe('a body that cannot be read at all', () => {
   beforeEach(() => {
     resetMockState();
     seedMockSession();
-    // Transfers sit behind the step-up gate, which is BFF MIDDLEWARE: unelevated they are a 403
-    // whatever the body says, because it runs before the request reaches model binding at all.
-    // Elevating once here keeps the table about bodies. (That cost this suite a first draft.)
-    mockState.authLevel = 2;
+    // Until ADR-0041 transfers sat behind the step-up gate, which is BFF MIDDLEWARE: unelevated
+    // they were a 403 whatever the body said, because it ran before model binding, and this suite
+    // elevated once to keep the table about bodies (that cost it a first draft). Since
+    // ADR-0041/0042 no row below reads the level — only the reveal does — so nothing is elevated.
   });
 
   /*

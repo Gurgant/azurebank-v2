@@ -12,9 +12,10 @@ import { InternalTransferPage } from './InternalTransferPage';
 import { mockState, seedMockSession } from '../mocks/state';
 
 /**
- * PR-11b — internal transfer between the caller's OWN accounts, riding the same step-up
- * interceptor: pick source + destination (can't be the same), amount, review, Send → the
- * level-2 403 pops the root StepUpModal → PIN → the transfer replays onto the receipt.
+ * PR-11b — internal transfer between the caller's OWN accounts, PIN collected in the page
+ * (ADR-0041/0042): pick source + destination (can't be the same), amount, review, PIN → the
+ * authorisation is minted and spent on Send → receipt. Until ADR-0041 Send met a level-2 403 and
+ * the root StepUpModal collected the PIN; it stays mounted below to prove it no longer appears.
  */
 
 function renderInternal() {

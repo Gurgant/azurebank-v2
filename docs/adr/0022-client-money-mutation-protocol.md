@@ -87,7 +87,14 @@ of ADR-0009, written into the repository so the pointers have somewhere real to 
 
 The interceptor applies to **every level-2 endpoint**, stated as a rule rather than as a count. An
 earlier formulation named "exactly the two transfer endpoints"; ADR-0020 has since added
-`GET /api/accounts/{id}/full-number` as a third, riding the same `baseQueryWithStepUp`.
+`GET /api/accounts/{id}/full-number` ~~as a third~~ (struck 2026-09-04; note below), riding the same
+`baseQueryWithStepUp`.
+
+*(Correction 2026-09-04: since ADR-0041 (dd84179, 2026-08-13) the reveal is not the third level-2
+endpoint but the only one — transfers left the gate and carry an authorisation in a header
+(ADR-0042). "Every level-2 endpoint" still holds and is now satisfied by one route; the replay path
+is exercised by the reveal alone, as `stepup.test.ts` and `money.integration.test.ts` already
+say. The "third level-2 surface" line under Related is read the same way.)*
 
 ## Alternatives considered
 
@@ -164,5 +171,5 @@ a reversal of this decision, not a test cleanup. The six behaviours they hold:
   concern.
 - **ADR-0009** — the server protocol. This ADR is its client half; read them together.
 - **ADR-0019** — the SPA/BFF error channel this protocol routes on.
-- **ADR-0020** — the third level-2 surface, and the reason the interceptor rule is stated as "every
-  level-2 endpoint" rather than a count.
+- **ADR-0020** — ~~the third~~ the only (since ADR-0041; struck 2026-09-04) level-2 surface, and the
+  reason the interceptor rule is stated as "every level-2 endpoint" rather than a count.

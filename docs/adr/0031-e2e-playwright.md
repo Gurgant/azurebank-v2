@@ -113,12 +113,18 @@ observer was written — which is the gate doing exactly what it was added for.
 `SetPinVerified` (`SessionService.cs:103`) is the only mutator; the level drops only when it expires
 on its own after `PinValidityMinutes` — 10 in dev, 5 in the base config. There is no de-elevation
 endpoint. Three consequences, all now written down next to the specs: cancel runs before verify
-within the step-up file; nothing that elevates may sort ahead of that file across the suite (only
-`/api/transfers`, `/api/transfers/internal` and `/full-number` are gated, and no other spec touches
-them — but a future transfer spec would); and each RUN is safe regardless, because the setup project
+within the step-up file; nothing that elevates may sort ahead of that file across the suite (~~only
+`/api/transfers`, `/api/transfers/internal` and `/full-number` are gated~~ only `/full-number` is
+gated since ADR-0041 — struck 2026-09-04, note below — and no other spec touches it; a future
+transfer spec elevates nothing); and each RUN is safe regardless, because the setup project
 signs in fresh and a new session starts at level 1, so elevation never leaks between runs. The first
 step-up assertion carries that explanation in its failure message, because otherwise the symptom is
 "modal not found", which reads like a broken selector.
+
+*(Correction 2026-09-04: "only `/api/transfers`, `/api/transfers/internal` and `/full-number` are
+gated" was true on 2026-08-04. Since ADR-0041 (dd84179, 2026-08-13) only `/full-number` is; a
+transfer carries its authorisation in-band (ADR-0042) and elevates nothing, so a future transfer
+spec would NOT disturb the ordering — `e2e/stepUp.spec.ts` already says so in its header.)*
 
 **React 19 renders correctly under headless Chromium.** Worth recording because a known trap in this
 project is a HIDDEN tab never firing `requestAnimationFrame`, which freezes React 19 mid-update.
