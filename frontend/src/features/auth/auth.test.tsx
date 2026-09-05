@@ -72,6 +72,91 @@ describe('global 401 handling (D3)', () => {
     expect(Object.keys(store.getState().api.queries)).toHaveLength(0);
   });
 
+  /*
+    A step-up 401 is about the AUTHORISATION, not the session — for all THREE of ADR-0042's codes.
+
+    Table-driven so the set cannot lose one silently: each row is one code, each is asserted to be
+    the code the mock actually answered (or the row would prove nothing about that code), and the
+    negative control is the errorCode-less 401 above, which DOES expire the session. The first two
+    rows drive the aligned mock as it answers by itself — it refuses a headerless transfer and an
+    authorisation it never minted exactly as the API does, both measured — while an expiry needs a
+    clock, so that row is an override carrying the API's own sentence.
+
+    AUTHORIZATION_REQUIRED is the row that was missing until 2026-09-05. The shipped pages never
+    send a headerless transfer — both mint first — so this is built at the store, which is also
+    where the real-stack twin lives (errorPath.integration.test.ts). Measured through the BFF that
+    day, cookie alive, at level 1 and at level 2 alike:
+
+      POST /api/transfers, no Step-Up-Authorization header
+        -> 401 {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+                "detail":"This transfer has not been authorised.","instance":"/api/transfers",
+                "errorCode":"AUTHORIZATION_REQUIRED","traceId":"<32-hex>"}
+      GET /bff/auth/me straight after -> 200, authLevel unchanged
+
+    Falsified by removing the row's code from IN_FLOW_401_CODES: the row reads 'expired'. Run
+    for each of the three on 2026-09-05 — one code removed at a time, only that row red.
+  */
+  const stepUpRefusals: Array<[code: string, arrange: () => { stepUpAuthorizationId?: string }]> = [
+    ['AUTHORIZATION_REQUIRED', () => ({})],
+    ['AUTHORIZATION_INVALID', () => ({ stepUpAuthorizationId: crypto.randomUUID() })],
+    [
+      'AUTHORIZATION_EXPIRED',
+      () => {
+        server.use(
+          http.post('*/api/transfers', () =>
+            problem({
+              status: 401,
+              errorCode: 'AUTHORIZATION_EXPIRED',
+              detail: 'This authorisation has expired. Enter your PIN again to confirm.',
+            }),
+          ),
+        );
+        return {};
+      },
+    ],
+  ];
+
+  it.each(stepUpRefusals)(
+    'a 401 %s on a transfer keeps the session AND the cache — a step-up refusal is not a dead session',
+    async (code, arrange) => {
+      seedMockSession();
+      const store = makeTestStore();
+      await boot(store);
+      expect(store.getState().auth.status).toBe('authenticated');
+
+      // Warm the cache, so "nothing was wiped" is an observation rather than a vacuity.
+      const accounts = await store.dispatch(apiSlice.endpoints.getAccounts.initiate()).unwrap();
+      const cachedKeys = Object.keys(store.getState().api.queries);
+      expect(cachedKeys.length).toBeGreaterThan(0);
+
+      const extras = arrange();
+      const refused = await store
+        .dispatch(
+          apiSlice.endpoints.transfer.initiate({
+            idempotencyKey: crypto.randomUUID(),
+            body: {
+              fromAccountId: accounts[0].id,
+              recipientAzureTag: 'friend',
+              amount: 1,
+              description: 'D3',
+            },
+            ...extras,
+          }),
+        )
+        .unwrap()
+        .then(
+          () => null,
+          (error: unknown) => error as { status?: unknown; errorCode?: string },
+        );
+      // The control that keeps the table honest: the mock really answered THIS code.
+      expect(refused?.status).toBe(401);
+      expect(refused?.errorCode).toBe(code);
+
+      expect(store.getState().auth.status).toBe('authenticated');
+      expect(Object.keys(store.getState().api.queries)).toEqual(cachedKeys);
+    },
+  );
+
   it('a 401 while NOT authenticated never expires the session — the calling surface owns it', async () => {
     mockState.session = null;
     const store = makeTestStore();

@@ -38,6 +38,12 @@ and three 429 sources.
    boot probe's 401 resolves to `anonymous` (no banner); every other 401 dispatches
    `sessionExpired()` AND resets the RTK Query cache — financial data must not outlive
    the session it was fetched under.
+   *Correction (2026-09-05): the exempt list is `IN_FLOW_401_CODES` in `sessionMiddleware.ts`,
+   and it also holds ADR-0042's three authorisation codes — `AUTHORIZATION_REQUIRED`,
+   `AUTHORIZATION_EXPIRED`, `AUTHORIZATION_INVALID` — 401s about a transfer's authorisation,
+   thrown after the cookie was accepted. `EXPIRED` and `INVALID` joined on 2026-08-17
+   (`e4973da`); `REQUIRED` on 2026-09-05, when a headerless transfer built at the store against
+   the real stack took the session from `authenticated` to `expired` with the cookie alive.*
 4. **No polling, explicit keep-alive** (D6/D14): `session-status` is the safe probe (the
    BFF excludes it from activity, ADR-0018); `/bff/auth/me` is the deliberate refresher
    behind the T-2min "Stay signed in" warning, driven by a client mirror of

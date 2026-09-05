@@ -25,6 +25,8 @@ export const FIXTURES = {
   email: 'admin@azurebank.dev',
   password: 'Test123!',
   pin: '123456',
+  /** Someone else with an account, for the transfer bodies — the contract suite's choice too. */
+  recipientAzureTag: 'johnsmith',
 } as const;
 
 /**

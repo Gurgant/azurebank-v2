@@ -1,7 +1,15 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { apiSlice } from '../features/api/apiSlice';
 import type { ApiProblem } from '../api/problemBaseQuery';
-import { authStatus, makeStore, run, signIn, type IntegrationStore } from './harness';
+import {
+  FIXTURES,
+  authStatus,
+  idempotencyKey,
+  makeStore,
+  run,
+  signIn,
+  type IntegrationStore,
+} from './harness';
 import { currentCookieHeader, resetCookieJar } from './setup';
 
 /**
@@ -90,6 +98,73 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     still holds the session this file signed in with, and the call simply succeeded. Signed-out has
     to be a property of the FILE.
   */
+
+  it('keeps the session on 401 AUTHORIZATION_REQUIRED — a refused transfer is not a dead session', async () => {
+    /*
+      ADR-0042's third code, and the one the exemption list did not hold until 2026-09-05. Measured
+      that day through the BFF (:5000 -> :7215), the cookie alive, first at level 1 and again at
+      level 2 after verify-pin — the same answer both times, because the transfer paths have not
+      been level-gated since ADR-0041:
+
+        POST /api/transfers, Idempotency-Key set, NO Step-Up-Authorization header
+          -> 401 {"type":"https://httpstatuses.com/401","title":"Unauthorized","status":401,
+                  "detail":"This transfer has not been authorised.","instance":"/api/transfers",
+                  "errorCode":"AUTHORIZATION_REQUIRED","traceId":"<32-hex>"}
+             no WWW-Authenticate header, no X-Auth-Level-* header
+        GET /bff/auth/me straight after -> 200, authLevel unchanged
+
+      The refusal is thrown inside the [Authorize]d action, upstream of the payee lookup and of
+      the two codes the middleware already exempted, so a client holding this answer has proven its
+      cookie at least as well as one holding AUTHORIZATION_EXPIRED. The shipped pages never send a
+      headerless transfer — both mint first and pass the id — so the request is built by hand at
+      the store, the only place the middleware's reaction can be observed against the real stack.
+      Before the fix this went red at the status assertion below — 'authenticated' -> 'expired'
+      for a session the server had just accepted. The cache reset is the other half of the same
+      dispatch block, and in the app that transition is ProtectedRoute to /login with "Your
+      session has expired"; neither was observed in that run, both follow from the code.
+    */
+    expect(authStatus(store)).toBe('authenticated');
+
+    // Warm the cache first, so "the balances survived" is an observation rather than a vacuity.
+    const accounts = await run(store.dispatch(apiSlice.endpoints.getAccounts.initiate()));
+    expect(accounts.ok, accounts.ok ? '' : JSON.stringify(accounts.error)).toBe(true);
+    if (!accounts.ok) return;
+    const accountsKey = Object.keys(store.getState().api.queries).find((key) =>
+      key.startsWith('getAccounts'),
+    );
+    expect(store.getState().api.queries[accountsKey as string]?.data).toBeDefined();
+
+    const refused = await run(
+      store.dispatch(
+        apiSlice.endpoints.transfer.initiate({
+          idempotencyKey: idempotencyKey(),
+          body: {
+            fromAccountId: accounts.data[0].id,
+            recipientAzureTag: FIXTURES.recipientAzureTag,
+            amount: 1,
+            description: 'integration: no authorisation presented',
+          },
+          // No stepUpAuthorizationId, on purpose: the header is omitted and the API refuses.
+        }),
+      ),
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    const apiProblem = problem(refused.error);
+    expect(apiProblem.status).toBe(401);
+    expect(apiProblem.errorCode).toBe('AUTHORIZATION_REQUIRED');
+    expect(apiProblem.detail).toBe('This transfer has not been authorised.');
+
+    // The rule: still authenticated, and the balances fetched a moment ago are still cached.
+    expect(authStatus(store)).toBe('authenticated');
+    expect(store.getState().api.queries[accountsKey as string]?.data).toBeDefined();
+
+    // And the server agrees the session is alive: the same cookie still reads the accounts.
+    const after = await run(
+      store.dispatch(apiSlice.endpoints.getAccounts.initiate(undefined, { forceRefetch: true })),
+    );
+    expect(after.ok, after.ok ? '' : JSON.stringify(after.error)).toBe(true);
+  });
 
   /*
     LAST TEST IN THE FILE, deliberately: it destroys the session this file signed in with, and
