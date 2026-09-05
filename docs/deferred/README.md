@@ -31,7 +31,8 @@ plan.
   deployment. SQL Server's ledger closes a different layer — the write — and is deferred too;
   ADR-0044 carries both and says why neither replaces the other.
 - [`relaying-the-enrolment-notice.md`](relaying-the-enrolment-notice.md) — the notice an account
-  holder is owed when a PIN is enrolled is recorded with the enrolment and rendered by the operator
-  tool into a pickup directory, and nothing sends it. Sending needs a relay: unattended,
+  holder is owed when a PIN is enrolled is recorded with the enrolment and rendered into a pickup
+  directory — by the operator tool, or since ADR-0048 by the API's own relay — and nothing sends
+  it. Sending needs a relay: unattended,
   third-party, and outside a demo paid for — and the account holds one unvalidated address, with no
   second one and no PIN reset behind the contact. ADR-0045 says where the built half stops.

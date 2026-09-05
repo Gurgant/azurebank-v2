@@ -1,4 +1,8 @@
-# Relaying the enrolment notice, and why this deployment cannot
+# Relaying the enrolment notice, and what this deployment still cannot do
+
+_Title until 2026-09-04: "…and why this deployment cannot". It can now DELIVER to a pickup directory
+on its own (ADR-0048); what it still cannot do is SEND, and that is what the rest of this page is
+about._
 
 When a transfer PIN is enrolled, and again when an existing one is changed, the API records that the
 account holder is owed a notice, in the same transaction as the action — until 2026-09-04 this said
@@ -37,12 +41,21 @@ the pickup directory already lets the ADR say.
 
 Detection. In the threat model — an attacker with a stolen session enrols a PIN behind the account
 password, or changes an existing one behind the PIN alone (ADR-0047) — the notice is the only thing
-that reaches the legitimate owner, and today it reaches them
-only if somebody runs a verb and then moves a file. A relay turns "when the operator remembers" into
+that reaches the legitimate owner, and — until the API's relay landed (ADR-0048) — it reached them
+only if somebody ran a verb and then moved a file; now the file is written on a period, backlog
+permitting, and a person still has to move it. A sending relay turns "when the operator
+remembers" into
 "within seconds of the enrolment", which is the property NIST SP 800-63B-4 §4.6 is written to
 provide.
 
 ## Why not here
+
+> **Correction (2026-09-04, evening): the runner is here — ADR-0048.** The paragraphs below were
+> true of the deployment they describe and are kept as its record. The ratification at the foot of
+> this page landed the same day: a hosted loop in the API now claims owed rows under a lease and
+> delivers them through the pickup transport. What is still not here is the SENDING half — a
+> provider, a credential, addresses the project may write to — and the preconditions listed under
+> "What would have to be true" are unchanged for it.
 
 The project's rule: a control whose value depends on a process running unattended, on a third party
 watching, or on a paid subscription is out of scope on its own, because there is nothing here to run
@@ -66,8 +79,9 @@ only address that exists.
   is amended to say that one address is the whole design.
 - The repudiation path has a remedy: a PIN reset or revocation flow behind the contact.
 
-When those hold, the change is a second `INoticeTransport`, registered in the tool's composition
-root in place of the pickup directory, and ADR-0045 D7 — delivery recorded on the row rather than in
+When those hold, the change is a second `INoticeTransport`, registered in place of the pickup
+directory in both composition roots — the tool's and, since ADR-0048, the API's — and ADR-0045
+D7 — delivery recorded on the row rather than in
 the chain — is the decision to reopen, because "delivered" will then mean something.
 
 ## Ratified 2026-09-04
@@ -75,7 +89,8 @@ the chain — is the decision to reopen, because "delivered" will then mean some
 Decided, and recorded here so the deferral above reads as history rather than as an open
 question: **the API is the runner first.** A hosted background service inside the API process claims
 pending `SubscriberNotices` rows under a lease and hands each to the registered `INoticeTransport`,
-retrying on failure. **At-least-once, and the lease does not make it once.** A claim stops two
+retrying on failure. Shipped as ADR-0048 the same day: `NoticeRelayService`,
+`Notices:Runner=Api`. **At-least-once, and the lease does not make it once.** A claim stops two
 runners owning the same row at the same moment; it cannot stop a worker that sends a notice and
 then dies before recording that it did, whose lease expires and whose row is picked up and sent
 again. Exactly-once is not the runner's to give: it needs an idempotency key the transport or the

@@ -939,7 +939,11 @@ successful assembly, and the line to search a transcript for.
 
 When a PIN is enrolled, and again when an existing one is CHANGED, the API records — in the same
 save as the action and its audit row — that the account holder is OWED a notice (ADR-0045 for the
-enrolment, ADR-0047 for the change). Nothing in the API sends either. This verb renders every
+enrolment, ADR-0047 for the change). Nothing in the API sends either. Since ADR-0048 the API can
+DELIVER them to the pickup directory itself — `Notices:Runner=Api` plus a directory and a contact —
+and when it does, this verb steps aside for every row the relay holds under a live lease and says
+how many. Run it when no runner is live, or when one is down: a lapsed lease is free to the
+verb. This verb renders every
 owed notice as one RFC 5322 `.eml` file, addressed to the email held on the account, into a
 directory you name, and marks the row delivered:
 
@@ -955,8 +959,9 @@ what a recipient uses to say "this was not me"; NIST §4.6 makes it mandatory co
 renders nothing without it. What that contact can actually do is a separate runbook.
 
 **A file in a pickup directory has reached the edge of this machine and nobody else.** Nothing here
-sends: a relay pointed at the directory, or a person, is what moves it — and neither exists in this
-deployment, which is the gap `docs/deferred/` records with its trigger. Delete the spool after the
+sends: a collector pointed at the directory, or a person, is what moves it — and neither exists in
+this deployment (the API's relay, ADR-0048, writes the file; it does not move it), which is the
+gap `docs/deferred/` records with its trigger. Delete the spool after the
 demonstration; it holds addresses in clear.
 
 The headlines, and what each means from THIS verb:
@@ -964,8 +969,12 @@ The headlines, and what each means from THIS verb:
 - `NOTIFIED n of m waiting notices into <directory>` — the summary line, first. Exit **0** when
   every waiting notice was written and marked; **6** when at least one is still owed, with a line
   per notice saying why. A marked notice is never rewritten: fix what the line names and run again.
-- `NOTHING TO NOTIFY` — exit **2**: no notice is owed. Its own answer, not a success, for the reason
-  `verify`'s **2** is.
+- `NOTHING TO NOTIFY` — exit **2**, with two readings and the line says which: no notice is owed, or
+  every owed notice is leased by a live runner (the API's relay, ADR-0048) and none is free to this
+  run. Its own answer, not a success, for the reason `verify`'s **2** is. A row that stays owed
+  beside a file that already exists — a runner delivered it and died before the mark — is refused
+  again on every retry (`NOT NOTIFIED … (IOException)`, exit **6**): the row is the truth; move the
+  file out and run again, or mark the row by hand, as the repudiation runbook's §2 marks a PIN.
 - `NO ADDRESS` — that notice's account holds no email, or one that cannot head a message because it
   contains a line break (either is unreachable through registration and reachable by seed or raw
   SQL). Nothing is rendered for it and it stays owed.
@@ -990,6 +999,12 @@ The headlines, and what each means from THIS verb:
   `.partial` is a write that failed, and can be deleted. The row is the truth: delete or move the
   orphan and run again, and the notice is rendered afresh under the same reference. A second run
   into the same directory refuses to overwrite it and says so.
+- `LEASE LAPSED` — the verb claims what it renders, under its own name and a two-minute lease
+  (ADR-0048), batch after batch; a run too large or too slow to finish inside that lease stops
+  delivering and says how many it did not reach. Those rows are not lost: they are free to the next
+  claim — this verb again, or the API's relay — and delivering them here, under a lease the verb no
+  longer held, would be the duplicate the lease exists to prevent. Exit **6**, because notices are
+  still owed. Run again.
 - `CANNOT NOTIFY` — exit **3**: the tool is not configured, the ring will not build, or the store
   could not be read or written. Not a statement about any notice.
 - `INTERRUPTED` — exit **5**. Notices written and marked before the interruption stay marked.
@@ -1228,7 +1243,8 @@ What a recipient does with the reference, and what the contact can do about it, 
   a verdict but nothing could be recorded from it. Only 0, 1 and 2 are statements about the CHAIN.
   `evidence` adds no code of its own: it exits with the chain's verdict, and a number the store does
   not hold is 4. `notify` adds none either and walks no chain, so from it 0 and 2 are statements
-  about NOTICES (all written; none waiting), 6 means at least one is still owed, and 1 never occurs.
+  about NOTICES (all this run claimed written; none free to it), 6 means at least one is still
+  owed, and 1 never occurs.
 
   ⚠️ **This list stopped at 5 until 2026-08-28, and 6 had existed since the `anchor` mode shipped.**
   A script written from it treated 6 as an unknown code. The list lives in FOUR places —

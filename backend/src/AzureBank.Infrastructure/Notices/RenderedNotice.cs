@@ -1,4 +1,4 @@
-namespace AzureBank.AuditVerifier.Notices;
+namespace AzureBank.Infrastructure.Notices;
 
 /// <summary>
 /// A notice as text, before any address is attached to it.

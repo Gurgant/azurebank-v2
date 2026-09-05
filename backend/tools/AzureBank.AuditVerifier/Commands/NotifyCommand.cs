@@ -1,7 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Data.Common;
-using AzureBank.AuditVerifier.Notices;
+using AzureBank.Infrastructure.Notices;
 using AzureBank.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,11 +15,14 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A MODE OF THIS TOOL, NOT A SCHEDULED JOB — the anchor's decision, for the anchor's reason:
-/// nothing in this deployment runs between sessions, so a control that needs a runner names the
-/// operator, and says in the same breath that a control depending on somebody choosing to run it
-/// does not constrain that person. The API writes the row (in the same save as the enrolment, so
-/// the obligation is never lost and never survives a rollback); this verb is what reads it.
+/// ONE OF TWO RUNNERS since ADR-0048, and the one that needs a person. Until 2026-09-04 this was
+/// "a mode of this tool, not a scheduled job" — the anchor's decision, for a deployment in which
+/// nothing ran between sessions. The API now runs a relay that claims and delivers the same rows
+/// on a period when <c>Notices:Runner</c> names it; this verb is for a store where it does not, and
+/// for the day it is down. Both use <see cref="NoticeClaim"/>: the verb CLAIMS what it delivers,
+/// under its own name and a short lease, so the two cannot both hold a row at the same moment.
+/// The API writes the row (in the same save as the enrolment, so the obligation is never lost and
+/// never survives a rollback); this verb and the relay are what read it.
 /// </para>
 /// <para>
 /// ⚠️ WHAT THIS DOES NOT DO. It does not send. The transport writes an RFC 5322 message into a
@@ -45,9 +48,10 @@ namespace AzureBank.AuditVerifier.Commands;
 /// can echo the path it was writing, and a relay's refusal can echo the recipient).
 /// </para>
 /// <para>
-/// EXIT CODES, none of them new. 0: every waiting notice was written and marked. 2: nothing was
-/// waiting — its own answer, not a success, for the reason <see cref="VerifyCommand.NothingToVerify"/>
-/// gives. 3: the tool is not configured, the ring will not build, or the store could not be read.
+/// EXIT CODES, none of them new. 0: every notice this run claimed was written and marked. 2:
+/// nothing was FREE — no notice is owed, or every owed one is leased by a live runner, and the
+/// line says which — its own answer, not a success, for the reason
+/// <see cref="VerifyCommand.NothingToVerify"/> gives. 3: the tool is not configured, the ring will not build, or the store could not be read.
 /// 4: the command line was wrong — no contact, no directory, or a directory inside a git
 /// repository. 5: interrupted. 6: at least one notice is still owed after the run — a reuse of
 /// <see cref="AnchorCommand.NotRecorded"/>, whose meaning ("there was work to do and it could not
@@ -57,6 +61,19 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </remarks>
 public static class NotifyCommand
 {
+    /// <summary>
+    /// How long this run holds what it claims. Long enough to render a large spool, short enough
+    /// that a verb killed half-way frees its rows to the relay within minutes.
+    /// </summary>
+    internal static readonly TimeSpan VerbLease = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// How many free rows one claim takes; the verb claims batch after batch until none is free or
+    /// its lease lapses, so a backlog is still rendered whole while each claim stays small.
+    /// Settable so a test can drive a second batch with two rows instead of a hundred and one.
+    /// </summary>
+    internal static int VerbBatch { get; set; } = 100;
+
     public static Command Create(IServiceProvider services)
     {
         var command = new Command(
@@ -210,119 +227,138 @@ public static class NotifyCommand
 
         try
         {
-            var waiting = await context.SubscriberNotices
-                .Where(n => n.DeliveredAt == null)
-                .OrderBy(n => n.OccurredAt)
-                .ToListAsync(cancellationToken);
+            // The clock is a seam so a test can lapse the verb's lease without waiting two minutes.
+            var clock = services.GetService<TimeProvider>() ?? TimeProvider.System;
+            var now = clock.GetUtcNow().UtcDateTime;
+            var leaseEnd = now.Add(VerbLease);
+            var runner = NoticeClaim.RunnerNameFor(
+                "verb", Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
+
+            /*
+              THE VERB CLAIMS TOO (ADR-0048). A row a live runner holds is not this run's: rendering it
+              would produce the duplicate the lease exists to prevent, and a row this run read without
+              claiming could be taken by the relay between the read and the write. So the verb takes
+              the same lease the relay takes, under its own name, batch by batch, and delivers only
+              what it holds. Rows another runner holds are counted and named, not touched: if that
+              runner dies, its lease lapses and the next claim — this verb or the relay — takes them.
+            */
+            await NoticeClaim.ClaimAsync(context, runner, now, leaseEnd, VerbBatch, cancellationToken);
+            var leased = await NoticeClaim.HeldByOthersAsync(context, runner, now, cancellationToken);
+            var waiting = await NoticeClaim.HeldBy(context, runner, now).ToListAsync(cancellationToken);
 
             if (waiting.Count == 0)
             {
-                return (VerifyCommand.NothingToVerify, new[]
-                {
-                    "NOTHING TO NOTIFY: no notice is owed.",
-                    "  Every recorded notice has been rendered, or none was ever recorded. Not a success",
-                    "  and not a failure: nothing was waiting.",
-                });
+                return (VerifyCommand.NothingToVerify, leased == 0
+                    ? new[]
+                    {
+                        "NOTHING TO NOTIFY: no notice is owed.",
+                        "  Every recorded notice has been rendered, or none was ever recorded. Not a success",
+                        "  and not a failure: nothing was waiting.",
+                    }
+                    : new[]
+                    {
+                        $"NOTHING TO NOTIFY: {leased} owed notice(s) are leased by a live runner and none is free.",
+                        "  The API's relay is delivering them. If it is not running, its leases lapse within",
+                        "  minutes and a later run of this verb takes them.",
+                    });
             }
 
-            var now = DateTime.UtcNow;
+            var run = new NoticeDeliveryRun(context, transport);
+            var claimedTotal = 0;
+            var lapsed = false;
+            var attempted = new HashSet<Guid>();
 
-            foreach (var notice in waiting)
+            /*
+              ONE UNIT PER ROW, SHARED WITH THE RELAY (ADR-0048): NoticeDeliveryRun reads the address,
+              checks the evidence, renders, delivers and marks. This verb owns the words, and the
+              words are the ones it printed when it owned the steps too. The address is in none.
+              Batch after batch until nothing is free — or the verb's own lease lapses, after which
+              the rows it has not reached are free to the next claim and delivering them here would
+              be the duplicate the lease exists to prevent, exactly as the relay stops.
+            */
+            while (waiting.Count > 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var reference = notice.Id.ToString("N");
+                claimedTotal += waiting.Count;
 
-                var address = await context.Users
-                    .AsNoTracking()
-                    .Where(u => u.Id == notice.UserId)
-                    .Select(u => u.Email)
-                    .SingleOrDefaultAsync(cancellationToken);
+                foreach (var notice in waiting)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                if (string.IsNullOrWhiteSpace(address))
-                {
-                    lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has no email on the account; still owed.");
-                    owed++;
-                    continue;
-                }
+                    if (clock.GetUtcNow().UtcDateTime >= leaseEnd)
+                    {
+                        lapsed = true;
+                        break;
+                    }
 
-                /*
-                  A LINE BREAK IN THE ADDRESS WOULD BECOME A HEADER. The address heads the message,
-                  and RFC 5322 headers end at CRLF, so an email holding one -- unreachable through
-                  registration, reachable by anybody who can write the table -- would inject whatever
-                  followed it (a Bcc:, say). Refused here as unusable, and refused again by the
-                  transport in case a second caller ever skips this check.
-                */
-                if (address.AsSpan().IndexOfAny('\r', '\n', '\0') >= 0)
-                {
-                    lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has an email on the account that cannot head a message (it contains a line break); still owed.");
-                    owed++;
-                    continue;
-                }
+                    attempted.Add(notice.Id);
+                    var result = await run.DeliverAsync(notice, contact, fullDirectory, cancellationToken);
+                    var reference = result.Reference;
 
-                /*
-                  JOINED BY (ACTOR, EVENT), NEVER BY TIME: the notice and the audit row read two
-                  clocks milliseconds apart. An absent row is reported and the notice is still
-                  rendered -- see the class remarks.
-                */
-                var backed = await context.AuditEvents
-                    .AnyAsync(e => e.ActorUserId == notice.UserId && e.Event == notice.Event, cancellationToken);
-                if (!backed)
-                {
-                    lines.Add($"NO AUDIT ROW backs notice {reference}: no {notice.Event} row exists for that user. "
-                              + "The notice is rendered anyway; the absence is the finding.");
-                }
+                    if (result.AuditRowMissing)
+                    {
+                        lines.Add($"NO AUDIT ROW backs notice {reference}: no {notice.Event} row exists for that user. "
+                                  + "The notice is rendered anyway; the absence is the finding.");
+                    }
 
-                RenderedNotice rendered;
-                try
-                {
-                    rendered = NoticeRenderer.Render(notice, contact, now);
-                }
-                catch (InvalidOperationException)
-                {
-                    lines.Add($"NOT NOTIFIED: notice {reference} names event {notice.Event}, which this build cannot render; still owed.");
-                    owed++;
-                    continue;
+                    switch (result.Outcome)
+                    {
+                        case NoticeOutcome.NoAddress:
+                            lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has no email on the account; still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.UnusableAddress:
+                            lines.Add($"NO ADDRESS: notice {reference} for user {notice.UserId:N} has an email on the account that cannot head a message (it contains a line break); still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.Unrenderable:
+                            lines.Add($"NOT NOTIFIED: notice {reference} names event {notice.Event}, which this build cannot render; still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.TransportFailed:
+                            lines.Add($"NOT NOTIFIED: notice {reference} could not be written ({result.FailureType}); still owed.");
+                            owed++;
+                            break;
+                        case NoticeOutcome.MarkedByAnother:
+                            lines.Add($"NOT NOTIFIED by this run: notice {reference} was marked by another run while this one wrote {result.Receipt}; that file is a duplicate.");
+                            break;
+                        case NoticeOutcome.Delivered:
+                            lines.Add($"  {result.Receipt} <- notice {reference}, {notice.Event} at {notice.OccurredAt:yyyy-MM-dd HH:mm:ss}Z");
+                            written++;
+                            break;
+                    }
                 }
 
-                string receipt;
-                try
+                if (lapsed)
                 {
-                    receipt = await transport.DeliverAsync(rendered, address, fullDirectory, cancellationToken);
-                }
-                catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-                {
-                    // The TYPE only: an I/O message can echo the path, and a relay's can echo the recipient.
-                    lines.Add($"NOT NOTIFIED: notice {reference} could not be written ({failure.GetType().Name}); still owed.");
-                    owed++;
-                    continue;
+                    break;
                 }
 
-                // Per notice, read after the write: a batch rendered slowly would otherwise date every
-                // file to the moment the run began rather than the moment each was produced.
-                notice.DeliveredAt = DateTime.UtcNow;
-                notice.DeliveryReceipt = receipt;
-                try
-                {
-                    await context.SaveChangesAsync(cancellationToken);
-                }
-                catch (DbUpdateConcurrencyException)
-                {
-                    /*
-                      ANOTHER RUN MARKED IT FIRST. The file this run wrote is a second copy of a
-                      notice the other run also produced; at-least-once is the honest description
-                      of this transport, and the duplicate is named rather than hidden. Not owed:
-                      the row is marked, by somebody.
-                    */
-                    context.Entry(notice).State = EntityState.Detached;
-                    lines.Add($"NOT NOTIFIED by this run: notice {reference} was marked by another run while this one wrote {receipt}; that file is a duplicate.");
-                    continue;
-                }
-
-                lines.Add($"  {receipt} <- notice {reference}, {notice.Event} at {notice.OccurredAt:yyyy-MM-dd HH:mm:ss}Z");
-                written++;
+                // The next batch. The re-read by name would also return rows this run already
+                // attempted and could not deliver — still owed, still held — so those are excluded:
+                // one attempt per row per run, and each row counted once.
+                var more = await NoticeClaim.ClaimAsync(
+                    context, runner, clock.GetUtcNow().UtcDateTime, leaseEnd, VerbBatch, cancellationToken);
+                waiting = more == 0
+                    ? []
+                    : (await NoticeClaim.HeldBy(context, runner, clock.GetUtcNow().UtcDateTime)
+                        .ToListAsync(cancellationToken))
+                        .Where(n => !attempted.Contains(n.Id))
+                        .ToList();
             }
 
-            lines.Insert(0, $"NOTIFIED {written} of {waiting.Count} waiting notices into {fullDirectory}");
+            lines.Insert(0, $"NOTIFIED {written} of {claimedTotal} waiting notices into {fullDirectory}");
+            if (lapsed)
+            {
+                // Attempted is the count that matters: a row another run marked first was attempted too.
+                var unreached = claimedTotal - attempted.Count;
+                owed += unreached;
+                lines.Add($"LEASE LAPSED after {attempted.Count} of {claimedTotal}: the verb held its rows for {VerbLease.TotalMinutes:0} minutes and "
+                          + $"{unreached} were not reached. They are free to the next claim — this verb again, or the relay. Run again.");
+            }
+            if (leased > 0)
+            {
+                lines.Add($"{leased} more owed notice(s) are leased by a live runner and were left to it.");
+            }
             lines.Insert(1, "  Each file is a complete message addressed to the email held on the account, and it has");
             lines.Insert(2, "  reached this machine's disk and nobody else: nothing here sends. Point a relay at the");
             lines.Insert(3, "  directory or move the files yourself, and delete the spool afterwards.");
@@ -360,92 +396,12 @@ public static class NotifyCommand
     }
 
     /// <summary>
-    /// True when the directory, or any directory above it, is a git working tree — where it SITS and
-    /// where it POINTS.
+    /// The guard the relay's option validation shares (ADR-0048); kept here by name for the tests
+    /// that pin it, delegating to <see cref="PickupDirectoryGuard"/>.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The mechanical half of "never commit a spool of addresses"; the runbook's delete-after
-    /// sentence is the other half. A <c>.git</c> FILE counts too — that is what a worktree carries.
-    /// </para>
-    /// <para>
-    /// LINKS ARE FOLLOWED. A symbolic link or a junction sitting outside every repository can point
-    /// into one, and the files would land where it points; on Windows git treats a junction as an
-    /// ordinary directory and stages what is inside it. So the walk is done twice: over the path as
-    /// typed, and over its physical target once every link on it is resolved. Either being inside a
-    /// working tree refuses the directory.
-    /// </para>
-    /// </remarks>
-    internal static bool InsideAGitRepository(string fullDirectory)
-    {
-        if (AncestorHoldsGit(fullDirectory))
-        {
-            return true;
-        }
+    internal static bool InsideAGitRepository(string fullDirectory) =>
+        PickupDirectoryGuard.InsideAGitRepository(fullDirectory);
 
-        var physical = PhysicalPath(fullDirectory);
-        return !string.Equals(physical, fullDirectory, StringComparison.OrdinalIgnoreCase)
-               && AncestorHoldsGit(physical);
-    }
-
-    private static bool AncestorHoldsGit(string fullDirectory)
-    {
-        for (var current = new DirectoryInfo(fullDirectory); current is not null; current = current.Parent)
-        {
-            var marker = Path.Combine(current.FullName, ".git");
-            if (Directory.Exists(marker) || File.Exists(marker))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// The directory with every link on its path resolved to what it points at.
-    /// </summary>
-    /// <remarks>
-    /// Walks upward to the deepest link, replaces that segment by its final target, and repeats on
-    /// the result until no segment is a link. Bounded, so a link loop ends the walk instead of the
-    /// process; an unreadable segment is left as it is rather than guessed at.
-    /// </remarks>
-    internal static string PhysicalPath(string fullDirectory)
-    {
-        var path = fullDirectory;
-        for (var hops = 0; hops < 32; hops++)
-        {
-            string? resolved = null;
-            for (var current = new DirectoryInfo(path); current is not null; current = current.Parent)
-            {
-                FileSystemInfo? target;
-                try
-                {
-                    target = current.Exists ? current.ResolveLinkTarget(returnFinalTarget: true) : null;
-                }
-                catch (IOException)
-                {
-                    target = null;
-                }
-
-                if (target is null)
-                {
-                    continue;
-                }
-
-                var relative = Path.GetRelativePath(current.FullName, path);
-                resolved = relative == "." ? target.FullName : Path.Combine(target.FullName, relative);
-                break;
-            }
-
-            if (resolved is null)
-            {
-                return path;
-            }
-
-            path = Path.GetFullPath(resolved);
-        }
-
-        return path;
-    }
+    internal static string PhysicalPath(string fullDirectory) =>
+        PickupDirectoryGuard.PhysicalPath(fullDirectory);
 }

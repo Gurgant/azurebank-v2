@@ -684,11 +684,12 @@ public class AuthService : IAuthService
               the commit and the call with no record that it was owed, and inside the save it would
               hold the audit tail lock across I/O. So the request records the OBLIGATION, beside the
               evidence and for the same reason it sits before UpdateAsync: the row rides the save
-              below and cancels itself with it. The operator tool's `notify` verb renders it later,
-              addressed to the email held on the account — a path the session that enrolled the
-              PIN cannot read, redirect or suppress. Not a BackgroundService: nothing in this API
-              runs a correctness-bearing loop, and the anchor sets the precedent of a mode of the
-              tool, not a scheduled job.
+              below and cancels itself with it. The API's relay (NoticeRelayService, ADR-0048) or the
+              operator tool's `notify` verb renders it later, addressed to the email held on the
+              account — a path the session that enrolled the PIN cannot read, redirect or suppress.
+              Not sent from here, and not rendered from here: the relay is a hosted loop outside
+              the request, on a period, and until 2026-09-04 this comment said the API ran no such
+              loop.
 
               No address is written: it is joined from the account when the notice is rendered.
             */
@@ -753,9 +754,9 @@ public class AuthService : IAuthService
               Detective control, in the OPERATOR's log — see SecurityEvents.PinEnrolled: this is
               deliberately NOT the independent notification to the account owner that NIST
               SP 800-63B-4 §4.1.2.1 also requires. That notice is the SubscriberNotice row added
-              above, rendered later by the operator tool; what this system still lacks is a relay
-              that delivers it (ADR-0045). Saying so here rather than letting the line read as
-              compliance.
+              above, rendered later by the API's relay or the operator tool into a pickup directory
+              (ADR-0045, ADR-0048); what this system still lacks is a transport that SENDS it.
+              Saying so here rather than letting the line read as compliance.
 
               AFTER the update, unlike the audit row above, and the asymmetry is deliberate rather
               than an oversight: the row lives inside the transaction and cancels itself when the

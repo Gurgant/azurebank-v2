@@ -12,9 +12,10 @@ namespace AzureBank.Tests.Architecture;
 /// <para>
 /// The first is the mechanical half of "the request records the obligation and never sends": a
 /// mail dependency appearing in Api, Infrastructure or Shared is the one change that could quietly
-/// move a send inside <c>POST /api/auth/pin</c>. The operator tool is EXCLUDED on purpose — it is
-/// the one place a notice is rendered, and it hand-writes RFC 5322 rather than referencing a mail
-/// library, which this test does not police.
+/// move a send inside <c>POST /api/auth/pin</c>. Since ADR-0048 the renderer and the pickup
+/// transport live in Infrastructure, which this test DOES police: they hand-write RFC 5322 rather
+/// than referencing a mail library, and the guard stays green because of that. The operator tool
+/// is excluded because it only calls them.
 /// </para>
 /// <para>
 /// WATCHED REFUSING before it shipped: with <c>_ = new System.Net.Mail.SmtpClient();</c> placed in
@@ -42,9 +43,11 @@ public class SubscriberNoticeLimitTests
                 .GetResult();
 
             result.IsSuccessful.Should().BeTrue(
-                "{0} must not be able to send: the notice is RECORDED in the request and rendered by "
-                + "the operator tool (ADR-0045); a send inside the request would be lost between the "
-                + "commit and the call or would hold the audit tail lock across I/O. Offending types: {1}",
+                "{0} must not be able to send: the notice is RECORDED in the request and rendered later, "
+                + "by the operator tool (ADR-0045) or by the API's own relay (ADR-0048) — both into a "
+                + "pickup directory, neither through a mail library; a send inside the request would be "
+                + "lost between the commit and the call or would hold the audit tail lock across I/O. "
+                + "Offending types: {1}",
                 assembly.GetName().Name,
                 string.Join(", ", result.FailingTypes?.Select(t => t.FullName) ?? []));
         }

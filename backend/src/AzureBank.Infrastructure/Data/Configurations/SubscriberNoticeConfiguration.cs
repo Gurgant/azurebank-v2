@@ -26,6 +26,13 @@ public class SubscriberNoticeConfiguration : IEntityTypeConfiguration<Subscriber
                 "CK_SubscriberNotices_Delivery",
                 "([DeliveredAt] IS NULL AND [DeliveryReceipt] IS NULL) "
                 + "OR ([DeliveredAt] IS NOT NULL AND [DeliveryReceipt] IS NOT NULL)");
+
+            // The lease is a pair for the same reason (ADR-0048): a row held until a time by nobody,
+            // or by somebody until no time, is a state no runner produces.
+            t.HasCheckConstraint(
+                "CK_SubscriberNotices_Lease",
+                "([LeasedUntil] IS NULL AND [LeasedBy] IS NULL) "
+                + "OR ([LeasedUntil] IS NOT NULL AND [LeasedBy] IS NOT NULL)");
         });
 
         // Assigned by the writer, never by the store (see the entity's remarks).
@@ -54,13 +61,19 @@ public class SubscriberNoticeConfiguration : IEntityTypeConfiguration<Subscriber
         builder.Property(n => n.DeliveryReceipt)
             .HasMaxLength(64);
 
+        // The runner's name: host, process and a short id. Not an address, not a secret.
+        builder.Property(n => n.LeasedBy)
+            .HasMaxLength(64);
+
         // Erasure by cascade: the notice is the account holder's and goes with them (ADR-0045).
         builder.HasOne<ApplicationUser>()
             .WithMany()
             .HasForeignKey(n => n.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // What the operator tool reads: the rows still owed, oldest first.
+        // What a runner's claim and the operator tool read: the rows still owed, oldest first. The
+        // claim also filters on LeasedUntil, which this index does not carry; at this scale the
+        // residual filter over the owed rows is cheap, and the index stays as ADR-0045 shipped it.
         builder.HasIndex(n => n.OccurredAt)
             .HasDatabaseName("IX_SubscriberNotices_Pending")
             .HasFilter("[DeliveredAt] IS NULL");

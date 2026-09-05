@@ -1,4 +1,4 @@
-using AzureBank.AuditVerifier.Notices;
+using AzureBank.Infrastructure.Notices;
 
 namespace AzureBank.Tests.Fixtures;
 

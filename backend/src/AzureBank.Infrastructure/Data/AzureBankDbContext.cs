@@ -59,8 +59,8 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
 
     /// <summary>
     /// What an account holder is owed and has not yet been told (ADR-0045). Written by the API in
-    /// the same save as the action that owes the notice; read and marked by the operator tool;
-    /// purged by nothing.
+    /// the same save as the action that owes the notice; claimed, read and marked by the API's relay
+    /// or the operator tool (ADR-0048); purged by nothing.
     /// </summary>
     public DbSet<SubscriberNotice> SubscriberNotices => Set<SubscriberNotice>();
 
