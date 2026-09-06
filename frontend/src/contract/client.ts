@@ -175,14 +175,21 @@ export async function elevate(): Promise<Wire> {
  * then DELETE with it in `Step-Up-Authorization`. Cleanup-shaped — every failure is swallowed
  * exactly as the `finally` blocks that call it swallow theirs — and with no branch on the target.
  *
- * On the mock target the mint route is not handled yet (the frontend follow-up adds it) and MSW is
- * listening with `onUnhandledRequest: 'error'`, so the POST rejects and the DELETE goes out
- * headerless, which the mock still honours. On the real target the mint answers 201 and the DELETE
- * carries the authorisation. Before this helper existed the two cleanups in money.contract.test.ts
- * sent the bare DELETE on both targets, and on the real stack after ADR-0049 that answers 401
- * AUTHORIZATION_REQUIRED (measured 2026-09-06T10:44Z, D1 in the change's after-transcript) — and
- * because `call` resolves on every status, `.catch` never fired: each run left the probe account
- * listed and appended an AccountDeletionRefused audit row to the seeded database.
+ * Both targets handle the mint (the mock's `authoriseAccountDeletion` landed with the frontend
+ * half of ADR-0049; the API's answers 201). The `mint?.status === 201` branch stays because this
+ * is cleanup-shaped — a refused mint (a locked PIN, a funded probe) must not throw out of a
+ * `finally`, and the DELETE that follows is then refused by the server in its own words rather
+ * than by a transport error here. An earlier revision of this comment said the mock's POST
+ * "rejects" under `onUnhandledRequest: 'error'`; it never did — the `http.all` sentinel in
+ * handlers.ts answers 501 MOCK_HANDLER_MISSING for any unmocked `/api` path, so the fallback was
+ * exercised by a 501, not a rejection. Corrected 2026-09-06 when the route was added.
+ *
+ * Before this helper existed the two cleanups in money.contract.test.ts sent the bare DELETE on
+ * both targets, and on the real stack after ADR-0049 that answers 401 AUTHORIZATION_REQUIRED
+ * (measured 2026-09-06T10:44Z, D1 in the change's after-transcript; re-measured 2026-09-06T19:16Z
+ * on main 19742ff) — and because `call` resolves on every status, `.catch` never fired: each run
+ * left the probe account listed and appended an AccountDeletionRefused audit row to the seeded
+ * database.
  */
 export async function closeAccount(id: string): Promise<void> {
   const mint = await call(`/api/accounts/${id}/deletion-authorizations`, {

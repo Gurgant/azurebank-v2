@@ -166,6 +166,84 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     expect(after.ok, after.ok ? '' : JSON.stringify(after.error)).toBe(true);
   });
 
+  it('keeps the session on a headerless DELETE — 401 AUTHORIZATION_REQUIRED from the closure path too', async () => {
+    /*
+      The same rule on the account closure (ADR-0049), which is the row the transfer measurement
+      above could not stand in for. Measured 2026-09-06T19:16Z on main 19742ff through the BFF
+      (:5000 -> :7215), the cookie alive at level 1 — D1 in
+      azurebank-work/plans/account-deletion/measure-after-main-19742ff-2026-09-06.txt:
+
+        DELETE /api/accounts/{spare}, NO Step-Up-Authorization header
+          -> 401 {"detail":"This account closure has not been authorised.",
+                  "errorCode":"AUTHORIZATION_REQUIRED", ...}, no WWW-Authenticate
+        GET /bff/auth/me straight after -> 200, authLevel 1
+
+      IN_FLOW_401_CODES routes on errorCode alone, so no code changed for this — which is exactly
+      why it needs a pin of its own: nothing else on the DELETE path exercises the middleware
+      against the real stack. The shipped dialog never sends a headerless DELETE (it mints first),
+      so the request is built by hand at the store. The spare is a fresh non-primary zero-balance
+      account — the seeded admin's first account is the primary and would answer 422 — and the
+      cleanup in `finally` is the data layer exercising both new mutations, mint then DELETE with
+      the header, on the real stack. Each run appends one AccountDeletionRefused audit row.
+    */
+    expect(authStatus(store)).toBe('authenticated');
+
+    const accounts = await run(store.dispatch(apiSlice.endpoints.getAccounts.initiate()));
+    expect(accounts.ok, accounts.ok ? '' : JSON.stringify(accounts.error)).toBe(true);
+    if (!accounts.ok) return;
+    const accountsKey = Object.keys(store.getState().api.queries).find((key) =>
+      key.startsWith('getAccounts'),
+    );
+    expect(store.getState().api.queries[accountsKey as string]?.data).toBeDefined();
+
+    const created = await run(
+      store.dispatch(
+        apiSlice.endpoints.createAccount.initiate({
+          name: 'Integration Closure',
+          type: 'Savings',
+        }),
+      ),
+    );
+    expect(created.ok, created.ok ? '' : JSON.stringify(created.error)).toBe(true);
+    if (!created.ok) return;
+    const id = created.data.id;
+
+    try {
+      const refused = await run(
+        // No stepUpAuthorizationId, on purpose: the header is omitted and the API refuses.
+        store.dispatch(apiSlice.endpoints.deleteAccount.initiate({ id })),
+      );
+      expect(refused.ok).toBe(false);
+      if (refused.ok) return;
+      const apiProblem = problem(refused.error);
+      expect(apiProblem.status).toBe(401);
+      expect(apiProblem.errorCode).toBe('AUTHORIZATION_REQUIRED');
+      expect(apiProblem.detail).toBe('This account closure has not been authorised.');
+
+      // The rule: still authenticated, and the balances fetched a moment ago are still cached.
+      expect(authStatus(store)).toBe('authenticated');
+      expect(store.getState().api.queries[accountsKey as string]?.data).toBeDefined();
+    } finally {
+      const minted = await run(
+        store.dispatch(
+          apiSlice.endpoints.authoriseAccountDeletion.initiate({ id, pin: FIXTURES.pin }),
+        ),
+      );
+      expect(minted.ok, minted.ok ? '' : JSON.stringify(minted.error)).toBe(true);
+      if (minted.ok) {
+        const closed = await run(
+          store.dispatch(
+            apiSlice.endpoints.deleteAccount.initiate({
+              id,
+              stepUpAuthorizationId: minted.data.authorizationId,
+            }),
+          ),
+        );
+        expect(closed.ok, closed.ok ? '' : JSON.stringify(closed.error)).toBe(true);
+      }
+    }
+  });
+
   /*
     LAST TEST IN THE FILE, deliberately: it destroys the session this file signed in with, and
     anything after it would run unauthenticated. Vitest runs tests within a file in declaration

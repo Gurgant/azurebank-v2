@@ -4,6 +4,25 @@ import { MAIN_ACCOUNT_ID, MOCK_PIN, mockState, resetMockState, seedMockSession }
 import { transactionSummarySchema } from '../api/responseSchemas';
 
 /**
+ * Close an account the way ADR-0049 requires: mint a deletion authorisation from the seeded PIN,
+ * then DELETE with it in `Step-Up-Authorization`. The three tests below that close an account are
+ * about identity and the ledger, not about the second factor, so the mint-then-delete shape lives
+ * here once. A headerless DELETE answers 401 AUTHORIZATION_REQUIRED on the aligned mock (D1 in
+ * measure-after-main-19742ff-2026-09-06.txt), which is what `accountDeletionHandler.test.ts` pins.
+ */
+async function closeInMock(id: string): Promise<Response> {
+  const minted = await fetch(`/api/accounts/${id}/deletion-authorizations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: MOCK_PIN }),
+  }).then((r) => r.json());
+  return fetch(`/api/accounts/${id}`, {
+    method: 'DELETE',
+    headers: { 'Step-Up-Authorization': minted.data.authorizationId },
+  });
+}
+
+/**
  * The mock stands in for the API everywhere the frontend is tested, so a gap in it is a gap in the
  * oracle. These pin the two things an audit found that nothing else could have.
  */
@@ -745,7 +764,7 @@ describe('account identity survives a delete', () => {
     const first = (await create('First Account')).data;
     const second = (await create('Second Account')).data;
 
-    const deleted = await fetch(`/api/accounts/${first.id}`, { method: 'DELETE' });
+    const deleted = await closeInMock(first.id);
     expect(deleted.status).toBe(200);
 
     const third = (await create('Third Account')).data;
@@ -775,7 +794,7 @@ describe('account identity survives a delete', () => {
       is the identity; the masked number is decoration.
     */
     const first = (await create('First Account')).data;
-    await fetch(`/api/accounts/${first.id}`, { method: 'DELETE' });
+    expect((await closeInMock(first.id)).status).toBe(200);
     const next = (await create('Next Account')).data;
 
     expect(next.accountNumber).toMatch(/^AB-\*{4}-\*{4}-\d{2}$/);
@@ -889,7 +908,7 @@ describe('a deleted account takes its transactions with it', () => {
     const listedIds = (rows: { id: string }[]) => rows.map((t) => t.id);
     expect(listedIds(before.data)).toEqual(expect.arrayContaining(doomedIds));
 
-    expect((await fetch(`/api/accounts/${id}`, { method: 'DELETE' })).status).toBe(200);
+    expect((await closeInMock(id)).status).toBe(200);
 
     const after = await fetch('/api/transactions?Page=1&PageSize=100').then((r) => r.json());
     const afterSummary = await fetch(wide).then((r) => r.json());

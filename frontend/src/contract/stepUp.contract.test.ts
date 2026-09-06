@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, firstAccountId, idempotencyKey, login } from './client';
+import { asProblem, call, closeAccount, firstAccountId, idempotencyKey, login } from './client';
 import { FIXTURES } from './target';
 
 /**
@@ -395,5 +395,108 @@ describe('contract: step-up authorisations', () => {
     expect(keys).toContain('Step-Up-Authorization');
     expect(keys).toContain('FromAccountId');
     expect(keys).not.toContain('Pin');
+  });
+});
+
+/**
+ * The account closure on the same rail (ADR-0049), on BOTH targets and inside this file's no-spend
+ * rules: a correct-PIN mint and the closure of a spare the test creates itself move no money and
+ * spend no attempt. Every probe here creates its own non-primary, zero-balance account — the
+ * seeded admin's first account is the primary, and a headerless DELETE on it answers 422
+ * PRIMARY_ACCOUNT_DELETE (D8), not the 401 the presence pin wants — and closes it in `finally`.
+ *
+ * Every expected value is quoted from `azurebank-work/plans/account-deletion/
+ * measure-after-main-19742ff-2026-09-06.txt`, measured 2026-09-06T19:16Z on main 19742ff through
+ * the BFF (:5000 -> :7215, AzureBankDev).
+ *
+ * REAL-STACK NOTE: each run leaves one `AccountDeletionRefused` audit row per headerless DELETE
+ * below on the seeded database. The row is the record, as ADR-0049 says of its own probes.
+ */
+describe('contract: deletion authorisations', () => {
+  async function createSpare(name: string): Promise<string> {
+    const created = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name, type: 'Savings' }),
+    });
+    expect(created.status).toBe(201);
+    return (created.body as { data: { id: string } }).data.id;
+  }
+
+  it('answers 404 ACCOUNT_NOT_FOUND on a deletion mint for an unknown id — M4', async () => {
+    // Measured M4 (correct pin 123456, 2026-09-06T19:16Z, main 19742ff) on an unknown id:
+    //   404 ACCOUNT_NOT_FOUND "Account with identifier '<id>' was not found."
+    // Sent with a CORRECT pin so it spends nothing on either target. Whether the lookup precedes
+    // the PIN check is NOT observable here (a wrong PIN is off-limits on the real target, see the
+    // file header) and was not measured for M4 — only M2 measured a guard ahead of the PIN.
+    const { status, body } = await call(
+      `/api/accounts/${UNKNOWN_AUTHORIZATION}/deletion-authorizations`,
+      { method: 'POST', body: JSON.stringify({ pin: FIXTURES.pin }) },
+    );
+
+    expect(status).toBe(404);
+    expect(asProblem(body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+  });
+
+  it('refuses a deletion that presents no authorisation, and names why', async () => {
+    /*
+      The row the closure's second factor exists for. Measured D1 on a fresh empty spare:
+        401 AUTHORIZATION_REQUIRED "This account closure has not been authorised."
+      and GET /bff/auth/me straight after -> 200, authLevel 1 — the errorCode survives the BFF,
+      which is what lets sessionMiddleware keep the session. On the real target this appends one
+      AccountDeletionRefused row (see the describe's note); the spare is closed in `finally`.
+    */
+    let spare = '';
+    try {
+      spare = await createSpare('Contract Closure Presence');
+
+      const { status, body } = await call(`/api/accounts/${spare}`, { method: 'DELETE' });
+      const problem = asProblem(body);
+
+      expect(status).toBe(401);
+      expect(problem.errorCode).toBe('AUTHORIZATION_REQUIRED');
+      expect(problem.detail).toBe('This account closure has not been authorised.');
+    } finally {
+      if (spare) await closeAccount(spare);
+    }
+  });
+
+  it('a minted deletion authorisation closes the account once', async () => {
+    /*
+      Measured M5 (201 "Account closure authorised", expiresAt = mint + 2m), D9 (200 "Account
+      deleted successfully"), then D10 (the same header again -> 404 ACCOUNT_NOT_FOUND: the account
+      is gone first, so a spent header is 404, not AUTHORIZATION_INVALID). The TTL is asserted as
+      a RANGE for the same reason the transfer mint's is: expiresAt is the server's clock.
+    */
+    const spare = await createSpare('Contract Closure Once');
+    let closed = false;
+    try {
+      const mint = await call(`/api/accounts/${spare}/deletion-authorizations`, {
+        method: 'POST',
+        body: JSON.stringify({ pin: FIXTURES.pin }),
+      });
+      expect(mint.status).toBe(201);
+      const data = (mint.body as { data?: { authorizationId?: string; expiresAt?: string } }).data;
+      expect(data?.authorizationId).toMatch(/^[0-9a-f-]{36}$/i);
+      const ttl = new Date(data?.expiresAt ?? 0).getTime() - Date.now();
+      expect(ttl).toBeGreaterThan(30_000);
+      expect(ttl).toBeLessThanOrEqual(120_000);
+      const headers = { 'Step-Up-Authorization': data?.authorizationId ?? '' };
+
+      const first = await call(`/api/accounts/${spare}`, { method: 'DELETE', headers });
+      expect(first.status).toBe(200);
+      closed = true;
+
+      const read = await call(`/api/accounts/${spare}`);
+      expect(read.status).toBe(404);
+      expect(asProblem(read.body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+
+      const second = await call(`/api/accounts/${spare}`, { method: 'DELETE', headers });
+      expect(second.status).toBe(404);
+      expect(asProblem(second.body).errorCode).toBe('ACCOUNT_NOT_FOUND');
+    } finally {
+      // Only if the closure under test did not happen: a second mint on a closed account is a
+      // 404 that closeAccount would swallow, but the probe should not need the swallow.
+      if (!closed) await closeAccount(spare);
+    }
   });
 });

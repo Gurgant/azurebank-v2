@@ -21,6 +21,7 @@ import {
   mockAccessTokenExpiry,
   mockState,
   toWire,
+  type MockAccount,
   type MockSessionUser,
   type StoredStepUpAuthorization,
 } from './state';
@@ -1023,37 +1024,143 @@ const setPrimaryAccount = api.patch(
 );
 
 /**
- * DELETE /api/accounts/{id} — the REAL business rules (AccountService): a 422
- * BusinessRuleException for non-zero balance or primary, else soft delete.
+ * The two 422 guards a closure meets BEFORE anything reads a PIN or an authorisation — the mock's
+ * `AccountService.RefuseIfNotClosable`, balance then primary, in one place so the deletion mint
+ * and the DELETE cannot drift from each other (ADR-0049 D4: the mint runs the same guards).
+ *
+ * Every value below is quoted from `azurebank-work/plans/account-deletion/
+ * measure-after-main-19742ff-2026-09-06.txt`, measured 2026-09-06T19:16Z on main 19742ff through
+ * the BFF (:5000 -> :7215, AzureBankDev); probe letters are that file's row labels.
+ *
+ * Returns the refusal to send, or null when the account is closable.
+ */
+function refuseIfNotClosable(account: MockAccount, request: Request): Response | null {
+  if (account.balance !== 0) {
+    return problem({
+      instance: pathOf(request),
+      status: 422,
+      errorCode: 'NON_ZERO_BALANCE',
+      // No figure since 3769dc9 — the caller already holds the balance from GET /api/accounts
+      // (AccountService.DeleteAccountAsync). Measured 2026-09-03, balance 16:
+      //   422 NON_ZERO_BALANCE "Cannot delete an account with a non-zero balance."
+      // Re-measured 2026-09-06T19:16Z on main 19742ff: M2 (the mint, with a WRONG pin —
+      // PinAccessFailedCount unchanged, so this guard is ahead of the PIN) and D7/D12 (the DELETE,
+      // no header / a valid header — D12's authorisation stays Pending, nothing spent).
+      detail: 'Cannot delete an account with a non-zero balance.',
+    });
+  }
+  if (account.isPrimary) {
+    return problem({
+      instance: pathOf(request),
+      status: 422,
+      errorCode: 'PRIMARY_ACCOUNT_DELETE',
+      // Measured 2026-09-06T19:16Z on main 19742ff: M3 on the mint (correct pin), D8 on the
+      // DELETE (no header) — 422 PRIMARY_ACCOUNT_DELETE "Cannot delete primary account. Set
+      // another account as primary first." Balance-before-primary is code
+      // (AccountService.RefuseIfNotClosable), pinned by the API's unit Theory, not a probe (a
+      // zero-balance primary is the only account that reaches this branch — ADR-0049 Context).
+      detail: 'Cannot delete primary account. Set another account as primary first.',
+    });
+  }
+  return null;
+}
+
+/**
+ * DELETE /api/accounts/{id} — a closure costs a PIN, on the transfer's authorisation rail
+ * (ADR-0049). The ORDER is the contract (ADR-0049 D6) and every rung quotes a probe of
+ * `measure-after-main-19742ff-2026-09-06.txt` (2026-09-06T19:16Z, main 19742ff, through the BFF):
+ *
+ *   binding 400 -> ownership 404 -> balance 422 -> primary 422 -> presence 401 -> validate 401
+ *   -> spend + remove 200
+ *
+ * Ownership stays ahead of presence and validate: D10/D11 measured a SECOND DELETE — with the
+ * spent header and with no header alike — as 404 ACCOUNT_NOT_FOUND, because the account is gone
+ * first. Reordering would turn D10 into AUTHORIZATION_INVALID and D11 into AUTHORIZATION_REQUIRED,
+ * neither of which the server sends. Guards stay ahead of presence (D7/D8 answered 422 with no
+ * header) and ahead of spend (D12's authorisation stayed Pending after a refused closure; D16
+ * shows the same Pending row closing the account later, 200).
+ *
+ * Hard-remove is wire-equivalent to the API's soft delete for every measured row: D9 records the
+ * 200, the IsDeleted flag on the account row and the Consumed authorisation; a later DELETE
+ * answers 404 ACCOUNT_NOT_FOUND (D10/D11). Dropping the row from `mockState.accounts` is what the
+ * mock does to model the API's soft-delete filter (every listing reads `!IsDeleted`) — the
+ * after-run took no GET of the listing or of the closed account, so that removal is the mock's
+ * modelling, not a measured row. Ids are never reused (`nextAccountSeq`), and `fidelity.test.ts`
+ * pins the ledger cascade. The
+ * `AccountDeleted` / `AccountDeletionRefused` audit rows are not modelled — the mock has no audit.
+ *
+ * ACCESS_DENIED (D14/D15: a stranger presenting the owner's authorisation, or minting on the
+ * owner's account -> 403) is NOT modelled either: the mock has one user and `MockAccount` carries
+ * no owner (state.ts), so a foreign account is 404 here and the 403 rows live in the real-stack
+ * contract suite only. Do not extend the transactions handler's not-listed->403 idiom to
+ * accounts — it would contradict the account handlers' measured 404.
+ *
+ * Nothing on the 401/422/404 paths touches `mockState.pinAttempts`: M2 and E2 measured the
+ * counter unchanged, and only `checkPinInBand` (reached from the MINT, never from here) moves it.
  */
 const deleteAccount = api.delete('/api/accounts/{id}', ({ params, request, response }) => {
+  /*
+    BINDING FIRST — model binding runs before the action. Measured D4 on the spare:
+      header 'not-a-guid' -> 400 {"Step-Up-Authorization":["The value 'not-a-guid' is not valid."]}
+    with no errorCode. Measured on the spare only: that the 400 precedes ownership on a
+    funded/unknown id is MVC binding (`AccountController [FromHeader] Guid?`) — inferred, not
+    probed. Absent, '' and whitespace fold to id:null (D1/D2/D3) and reach the presence rung below.
+  */
+  const stepUp = readStepUpHeader(request);
+  if (stepUp.errors.length > 0) {
+    return response.untyped(modelStateProblem({ [STEP_UP_HEADER]: stepUp.errors }));
+  }
+
+  // OWNERSHIP — 404 ACCOUNT_NOT_FOUND, before the guards and before the header is examined
+  // (D10/D11: the same 404 for a spent header and for no header once the account is gone).
   const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
   if (!account) {
     return response.untyped(notFound('Account', routeGuid(params.id), request));
   }
-  if (account.balance !== 0) {
+
+  // GUARDS — balance then primary, ahead of the presence check (D7/D8, no header -> 422).
+  const notClosable = refuseIfNotClosable(account, request);
+  if (notClosable) return response.untyped(notClosable);
+
+  /*
+    PRESENCE — no authorisation at all. Measured D1 (absent), D2 (''), D3 ('   '):
+      401 AUTHORIZATION_REQUIRED "This account closure has not been authorised."
+    and GET /bff/auth/me straight after D1 -> 200, authLevel 1 — a refused closure is not a dead
+    session; `sessionMiddleware` IN_FLOW_401_CODES already exempts the code (code says, endpoint-
+    agnostic) and errorPath.integration.test.ts pins it on the real stack. D1's
+    AccountDeletionRefused audit row is not modelled. The sentence is the closure's own
+    (AccountService.cs), not the transfer's.
+  */
+  if (stepUp.id === null) {
     return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 422,
-        errorCode: 'NON_ZERO_BALANCE',
-        // No figure since 3769dc9 — the caller already holds the balance from GET /api/accounts
-        // (AccountService.DeleteAccountAsync). Measured 2026-09-03, balance 16:
-        //   422 NON_ZERO_BALANCE "Cannot delete an account with a non-zero balance."
-        detail: 'Cannot delete an account with a non-zero balance.',
-      }),
+      authorizationRequired(request, 'This account closure has not been authorised.'),
     );
   }
-  if (account.isPrimary) {
-    return response.untyped(
-      problem({
-        instance: pathOf(request),
-        status: 422,
-        errorCode: 'PRIMARY_ACCOUNT_DELETE',
-        detail: 'Cannot delete primary account. Set another account as primary first.',
-      }),
-    );
-  }
+
+  /*
+    VALIDATE — the binding is (AccountDeletion, account, amount 0) per ADR-0049 D3, and BOTH sides
+    must carry amount 0 with recipientAzureTag/toAccountId undefined, or `validateAuthorization`'s
+    field-by-field compare refuses every closure. Measured D5 (a random GUID) and D6 (a TRANSFER
+    authorisation minted from the same account) -> 401 AUTHORIZATION_INVALID "This authorisation
+    cannot be used.", uniform on purpose — the mock is no more an oracle than the server. Expiry:
+    E1/E2 (measure-after-2026-09-06.txt, d93ba10 working tree merged as 19742ff) — a DELETE 130 s
+    after a mint whose expiresAt was mint+2m -> 401 AUTHORIZATION_EXPIRED "This authorisation has
+    expired. Enter your PIN again to confirm.", PinAccessFailedCount 0/0, row still Pending.
+  */
+  const authorization = validateAuthorization(stepUp.id, request, {
+    operation: 'AccountDeletion',
+    fromAccountId: account.id,
+    amount: 0,
+  });
+  if (authorization.refusal) return response.untyped(authorization.refusal);
+
+  // SPEND, on the 200 path only (D9: authorisation Consumed; D12: a refused closure spends
+  // nothing).
+  spendAuthorization(authorization.held);
+
+  // Measured D9: 200 "Account deleted successfully", IsDeleted set, authorisation Consumed. The
+  // row is dropped here to model the soft-delete filter (not a measured GET); D10/D11 answer 404
+  // ACCOUNT_NOT_FOUND from the ownership rung above, spent header or none alike.
   mockState.accounts = mockState.accounts.filter((a) => a.id !== routeGuid(params.id));
   return response(200).json({ message: 'Account deleted successfully' });
 });
@@ -2015,10 +2122,10 @@ function checkPinInBand(
     - the lock lands ON the third wrong PIN, not after it (checkPinInBand already does this);
     - an unknown recipient is ACCOUNT_NOT_FOUND, not a dedicated recipient code.
 
-  No Idempotency-Key on either endpoint, deliberately (apiSlice.ts): minting moves no money, so
-  there is nothing to deduplicate. It DOES cost a PIN attempt, which is why both call
-  `checkPinInBand` — minting is the authentication event and must not be a cheaper oracle than the
-  transfer itself.
+  No Idempotency-Key on any of the three mints (the two transfer ones here and the account
+  closure's, ADR-0049), deliberately (apiSlice.ts): minting moves no money, so there is nothing to
+  deduplicate. It DOES cost a PIN attempt, which is why all three call `checkPinInBand` — minting
+  is the authentication event and must not be a cheaper oracle than the operation itself.
 */
 
 /** The window the real server uses (StepUpOptions.Window). Two minutes, no refresh. */
@@ -2260,19 +2367,26 @@ function mintAuthorization(record: Omit<StoredStepUpAuthorization, 'consumed' | 
  * Returns the refusal to send, or the held record (or null when no header was presented at all).
  */
 /**
- * `401 AUTHORIZATION_REQUIRED` — the transfer presented no authorisation at all (ADR-0042).
+ * `401 AUTHORIZATION_REQUIRED` — the request presented no authorisation at all (ADR-0042).
  *
  * MEASURED on the real API after the flip. Distinct from AUTHORIZATION_INVALID, which means one WAS
  * presented and does not match: the two drive different recoveries, a fresh PIN entry versus a
  * "that confirmation cannot be used" message. An EMPTY header lands here too, not on the 400 that a
  * non-UUID gets, because `[FromHeader] Guid?` binds an empty value to null — verified on the wire.
+ *
+ * The sentence names the OPERATION, so it is a parameter: the two transfer callers keep the
+ * transfer's default; the account closure passes its own, measured D1/D2/D3 on 2026-09-06T19:16Z
+ * (main 19742ff) as "This account closure has not been authorised." (ADR-0049).
  */
-function authorizationRequired(request: Request): Response {
+function authorizationRequired(
+  request: Request,
+  detail = 'This transfer has not been authorised.',
+): Response {
   return problem({
     instance: pathOf(request),
     status: 401,
     errorCode: 'AUTHORIZATION_REQUIRED',
-    detail: 'This transfer has not been authorised.',
+    detail,
   });
 }
 
@@ -2477,10 +2591,15 @@ const authoriseTransfer = api.post(
 
     // MEASURED: 422 PIN_REQUIRED · 429 PIN_LOCKED (retryAfterSeconds 900, on the THIRD miss) ·
     // 401 INVALID_PIN. Same helper the transfer uses, so the two cannot drift.
+    // The PIN_REQUIRED sentence: measured 2026-09-06T19:16Z on the DELETION mint (main 19742ff;
+    // M0 in measure-after-main-19742ff-2026-09-06.txt) as "PIN must be set before authorising
+    // this operation."; StepUpAuthorizationService.cs is the ONE producer for all three mints, so
+    // the transfer mints say the same — code says, not re-measured on /api/transfers/authorizations
+    // after the change (ADR-0049 D4 generalised it from "…authorising a transfer.").
     const pinRefusal = checkPinInBand(
       body.pin,
       request,
-      'PIN must be set before authorising a transfer.',
+      'PIN must be set before authorising this operation.',
     );
     if (pinRefusal) return response.untyped(pinRefusal);
 
@@ -2556,10 +2675,12 @@ const authoriseInternalTransfer = api.post(
       return response.untyped(notFound('Account', body.toAccountId, request));
     }
 
+    // Sentence measured on the deletion mint (M0, 2026-09-06T19:16Z, main 19742ff); one producer
+    // for all three mints (StepUpAuthorizationService.cs) — see the external mint's note.
     const pinRefusal = checkPinInBand(
       body.pin,
       request,
-      'PIN must be set before authorising a transfer.',
+      'PIN must be set before authorising this operation.',
     );
     if (pinRefusal) return response.untyped(pinRefusal);
 
@@ -2571,6 +2692,90 @@ const authoriseInternalTransfer = api.post(
     });
 
     return response(201).json({ data: minted, message: 'Internal transfer authorised' });
+  },
+);
+
+/**
+ * POST /api/accounts/{id}/deletion-authorizations — mint one for closing an account (ADR-0049).
+ *
+ * The third mint, on the same rail as the two above and refused in the order
+ * `AccountService.AuthoriseDeletionAsync` refuses: binding, then OWNERSHIP, then the two closure
+ * guards, then the PIN — so a wrong PIN on a funded or primary account costs no attempt, and an
+ * account the caller does not own costs nothing at all. Every status below quotes a row of
+ * `azurebank-work/plans/account-deletion/measure-after-main-19742ff-2026-09-06.txt`, measured
+ * 2026-09-06T19:16Z on main 19742ff through the BFF (:5000 -> :7215, AzureBankDev):
+ *
+ *   M4  unknown id, correct pin        -> 404 ACCOUNT_NOT_FOUND (stepUpAuthorizations untouched)
+ *   M2  funded account, WRONG pin      -> 422 NON_ZERO_BALANCE, PinAccessFailedCount unchanged
+ *   M3  primary account, correct pin   -> 422 PRIMARY_ACCOUNT_DELETE
+ *   M0  no PIN enrolled                -> 422 PIN_REQUIRED "PIN must be set before authorising
+ *                                         this operation."
+ *   M1  wrong pin                      -> 401 INVALID_PIN "Invalid PIN.", counter 0 -> 1
+ *   M5  correct pin                    -> 201 {data:{authorizationId, expiresAt = mint + 2m},
+ *                                         message:"Account closure authorised"};
+ *                                         row AccountDeletion Pending NULL
+ *
+ * NOT measured on this endpoint, and labelled so rather than borrowed silently:
+ *   - 429 PIN_LOCKED was not provoked in the after-run (one wrong PIN, M1, and the counter ended
+ *     at 0); the shape and retryAfterSeconds 900 on the third miss are `checkPinInBand`'s,
+ *     measured on the transfer mints 2026-08-16;
+ *   - the four 400 body shapes (pin absent / null / '12' / non-string) are `mintPinBindFailure`'s
+ *     and `pinAnnotationErrors`', measured on the TRANSFER mints 2026-08-16; this DTO carries the
+ *     same [Required][Pin] (AccountDeletionAuthorizationRequest.cs) and the CLR name is code
+ *     (namespace + class), not observed on /deletion-authorizations;
+ *   - the funded-and-no-PIN combination: M0 was on a closable spare, M2 on a funded account WITH
+ *     a PIN; ADR-0049 D4 says the guards precede MintAsync, which is where PIN_REQUIRED
+ *     originates, so the guards answer first here — code says;
+ *   - a repeat mint on an account already holding a Pending authorisation answers a second 201:
+ *     `mintAuthorization` never checks, and the backend's MintAsync just inserts — code says, the
+ *     after-run minted on distinct spares only;
+ *   - 403 ACCESS_DENIED for a foreign account (D15) is not modelled — no owner on `MockAccount`.
+ */
+const authoriseAccountDeletion = api.post(
+  '/api/accounts/{id}/deletion-authorizations',
+  async ({ params, request, response }) => {
+    const body = (await request.json()) as { pin?: unknown };
+
+    const pinBind = mintPinBindFailure(
+      body,
+      'AzureBank.Shared.DTOs.Account.AccountDeletionAuthorizationRequest',
+    );
+    if (pinBind) return response.untyped(pinBind);
+    const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
+    if (badPin.length > 0) return response.untyped(modelStateProblem({ Pin: badPin }));
+
+    // OWNERSHIP FIRST. M4 measured the 404 (correct pin, no counter read); that it precedes the
+    // PIN is code — `AuthoriseDeletionAsync` opens with GetAccountWithOwnershipCheckAsync before
+    // MintAsync (AccountService.cs) — so probing an account costs no PIN attempt, exactly as on
+    // the transfer mints. accountDeletionHandler.test.ts pins the order with a wrong pin.
+    const account = mockState.accounts.find((a) => a.id === routeGuid(params.id));
+    if (!account) {
+      return response.untyped(notFound('Account', routeGuid(params.id), request));
+    }
+
+    // GUARDS before the PIN (M2/M3) — the same helper the DELETE uses, so the two cannot drift.
+    const notClosable = refuseIfNotClosable(account, request);
+    if (notClosable) return response.untyped(notClosable);
+
+    // M0 422 PIN_REQUIRED · M1 401 INVALID_PIN (counter +1) · 429 PIN_LOCKED inherited (see above).
+    const pinRefusal = checkPinInBand(
+      (body.pin ?? undefined) as string | undefined,
+      request,
+      'PIN must be set before authorising this operation.',
+    );
+    if (pinRefusal) return response.untyped(pinRefusal);
+
+    // Binding per ADR-0049 D3: (accountId, null, null, 0). Amount 0 on BOTH the mint and the
+    // DELETE, or `validateAuthorization`'s compare refuses every closure.
+    const minted = mintAuthorization({
+      operation: 'AccountDeletion',
+      fromAccountId: account.id,
+      amount: 0,
+    });
+
+    // Measured M5: 201, expiresAt = mint + 2m (E1 in measure-after-2026-09-06.txt: 10:44:53 ->
+    // 10:46:53), message from AccountController.cs.
+    return response(201).json({ data: minted, message: 'Account closure authorised' });
   },
 );
 
@@ -3823,6 +4028,7 @@ export const handlers = [
   renameAzureTag,
   authoriseTransfer,
   authoriseInternalTransfer,
+  authoriseAccountDeletion,
   transfer,
   transferInternal,
   verifyPin,

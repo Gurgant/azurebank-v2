@@ -147,7 +147,8 @@ export const HISTORY_PAGE_SIZE = 20;
  *                create -> LIST; rename -> id; delete -> [LIST,id];
  *                setPrimary -> blanket 'Account' (two accounts flip isPrimary).
  * Invalidation happens only on SUCCESS (`error ? [] : ...`): failed mutations changed
- * nothing server-side, and RESULT_UNKNOWN recovery invalidates explicitly in its flow.
+ * nothing server-side, and RESULT_UNKNOWN recovery invalidates explicitly in its flow — as does
+ * the delete dialog's ACCOUNT_NOT_FOUND branch (the account is already gone; the LIST is stale).
  */
 export const apiSlice = createApi({
   reducerPath: 'api',
@@ -209,10 +210,30 @@ export const apiSlice = createApi({
       invalidatesTags: (_result, error) => (error ? [] : ['Account']),
     }),
 
-    deleteAccount: builder.mutation<void, string>({
-      query: (id) => ({ url: `/api/accounts/${id}`, method: 'DELETE' }),
+    /*
+      A closure costs a PIN on the transfer's authorisation rail (ADR-0049): the dialog mints with
+      `authoriseAccountDeletion` below and presents the id here, in the header the document marks
+      REQUIRED (schema.d.ts). No Idempotency-Key — the DELETE carries none (ADR-0049), so nothing
+      is ever held across attempts and a refusal simply mints again.
+    */
+    deleteAccount: builder.mutation<void, { id: string; stepUpAuthorizationId?: string }>({
+      query: ({ id, stepUpAuthorizationId }) => ({
+        url: `/api/accounts/${id}`,
+        method: 'DELETE',
+        headers: {
+          // Spread rather than a `?? undefined` value — see `transfer` below: an explicit
+          // `undefined` still serialises as an EMPTY header on some transports, and
+          // `[FromHeader] Guid?` binds an empty value to null, so the API would answer 401
+          // AUTHORIZATION_REQUIRED as though nothing had been sent. Measured on THIS endpoint:
+          // D2/D3 in measure-after-main-19742ff-2026-09-06.txt ('' and '   ' -> 401), 19:16Z.
+          ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
+        },
+      }),
       transformResponse: () => undefined,
-      invalidatesTags: (_result, error, id) =>
+      // Destructured: the argument is an object now, and a bare third parameter would tag the
+      // whole object. Invalidation is success-only, so the dialog's ACCOUNT_NOT_FOUND branch
+      // ("already closed") invalidates the LIST tag by hand (DeleteAccountDialog.tsx).
+      invalidatesTags: (_result, error, { id }) =>
         error
           ? []
           : [
@@ -393,13 +414,15 @@ export const apiSlice = createApi({
     }),
 
     /*
-      MINTING (ADR-0042). Two endpoints, no Idempotency-Key on either, and that is deliberate:
-      minting moves no money, so there is nothing to deduplicate, and a repeat simply produces a
-      second authorisation of which only one can ever be spent. Requiring a key would add a failure
-      mode to the one call whose whole job is to be easy to make again after a wrong PIN.
+      MINTING (ADR-0042). Three endpoints — the two transfer mints and the account closure's
+      (ADR-0049, `authoriseAccountDeletion` below) — no Idempotency-Key on any, and that is
+      deliberate: minting moves no money, so there is nothing to deduplicate, and a repeat simply
+      produces a second authorisation of which only one can ever be spent. Requiring a key would
+      add a failure mode to the one call whose whole job is to be easy to make again after a wrong
+      PIN.
 
       What a repeat DOES cost is a PIN attempt — minting IS the authentication event, and must not
-      be a cheaper oracle than the transfer itself. So these answer with the same PIN codes the
+      be a cheaper oracle than the operation itself. So these answer with the same PIN codes the
       transfer does (401 INVALID_PIN, 429 PIN_LOCKED, 422 PIN_REQUIRED) and the pages route all
       three through the branch that already handles them.
 
@@ -421,6 +444,26 @@ export const apiSlice = createApi({
         url: '/api/transfers/internal/authorizations',
         method: 'POST',
         body,
+      }),
+      transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
+        unwrap(response, stepUpAuthorizationResponseSchema),
+    }),
+
+    /*
+      The closure's mint (ADR-0049 D4): operation in the path segment, the PIN in the JSON body and
+      nowhere else — never a query string, never a header. The API runs ownership -> the two 422
+      guards -> the PIN, so a wrong PIN on a funded or primary account costs no attempt (M2,
+      measure-after-main-19742ff-2026-09-06.txt). Same StepUpAuthorizationResponse as the transfer
+      mints, so the STRICT unwrap is one schema.
+    */
+    authoriseAccountDeletion: builder.mutation<
+      StepUpAuthorizationResponse,
+      { id: string; pin: string }
+    >({
+      query: ({ id, pin }) => ({
+        url: `/api/accounts/${id}/deletion-authorizations`,
+        method: 'POST',
+        body: { pin },
       }),
       transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
         unwrap(response, stepUpAuthorizationResponseSchema),
@@ -608,6 +651,7 @@ export const {
   useLazyLookupRecipientQuery,
   useAuthoriseTransferMutation,
   useAuthoriseInternalTransferMutation,
+  useAuthoriseAccountDeletionMutation,
   useTransferMutation,
   useTransferInternalMutation,
   // BFF auth
