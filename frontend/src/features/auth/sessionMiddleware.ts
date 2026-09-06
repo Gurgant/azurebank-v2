@@ -15,14 +15,33 @@ function isGetMeAction(action: unknown): boolean {
  * The global 401 rule (D3), routed on errorCode — never on endpoint identity:
  *  - INVALID_PIN         stays in the calling form (withdraw dialog / step-up);
  *  - INVALID_CREDENTIALS stays on the login form;
- *  - AUTHORIZATION_EXPIRED / AUTHORIZATION_INVALID stay in the transfer wizard (ADR-0042). These
- *    are 401s about a step-up AUTHORISATION, not about the session, and the pipeline proves it:
- *    `IdempotencyMiddleware` is registered AFTER UseAuthentication/UseAuthorization, so reaching
- *    `StepUpAuthorizationService.ValidateAsync` at all means the cookie was accepted. Treating
- *    them as a dead session signed the user out mid-transfer — and the wizard's exit blocker
- *    exempts /login, so they were not even asked whether to abandon a payment whose outcome they
- *    did not know. Measured through the BFF: the `errorCode` extension survives on this 401, so
- *    routing on it here is safe;
+ *  - AUTHORIZATION_REQUIRED / AUTHORIZATION_EXPIRED / AUTHORIZATION_INVALID — all three codes of
+ *    ADR-0042 — stay in the transfer wizard. These are 401s about a step-up AUTHORISATION, not
+ *    about the session, and the pipeline proves it: `IdempotencyMiddleware` is registered AFTER
+ *    UseAuthentication/UseAuthorization, so reaching `StepUpAuthorizationService.ValidateAsync`
+ *    at all means the cookie was accepted; REQUIRED is thrown in the same [Authorize]d action,
+ *    upstream of that validator and before the payee is resolved, so it proves the cookie at
+ *    least as well. Treating them as a dead session signed the user out mid-transfer — and the
+ *    wizard's exit blocker exempts /login, so they were not even asked whether to abandon a
+ *    payment whose outcome they did not know. Measured through the BFF: the `errorCode`
+ *    extension survives on all three 401s, so routing on it here is safe.
+ *
+ *    REQUIRED joined the list on 2026-09-05. The set was written from the codes the server could
+ *    emit that day (e4973da, 2026-08-17); the flip that made REQUIRED emittable landed the next
+ *    day (6c3b24e) without touching this file. No shipped page can reach it — both transfer
+ *    pages mint before they send — so no click met it; but the data layer against the real
+ *    stack, handed a headerless transfer at the store, went 'authenticated' -> 'expired' with the
+ *    cookie alive (observed, red before the fix). The rest follows from this block: the same
+ *    dispatch resets the cache, and in the app ProtectedRoute answers 'expired' with /login and
+ *    a "session expired" banner — for a session the server had just accepted. Measured
+ *    2026-09-05 at level 1 and at level 2 alike:
+ *
+ *      POST /api/transfers, no Step-Up-Authorization header
+ *        -> 401 {"detail":"This transfer has not been authorised.",
+ *                "errorCode":"AUTHORIZATION_REQUIRED", ...}, no WWW-Authenticate
+ *      GET /bff/auth/me straight after -> 200, authLevel unchanged
+ *
+ *    (errorPath.integration.test.ts pins it on the real stack; auth.test.tsx holds the table);
  *  - a 401 while NOT authenticated is the calling surface's business (the boot probe
  *    resolves to 'anonymous' in the slice; an anonymous user must never see a
  *    "session expired" banner for a session they never had, and their form's mutation
@@ -60,6 +79,7 @@ const TRANSPORT_FAILURES = new Set(['NETWORK', 'PARSE']);
 const IN_FLOW_401_CODES = new Set([
   'INVALID_PIN',
   'INVALID_CREDENTIALS',
+  'AUTHORIZATION_REQUIRED',
   'AUTHORIZATION_EXPIRED',
   'AUTHORIZATION_INVALID',
 ]);

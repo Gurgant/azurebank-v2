@@ -397,7 +397,7 @@ describe('a lost response, and the way back to the PIN', () => {
     /*
       The sharpest defect this PR fixes, and the one a user would have met first.
 
-      Both authorisation refusals are 401s, and `sessionMiddleware` treated every 401 that was not
+      Every authorisation refusal is a 401, and `sessionMiddleware` treated every 401 that was not
       INVALID_PIN or INVALID_CREDENTIALS as a dead session: `sessionExpired()` + `resetApiState()`,
       then `ProtectedRoute` to /login — and the wizard's exit blocker exempts /login, so the user
       was not even asked about a payment whose outcome they did not know.
@@ -405,7 +405,10 @@ describe('a lost response, and the way back to the PIN', () => {
       The session was never in question. `IdempotencyMiddleware` sits after UseAuthentication, so
       reaching the step-up check at all proves the cookie was accepted.
 
-      Falsified by removing either code from IN_FLOW_401_CODES.
+      Falsified by removing AUTHORIZATION_EXPIRED from IN_FLOW_401_CODES. The other two codes have
+      a booted store of their own below — an earlier version of the INVALID test rendered on a
+      store still at 'unknown', where the middleware never fires, so the sentence "falsified by
+      removing either code" was true of one code and not the other.
     */
     server.use(
       http.post('*/api/transfers', () =>
@@ -454,11 +457,73 @@ describe('a lost response, and the way back to the PIN', () => {
       ),
     );
 
-    renderTransfer();
+    // Booted to 'authenticated' for the same reason as the test above: on a store at 'unknown'
+    // the session assertion at the end cannot fail.
+    const store = makeTestStore();
+    await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+    expect(store.getState().auth.status).toBe('authenticated');
+    renderWithProviders(
+      <Routes>
+        <Route path="/" element={<TransferPage />} />
+      </Routes>,
+      { routerEntries: ['/'], store },
+    );
     await externalToPinStep();
     await enterPin();
 
     expect(await screen.findByText(/can no longer be used/i)).toBeInTheDocument();
     expect(screen.queryByText(/your confirmation expired/i)).not.toBeInTheDocument();
+    // The assertion that bites — falsified by removing AUTHORIZATION_INVALID from
+    // IN_FLOW_401_CODES. Nothing in this tree navigates on 'expired' (ProtectedRoute is not
+    // mounted), so the status is the only thing the middleware's reaction can be read from.
+    expect(store.getState().auth.status).toBe('authenticated');
+  });
+
+  it('keeps the wizard and the session when the server says no authorisation was presented', async () => {
+    /*
+      AUTHORIZATION_REQUIRED, the third ADR-0042 code, and the one the exemption list did not hold
+      until 2026-09-05. This page cannot produce it — it mints before it sends, and the aligned mock
+      refuses a headerless transfer for the same reason the API does — so the override answers it to
+      a request that DID carry the header, which is the only way to put the answer in front of the
+      page. What is pinned is the page's reaction, not the wire: the user is still on the PIN step,
+      still signed in, and reads the server's own sentence (there is no client copy for a refusal the
+      client cannot cause). With the code removed from the set this test fails at the status line
+      only — the sentence and the PIN step still render, and nothing here navigates, because
+      ProtectedRoute is not in the tree; in the app it is what turns 'expired' into /login and
+      "Your session has expired".
+
+      Measured 2026-09-05 through the BFF, cookie alive: the API's body is
+        {"status":401,"detail":"This transfer has not been authorised.",
+         "errorCode":"AUTHORIZATION_REQUIRED",...}
+      and /bff/auth/me answers 200 straight after.
+
+      Falsified by removing AUTHORIZATION_REQUIRED from IN_FLOW_401_CODES.
+    */
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({
+          status: 401,
+          errorCode: 'AUTHORIZATION_REQUIRED',
+          detail: 'This transfer has not been authorised.',
+        }),
+      ),
+    );
+
+    const store = makeTestStore();
+    await store.dispatch(apiSlice.endpoints.getMe.initiate()).unwrap();
+    expect(store.getState().auth.status).toBe('authenticated');
+    renderWithProviders(
+      <Routes>
+        <Route path="/" element={<TransferPage />} />
+      </Routes>,
+      { routerEntries: ['/'], store },
+    );
+    await externalToPinStep();
+    await enterPin();
+
+    expect(await screen.findByText('This transfer has not been authorised.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Digit 1 of 6')).toBeInTheDocument();
+    // The assertion that bites — falsified by removing AUTHORIZATION_REQUIRED from the set.
+    expect(store.getState().auth.status).toBe('authenticated');
   });
 });
