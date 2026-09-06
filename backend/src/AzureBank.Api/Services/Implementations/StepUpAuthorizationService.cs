@@ -55,7 +55,8 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
           TransferService.VerifyPinOrThrowAsync along with TransferRequest.Pin. These three checks
           were written as its deliberate mirror — same order, same exceptions — so that the two
           endpoints answered a bad PIN identically; the mirror now has one side and these are simply
-          the checks. TransactionService.WithdrawAsync still carries its own copy, and withdraw is
+          the checks. Since ADR-0049 an account closure's PIN is proved here too, through the same
+          three checks. TransactionService.WithdrawAsync still carries its own copy, and withdraw is
           the task that should converge here next.
         */
         var user = await _context.Users.FindAsync([userId], cancellationToken);
@@ -66,8 +67,10 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
 
         if (string.IsNullOrEmpty(user.PinHash))
         {
+            // "This operation", not "a transfer", since ADR-0049 put a closure on this rail. The
+            // sentence is the 422's detail on the wire; the SPA mock aligns to the measured value.
             throw new BusinessRuleException(
-                "PIN must be set before authorising a transfer.", ErrorCodes.PinRequired);
+                "PIN must be set before authorising this operation.", ErrorCodes.PinRequired);
         }
 
         // Throws 429 PIN_LOCKED when locked; false is a wrong PIN. A wrong PIN costs an attempt
@@ -173,7 +176,7 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
     public async Task ConsumeAsync(
         Guid userId,
         Guid authorizationId,
-        Guid consumedByTransactionId,
+        Guid? consumedByTransactionId,
         CancellationToken cancellationToken = default)
     {
         var now = DateTime.UtcNow;

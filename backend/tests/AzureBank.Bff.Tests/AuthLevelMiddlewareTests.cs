@@ -20,9 +20,12 @@ namespace AzureBank.Bff.Tests;
 /// <summary>
 /// First coverage of AuthLevelMiddleware — security-load-bearing now that
 /// GET /api/accounts/{id}/full-number discloses the unmasked account number: this
-/// middleware is the ONLY PIN (level-2) gate in the system (the API has no auth-level
-/// concept; the JWT carries no level claim). YARP's forwarder is replaced with a
-/// recording fake, so "the backend was never called" is asserted, never assumed.
+/// middleware is the BFF's session-flag (level-2) gate, and since ADR-0041 the reveal is
+/// the only path it still gates that way — transfers (ADR-0042) and account closures
+/// (ADR-0049) are authorised at the API by a minted step-up authorisation instead (the
+/// API has no auth-level concept; the JWT carries no level claim). YARP's forwarder is
+/// replaced with a recording fake, so "the backend was never called" is asserted, never
+/// assumed.
 /// </summary>
 public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
@@ -716,6 +719,33 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
 
         response.StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
         backend.ForwardedPaths.Should().Contain("/api/transfers/authorizations");
+    }
+
+    [Fact]
+    public async Task AClosureMintAndItsDelete_WithALevel1Session_AreForwarded()
+    {
+        /*
+          ADR-0049 put account closures on the API's mint rail WITHOUT touching this middleware:
+          the suffix rule matches only /full-number and the exact set is empty, so neither the mint
+          under /api/accounts/{id}/ nor the DELETE fits a level-2 branch. This pins that the mint
+          path did not collide with the prefix/suffix rules by accident — a collision would gate
+          the mint behind the session model ADR-0041 rejected, silently, and the SPA would see a
+          403 STEP_UP_REQUIRED on the endpoint that exists to take the PIN.
+        */
+        var (factory, backend) = WithRecorder();
+        var (sessionId, cookieName, _) = CreateSession(factory);
+        var client = factory.CreateClient();
+        const string account = "01a01234-0000-7000-8000-000000000000";
+
+        var mint = Request(HttpMethod.Post, $"/api/accounts/{account}/deletion-authorizations", cookieName, sessionId);
+        mint.Content = JsonContent.Create(new { });
+        (await client.SendAsync(mint)).StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+
+        var delete = Request(HttpMethod.Delete, $"/api/accounts/{account}", cookieName, sessionId);
+        (await client.SendAsync(delete)).StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+
+        backend.ForwardedPaths.Should().Contain($"/api/accounts/{account}/deletion-authorizations");
+        backend.ForwardedPaths.Should().Contain($"/api/accounts/{account}");
     }
 
     [Fact]

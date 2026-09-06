@@ -43,8 +43,10 @@ public interface IAuditService
     /// The contract is copied deliberately from <c>IIdempotencyService.MarkExecutedPending</c>,
     /// which is this codebase's existing precedent for "a bookkeeping row that rides the business
     /// commit". Nothing here opens a transaction: at <c>TransferService</c> the row joins the
-    /// explicit one, and at <c>AccountService.DeleteAccountAsync</c> — which has none — it joins the
-    /// implicit multi-statement transaction EF opens for <c>SaveChanges</c>. The chain fields are
+    /// explicit one, and so does it at <c>AccountService.DeleteAccountAsync</c>, which since
+    /// ADR-0049 opens one of its own so the spend of the closure's authorisation can ride the same
+    /// commit as the soft delete (before that it had none, and the row joined the implicit
+    /// multi-statement transaction EF opens for <c>SaveChanges</c>). The chain fields are
     /// filled later, inside <c>AzureBankDbContext.SaveChanges</c>, because they can only be computed
     /// within that transaction — NOT by an interceptor, which ADR-0044 D3 rejected because the test
     /// host rebuilds the <c>DbContext</c> registration and would silently drop it. An earlier draft

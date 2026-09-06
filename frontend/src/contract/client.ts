@@ -170,6 +170,34 @@ export async function elevate(): Promise<Wire> {
   );
 }
 
+/**
+ * Close an account the way ADR-0049 requires: mint a deletion authorisation from the fixture PIN,
+ * then DELETE with it in `Step-Up-Authorization`. Cleanup-shaped — every failure is swallowed
+ * exactly as the `finally` blocks that call it swallow theirs — and with no branch on the target.
+ *
+ * On the mock target the mint route is not handled yet (the frontend follow-up adds it) and MSW is
+ * listening with `onUnhandledRequest: 'error'`, so the POST rejects and the DELETE goes out
+ * headerless, which the mock still honours. On the real target the mint answers 201 and the DELETE
+ * carries the authorisation. Before this helper existed the two cleanups in money.contract.test.ts
+ * sent the bare DELETE on both targets, and on the real stack after ADR-0049 that answers 401
+ * AUTHORIZATION_REQUIRED (measured 2026-09-06T10:44Z, D1 in the change's after-transcript) — and
+ * because `call` resolves on every status, `.catch` never fired: each run left the probe account
+ * listed and appended an AccountDeletionRefused audit row to the seeded database.
+ */
+export async function closeAccount(id: string): Promise<void> {
+  const mint = await call(`/api/accounts/${id}/deletion-authorizations`, {
+    method: 'POST',
+    body: JSON.stringify({ pin: FIXTURES.pin }),
+  }).catch(() => null);
+  const headers: Record<string, string> = {};
+  if (mint?.status === 201) {
+    headers['Step-Up-Authorization'] = (
+      mint.body as { data: { authorizationId: string } }
+    ).data.authorizationId;
+  }
+  await call(`/api/accounts/${id}`, { method: 'DELETE', headers }).catch(() => {});
+}
+
 /** The caller's first account id. Both targets seed at least one. */
 export async function firstAccountId(): Promise<string> {
   const { status, body } = await call('/api/accounts');

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
 // <Schemas>
+export type AccountDeletionAuthorizationRequest = z.infer<
+  typeof AccountDeletionAuthorizationRequest
+>;
+export const AccountDeletionAuthorizationRequest = z.object({
+  pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
+});
+
 export type AccountNumberResponse = z.infer<typeof AccountNumberResponse>;
 export const AccountNumberResponse = z.object({ accountId: z.uuid(), accountNumber: z.string() });
 

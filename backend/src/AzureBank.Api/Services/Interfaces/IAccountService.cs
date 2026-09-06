@@ -1,4 +1,5 @@
 using AzureBank.Shared.DTOs.Account;
+using AzureBank.Shared.DTOs.Transfer;
 
 namespace AzureBank.Api.Services.Interfaces;
 
@@ -33,9 +34,25 @@ public interface IAccountService
     Task SetPrimaryAccountAsync(Guid userId, Guid accountId);
 
     /// <summary>
-    /// Soft deletes an account (balance must be zero, cannot be primary).
+    /// Proves the PIN and mints the one-shot authorisation a closure of
+    /// <paramref name="accountId"/> must present (ADR-0049). Ownership first, then the two closure
+    /// guards (422 <c>NON_ZERO_BALANCE</c>, 422 <c>PRIMARY_ACCOUNT_DELETE</c>), and only then the
+    /// PIN — so a closure that cannot happen never costs an attempt. The PIN refusals are the
+    /// mint's own:
+    /// 422 <c>PIN_REQUIRED</c>, 401 <c>INVALID_PIN</c>, 429 <c>PIN_LOCKED</c>.
     /// </summary>
-    Task DeleteAccountAsync(Guid accountId, Guid userId);
+    Task<StepUpAuthorizationResponse> AuthoriseDeletionAsync(Guid userId, Guid accountId, string pin);
+
+    /// <summary>
+    /// Soft deletes an account (balance must be zero, cannot be primary) under an authorisation
+    /// minted by <see cref="AuthoriseDeletionAsync"/> and presented in the
+    /// <c>Step-Up-Authorization</c> header (ADR-0049). None presented is 401
+    /// <c>AUTHORIZATION_REQUIRED</c> and writes an <c>AccountDeletionRefused</c> row; one that does
+    /// not match is 401 <c>AUTHORIZATION_INVALID</c>; one that has lapsed is 401
+    /// <c>AUTHORIZATION_EXPIRED</c>. The soft delete, its <c>AccountDeleted</c> row and the spend
+    /// of the authorisation commit together or not at all.
+    /// </summary>
+    Task DeleteAccountAsync(Guid accountId, Guid userId, Guid? stepUpAuthorizationId);
 
     /// <summary>
     /// Gets the current or historical balance for an account.

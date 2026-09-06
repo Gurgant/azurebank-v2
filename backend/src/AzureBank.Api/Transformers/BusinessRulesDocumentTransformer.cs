@@ -35,6 +35,12 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
             "Business Rule Violation - The request violates domain constraints (e.g., insufficient funds).",
         ["DELETE /api/accounts/{id}"] =
             "Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance).",
+        // ADR-0049: the mint runs the two closure guards before the PIN is consulted, and the PIN
+        // verifier adds a third code. Declared here and NOT by an attribute on the action, for the
+        // reason on AccountController.DeleteAccount: an attribute would outrank this entry and
+        // publish the bare reason phrase, which is what the document carried until 2026-09-06.
+        ["POST /api/accounts/{id}/deletion-authorizations"] =
+            "Business Rule Violation - the account cannot be closed (errorCode NON_ZERO_BALANCE or PRIMARY_ACCOUNT_DELETE, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED).",
         ["GET /api/transactions/summary"] =
             "Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE)."
     };

@@ -150,8 +150,42 @@ public static class SecurityEvents
     /// act, did. Two guards make the money case unreachable (non-zero balance and primary account
     /// both refuse with 422), so this is a detective control over integrity, not over funds.
     /// </para>
+    /// <para>
+    /// CORRECTION (2026-09-06, ADR-0049): "a detective control" undersold it from that date on. The
+    /// closure is now also PREVENTIVELY controlled — it needs a step-up authorisation minted from
+    /// the PIN and bound to the account, presented in <c>Step-Up-Authorization</c>, and a closure
+    /// presenting none is refused and recorded as <see cref="AccountDeletionRefused"/>. This row is
+    /// still the evidence that a closure happened; it is no longer the only control over whether it
+    /// could.
+    /// </para>
     /// </remarks>
     public const string AccountDeleted = "AccountDeleted";
+
+    /// <summary>
+    /// A closure was refused because no step-up authorisation was presented (ADR-0049). Detail
+    /// carries the ErrorCodes reason, which is always <c>AUTHORIZATION_REQUIRED</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// RAISED FOR AN ABSENT AUTHORISATION ONLY, matching the transfer precedent
+    /// (<see cref="MoneyTransferRefused"/>): an authorisation that is EXPIRED or INVALID is not
+    /// recorded for a closure any more than it is for a transfer, and the omission is inherited
+    /// rather than decided afresh — ADR-0049 lists it under "not done".
+    /// </para>
+    /// <para>
+    /// NOT raised for the two 422 guards (non-zero balance, primary account). ADR-0044 keeps
+    /// business validation log-only: those refuse the caller's OWN account for a state the caller
+    /// can already read from <c>GET /api/accounts</c>, so a row would record an input mistake, not
+    /// an attempt to defeat a control. Same rule that keeps insufficient funds out of the table.
+    /// </para>
+    /// <para>
+    /// Written with <c>RecordRefusalAsync</c> on its own connection AFTER the ownership check, so
+    /// the row names the account it was refused against — the same placement as the transfer
+    /// refusal, and the same reason.
+    /// </para>
+    /// <para>OWASP: <c>authz_fail:[userid,resource]</c>.</para>
+    /// </remarks>
+    public const string AccountDeletionRefused = "AccountDeletionRefused";
 
     /// <summary>A user changed their own public handle (ADR-0015).</summary>
     /// <remarks>OWASP: <c>user_updated:[userid,onuserid,attributes[…]]</c>.</remarks>

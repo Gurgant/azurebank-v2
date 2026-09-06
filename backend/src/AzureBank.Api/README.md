@@ -171,8 +171,10 @@ AzureBank.Api/
 | `/api/accounts` | POST | Create new account | Yes |
 | `/api/accounts/{id}` | GET | Get account details | Yes |
 | `/api/accounts/{id}` | PATCH | Update account name | Yes |
-| `/api/accounts/{id}` | DELETE | Close account (soft delete) | Yes |
+| `/api/accounts/{id}/deletion-authorizations` | POST | Mint a one-shot deletion authorisation from the PIN (ADR-0049); 201 `{authorizationId, expiresAt}`; the balance and primary guards answer 422 before the PIN is consulted | Yes + PIN |
+| `/api/accounts/{id}` | DELETE | Close account (soft delete); requires a live `Step-Up-Authorization` header minted above, else 401 `AUTHORIZATION_REQUIRED` (ADR-0042/0049) | Yes + Step-Up-Authorization |
 | `/api/accounts/{id}/balance` | GET | Get current/historical balance | Yes |
+| `/api/accounts/{id}/full-number` | GET | Reveal the full account number (level 2, ADR-0038) | Yes |
 | `/api/accounts/{id}/set-primary` | PATCH | Set as primary account | Yes |
 
 ### Transactions (`/api/transactions`)
@@ -188,8 +190,10 @@ AzureBank.Api/
 
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
-| `/api/transfers` | POST | Transfer to external user | Yes + PIN |
-| `/api/transfers/internal` | POST | Transfer between own accounts | Yes + PIN |
+| `/api/transfers/authorizations` | POST | Mint a one-shot transfer authorisation from the PIN (ADR-0042) | Yes + PIN |
+| `/api/transfers/internal/authorizations` | POST | Mint a one-shot internal-transfer authorisation from the PIN (ADR-0042) | Yes + PIN |
+| `/api/transfers` | POST | Transfer to external user; presents the authorisation minted above | Yes + Step-Up-Authorization |
+| `/api/transfers/internal` | POST | Transfer between own accounts; presents the authorisation minted above | Yes + Step-Up-Authorization |
 
 ### Users (`/api/users`)
 
@@ -216,12 +220,18 @@ Handles user authentication, registration, and PIN management.
 
 Manages bank account CRUD operations.
 
-**Key Methods:**
-- `GetAccountsAsync(userId)` - List user's accounts
+**Key Methods** (the `IAccountService` names as of 2026-09-06; the list used to be one to two
+parameters stale per method):
+- `GetUserAccountsAsync(userId)` - List user's accounts
+- `GetAccountByIdAsync(accountId, userId)` - One account, ownership-checked
 - `CreateAccountAsync(userId, request)` - Create new account
-- `UpdateAccountAsync(accountId, request)` - Update account name
-- `DeleteAccountAsync(accountId)` - Soft delete account
-- `SetPrimaryAsync(accountId)` - Set as primary
+- `UpdateAccountAsync(accountId, userId, request)` - Update account name
+- `SetPrimaryAccountAsync(userId, accountId)` - Set as primary
+- `AuthoriseDeletionAsync(userId, accountId, pin)` - Mint the closure authorisation (ADR-0049)
+- `DeleteAccountAsync(accountId, userId, stepUpAuthorizationId)` - Soft delete; spends the
+  authorisation in the same transaction
+- `GetBalanceAsync(accountId, userId, atTime)` - Current or historical balance
+- `GetFullAccountNumberAsync(accountId, userId)` - The unmasked number (ADR-0038)
 
 ### TransactionService
 

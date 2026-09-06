@@ -179,7 +179,10 @@ export interface paths {
         delete: {
             parameters: {
                 query?: never;
-                header?: never;
+                header: {
+                    /** @description Authorisation reference minted by POST /api/accounts/{id}/deletion-authorizations (ADR-0049). REQUIRED to close an account: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The balance and primary-account rules (422) are checked before the header is. */
+                    "Step-Up-Authorization": string;
+                };
                 path: {
                     /** @description Account ID */
                     id: string;
@@ -553,6 +556,122 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/accounts/{id}/deletion-authorizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorise the closure of one owned account (ADR-0049).
+         *     The account must be closable — zero balance, not primary — before the PIN is consulted.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Account ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The PIN */
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccountDeletionAuthorizationRequest"];
+                    "text/json": components["schemas"]["AccountDeletionAuthorizationRequest"];
+                    "application/*+json": components["schemas"]["AccountDeletionAuthorizationRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfStepUpAuthorizationResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Business Rule Violation - the account cannot be closed (errorCode NON_ZERO_BALANCE or PRIMARY_ACCOUNT_DELETE, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED). */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description A URI reference identifying the problem type */
+                            type?: string;
+                            /** @description A short, human-readable summary (e.g., 'Business Rule Violation') */
+                            title?: string;
+                            /** @description The HTTP status code (422) */
+                            status?: number;
+                            /** @description A human-readable explanation of the business rule violation */
+                            detail?: string;
+                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            errorCode?: string;
+                            /** @description Request trace identifier for debugging */
+                            traceId?: string;
+                        };
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/auth/login": {
@@ -2255,6 +2374,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Authorises the closure of one account: proves the PIN and returns a reference valid only for
+         *     DELETE /api/accounts/{id} on that account.
+         */
+        AccountDeletionAuthorizationRequest: {
+            /** @description PIN must be exactly 6 digits. */
+            pin: string;
+        };
         /**
          * @description The on-demand reveal of a single account's FULL (unmasked) account number.
          *     Every other account DTO carries the masked form (AccountMapper); this dedicated type

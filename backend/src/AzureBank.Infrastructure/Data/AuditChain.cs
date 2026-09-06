@@ -221,9 +221,13 @@ public readonly record struct AuditChainVerification(
 /// <para>
 /// WHY THIS RUNS INSIDE SaveChanges AND NOT INSIDE THE WRITER. The chain needs the tail of the table
 /// read under a lock and the new row inserted with nobody slipping in between — one transaction.
-/// <c>IAuditService.Record</c> cannot do that: it deliberately only calls <c>Add</c>, and
-/// <c>AccountService.DeleteAccountAsync</c> has no explicit transaction at all, so a lock taken there
-/// would be released before the insert and two concurrent writers would chain off the same tail. The
+/// <c>IAuditService.Record</c> cannot do that: it deliberately only calls <c>Add</c>, and most of
+/// its callers have no explicit transaction at all (<c>AccountService.GetFullAccountNumberAsync</c>,
+/// <c>UserService.RenameAzureTagAsync</c>, the auth and money rows), so a lock taken there would be
+/// released before the insert and two concurrent writers would chain off the same tail.
+/// (<c>AccountService.DeleteAccountAsync</c> was the example named here until 2026-09-06; since
+/// ADR-0049 it opens a transaction of its own and the funnel joins it — the argument is unchanged,
+/// the example moved.) The
 /// SaveChanges funnel is the only place a transaction can be guaranteed for EVERY call site, so
 /// <c>AzureBankDbContext</c> opens one there when a save carries audit rows and the caller has not
 /// opened one already.

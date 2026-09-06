@@ -53,6 +53,11 @@ handed back — leaving the one client that provably cannot know whether its mon
 find out. `StepUpAuthorizationTests.Replay_OfACompletedTransfer_SucceedsEvenWithAnExpiredAuthorisation`
 is the falsifiable form of this decision.
 
+_Noted 2026-09-06 ([ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md)): this
+placement argument is about the replay lookup, and it does not apply to `DELETE /api/accounts/{id}`,
+which carries no `[RequireIdempotency]` — there is no stored response to hand back, so the check
+sits in `AccountService` for the plain reason that the service owns the action, not for this one._
+
 **The reference travels in a header, never in the body.** `ComputeRequestHashAsync(Stream body, …)`
 fingerprints the **body alone**. Keeping the authorisation out of it is what lets the same transfer be
 resent byte-identically — same `Idempotency-Key` — while carrying a different, expired or absent
@@ -71,6 +76,15 @@ Keyed rather than bare, because `(operation, payer, account, payee, amount)` is 
 unkeyed digest would let anyone with database read access confirm guesses about who paid whom. The
 key is separate from `Idempotency:HashKey`: the two hashes answer different questions, and one leaked
 key must not forge the other's answer.
+
+_Applied, not bumped, 2026-09-06: ADR-0049 put a NON-MONEY operation on this rail — closing an
+account — without adding a field. `StepUpOperation` has three members (`Transfer`,
+`InternalTransfer`, `AccountDeletion`); the deletion binding is `(accountId, null, null, 0m)` with
+`FromAccountId` read as "the account the operation is about" and `Amount` rendered `0` for an
+operation that moves nothing, so the `v1|` payload is unchanged and a transfer authorisation minted
+on the same account cannot be presented as a deletion — the operation name is in the hash. The rule
+in this paragraph is what decides when `v2|` arrives: the first operation that needs a field this
+record does not have._
 
 **Consumption is one statement, inside the transfer's transaction.** A read-then-write would be a
 double spend, and this repository has been bitten by exactly that shape twice (ADR-0009, and the
@@ -103,6 +117,12 @@ The uniformity is the `RefreshTokenInvalid` posture: the specific reason is logg
 never put on the wire, so the endpoint is not an oracle for which references exist or who owns them.
 Before this ADR none of these could be said at all — an elapsed elevation and one never granted were
 the same `403 STEP_UP_REQUIRED`.
+
+_Noted 2026-09-06: the same three codes, at the same statuses and with the same uniformity, are
+what `DELETE /api/accounts/{id}` answers since ADR-0049 — with one placement difference that ADR
+records as a decision: its two 422 guards sit AHEAD of the `AUTHORIZATION_REQUIRED` check, because
+they reveal only the caller's own account state and a real-stack contract test pins the headerless
+422._
 
 ## Consequences
 
@@ -139,3 +159,11 @@ mint now, which is the only place on this path that can spend an attempt.
 **Not done, and not pretended otherwise.** Withdraw keeps its in-body PIN with the same weakness and
 should follow this route as its own task. Nothing sweeps the table — rows are the Art. 72 evidence B3
 assembles, so a retention policy is a later decision that brings its own index.
+
+_Generalised 2026-09-06 by [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md).
+The rail built here for transfers now carries its first operation that moves no money: closing an
+account. What that cost, and what it did not: `ConsumeAsync`'s `consumedByTransactionId` became
+`Guid?` — the column always was — and a closure passes `null`, because a deletion produces no
+ledger row and a value that is not a movement id would lie to the evidence pack's join; the transfer
+call sites still pass the outgoing transaction id. No field, no `v2|`, no migration, no new column.
+The "Not done" above is unchanged: withdraw still carries its in-body PIN._
