@@ -399,7 +399,7 @@ public class ApplicationUser : IdentityUser<Guid>
 | Transfer | Level 2 | Money out |
 | Internal transfer | Level 2 | Account modification |
 | Update account | Level 1 | Non-financial |
-| Delete account | Level 2 | Destructive |
+| Delete account | Level 2 | Destructive — gated since 2026-09-06 by an API-minted authorisation, [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md); the 2026-09-06 correction below has the mechanism |
 
 > **Correction (2026-08-12): this table is the decision, not the state. They diverge in three places.**
 >
@@ -413,7 +413,10 @@ public class ApplicationUser : IdentityUser<Guid>
 > **1 — Withdraw reaches the same level by a different route**, so a withdraw survives a direct call
 > to the API and a transfer does not. One decision, two implementations.
 >
-> **2 — Delete account is an open hole**, not a mechanism choice: the middleware gates ~~three
+> **2 — ~~Delete account is an open hole~~** *(struck 2026-09-06: closed by
+> [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) — the API mints and spends a
+> deletion authorisation; the middleware still gates only the reveal, see the 2026-09-06 correction
+> below)*, not a mechanism choice: the middleware gates ~~three
 > paths~~ one path at level 2 (struck 2026-09-04; correction below) and deletion is not one of them,
 > and the API has no auth-level concept to fall back on. Worth
 > weighing when it is closed: deletion here is a *soft* delete (`Account.IsDeleted` behind a global
@@ -437,7 +440,8 @@ public class ApplicationUser : IdentityUser<Guid>
 > | Reveal full account number | ✅ yes | `AuthLevelMiddleware`'s prefix/suffix rule — now the **only** thing left behind the level-2 gate. Note the mechanism: the exact-path set `PinRequiredPaths` is empty and plays no part here |
 >
 > So point 1 above inverted: the *"one decision, two implementations"* split is gone, and withdraw is
-> no longer the odd one out. Point 2 (delete account) is unchanged and still open.
+> no longer the odd one out. Point 2 (delete account) ~~is unchanged and still open~~ *(struck
+> 2026-09-06: closed by ADR-0049, correction at the end of this chain)*.
 >
 > Recorded rather than edited in place, per this file's own rule at the top. The lesson is worth
 > keeping: a correction table is a snapshot of the code, and it decays exactly as fast as the code
@@ -491,7 +495,11 @@ public class ApplicationUser : IdentityUser<Guid>
 > unreachable, so nothing here can lose funds — which is what A2/ADR-0042 exists to protect, and
 > "add a PIN because withdraw has one" is cargo-culting when the risk differs. For: this table says
 > Level 2, the owner cannot undo it, and closing an account at a real bank is not a level-1 act.
-> Recorded as still open rather than decided in passing, and the mechanism is now cheap either way —
+> ~~Recorded as still open rather than decided in passing~~ *(struck 2026-09-06: decided — a
+> closure costs a PIN, minted and spent at the API on ADR-0042's rail;
+> [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) D1 quotes this paragraph as
+> the two-sided case it settles. The history loss recorded above is NOT closed by it and stays
+> open there)*, and the mechanism is now cheap either way —
 > `StepUpAuthorization` binds its fields inside an HMAC rather than in columns, and
 > `ToAccountId`/`RecipientUserId`/`ConsumedByTransactionId` are already nullable, so a third
 > `StepUpOperation` needs no migration.
@@ -556,8 +564,45 @@ public class ApplicationUser : IdentityUser<Guid>
 >
 > **Point 2's premise moved; its conclusion did not.** `DELETE /api/accounts/{id}` is now behind
 > the session gate like everything else under `/api/` — sessionless it answers 401 at the BFF,
-> measured in `d74603c` — but it is still not behind the level-2 gate, so the hole the 2026-08-18
-> note records is unchanged and still open.
+> measured in `d74603c` — ~~but it is still not behind the level-2 gate, so the hole the 2026-08-18
+> note records is unchanged and still open.~~ *(struck 2026-09-06: the hole is closed, and not by
+> the level-2 gate — see the correction below.)*
+>
+> ---
+>
+> **Correction (2026-09-06): the Delete account row has its mechanism, and it is not the BFF gate.**
+>
+> [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) closes point 2. The table's
+> *Delete account · Level 2* row is enforced the way the 2026-08-13 table recorded for transfers —
+> at the API, in the request — and by the successor of that mechanism, ADR-0042's one-shot
+> authorisation:
+>
+> | Operation | Enforced today? | By what |
+> |---|---|---|
+> | Delete account | ✅ yes | **API-side authorisation minted at `POST /api/accounts/{id}/deletion-authorizations`**, bound to `(AccountDeletion, user, account)`, presented in the `Step-Up-Authorization` header on `DELETE /api/accounts/{id}`, spent once inside the closure's transaction. Absent → 401 `AUTHORIZATION_REQUIRED` and an `AccountDeletionRefused` audit row. The BFF requires a session for the path, as for everything under `/api/`, and asks for no level |
+>
+> Measured before the change, 2026-09-06 on `main` @ `d93ba10`, one user, level 1, no PIN enrolled
+> (the full transcript is in ADR-0049; the reveal line followed a fresh login of the same user):
+>
+> ```
+> D4 DELETE with a Step-Up-Authorization header (ignored?)   200  OK "Account deleted successfully"
+> R1 GET .../full-number at level 1 (the reveal)             403  {"type": "STEP_UP_REQUIRED", ... "requiredLevel": 2, "currentLevel": 1,  X-Auth-Level-Required=2 X-Auth-Level-Current=1
+> ```
+>
+> The first line is the hole; the second is the BFF gate doing for the reveal what this table had
+> promised for deletion. What closed the first line is a new `StepUpOperation` and a required
+> header, not a new entry in the middleware.
+>
+> **"One level-2 path" (2026-09-04, above) stays TRUE.** `RequiresPinVerification` was not touched:
+> `PinRequiredPaths` is still empty and the prefix/suffix rule still names only `/full-number`, so
+> `GET /api/accounts/{id}/full-number` is still the single path that can answer 403
+> `STEP_UP_REQUIRED`. ADR-0041 gave three reasons for keeping a state change off the session flag,
+> and ADR-0049 applies all three to a closure; the reveal's exemption — a GET has nothing to bind —
+> does not extend to an operation with a subject.
+>
+> **What this does NOT close: the history loss.** The 2026-08-18 measurement above (two rows before
+> the delete, none after) describes `TransactionService` today; ADR-0049 names it in its "Not done"
+> list as a read-side change, and this note does not pretend otherwise.
 
 ## Validation
 

@@ -45,10 +45,18 @@ public interface IStepUpAuthorizationService
     /// Must be called INSIDE the caller's database transaction, so an authorisation is never spent by
     /// a transfer that did not commit, and so two concurrent transfers presenting the same
     /// authorisation resolve to exactly one success.
+    /// <para>
+    /// <c>consumedByTransactionId</c> is the ledger row the authorisation paid for — null for an
+    /// operation that produces no ledger row (<see cref="StepUpOperation.AccountDeletion"/>,
+    /// ADR-0049). Null rather than the account id, because the column is named for a TRANSACTION
+    /// and the evidence verb joins it on the movement id: an account id written there would be a
+    /// value that can never match, dressed as one that could. A closure's authorisation is found by
+    /// the operator query ADR-0049 records instead.
+    /// </para>
     /// </summary>
     Task ConsumeAsync(
         Guid userId,
         Guid authorizationId,
-        Guid consumedByTransactionId,
+        Guid? consumedByTransactionId,
         CancellationToken cancellationToken = default);
 }

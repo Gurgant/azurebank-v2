@@ -163,9 +163,13 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
       The chain runs HERE, in the same funnel as the immutability guard and the timestamps, and for
       the same stated reason: no call path can bypass it. It also has to be here rather than in
       IAuditService — the tail must be read under a lock inside the transaction SaveChanges is already
-      using, and AccountService.DeleteAccountAsync has no explicit transaction for the writer to
-      borrow. See AuditChain's remarks for why a SaveChangesInterceptor was rejected (the test host
-      rebuilds the DbContext registration and would silently drop it).
+      using, and most writers have no explicit transaction for the chain to borrow —
+      AccountService.GetFullAccountNumberAsync, UserService.RenameAzureTagAsync and the AuthService
+      and TransactionService rows all rely on the implicit one. (DeleteAccountAsync was the example
+      named here until 2026-09-06; since ADR-0049 it opens its own transaction so the authorisation
+      spend rides the same commit, and the funnel simply joins it — the argument is unchanged, the
+      example moved.) See AuditChain's remarks for why a SaveChangesInterceptor was rejected (the
+      test host rebuilds the DbContext registration and would silently drop it).
     */
     private IAuditChain RequireAuditChain()
     {

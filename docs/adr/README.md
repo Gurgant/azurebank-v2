@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Forty-eight decisions is more than anyone reads cold. These four carry the architecture; the rest is
+Forty-nine decisions is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -60,7 +60,9 @@ detail hanging off them.
 [0037](0037-atomic-registration.md) registration is all-or-nothing ·
 [0038](0038-bff-session-is-the-only-credential.md) the session is the only credential the BFF accepts ·
 [0040](0040-changing-a-credential-requires-the-current-one.md) changing a credential requires proving the current one ·
-[0041](0041-the-api-verifies-the-transfer-pin.md) the API verifies the transfer PIN, not the BFF
+[0041](0041-the-api-verifies-the-transfer-pin.md) the API verifies the transfer PIN, not the BFF ·
+[0049](0049-closing-an-account-is-authorised-like-a-transfer.md) closing an account is authorised
+like a transfer
 
 **Not leaking who exists** — [0013](0013-registration-user-enumeration.md) registration enumeration ·
 [0014](0014-recipient-lookup-enumeration.md) recipient lookup, exact-match and harvest-resistant ·
@@ -84,7 +86,7 @@ detail hanging off them.
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All forty-eight **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+All forty-nine **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
@@ -102,10 +104,14 @@ for the two reasons it had given for leaving it open, which were wrong; ADR-0040
 left both ADR-0008's step-up gate and ADR-0010's attempt-limiting inoperative; and ADR-0041 moves
 transfers off that gate entirely, which makes ADR-0022's step-up-replay verification step true of
 no live caller — recorded there rather than quietly left to rot. ADR-0008's own
-corrections follow the same rule — eight inline notes, nothing deleted, the Protected Operations
-one of them now carrying four dated corrections — and it records an
-open hole rather than a supersession: **account deletion is listed as level 2 and is gated nowhere
-at that level** (the endpoint is still `[Authorize]`; what is missing is the step-up).
+corrections follow the same rule — eight inline notes, nothing deleted,
+the Protected Operations one of them now carrying ~~four~~ five dated corrections — and it
+~~records an open hole rather than a supersession: **account deletion is listed as level 2 and is
+gated nowhere at that level** (the endpoint is still `[Authorize]`; what is missing is the
+step-up)~~ *(struck 2026-09-06: that hole is closed by ADR-0049, which mints and spends a
+deletion authorisation at the API on ADR-0042's rail rather than adding the route to the BFF gate;
+ADR-0008, 0041, 0042 and 0044 each carry a dated note saying what moved, and ADR-0045 and 0048
+deliberately do not move — no closure notice is promised or added)*.
 ADR-0043 corrects the generation pipeline that both ADR-0029 and ADR-0023 consume, and is filed
 as a correction rather than a new policy: the decisions were already made, the document simply
 did not say them. ADR-0045 strikes the residual ADR-0040 left open (closed by T8) and narrows the
@@ -120,7 +126,12 @@ corrects seven records at once. Six — ADR-0008, 0022, 0029, 0030, 0031 and 004
 ADR-0041 left `GET /api/accounts/{id}/full-number` as the only level-2 route, so every sentence that
 counted three of them, or called the reveal "the third", is struck in place with a dated note beside
 it. The seventh is ADR-0046, corrected twice: D4's two unmeasured server sentences have now been
-measured, and D6's unread constant is deleted.
+measured, and D6's unread constant is deleted. ADR-0049 (2026-09-06) closes the row ADR-0008's
+table had carried unenforced since January — *Delete account · Level 2* — with ADR-0042's rail
+rather than ADR-0008's gate, and corrects four records in place: 0008 (the row gains its mechanism,
+two "still open" notes struck), 0041 (its deletion residual struck; its reopen trigger noted as
+tested and not fired), 0042 (a non-money operation on the rail, the payload applied not bumped, a
+nullable consumed-by) and 0044 (the inventory gains its first non-money refusal event).
 
 HOW A CORRECTION IS RECORDED, written down because it had never been stated and a review round went
 on it. **The note goes immediately against what it corrects.** That is the load-bearing half: a note
@@ -148,7 +159,7 @@ two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`, 
 leaving them as they are; from here the wording is struck in place instead, which costs less and
 reads better.
 
-The next free number is **0049**.
+The next free number is **0050**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -204,6 +215,7 @@ The next free number is **0049**.
 | [ADR-0046](0046-one-money-cap-for-every-move-and-the-client-promises-what-the-contract-publishes.md) | One money cap for every move, and the client promises what the contract publishes | Accepted | 2026-09-03 |
 | [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md) | A PIN change owes the same notice an enrolment does | Accepted | 2026-09-04 |
 | [ADR-0048](0048-the-api-is-the-runner-that-delivers-owed-notices.md) | The API is the runner that delivers owed notices | Accepted | 2026-09-04 |
+| [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) | Closing an account is authorised like a transfer | Accepted | 2026-09-06 |
 
 </details>
 ## Creating a New ADR

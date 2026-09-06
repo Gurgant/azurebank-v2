@@ -1,4 +1,5 @@
 using AzureBank.Api.Mappers;
+using AzureBank.Api.Services;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Infrastructure.Data;
@@ -10,6 +11,7 @@ using AzureBank.Shared.Exceptions;
 using FluentAssertions;
 using AzureBank.Tests.Fixtures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
@@ -28,6 +30,7 @@ public class AccountServiceTests : IDisposable
     private readonly AccountMapper _mapper;
     private readonly Mock<ILogger<AccountService>> _loggerMock;
     private readonly Mock<IAuditService> _auditMock;
+    private readonly Mock<IStepUpAuthorizationService> _stepUpMock;
     private readonly AccountService _sut; // System Under Test
 
     private readonly string _databaseName = Guid.NewGuid().ToString();
@@ -49,6 +52,15 @@ public class AccountServiceTests : IDisposable
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
             .UseInMemoryDatabase(_databaseName, _databaseRoot)
             .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
+            /*
+              DeleteAccountAsync opens an explicit transaction since ADR-0049, and InMemory escalates
+              TransactionIgnoredWarning to an exception — the same suppression AuthServiceTests
+              carries, for the same reason: the tests run the path that ships, and
+              BeginTransactionAsync is simply a no-op here. So these tests pin the ORDER of the
+              writes and the arguments each collaborator receives; they say nothing about rollback,
+              which AccountDeletionSqlServerTests proves on real SQL Server.
+            */
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _context = new AzureBankDbContext(options);
@@ -56,14 +68,27 @@ public class AccountServiceTests : IDisposable
         _mapper = new AccountMapper();
         _loggerMock = new Mock<ILogger<AccountService>>();
         _auditMock = new Mock<IAuditService>();
+        // A MOCK, unlike TransferServiceTests' real StepUpAuthorizationService: what these tests
+        // pin is that AccountService hands the rail the right operation, binding and consumed-by,
+        // and does so in the right order — not the rail's own hashing, which
+        // StepUpAuthorizationServiceTests covers with the real thing.
+        _stepUpMock = new Mock<IStepUpAuthorizationService>();
 
         _sut = new AccountService(
             _context,
             _accountAccessMock.Object,
             _mapper,
             _loggerMock.Object,
-            _auditMock.Object);
+            _auditMock.Object,
+            _stepUpMock.Object);
     }
+
+    /// <summary>
+    /// A reference that IS presented and is worth nothing: syntactically an authorisation, bound to
+    /// no closure. It clears the presence check, and the mocked rail accepts it, so a test that
+    /// passes it is saying "the refusal under test happens BEFORE the authorisation matters".
+    /// </summary>
+    private static Guid Presented() => Guid.CreateVersion7();
 
     public void Dispose()
     {
@@ -340,6 +365,104 @@ public class AccountServiceTests : IDisposable
 
     #endregion
 
+    #region AuthoriseDeletionAsync Tests
+
+    [Fact]
+    public async Task AuthoriseDeletionAsync_ForAnotherUsersAccount_NeverReachesTheMint()
+    {
+        // Ownership is the first rung, exactly as on the transfer mints: a probe of someone else's
+        // account must not cost the prober a PIN attempt, and must not tell them anything the
+        // ownership check would not.
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ThrowsAsync(new AuthorizationException("You do not have access to this account."));
+
+        await _sut.Invoking(s => s.AuthoriseDeletionAsync(userId, accountId, "123456"))
+            .Should().ThrowAsync<AuthorizationException>();
+
+        _stepUpMock.Verify(s => s.MintAsync(
+            It.IsAny<Guid>(), It.IsAny<StepUpOperation>(), It.IsAny<StepUpBinding>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AuthoriseDeletionAsync_WithNonZeroBalance_RefusesBeforeSpendingAnAttempt()
+    {
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        account.Balance = 5m;
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        // A WRONG pin would be refused by the mint; the point is that the guard answers first, so
+        // the mint — and the attempt it costs — is never reached.
+        var act = () => _sut.AuthoriseDeletionAsync(userId, account.Id, "999999");
+
+        (await act.Should().ThrowAsync<BusinessRuleException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.NonZeroBalance);
+        _stepUpMock.Verify(s => s.MintAsync(
+            It.IsAny<Guid>(), It.IsAny<StepUpOperation>(), It.IsAny<StepUpBinding>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AuthoriseDeletionAsync_ForThePrimary_RefusesBeforeSpendingAnAttempt()
+    {
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: true);
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        var act = () => _sut.AuthoriseDeletionAsync(userId, account.Id, "999999");
+
+        (await act.Should().ThrowAsync<BusinessRuleException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.PrimaryAccountDelete);
+        _stepUpMock.Verify(s => s.MintAsync(
+            It.IsAny<Guid>(), It.IsAny<StepUpOperation>(), It.IsAny<StepUpBinding>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AuthoriseDeletionAsync_MintsWithTheAccountBinding()
+    {
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        var expiresAt = DateTime.UtcNow.AddMinutes(2);
+        var minted = new StepUpAuthorization
+        {
+            Id = Guid.CreateVersion7(),
+            UserId = userId,
+            Operation = StepUpOperation.AccountDeletion,
+            BindingHash = "irrelevant-here",
+            ExpiresAt = expiresAt
+        };
+        _stepUpMock
+            .Setup(s => s.MintAsync(
+                userId, StepUpOperation.AccountDeletion, StepUpBinding.ForAccountDeletion(account.Id),
+                "123456", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(minted);
+
+        var result = await _sut.AuthoriseDeletionAsync(userId, account.Id, "123456");
+
+        // The EXACT binding, not any binding: (account, null, null, 0). A mint under a different
+        // shape would produce an authorisation the deletion can never validate.
+        _stepUpMock.Verify(s => s.MintAsync(
+            userId, StepUpOperation.AccountDeletion, StepUpBinding.ForAccountDeletion(account.Id),
+            "123456", It.IsAny<CancellationToken>()), Times.Once);
+        result.AuthorizationId.Should().Be(minted.Id);
+        result.ExpiresAt.Should().Be(expiresAt);
+    }
+
+    #endregion
+
     #region DeleteAccountAsync Tests
 
     [Fact]
@@ -356,8 +479,9 @@ public class AccountServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
             .ReturnsAsync(account);
 
-        // Act
-        var act = () => _sut.DeleteAccountAsync(accountId, userId);
+        // Act — with a reference presented, so the refusal is provably the guard's and not the
+        // presence check's (guards-first, ADR-0049).
+        var act = () => _sut.DeleteAccountAsync(accountId, userId, Presented());
 
         // Assert
         await act.Should()
@@ -380,12 +504,226 @@ public class AccountServiceTests : IDisposable
             .ReturnsAsync(account);
 
         // Act
-        var act = () => _sut.DeleteAccountAsync(accountId, userId);
+        var act = () => _sut.DeleteAccountAsync(accountId, userId, Presented());
 
         // Assert
         await act.Should()
             .ThrowAsync<BusinessRuleException>()
             .WithMessage("*primary account*");
+    }
+
+    [Theory]
+    [InlineData(true, 0, ErrorCodes.PrimaryAccountDelete)]   // primary account   -> PRIMARY_ACCOUNT_DELETE
+    [InlineData(false, 50, ErrorCodes.NonZeroBalance)]       // non-zero balance  -> NON_ZERO_BALANCE
+    [InlineData(true, 50, ErrorCodes.NonZeroBalance)]        // both: the balance guard answers first
+    public async Task DeleteAccountAsync_TheGuardsAnswerBeforeThePresenceCheck(
+        bool isPrimary, decimal balance, string expectedErrorCode)
+    {
+        /*
+          GUARDS-FIRST, pinned. A headerless DELETE on an account that cannot be closed answers the
+          guard's 422, not 401 AUTHORIZATION_REQUIRED — ADR-0049's deliberate departure from
+          ADR-0042's refusal-at-the-ownership-rung, and the order the SPA's real-stack contract
+          suite depends on. If this test goes red with an AuthenticationException, the checks were
+          reordered; put them back (observed 2026-09-06 by mutation: with the presence check moved
+          above the guards, both original rows failed with AuthenticationException).
+
+          The third row settles the order BETWEEN the guards — balance before primary — which no
+          running-stack probe has measured: neither 2026-09-06 transcript deletes a funded primary
+          (the before-run has D1 funded non-primary and D2 empty primary only).
+        */
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: isPrimary);
+        account.Balance = balance;
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        (await _sut.Invoking(
+                s => s.DeleteAccountAsync(account.Id, userId, stepUpAuthorizationId: null))
+            .Should().ThrowAsync<BusinessRuleException>())
+            .Which.ErrorCode.Should().Be(expectedErrorCode);
+
+        // And no refusal row: the guards are business validation, log-only per ADR-0044.
+        _auditMock.Verify(a => a.RecordRefusalAsync(
+            It.IsAny<string>(), It.IsAny<AuditOutcome>(), It.IsAny<Guid?>(), It.IsAny<string?>(),
+            It.IsAny<Guid?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_WithNoAuthorisation_IsRefused_AndRecordsTheRefusal()
+    {
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        var act = () => _sut.DeleteAccountAsync(account.Id, userId, stepUpAuthorizationId: null);
+
+        (await act.Should().ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.AuthorizationRequired);
+
+        /*
+          THE ROW, with every argument exact. Subject is the ACCOUNT the closure was refused against
+          (the ownership check has already resolved it, which is why the refusal is recorded at the
+          call site and not in a helper), Detail is the error code and nothing else (ADR-0044 D5),
+          and it goes through RecordRefusalAsync because there is no transaction for it to ride.
+        */
+        _auditMock.Verify(a => a.RecordRefusalAsync(
+            SecurityEvents.AccountDeletionRefused,
+            AuditOutcome.Refused,
+            userId,
+            "Account",
+            account.Id,
+            ErrorCodes.AuthorizationRequired,
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _auditMock.Verify(a => a.Record(
+            SecurityEvents.AccountDeleted, It.IsAny<AuditOutcome>(), It.IsAny<Guid?>(),
+            It.IsAny<string?>(), It.IsAny<Guid?>(), It.IsAny<string?>()), Times.Never);
+        _stepUpMock.Verify(s => s.ValidateAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<StepUpOperation>(),
+            It.IsAny<StepUpBinding>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        (await FreshReadAsync(account.Id)).IsDeleted.Should().BeFalse("nothing was closed");
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_ValidatesWithTheOperationAndBindingOfThisAccount()
+    {
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+        var authorizationId = Guid.CreateVersion7();
+
+        await _sut.DeleteAccountAsync(account.Id, userId, authorizationId);
+
+        // The same factory the mint used — operation AND binding. Dropping the operation from the
+        // binding would let a transfer authorisation minted from this account close it. This test
+        // pins ONLY the arguments: that the validation runs before any write is
+        // DeleteAccountAsync_WhenValidationRefuses_WritesNothing, which reads the store (observed
+        // 2026-09-06 by mutation: with ValidateAsync moved after SaveChanges this test stayed green
+        // and WritesNothing went red on "Expected IsDeleted to be False, but found True"). The
+        // name used to say "_BeforeAnyWrite" and promised what it could not fail on.
+        _stepUpMock.Verify(s => s.ValidateAsync(
+            userId, authorizationId, StepUpOperation.AccountDeletion,
+            StepUpBinding.ForAccountDeletion(account.Id), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_WhenValidationRefuses_WritesNothing()
+    {
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+        _stepUpMock
+            .Setup(s => s.ValidateAsync(
+                It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<StepUpOperation>(),
+                It.IsAny<StepUpBinding>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AuthenticationException(
+                "This authorisation cannot be used.", ErrorCodes.AuthorizationInvalid));
+
+        var act = () => _sut.DeleteAccountAsync(account.Id, userId, Presented());
+
+        (await act.Should().ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.AuthorizationInvalid);
+
+        // Validation is read-only and runs before the transaction, so a mismatch costs nothing: no
+        // closure, no success row, no refusal row (EXPIRED/INVALID are unaudited, as for
+        // transfers), and nothing spent.
+        (await FreshReadAsync(account.Id)).IsDeleted.Should().BeFalse();
+        _auditMock.Verify(a => a.Record(
+            It.IsAny<string>(), It.IsAny<AuditOutcome>(), It.IsAny<Guid?>(), It.IsAny<string?>(),
+            It.IsAny<Guid?>(), It.IsAny<string?>()), Times.Never);
+        _auditMock.Verify(a => a.RecordRefusalAsync(
+            It.IsAny<string>(), It.IsAny<AuditOutcome>(), It.IsAny<Guid?>(), It.IsAny<string?>(),
+            It.IsAny<Guid?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        _stepUpMock.Verify(s => s.ConsumeAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_ConsumesAfterTheSave_WithNoTransactionId()
+    {
+        /*
+          THE ORDER IS THE PROPERTY. ConsumeAsync throws when its UPDATE matches no row, and that
+          throw is what rolls the soft delete back on SQL Server — so the save has to come FIRST, or
+          the authorisation is spent before the closure it paid for exists. SaveChanges is not a
+          collaborator that can be sequenced with a mock, so the order is observed from inside the
+          consume: by the time the rail is asked to spend, a FRESH context must already see the
+          account closed and Record must already have been called. That the success row rides the
+          SAME SaveChanges as the soft delete is not observable through a mocked IAuditService
+          (Record moved to between the save and the consume keeps this green — observed 2026-09-06
+          by mutation); AccountDeletionSqlServerTests pins it with the AccountDeleted count of 1
+          in EightConcurrentDeletes and ATransientFault.
+        */
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+        var authorizationId = Guid.CreateVersion7();
+
+        bool? closedWhenConsumed = null;
+        bool? recordedWhenConsumed = null;
+        _stepUpMock
+            .Setup(s => s.ConsumeAsync(userId, authorizationId, null, It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                closedWhenConsumed = (await FreshReadAsync(account.Id)).IsDeleted;
+                recordedWhenConsumed = _auditMock.Invocations.Any(i => i.Method.Name == nameof(IAuditService.Record));
+            });
+
+        await _sut.DeleteAccountAsync(account.Id, userId, authorizationId);
+
+        closedWhenConsumed.Should().BeTrue("the soft delete must be saved before the spend");
+        recordedWhenConsumed.Should().BeTrue(
+            "Record was called before the spend — that the row rides the SAME SaveChanges is not "
+            + "observable through a mocked IAuditService; AccountDeletionSqlServerTests pins it "
+            + "(AccountDeleted count == 1 in EightConcurrentDeletes and ATransientFault)");
+
+        // Consumed-by is NULL for a closure: there is no ledger row, and the column is named for
+        // one. Exact arguments, so a future "helpful" account id cannot slip in unnoticed.
+        _stepUpMock.Verify(s => s.ConsumeAsync(
+            userId, authorizationId, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_WhenTheConsumeFails_PropagatesTheRefusal()
+    {
+        // InMemory has no transaction to roll back, so this pins only that the refusal is not
+        // swallowed. That the soft delete and its row roll back with it is
+        // AccountDeletionSqlServerTests.WhenTheConsumeMatchesZeroRows_TheSoftDeleteIsRolledBackToo.
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, isPrimary: false);
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+        _stepUpMock
+            .Setup(s => s.ConsumeAsync(
+                It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AuthenticationException(
+                "This authorisation cannot be used.", ErrorCodes.AuthorizationInvalid));
+
+        var act = () => _sut.DeleteAccountAsync(account.Id, userId, Presented());
+
+        (await act.Should().ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.AuthorizationInvalid);
     }
 
     [Fact]
@@ -406,7 +744,7 @@ public class AccountServiceTests : IDisposable
             .ReturnsAsync(account);
 
         // Act
-        await _sut.DeleteAccountAsync(accountId, userId);
+        await _sut.DeleteAccountAsync(accountId, userId, Presented());
 
         // Assert
         var deletedAccount = await _context.Accounts.FindAsync(accountId);
@@ -429,7 +767,7 @@ public class AccountServiceTests : IDisposable
             .ReturnsAsync(account);
 
         // Act
-        var act = () => _sut.DeleteAccountAsync(accountId, userId);
+        var act = () => _sut.DeleteAccountAsync(accountId, userId, Presented());
 
         // Assert
         await act.Should()
@@ -455,7 +793,7 @@ public class AccountServiceTests : IDisposable
             .ReturnsAsync(account);
 
         // Act
-        await _sut.DeleteAccountAsync(accountId, userId);
+        await _sut.DeleteAccountAsync(accountId, userId, Presented());
 
         /*
           Assert — this was a plain LogInformation("Soft deleted account {AccountId}") until now, so
@@ -511,7 +849,7 @@ public class AccountServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
             .ReturnsAsync(account);
 
-        await _sut.Invoking(sut => sut.DeleteAccountAsync(accountId, userId))
+        await _sut.Invoking(sut => sut.DeleteAccountAsync(accountId, userId, Presented()))
             .Should().ThrowAsync<BusinessRuleException>();
 
         _loggerMock.Verify(l => l.Log(
@@ -529,6 +867,21 @@ public class AccountServiceTests : IDisposable
             It.IsAny<string?>(),
             It.IsAny<Guid?>(),
             It.IsAny<string?>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Re-reads the account on a SECOND context over the same store — the only way to see what was
+    /// persisted rather than what this context's tracker holds (see CreateAccountAsync_Persists…).
+    /// </summary>
+    private async Task<Account> FreshReadAsync(Guid accountId)
+    {
+        await using var fresh = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>()
+                .UseInMemoryDatabase(_databaseName, _databaseRoot)
+                .ReplaceService<IModelCustomizer, InMemoryTestModelCustomizer>()
+                .Options);
+        // IgnoreQueryFilters: a closed account is exactly what some callers are looking for.
+        return await fresh.Accounts.IgnoreQueryFilters().AsNoTracking().SingleAsync(a => a.Id == accountId);
     }
 
     #endregion

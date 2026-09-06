@@ -878,7 +878,8 @@ about the command line. The ring-refusal test now asks all ~~four~~ five verbs *
 
 ## What is wired, and what is not
 
-**Fourteen events write a row today.** Eight are administrative: `AccountDeleted`,
+**~~Fourteen~~ Fifteen events write a row today** *(struck 2026-09-06: `AccountDeletionRefused`
+joined, below)*. Eight are administrative: `AccountDeleted`,
 `AccountNumberRevealed`, `AzureTagRenamed`, `PinChanged`, `PinEnrolled`, `RefreshTokenUnknown`,
 `RefreshTokenReuse` and `RefreshTokenReuseRevokeFailed`. For those the log line is kept alongside the
 row — two destinations, two jobs. `PinChanged` is the exception to that pairing and was **added
@@ -896,7 +897,26 @@ not the one refused because somebody was guessing a PIN, and `PinService` throws
 places while auditing at neither. **This is the change the paragraph further down anticipated**, and
 it wires only what that paragraph named as a security signal.
 
-⚠️ **The `Detail` rule INVERTS on these two, and D5 is why it inverts rather than lapsing.** The four
+**A third refusal event, and the first that is not money — `AccountDeletionRefused`, added
+2026-09-06** ([ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md)). One site raises
+it: `DELETE /api/accounts/{id}` presented with no step-up authorisation, after the ownership check
+so the row names an account the caller owns, through `RecordRefusalAsync` on its own connection —
+the placement and the shape of `MoneyTransferRefused` at the two transfer kinds. `Detail` is the
+`ErrorCodes` constant, `AUTHORIZATION_REQUIRED`, and nothing else; the subject is the account. So
+the refusal inventory is three events at five sites, and `AccountDeleted` now pairs with a refusal
+the way the money movements do. What the closure path deliberately does NOT audit, for this ADR's
+own reasons: its two 422 guards (a funded or a primary account — business validation the owner can
+trigger at will from a list they already hold), a wrong or locked PIN at the deletion mint (as at
+the transfer mints, which have no `IAuditService`), and an expired or invalid authorisation on the
+DELETE (as on a transfer). It emits no `SecurityEvent` log line, following the money-refusal
+precedent, so the logged-site inventory does not move; the row-writing one does, by one event and
+one `_audit.RecordRefusalAsync` site, and
+`SecurityEventConstantTests.TheEventInventoryThisAdrStatesIsStillTheOneInTheSource` moves with it in
+the same commit.
+
+⚠️ **The `Detail` rule INVERTS on these ~~two~~ three, and D5 is why it inverts rather than
+lapsing.** *(struck 2026-09-06: `AccountDeletionRefused` carries `AUTHORIZATION_REQUIRED` the same
+way, and for the same reason — a refused closure commits no row for a pointer to reach.)* The four
 successes below carry a null `Detail` because the facts live on the ledger row `SubjectId` reaches. A
 refusal commits no ledger row, so a pointer-shaped row would point at nothing and "a withdrawal was
 refused" without a reason is indistinguishable from noise. So these carry a `Detail` — **the
@@ -975,6 +995,12 @@ row per attempt is the same unbounded write into a never-purged table that keeps
 refusals out. The ones that ARE security signals — a transfer presented without a step-up
 authorisation, a wrong PIN at the mint — belong with the step-up path, where ADR-0010's lockout
 already lives, and that is its own change with its own tests.
+
+_Instance added 2026-09-06 (ADR-0049): the account closure follows the same line. Its two 422
+refusals — a non-zero balance, the primary account — are business validation and stay log-only; the
+one refusal that is about a control, a DELETE presented with no step-up authorisation, writes
+`AccountDeletionRefused` on its own connection. The paragraph's "a wrong PIN at the mint" is still
+not wired, for the deletion mint as for the transfer mints._
 
 The remaining ten logged events are deliberately log-only, with reasons that were measured rather
 than assumed:

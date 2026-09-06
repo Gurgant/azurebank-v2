@@ -281,6 +281,16 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Step-Up-Authorization",
+            "in": "header",
+            "description": "Authorisation reference minted by POST /api/accounts/{id}/deletion-authorizations (ADR-0049). REQUIRED to close an account: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The balance and primary-account rules (422) are checked before the header is.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -599,6 +609,145 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/deletion-authorizations": {
+      "post": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Authorise the closure of one owned account (ADR-0049).\r\nThe account must be closable — zero balance, not primary — before the PIN is consulted.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The PIN",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionAuthorizationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionAuthorizationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionAuthorizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfStepUpAuthorizationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Business Rule Violation - the account cannot be closed (errorCode NON_ZERO_BALANCE or PRIMARY_ACCOUNT_DELETE, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary (e.g., 'Business Rule Violation')"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the business rule violation"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
                 }
               }
             }
@@ -2611,6 +2760,22 @@
   },
   "components": {
     "schemas": {
+      "AccountDeletionAuthorizationRequest": {
+        "required": [
+          "pin"
+        ],
+        "type": "object",
+        "properties": {
+          "pin": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "type": "string",
+            "description": "PIN must be exactly 6 digits."
+          }
+        },
+        "description": "Authorises the closure of one account: proves the PIN and returns a reference valid only for\r\nDELETE /api/accounts/{id} on that account."
+      },
       "AccountNumberResponse": {
         "required": [
           "accountId",

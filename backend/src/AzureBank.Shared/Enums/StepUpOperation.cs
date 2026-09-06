@@ -13,5 +13,13 @@ public enum StepUpOperation
     Transfer = 0,
 
     /// <summary>POST /api/transfers/internal — money between two accounts of the same user.</summary>
-    InternalTransfer = 1
+    InternalTransfer = 1,
+
+    /// <summary>
+    /// DELETE /api/accounts/{id} — closing one of the caller's own accounts; bound to the account,
+    /// amount rendered 0 (ADR-0049). The first non-money operation on the rail: a closure has a
+    /// subject to bind — the account — where a reveal (a GET) has none, which is why the reveal
+    /// stays on the BFF's session model and this does not.
+    /// </summary>
+    AccountDeletion = 2
 }

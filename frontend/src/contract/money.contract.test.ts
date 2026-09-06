@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, firstAccountId, idempotencyKey, login } from './client';
+import { asProblem, call, closeAccount, firstAccountId, idempotencyKey, login } from './client';
 import { FIXTURES } from './target';
 
 /** The committed contract, read as a third party would — the number the client promises. */
@@ -226,7 +226,11 @@ describe('contract: money', () => {
       // The API soft-deletes (IsDeleted), so the row stays but the account leaves every listing;
       // on a seeded database that is the most this probe can clean up after itself. Swallowed:
       // a throwing cleanup would replace the contract mismatch above with a transport error.
-      if (emptyId) await call(`/api/accounts/${emptyId}`, { method: 'DELETE' }).catch(() => {});
+      // Since ADR-0049 a closure needs an authorisation minted from the PIN: a bare DELETE here is
+      // answered 401 AUTHORIZATION_REQUIRED on the real stack (measured 2026-09-06T10:44Z), `call`
+      // resolves rather than throws, and the probe would stay listed with a refusal row appended
+      // per run — which is what this cleanup did on the interim main until closeAccount existed.
+      if (emptyId) await closeAccount(emptyId);
     }
   });
 
@@ -265,14 +269,18 @@ describe('contract: money', () => {
     } finally {
       // Drain with the PIN, then delete (a soft delete on the API): the probe must not stay
       // listed on a seeded database. Each call swallows its own failure — an unguarded drain
-      // would both mask the assertion above and skip the delete that follows it.
+      // would both mask the assertion above and skip the delete that follows it. The delete goes
+      // through closeAccount (mint, then DELETE with the header) because a bare DELETE on the
+      // drained account is refused 401 AUTHORIZATION_REQUIRED since ADR-0049 — measured
+      // 2026-09-06T10:44Z — and `call` resolves on it, so the old `.catch` hid a cleanup that
+      // no longer cleaned anything and left a refusal row per run.
       if (fundedId) {
         await call('/api/transactions/withdraw', {
           method: 'POST',
           headers: { 'Idempotency-Key': idempotencyKey() },
           body: JSON.stringify({ accountId: fundedId, amount: 25, pin: FIXTURES.pin }),
         }).catch(() => {});
-        await call(`/api/accounts/${fundedId}`, { method: 'DELETE' }).catch(() => {});
+        await closeAccount(fundedId);
       }
     }
   });

@@ -4,9 +4,11 @@ namespace AzureBank.Api.Attributes;
 /// Marks an endpoint that refuses without a <c>Step-Up-Authorization</c> header (ADR-0042).
 ///
 /// <para>
-/// A DOCUMENTATION marker, not a gate. Enforcement lives in <c>TransferService</c>, downstream of
-/// the idempotency replay lookup, because a replay must not be refused for a header it does not
-/// need — see the note on <c>TransferService.RequireAuthorization</c>. What this marker buys is that
+/// A DOCUMENTATION marker, not a gate. Enforcement lives in the service that owns the action —
+/// <c>TransferService</c> for the two transfers, <c>AccountService</c> for a closure (ADR-0049) —
+/// downstream of the idempotency replay lookup where there is one, because a replay must not be
+/// refused for a header it does not need — see the note on
+/// <c>TransferService.RequireAuthorization</c>. What this marker buys is that
 /// <c>StepUpAuthorizationOperationTransformer</c> can publish the header as <c>required: true</c>.
 /// </para>
 ///

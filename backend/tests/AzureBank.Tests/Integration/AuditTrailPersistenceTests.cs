@@ -109,7 +109,13 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         var accountId = (await created.Content
             .ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!.Id;
 
-        (await Client.DeleteAsync($"/api/accounts/{accountId}")).EnsureSuccessStatusCode();
+        // A closure costs a PIN since ADR-0049: mint first, present the reference on the DELETE.
+        // The refusal for presenting none has its own test below.
+        await SetPinAsync(token);
+        var authorizationId = await AuthoriseDeletionAsync(accountId);
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/accounts/{accountId}");
+        delete.Headers.Add(StepUpConstants.HeaderName, authorizationId.ToString());
+        (await Client.SendAsync(delete)).EnsureSuccessStatusCode();
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.AccountDeleted);
 
@@ -578,6 +584,58 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             + "exact mistake this test exists for, and both accounts belong to the same actor here "
             + "so nothing else in the row would look wrong");
         row.SubjectId.Should().NotBe(secondAccountId);
+    }
+
+    [Fact]
+    public async Task ClosingAnAccountWithoutStepUp_WritesTheRefusal_NamingTheAccount()
+    {
+        /*
+          The closure's counterpart of the transfer refusal above (ADR-0049). The row is written on
+          its own connection — this request commits nothing else — and names the ACCOUNT, because
+          the refusal is recorded after the ownership check resolved it. Detail is the error code and
+          nothing more (ADR-0044 D5).
+        */
+        var (token, userId, _) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        var created = await Client.PostAsJsonAsync(
+            "/api/accounts",
+            new CreateAccountRequest { Name = "Unauthorised", Type = AccountType.Savings },
+            JsonOptions);
+        created.EnsureSuccessStatusCode();
+        var accountId = (await created.Content
+            .ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions))!.Data!.Id;
+
+        // No Step-Up-Authorization header: the refusal under test.
+        var response = await Client.DeleteAsync($"/api/accounts/{accountId}");
+        response.IsSuccessStatusCode.Should().BeFalse("a closure presenting no authorisation is refused");
+
+        var row = await SingleRowForActorAsync(userId, SecurityEvents.AccountDeletionRefused);
+        row.Outcome.Should().Be(AuditOutcome.Refused);
+        row.SubjectType.Should().Be("Account");
+        row.SubjectId.Should().Be(accountId, "the refusal names the account it was refused against");
+        row.Detail.Should().Be(ErrorCodes.AuthorizationRequired);
+
+        (await RowsForActorAsync(userId, SecurityEvents.AccountDeleted)).Should().BeEmpty(
+            "a refused closure must not also record a closure");
+    }
+
+    /// <summary>
+    /// Spends the PIN at the closure mint and returns the reference bound to exactly this account
+    /// — the only thing <c>DELETE /api/accounts/{id}</c> accepts as a second factor (ADR-0049).
+    /// </summary>
+    private async Task<Guid> AuthoriseDeletionAsync(Guid accountId, string pin = "123456")
+    {
+        var response = await Client.PostAsJsonAsync(
+            $"/api/accounts/{accountId}/deletion-authorizations",
+            new AccountDeletionAuthorizationRequest { Pin = pin },
+            JsonOptions);
+        response.StatusCode.Should().Be(
+            HttpStatusCode.Created,
+            "a closure cannot happen without a minted authorisation, so a failure here would surface "
+            + "as an unrelated 401 on the DELETE under test");
+        var body = await response.Content
+            .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(JsonOptions);
+        return body!.Data!.AuthorizationId;
     }
 
     private async Task<List<AuditEvent>> RowsForActorAsync(Guid actorUserId, string securityEvent)

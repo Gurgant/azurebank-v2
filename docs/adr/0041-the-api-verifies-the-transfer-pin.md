@@ -171,6 +171,12 @@ locally, at the BFF, with the API's own 401 shape, trailing slash normalised the
 payee — there is nothing for an in-band credential to be **bound to**. Two questions, two mechanisms,
 on purpose.
 
+_Amended 2026-09-06 ([ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md)): and
+closures use the second. `DELETE /api/accounts/{id}` is a state change with a subject — the account
+id — so the reveal's "nothing to bind" exemption does not reach it; it is authorised by an
+API-minted, account-bound, one-shot authorisation on ADR-0042's rail, and the session gate above
+still asks for level 2 on the reveal alone._
+
 > **Correction (review of this PR).** An earlier draft of this paragraph justified that with
 > "PSD2 does not treat it as an SCA trigger at all: Art. 97(1)'s list is exhaustive, and Art. 4(32)
 > says an account number is not sensitive payment data." Both halves were overstated. Art. 4(32)
@@ -250,7 +256,12 @@ this, and has not yet.
   `PinRequiredPrefixes` × `PinRequiredSuffixes` pair, which is what actually gates `/full-number`.
   A trigger naming only the set would miss a level-2 route added through the other branch, and would
   miss a third branch entirely. The condition is `RequiresPinVerification` returning true for a new
-  operation, whichever rule decides it. Or (b) the session store becomes shared or user-indexed — the
+  operation, whichever rule decides it. _Noted 2026-09-06: trigger (a) was tested and did not fire.
+  Account deletion (ADR-0049) was gated WITHOUT touching `RequiresPinVerification` — a parameterised
+  DELETE fits neither branch, and adding a third was rejected precisely because this trigger names
+  it — so the level-2 gate still protects exactly the one read, and the cross-process lockout gap
+  above still exposes only the reveal. A closure refused by the API's lockout is refused whatever
+  the session says, as a transfer is._ Or (b) the session store becomes shared or user-indexed — the
   Redis move `InMemoryTokenStore` already anticipates — because per-user revocation is then cheap,
   and the response-observation design that is inadequate today becomes a real fix. Until then, note
   that observing a 429 on the locked-out user's OWN session would close only that case and leave the
@@ -314,5 +325,8 @@ Two review points were **declined**, with reasons:
 - Re-dating this ADR. The file and the index row already agree, and the date is the day the work
   was done.
 
-- **Not addressed here:** account deletion still has no PIN check anywhere (C.1), and first-time PIN
-  enrolment still needs only a session (the live residual noted in ADR-0040).
+- **Not addressed here:** ~~account deletion still has no PIN check anywhere (C.1)~~ *(struck
+  2026-09-06: closed by [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) — a
+  deletion authorisation is minted at `POST /api/accounts/{id}/deletion-authorizations` and spent by
+  the DELETE, on the same rail as a transfer)*, and first-time PIN enrolment still needs only a
+  session (the live residual noted in ADR-0040).

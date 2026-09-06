@@ -78,7 +78,10 @@ public class AuthLevelMiddleware
       payment-initiation and account-information PROVIDERS, and 97(1)(c) is a catch-all for any
       remote action that may imply a fraud risk. The reason this path keeps the session model is that
       a GET carries no amount and no payee to bind a code to, not that the regulation is silent.
-      See ADR-0041.
+      See ADR-0041. Closing an account is NOT gated here either: it is authorised at the API, on the
+      ADR-0042 rail, by an authorisation minted at POST /api/accounts/{id}/deletion-authorizations
+      and presented on the DELETE — a closure has a subject to bind (the account), where the reveal
+      has none (ADR-0049). So this set stays empty and RequiresPinVerification gained no branch.
     */
     private static readonly HashSet<string> PinRequiredPaths = new(StringComparer.OrdinalIgnoreCase);
 
