@@ -21,7 +21,7 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Forty-nine decisions is more than anyone reads cold. These four carry the architecture; the rest is
+Fifty decisions is more than anyone reads cold. These four carry the architecture; the rest is
 detail hanging off them.
 
 | | Why this one |
@@ -44,7 +44,9 @@ detail hanging off them.
 [0024](0024-no-client-facing-optimistic-concurrency.md) no client-facing optimistic concurrency ·
 [0028](0028-data-router-for-blocking-browser-back.md) a data router, bought for one hook ·
 [0035](0035-transaction-number-check-symbol.md) a check symbol on the transaction number ·
-[0036](0036-account-number-collision-recovery.md) recovering from an account-number collision
+[0036](0036-account-number-collision-recovery.md) recovering from an account-number collision ·
+[0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) a
+UTC day bounds a user's external transfers, and the mint says so before the PIN
 
 **Interface** — [0027](0027-dark-mode-through-css-custom-properties.md) dark mode through CSS custom properties ·
 [0033](0033-root-error-boundary.md) a root error boundary, so a render error is not a blank page
@@ -86,7 +88,7 @@ like a transfer
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All forty-nine **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+All fifty **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
@@ -131,7 +133,17 @@ table had carried unenforced since January — *Delete account · Level 2* — w
 rather than ADR-0008's gate, and corrects four records in place: 0008 (the row gains its mechanism,
 two "still open" notes struck), 0041 (its deletion residual struck; its reopen trigger noted as
 tested and not fired), 0042 (a non-money operation on the rail, the payload applied not bumped, a
-nullable consumed-by) and 0044 (the inventory gains its first non-money refusal event).
+nullable consumed-by) and 0044 (the inventory gains its first non-money refusal event). ADR-0050
+(2026-09-07) is the first AGGREGATE bound on money — a UTC day on a user's outgoing external
+transfers, refused at the mint before the PIN and re-proven inside the transfer's transaction under
+a per-user application lock — and notes four records in place: 0046 (D7's "neither starts nor
+forecloses" struck for external transfers per user; its "second bound" trigger fired in part, with
+no second schema maximum), 0044 (a log-only instance added; the limit does not lean on the audit
+tail, so the partition question stays untouched), 0042 (a non-PIN 422 ahead of the PIN at the
+external mint, the transfer's enumeration argument intact) and 0049 (its `TimeProvider` deferral
+corrected rather than closed — the framework had registered the clock all along, so ADR-0050 makes
+the dependency explicit, adds its first required consumer and pins that the context receives it,
+for the ledger clock).
 
 HOW A CORRECTION IS RECORDED, written down because it had never been stated and a review round went
 on it. **The note goes immediately against what it corrects.** That is the load-bearing half: a note
@@ -159,7 +171,7 @@ two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`, 
 leaving them as they are; from here the wording is struck in place instead, which costs less and
 reads better.
 
-The next free number is **0050**.
+The next free number is **0051**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -216,6 +228,7 @@ The next free number is **0050**.
 | [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md) | A PIN change owes the same notice an enrolment does | Accepted | 2026-09-04 |
 | [ADR-0048](0048-the-api-is-the-runner-that-delivers-owed-notices.md) | The API is the runner that delivers owed notices | Accepted | 2026-09-04 |
 | [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) | Closing an account is authorised like a transfer | Accepted | 2026-09-06 |
+| [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) | A UTC day bounds a user's external transfers, and the mint says so before the PIN | Accepted | 2026-09-07 |
 
 </details>
 ## Creating a New ADR

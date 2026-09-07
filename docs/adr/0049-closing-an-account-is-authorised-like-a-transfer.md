@@ -398,9 +398,23 @@ the 403 is the one every foreign account id gets.
   `GET /api/transactions` to accounts that are not deleted, so the closed account's rows leave the
   owner's view. A read-side change, not a gate change.
 - **`DeletedAt` and `UpdatedAt` are stamped from two clocks** — `DateTime.UtcNow` in the service and
-  the context's `TimeProvider` in `UpdateTimestamps`. Fixing it wants a `TimeProvider` in DI, which
-  `AzureBankDbContext` has deliberately not registered until a service needs it; that is a DI
-  decision, not a closure one.
+  the context's `TimeProvider` in `UpdateTimestamps`. ~~Fixing it wants a `TimeProvider` in DI,
+  which `AzureBankDbContext` has deliberately not registered until a service needs it; that is a
+  DI decision, not a closure one.~~ *(corrected 2026-09-07, with
+  [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md):
+  the struck sentence was wrong on its facts, not merely superseded. There was no deferred
+  registration to land — the framework had registered the clock all along. `AddAuthentication()` in
+  `Microsoft.AspNetCore.Authentication` calls `services.TryAddSingleton(TimeProvider.System)`, and
+  `Program.cs` reaches it twice before `AddApplicationServices` runs, so `AzureBankDbContext`'s
+  optional `TimeProvider` parameter was already being resolved from the container on the tree this
+  record describes; found by reading the installed shared framework's IL, and pinned on a bare
+  `ServiceCollection` by `DailyLimitOptionsTests.TheFrameworkRegistersTheClockFirst`. What ADR-0050
+  adds is the dependency made explicit and app-owned in `AddDailyLimit` — a `TryAdd`, which
+  therefore registers nothing in the real host — plus the first REQUIRED consumer,
+  `DailyOutflowLimitService`, which needs the ledger's clock to compute the UTC day it sums, and
+  `DbContextReceivesRegisteredClockTests`, which pins that the context receives it. The first
+  sentence of this bullet stays true: `DeletedAt` and `UpdatedAt` in the services still read
+  `DateTime.UtcNow`, so the two-clock question is narrowed to those sites, not closed.)*
 - ~~**The deposit-between-guard-and-save race is retried, not proven.** The loop in D8 reloads and
   re-runs the guards, so a racing deposit ends as 422 `NON_ZERO_BALANCE` rather than a closed
   funded account; the eight-way proof drives the second-DELETE race, and no SQL Server test drives

@@ -17,6 +17,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -126,6 +127,8 @@ public static class ServiceCollectionExtensions
                 "StepUp:Window must be positive")
             .ValidateOnStart();
 
+        services.AddDailyLimit(configuration);
+
         // Audit trail chain key (ADR-0044). A secret, with the same fail-fast treatment as
         // StepUp:BindingKey and Idempotency:HashKey, and SEPARATE from both: one leaked key must not
         // let an attacker forge another mechanism's answer. Without it the row hash is computable by
@@ -197,6 +200,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ITransactionService, TransactionService>();
         services.AddScoped<ITransferService, TransferService>();
         services.AddScoped<IUserService, UserService>();
+        // The day's external-transfer ceiling (ADR-0050): scoped, sharing the request's DbContext
+        // so the in-transaction sum runs on the connection holding the per-user application lock.
+        services.AddScoped<IDailyOutflowLimit, DailyOutflowLimitService>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
         // Scoped, and sharing the REQUEST's DbContext on purpose (ADR-0042): consuming an
         // authorisation must ride the transfer's transaction, unlike PinService's bookkeeping,
@@ -274,6 +280,65 @@ public static class ServiceCollectionExtensions
 
         // Always registered, so a second host inherits it; it steps aside unless the flag names it.
         services.AddHostedService<Services.NoticeRelayService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// The day's ceiling on outgoing external transfers (ADR-0050): the option, validated at
+    /// startup, and the ONE clock the ledger stamp and the day's window are both read from.
+    /// </summary>
+    /// <remarks>
+    /// Its own method rather than inline above so <c>DailyLimitOptionsTests</c> can drive exactly
+    /// these rules through <c>IStartupValidator</c> without building the whole host; called from
+    /// <see cref="AddApplicationServices"/> so a second host inherits both registrations.
+    /// </remarks>
+    public static IServiceCollection AddDailyLimit(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // Not a secret, unlike the three keys around it, but fail-fast for a different reason: a
+        // zero or negative ceiling would refuse every external transfer, and a value with sub-cent
+        // digits would put noise into the 422 body's `limit` member. Both are misconfigurations a
+        // running host should not carry. The default (5,000) is valid, so a host with no DailyLimit
+        // section still starts.
+        services.AddOptions<DailyLimitOptions>()
+            .Bind(configuration.GetSection(DailyLimitOptions.SectionName))
+            .Validate(
+                o => o.Amount > 0,
+                "DailyLimit:Amount must be positive")
+            .Validate(
+                o => decimal.Round(o.Amount, 2) == o.Amount,
+                "DailyLimit:Amount must have at most 2 decimals")
+            .ValidateOnStart();
+
+        /*
+          THE CLOCK — made explicit here, NOT first registered here. The framework already
+          registers it: AddAuthentication() in Microsoft.AspNetCore.Authentication does
+          services.TryAddSingleton(TimeProvider.System), and Program.cs reaches it twice before this
+          method runs (AddIdentityServices → AddIdentity → AddAuthentication, then AddJwtAuthentication
+          → AddAuthentication(options => …)), so in the real host this TryAdd registers nothing and
+          AzureBankDbContext's optional parameter was receiving the container's TimeProvider.System
+          on main already. Found while ADR-0050 was reviewed (the installed shared framework's IL,
+          and DailyLimitOptionsTests.TheFrameworkRegistersTheClockFirst pins it on a bare
+          collection); the context's comment had deferred a registration that, unknown to it, the
+          host had carried since AddAuthentication.
+
+          It stays for two reasons. AddApplicationServices must be self-sufficient:
+          DailyOutflowLimitService takes TimeProvider as a REQUIRED parameter — it computes the start
+          of the UTC day it sums, and the rows it sums carry a CreatedAt stamped by the context's
+          clock; two clocks would put a row on one side of midnight for the writer and the other for
+          the reader — and DailyLimitOptionsTests builds this root without authentication. And the
+          dependency is now app-owned rather than a side effect of the auth registration. TryAdd
+          precisely so it never displaces the framework's descriptor or a test's earlier
+          FakeTimeProvider. What ADR-0050 adds is the first REQUIRED consumer and
+          DbContextReceivesRegisteredClockTests, which pins that the context actually receives it.
+
+          The services that still read DateTime.UtcNow (StepUp mint/expiry, DeletedAt, UpdatedAt in
+          the services) are NOT migrated here: the question is narrowed to the ledger clock, not
+          closed.
+        */
+        services.TryAddSingleton(TimeProvider.System);
 
         return services;
     }

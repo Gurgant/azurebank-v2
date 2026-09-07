@@ -24,6 +24,7 @@ public class TransferService : ITransferService
     private readonly IStepUpAuthorizationService _stepUp;
     private readonly ILogger<TransferService> _logger;
     private readonly IAuditService _audit;
+    private readonly IDailyOutflowLimit _dailyLimit;
 
     public TransferService(
         AzureBankDbContext context,
@@ -32,7 +33,8 @@ public class TransferService : ITransferService
         IPinVerifier pinVerifier,
         IStepUpAuthorizationService stepUp,
         ILogger<TransferService> logger,
-        IAuditService audit)
+        IAuditService audit,
+        IDailyOutflowLimit dailyLimit)
     {
         _audit = audit;
         _context = context;
@@ -41,7 +43,28 @@ public class TransferService : ITransferService
         _pinVerifier = pinVerifier;
         _stepUp = stepUp;
         _logger = logger;
+        _dailyLimit = dailyLimit;
     }
+
+    /*
+      THE PER-USER APPLICATION LOCK the day's ceiling is proven under (ADR-0050 D5). Taken as the
+      first statement of the transfer's transaction, before any row is built, and released with it.
+
+      sp_getapplock's outcome is a RETURN VALUE, not an error — 0/1 granted, -1 timed out, -2
+      cancelled, -3 deadlock victim, -999 bad call — and ExecuteSqlRawAsync cannot see one. Without
+      the guard a refused lock would read as a lock held, and the whole proof would rest on a
+      statement that silently did nothing. So the batch turns any negative return into a raised
+      error: the transfer then fails loudly instead of summing unserialised.
+    */
+    internal const string DailyLimitLockSql =
+        "DECLARE @r int; "
+        + "EXEC @r = sp_getapplock @Resource = {0}, @LockMode = N'Exclusive', @LockOwner = N'Transaction'; "
+        + "IF @r < 0 BEGIN DECLARE @m nvarchar(80) = CONCAT(N'sp_getapplock returned ', @r); THROW 50000, @m, 1; END";
+
+    /// <summary>
+    /// The applock resource name for one user's day: one lock per payer, never per account.
+    /// </summary>
+    internal static string DailyLimitLockResource(Guid userId) => $"daily-limit:{userId:D}";
 
     /// <summary>
     /// Refuses a transfer that presents no authorisation at all, at the rung the in-band PIN check
@@ -173,6 +196,29 @@ public class TransferService : ITransferService
 
         var (_, recipient, _) = await ResolveExternalPayeeAsync(userId, request.RecipientAzureTag);
 
+        /*
+          THE DAY'S CEILING, BEFORE THE PIN (ADR-0050 D4). The mint checks nothing about money today —
+          measured 2026-09-07, B1: a mint of 400 with 250 left answered 201, and only the transfer
+          refused — so a transfer the day cannot take costs the user a PIN entry before it is
+          refused. This is the ADR-0049 D4 rung: a 422 guard that reveals only the caller's OWN
+          state runs before IPinVerifier spends an attempt (the two closure guards on the deletion
+          mint sit on the same rung). The daily aggregate reveals only the caller's own ledger, so
+          it belongs here; a wrong PIN on a doomed request is answered 422 DAILY_LIMIT_EXCEEDED, not
+          401, and no attempt is spent. The balance guard is deliberately NOT lifted to the mint:
+          its own rule is that funds are checked at the transfer (ADR-0046), and this slice does not
+          move it.
+
+          Below the payee resolution so the mint refuses in the transfer's order — payee 404/422,
+          then the day's 422, then the PIN — the order ADR-0050's rung table records. What this does
+          NOT claim: the enumeration argument at the top of this file is the TRANSFER's
+          (RequireAuthorization sits above its payee resolution) and the mint has no counterpart —
+          it answers 404/422 on a handle here, before the PIN below, to any JWT holder, bounded only
+          by the BFF's per-IP global limiter (ADR-0014's per-user `lookup` policy covers
+          /api/users/* only). Pre-existing since ADR-0042; this check neither widens nor narrows
+          it, because it answers nothing about the payee.
+        */
+        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount);
+
         var authorization = await _stepUp.MintAsync(
             userId,
             StepUpOperation.Transfer,
@@ -198,6 +244,8 @@ public class TransferService : ITransferService
             throw new BusinessRuleException("Cannot transfer to the same account.", ErrorCodes.SameAccountTransfer);
         }
 
+        // No daily-limit check here: internal moves are not counted (ADR-0050 D2) — the money
+        // stays with the user, so there is nothing the day's ceiling could bound.
         var authorization = await _stepUp.MintAsync(
             userId,
             StepUpOperation.InternalTransfer,
@@ -246,6 +294,23 @@ public class TransferService : ITransferService
         var binding = new StepUpBinding(request.FromAccountId, null, recipient.Id, request.Amount);
         await _stepUp.ValidateAsync(userId, authorizationId, StepUpOperation.Transfer, binding);
 
+        /*
+          THE DAY'S CEILING, PRE-CHECK (ADR-0050 D4). After ValidateAsync, so an expired or invalid
+          authorisation still wins first and this cannot become an oracle without a minted one; and
+          BEFORE the balance guard in the loop below, so the order on the wire is
+          401 AUTHORIZATION_REQUIRED → 404/422 payee → 401 AUTHORIZATION_EXPIRED/_INVALID →
+          422 DAILY_LIMIT_EXCEEDED → 422 INSUFFICIENT_FUNDS (the binding can only be validated once
+          the payee is resolved — RequireAuthorization's remarks above say why the two 401s split).
+          Daily before balance is a decision, not an accident: the mint has no balance check, so
+          keeping daily first makes the mint and the transfer refuse in the same order, and a
+          request that violates both answers the daily code.
+
+          A pre-check only — cheap, nothing written, on committed rows outside any transaction. Two
+          transfers from two DIFFERENT accounts of one user both pass it together, which is why the
+          authoritative check sits inside the transaction below.
+        */
+        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount);
+
         // Use transaction for atomicity; retry optimistic-concurrency
         // conflicts on the accounts (see ConcurrencyRetry).
         var strategy = _context.Database.CreateExecutionStrategy();
@@ -281,6 +346,66 @@ public class TransferService : ITransferService
 
                     try
                     {
+                        /*
+                          THE AUTHORITATIVE DAILY CHECK, under a per-user application lock (ADR-0050
+                          D5). Nothing else in this system serialises money movement across two
+                          accounts of one user TO DIFFERENT PAYEES: Account.RowVersion and
+                          ConcurrencyRetry protect one account row, so two such transfers touch no
+                          shared row and both pass a sum taken outside a lock. (Two transfers to the
+                          SAME payee are serialised by the payee's row — its RowVersion moves under
+                          the loser, which retries, re-enters this delegate and re-sums after the
+                          winner's commit. Measured while writing the reproduction: the panel's
+                          two-account, one-payee shape stayed green with this lock removed, every
+                          run; DailyLimitConcurrencySqlServerTests says so.) The lock is what turns
+                          the pre-check above into a control for every shape.
+
+                          WHY NOT THE AUDIT TAIL. Every audited save reads the AuditEvents tail
+                          under UPDLOCK, HOLDLOCK (AuditChain.TailSql), so a re-sum after the first
+                          SaveChangesAsync would be serialised for free — but ADR-0044 lists
+                          partitioning that chain as an open question, and a business invariant must
+                          not silently depend on an audit lock a later change may split. This lock
+                          is independent of the chain: partition it and nothing here moves.
+
+                          WHY NOT UPDLOCK ON AspNetUsers OR Accounts. Verified in code, not argued:
+                          UserService.RenameAzureTagAsync and AuthService's PIN enrol/change modify
+                          the user row in an AUDITED save, and AzureBankDbContext.SaveChangesAsync
+                          applies the chain (tail lock) BEFORE base.SaveChangesAsync — so those paths
+                          lock tail → user row, and a transfer locking the user row first and then
+                          waiting on the tail is a 1205 cycle. A deposit is the same shape on the
+                          Accounts row: tail → account row. EnableRetryOnFailure would retry the
+                          victim (1205 is in the shipped detector), but a design that deadlocks by
+                          construction and relies on the retry is not the design to record.
+
+                          An application lock participates in no table-lock order. Nothing else in
+                          backend/src takes one (grep sp_getapplock: this file only), so the only
+                          order added is applock → tail, and no cycle can form. It holds under READ
+                          COMMITTED and under RCSI (measured ON for AzureBankDev and AzureBankTests,
+                          2026-09-07); it would not hold under transaction-level SNAPSHOT, which
+                          nothing sets. Owner = Transaction, so a rollback or commit releases it
+                          without a matching sp_releaseapplock.
+
+                          BEFORE ANY ROW IS BUILT, so the sum is over committed rows plus nothing of
+                          this request's own — `used + amount > limit`, the same comparison as the
+                          pre-check (the helper's comment says what changes if this ever moves after
+                          the save). A loser therefore writes nothing at all: no ledger rows, no
+                          audit row, no consumed authorisation. And a RowVersion retry re-enters
+                          this delegate and re-takes lock + sum, so the same-account race is covered
+                          by the same statement.
+
+                          InMemory has no locks and no transactions: it skips the statement and
+                          proves only that the check exists. The concurrency property is proven only
+                          by DailyLimitConcurrencySqlServerTests, written as a reproduction first —
+                          the exact posture ConsumeAsync takes for its own single-statement
+                          guarantee.
+                        */
+                        if (_context.Database.IsRelational())
+                        {
+                            await _context.Database.ExecuteSqlRawAsync(
+                                DailyLimitLockSql, DailyLimitLockResource(userId));
+                        }
+
+                        await _dailyLimit.AssertCanMoveAsync(userId, request.Amount);
+
                         var transactionNumber = IdGenerator.GenerateTransactionNumber();
 
                         /*
@@ -500,6 +625,10 @@ public class TransferService : ITransferService
             authorizationId,
             StepUpOperation.InternalTransfer,
             new StepUpBinding(request.FromAccountId, request.ToAccountId, null, request.Amount));
+
+        // No daily-limit check on this rail, and no application lock below: internal moves are not
+        // counted (ADR-0050 D2). The row this path writes carries no RecipientAzureTag, which is
+        // what keeps it out of the day's sum.
 
         // Use transaction for atomicity; retry optimistic-concurrency
         // conflicts on the accounts (see ConcurrencyRetry).

@@ -1505,7 +1505,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Unprocessable Entity - this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1658,7 +1658,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Business Rule Violation - The request violates domain constraints (e.g., insufficient funds). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1767,13 +1767,26 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unprocessable Entity */
+                /** @description Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED). */
                 422: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ProblemDetails"];
+                        "application/json": {
+                            /** @description A URI reference identifying the problem type */
+                            type?: string;
+                            /** @description A short, human-readable summary (e.g., 'Business Rule Violation') */
+                            title?: string;
+                            /** @description The HTTP status code (422) */
+                            status?: number;
+                            /** @description A human-readable explanation of the business rule violation */
+                            detail?: string;
+                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            errorCode?: string;
+                            /** @description Request trace identifier for debugging */
+                            traceId?: string;
+                        };
                     };
                 };
                 /** @description Too Many Requests */
@@ -2011,7 +2024,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Business Rule Violation - The request violates domain constraints (e.g., recipient not found, self transfer, insufficient funds) or the day's external transfer limit (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -2163,7 +2176,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;

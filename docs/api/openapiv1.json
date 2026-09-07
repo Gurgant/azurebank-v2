@@ -1646,7 +1646,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "description": "Unprocessable Entity - this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1865,7 +1865,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "description": "Business Rule Violation - The request violates domain constraints (e.g., insufficient funds). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2016,8 +2016,8 @@
               }
             }
           },
-          "422": {
-            "description": "Unprocessable Entity",
+          "429": {
+            "description": "Too Many Requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -2026,12 +2026,38 @@
               }
             }
           },
-          "429": {
-            "description": "Too Many Requests",
+          "422": {
+            "description": "Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary (e.g., 'Business Rule Violation')"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the business rule violation"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
                 }
               }
             }
@@ -2284,7 +2310,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "description": "Business Rule Violation - The request violates domain constraints (e.g., recipient not found, self transfer, insufficient funds) or the day's external transfer limit (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2503,7 +2529,7 @@
             }
           },
           "422": {
-            "description": "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), or this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "description": "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
             "content": {
               "application/json": {
                 "schema": {

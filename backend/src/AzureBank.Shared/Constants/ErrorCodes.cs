@@ -91,6 +91,13 @@ public static class ErrorCodes
     // currently unhandled by the frontend, which falls through to the generic message — tracked for
     // the U6 frontend work rather than papered over here.
     public const string RecipientNoAccount = "RECIPIENT_NO_ACCOUNT";
+    // The day's ceiling on a user's outgoing external transfers would be exceeded (ADR-0050).
+    // Thrown from ONE helper, DailyOutflowLimitService.AssertCanMoveAsync, at three sites in
+    // TransferService: the external mint before the PIN is consulted, the transfer's pre-check
+    // after the authorisation is validated, and the authoritative check inside the transfer's
+    // transaction under the per-user application lock. Never on the internal rail, never on a
+    // withdrawal.
+    public const string DailyLimitExceeded = "DAILY_LIMIT_EXCEEDED";
 
     // Account lifecycle
     public const string NonZeroBalance = "NON_ZERO_BALANCE";

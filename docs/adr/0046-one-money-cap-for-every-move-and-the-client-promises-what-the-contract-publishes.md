@@ -105,11 +105,21 @@ document may cite it as a control.
 > zero readers, across `backend/src`, `backend/tests`, `frontend/`, `docs/api/openapiv1.json` and
 > the generated `schema.d.ts`. No behaviour changed, because nothing ever read it. A daily or
 > aggregate limit remains unbuilt and undecided — D7 and the backlog's transaction-limits feature.
+>
+> *Noted 2026-09-07: the aggregate now exists —
+> [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)
+> bounds a user's outgoing external transfers per UTC day — as an option (`DailyLimit:Amount`,
+> default 5,000, validated on start), not a constant, and nothing is restored here: the 1,000 was a
+> dead number, not a decision.*
 
 **D7 — Not in this decision.** Showing the cap proactively or clamping the input (U8 UI/UX, last as
-always); per-day, per-account or tiered limits (the backlog's transaction-limits feature, which
+always); ~~per-day, per-account or tiered limits (the backlog's transaction-limits feature, which
 this decision neither starts nor forecloses — the direction seam it would need can be added when
-the second number exists); raising the server's bound for any operation.
+the second number exists)~~ *(struck 2026-09-07: started by
+[ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)
+for external transfers per user — a per-day aggregate held in an option, not a schema bound, so no
+direction seam was needed for it; per-account and tiered limits remain with the umbrella entry)*;
+raising the server's bound for any operation.
 
 ## Alternatives declined
 
@@ -139,7 +149,14 @@ form's literal edited away from the constant — is the same tripwire, run throu
 
 - **A second money bound on the server** — a tiered or per-direction limit — is the day
   `MONEY_MAX` becomes a map keyed by operation, the tripwire iterates it, and D1's "one cap" is
-  reopened as a decision rather than a fact.
+  reopened as a decision rather than a fact. *Fired in part 2026-09-07:
+  [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)
+  adds a second bound on the server — a UTC-day aggregate on external transfers — but an
+  AGGREGATE has no schema `maximum`, so `MONEY_MAX` stays one number, D1 stays true and the
+  tripwire is unchanged; the map-keyed-by-operation day is still ahead. What that ADR does concede:
+  a single external transfer can no longer reach the published per-request `maximum` on a fresh
+  day, and the client's effective bound for one is min(`MONEY_MAX`, remaining) — a U8 surface, not
+  a schema change.*
 - **A relay for the contract check into CI** (`openapi-spec.mjs check` against a running API) would
   make D5's guard redundant; until then it is the only thing standing between a constant and the
   document.

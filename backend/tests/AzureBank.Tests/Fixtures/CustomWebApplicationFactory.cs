@@ -1,15 +1,20 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
+using System.Collections.Concurrent;
 using System.Globalization;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace AzureBank.Tests.Fixtures;
 
@@ -114,6 +119,91 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _enableSqlRetryOnFailure = true;
     }
 
+    private decimal? _dailyLimit;
+
+    /// <summary>
+    /// Overrides <c>DailyLimit:Amount</c> — the day's ceiling on a user's outgoing external
+    /// transfers (ADR-0050). Call before <c>CreateClient()</c>.
+    /// </summary>
+    /// <remarks>
+    /// Exists so a proof can exhaust the day in a handful of small transfers instead of moving the
+    /// production 5,000; the SQL Server race is eight transfers of 100 against a ceiling of 500.
+    /// Goes through <c>UseSetting</c>, so the value takes the same path — binding and
+    /// <c>ValidateOnStart</c> — a real appsettings value would.
+    /// </remarks>
+    public void SetDailyLimit(decimal amount)
+    {
+        _dailyLimit = amount;
+    }
+
+    private FakeTimeProvider? _clock;
+
+    /// <summary>
+    /// Replaces the host's <see cref="TimeProvider"/> with a <see cref="FakeTimeProvider"/> and
+    /// returns it, so a test can move the day through the real composition root. Call before
+    /// <c>CreateClient()</c>; the fake starts at the real now unless told otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Opt-in rather than always on, because a fake clock does not advance by itself: every
+    /// consumer in the host — the context's timestamps, the audit trail's OccurredAt, the day's
+    /// window — would read one frozen instant for the whole class, which is exactly what the
+    /// day-boundary test wants and what nothing else does. What it does NOT move: the step-up
+    /// mint and expiry and the JWT still read <c>DateTime.UtcNow</c>, so advancing this clock past
+    /// midnight expires no authorisation and no token — ADR-0049's two-clock note, narrowed by
+    /// ADR-0050 to the ledger clock and not closed.
+    /// </remarks>
+    public FakeTimeProvider UseFakeClock(DateTimeOffset? start = null)
+    {
+        _clock = new FakeTimeProvider(start ?? DateTimeOffset.UtcNow);
+        return _clock;
+    }
+
+    /// <summary>The fake clock installed by <see cref="UseFakeClock"/>.</summary>
+    public FakeTimeProvider Clock =>
+        _clock ?? throw new InvalidOperationException("Call UseFakeClock() before CreateClient().");
+
+    private bool _captureLog;
+
+    /// <summary>
+    /// Every log event the host emits at Warning or above, rendered, in emission order. Filled
+    /// only after <see cref="CaptureLog"/>; empty otherwise.
+    /// </summary>
+    /// <remarks>
+    /// A Serilog sink registered in DI, which the host's <c>ReadFrom.Services</c> picks up — NOT an
+    /// <c>ILoggerProvider</c>, which <c>UseSerilog</c> would ignore (it replaces the logger factory
+    /// and does not write to providers by default). Warning and above is where EF reports a retried
+    /// transient fault and where <c>AppExceptionHandler</c> reports a domain refusal, which is what
+    /// the deadlock proofs read.
+    /// </remarks>
+    public ConcurrentQueue<string> CapturedLog { get; } = new();
+
+    /// <summary>
+    /// Starts filling <see cref="CapturedLog"/>. Call before <c>CreateClient()</c>.
+    /// </summary>
+    public void CaptureLog()
+    {
+        _captureLog = true;
+    }
+
+    private sealed class CapturingSink(ConcurrentQueue<string> sink) : ILogEventSink
+    {
+        public void Emit(LogEvent logEvent)
+        {
+            if (logEvent.Level < LogEventLevel.Warning)
+            {
+                return;
+            }
+
+            var line = $"[{logEvent.Level}] {logEvent.RenderMessage(CultureInfo.InvariantCulture)}";
+            if (logEvent.Exception is not null)
+            {
+                line += " | " + logEvent.Exception.GetType().Name + ": " + logEvent.Exception.Message;
+            }
+
+            sink.Enqueue(line);
+        }
+    }
+
     /// <summary>
     /// Registers an EF interceptor on the test DbContext (e.g. to inject a one-shot fault).
     ///
@@ -159,6 +249,27 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             builder.UseSetting(
                 "Audit:TailTimeoutSeconds", tailTimeout.ToString(CultureInfo.InvariantCulture));
         }
+
+        if (_dailyLimit is { } dailyLimit)
+        {
+            builder.UseSetting("DailyLimit:Amount", dailyLimit.ToString(CultureInfo.InvariantCulture));
+        }
+
+        // After the application's own registrations, so the swap replaces the TimeProvider.System
+        // singleton the host carries (registered by the framework's AddAuthentication and echoed by
+        // AddDailyLimit's TryAdd) rather than being replaced by it.
+        builder.ConfigureTestServices(services =>
+        {
+            if (_clock is not null)
+            {
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(_clock));
+            }
+
+            if (_captureLog)
+            {
+                services.AddSingleton<ILogEventSink>(new CapturingSink(CapturedLog));
+            }
+        });
 
         builder.ConfigureServices(services =>
         {

@@ -15,6 +15,16 @@ namespace AzureBank.Api.Transformers;
 /// This transformer ensures these endpoints document 422 as a possible response,
 /// which aligns with how BusinessRuleException now returns 422.
 ///
+/// <para>
+/// On a [RequireIdempotency] endpoint the 422 is written EARLIER, by
+/// IdempotencyOperationTransformer (operation transformers run before document transformers, and
+/// Add422Response below returns when a 422 already exists). Until ADR-0050 the three money entries
+/// here were therefore dead text: the document carried the idempotency transformer's generic blurb
+/// and never this table's. That transformer now reads this table through
+/// <see cref="TryGetDescription"/> and composes the per-endpoint rule with its own
+/// IDEMPOTENCY_KEY_REUSE clause, so ONE table names the rules.
+/// </para>
+///
 /// Reference: project-docs/30-business-rule-validation-implementation-plan.md
 /// </summary>
 public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransformer
@@ -30,9 +40,19 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         ["POST /api/transfers/internal"] =
             "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
         ["POST /api/transfers"] =
-            "Business Rule Violation - The request violates domain constraints (e.g., recipient not found, self transfer, insufficient funds).",
+            "Business Rule Violation - The request violates domain constraints (e.g., recipient not found, self transfer, insufficient funds) or the day's external transfer limit (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance).",
         ["POST /api/transactions/withdraw"] =
             "Business Rule Violation - The request violates domain constraints (e.g., insufficient funds).",
+        // ADR-0050: the external mint answers 422 four ways, named here in wire order — the payee
+        // resolution's two codes (TransferService.ResolveExternalPayeeAsync, before the daily check),
+        // the day's ceiling BEFORE the PIN is consulted (the ADR-0049 D4 rung), and the PIN
+        // verifier's PIN_REQUIRED. Declared here and NOT by an attribute on
+        // TransferController.AuthoriseTransfer, which was removed for the reason on the deletion
+        // mint below: it outranked this entry and published the bare reason phrase. The internal
+        // mint has no entry on purpose — it checks no daily limit — and still carries its
+        // attribute, so its 422 stays the bare phrase: an existing drift named, not fixed here.
+        ["POST /api/transfers/authorizations"] =
+            "Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED).",
         ["DELETE /api/accounts/{id}"] =
             "Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance).",
         // ADR-0049: the mint runs the two closure guards before the PIN is consulted, and the PIN
@@ -44,6 +64,13 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         ["GET /api/transactions/summary"] =
             "Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE)."
     };
+
+    /// <summary>
+    /// The per-endpoint 422 prose for <c>"METHOD /path"</c>, for the operation transformer that
+    /// writes the 422 on [RequireIdempotency] endpoints before this one runs.
+    /// </summary>
+    internal static bool TryGetDescription(string operationKey, out string description)
+        => BusinessRuleEndpoints.TryGetValue(operationKey, out description!);
 
     public Task TransformAsync(
         OpenApiDocument document,
