@@ -2734,7 +2734,29 @@ const authoriseInternalTransfer = api.post(
 const authoriseAccountDeletion = api.post(
   '/api/accounts/{id}/deletion-authorizations',
   async ({ params, request, response }) => {
-    const body = (await request.json()) as { pin?: unknown };
+    /*
+      READ THE BODY THE WAY EVERY OTHER HANDLER DOES. The first version called `request.json()`
+      directly: malformed JSON rejected the promise (an MSW error, not a response), and a JSON
+      `null` reached `mintPinBindFailure`, which reads `body.pin` off it and threw. CodeRabbit
+      raised it on the PR. Measured on THIS endpoint before accepting, 2026-09-07T12:30Z on main
+      19742ff through the BFF (`plans/account-deletion/measure-badbody-2026-09-07.txt`):
+
+        body `{pin:`   -> 400 {"$":["'p' is an invalid start of a property name. ..."], "request":[...]}
+        body `null`    -> 400 {"":["A non-empty request body is required."], "request":[...]}
+        body `[]`      -> 400 {"$":["The JSON value could not be converted to ...AccountDeletionAuthorizationRequest. ..."]}
+        body ``        -> 400 {"":["A non-empty request body is required."], "request":[...]}
+        body `"123456"`-> 400 {"$":["The JSON value could not be converted to ..."]}
+
+      `readJsonBody` folds all of those to null and `unreadableBodyProblem` answers the framework
+      envelope: the `""` key for a body the framework treats as absent (empty, and — measured here —
+      the literal `null`), the `$` key for anything it could not parse or convert. None of them
+      reaches ownership, the guards or the PIN, so none costs an attempt.
+    */
+    const parsed = await readJsonBody(request);
+    if (!parsed) {
+      return response.untyped(unreadableBodyProblem(await request.clone().text()));
+    }
+    const body = parsed.body as { pin?: unknown };
 
     const pinBind = mintPinBindFailure(
       body,

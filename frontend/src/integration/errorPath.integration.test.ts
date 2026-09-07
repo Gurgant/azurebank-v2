@@ -208,6 +208,14 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
     if (!created.ok) return;
     const id = created.data.id;
 
+    /*
+      The cleanup is also the data layer's own pin of both new mutations, so its outcome is
+      asserted — but AFTER the block, not inside `finally`. An `expect` in `finally` would replace
+      the refusal's failure with its own, and a refused mint would throw before the DELETE ran,
+      leaving the probe account on the seeded admin for every later run to trip over (the e2e
+      leftover trap). CodeRabbit raised it; the shape is theirs.
+    */
+    const cleanup = { minted: false, closed: false };
     try {
       const refused = await run(
         // No stepUpAuthorizationId, on purpose: the header is omitted and the API refuses.
@@ -229,7 +237,7 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
           apiSlice.endpoints.authoriseAccountDeletion.initiate({ id, pin: FIXTURES.pin }),
         ),
       );
-      expect(minted.ok, minted.ok ? '' : JSON.stringify(minted.error)).toBe(true);
+      cleanup.minted = minted.ok;
       if (minted.ok) {
         const closed = await run(
           store.dispatch(
@@ -239,9 +247,10 @@ describe('integration: problemBaseQuery normalises real backend errors', () => {
             }),
           ),
         );
-        expect(closed.ok, closed.ok ? '' : JSON.stringify(closed.error)).toBe(true);
+        cleanup.closed = closed.ok;
       }
     }
+    expect(cleanup).toEqual({ minted: true, closed: true });
   });
 
   /*

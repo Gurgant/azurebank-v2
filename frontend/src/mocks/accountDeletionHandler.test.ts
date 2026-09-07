@@ -203,6 +203,41 @@ describe('POST /api/accounts/{id}/deletion-authorizations — the deletion mint'
     expect(mockState.stepUpAuthorizations.size).toBe(0);
   });
 
+  describe('a body the framework cannot read never reaches the PIN', () => {
+    /*
+      CodeRabbit's finding on the PR: the first version called `request.json()` directly, so a
+      malformed body rejected the handler's promise and a JSON `null` threw inside the pin-bind
+      helper. Measured on the real endpoint 2026-09-07T12:30Z, main 19742ff
+      (`plans/account-deletion/measure-badbody-2026-09-07.txt`): every shape below is a 400 in the
+      framework envelope (rfc9110 type, `errors`, no `errorCode`) — the `""` key when the body is
+      absent or the literal `null`, the `$` key when it could not be parsed or converted. The mock's
+      `$` sentence is a stated approximation of the framework's token-bearing text; the KEY and the
+      envelope are what is pinned.
+    */
+    it.each([
+      ['malformed JSON', '{pin:', '$'],
+      ['the literal null', 'null', ''],
+      ['an array', '[]', '$'],
+      ['an empty body', '', ''],
+      ['a bare string', '"123456"', '$'],
+    ])('%s is a 400 in the framework envelope, and costs nothing', async (_label, raw, key) => {
+      const spare = await createSpare();
+      const before = mockState.pinAttempts;
+      const res = await fetch(MINT(spare), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { errors?: Record<string, string[]>; errorCode?: string };
+      expect(body.errorCode).toBeUndefined();
+      expect(Object.keys(body.errors ?? {})).toContain(key);
+      expect(body.errors?.request).toEqual(['The request field is required.']);
+      expect(mockState.pinAttempts).toBe(before);
+      expect(mockState.stepUpAuthorizations.size).toBe(0);
+    });
+  });
+
   it('a malformed PIN is a model-state 400 keyed Pin, before ownership and the PIN', async () => {
     // Envelopes measured on the TRANSFER mints 2026-08-16 (mintPinBindFailure /
     // pinAnnotationErrors); this DTO carries the same [Required][Pin]
