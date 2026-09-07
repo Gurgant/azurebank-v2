@@ -344,6 +344,14 @@ public static class SecurityEvents
       would take the chain tail lock that every real money movement queues behind.
       AWithdrawalRefusedForFunds_WritesNoRow_AndThatIsTheDecision asserts the absence, because
       somebody re-reading this list will otherwise think it was forgotten.
+
+      AND DAILY_LIMIT_EXCEEDED (ADR-0050), by the same line and with the same contention arithmetic.
+      The day's ceiling on external transfers is refused at the mint before the PIN is consulted and
+      again on the transfer, both from state the caller holds and can trigger at will, at no cost
+      and with no bound — so a row per attempt would be the unbounded write ADR-0044 keeps out,
+      each one queued on the chain tail behind real money. Log-only, at both sites; no inventory
+      change here. ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision asserts the
+      absence at both.
     */
 
     /// <summary>

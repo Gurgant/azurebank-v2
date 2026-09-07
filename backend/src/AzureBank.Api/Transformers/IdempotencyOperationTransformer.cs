@@ -17,7 +17,11 @@ namespace AzureBank.Api.Transformers;
 /// Note: runs BEFORE document transformers; the 422 added here (with the
 /// full ProblemDetails schema) also covers the business-rule 422 that
 /// BusinessRulesDocumentTransformer would otherwise add to these endpoints
-/// (it skips operations that already document 422).
+/// (it skips operations that already document 422). Since ADR-0050 the
+/// description is COMPOSED from that transformer's per-endpoint entry when one
+/// exists, so the rules an endpoint can refuse on are named by one table and
+/// not lost to this one's generic blurb — which is what happened to the three
+/// money entries until then.
 /// </summary>
 public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransformer
 {
@@ -65,12 +69,25 @@ public sealed class IdempotencyOperationTransformer : IOpenApiOperationTransform
                 }
             }
         };
+        // "POST /api/transfers": the key BusinessRulesDocumentTransformer's table uses. When the
+        // endpoint has an entry there, its rules lead and the idempotency clause follows. The
+        // fallback is for an idempotent endpoint with no business rule of its own — today only
+        // POST /api/transactions/deposit, whose service throws no BusinessRuleException at all
+        // (ownership 404/403, then the ledger write) — so it names the one refusal such an
+        // endpoint can make and nothing else. Until ADR-0050's review it also said
+        // "(e.g. INSUFFICIENT_FUNDS)", a refusal a deposit cannot answer; PublishedDailyLimitTests
+        // pins the deposit's prose so the over-claim cannot come back.
+        var operationKey =
+            $"{context.Description.HttpMethod?.ToUpperInvariant()} /{context.Description.RelativePath}";
+        var description422 = BusinessRulesDocumentTransformer.TryGetDescription(operationKey, out var rule)
+            ? rule + " Also refused when this idempotency key was already used with a different " +
+              "payload (IDEMPOTENCY_KEY_REUSE)."
+            : "Unprocessable Entity - this idempotency key was already used with a different " +
+              "payload (IDEMPOTENCY_KEY_REUSE).";
+
         operation.Responses["422"] = new OpenApiResponse
         {
-            Description =
-                "Unprocessable Entity - business rule violation (e.g. INSUFFICIENT_FUNDS), " +
-                "or this idempotency key was already used with a different payload " +
-                "(IDEMPOTENCY_KEY_REUSE).",
+            Description = description422,
             Content = new Dictionary<string, OpenApiMediaType>
             {
                 ["application/json"] = new OpenApiMediaType

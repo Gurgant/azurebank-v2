@@ -409,6 +409,85 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision()
+    {
+        /*
+          THE SAME LINE AS THE FUNDS REFUSAL ABOVE, at both sites the day's ceiling is refused
+          (ADR-0050 D7, an instance of ADR-0044's rule). The refusal comes from state the caller
+          holds — their own day's ledger — and can be triggered at will, at no cost and with no
+          bound: at the mint it is answered BEFORE the PIN, so not even ADR-0010's three attempts
+          bound it. A row per attempt would be the unbounded write into a never-purged table, each
+          one queued on the chain tail behind real money. So: log-only, and the absence is asserted
+          at the mint and at the transfer, because the refusal list will otherwise read as if this
+          one was forgotten.
+
+          Default ceiling (5,000): 4,000 spent, then a mint of 1,500 refused at the mint; then two
+          mints of 900 (each fits: 4,900) of which the second spend is refused at the transfer.
+        */
+        var (_, payeeId, _) = await RegisterTestUserAsync();
+        string payeeTag;
+        using (var lookup = Factory.Services.CreateScope())
+        {
+            var db = lookup.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            payeeTag = (await db.Users.AsNoTracking().SingleAsync(u => u.Id == payeeId)).AzureTag;
+        }
+
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        await DepositAsync(token, accountId, 6_000m);
+
+        var spent = await AuthoriseTransferAsync(accountId, payeeTag, 4_000m);
+        (await PostMonetaryAsync(
+                "/api/transfers",
+                new TransferRequest { FromAccountId = accountId, RecipientAzureTag = payeeTag, Amount = 4_000m },
+                stepUpAuthorizationId: spent))
+            .IsSuccessStatusCode.Should().BeTrue();
+
+        // At the mint.
+        var atTheMint = await Client.PostAsJsonAsync(
+            "/api/transfers/authorizations",
+            new TransferAuthorizationRequest
+            {
+                FromAccountId = accountId, RecipientAzureTag = payeeTag, Amount = 1_500m, Pin = "123456"
+            },
+            JsonOptions);
+        atTheMint.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "4,000 + 1,500 exceeds 5,000");
+        (await atTheMint.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.DailyLimitExceeded);
+
+        // At the transfer: the mint does not reserve, so two 900s mint and the second spend loses.
+        var first = await AuthoriseTransferAsync(accountId, payeeTag, 900m);
+        var second = await AuthoriseTransferAsync(accountId, payeeTag, 900m);
+        (await PostMonetaryAsync(
+                "/api/transfers",
+                new TransferRequest { FromAccountId = accountId, RecipientAzureTag = payeeTag, Amount = 900m },
+                stepUpAuthorizationId: first))
+            .IsSuccessStatusCode.Should().BeTrue("4,900 fits");
+        var atTheTransfer = await PostMonetaryAsync(
+            "/api/transfers",
+            new TransferRequest { FromAccountId = accountId, RecipientAzureTag = payeeTag, Amount = 900m },
+            stepUpAuthorizationId: second);
+        atTheTransfer.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "4,900 + 900 exceeds 5,000");
+        (await atTheTransfer.Content.ReadAsStringAsync()).Should().Contain(ErrorCodes.DailyLimitExceeded);
+
+        var refusals = await RowsForActorAsync(userId, SecurityEvents.MoneyTransferRefused);
+        refusals.Should().BeEmpty(
+            "the day's ceiling is a routine outcome the caller can trigger at will from their own "
+            + "ledger, at both sites, and ADR-0044's rule keeps it out of the trail on purpose");
+
+        using var scope = Factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        (await context.AuditEvents.AsNoTracking()
+                .Where(e => e.ActorUserId == userId)
+                .Select(e => e.Detail)
+                .ToListAsync())
+            .Should().NotContain(ErrorCodes.DailyLimitExceeded, "no event of any name carries the code");
+        (await context.AuditEvents.AsNoTracking()
+                .CountAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.MoneyTransferred))
+            .Should().Be(2, "the two transfers that moved money are the only money rows: 4,000 and 900");
+    }
+
+    [Fact]
     public async Task AWrongPinOnAWithdrawal_WritesItsRow_BecauseThatIsTheAttemptWorthSeeing()
     {
         // A guessed PIN against somebody's balance is the event this table exists for, and until

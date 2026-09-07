@@ -124,6 +124,18 @@ records as a decision: its two 422 guards sit AHEAD of the `AUTHORIZATION_REQUIR
 they reveal only the caller's own account state and a real-stack contract test pins the headerless
 422._
 
+_Noted 2026-09-07
+([ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)):
+the external-transfer MINT now answers a non-PIN 422 — `DAILY_LIMIT_EXCEEDED` — ahead of the
+PIN, on the rung ADR-0049 D4 established: a guard that reveals only the caller's own state (here,
+their own day's ledger) runs before `IPinVerifier` spends an attempt, so an over-limit mint with a
+wrong PIN is 422, not 401, and costs nothing. On the transfer itself the daily check sits AFTER
+`AUTHORIZATION_REQUIRED` and the payee resolution, so the enumeration argument below — a caller
+holding no second factor cannot ask the endpoint which handles exist — is intact.
+`[ProducesResponseType(422)]` was removed from `AuthoriseTransfer` for the reason ADR-0049's row
+14 recorded: it outranked the document transformer and published a bare reason phrase. Withdraw's
+convergence, "Not done" below, is still its own task; ADR-0050 counts no withdrawal._
+
 ## Consequences
 
 **Shipped here (PR 1, backend only).** The entity and its migration, the two mint endpoints, the

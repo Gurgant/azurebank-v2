@@ -156,7 +156,14 @@ do under pressure: disable the chain, or raise the bound to push the failures aw
 
 The tail is a single global row, so the chain serialises every money movement in the system by
 construction. Nothing here changes that — it bounds the damage rather than removing the choke point.
-Whether the chain should be partitioned is a real question this ADR does not answer.
+Whether the chain should be partitioned is a real question this ADR does not answer. _Noted
+2026-09-07
+([ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)):
+the daily-limit aggregate is serialised by a per-user application lock (`sp_getapplock`, taken as
+the first statement of the transfer's transaction, before any row is built) and does NOT depend on
+the tail — a re-sum under the tail lock was the alternative that ADR declined precisely because of
+this open question — so partitioning the chain does not touch the limit. The only lock order it
+adds is applock → tail; nothing else in `backend/src` takes an application lock._
 
 **And there is still no way for an operator to VERIFY the chain.** `AuditChain.VerifyAsync` exists
 and the suite calls it, but nothing exposes it — no endpoint, no CLI, no job. So the runbook can tell
@@ -1001,6 +1008,16 @@ refusals — a non-zero balance, the primary account — are business validation
 one refusal that is about a control, a DELETE presented with no step-up authorisation, writes
 `AccountDeletionRefused` on its own connection. The paragraph's "a wrong PIN at the mint" is still
 not wired, for the deletion mint as for the transfer mints._
+
+_Instance added 2026-09-07
+([ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)):
+the daily external-transfer limit follows the same line. Its refusal — `DAILY_LIMIT_EXCEEDED`, at
+the external mint before the PIN is consulted and at the transfer — is business validation the
+owner can trigger at will from state they already hold (their own day's ledger), and it stays
+log-only: a row per attempt would be exactly the unbounded write this paragraph names, each one
+taking the tail lock that every real movement queues behind.
+`ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision` asserts the absence, at both
+sites, so nobody re-reading the inventory thinks it was forgotten._
 
 The remaining ten logged events are deliberately log-only, with reasons that were measured rather
 than assumed:

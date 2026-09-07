@@ -19,10 +19,26 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
     /// <c>FakeTimeProvider</c> here.
     ///
     /// <para>
-    /// No <c>AddSingleton(TimeProvider.System)</c> is registered yet, on purpose: nothing would
-    /// resolve it, and a registration nothing consumes is the same dead-setting defect as the BFF's
-    /// <c>MaxPinAttempts</c>. The registration lands when a service — not just this context —
-    /// needs it.
+    /// In the API's root this parameter has received <c>TimeProvider.System</c> from the container
+    /// for as long as the host has called <c>AddAuthentication()</c>: the framework registers that
+    /// singleton itself (<c>TryAddSingleton(TimeProvider.System)</c> inside
+    /// <c>Microsoft.AspNetCore.Authentication</c>, reached through <c>AddIdentity</c> and
+    /// <c>AddJwtAuthentication</c> before <c>AddApplicationServices</c> runs), and <c>AddDbContext</c>
+    /// resolves an optional parameter once its type is registered. ADR-0050 did not create that
+    /// registration — it found it: <c>AddDailyLimit</c> adds an app-owned
+    /// <c>TryAddSingleton(TimeProvider.System)</c> that registers nothing in the host and serves a
+    /// bare <c>ServiceCollection</c> root, because <c>DailyOutflowLimitService</c> REQUIRES the clock
+    /// that stamps <c>CreatedAt</c> to compute the day it sums (two clocks would make the
+    /// day-boundary test meaningless), and <c>DbContextReceivesRegisteredClockTests</c> pins that the
+    /// registered instance reaches this parameter rather than trusting this comment.
+    /// </para>
+    /// <para>
+    /// The default is still load-bearing in two production roots, not only at the direct
+    /// construction sites in tests: <c>AzureBank.Seeder</c> and <c>AzureBank.AuditVerifier</c>
+    /// register this context through <c>AddInfrastructure</c> alone, reference no
+    /// <c>AzureBank.Api</c>, call no <c>AddAuthentication</c>, and register no <c>TimeProvider</c>
+    /// (<c>NotifyCommand</c> resolves it with <c>?? TimeProvider.System</c> for that reason), so
+    /// there the context stamps from the same system clock by falling through this default.
     /// </para>
     /// </param>
     /// <param name="auditChain">
