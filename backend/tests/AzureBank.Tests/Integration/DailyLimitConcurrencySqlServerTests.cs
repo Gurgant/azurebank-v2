@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -13,11 +14,13 @@ using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Enums;
+using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Xunit.Abstractions;
 
 namespace AzureBank.Tests.Integration;
@@ -133,8 +136,10 @@ public sealed class DailyLimitConcurrencySqlServerTests : IDisposable
             granted.Should().BeGreaterThanOrEqualTo(0, "0 = granted, 1 = granted after a wait");
 
             // The production batch as TransferService issues it: parses, and raises nothing on a
-            // lock this transaction already holds (a re-request by the same owner is granted).
-            await db.Database.ExecuteSqlRawAsync(TransferService.DailyLimitLockSql, resource);
+            // lock this transaction already holds (a re-request by the same owner is granted). The
+            // second argument is the wait bound in milliseconds, the unit sp_getapplock takes.
+            await db.Database.ExecuteSqlRawAsync(
+                TransferService.DailyLimitLockSql, resource, LockTimeoutMilliseconds());
 
             var whileHeld = await ProbeAsync(connectionString, resource);
             _output.WriteLine($"sp_getapplock (second connection, @LockTimeout = 0) while held returned {whileHeld}");
@@ -149,13 +154,115 @@ public sealed class DailyLimitConcurrencySqlServerTests : IDisposable
         await strategy.ExecuteAsync(async () =>
         {
             await using var tx = await db.Database.BeginTransactionAsync();
-            await db.Database.ExecuteSqlRawAsync(TransferService.DailyLimitLockSql, resource);
+            await db.Database.ExecuteSqlRawAsync(
+                TransferService.DailyLimitLockSql, resource, LockTimeoutMilliseconds());
             (await ProbeAsync(connectionString, resource)).Should().Be(-1);
             await tx.RollbackAsync();
         });
 
         (await ProbeAsync(connectionString, resource)).Should().Be(0, "rollback released it too");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // The wait behind the lock is bounded, and the timeout is a fault
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [SqlServerFact]
+    public async Task TheApplock_RefusesInsideTheConfiguredBound_WithAMessageThatNamesTheTimeout()
+    {
+        /*
+          THE BOUND, PROVEN BY THE CLOCK RATHER THAN BY THE EXCEPTION TYPE. Without @LockTimeout the
+          batch waits at @@LOCK_TIMEOUT — measured -1 on LocalDB, i.e. forever — and only the global
+          30-second CommandTimeout ends it, holding a transaction and a pooled connection for half a
+          minute per queued same-payer transfer
+          (plans/daily-limit/measure-cr1-2026-09-07.txt, run 1). An assertion on the throw alone
+          would be green under either regime, which is why the ELAPSED time is the assertion and the
+          message is the corroboration.
+
+          The host is built with a two-second bound so the proof costs two seconds rather than the
+          production ten; the value is read back OUT of the host's own options, so the test cannot
+          drift from what the transfer would actually send.
+
+          The holder is a raw SqlConnection rather than a second DbContext: an application lock
+          owned by a TRANSACTION is released by that transaction, and a raw connection is the
+          shortest way to hold one open across another connection's attempt.
+        */
+        var client = CreateSqlClient(lockTimeoutSeconds: 2);
+        _ = client;
+
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+        var connectionString = db.Database.GetConnectionString()!;
+        var resource = TransferService.DailyLimitLockResource(Guid.NewGuid());
+        var boundMilliseconds = LockTimeoutMilliseconds();
+        boundMilliseconds.Should().Be(
+            2_000, "the host bound the wait at the two seconds asked for");
+
+        await using var holder = new SqlConnection(connectionString);
+        await holder.OpenAsync();
+        await using (var holderTx = (SqlTransaction)await holder.BeginTransactionAsync())
+        {
+            await using (var take = holder.CreateCommand())
+            {
+                take.Transaction = holderTx;
+                take.CommandText =
+                    "DECLARE @r int; EXEC @r = sp_getapplock @Resource = @resource, "
+                    + "@LockMode = N'Exclusive', @LockOwner = N'Transaction'; SELECT @r";
+                take.Parameters.AddWithValue("@resource", resource);
+                ((int)(await take.ExecuteScalarAsync())!).Should().BeGreaterThanOrEqualTo(
+                    0, "the holder must actually hold it, or the waiter below proves nothing");
+            }
+
+            var strategy = db.Database.CreateExecutionStrategy();
+            var started = Stopwatch.StartNew();
+
+            var waiting = async () => await strategy.ExecuteAsync(async () =>
+            {
+                await using var tx = await db.Database.BeginTransactionAsync();
+                await db.Database.ExecuteSqlRawAsync(
+                    TransferService.DailyLimitLockSql, resource, boundMilliseconds);
+                await tx.RollbackAsync();
+            });
+
+            var thrown = (await waiting.Should().ThrowAsync<SqlException>(
+                "a lock the payer cannot take is a fault the transfer must not swallow")).Which;
+            started.Stop();
+            _output.WriteLine(
+                $"waiter refused after {started.ElapsedMilliseconds} ms against a bound of "
+                + $"{boundMilliseconds} ms; SqlException {thrown.Number}: {thrown.Message}");
+
+            thrown.Number.Should().Be(50_000, "the batch's own THROW, not a lower-level error");
+            thrown.Message.Should().Contain(
+                $"timed out after {boundMilliseconds} ms",
+                "-1 must be named as the wait expiring, not printed as a bare negative number: it "
+                + "is the return value every other refusal shares");
+            thrown.Message.Should().NotContain(
+                ErrorCodes.DailyLimitExceeded,
+                "a timeout says the server was busy, never that the payer's day is full");
+
+            started.Elapsed.Should().BeGreaterThanOrEqualTo(
+                TimeSpan.FromMilliseconds(boundMilliseconds * 0.75),
+                "it must WAIT for the bound rather than fail fast — a zero-wait bound would be a "
+                + "different bug with the same exception");
+            started.Elapsed.Should().BeLessThan(
+                TimeSpan.FromSeconds(15),
+                "and it must not ride the 30-second CommandTimeout, which was the only bound "
+                + "before DailyLimit:LockTimeoutSeconds existed");
+
+            await holderTx.RollbackAsync();
+        }
+
+        (await ProbeAsync(connectionString, resource)).Should().Be(
+            0, "the holder's rollback released it: the bound refused a real wait, not a leak");
+    }
+
+    /// <summary>
+    /// The wait bound the HOST is running with, in the unit <c>sp_getapplock</c> takes — read from
+    /// the composition root rather than restated, so these proofs send what a transfer sends.
+    /// </summary>
+    private int LockTimeoutMilliseconds()
+        => _factory!.Services.GetRequiredService<IOptions<DailyLimitOptions>>()
+            .Value.LockTimeoutMilliseconds;
 
     /// <summary>
     /// What each loser saw as <c>used</c> when it was refused — the sum it lost to.
@@ -437,12 +544,23 @@ public sealed class DailyLimitConcurrencySqlServerTests : IDisposable
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    private HttpClient CreateSqlClient()
+    /// <param name="lockTimeoutSeconds">
+    /// Overrides <c>DailyLimit:LockTimeoutSeconds</c> when the proof is about the wait bound
+    /// itself. Left null everywhere else, so every other proof here runs on the production
+    /// default and a change to that default would be felt by them rather than hidden behind a
+    /// test value.
+    /// </param>
+    private HttpClient CreateSqlClient(int? lockTimeoutSeconds = null)
     {
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
         _factory.EnableSqlRetryOnFailure();
         _factory.SetDailyLimit(Limit);
+        if (lockTimeoutSeconds is { } seconds)
+        {
+            _factory.SetDailyLimitLockTimeoutSeconds(seconds);
+        }
+
         _factory.CaptureLog();
         return _factory.CreateClient();
     }

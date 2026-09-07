@@ -310,6 +310,13 @@ public static class ServiceCollectionExtensions
             .Validate(
                 o => decimal.Round(o.Amount, 2) == o.Amount,
                 "DailyLimit:Amount must have at most 2 decimals")
+
+            // The [Range] on LockTimeoutSeconds is only enforced if something asks for it — the
+            // lesson Audit:TailTimeoutSeconds records a few lines above. Without this line the
+            // attribute is decoration: DailyLimit:LockTimeoutSeconds=-1 would bind happily and hand
+            // sp_getapplock its own "wait forever", which is the unbounded wait this option exists
+            // to remove; 0 would hand it "do not wait" and fault every same-payer overlap.
+            .ValidateDataAnnotations()
             .ValidateOnStart();
 
         /*

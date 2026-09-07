@@ -136,6 +136,23 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _dailyLimit = amount;
     }
 
+    private int? _dailyLimitLockTimeoutSeconds;
+
+    /// <summary>
+    /// Overrides <c>DailyLimit:LockTimeoutSeconds</c> — how long a transfer waits for the payer's
+    /// application lock before the movement is refused as a fault. Call before
+    /// <c>CreateClient()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The same reason <c>SetAuditTailTimeoutSeconds</c> exists: the proof that the bound FIRES has
+    /// to hit it in a second or two rather than the ten the production default allows, and a proof
+    /// slow enough to be skipped is no proof.
+    /// </remarks>
+    public void SetDailyLimitLockTimeoutSeconds(int seconds)
+    {
+        _dailyLimitLockTimeoutSeconds = seconds;
+    }
+
     private FakeTimeProvider? _clock;
 
     /// <summary>
@@ -253,6 +270,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         if (_dailyLimit is { } dailyLimit)
         {
             builder.UseSetting("DailyLimit:Amount", dailyLimit.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (_dailyLimitLockTimeoutSeconds is { } lockTimeout)
+        {
+            builder.UseSetting(
+                "DailyLimit:LockTimeoutSeconds",
+                lockTimeout.ToString(CultureInfo.InvariantCulture));
         }
 
         // After the application's own registrations, so the swap replaces the TimeProvider.System

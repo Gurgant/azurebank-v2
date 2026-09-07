@@ -1786,6 +1786,17 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /** @description DAILY_LIMIT_EXCEEDED only: the ceiling on the sum of this user's completed outgoing external transfers in the current UTC day. */
+                            limit?: number;
+                            /** @description DAILY_LIMIT_EXCEEDED only: how much of that ceiling the user's completed outgoing external transfers had already taken when this request was refused. Today's remaining headroom is limit - used; no member carries it, so there is one source of truth. */
+                            used?: number;
+                            /** @description DAILY_LIMIT_EXCEEDED only: the amount this request asked to move. It was not moved: used + requested would have exceeded limit, and nothing was written. */
+                            requested?: number;
+                            /**
+                             * Format: date-time
+                             * @description DAILY_LIMIT_EXCEEDED only: the UTC instant the window reopens — the start of the next UTC day. Sent so a client need not know that the window is a calendar day.
+                             */
+                            resetsAt?: string;
                         };
                     };
                 };
@@ -2043,6 +2054,17 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /** @description DAILY_LIMIT_EXCEEDED only: the ceiling on the sum of this user's completed outgoing external transfers in the current UTC day. */
+                            limit?: number;
+                            /** @description DAILY_LIMIT_EXCEEDED only: how much of that ceiling the user's completed outgoing external transfers had already taken when this request was refused. Today's remaining headroom is limit - used; no member carries it, so there is one source of truth. */
+                            used?: number;
+                            /** @description DAILY_LIMIT_EXCEEDED only: the amount this request asked to move. It was not moved: used + requested would have exceeded limit, and nothing was written. */
+                            requested?: number;
+                            /**
+                             * Format: date-time
+                             * @description DAILY_LIMIT_EXCEEDED only: the UTC instant the window reopens — the start of the next UTC day. Sent so a client need not know that the window is a calendar day.
+                             */
+                            resetsAt?: string;
                         };
                     };
                 };

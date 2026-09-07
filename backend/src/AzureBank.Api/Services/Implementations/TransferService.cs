@@ -6,8 +6,10 @@ using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
+using AzureBank.Shared.Options;
 using AzureBank.Shared.Utilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using AzureBank.Shared.Constants;
 
 namespace AzureBank.Api.Services.Implementations;
@@ -25,7 +27,14 @@ public class TransferService : ITransferService
     private readonly ILogger<TransferService> _logger;
     private readonly IAuditService _audit;
     private readonly IDailyOutflowLimit _dailyLimit;
+    private readonly DailyLimitOptions _dailyLimitOptions;
 
+    /*
+      dailyLimitOptions is read for the applock's WAIT BOUND only — the ceiling itself is
+      IDailyOutflowLimit's to know, and nothing here should be able to compute a limit refusal.
+      Taken as IOptions rather than as a number so a test host's UseSetting reaches it by the same
+      path an appsettings value does.
+    */
     public TransferService(
         AzureBankDbContext context,
         IAccountAccessService accountAccess,
@@ -34,7 +43,8 @@ public class TransferService : ITransferService
         IStepUpAuthorizationService stepUp,
         ILogger<TransferService> logger,
         IAuditService audit,
-        IDailyOutflowLimit dailyLimit)
+        IDailyOutflowLimit dailyLimit,
+        IOptions<DailyLimitOptions> dailyLimitOptions)
     {
         _audit = audit;
         _context = context;
@@ -44,6 +54,7 @@ public class TransferService : ITransferService
         _stepUp = stepUp;
         _logger = logger;
         _dailyLimit = dailyLimit;
+        _dailyLimitOptions = dailyLimitOptions.Value;
     }
 
     /*
@@ -55,11 +66,31 @@ public class TransferService : ITransferService
       the guard a refused lock would read as a lock held, and the whole proof would rest on a
       statement that silently did nothing. So the batch turns any negative return into a raised
       error: the transfer then fails loudly instead of summing unserialised.
+
+      THE WAIT IS BOUNDED HERE, AND IT WAS NOT UNTIL THIS PARAMETER EXISTED. Called without
+      @LockTimeout, sp_getapplock waits at @@LOCK_TIMEOUT, and that session default is -1 — wait
+      forever. MEASURED on LocalDB 2026-09-07 (plans/daily-limit/measure-cr1-2026-09-07.txt): the
+      waiter read its own @@LOCK_TIMEOUT as -1, and with @LockTimeout = 2000 supplied it was refused
+      -1 after 2,006-2,012 ms across three runs. So the only bound before this was the global
+      30-second CommandTimeout (AddInfrastructure, sqlOptions.CommandTimeout(30)) — which covers the
+      whole statement rather than the wait, and until it fires the loser holds an open transaction
+      and a pooled connection for half a minute. Under same-payer contention that is one connection
+      per queued transfer. The bound is DailyLimit:LockTimeoutSeconds, kept strictly below that
+      command timeout (Range 1-29) so the refusal is always this one and never the statement's, and
+      above Audit:TailTimeoutSeconds because the holder's own audit tail read sits inside the span
+      this waits on.
+
+      -1 IS A FAULT, NOT A LIMIT REFUSAL, and the message says which negative it was. Waiting the
+      bound out means the server was busy, not that the payer's day is full: it must never surface
+      as DAILY_LIMIT_EXCEEDED, whose 422 would tell the client figures nothing computed. A bare
+      number in the message would have left the two indistinguishable in a log.
     */
     internal const string DailyLimitLockSql =
-        "DECLARE @r int; "
-        + "EXEC @r = sp_getapplock @Resource = {0}, @LockMode = N'Exclusive', @LockOwner = N'Transaction'; "
-        + "IF @r < 0 BEGIN DECLARE @m nvarchar(80) = CONCAT(N'sp_getapplock returned ', @r); THROW 50000, @m, 1; END";
+        "DECLARE @r int, @t int = {1}; "
+        + "EXEC @r = sp_getapplock @Resource = {0}, @LockMode = N'Exclusive', @LockOwner = N'Transaction', @LockTimeout = @t; "
+        + "IF @r < 0 BEGIN DECLARE @m nvarchar(200) = CASE WHEN @r = -1 "
+        + "THEN CONCAT(N'sp_getapplock timed out after ', @t, N' ms waiting for the payer''s daily-limit lock') "
+        + "ELSE CONCAT(N'sp_getapplock returned ', @r) END; THROW 50000, @m, 1; END";
 
     /// <summary>
     /// The applock resource name for one user's day: one lock per payer, never per account.
@@ -401,7 +432,9 @@ public class TransferService : ITransferService
                         if (_context.Database.IsRelational())
                         {
                             await _context.Database.ExecuteSqlRawAsync(
-                                DailyLimitLockSql, DailyLimitLockResource(userId));
+                                DailyLimitLockSql,
+                                DailyLimitLockResource(userId),
+                                _dailyLimitOptions.LockTimeoutMilliseconds);
                         }
 
                         await _dailyLimit.AssertCanMoveAsync(userId, request.Amount);

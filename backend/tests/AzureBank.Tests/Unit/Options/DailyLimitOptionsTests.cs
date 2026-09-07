@@ -22,12 +22,17 @@ namespace AzureBank.Tests.Unit.Configuration;
 /// </remarks>
 public class DailyLimitOptionsTests
 {
-    private static IServiceProvider Root(string? amount)
+    private static IServiceProvider Root(string? amount, string? lockTimeoutSeconds = null)
     {
         var values = new Dictionary<string, string?>();
         if (amount is not null)
         {
             values["DailyLimit:Amount"] = amount;
+        }
+
+        if (lockTimeoutSeconds is not null)
+        {
+            values["DailyLimit:LockTimeoutSeconds"] = lockTimeoutSeconds;
         }
 
         var services = new ServiceCollection();
@@ -62,6 +67,46 @@ public class DailyLimitOptionsTests
         act.Should().NotThrow();
         root.GetRequiredService<IOptions<DailyLimitOptions>>().Value.Amount
             .Should().Be((decimal)expected);
+    }
+
+    [Theory]
+    [InlineData("0")]   // sp_getapplock reads 0 as DO NOT WAIT: every same-payer overlap faults
+    [InlineData("-1")]  // sp_getapplock's own "wait forever" — the bug the option exists to remove
+    [InlineData("30")]  // the CommandTimeout itself: the statement would expire, not the wait
+    [InlineData("300")]
+    public void AWaitBoundTheApplockCannotTake_StopsTheHostAtStart(string seconds)
+    {
+        /*
+          THE [Range] IS ONLY ENFORCED BECAUSE AddDailyLimit CALLS ValidateDataAnnotations, and that
+          is the whole point of this test — it is the lesson Audit:TailTimeoutSeconds records one
+          registration above: without the call the attribute is decoration, the bad value binds
+          happily, and the failure arrives as a fault on a busy transfer rather than at startup.
+          Delete the line and every case here goes red.
+        */
+        var root = Root(amount: null, lockTimeoutSeconds: seconds);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Message.Should().Contain("DailyLimit:LockTimeoutSeconds must be between 1 and 29");
+    }
+
+    [Theory]
+    [InlineData(null, 10)] // no section: the default is valid, so a host without one starts
+    [InlineData("2", 2)]   // what the SQL Server proof of the bound sets through UseSetting
+    [InlineData("29", 29)] // the largest whole second strictly below the 30s CommandTimeout
+    public void AValidWaitBound_PassesStartupValidation_AndBinds(string? seconds, int expected)
+    {
+        var root = Root(amount: null, lockTimeoutSeconds: seconds);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().NotThrow();
+        var options = root.GetRequiredService<IOptions<DailyLimitOptions>>().Value;
+        options.LockTimeoutSeconds.Should().Be(expected);
+        options.LockTimeoutMilliseconds.Should().Be(
+            expected * 1_000, "sp_getapplock's @LockTimeout is in milliseconds, and the conversion "
+            + "lives beside the range rather than at the call site");
     }
 
     [Fact]

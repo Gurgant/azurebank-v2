@@ -217,6 +217,29 @@ therefore refuses before it has written anything — no ledger row, no audit row
 back. A `RowVersion` retry (the balance guard's loop) re-enters the delegate and re-takes lock and
 sum, so the same-account race is covered by the same statement.
 
+_Noted 2026-09-07 (review round 1, `limits/daily-external-transfers`): **the batch above waited
+without a bound, and it now takes one.** As written it passed no `@LockTimeout`, so `sp_getapplock`
+waited at `@@LOCK_TIMEOUT` — measured **-1, wait forever**, read off the waiting connection itself
+on LocalDB — and the only thing that could end the wait was the global 30-second `CommandTimeout`
+set in `AddInfrastructure` (`sqlOptions.CommandTimeout(30)`). Under same-payer contention that is a
+transaction and a pooled connection held for half a minute per queued transfer, which is a cost
+this decision never argued for. Measured beside it: a holder took the lock in one transaction and a
+second connection asking with `@LockTimeout = 2000` was refused `-1` after **2,006-2,012 ms across
+three runs** (`plans/daily-limit/measure-cr1-2026-09-07.txt`, run 1). The batch now declares
+`@t int = {1}` and passes it as `@LockTimeout`; the bound is `DailyLimit:LockTimeoutSeconds`,
+default **10**, `[Range(1, 29)]` and `ValidateDataAnnotations().ValidateOnStart()` — above
+`Audit:TailTimeoutSeconds` (5), because the holder's own audit tail read sits INSIDE the span a
+waiter waits on, and strictly below the 30-second command timeout, so the refusal is always this
+bound's and never the statement's. The `IF @r < 0` guard stays and its message now distinguishes
+`-1` — *"sp_getapplock timed out after N ms waiting for the payer's daily-limit lock"* — from every
+other negative return, because **a timeout is a fault, not a limit refusal**: it says the server was
+busy, and it must never surface as `DAILY_LIMIT_EXCEEDED` with figures nothing computed.
+`DailyLimitConcurrencySqlServerTests`'s
+`TheApplock_RefusesInsideTheConfiguredBound_WithAMessageThatNamesTheTimeout`
+asserts the ELAPSED time against the configured bound rather than the exception alone — an
+assertion on the throw would have been green under the unbounded regime too. The SQL block above is
+left as it was written; this note is the correction._
+
 *Why not the audit tail.* Two transfers from two DIFFERENT accounts of one user to two DIFFERENT
 payees touch no shared row, so the `Account.RowVersion` loop never fires (with ONE payee it does,
 on the payee's row — the finding below); the only other thing that serialises them today is the
@@ -393,6 +416,32 @@ the idempotency claim (ADR-0009), so the same key retried is re-evaluated and an
 no `Idempotency-Replayed` header. The authorisation stays Pending after a transfer-path refusal, as
 B2 measured for the balance guard; it can be spent later only within its two-minute life.
 
+_Noted 2026-09-07 (review round 1): **the four members are now DECLARED in the document**, which the
+paragraph above says they are not. The sentence *"Undeclared in the published document by that
+precedent"* rested on `available` / `requested`, and review asked what that precedent decided.
+Verified: `available` appears **zero** times in `docs/api/openapiv1.json`, so `INSUFFICIENT_FUNDS`'s
+members are an OMISSION and not a ruling — while ADR-0043's own thesis is that the document declares
+the error body so a generated client can branch on it. Verified too that this is not a new practice
+here: the 422 responses on `POST /api/transfers`, `POST /api/transfers/authorizations` and the
+deletion mint are already INLINE object schemas built by `BusinessRulesDocumentTransformer` (and, on
+the idempotent one, `IdempotencyOperationTransformer`), listing `type` / `title` / `status` /
+`detail` / `errorCode` / `traceId` — not a `$ref` to the ProblemDetails component. So `limit`,
+`used` and `requested` (`number`) and `resetsAt` (`string`, `format: date-time`) are declared on
+exactly the two operations that can answer the code, each description saying it rides
+`DAILY_LIMIT_EXCEEDED` only; the shared component is untouched and every other operation's 422
+schema is byte-identical. `schema.d.ts` gained the four as optional typed members on both
+operations, which is the point — a GENERATED client can now branch on them without hand-written
+types. The SPA still cannot, and this note does not claim otherwise: its hand-written `ApiProblem`
+(`frontend/src/api/problemBaseQuery.ts:23-37`) carries none of the four and `moneyProblem.ts` reads
+no extension member, so the paragraph above stays true on the client half — the frontend mirror PR
+is what consumes what is now typed.
+`PublishedDailyLimitTests` asserts the members and their types on both operations, and their ABSENCE
+on the four money moves that check no aggregate plus the deletion mint. **What this does not do:**
+`INSUFFICIENT_FUNDS`'s own `{available, requested}` remain undeclared everywhere. That spans more
+operations than these two and is its own small PR; it is named here and asserted in the same test
+file so the gap stays a known omission rather than a silence that the next reader mistakes for a
+decision._
+
 **D8 — Not decided here, named so the umbrella finds them.** Rolling windows; tiers by account type
 or verification level; amount-scaled step-up; velocity rules; withdrawals and internal transfers
 under any aggregate; per-account limits; customer-adjustable ceilings (with SCA on a raise); a
@@ -472,6 +521,26 @@ bounds it; the only bound is the BFF's per-IP global limiter (300 requests / 60 
 for the same reason the refusal is accepted as log-only, and named in D8 as the limiter that would
 close it. The seeded admin becomes a resource a real-stack test could exhaust for a day if it ever
 moves 5,000 externally — the contract row moves nothing and the after-probe uses throwaway users.
+
+_Measured 2026-09-07 (review round 1), because this paragraph asserted a cost without one.
+`SET STATISTICS IO` on `AzureBankDev`, a **242-row `Transactions` table and a 147-row `Accounts`
+table** — the transcript, the exact `sqlcmd` commands and the plan are in
+`plans/daily-limit/measure-cr1-2026-09-07.txt`, run 2. The aggregate costs **11 logical reads on
+`Transactions`** (scan count 1, 1 physical, 9 read-ahead) **and 32 on `Accounts`**, for the busiest
+payer of the current UTC day — 5 matching rows, 2 accounts — and IDENTICALLY for the user with the
+most of everything (136 transaction rows, 32 accounts). The plan says why, and it is not what a
+reader would guess from the numbers: `Transactions` is a **CLUSTERED INDEX SCAN** with the day,
+type, status and tag terms as a residual filter — 11 pages IS the whole table, which is why the
+number does not move between users — feeding a nested loop that **SEEKS `PK_Accounts` once per
+surviving row**, which is the 32. `IX_Transactions_AccountId_CreatedAt` exists and was NOT chosen;
+on 242 rows a scan is genuinely the cheaper plan.
+
+**What this settles and what it does not.** It bounds the cost on a PORTFOLIO database and settles
+nothing about scale, so it cannot disprove the reviewer's concern — if anything the plan sharpens
+it, because the `Transactions` side grows with the WHOLE TABLE today rather than with the caller's
+own rows, and the plan a table three orders of magnitude larger would get was not measured and must
+not be inferred from these numbers. What stays true either way is the sentence above: nothing in the
+API bounds how often an unauthenticated-by-PIN caller can ask for it._
 
 ### Before
 
@@ -608,6 +677,19 @@ Each is a test, not a sentence; the SQL Server ones run only with `AZUREBANK_TES
   `POST /api/transfers/authorizations`. The daily check runs before `IPinVerifier`, so ADR-0010's
   lockout cannot bound it and the only bound today is the BFF's per-IP global limiter, which a
   direct JWT caller bypasses (Consequences, "Cost accepted").
+
+  _Sharpened 2026-09-07 (review round 1): the review asked for a per-user / per-token / global
+  limiter in `AzureBank.Api` in front of the aggregate. It stays HERE, named and unbuilt, and the
+  reason is not reluctance. **Verified: the API has no rate-limiting infrastructure at all** —
+  `AddRateLimiter` and `EnableRateLimiting` appear only under `backend/src/AzureBank.Bff`
+  (`Bff/Program.cs:256`, `BffAuthController`, `RateLimitPolicies.cs`), so this is not a parameter to
+  add but a first limiter to introduce, with its own decisions: the policy shape, the partition key
+  read out of the JWT, the 429 contract and its entry in the document, and which other endpoints
+  need it the moment one exists. That is a feature, not a fix to the PR this bullet was written in,
+  and this record already accepted the unbounded read on its own terms. The measurement that would
+  have argued the other way was taken and does not: the aggregate costs 11 logical reads on
+  `Transactions` and 32 on `Accounts` on a 242-row table (Consequences, "Cost accepted"), which
+  bounds nothing at scale in either direction._
 - **Vlad reversing D5 at the PR** in favour of the re-sum under the audit tail: D5's declined
   alternative becomes the mechanism, the comparison becomes `used > limit` after the first save, the
   ADR-0044 note flips from "does not depend on the tail" to a dated dependency, and this record is

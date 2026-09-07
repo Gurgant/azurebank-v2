@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace AzureBank.Shared.Options;
 
 /// <summary>
@@ -39,4 +41,65 @@ public class DailyLimitOptions
     /// </para>
     /// </summary>
     public decimal Amount { get; set; } = 5_000m;
+
+    /// <summary>
+    /// How long a transfer may wait for the payer's application lock, in seconds, before the
+    /// movement is refused as a fault. Bounds the queue same-payer transfers stand in
+    /// (<c>TransferService.DailyLimitLockSql</c>); passed to <c>sp_getapplock</c> as
+    /// <c>@LockTimeout</c>, in MILLISECONDS.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED, which is why this exists at all. <c>sp_getapplock</c> called without
+    /// <c>@LockTimeout</c> waits at <c>@@LOCK_TIMEOUT</c>, and that session default is
+    /// <b>-1 — wait forever</b> (read off the waiter's own connection on LocalDB, 2026-09-07). The
+    /// only thing that ended the wait was the global 30-second command timeout set in
+    /// <c>AddInfrastructure</c>
+    /// (<c>AzureBank.Infrastructure/Extensions/ServiceCollectionExtensions.cs</c>,
+    /// <c>sqlOptions.CommandTimeout(30)</c>) — which bounds the whole statement rather than the
+    /// wait, and holds an open transaction and a pooled connection for half a minute while it does.
+    /// With the parameter supplied the wait ends at the parameter: a holder took the lock in one
+    /// transaction and a second connection asking with <c>@LockTimeout = 2000</c> was refused
+    /// <b>-1 after 2,006-2,012 ms across three runs</b>.
+    /// </para>
+    /// <para>
+    /// TEN SECONDS, and the number is bracketed rather than guessed. The lock is held from the
+    /// first statement of the transfer's transaction to its commit, and that span CONTAINS the
+    /// audit chain's tail read, which <see cref="AuditOptions.TailTimeoutSeconds"/> already bounds
+    /// at five — so anything at or below five would refuse a waiter whose winner was still inside a
+    /// wait the bank had been told to tolerate. Ten is two of those, and a third of the command
+    /// timeout above it, so the refusal is always THIS bound's and never the statement's.
+    /// </para>
+    /// <para>
+    /// A REFUSED LOCK IS A FAULT, NOT A LIMIT REFUSAL. Waiting out this bound says the server was
+    /// busy, not that the payer's day is full, so the batch raises and the transfer fails loudly —
+    /// it must never become a <c>DailyLimitExceededException</c>, whose 422 tells the client a
+    /// figure that was never computed.
+    /// </para>
+    /// </remarks>
+    /*
+      RANGE-VALIDATED, because the two invalid values fail in opposite and equally bad ways — the
+      shape Audit:TailTimeoutSeconds records for the same reason.
+      ZERO is the dangerous one here in the other direction: sp_getapplock reads @LockTimeout = 0 as
+      DO NOT WAIT, so a plausible typo would turn every concurrent transfer by one payer into an
+      immediate fault instead of a queue of milliseconds.
+      NEGATIVE is the bug this option removes: -1 is sp_getapplock's own "wait forever", so a
+      negative value would silently restore the unbounded wait.
+      TWENTY-NINE is not a considered maximum; it is the largest whole second STRICTLY BELOW the
+      30-second CommandTimeout, so the wait can never outlive the statement that carries it.
+    */
+    [Range(1, 29, ErrorMessage =
+        "DailyLimit:LockTimeoutSeconds must be between 1 and 29. Zero means DO NOT WAIT to "
+        + "sp_getapplock, and a negative value means wait forever; the upper end stays strictly "
+        + "below the 30-second CommandTimeout so this bound fires first.")]
+    public int LockTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>
+    /// <see cref="LockTimeoutSeconds"/> in the unit <c>sp_getapplock</c> takes.
+    /// </summary>
+    /// <remarks>
+    /// Here rather than at the call site so the unit conversion is stated once, beside the range
+    /// that makes it safe: 29 seconds is 29,000 ms, far inside <c>int</c>.
+    /// </remarks>
+    public int LockTimeoutMilliseconds => LockTimeoutSeconds * 1_000;
 }

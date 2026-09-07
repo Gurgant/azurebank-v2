@@ -81,7 +81,7 @@ public class TransferServiceTests : IDisposable
 
         _sut = new TransferService(
             _context, _accountAccessMock.Object, _userMapper, _pinVerifierMock.Object, _stepUp,
-            _loggerMock.Object, _auditMock.Object, dailyLimit);
+            _loggerMock.Object, _auditMock.Object, dailyLimit, Options.Create(_dailyLimitOptions));
     }
 
     /// <summary>
