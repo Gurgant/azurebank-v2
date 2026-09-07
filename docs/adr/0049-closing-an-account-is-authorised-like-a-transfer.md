@@ -82,7 +82,8 @@ history leaves their view with it (`TransactionService` scopes `GET /api/transac
 `!a.IsDeleted`). An empty account is not a historyless one. The alternative — strike the row and
 close the pair as won't-do — was a legitimate one-paragraph outcome; it contradicts the row the
 record has carried since January rather than honouring it. Taken here; Vlad ratifies or reverses
-it at the PR, and this paragraph is corrected in place if he reverses.
+it at the PR, and this paragraph is corrected in place if he reverses. *(Ratified 2026-09-06 by
+the merge of PR #154, 19742ff; the frontend half is the frontend follow-up.)*
 
 **D2 — At the API, on the ADR-0042 rail — not a BFF level-2 rule.** ADR-0041 took transfers off the
 session gate for three reasons, and each applies to a closure unchanged:
@@ -136,7 +137,8 @@ funded or primary account is refused 422 BEFORE `IPinVerifier` spends an attempt
 account is 403 with nothing learned. The 422 PIN_REQUIRED sentence on the mint is generalised from
 *"PIN must be set before authorising a transfer."* to *"PIN must be set before authorising this
 operation."*; its only pins were two mock lines, and the mock aligns to the measured sentence in
-the frontend follow-up.
+the frontend follow-up. *(Done 2026-09-06 in the frontend follow-up: `handlers.ts`, both transfer
+mints and the deletion mint.)*
 
 **D5 — `ConsumedByTransactionId` is NULL for a closure, and the operator query is recorded here.**
 `IStepUpAuthorizationService.ConsumeAsync` took a non-nullable `Guid consumedByTransactionId` while
@@ -279,8 +281,24 @@ DELETE that after this PR answers 401 `AUTHORIZATION_REQUIRED` — row 6 above i
 since `call` resolves on every status their `.catch` never fired, so every real-target run would
 have left the "Contract Empty"/"Contract Funded" probes listed (`IsDeleted` 0) and appended one
 `AccountDeletionRefused` row each. This PR gives `client.ts` a `closeAccount` that mints from the
-fixture PIN and deletes with the header, falling back to the bare DELETE where the mint route is
-unhandled (the mock, until the follow-up adds it).
+fixture PIN and deletes with the header, ~~falling back to the bare DELETE where the mint route is
+unhandled (the mock, until the follow-up adds it)~~ *(struck 2026-09-06: both targets handle the
+mint; the `mint?.status === 201` branch stays as cleanup shape, not as a fallback)*.
+
+*Closed 2026-09-06 by the frontend follow-up (PR number and sha to be filled at its merge):*
+`DeleteAccountDialog` mints on the sixth digit and deletes with the header; the mock's delete
+handler enforces binding → ownership → guards → presence → validate → spend, and its mint mirrors
+the API's. Every mock status, `errorCode` and `detail` on the mint (M0–M5) and on the DELETE
+(D1–D12, D16) quotes a row of the after-table (re-measured on `main` @ `19742ff`,
+2026-09-06T19:16Z, `measure-after-main-19742ff-2026-09-06.txt` beside the original), and the
+expiry pair E1/E2 quotes `measure-after-2026-09-06.txt`. Labelled
+NOT measured on this endpoint, in `handlers.ts`'s own mint doc block: the mint's 429 `PIN_LOCKED`
+and the four 400 body shapes are the transfer mints' 2026-08-16 rows; the funded-and-no-PIN
+combination, a repeat mint on an account already holding a Pending authorisation, and the
+header-400 precedence on a funded/unknown id are code, not rows; the 403 `ACCESS_DENIED` rows
+(D14/D15) are not modelled at all. The DELETE line joined `sessionMiddleware`'s doc block and
+`errorPath.integration` pins it. `closeAccount`'s fallback sentence above no longer applies: both
+targets handle the mint.
 
 ### Before
 
@@ -319,6 +337,9 @@ observation; none disagreed.
 | 14 | `docs/api/openapiv1.json` | header `required: true`; 200/400/401/403/404/422; mint 201; the mint's 422 names its codes *(expectation added 2026-09-06 after the pre-review; not part of the 10:45Z check)* | `[('Step-Up-Authorization', True)]`, responses 200/400/401/403/404/422; mint 201/400/401/403/404/422/429, body `AccountDeletionAuthorizationRequest`. At 10:45Z the mint's 422 read the bare "Unprocessable Entity" — its `[ProducesResponseType(422)]` outranked the transformer, which had no entry for it. Regenerated later on 2026-09-06 with the attribute removed and the entry added; read from the regenerated document: 422 "Business Rule Violation - the account cannot be closed (errorCode NON_ZERO_BALANCE or PRIMARY_ACCOUNT_DELETE, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED)." with the inline business-rule schema (`errorCode` documented), the same shape as the DELETE's |
 | 15 | `AzureBank.AuditVerifier verify`; `evidence` for a deposit into a later-closed spare | intact; resolves | `CHAIN INTACT: 55 rows verified.` (at ~10:45Z; later probes on the same database add rows); the pack prints the deposit, "NO AUTHORISATION APPLIES", `#54 MoneyDeposited -> Succeeded` |
 | 16 | the D5 operator query for row 9 | one row, Consumed, NULL, seconds from the closure | `01A07651-B064… Consumed 10:44:20.726 NULL`, beside `AccountDeleted` sequence 53 at 10:44:20.719 |
+| 17 | SPA — `npm run test:contract:real` + `test:contract:mock`, the three deletion rows | green on both targets | real 22:47Z: 7 files / 68 tests; mock: 7 / 68 — the same assertions, both targets, on main 19742ff + the SPA change |
+| 18 | SPA — `npm run test:integration`, the headerless DELETE row | 401 `AUTHORIZATION_REQUIRED`, auth `'authenticated'` | 22:49Z: 5 files / 18 tests; the row observed 401 `AUTHORIZATION_REQUIRED` "This account closure has not been authorised.", auth still `'authenticated'`, cache intact |
+| 19 | SPA — `npm run test:e2e`, `deleteAccount.spec.ts` | 2 passed | 20:50Z, Playwright's own headless Chromium against the running BFF: 9 passed, 2 skipped by design, both deletion specs among the passes (a first run at 20:00Z failed two older specs on four probe accounts left by the morning's bare-DELETE cleanups; closed with the mint, then green) |
 
 ```
 D1 DELETE spare, NO header                                     401  errorCode=AUTHORIZATION_REQUIRED  detail="This account closure has not been authorised."

@@ -251,6 +251,12 @@ export function invalidJsonValueProblem(path: string, message: string) {
  * offending token and the parse position, so imitating it exactly would be fake precision that
  * changes with every payload. The KEY and the ENVELOPE are what a client branches on, and those
  * are now faithful.
+ *
+ * A JSON `null` body takes the EMPTY branch, not the `$` one. Measured 2026-09-07 on
+ * `POST /api/accounts/{id}/deletion-authorizations`, main 19742ff: the literal `null` answers
+ * `{"":["A non-empty request body is required."],"request":[...]}` — the framework binds it to a
+ * null model and reports the body as absent, exactly as for an empty body. That is MVC's
+ * `[FromBody]` behaviour, not the endpoint's, so it holds for every JSON-bodied action here.
  */
 export function unreadableBodyProblem(raw: string) {
   /*
@@ -266,7 +272,7 @@ export function unreadableBodyProblem(raw: string) {
 
     So whitespace reaches System.Text.Json and fails there like any other garbage — the `$` branch.
   */
-  return raw.length === 0
+  return raw.length === 0 || raw.trim() === 'null'
     ? modelStateProblem({
         '': ['A non-empty request body is required.'],
         request: ['The request field is required.'],

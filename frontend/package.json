@@ -20,7 +20,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:tripwire": "vitest run src/api/bffSchemas.test.ts src/features/auth/stepUpController.test.ts src/forms/moneySchemas.test.ts src/mocks/idempotency.test.ts src/mocks/stepup.test.ts src/mocks/transferHandler.test.ts src/mocks/withdrawHandler.test.ts src/utils/amountSchema.test.ts",
+    "test:tripwire": "vitest run src/api/bffSchemas.test.ts src/features/auth/stepUpController.test.ts src/forms/moneySchemas.test.ts src/mocks/accountDeletionHandler.test.ts src/mocks/idempotency.test.ts src/mocks/stepup.test.ts src/mocks/transferHandler.test.ts src/mocks/withdrawHandler.test.ts src/utils/amountSchema.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

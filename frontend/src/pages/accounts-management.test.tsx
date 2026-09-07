@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { mockState } from '../mocks/state';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { enterPin } from '../test/pinFlow';
 import { AccountsPage } from './AccountsPage';
 
 /**
@@ -93,7 +94,15 @@ describe('set primary (A6)', () => {
 });
 
 describe('delete account (A7)', () => {
-  it('deletes a zero-balance account after confirmation', async () => {
+  /*
+    Since ADR-0049 a closure costs a PIN: the dialog mints a deletion authorisation on the sixth
+    digit and DELETEs with it in the header. These run against the REAL mock handlers, so they are
+    also the page-level pin of the mock's mint + gated DELETE. The surface is MoneyDialogShell's
+    Fluent dialog — role 'dialog' named by its title, not the hand-rolled ConfirmDialog's
+    'alertdialog' — and the 'Delete' BUTTON shares its name with the menuitem, so the role is what
+    disambiguates.
+  */
+  it('deletes a zero-balance account after confirmation and the PIN', async () => {
     // Seed a deletable account directly (zero balance, not primary) — the create
     // FLOW is already covered by accounts.test.tsx.
     mockState.accounts.push({
@@ -110,13 +119,20 @@ describe('delete account (A7)', () => {
 
     await openMenu('Temp Fund');
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
-    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Delete account?' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    // The sixth digit is the submit: mint, then DELETE with the minted id (M5 -> D9).
+    await enterPin();
 
     await waitFor(() => expect(screen.queryByText('Temp Fund')).not.toBeInTheDocument());
     // The rest of the list is untouched.
     expect(screen.getByText('Main Account')).toBeInTheDocument();
     expect(screen.getAllByText('Primary')).toHaveLength(1);
+
+    // One authorisation, bound to the closure, spent exactly once.
+    expect(mockState.stepUpAuthorizations.size).toBe(1);
+    const [minted] = [...mockState.stepUpAuthorizations.values()];
+    expect(minted).toMatchObject({ operation: 'AccountDeletion', consumed: true });
   });
 
   it('a non-zero balance is refused INLINE and the dialog stays open (D17)', async () => {
@@ -125,13 +141,21 @@ describe('delete account (A7)', () => {
 
     await openMenu('Rainy Day'); // balance 830 — the real business rule refuses it
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
-    await screen.findByRole('alertdialog');
+    await screen.findByRole('dialog', { name: 'Delete account?' });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    // A WRONG pin on purpose, as M2 was measured (measure-after-main-19742ff-2026-09-06.txt: 422
+    // NON_ZERO_BALANCE, PinAccessFailedCount unchanged). With the correct pin the counter reads 0
+    // in either order (checkPinInBand resets it on a match); with this one a mock that consulted
+    // the PIN first answers 401 INVALID_PIN and the counter reads 1.
+    await enterPin('000000');
 
     expect(
       await screen.findByText('Only accounts with a zero balance can be deleted.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(screen.queryByText('Invalid PIN.')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Delete account?' })).toBeInTheDocument();
+    // M2: the guard answers before the PIN is consulted, so the attempt is not spent.
+    expect(mockState.pinAttempts).toBe(0);
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.getByText('Rainy Day')).toBeInTheDocument();
@@ -139,7 +163,7 @@ describe('delete account (A7)', () => {
 
   it('the primary account is refused with its own mapped reason', async () => {
     // The REAL rule order checks balance BEFORE primary (AccountService), so only a
-    // ZERO-balance primary reaches the PRIMARY_ACCOUNT_DELETE rule — mirror that.
+    // ZERO-balance primary reaches the PRIMARY_ACCOUNT_DELETE rule — mirror that (M3).
     const primary = mockState.accounts.find((a) => a.isPrimary);
     primary!.balance = 0;
     renderWithProviders(<AccountsPage />, { routerEntries: ['/accounts'] });
@@ -147,13 +171,22 @@ describe('delete account (A7)', () => {
 
     await openMenu('Main Account');
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
-    await screen.findByRole('alertdialog');
+    await screen.findByRole('dialog', { name: 'Delete account?' });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    // M3 was measured with the CORRECT pin; the WRONG one here makes the counter assertion able
+    // to fail — it pins the mock's shared guards-before-checkPinInBand order (the order M2
+    // measured on the balance guard), not a measured wrong-pin-on-primary row.
+    await enterPin('000000');
 
     expect(
       await screen.findByText(
         'This is your primary account — set another account as primary first.',
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByText('Invalid PIN.')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Delete account?' })).toBeInTheDocument();
+    expect(mockState.pinAttempts).toBe(0);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   });
 });

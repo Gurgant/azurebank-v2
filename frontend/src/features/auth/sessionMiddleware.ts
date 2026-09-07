@@ -29,7 +29,8 @@ function isGetMeAction(action: unknown): boolean {
  *    REQUIRED joined the list on 2026-09-05. The set was written from the codes the server could
  *    emit that day (e4973da, 2026-08-17); the flip that made REQUIRED emittable landed the next
  *    day (6c3b24e) without touching this file. No shipped page can reach it — both transfer
- *    pages mint before they send — so no click met it; but the data layer against the real
+ *    pages mint before they send, and so does the delete dialog — so no click met it; but the
+ *    data layer against the real
  *    stack, handed a headerless transfer at the store, went 'authenticated' -> 'expired' with the
  *    cookie alive (observed, red before the fix). The rest follows from this block: the same
  *    dispatch resets the cache, and in the app ProtectedRoute answers 'expired' with /login and
@@ -41,7 +42,15 @@ function isGetMeAction(action: unknown): boolean {
  *                "errorCode":"AUTHORIZATION_REQUIRED", ...}, no WWW-Authenticate
  *      GET /bff/auth/me straight after -> 200, authLevel unchanged
  *
- *    (errorPath.integration.test.ts pins it on the real stack; auth.test.tsx holds the table);
+ *    and, since the account closure joined the rail (ADR-0049), measured 2026-09-06T19:16Z on
+ *    main 19742ff (D1, measure-after-main-19742ff-2026-09-06.txt in the working-state repo):
+ *
+ *      DELETE /api/accounts/{id}, no Step-Up-Authorization header
+ *        -> 401 {"detail":"This account closure has not been authorised.",
+ *                "errorCode":"AUTHORIZATION_REQUIRED", ...}, no WWW-Authenticate
+ *      GET /bff/auth/me straight after -> 200, authLevel 1
+ *
+ *    (errorPath.integration.test.ts pins both on the real stack; auth.test.tsx holds the table);
  *  - a 401 while NOT authenticated is the calling surface's business (the boot probe
  *    resolves to 'anonymous' in the slice; an anonymous user must never see a
  *    "session expired" banner for a session they never had, and their form's mutation
