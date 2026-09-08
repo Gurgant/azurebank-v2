@@ -70,10 +70,23 @@ public class NoticeRelayOptions
     public int PeriodSeconds { get; set; } = 15;
 
     /// <summary>
-    /// How long a claimed row stays this runner's before another may take it. Validated to be at
-    /// least twice the period, which keeps a sweep and the next claim from overlapping in the normal
+    /// How long a claimed row stays this runner's before another may take it.
+    /// <para>
+    /// TWO HOSTS CHECK "at least twice the period" AT TWO DIFFERENT MOMENTS, and the difference is
+    /// worth knowing before trusting either. The API validates
+    /// <see cref="LeaseSeconds"/> against <see cref="PeriodSeconds"/> AT STARTUP
+    /// (<c>ValidateThePeriodItSleepsFor</c> with <c>ValidateOnStart</c>) and refuses to start when it
+    /// fails. The Function cannot: its cadence is <c>Notices:Schedule</c>, bound by the Functions
+    /// host before any of this code runs, and it never reads <see cref="PeriodSeconds"/> at all — so
+    /// it compares the lease against the interval it OBSERVES between its own ticks and warns per
+    /// tick (ADR-0051 D5). Startup refusal against a declared number; a running warning against a
+    /// real one.
+    /// </para>
+    /// <para>
+    /// Either way the rule only keeps a sweep and the next claim from overlapping in the normal
     /// case; what stops a delivery under a lapsed lease is the check before each row, and neither
     /// makes the protocol more than at-least-once (ADR-0048 D3).
+    /// </para>
     /// </summary>
     [Range(30, 3600, ErrorMessage = "Notices:LeaseSeconds must be between 30 and 3600.")]
     public int LeaseSeconds { get; set; } = 120;

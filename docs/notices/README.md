@@ -58,8 +58,21 @@ Then, from the repository root:
 
     cd backend\src\AzureBank.Functions.NoticeRelay
     copy local.settings.sample.json local.settings.json
-    (edit ConnectionStrings:DefaultConnection and Notices:PickupDirectory in it)
+    (edit ConnectionStrings:DefaultConnection, Notices:PickupDirectory and Notices:Schedule in it)
     func start
+
+⚠️ **`Notices:Schedule` is the one key whose absence does not stop the host.** It is a trigger
+expression the Functions runtime binds before any of this project's code runs, so a missing value is
+an indexing failure rather than a startup refusal — the host prints these three lines and then keeps
+running with nothing scheduled:
+
+    '%Notices:Schedule%' does not resolve to a value.
+    Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
+    Job host started
+
+Measured. Nothing is delivered twice and no notice is lost — the rows simply stay owed — but the
+process is up and its exit code is zero, so a reader who does not check the log sees a healthy host
+delivering nothing. Every other key in the section stops the host with a message naming it.
 
 `local.settings.json` is gitignored: it is this host's connection string and pickup directory, the
 Function's equivalent of the API's user-secrets. The pickup directory must EXIST and must be outside

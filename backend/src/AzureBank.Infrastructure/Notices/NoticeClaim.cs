@@ -203,8 +203,25 @@ public static class NoticeClaim
     public static async Task<IReadOnlyList<string>> HolderKindsOtherThanAsync(
         AzureBankDbContext context, string runner, DateTime now, CancellationToken cancellationToken)
     {
+        /*
+          `LeasedBy != null` IS NOT REDUNDANT, THOUGH THE STORE MAKES IT UNREACHABLE.
+          CK_SubscriberNotices_Lease pairs the two halves — "([LeasedUntil] IS NULL AND [LeasedBy] IS
+          NULL) OR (both NOT NULL)" — so on SQL Server a row cannot be held until a time by nobody,
+          and SubscriberNoticeSqlServerTests watches the store refuse one. But `null != runner` is
+          TRUE, so without this term the predicate would admit such a row, and unlike its siblings
+          this query DEREFERENCES what it selects. The InMemory provider enforces no check
+          constraint, and NotifyCommand wraps everything in a catch that reports "the store could
+          not be read or written" — measured: with the term removed the operator is told
+          "CANNOT NOTIFY: the store could not be read or written (NullReferenceException)", an
+          accusation against the database for a bug in this query. A query that dereferences must
+          not lean on an invariant two layers away that it cannot see.
+        */
         var names = await context.SubscriberNotices
-            .Where(n => n.DeliveredAt == null && n.LeasedUntil != null && n.LeasedUntil > now && n.LeasedBy != runner)
+            .Where(n => n.DeliveredAt == null
+                        && n.LeasedUntil != null
+                        && n.LeasedUntil > now
+                        && n.LeasedBy != null
+                        && n.LeasedBy != runner)
             .Select(n => n.LeasedBy!)
             .Distinct()
             .ToListAsync(cancellationToken);

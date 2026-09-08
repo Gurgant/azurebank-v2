@@ -582,6 +582,36 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ARowHeldUNTILATIMEBYNOBODY_IsExcluded_RatherThanBlamedOnTheStore()
+    {
+        /*
+          A STATE THE STORE FORBIDS AND THIS QUERY MUST NOT ASSUME AWAY.
+          CK_SubscriberNotices_Lease pairs the halves — "(both NULL) OR (both NOT NULL)" — and
+          SubscriberNoticeSqlServerTests watches SQL Server refuse a half-set lease. So this row
+          cannot exist there. It can exist HERE, because the InMemory provider enforces no check
+          constraint, and that is the point: `null != runner` is TRUE, so the holder query would
+          admit the row and then dereference a null name.
+
+          What made it worth a term in the predicate rather than a shrug is where the failure would
+          land. NotifyCommand catches everything and prints "the store could not be read or written
+          ({Type})" — so a null-reference bug would arrive at the operator as an accusation against
+          the database, during exactly the incident where they are deciding whether the store is
+          sound. The count is unaffected either way, which is why nothing else caught this.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: null);
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+        var printed = string.Join("\n", lines);
+
+        printed.Should().NotContain("could not be read or written",
+            "a row the store would have refused must not be reported as the store failing");
+        printed.Should().NotContain("NullReferenceException");
+        exitCode.Should().NotBe(VerifyCommand.Misconfigured);
+    }
+
+    [Fact]
     public async Task AHolderWhoseNameIsNotOneOfTheThreeKinds_IsNotEchoedBackAtTheOperator()
     {
         /*
