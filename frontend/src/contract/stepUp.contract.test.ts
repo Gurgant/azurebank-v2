@@ -41,6 +41,17 @@ describe('contract: step-up authorisations', () => {
       The TTL is asserted as a RANGE, not an equality. `expiresAt` is the SERVER's clock and this
       process has its own; pinning it to exactly 120s would make a healthy stack fail on a machine
       whose clock is a second off, which is a test that fails for a reason nobody can act on.
+
+      SINCE ADR-0050 THIS ROW HAS A DEPENDENCY IT DID NOT USED TO HAVE. The mint's order is payee
+      resolution -> DAILY -> PIN, and `FIXTURES.recipientAzureTag` resolves, so the daily rung IS
+      reached: if the seeded admin's day were ever within 1.00 of the ceiling, this answers 422
+      DAILY_LIMIT_EXCEEDED and the failure names step-up rather than the limit. Exposure is zero
+      today and measurably so — every real-stack money move in the estate is on a rail D2 excludes
+      (deposits and withdrawals; there is no POST /api/transfers anywhere in the contract,
+      integration or e2e suites), so a full estate run moves 0.00 of external TransferOut. Do NOT add
+      a drain-the-day fixture to prove otherwise: it would cost 5,000 and break every other row for
+      the rest of the UTC day, and contract, integration and e2e all sign in as the SAME
+      admin@azurebank.dev against the same :5000 BFF, so they share one day under one identity.
     */
     const id = await firstAccountId();
 
@@ -61,6 +72,82 @@ describe('contract: step-up authorisations', () => {
     const ttl = new Date(data?.expiresAt ?? 0).getTime() - Date.now();
     expect(ttl).toBeGreaterThan(30_000);
     expect(ttl).toBeLessThanOrEqual(120_000);
+  });
+
+  it('refuses a mint one cent over the daily ceiling, with the four figures (ADR-0050)', async () => {
+    /*
+      The zero-money row ADR-0050's Consequences promises, on BOTH targets. It belongs here rather
+      than in `money.contract.test.ts` because this file owns every `/api/transfers/authorizations`
+      row and its header already states the no-spend rules this obeys.
+
+      MEASURED A1.1 — 2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's working tree on
+      3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default;
+      transcript `azurebank-work/plans/daily-limit/measure-after-2026-09-07.txt`:
+        422 errorCode=DAILY_LIMIT_EXCEEDED detail="Daily transfer limit exceeded."
+        extra={"limit": 5000, "used": 0.0, "requested": 5000.01, "resetsAt": "2026-09-08T00:00:00Z"}
+
+      ITEMISED COST, because this file demands it: 0.00 of the daily allowance (refused before the
+      ledger, so `used` does not move), 0 StepUpAuthorizations rows (A1: nothing is minted), 0 audit
+      rows (D7 is log-only; A7 measured successes only), 0 PIN attempts (A1: the rung runs before
+      `IPinVerifier`), 0 IdempotencyRecords rows (the mint takes no Idempotency-Key). Strictly
+      cheaper than the deletion rows below, which leave one AccountDeletionRefused row per run.
+
+      It is refused on ANY day regardless of `used`, because 5,000.01 alone exceeds the default while
+      sitting below TransactionMaxAmount (100,000) — D6 chose the figure for exactly this row.
+
+      TWO ASSERTION CAVEATS. (1) The PIN is the CORRECT one. A wrong-PIN probe here would, if A1's
+      property had regressed, lock the shared fixture for fifteen minutes and take the whole run with
+      it — the failure this file's header forbids; A1 is covered by the mock rung and by the
+      backend's `DailyLimitEndpointTests`, where a wrong PIN is free. (2) `used` is asserted LOOSELY.
+      It is the seeded admin's LIVE day, measured 0 on 2026-09-07 (ADR-0050 Context) and shared with
+      every future real-target row, so `toBe(0)` is the classic drift trap. `limit` IS pinned: the
+      moment an assertion goes configuration-agnostic to survive both targets it has branched on the
+      target in disguise, which is the one thing this directory exists to prevent.
+
+      WHAT THIS ROW CANNOT SHOW, in the M4 idiom: the ORDER — a mint has no balance rung at all
+      (D4 item 1) — and the transfer-side rung, because being refused at the transfer needs
+      used + requested > 5,000 with `requested` bounded by the authorisation the mint already vetted,
+      so the cheapest transfer-path refusal costs just under 5,000 EUR of completed external
+      transfers on the shared admin. That rung is mock-only plus `DailyLimitEndpointTests`
+      (SetDailyLimit(500)).
+    */
+    const id = await firstAccountId();
+
+    const { status, body } = await call('/api/transfers/authorizations', {
+      method: 'POST',
+      body: JSON.stringify({
+        fromAccountId: id,
+        recipientAzureTag: FIXTURES.recipientAzureTag,
+        amount: 5000.01,
+        pin: FIXTURES.pin,
+      }),
+    });
+
+    const problem = asProblem(body) as ReturnType<typeof asProblem> & {
+      limit?: number;
+      used?: number;
+      requested?: number;
+      resetsAt?: string;
+    };
+
+    expect(status).toBe(422);
+    expect(problem.errorCode).toBe('DAILY_LIMIT_EXCEEDED');
+    expect(problem.detail).toBe('Daily transfer limit exceeded.');
+
+    // Numbers, not strings: the wire spells the decimals `5000` / `0.0`, which `JSON.parse`
+    // normalises — an assertion on raw body text would be red for a reason unrelated to alignment.
+    expect(problem.limit).toBe(5000);
+    expect(typeof problem.used).toBe('number');
+    expect(problem.used).toBeGreaterThanOrEqual(0);
+    expect(problem.requested).toBe(5000.01);
+    expect(typeof problem.resetsAt).toBe('string');
+    /*
+      SHAPE, not an ordering against this process's clock. The server computes the next UTC
+      midnight from ITS clock; comparing that to `Date.now()` here fails on a machine whose clock
+      runs ahead across midnight, for a reason nobody can act on — the same trap the TTL row above
+      avoids by asserting a range. What is worth pinning is that the instant is a UTC midnight.
+    */
+    expect(problem.resetsAt).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00(\.0+)?Z$/);
   });
 
   it('answers an unknown payee with ACCOUNT_NOT_FOUND, not a code of its own', async () => {

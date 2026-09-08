@@ -254,6 +254,64 @@ function visibleTransactions(): typeof mockState.transactions {
 }
 
 /**
+ * The day's completed outgoing EXTERNAL outflow, in CENTS — what the daily bound is measured
+ * against (ADR-0050 D1/D2/D3). Sat directly below `visibleTransactions()` because that accessor is
+ * the natural one here and the wrong one.
+ *
+ * Three things this does NOT do, each deliberate.
+ *
+ * (i) IT READS `mockState.transactions` DIRECTLY, NEVER `visibleTransactions()`. That accessor
+ * filters by the LIVE account set, and `deleteAccount` hard-removes the account row while its
+ * transaction rows survive — so a sum built on it would hand the day's headroom back by closing an
+ * account. D3 says the real query calls `IgnoreQueryFilters()` for exactly that reason. MEASURED A6
+ * (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API
+ * :7215, AzureBankDev, DailyLimit:Amount default; transcript plans/daily-limit/
+ * measure-after-2026-09-07.txt): transfer 4,600 from a spare, DELETE the drained spare, mint 500 ->
+ * 422 with `used 4600.0`.
+ *
+ * (ii) THERE IS NO DAY TERM, and that is the one half of D1 the mock does not model. Every ledger
+ * row the mock writes carries a FIXED `2026-07-22` stamp (the deposit, withdraw, external-transfer
+ * and internal-transfer writers below), so a today-filtered sum would be 0.00 forever and the
+ * transfer rung would be unreachable dead code that still looked faithful. The mock's ledger is one
+ * session and has no yesterday. Changing those stamps is a separate decision with history behind it
+ * — `redateIntoCurrentMonth` (state.ts) exists because hardcoded seed dates were a time bomb, and it
+ * ripples into the newest-first feed sort and the current-month summary window.
+ *
+ * (iii) THE `Completed` TERM DECIDES NOTHING ON THE REAL LEDGER (207/207 rows Completed, ADR-0050
+ * Context) AND EVERYTHING HERE: the seed's only external TransferOut (state.ts, 200 to john_d) is
+ * `Pending`, which is the sole reason the mock's day starts at 0.00. Flip that status and `used`
+ * silently becomes 200, and date-dependent through `redateIntoCurrentMonth`. Assert it, never assume
+ * it.
+ *
+ * CENTS, not euros: A2.4 and A6.4 both measured 201 at `used + requested == limit` exactly, and
+ * 5000 - 1000.01 in IEEE-754 is 3999.9899999999998. `state.ts`'s `round2` is module-private, so the
+ * rounding is done here rather than exported for one caller.
+ */
+function dailyExternalOutflowCents(): number {
+  return mockState.transactions
+    .filter(
+      (t) => t.type === 'TransferOut' && t.recipientAzureTag !== null && t.status === 'Completed',
+    )
+    .reduce((sum, t) => sum + Math.round(t.amount * 100), 0);
+}
+
+/**
+ * `resetsAt`: the start of the NEXT UTC day, in the shape the wire measurably has.
+ *
+ * A THIRD instant format, because neither existing one matches. MEASURED A1.1:
+ * `"resetsAt": "2026-09-08T00:00:00Z"` — ZERO fractional digits — while `apiInstant()` pads to seven
+ * and `apiOffsetInstant()` writes `+00:00`.
+ */
+function nextUtcMidnightInstant(): string {
+  const d = new Date();
+  return (
+    new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1))
+      .toISOString()
+      .slice(0, 19) + 'Z'
+  );
+}
+
+/**
  * A transaction number for a row the mock is about to write, keyed only on the ledger's global
  * length so two rows can never share one.
  *
@@ -2589,6 +2647,59 @@ const authoriseTransfer = api.post(
       return response.untyped(notFound('Recipient', body.recipientAzureTag, request));
     }
 
+    /*
+      THE DAILY RUNG, AND IT SITS ABOVE THE PIN (ADR-0050 D4 item 1 — TransferService.cs:220, between
+      ResolveExternalPayeeAsync and _stepUp.MintAsync). Everything before this line was resolution;
+      the mock's external mint had no money check of any kind, so this is an addition, not a
+      correction.
+
+      MEASURED A1 (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF
+      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
+      plans/daily-limit/measure-after-2026-09-07.txt): an over-limit mint with a WRONG PIN answers
+      422 DAILY_LIMIT_EXCEEDED and never 401, spends no attempt (`PinAccessFailedCount` 0 -> 0 after
+      three of them) and mints nothing. That is the behaviour change ADR-0050 states plainly, and
+      PLACEMENT ALONE buys it here: `mockState.pinAttempts` and `mockState.pinLockedUntil` are
+      mutated only inside `checkPinInBand` below. A rung placed under it would be silently wrong in
+      exactly the way the ownership-before-PIN ordering bug already was — this file records that
+      precedent at the external transfer's ownership 404.
+
+      MEASURED A1.1: 422 errorCode=DAILY_LIMIT_EXCEEDED, detail "Daily transfer limit exceeded."
+      (figure-free, trailing period), and FOUR numeric extension members at the top level —
+      `{"limit": 5000, "used": 0.0, "requested": 5000.01, "resetsAt": "2026-09-08T00:00:00Z"}`, no
+      fifth. `problem()` already spreads `extensions` LAST, after errorCode then traceId, which is
+      the measured order. `instance` and `title` are INFERRED by handler identity rather than
+      measured — the probe strips both before printing `extra` — from the sibling 422 one rung below
+      on the transfer, which passes `instance: pathOf(request)` and lets DEFAULT_TITLES supply
+      'Unprocessable Entity'.
+
+      MEASURED A2.3/A2.4: the bound is INCLUSIVE — 4,000 + 1,000.01 refuses, 4,000 + 1,000 mints. So
+      strictly greater, compared in CENTS, because 5000 - 1000.01 is 3999.9899999999998 in IEEE-754
+      and this comparison decides a 201. `used` and `limit` go out as EUROS; the cents are the
+      comparison's business only.
+
+      MEASURED A3.1-A3.4: two authorisations can be minted under the limit and only one is spendable,
+      so `used` is a LEDGER SUM and never a counter of mints — hence `dailyExternalOutflowCents()`
+      and not `mockState.stepUpAuthorizations`.
+    */
+    const dailyUsedCents = dailyExternalOutflowCents();
+    const dailyLimitCents = Math.round(mockState.dailyTransferLimit * 100);
+    if (dailyUsedCents + Math.round(body.amount * 100) > dailyLimitCents) {
+      return response.untyped(
+        problem({
+          instance: pathOf(request),
+          status: 422,
+          errorCode: 'DAILY_LIMIT_EXCEEDED',
+          detail: 'Daily transfer limit exceeded.',
+          extensions: {
+            limit: mockState.dailyTransferLimit,
+            used: dailyUsedCents / 100,
+            requested: body.amount,
+            resetsAt: nextUtcMidnightInstant(),
+          },
+        }),
+      );
+    }
+
     // MEASURED: 422 PIN_REQUIRED · 429 PIN_LOCKED (retryAfterSeconds 900, on the THIRD miss) ·
     // 401 INVALID_PIN. Same helper the transfer uses, so the two cannot drift.
     // The PIN_REQUIRED sentence: measured 2026-09-06T19:16Z on the DELETION mint (main 19742ff;
@@ -2990,6 +3101,57 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
     amount: body.amount,
   });
   if (authorization.refusal) return response.untyped(authorization.refusal);
+
+  /*
+    THE DAILY RUNG ON THE TRANSFER, AND IT SITS ABOVE THE BALANCE (ADR-0050 D4 item 2). That order is
+    the whole point of the A4 re-run.
+
+    MEASURED A4, the 14:46:26Z re-run (PR #156's working tree on 3c30122, merged as fda7ff7, BFF
+    :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
+    plans/daily-limit/measure-after-2026-09-07.txt): used 4,900, balance 300, spend 400 ->
+    `422 errorCode=DAILY_LIMIT_EXCEEDED extra={"limit": 5000, "used": 4900.0, "requested": 400,
+    "resetsAt": "2026-09-08T00:00:00Z"}` — NOT INSUFFICIENT_FUNDS, though both bounds were violated.
+    Cite the 14:46Z block and not the 14:17Z A4 rows: A4.3 is a MINT (which reads no balance) and
+    A4.4 is a transfer whose day was intact, so neither shows the order. The detail sentence comes
+    from A3.3; the order from this block.
+
+    THREE PROPERTIES COME FREE FROM THE POSITION and are named here rather than coded around.
+    The refused authorisation stays PENDING, because `spendAuthorization` is below (measured A3.3).
+    NO idempotency row is written and no `Idempotency-Replayed` header can ever appear, because
+    `mockState.idempotency.set` is on the 201 path only (measured A3.4: the same key sent twice
+    answered 422 twice, and the sender's IdempotencyRecords held exactly the seven 201 money POSTs —
+    the refused key left no row). And AUTHORIZATION_EXPIRED/_INVALID still win, because
+    `validateAuthorization` is above.
+
+    The INSUFFICIENT_FUNDS branch immediately below is NOT touched: it is the tripwire that this rung
+    did not swallow the balance refusal. MEASURED A4.4 on a day that was intact —
+    `422 errorCode=INSUFFICIENT_FUNDS detail="Insufficient funds."
+    extra={"available": 300.0, "requested": 400}` — which is also the proof that `requested` is not
+    exclusive to DAILY_LIMIT_EXCEEDED. Branch on errorCode, never on member presence.
+
+    NO RUNG on the internal mint, the internal transfer or withdraw: D2 excludes them and A5 measured
+    201/201/201 with the day exhausted. The record for that is the tripwire test in
+    `transferHandler.test.ts`, not a comment on each handler. The helper's own predicate is the other
+    half of the record — the external writer sets `recipientAzureTag`, the internal one sets null.
+  */
+  const dailyUsedCents = dailyExternalOutflowCents();
+  const dailyLimitCents = Math.round(mockState.dailyTransferLimit * 100);
+  if (dailyUsedCents + Math.round(amount * 100) > dailyLimitCents) {
+    return response.untyped(
+      problem({
+        instance: pathOf(request),
+        status: 422,
+        errorCode: 'DAILY_LIMIT_EXCEEDED',
+        detail: 'Daily transfer limit exceeded.',
+        extensions: {
+          limit: mockState.dailyTransferLimit,
+          used: dailyUsedCents / 100,
+          requested: amount,
+          resetsAt: nextUtcMidnightInstant(),
+        },
+      }),
+    );
+  }
 
   const available = account.balance;
   if (amount > available) {

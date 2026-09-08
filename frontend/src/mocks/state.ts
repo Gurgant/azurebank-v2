@@ -208,6 +208,15 @@ interface MockState {
   /** ISO instant the PIN lock lifts, or null. A withdraw while locked is a 429 PIN_LOCKED. */
   pinLockedUntil: string | null;
   /**
+   * The ceiling on the day's completed outgoing EXTERNAL transfers (ADR-0050 D1).
+   *
+   * A field rather than a module const, the exact shape `sessionInactivityWindowMs` has, and for the
+   * same reason: it is the mock's `SetDailyLimit(500)`. A tripwire lowers the ceiling instead of
+   * pushing 5,000 of mock money through the wizard, which is how the backend's own
+   * `DailyLimitEndpointTests` proves the inclusive-bound rows.
+   */
+  dailyTransferLimit: number;
+  /**
    * The session user's accounts — REAL contract shapes: PascalCase types, and numbers
    * arrive ALREADY MASKED (`AB-****-****-90`) because AccountMapper.MaskAccountNumber
    * runs server-side; the full number never leaves the API.
@@ -467,6 +476,16 @@ export const MOCK_PIN = '123456';
 export const MOCK_INACTIVITY_WINDOW_MS = 30 * 60_000;
 export const MOCK_ABSOLUTE_WINDOW_MS = 60 * 60_000;
 
+/**
+ * The shipped `DailyLimit:Amount` default (ADR-0050 D1).
+ *
+ * MEASURED `"limit": 5000` on EVERY A-row of the transcript — 2026-09-07T14:17:53Z (and the
+ * 14:46:26Z A4 re-run), PR #156's working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API
+ * :7215, AzureBankDev, DailyLimit:Amount default. `backend/src/AzureBank.Api/appsettings.json:52`
+ * also says 5000, but that is a document and the house rule takes the measurement.
+ */
+export const MOCK_DAILY_TRANSFER_LIMIT = 5000;
+
 export const mockState: MockState = {
   idempotency: new Map(),
   authLevel: 1,
@@ -480,6 +499,7 @@ export const mockState: MockState = {
   stepUpAuthorizations: new Map(),
   nextAccountSeq: 0,
   pinLockedUntil: null,
+  dailyTransferLimit: MOCK_DAILY_TRANSFER_LIMIT,
   loginFailures: {},
   loginLockedUntil: {},
   authCallTimes: [],
@@ -578,6 +598,7 @@ export function resetMockState(): void {
   mockState.pinAttempts = 0;
   mockState.nextAccountSeq = 0;
   mockState.pinLockedUntil = null;
+  mockState.dailyTransferLimit = MOCK_DAILY_TRANSFER_LIMIT;
   /*
     The lockout and rate-limit counters MUST reset here, and forgetting them is not a small bug:
     they accumulate across every test in a file, so the eleventh login anywhere in that file starts

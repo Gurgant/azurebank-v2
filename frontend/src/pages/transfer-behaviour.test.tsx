@@ -333,8 +333,16 @@ describe('money flows — the behaviour the unification must preserve', () => {
       NETWORK / PARSE / 5xx, which makes keyLive true, which makes toForm() a no-op. So only a
       key-DROPPING 4xx can ever follow the user back — which is exactly the two cases below.
     */
-    const failWith = (errorCode: string, status: number) =>
-      server.use(http.post('*/api/transfers', () => problem({ status, errorCode })));
+    const failWith = (
+      errorCode: string,
+      status: number,
+      extra?: { detail?: string; extensions?: Record<string, unknown> },
+    ) =>
+      server.use(
+        http.post('*/api/transfers', () =>
+          problem({ status, errorCode, detail: extra?.detail, extensions: extra?.extensions }),
+        ),
+      );
 
     it('an attempt-scoped message does NOT follow you back to the form', async () => {
       /*
@@ -402,6 +410,102 @@ describe('money flows — the behaviour the unification must preserve', () => {
       await userEvent.click(screen.getByRole('button', { name: '€25' }));
 
       await waitFor(() => expect(screen.queryByText(/Insufficient funds/)).not.toBeInTheDocument());
+    });
+
+    /*
+      THE DAILY BOUND (ADR-0050), proven where INSUFFICIENT_FUNDS is proven — the classifier's other
+      figure-bearing refusal, and its structural neighbour in the shared tail.
+
+      Deliberately NOT a new `src/api/moneyProblem.test.ts`: that module has never had one, every
+      branch it owns is proven through this page suite, and a unit file would be a second oracle for
+      one branch (plus a `test:tripwire` bookkeeping decision).
+
+      The refusal body is MEASURED — 2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's
+      working tree on 3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev,
+      DailyLimit:Amount default; transcript plans/daily-limit/measure-after-2026-09-07.txt.
+    */
+    const DAILY_MEMBERS = {
+      limit: 5000,
+      used: 4900,
+      requested: 400,
+      resetsAt: '2026-09-08T00:00:00Z',
+    };
+
+    it('composes the daily refusal from the figures, in the formatted currency', async () => {
+      /*
+        The FORMATTED STRING is asserted, never the derived number: `limit - used` is IEEE-754
+        subtraction on decimal money (5000 - 1000.01 is 3999.9899999999998) and only
+        `formatCurrency`'s rounding hides it. Here 5000 - 4900 happens to be exact; asserting the
+        rendered output is the habit that keeps the next figure honest.
+
+        The reset INSTANT is asserted only up to the words before it. `formatDateTime` renders a UTC
+        instant through date-fns in the VIEWER's zone, so "2026-09-08T00:00:00Z" reads
+        "September 8, 2026 · 12:00 AM" in CI and "· 2:00 AM" on a UTC+2 machine — correct behaviour
+        for an instant, and a flaky assertion if pinned without fixing TZ.
+      */
+      failWith('DAILY_LIMIT_EXCEEDED', 422, {
+        detail: 'Daily transfer limit exceeded.',
+        extensions: DAILY_MEMBERS,
+      });
+      await externalToReview();
+      await confirmWithPin();
+
+      const banner = await screen.findByText(/Daily transfer limit reached/);
+      expect(banner).toHaveTextContent('€100.00 left today');
+      expect(banner).toHaveTextContent(/The limit resets on /);
+      // The ceiling is deliberately not named — one fewer figure, one fewer copy decision taken
+      // away from #165/#166.
+      expect(banner).not.toHaveTextContent('€5,000.00');
+    });
+
+    it('and the daily refusal survives the two Backs, then clears on the edit that supersedes it', async () => {
+      // 'input' scope, for the same reason INSUFFICIENT_FUNDS has it: the message names the amount,
+      // and the amount is what the user goes back to change. Reachable at all only because a 422 is
+      // a key-DROPPING class — see the note at the top of this describe.
+      failWith('DAILY_LIMIT_EXCEEDED', 422, {
+        detail: 'Daily transfer limit exceeded.',
+        extensions: DAILY_MEMBERS,
+      });
+      await externalToReview();
+      await confirmWithPin();
+      await screen.findByText(/Daily transfer limit reached/);
+
+      const backToReview = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToReview[backToReview.length - 1]);
+      const backToForm = await screen.findAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToForm[backToForm.length - 1]);
+
+      expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
+      expect(screen.getByText(/Daily transfer limit reached/)).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: '€25' }));
+      await waitFor(() =>
+        expect(screen.queryByText(/Daily transfer limit reached/)).not.toBeInTheDocument(),
+      );
+    });
+
+    it("degrades to the server's own sentence when the figures are absent, and keeps its lifetime", async () => {
+      /*
+        The hard degrade, or the branch renders €NaN. This is what `main` renders today through the
+        tail's `problem.detail || fallback`, and what ADR-0050's Consequences calls "a correct
+        refusal in the server's words, not a crash". The scope is decided by the CODE, not by
+        whether the copy came out with figures — so it still survives the two Backs, which is the
+        half that would silently regress if the degrade were written as a fall-through.
+      */
+      failWith('DAILY_LIMIT_EXCEEDED', 422, { detail: 'Daily transfer limit exceeded.' });
+      await externalToReview();
+      await confirmWithPin();
+
+      expect(await screen.findByText('Daily transfer limit exceeded.')).toBeInTheDocument();
+      expect(screen.queryByText(/left today/)).not.toBeInTheDocument();
+
+      const backToReview = screen.getAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToReview[backToReview.length - 1]);
+      const backToForm = await screen.findAllByRole('button', { name: 'Back' });
+      await userEvent.click(backToForm[backToForm.length - 1]);
+
+      expect(await screen.findByLabelText('Transfer amount')).toBeInTheDocument();
+      expect(screen.getByText('Daily transfer limit exceeded.')).toBeInTheDocument();
     });
   });
 
