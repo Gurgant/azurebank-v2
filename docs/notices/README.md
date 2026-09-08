@@ -44,8 +44,11 @@ working tree. Delete the directory afterwards — it holds addresses in clear.
 
 The same file, written by `AzureBank.Functions.NoticeRelay` instead of by the verb or by the API's
 loop. It needs the Azure Functions Core Tools and Azurite — the Functions HOST wants a storage
-account for its timer's schedule state and its own singleton lease, which is the whole of what
-Azurite is doing here; no queue carries a notice, because the row is the obligation (ADR-0048).
+account for its own singleton lease — the blob it takes to elect one host among instances of one
+app — and that is the whole of what Azurite is doing here. NOT the timer's schedule state: the
+trigger pins `UseMonitor = false`, so no ScheduleMonitor is attached and nothing about the schedule
+is persisted (ADR-0051 D2, D5). And no queue carries a notice, because the row is the obligation
+(ADR-0048).
 
 Once, to install:
 
@@ -72,12 +75,21 @@ running with nothing scheduled:
 
 Measured. Nothing is delivered twice and no notice is lost — the rows simply stay owed — but the
 process is up and its exit code is zero, so a reader who does not check the log sees a healthy host
-delivering nothing. Every other key in the section stops the host with a message naming it.
+delivering nothing.
+
+**What the rest of the section does, in three groups, because it is not uniform.** The ranges on
+`Notices:PeriodSeconds`, `Notices:LeaseSeconds` and `Notices:BatchSize` are checked WHATEVER the
+runner: a value out of range is a misconfiguration even in a host that delivers nothing.
+`Notices:Contact` and `Notices:PickupDirectory` are checked only when `Notices:Runner=Function`
+names THIS host — with `Api` or `None` the Function starts without them and steps aside, which is
+deliberate (ADR-0051 D3): refusing to start over a directory it will never write to would take one
+runner down for another's misconfiguration. And `Notices:Schedule` is checked by nobody, as above.
 
 `local.settings.json` is gitignored: it is this host's connection string and pickup directory, the
-Function's equivalent of the API's user-secrets. The pickup directory must EXIST and must be outside
-any git repository — the Function refuses to start otherwise, with a message naming the key, which
-is the same rule the verb and the API apply and now the same code.
+Function's equivalent of the API's user-secrets. **When `Notices:Runner=Function`**, the pickup
+directory must EXIST and must be outside any git repository, or the Function refuses to start with a
+message naming the key — the same rule the verb and the API apply, and since ADR-0051 the same
+code, asked about whichever host the flag names.
 
 **Run one HOSTED runner at a time.** `Notices:Runner` names which: `Api`, `Function`, or `None`.
 Both hosts step aside unless the flag names them, so a configuration naming neither delivers nothing

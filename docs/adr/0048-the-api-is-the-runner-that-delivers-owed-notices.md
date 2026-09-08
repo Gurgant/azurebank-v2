@@ -161,8 +161,10 @@ obligation: written in the enrolment's own save so it is never lost and never su
 _Noted 2026-09-08 (ADR-0051 D2): **this paragraph is what closed the "timer- or queue-triggered"
 question the backlog left open.** A queue TRIGGER needs a producer, and the only honest producer is
 the row, so a queue trigger would be this declined design wearing a trigger. The Function is
-timer-triggered, and what Azurite provides is the HOST's own storage — the timer's schedule state
-and a blob singleton lease that elects one host among instances of one app. That singleton is a
+timer-triggered, and what Azurite provides is the HOST's own storage — a blob singleton lease that
+elects one host among instances of one app, and NOT the timer's schedule state: ADR-0051 D2 pins
+`UseMonitor = false` on the trigger, so no ScheduleMonitor is attached and none is persisted. That
+singleton is a
 second one at a different layer; it knows nothing about this relay or the verb and does not replace
 the row lease._
 

@@ -30,8 +30,11 @@ namespace AzureBank.Functions.NoticeRelay;
 /// queue: "a queue would carry a copy of the obligation, and the row is the obligation … A lease on
 /// the row keeps that property; a queue would have to be reconciled with it." A queue trigger needs
 /// a producer, and the only honest producer here is the row — so a queue would be the declined
-/// design wearing a trigger. What Azurite actually provides is the HOST's own storage: the timer's
-/// schedule state and the host singleton lease, neither of which carries an obligation.
+/// design wearing a trigger. What Azurite actually provides is the HOST's own storage: the blob
+/// singleton lease it takes to elect one host among instances of one app — observed under this
+/// configuration, "Host lock lease acquired by instance ID …". NOT the timer's schedule state: the
+/// trigger above pins <c>UseMonitor = false</c>, so no ScheduleMonitor is attached and none is
+/// persisted. Neither carries an obligation; the row does.
 /// </para>
 /// <para>
 /// THE FLAG IS CHECKED HERE TOO, and symmetrically: this Function delivers only when
