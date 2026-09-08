@@ -528,6 +528,38 @@ export function TransferPage() {
         */
       lastAuthorization.current = null;
       setAuthorizationHeld(false);
+    } else if (refusal?.errorCode === 'DAILY_LIMIT_EXCEEDED') {
+      /*
+          The daily outgoing-transfer bound (ADR-0050). The expiry arm's exact shape, for three
+          reasons of its own — and NO `setPinError`, NO navigation.
+
+          NO RED BOXES. A1 measured `PinAccessFailedCount` 0 → 0 after three wrong-PIN over-limit
+          mints, with 0 authorisations minted: the rung runs before the PIN is ever verified, so
+          styling the boxes red would tell the user the lockout is closer when it provably is not.
+          The arm above already makes this argument for its own case.
+
+          AND DROP THE AUTHORISATION. On the SEND path the refused authorisation stays Pending
+          server-side (measured A3.3) while `lastAuthorization.current` still holds one bound to the
+          OLD amount — the amount that must change. `onValid`'s re-present guard
+          (`keyLive && lastAuthorization.current`) is false today because a 422 is a key-DROP class
+          (`shouldKeepKey`), but leaning on an invariant three files away to keep a stale reference
+          harmless is exactly what the arm above refuses to do.
+
+          NO NAVIGATION. SELF_TRANSFER_NOT_ALLOWED and RECIPIENT_NO_ACCOUNT already fall through this
+          rung without moving the user, the banner is 'input'-scoped so it survives the two Backs,
+          and `exitLocked` is false after a 422 so Back is live. WHERE the user should land is a flow
+          decision that belongs with #165/#166.
+
+          Clearing `enteredPin.current` is a DEAD-END decision, not a security one: the PIN never
+          leaves the mint body either way, and every non-PIN refusal at this rung already retains it
+          today. The amount and the payee are KEPT because WCAG 2.2 SC 3.3.7's exception covers
+          security information only — the same argument the expiry arm carries.
+        */
+      setPin('');
+      enteredPin.current = '';
+      setPinNonce((n) => n + 1);
+      lastAuthorization.current = null;
+      setAuthorizationHeld(false);
     } else if (refusal?.errorCode === 'PIN_LOCKED') {
       setPin('');
       enteredPin.current = '';

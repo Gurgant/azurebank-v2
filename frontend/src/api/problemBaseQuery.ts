@@ -34,6 +34,27 @@ export interface ApiProblem {
   retryAfterSeconds?: number;
   /** Step-up 403s (D2): the level the endpoint demands, read from the header. */
   requiredAuthLevel?: number;
+  /*
+    The daily outgoing-transfer bound (ADR-0050). All four ride DAILY_LIMIT_EXCEEDED on
+    POST /api/transfers/authorizations and POST /api/transfers, as top-level JSON numbers with
+    `resetsAt` a string — measured 2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run) on PR #156's
+    working tree at 3c30122, merged as fda7ff7, BFF :5000 -> API :7215, AzureBankDev,
+    DailyLimit:Amount default.
+
+    BRANCH ON `errorCode`, NEVER ON MEMBER PRESENCE. `requested` is NOT exclusive to
+    DAILY_LIMIT_EXCEEDED: A4.4 measured INSUFFICIENT_FUNDS on POST /api/transfers carrying
+    `{"available": 300.0, "requested": 400}`, which contradicts schema.d.ts:2061's
+    "DAILY_LIMIT_EXCEEDED only" prose. The document UNDER-DECLARES INSUFFICIENT_FUNDS's members;
+    the code is right. Any consumer inferring the daily refusal from `problem.requested !== undefined`
+    is wrong.
+
+    `available` stays UNTYPED on purpose: ADR-0050's review-round-1 note keeps INSUFFICIENT_FUNDS's
+    `{available, requested}` as its own small PR, and declaring it here would quietly do that PR's work.
+  */
+  limit?: number;
+  used?: number;
+  requested?: number;
+  resetsAt?: string;
 }
 
 interface ProblemDetailsBody {
@@ -44,6 +65,16 @@ interface ProblemDetailsBody {
   traceId?: string;
   errors?: Record<string, string[]>;
   retryAfterSeconds?: number;
+  /*
+    LOAD-BEARING, not a mirror kept for tidiness. Read through the `[key: string]: unknown` index
+    signature below, `body.limit` narrows to `{} | null | undefined` after a `!== undefined` guard,
+    and the return literal's spread fails TS2322. Measured on a scratch patch by the data-layer lens
+    (reverted; tree clean).
+  */
+  limit?: number;
+  used?: number;
+  requested?: number;
+  resetsAt?: string;
   [key: string]: unknown;
 }
 
@@ -60,6 +91,14 @@ const problemDetailsBodySchema = z.looseObject({
   traceId: z.string().optional(),
   errors: z.record(z.string(), z.array(z.string())).optional(),
   retryAfterSeconds: z.number().optional(),
+  // The daily-limit four. Not needed to CARRY the values — this is a `z.looseObject`, so they
+  // already survive `safeParse` into `bodyResult.data` — but declaring them buys the same
+  // "a wrong-typed known field fails safeParse" property the docblock above states as the reason
+  // this schema exists at all.
+  limit: z.number().optional(),
+  used: z.number().optional(),
+  requested: z.number().optional(),
+  resetsAt: z.string().optional(),
 });
 
 function parseRetryAfterSeconds(
@@ -113,6 +152,12 @@ export function toApiProblem(error: FetchBaseQueryError, response?: Response): A
     traceId: body.traceId,
     ...(body.errors ? { errors: body.errors } : {}),
     ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    // The ACTUAL drop site: an allow-list, so a member typed on the interface and not spread here
+    // is silently absent at runtime. Same conditional style as the line above.
+    ...(body.limit !== undefined ? { limit: body.limit } : {}),
+    ...(body.used !== undefined ? { used: body.used } : {}),
+    ...(body.requested !== undefined ? { requested: body.requested } : {}),
+    ...(body.resetsAt !== undefined ? { resetsAt: body.resetsAt } : {}),
   };
 }
 

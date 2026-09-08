@@ -152,6 +152,78 @@ describe('the client mints an authorisation and presents it', () => {
     });
     expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
   });
+
+  it('treats the DAILY refusal at MINT time as a dead end, not as a wrong PIN', async () => {
+    /*
+      ADR-0050's rung sits ABOVE the PIN on the mint, so this refusal arrives at the same catch a
+      wrong PIN does — and must be recovered differently. Every expected value is MEASURED:
+      2026-09-07T14:17:53Z (and the 14:46:26Z A4 re-run), PR #156's working tree on 3c30122, merged
+      as fda7ff7, BFF :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
+      plans/daily-limit/measure-after-2026-09-07.txt.
+
+      ONLY THE MINT IS OVERRIDDEN. `POST /api/transfers` keeps its aligned handler on purpose: a send
+      that should never happen is then ANSWERED and visible in the count below, rather than becoming
+      an unhandled-request error attributed to the wrong cause. Counting through `server.events`
+      rather than a second override is the same rule the file records above — an override that calls
+      through re-enters itself and kills the worker.
+
+      (c) and (d) would BOTH still pass if the mock's rung had been placed below `checkPinInBand` —
+      the mint would refuse either way. That is why `mocks/transferHandler.test.ts` asserts
+      `mockState.pinAttempts` separately; here they pin the page, not the ordering.
+    */
+    const sends: string[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.method !== 'POST' || !request.url.includes('/api/transfers')) return;
+      if (request.url.includes('/authorizations')) return;
+      sends.push(request.url);
+    });
+
+    server.use(
+      http.post('*/api/transfers/authorizations', () =>
+        problem({
+          status: 422,
+          errorCode: 'DAILY_LIMIT_EXCEEDED',
+          detail: 'Daily transfer limit exceeded.',
+          extensions: {
+            limit: 5000,
+            used: 4900,
+            requested: 400,
+            resetsAt: '2026-09-08T00:00:00Z',
+          },
+        }),
+      ),
+    );
+
+    renderTransfer();
+    await externalToPinStep();
+    await enterPin();
+
+    // (a) The client's composed sentence, not the server's. The reset instant is left out of the
+    // assertion because `formatDateTime` renders a UTC instant in the viewer's LOCAL zone.
+    expect(await screen.findByText(/Daily transfer limit reached/)).toHaveTextContent(
+      '€100.00 left today',
+    );
+
+    // (b) The boxes are EMPTIED and NOT red. Emptied boxes are the only thing that distinguishes
+    // this arm from the generic fall-through; the absence of the error state is A1's
+    // "PinAccessFailedCount 0 -> 0" rendered — the API charges no attempt, so neither may the UI
+    // suggest the lockout came closer.
+    await waitFor(() => {
+      expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
+    });
+    expect(screen.getByLabelText('Digit 1 of 6')).not.toHaveAttribute('aria-invalid');
+
+    // (c) NOTHING left the browser for the transfer itself: the mint refuses before minting, so the
+    // send can never fire.
+    expect(sends).toHaveLength(0);
+    // (d) And no authorisation exists — A1 measured "authorisations minted: 0".
+    expect([...mockState.stepUpAuthorizations.values()]).toHaveLength(0);
+    expect(screen.queryByText('Transfer Sent!')).not.toBeInTheDocument();
+
+    // `server.events` listeners outlive the test that registers one — the convention the sibling
+    // at the bottom of this file follows for the same reason.
+    server.events.removeAllListeners();
+  });
 });
 
 describe('what an expired authorisation does to the screen', () => {

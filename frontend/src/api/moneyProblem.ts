@@ -1,5 +1,6 @@
 import type { ApiProblem } from './problemBaseQuery';
 import { CONNECTION_FAILED } from './problemMessages';
+import { formatCurrency, formatDateTime } from '../utils/format';
 
 /**
  * What a failed money request MEANS, decided once instead of in every flow's catch block.
@@ -148,6 +149,62 @@ export function classifyMoneyProblem(
   // 6-10: the shared tail. Note what is NOT here: ACCOUNT_NOT_FOUND. Its copy genuinely differs
   // per flow ("re-check the handle" reads absurd on a page with no handle), so it belongs in each
   // flow's `messages` rather than in a shared branch speaking for a flow it does not know.
+  /*
+    THE DAILY OUTGOING-TRANSFER BOUND (ADR-0050), keyed on the CODE and never on member presence —
+    `requested` also rides INSUFFICIENT_FUNDS (measured A4.4: `{"available": 300.0, "requested": 400}`
+    on POST /api/transfers), so presence proves nothing about which bound refused.
+
+    It lives in the tail rather than in a flow's `messages` table because `DomainMessages` values are
+    `string | {text, scope}` — both static, with no hook to interpolate a figure — and the tail is
+    the only place that holds the `problem` object. VALIDATION_ERROR below is the existing precedent
+    for a tail branch that reads the problem to build its own text.
+
+    THE CLIENT COMPOSES THE SENTENCE; it does not render the server's. ADR-0050 D7 is the
+    ratification, in its own words: the server's sentence is figure-free because "figures travel as
+    numbers and are formatted in the user's locale", and the mirror PR is what "adds the typed
+    members, the classifier copy … and derives `remaining` there as `limit − used`". Rendering the
+    server's sentence would leave all four members typed and unread.
+
+    Descriptive, not prescriptive: "lower the amount" would be false at remaining exactly 0, which
+    A3.3 measured (used 5000.0 of limit 5000). The CEILING is deliberately not named — it is not
+    actionable, and one fewer figure is one fewer copy decision taken away from U8 (#165/#166), which
+    may reshape this string entirely. `limit - used` here is the refusal saying what it refused; it
+    is NOT a persistent "remaining today" surface, which D8 assigns to U8 along with the unbuilt
+    GET /api/transactions/allowance.
+
+    Scope 'input' on EVERY leg, decided by this module's own reviewer test above: the refusal names
+    the amount, the amount is editable on the form step, and only an 'input' message survives
+    `goToStep`'s keepInputErrors rule through `toReview()`/`toForm()` to the screen where the amount
+    lives. Today this code falls through to the tail's `problem.detail || opts.fallback` at 'attempt'
+    scope, so the message is wiped by exactly the transition that takes the user to where they can
+    fix it — a second defect this branch closes.
+
+    Unreachable from InternalTransferPage: ADR-0050 D2 excludes internal transfers from the
+    aggregate, and A5.1 measured an internal transfer of 100 answering 201 with the day exhausted.
+  */
+  if (problem.errorCode === 'DAILY_LIMIT_EXCEEDED') {
+    const { limit, used, resetsAt } = problem;
+    // HARD DEGRADE, or the branch renders €NaN. Without both figures there is nothing to compose,
+    // so fall back to the server's own 'Daily transfer limit exceeded.' — which is what main
+    // renders today, and what ADR-0050's Consequences calls "a correct refusal in the server's
+    // words, not a crash". The CODE decides the lifetime, so the scope stays 'input' either way.
+    if (typeof limit !== 'number' || typeof used !== 'number') {
+      return { kind: 'message', text: problem.detail || opts.fallback, scope: 'input' };
+    }
+    // NOT named `remaining`: ADR-0050 D7 uses that word for the NUMBER `limit - used`, and a
+    // reader arriving from the record would misread a sentence bound to it.
+    const headroomSentence = `Daily transfer limit reached — ${formatCurrency(limit - used)} left today.`;
+    return {
+      kind: 'message',
+      scope: 'input',
+      // `resetsAt` is a UTC instant and `formatDateTime` renders it in the VIEWER's zone. That is
+      // correct for an instant; it is also why any test asserting this half must pin TZ.
+      text:
+        typeof resetsAt === 'string'
+          ? `${headroomSentence} The limit resets on ${formatDateTime(resetsAt)}.`
+          : headroomSentence,
+    };
+  }
   if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
     return { kind: 'message', text: 'Insufficient funds for this transfer.', scope: 'input' };
   }

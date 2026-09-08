@@ -442,6 +442,20 @@ operations than these two and is its own small PR; it is named here and asserted
 file so the gap stays a known omission rather than a silence that the next reader mistakes for a
 decision._
 
+_Noted 2026-09-08 (the frontend mirror PR): **the client half of the two paragraphs above is now
+false for the four members, and still true for `available`.** `ApiProblem`
+(`frontend/src/api/problemBaseQuery.ts`) carries `limit` / `used` / `requested` / `resetsAt` as
+optional members, `toApiProblem`'s return literal spreads them so they survive normalization, and
+`moneyProblem.ts` composes the refusal sentence from them - `limit - used` through the one
+`formatCurrency`, `resetsAt` through the existing `formatDateTime`. `available` is untouched and
+stays the separate small PR named above. One correction the mirror found while consuming them: the
+descriptions read *"DAILY_LIMIT_EXCEEDED only"* on all four, and for `requested` that over-declares.
+Measured 2026-09-07T14:17:53Z (A4.4): `INSUFFICIENT_FUNDS` on `POST /api/transfers` carries
+`{"available": 300.0, "requested": 400}`. The document under-declares `INSUFFICIENT_FUNDS`, it is
+not the code that is wrong, and it is the same gap the paragraph above keeps open - so no consumer
+may infer the daily refusal from `requested`'s presence. The client branches on `errorCode` and says
+so where the members are declared._
+
 **D8 — Not decided here, named so the umbrella finds them.** Rolling windows; tiers by account type
 or verification level; amount-scaled step-up; velocity rules; withdrawals and internal transfers
 under any aggregate; per-account limits; customer-adjustable ceilings (with SCA on a raise); a
@@ -502,6 +516,14 @@ mirror (a separate PR, from the measured transcript and from nothing else) adds 
 the classifier copy, the mock's two rungs with a ledger-sum helper rather than a counter, and one
 zero-money contract row on both targets: a 5,000.01 mint on the seeded admin → 422 with `used` as
 measured. `moneySchemas.ts` is untouched and said so in that PR.
+
+_Noted 2026-09-08 (the frontend mirror PR, landing): **the first sentence above is now half past
+tense, and was always half wrong.** The CLASSIFIER half is superseded - `moneyProblem.ts` has a
+`DAILY_LIMIT_EXCEEDED` branch in the shared tail that composes the sentence from the figures and
+falls back to `problem.detail || fallback` only when `limit` or `used` is absent. The WITHDRAW
+DIALOG half was never reachable: D2 excludes withdrawals from the aggregate, and A5.2 measured a
+withdraw of 100 answering 201 with the day exhausted, so `WithdrawDialog.tsx` cannot see the code
+and takes no branch. Noted in place rather than left for a reader to add one._
 
 **Behaviour change, stated plainly.** An over-limit mint with a WRONG PIN now answers 422 rather
 than 401 and spends no attempt. A request violating both the daily bound and the balance answers

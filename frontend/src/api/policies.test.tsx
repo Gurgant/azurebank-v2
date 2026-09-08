@@ -196,6 +196,71 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(validation.error.errors).toEqual({ amount: ['Amount must be at least $0.01.'] });
   });
 
+  it("3b — carries DAILY_LIMIT_EXCEEDED's four extension members through the same channel", async () => {
+    /*
+      ADR-0050's four members, and this test DISPATCHES A REAL ENDPOINT THROUGH THE REAL BASE QUERY
+      on purpose. A test written against `problemDetailsBodySchema` alone passes today, before any
+      change, and certifies nothing: the members already survive the parse — the schema is a
+      `z.looseObject` — and the drop is the return literal's allow-list in `toApiProblem`.
+
+      MEASURED A8 (2026-09-07T14:17:53Z, PR #156's working tree on 3c30122, merged as fda7ff7, BFF
+      :5000 -> API :7215, AzureBankDev, DailyLimit:Amount default; transcript
+      plans/daily-limit/measure-after-2026-09-07.txt): `limit` / `used` / `requested` arrive as
+      top-level JSON NUMBERS and `resetsAt` as a STRING, beside errorCode and traceId, unchanged
+      through the BFF.
+
+      The values asserted are the PARSED ones. The wire spells the decimals `4900.0` / `0.0` /
+      `4600.0` — a C# decimal artifact `JSON.stringify` cannot reproduce — so an assertion on raw
+      body text would be red for a reason that has nothing to do with alignment.
+      `money.contract.test.ts` documents the same trap.
+    */
+    server.use(
+      http.post('*/api/transfers', () =>
+        problem({
+          status: 422,
+          errorCode: 'DAILY_LIMIT_EXCEEDED',
+          detail: 'Daily transfer limit exceeded.',
+          extensions: {
+            limit: 5000,
+            used: 4900,
+            requested: 400,
+            resetsAt: '2026-09-08T00:00:00Z',
+          },
+        }),
+      ),
+    );
+    const { store } = hookWrapper();
+
+    const refused = await settle(
+      store
+        .dispatch(
+          apiSlice.endpoints.transfer.initiate({
+            idempotencyKey: crypto.randomUUID(),
+            body: { fromAccountId: UUID, recipientAzureTag: 'friend', amount: 400 },
+          }),
+        )
+        .unwrap(),
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('unreachable');
+    expect(refused.error).toMatchObject({
+      status: 422,
+      errorCode: 'DAILY_LIMIT_EXCEEDED',
+      detail: 'Daily transfer limit exceeded.',
+      limit: 5000,
+      used: 4900,
+      requested: 400,
+      resetsAt: '2026-09-08T00:00:00Z',
+    });
+    // The types, separately from the values: three numbers and one string is what A8 measured, and
+    // a stringified number would satisfy neither `toMatchObject` above nor a consumer doing
+    // arithmetic on `limit - used`.
+    expect(typeof refused.error.limit).toBe('number');
+    expect(typeof refused.error.used).toBe('number');
+    expect(typeof refused.error.requested).toBe('number');
+    expect(typeof refused.error.resetsAt).toBe('string');
+  });
+
   it('4 — the step-up 403 (X-Auth-Level-Required header, D2) drives the interceptor; cancel → STEP_UP_CANCELLED', async () => {
     /*
       Driven through the REVEAL endpoint, not a transfer.

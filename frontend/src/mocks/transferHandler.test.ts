@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MOCK_PIN, mockState, seedMockSession } from './state';
+import { MOCK_DAILY_TRANSFER_LIMIT, MOCK_PIN, mockState, seedMockSession } from './state';
 
 /**
  * Executable contract for the recipient-lookup + stateful transfer handlers: the exact-match
@@ -209,9 +209,19 @@ describe('transfer handler (in-band PIN + failure order + idempotency)', () => {
     const res = await transfer(crypto.randomUUID(), {
       fromAccountId: acct(),
       recipientAzureTag: 'friend',
-      // Over the balance but INSIDE the contract's range: >100,000 is now rejected as invalid
-      // input before the funds check, exactly as FluentValidation rejects it before the service.
-      amount: 50_000,
+      /*
+        Over the balance (1,250.50) but inside BOTH bounds that sit above the funds check.
+
+        `>100,000` is rejected as invalid input before the funds check, exactly as FluentValidation
+        rejects it before the service — and since ADR-0050 there is a second, lower ceiling on this
+        rail. The AUTO-mint above now runs the daily rung, so the previous 50,000 could not be
+        authorised at all and this test reached the transfer with a worthless reference and read 401
+        AUTHORIZATION_INVALID. That is the API's behaviour too, not a mock artifact: a 50,000 mint
+        answers 422 DAILY_LIMIT_EXCEEDED on a fresh day against the 5,000 default. The figure moves
+        so the test keeps asserting the rung it names. The internal sibling below keeps its 50,000 —
+        D2 excludes internal transfers from the aggregate.
+      */
+      amount: 2_000,
       pin: MOCK_PIN,
     });
     expect(res.status).toBe(422);
@@ -1463,5 +1473,432 @@ describe('a route GUID takes every format, because MVC binds it', () => {
     const res = await fetch('/api/transactions/3F2504E0-4F89-41D3-9A0C-0305E82C3399');
     expect(res.status).toBe(404);
     expect((await res.json()).detail).toContain('3f2504e0-4f89-41d3-9a0c-0305e82c3399');
+  });
+});
+
+/**
+ * THE DAILY OUTGOING-TRANSFER BOUND (ADR-0050), one row per probe letter.
+ *
+ * Every expected value below is quoted from `azurebank-work/plans/daily-limit/
+ * measure-after-2026-09-07.txt`, measured 2026-09-07T14:17:53Z, and the A4 re-run at 14:46:26Z, on
+ * PR #156's working tree at 3c30122 (merged as fda7ff7), BFF :5000 -> API :7215, AzureBankDev,
+ * DailyLimit:Amount default. A1..A9 are that file's row labels.
+ *
+ * The rows that need a used-up day drive `mockState.dailyTransferLimit` DOWN rather than pushing
+ * 5,000 of mock money through the handlers — the mock's `SetDailyLimit(500)`, which is how the
+ * backend's own `DailyLimitEndpointTests` proves the same properties. The ceiling's shipped default
+ * is asserted once, separately, so lowering it in a test cannot hide a drift in the default.
+ *
+ * WHAT THE MOCK DOES NOT MODEL, so nothing below claims it:
+ *
+ *  - THE UTC DAY ITSELF. Every ledger row the mock writes carries a fixed `2026-07-22` stamp, so a
+ *    today-filtered sum would be 0.00 forever and the transfer rung would be unreachable dead code
+ *    that still looked faithful. The mock's ledger is one session and has no yesterday. This is a
+ *    NEW omission, not one ADR-0050 anticipated: the helper mirrors D2 (external via
+ *    `recipientAzureTag != null`) and D3 (Completed, no IsDeleted filter) term for term and drops
+ *    only D1's window.
+ *  - D5's APPLOCK AND IN-TRANSACTION RE-SUM. MSW is single-threaded; from the wire the pre-check and
+ *    the authoritative check are indistinguishable, so the mock has ONE rung. The record for the
+ *    race is `DailyLimitConcurrencySqlServerTests`.
+ *  - THE 'PER USER' HALF OF D3 — `MockAccount` has no owner, so the sum is per session, not per user.
+ *  - THE AUDIT TRAIL — the mock has none, so A7's audit half is out of reach. The backend's record is
+ *    `ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision`. The LEDGER half is asserted.
+ *  - A9's MIDNIGHT BOUNDARY. With no day term in the sum, a `vi.setSystemTime` test would prove only
+ *    the `resetsAt` formatter, not a window being crossed; `DailyOutflowLimitServiceTests`' single
+ *    fake clock is the record.
+ */
+describe('the daily transfer limit (ADR-0050)', () => {
+  /** A completed external outflow — the only kind of row the day's sum counts. */
+  async function moveExternally(amount: number, fromAccountId = acct()) {
+    const res = await transfer(crypto.randomUUID(), {
+      fromAccountId,
+      recipientAzureTag: 'friend',
+      amount,
+      pin: MOCK_PIN,
+    });
+    expect(res.status, `moving ${amount} externally must succeed`).toBe(201);
+  }
+
+  /** A spend of a named authorisation under a key the caller chose, so the key can be inspected. */
+  function spend(auth: string, amount: number, key = crypto.randomUUID()) {
+    return fetch(T_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': key,
+        'Step-Up-Authorization': auth,
+      },
+      body: JSON.stringify(externalBody(amount)),
+    });
+  }
+
+  function mintFor(amount: number, pin: string = MOCK_PIN) {
+    return authorise({ fromAccountId: acct(), recipientAzureTag: 'friend', amount, pin });
+  }
+
+  async function problemOf(res: Response) {
+    return (await res.json()) as {
+      errorCode?: string;
+      detail?: string;
+      limit?: number;
+      used?: number;
+      requested?: number;
+      resetsAt?: string;
+      available?: number;
+    };
+  }
+
+  async function mintedIdFor(amount: number) {
+    const res = await mintFor(amount);
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { data: { authorizationId: string } }).data.authorizationId;
+  }
+
+  it('ships the measured ceiling as its default, and resets to it', () => {
+    // MEASURED: `"limit": 5000` on EVERY A-row. appsettings.json:52 says the same, but that is a
+    // document; this asserts the measurement. Every row below that lowers the ceiling is undone by
+    // `resetMockState` in the shared teardown.
+    expect(MOCK_DAILY_TRANSFER_LIMIT).toBe(5000);
+    expect(mockState.dailyTransferLimit).toBe(5000);
+  });
+
+  it('the seed does not start the day: its one external TransferOut is Pending, so used is 0', async () => {
+    /*
+      The mock's baseline `used` of 0.00 is an INFERENCE, not a measurement — on the real stack the
+      throwaway users simply had no rows (A1.1 measured `used 0.0`). Here it is 0 because the seed's
+      only external TransferOut (200 to john_d) carries status 'Pending', which D3's Completed term
+      excludes. That term decides NOTHING on the real ledger (207/207 rows Completed, ADR-0050
+      Context) and EVERYTHING here: flip that seed row to Completed and the mock's day silently
+      starts at 200, and date-dependent through `redateIntoCurrentMonth`. So the exclusion is pinned
+      rather than assumed.
+    */
+    seedMockSession();
+    const seeded = mockState.transactions.filter(
+      (t) => t.type === 'TransferOut' && t.recipientAzureTag !== null,
+    );
+    expect(seeded).not.toHaveLength(0);
+    expect(seeded.every((t) => t.status !== 'Completed')).toBe(true);
+
+    const refused = await problemOf(await mintFor(MOCK_DAILY_TRANSFER_LIMIT + 0.01));
+    expect(refused.used).toBe(0);
+  });
+
+  it('A1 — refuses an over-limit mint BEFORE the PIN: no 401, no attempt spent, nothing minted', async () => {
+    /*
+      MEASURED A1: `mint 5000.01 with a WRONG pin` answered 422 DAILY_LIMIT_EXCEEDED three times in a
+      row — never 401 — with `PinAccessFailedCount` 0 -> 0 and `authorisations minted: 0`, then a
+      correct-pin mint of 100 answered 201.
+
+      THE PIN-COUNTER ASSERTIONS ARE THE ONES THAT BITE. `mockState.pinAttempts` and
+      `mockState.pinLockedUntil` are mutated only inside `checkPinInBand`, so they are the only
+      observable that fails if the rung drifts BELOW it — every other assertion here, and every
+      assertion in `transfer-step-up.test.tsx`, would still pass on a mock that charged an attempt
+      the API provably does not.
+    */
+    seedMockSession();
+    for (let i = 0; i < 3; i += 1) {
+      const res = await mintFor(MOCK_DAILY_TRANSFER_LIMIT + 0.01, '000000');
+      expect(res.status, `attempt ${i + 1} must be the daily refusal, not a PIN one`).toBe(422);
+      const body = await problemOf(res);
+      // MEASURED A1.1: detail figure-free with a trailing period, four numeric extension members at
+      // the top level, and no fifth (`extra` is the probe's body minus the envelope's own keys).
+      expect(body.errorCode).toBe('DAILY_LIMIT_EXCEEDED');
+      expect(body.detail).toBe('Daily transfer limit exceeded.');
+      expect(body.limit).toBe(5000);
+      expect(body.used).toBe(0);
+      expect(body.requested).toBe(5000.01);
+      // MEASURED "2026-09-08T00:00:00Z" — ZERO fractional digits, which neither `apiInstant()` nor
+      // `apiOffsetInstant()` emits. Asserted as a shape plus a bound, because the day is today's.
+      expect(body.resetsAt).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00Z$/);
+      expect(Date.parse(body.resetsAt ?? '')).toBeGreaterThan(Date.now());
+      expect(body.available).toBeUndefined();
+    }
+
+    expect(mockState.pinAttempts).toBe(0);
+    expect(mockState.pinLockedUntil).toBeNull();
+    expect(mockState.stepUpAuthorizations.size).toBe(0);
+
+    // A1.4: an under-limit mint with the correct PIN still works, so the rung refuses a request and
+    // not the endpoint.
+    expect((await mintFor(100)).status).toBe(201);
+  });
+
+  it('A2 — the bound is INCLUSIVE: one cent over refuses, exactly the limit mints', async () => {
+    /*
+      MEASURED A2.3/A2.4 at the shipped ceiling: used 4,000 + 1,000.01 refuses
+      (`{"used": 4000.0, "requested": 1000.01}`), and 4,000 + 1,000 — exactly 5,000 — mints. Driven
+      here by lowering the ceiling rather than by moving 5,000 of mock money.
+
+      CENTS, not euros: 100 - 20.01 in IEEE-754 is 79.99000000000001, and this comparison decides a
+      201.
+    */
+    seedMockSession();
+    mockState.dailyTransferLimit = 100;
+    await moveExternally(80);
+
+    const over = await mintFor(20.01);
+    expect(over.status).toBe(422);
+    const body = await problemOf(over);
+    expect(body.errorCode).toBe('DAILY_LIMIT_EXCEEDED');
+    expect(body.limit).toBe(100);
+    expect(body.used).toBe(80);
+    expect(body.requested).toBe(20.01);
+
+    expect((await mintFor(20)).status).toBe(201);
+  });
+
+  it('the day is summed in CENTS: a ledger whose euro sum overshoots still mints to the cent', async () => {
+    /*
+      THE TRIPWIRE FOR `dailyExternalOutflowCents`'s name. A2 above says "cents, not euros" in its
+      docblock and does not actually prove it: 80 + 20.01 and 8000 + 2001 refuse alike, and 80 + 20
+      mints alike, because those numbers survive a float sum intact. Written after the review asked
+      what would go red if the helper summed euros — and nothing would have.
+
+      This is the ledger that separates them, computed rather than guessed (node, this tree):
+
+        8.21 + 90         = 98.210000000000007958   <- the REDUCE is where the error enters
+        that + 1.79       = 100.00000000000001421   > 100  -> a euro sum REFUSES
+        821 + 9000 + 179  = 10000                   > 10000 is FALSE -> cents MINTS
+
+      There is no such pair with a single ledger row at this ceiling: the error is accumulated across
+      rows, which is exactly the operation the helper does and the wire cannot see.
+
+      FALSIFIED, and the mutant had to be the whole euro world to bite. Two HALF-mutants stay green,
+      which is why they are named here rather than left for the next person to try:
+      `dailyExternalOutflowCents()` reducing euros and multiplying by 100 at the end renormalises
+      (98.210000000000008 * 100 is exactly 9821), and so does dividing the cents back at the rung
+      (9821 / 100 is 98.209999999999994, and + 1.79 is exactly 100). Only a helper that returns the
+      euro sum AND a rung that compares in euros carries the error into the comparison — with both,
+      the mint below answers 422 instead of 201 and this row plus three of its neighbours go red.
+
+      This is a MOCK-INTERNAL property, not an A-row: the real backend sums in `decimal` and cannot
+      have this bug. It is here because the mock is the thing that could drift.
+    */
+    seedMockSession();
+    mockState.dailyTransferLimit = 100;
+    await moveExternally(8.21);
+    await moveExternally(90);
+
+    // `used` itself is the euro rendering of the cents sum, so it reads exactly 98.21 — not the
+    // 98.210000000000008 a float ledger would carry.
+    const over = await mintFor(1.8);
+    expect(over.status).toBe(422);
+    expect((await problemOf(over)).used).toBe(98.21);
+
+    // And the cent that decides it: exactly at the ceiling, so exactly 201.
+    expect((await mintFor(1.79)).status).toBe(201);
+  });
+
+  it('A3 — the mint does not reserve, so `used` is a LEDGER SUM and not a counter of mints', async () => {
+    /*
+      MEASURED A3.1-A3.4: two authorisations of 1,000 were minted at used 4,000 and BOTH answered
+      201; spending A took used to 5,000 and spending B answered 422
+      (`{"used": 5000.0, "requested": 1000}`) with authorisation B left Pending; the same key sent
+      again answered 422 again, carried no `Idempotency-Replayed`, and left NO IdempotencyRecords row
+      (the sender's seven rows were exactly the seven 201 money POSTs).
+
+      A counter of MINTS would have refused the second mint. That is the whole reason the helper sums
+      `mockState.transactions` — ADR-0050's Consequences names it a ledger sum for this reason.
+    */
+    seedMockSession();
+    mockState.dailyTransferLimit = 100;
+    await moveExternally(80);
+
+    const idA = await mintedIdFor(20);
+    const idB = await mintedIdFor(20);
+
+    expect((await spend(idA, 20)).status).toBe(201);
+
+    const key = crypto.randomUUID();
+    const refused = await spend(idB, 20, key);
+    expect(refused.status).toBe(422);
+    const body = await problemOf(refused);
+    expect(body.errorCode).toBe('DAILY_LIMIT_EXCEEDED');
+    expect(body.used).toBe(100);
+    expect(body.requested).toBe(20);
+
+    // The three properties the rung's POSITION buys, asserted rather than assumed: the authorisation
+    // is untouched (the rung is above `spendAuthorization`) and the key left no row (the rung is
+    // above `mockState.idempotency.set`, which is on the 201 path only).
+    expect(mockState.stepUpAuthorizations.get(idB)?.consumed).toBe(false);
+    expect(mockState.idempotency.has(`transfer|${key}`)).toBe(false);
+
+    // A3.4: the SAME key again is re-executed, not replayed.
+    const again = await spend(idB, 20, key);
+    expect(again.status).toBe(422);
+    expect(again.headers.get('Idempotency-Replayed')).toBeNull();
+    expect((await problemOf(again)).errorCode).toBe('DAILY_LIMIT_EXCEEDED');
+  });
+
+  it('A4 — daily BEFORE balance on the transfer path, when both bounds are violated', async () => {
+    /*
+      MEASURED A4, the 14:46:26Z re-run: used 4,900, balance 300, spend 400 -> 422
+      DAILY_LIMIT_EXCEEDED with `{"limit": 5000, "used": 4900.0, "requested": 400,
+      "resetsAt": "2026-09-08T00:00:00Z"}` — NOT INSUFFICIENT_FUNDS. Cite that block and not the
+      14:17Z A4 rows: A4.3 is a MINT, which reads no balance, and A4.4 is a transfer whose day was
+      intact, so neither shows the order.
+
+      Same shape here at a lower ceiling: two authorisations minted while the day still had room, one
+      spent, then the balance dropped under the second.
+    */
+    seedMockSession();
+    mockState.dailyTransferLimit = 100;
+    await moveExternally(60);
+
+    const idC = await mintedIdFor(20);
+    const idD = await mintedIdFor(30);
+    expect((await spend(idC, 20)).status).toBe(201);
+
+    // The transcript's `withdraw 700`, done directly: what matters is that the balance is short when
+    // the daily rung is also violated.
+    mockState.accounts[0].balance = 10;
+
+    const res = await spend(idD, 30);
+    expect(res.status).toBe(422);
+    const body = await problemOf(res);
+    expect(body.errorCode).toBe('DAILY_LIMIT_EXCEEDED');
+    expect(body.used).toBe(80);
+    expect(body.requested).toBe(30);
+    // The refusal carries NO `available`, so a daily refusal says nothing about the balance — a
+    // message mixing the two bounds would be inventing a figure.
+    expect(body.available).toBeUndefined();
+  });
+
+  it('A4.4 — with the day intact, the balance rung is untouched and still answers INSUFFICIENT_FUNDS', async () => {
+    /*
+      THE TRIPWIRE THAT THE NEW RUNG DID NOT SWALLOW THE BALANCE REFUSAL. MEASURED A4.4:
+      `422 errorCode=INSUFFICIENT_FUNDS detail="Insufficient funds."
+      extra={"available": 300.0, "requested": 400}`.
+
+      It is also the proof that `requested` is NOT exclusive to DAILY_LIMIT_EXCEEDED, contradicting
+      schema.d.ts:2061's prose — the document under-declares INSUFFICIENT_FUNDS's members, the code
+      is right. Branch on errorCode, never on member presence.
+    */
+    seedMockSession();
+    mockState.accounts[0].balance = 300;
+
+    const id = await mintedIdFor(400);
+    const res = await spend(id, 400);
+    expect(res.status).toBe(422);
+    const body = await problemOf(res);
+    expect(body.errorCode).toBe('INSUFFICIENT_FUNDS');
+    expect(body.detail).toBe('Insufficient funds.');
+    expect(body.available).toBe(300);
+    expect(body.requested).toBe(400);
+    expect(body.limit).toBeUndefined();
+    expect(body.used).toBeUndefined();
+  });
+
+  it('A5 — with the day exhausted, the excluded rails still pass', async () => {
+    /*
+      MEASURED A5: internal 100 -> 201, withdraw 100 -> 201, deposit 100 -> 201, all with the day
+      exhausted. D2 excludes internal transfers, withdrawals, deposits and TransferIn, each exclusion
+      argued in the ADR — so there is no rung to omit on those handlers, and the helper's predicate
+      (`recipientAzureTag !== null`) is the record. This test is that record's tripwire.
+    */
+    seedMockSession();
+    mockState.dailyTransferLimit = 100;
+    await moveExternally(100);
+
+    // The day really is exhausted — otherwise the three 201s below would prove nothing.
+    expect((await mintFor(0.01)).status).toBe(422);
+
+    const internalMove = await internal(crypto.randomUUID(), {
+      fromAccountId: acct(),
+      toAccountId: acct2(),
+      amount: 10,
+      pin: MOCK_PIN,
+    });
+    expect(internalMove.status).toBe(201);
+
+    const withdrawn = await fetch('/api/transactions/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ accountId: acct(), amount: 10, pin: MOCK_PIN }),
+    });
+    expect(withdrawn.status).toBe(201);
+
+    const deposited = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ accountId: acct(), amount: 10 }),
+    });
+    expect(deposited.status).toBe(201);
+  });
+
+  it('A6 — a drained-then-CLOSED account still spends the day it used', async () => {
+    /*
+      MEASURED A6: transfer 4,600 from a spare, DELETE the drained spare, then a mint of 500 from the
+      primary answered 422 with `{"used": 4600.0}` and a mint of 400 — exactly 5,000 — answered 201.
+
+      THE ASSERTION THAT THE HELPER DID NOT GO THROUGH `visibleTransactions()`. That accessor is the
+      natural one and the wrong one: it filters by the live account set while `deleteAccount`
+      hard-removes the account row, so a sum built on it would hand the day's headroom back by
+      closing an account. D3 says the real query calls `IgnoreQueryFilters()` for exactly that reason.
+    */
+    seedMockSession();
+    mockState.dailyTransferLimit = 100;
+
+    const created = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Daily Limit Spare', type: 'Savings' }),
+    });
+    expect(created.status).toBe(201);
+    const spare = ((await created.json()) as { data: { id: string } }).data.id;
+
+    const funded = await fetch('/api/transactions/deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ accountId: spare, amount: 90 }),
+    });
+    expect(funded.status).toBe(201);
+    await moveExternally(90, spare);
+
+    const closureMint = await fetch(`/api/accounts/${spare}/deletion-authorizations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: MOCK_PIN }),
+    });
+    expect(closureMint.status).toBe(201);
+    const closureId = ((await closureMint.json()) as { data: { authorizationId: string } }).data
+      .authorizationId;
+    const closed = await fetch(`/api/accounts/${spare}`, {
+      method: 'DELETE',
+      headers: { 'Step-Up-Authorization': closureId },
+    });
+    expect(closed.status).toBe(200);
+    expect(mockState.accounts.some((a) => a.id === spare)).toBe(false);
+
+    // The account row is gone; its outflow is not.
+    const over = await mintFor(11);
+    expect(over.status).toBe(422);
+    expect((await problemOf(over)).used).toBe(90);
+    expect((await mintFor(10)).status).toBe(201);
+  });
+
+  it('A7 — a refusal writes no ledger row, and the day does not move', async () => {
+    /*
+      MEASURED A7 for the sender: "external TransferOut today: 3 5000.0000" — three rows for three
+      201s, and no row for either refusal. The AUDIT half is not modelled (see the docblock); the
+      backend's record is `ATransferRefusedForDailyLimit_WritesNoRow_AndThatIsTheDecision`.
+    */
+    seedMockSession();
+    mockState.dailyTransferLimit = 100;
+    await moveExternally(60);
+
+    const idD = await mintedIdFor(30);
+    const idC = await mintedIdFor(20);
+    expect((await spend(idC, 20)).status).toBe(201);
+
+    const rowsBefore = mockState.transactions.length;
+
+    expect((await mintFor(30)).status).toBe(422);
+    expect((await spend(idD, 30)).status).toBe(422);
+
+    expect(mockState.transactions.length).toBe(rowsBefore);
+    // And the day's sum itself has not moved — read back through the wire rather than recomputed
+    // here, so this cannot pass by duplicating the helper's own arithmetic.
+    expect((await problemOf(await mintFor(30))).used).toBe(80);
   });
 });
