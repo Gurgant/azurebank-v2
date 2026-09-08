@@ -244,6 +244,7 @@ public static class NotifyCommand
             */
             await NoticeClaim.ClaimAsync(context, runner, now, leaseEnd, VerbBatch, cancellationToken);
             var leased = await NoticeClaim.HeldByOthersAsync(context, runner, now, cancellationToken);
+            var holders = await NoticeClaim.HolderKindsOtherThanAsync(context, runner, now, cancellationToken);
             var waiting = await NoticeClaim.HeldBy(context, runner, now).ToListAsync(cancellationToken);
 
             if (waiting.Count == 0)
@@ -258,8 +259,19 @@ public static class NotifyCommand
                     : new[]
                     {
                         $"NOTHING TO NOTIFY: {leased} owed notice(s) are leased by a live runner and none is free.",
-                        "  The API's relay is delivering them. If it is not running, its leases lapse within",
-                        "  minutes and a later run of this verb takes them.",
+                        /*
+                          NAMED, NOT GUESSED (ADR-0051 D7). This line used to say "The API's relay is
+                          delivering them" — true while the API was the only runner, and a guess from
+                          the moment the Function shipped, because HeldByOthersAsync counts rows and
+                          does not say who holds them. The holder's kind is the head of the name in
+                          LeasedBy, which is what that prefix exists for, so it is read here.
+                          An unrecognised name is dropped rather than echoed, which is why this
+                          sentence still has to work with nothing to name.
+                        */
+                        holders.Count == 0
+                            ? "  A live relay runner is delivering them. If it is not running, its leases lapse"
+                            : $"  A live {string.Join(" and ", holders.Select(k => $"`{k}`"))} runner is delivering them. If it is not running, its leases lapse",
+                        "  within minutes and a later run of this verb takes them.",
                     });
             }
 

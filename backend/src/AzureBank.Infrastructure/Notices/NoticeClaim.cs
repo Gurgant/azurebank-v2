@@ -178,4 +178,40 @@ public static class NoticeClaim
         context.SubscriberNotices.CountAsync(
             n => n.DeliveredAt == null && n.LeasedUntil != null && n.LeasedUntil > now && n.LeasedBy != runner,
             cancellationToken);
+
+    /// <summary>
+    /// The distinct KINDS of runner holding owed rows under a live lease right now, other than this
+    /// one — <see cref="ApiKind"/>, <see cref="VerbKind"/>, <see cref="FunctionKind"/> — in the order
+    /// they are declared, so the answer reads the same twice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THIS IS WHAT THE KIND PREFIX IS FOR. <see cref="HeldByOthersAsync"/> answers "how many" and
+    /// the verb used to guess the rest, telling an operator that "the API's relay is delivering
+    /// them" whichever runner actually held the rows — true while the API was the only one, and a
+    /// guess the moment the Function shipped (ADR-0051 D7). The name is already in the column; this
+    /// reads it rather than assuming it.
+    /// </para>
+    /// <para>
+    /// A name whose head is none of the three is DROPPED rather than reported raw: <c>LeasedBy</c>
+    /// is written by this protocol, but a hand-edited row could carry anything, and an operator
+    /// message is the wrong place to echo an unvalidated string back at somebody. Dropping it leaves
+    /// the caller with an empty list, which its own wording must survive — and the count from
+    /// <see cref="HeldByOthersAsync"/> is unaffected, so nothing goes missing from the tally.
+    /// </para>
+    /// </remarks>
+    public static async Task<IReadOnlyList<string>> HolderKindsOtherThanAsync(
+        AzureBankDbContext context, string runner, DateTime now, CancellationToken cancellationToken)
+    {
+        var names = await context.SubscriberNotices
+            .Where(n => n.DeliveredAt == null && n.LeasedUntil != null && n.LeasedUntil > now && n.LeasedBy != runner)
+            .Select(n => n.LeasedBy!)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        string[] known = [ApiKind, VerbKind, FunctionKind];
+        return known
+            .Where(kind => names.Any(name => name.StartsWith(kind + "/", StringComparison.Ordinal)))
+            .ToList();
+    }
 }

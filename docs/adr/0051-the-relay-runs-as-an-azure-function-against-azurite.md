@@ -170,9 +170,18 @@ a minute. So the "two runs" were one configuration measured twice, and `Schedule
 construction rather than by any fault of the isolated worker. `useMonitor` was removed from
 `host.json` — correctly, since it does nothing — but for a reason that did not hold.
 
-What settles it now is D2's `UseMonitor = false` on the trigger: with the monitor pinned off at
-every cadence, `ScheduleStatus` is never populated by design, and the host measuring its own ticks is
-the consequence of a decision rather than a workaround for a surprise. With that tick memory the same
+What settles it now is D2's `UseMonitor = false` on the trigger — and that was measured too, on a
+ONCE-A-MINUTE schedule where the cadence leaves the flag alone so the attribute is the only variable:
+
+```
+A  UseMonitor = false (as shipped)   metadata useMonitor=False    ScheduleStatus null on both ticks
+B  the argument removed              metadata useMonitor absent   ScheduleStatus NON-NULL on both
+```
+
+So the attribute decides it; `ScheduleStatus` is never populated by design; and run B is also the
+independent confirmation of the finding above, because a populated status IS the ScheduleMonitor
+being attached at a schedule of a minute or more. The host measuring its own ticks is the consequence
+of a decision rather than a workaround for a surprise. With that tick memory the same
 configuration warns on the second and third ticks and reports **20s** — and it reports 20 rather than
 19 only since the number stopped being a cast: `(int)gap.TotalSeconds` truncated a 19.6-second gap to
 19, so part of the "19s then 20s" first recorded here was the truncation and not the schedule. The

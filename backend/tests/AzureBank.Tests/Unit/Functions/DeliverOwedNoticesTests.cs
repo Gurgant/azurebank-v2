@@ -172,9 +172,12 @@ public sealed class DeliverOwedNoticesTests : IDisposable
           validates LeaseSeconds >= 2 * PeriodSeconds at start and refuses to start; the Function's
           cadence is a trigger expression, not an integer the options carry, so there is no number to
           compare at start. The host measures the gap between its own ticks instead
-          (NoticeRelayHostState.ObserveTick) — NOT TimerInfo.ScheduleStatus, which the trigger's
-          UseMonitor = false guarantees is never populated. The cost is a running host that is
-          misconfigured rather than one that refused to start.
+          (NoticeRelayHostState.ObserveTick) — NOT TimerInfo.ScheduleStatus, which is never populated
+          because the trigger pins UseMonitor = false. MEASURED, not reasoned, on a once-a-minute
+          schedule so the cadence could not clear the flag and the attribute was the only variable:
+          with UseMonitor = false, ScheduleStatus was null on both ticks; with the argument removed,
+          non-null on both. The cost is a running host that is misconfigured rather than one that
+          refused to start.
         */
         var owner = await OwnerAsync();
         await OwedAsync(owner);

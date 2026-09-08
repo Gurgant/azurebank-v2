@@ -546,19 +546,60 @@ public sealed class NoticeRelayServiceTests : IDisposable
             "the kind is the head of a slash-separated name, so it cannot carry a slash of its own");
     }
 
-    [Fact]
-    public async Task TheVerbLeavesARowALiveRunnerHolds_AndSaysSo()
+    [Theory]
+    [InlineData("api/HOST/1/abcdef12", "`api`")]
+    [InlineData("func/HOST/1/abcdef12", "`func`")]
+    [InlineData("verb/HOST/1/abcdef12", "`verb`")]
+    public async Task TheVerbLeavesARowALiveRunnerHolds_AndNAMESIt(string heldBy, string named)
     {
+        /*
+          NAMED, NOT GUESSED. This line said "The API's relay is delivering them" until ADR-0051,
+          which was true while the API was the only runner and a guess the moment the Function
+          shipped: HeldByOthersAsync counts rows and does not say who holds them. The kind prefix in
+          LeasedBy is what D7 exists for, and the operator reading this under pressure needs to know
+          WHICH process to go and look at.
+
+          Three rows rather than one, because a message that named the holder correctly for `api`
+          and wrongly for `func` is exactly the defect being fixed.
+        */
         var owner = await OwnerAsync();
-        var notice = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: "api/HOST/1/abcdef12");
+        var notice = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: heldBy);
         await using var provider = Provider();
 
         var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+        var printed = string.Join("\n", lines);
 
         exitCode.Should().Be(VerifyCommand.NothingToVerify, "nothing was FREE for this run; not a success and not a failure");
-        string.Join("\n", lines).Should().Contain("leased by a live runner");
-        _transport.Envelopes.Should().BeEmpty("the verb must not render what the relay is delivering");
+        printed.Should().Contain("leased by a live runner");
+        printed.Should().Contain($"A live {named} runner is delivering them",
+            "the holder is in the column; printing a guess instead is what ADR-0051 D7's prefix exists to prevent");
+        printed.Should().NotContain("The API's relay",
+            "the sentence that named one runner for all of them must not come back");
+        printed.Should().Contain("leases lapse",
+            "the operator still needs to know that waiting is a remedy");
+        _transport.Envelopes.Should().BeEmpty("the verb must not render what a live runner is delivering");
         (await StoredAsync(notice.Id)).DeliveredAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AHolderWhoseNameIsNotOneOfTheThreeKinds_IsNotEchoedBackAtTheOperator()
+    {
+        /*
+          LeasedBy is written by this protocol, so a name outside the three kinds means somebody
+          edited the row. An operator message is the wrong place to echo an unvalidated string, and
+          the count is unaffected — so the sentence has to work with nothing to name, and this is the
+          row that proves it does.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: "'; DROP TABLE --/x/1/abcdef12");
+        await using var provider = Provider();
+
+        var (_, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+        var printed = string.Join("\n", lines);
+
+        printed.Should().Contain("A live relay runner is delivering them", "the fallback wording carries the same guidance");
+        printed.Should().NotContain("DROP TABLE");
+        printed.Should().Contain("leased by a live runner", "the COUNT is still right; only the name was unusable");
     }
 
     [Fact]

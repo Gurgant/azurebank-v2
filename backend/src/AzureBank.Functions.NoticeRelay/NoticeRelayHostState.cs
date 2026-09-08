@@ -66,12 +66,18 @@ public sealed class NoticeRelayHostState
     /// <c>TimerInfo.ScheduleStatus</c> reports <c>Last</c> and <c>Next</c> and would give the
     /// interval for free — but it is populated only when the ScheduleMonitor is attached, and the
     /// trigger pins <c>UseMonitor = false</c> so that a restart cannot sweep a past-due tick
-    /// immediately (see <c>DeliverOwedNotices</c>). Observed null across six consecutive live ticks
-    /// on 2026-09-08, every one with a lease short enough that a warning was due and none produced.
-    /// ⚠️ That run could not tell the two causes apart: its 20-second cadence fires three times a
-    /// minute, which clears <c>UseMonitor</c> on its own. The attribute is what settles it now. A
-    /// guard that has never refused is a wish, so the interval is taken from this host's own clock
-    /// rather than from a field this host has decided not to have filled.
+    /// immediately (see <c>DeliverOwedNotices</c>).
+    /// </para>
+    /// <para>
+    /// THAT IS OBSERVED, AND THE FIRST ATTEMPT TO OBSERVE IT PROVED NOTHING. Six consecutive live
+    /// ticks on 2026-09-08 showed a null status, but at a 20-second cadence — three fires a minute,
+    /// which clears <c>UseMonitor</c> on its own — so the attribute was not the variable and the run
+    /// could not tell the two causes apart. Re-run the same day on a ONCE-A-MINUTE schedule, where
+    /// the cadence leaves the flag alone and the attribute is the only thing that moves:
+    /// with <c>UseMonitor = false</c> the status was null on both ticks; with the argument removed
+    /// it was NON-null on both. So the attribute decides it, the monitor really does attach at a
+    /// schedule of a minute or more, and this host's own clock is the interval's source by decision
+    /// rather than by accident.
     /// </para>
     /// <para>
     /// The gap between two ticks is not the SCHEDULE — a slow sweep, a paused debugger or a machine
