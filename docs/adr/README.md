@@ -229,6 +229,7 @@ The next free number is **0051**.
 | [ADR-0048](0048-the-api-is-the-runner-that-delivers-owed-notices.md) | The API is the runner that delivers owed notices | Accepted | 2026-09-04 |
 | [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) | Closing an account is authorised like a transfer | Accepted | 2026-09-06 |
 | [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) | A UTC day bounds a user's external transfers, and the mint says so before the PIN | Accepted | 2026-09-07 |
+| [ADR-0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) | The relay runs as an Azure Function, rehearsed locally against Azurite | Accepted | 2026-09-08 |
 
 </details>
 ## Creating a New ADR

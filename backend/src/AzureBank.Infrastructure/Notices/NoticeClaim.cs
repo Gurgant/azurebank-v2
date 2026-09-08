@@ -44,6 +44,23 @@ public static class NoticeClaim
     /// <summary>The width of <c>SubscriberNotices.LeasedBy</c>.</summary>
     public const int NameWidth = 64;
 
+    /// <summary>
+    /// The KIND prefix of a runner name — the head of what lands in <c>LeasedBy</c>, and the only
+    /// part of it a person reads to know which runner holds a row.
+    /// </summary>
+    /// <remarks>
+    /// Constants rather than three string literals in three projects, because the prefix is a
+    /// namespace: two kinds that shared one would make every log line and every held-by-another
+    /// count ambiguous, and nothing would fail. ADR-0051 names all three.
+    /// </remarks>
+    public const string ApiKind = "api";
+
+    /// <inheritdoc cref="ApiKind"/>
+    public const string VerbKind = "verb";
+
+    /// <inheritdoc cref="ApiKind"/>
+    public const string FunctionKind = "func";
+
     /// <summary><c>{kind}/{host}/{pid}/{8 hex}</c>, at most <see cref="NameWidth"/> characters.</summary>
     public static string RunnerNameFor(string kind, string host, int processId, Guid id)
     {

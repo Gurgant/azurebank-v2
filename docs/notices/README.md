@@ -39,3 +39,44 @@ migration: enrol a PIN through the API, then
 
 The directory must exist and must be outside any git repository; the verb refuses one inside a
 working tree. Delete the directory afterwards — it holds addresses in clear.
+
+## Or from the Function, which is the third runner (ADR-0051)
+
+The same file, written by `AzureBank.Functions.NoticeRelay` instead of by the verb or by the API's
+loop. It needs the Azure Functions Core Tools and Azurite — the Functions HOST wants a storage
+account for its timer's schedule state and its own singleton lease, which is the whole of what
+Azurite is doing here; no queue carries a notice, because the row is the obligation (ADR-0048).
+
+Once, to install:
+
+    winget install --id Microsoft.Azure.FunctionsCoreTools
+    npm install -g azurite
+
+Then, from the repository root:
+
+    azurite --silent --location %TEMP%\azurite-azurebank
+
+    copy backend\src\AzureBank.Functions.NoticeRelay\local.settings.sample.json ^
+         backend\src\AzureBank.Functions.NoticeRelay\local.settings.json
+    (edit ConnectionStrings:DefaultConnection and Notices:PickupDirectory)
+
+    cd backend\src\AzureBank.Functions.NoticeRelay
+    func start
+
+`local.settings.json` is gitignored: it is this host's connection string and pickup directory, the
+Function's equivalent of the API's user-secrets. The pickup directory must EXIST and must be outside
+any git repository — the Function refuses to start otherwise, with a message naming the key, which
+is the same rule the verb and the API apply and now the same code.
+
+**Run one runner at a time.** `Notices:Runner` names which: `Api`, `Function`, or `None`. Both hosts
+step aside unless the flag names them, so a configuration naming neither delivers nothing — an owed
+notice waits, and that is the failure worth having. The API prints which it is at Information on
+every start:
+
+    Notice relay: runner is Function; this process delivers nothing (Notices:Runner)
+
+and the Function prints one line per sweep, naming itself:
+
+    Notice relay: sweep as func/HOST/1234/9a0b6432 claimed 15, delivered 15, left 0 owed, into …
+
+Delete the pickup directory afterwards — it holds addresses in clear, whichever runner filled it.

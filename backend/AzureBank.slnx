@@ -6,6 +6,7 @@
   <Folder Name="/src/">
     <Project Path="src/AzureBank.Api/AzureBank.Api.csproj" />
     <Project Path="src/AzureBank.Bff/AzureBank.Bff.csproj" />
+    <Project Path="src/AzureBank.Functions.NoticeRelay/AzureBank.Functions.NoticeRelay.csproj" />
     <Project Path="src/AzureBank.Infrastructure/AzureBank.Infrastructure.csproj" />
     <Project Path="src/AzureBank.Shared/AzureBank.Shared.csproj" />
   </Folder>

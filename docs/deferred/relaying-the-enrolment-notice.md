@@ -103,3 +103,28 @@ Azurite (`func start`), so the deployment shape is rehearsed without a deploymen
 flag names which runner is live, so the two never both send. The preconditions above are unchanged:
 a provider credential, addresses the project may write to, a second contact and a remedy behind it
 are still what "delivered" needs before it can mean anything.
+
+## The Function landed, 2026-09-08 — ADR-0051
+
+The paragraph above is now past tense in its middle clause and unchanged at both ends.
+`AzureBank.Functions.NoticeRelay` is a timer-triggered isolated-worker Function that runs the same
+`NoticeSweep` the API runs — the sweep moved into Infrastructure so there is one of it, not two —
+selected by `Notices:Runner=Function`, developed and exercised locally with `func start` against
+Azurite. Measured on 2026-09-08: with the API stepping aside, one tick claimed 15 owed rows,
+delivered 15 files and left 0 owed, under the runner name `func/GURGANT/41396/920b6432`.
+
+**What the rehearsal is worth, stated so nobody has to guess.** It exercises the SHAPE of a
+deployment — a second deployable, its own configuration surface and lifetime, a trigger, a host that
+elects a singleton in blob storage — on one machine, started by hand, against a storage emulator.
+It says nothing about availability, scaling, cold start under load, managed identity or a
+consumption plan, and ADR-0051 says so in those words.
+
+**Nothing above is closed by it.** The last hop is still a file on this machine that nobody has
+seen; the account still holds one self-asserted, never-validated address where §4.6 asks for at
+least two; no endpoint changes it; no PIN reset stands behind the contact. A relay pointed at the
+seeded store would still mail strangers. The Function delivers the same file, on a schedule, from a
+different process — which is a rehearsal of a deployment, not a delivery.
+
+The one thing it did close is smaller and worth recording: the four `Notices` configuration rules
+were written for the API alone, so a pickup directory INSIDE a git repository was accepted whenever
+the flag named anything else. Both hosts share them now.

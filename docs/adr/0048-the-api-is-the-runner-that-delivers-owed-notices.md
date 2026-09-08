@@ -43,6 +43,14 @@ that notices stay owed. That flag, not the lease, is what keeps two KINDS of run
 sending; two hosts of this API with the flag set both run the loop, and the lease keeps them off
 each other's rows.
 
+_Noted 2026-09-08 (ADR-0051, the Function runner): **the Warning is gone, and the sentence that
+justified it was the thing that expired.** This paragraph said the API logs "at Warning for
+`Function`, which nothing implements yet, so an operator who set it is told that notices stay owed".
+`AzureBank.Functions.NoticeRelay` is that runner now, so `Notices:Runner=Function` is a correct
+configuration in which the API is simply not the one delivering — the same fact `None` states, and
+at the same level. A Warning for a correct configuration teaches an operator to ignore warnings.
+The test pins both halves: the level, and that the old claim does not survive the level change._
+
 **D2 — The claim is a lease on the row, taken in one statement, and shared.** Two nullable
 columns, `LeasedUntil` and `LeasedBy`, paired by `CK_SubscriberNotices_Lease` the way the delivery
 pair already is. A claim stamps up to `Notices:BatchSize` of the oldest owed rows whose lease is
@@ -64,6 +72,13 @@ has not reached are free to the next claim, and the lease is validated to be at 
 period so that is the exception, not the rule. The clocks compared are the runners' own: two hosts
 skewed by more than a lease would each see the other's live lease as lapsed, so a lease must exceed
 the period plus the skew a deployment tolerates.
+
+_Noted 2026-09-08 (ADR-0051): **the SWEEP joined the protocol in Infrastructure, and the API's own
+tests are the evidence it only moved.** This paragraph shares `NoticeClaim`; D4 shares the per-row
+unit; the sweep between them — renew, read holdings, capacity, claim, re-read, the per-row lease
+check, the outcome arms — was `internal` in `AzureBank.Api` and is `NoticeSweep` in Infrastructure
+now. 56 of the 57 notice tests passed through the extracted sweep with no edit; the single red was
+D1's level change above._
 
 **D3 — At-least-once, and the lease does not make it once.** A runner that hands a message to the
 transport and dies before marking is succeeded when its lease lapses. What happens then depends on
@@ -107,6 +122,18 @@ whatever the runner: an out-of-range value is a misconfiguration even when nothi
 set stops the host, with a message that names the key and the fix, which is the only thing an
 operator sees. Nothing in the section is a secret and none joins the six.
 
+_Noted 2026-09-08 (ADR-0051 D3): **"refused when partial" was true of the API and of nothing else.**
+Every rule this paragraph describes was written `o.Runner != NoticeRunner.Api || …` in the API's
+composition root, so a section naming any OTHER runner was not checked at all: with
+`Notices:Runner=Function`, `main` accepts a missing contact, a pickup directory that does not exist,
+and one INSIDE A GIT REPOSITORY, in silence. Correct while the API was the only host that could
+deliver. The four rules are `ValidateAsRunner(NoticeRunner)` in Infrastructure now, asked by each
+host about itself; a host the flag does not name still starts, because refusing over a directory it
+will never write to would take one runner down for the other's misconfiguration. The lease rule is
+the one the Function cannot check the same way — its cadence is a trigger expression, not an option
+— so it compares the lease against the interval `TimerInfo.ScheduleStatus` reports and warns per
+tick instead (ADR-0051 D5)._
+
 **D7 — Logging, and no `SecurityEvent`.** Information per delivered notice — reference, kind,
 receipt; Warning for an unusable address, an unrenderable kind, a transport failure and a missing
 audit row; Error for a sweep that failed as a whole. No new `SecurityEvents` constant, for
@@ -120,9 +147,23 @@ rehearsed locally against Azurite, selected by the same flag. Building it first 
 second host, a second configuration surface and a queue, before the protocol they would share had
 been proved on the store it runs against.
 
+_Noted 2026-09-08: **taken, in this order, and the order was the point.** ADR-0051 builds it on the
+protocol this ADR proved on SQL Server first, so the Function inherits `NoticeClaim`,
+`NoticeDeliveryRun` and now `NoticeSweep` rather than re-deriving them. It brought no queue and no
+second configuration surface worth the name: one `Notices` section, read by both hosts, with one key
+of its own (`Notices:Schedule`, because a trigger's schedule must be bindable before any code runs)._
+
 **A queue instead of a lease.** A queue would carry a copy of the obligation, and the row is the
 obligation: written in the enrolment's own save so it is never lost and never survives a rollback
 (ADR-0045 D1). A lease on the row keeps that property; a queue would have to be reconciled with it.
+
+_Noted 2026-09-08 (ADR-0051 D2): **this paragraph is what closed the "timer- or queue-triggered"
+question the backlog left open.** A queue TRIGGER needs a producer, and the only honest producer is
+the row, so a queue trigger would be this declined design wearing a trigger. The Function is
+timer-triggered, and what Azurite provides is the HOST's own storage — the timer's schedule state
+and a blob singleton lease that elects one host among instances of one app. That singleton is a
+second one at a different layer; it knows nothing about this relay or the verb and does not replace
+the row lease._
 
 **Claiming row by row under the concurrency token.** Possible, and it is what the verb's mark does;
 but a sweep that claimed N rows in N round trips would spend N chances to interleave with another
@@ -135,6 +176,11 @@ runner is down; it now coexists with the runner (D5) rather than competing with 
 delivery and marking the row. It would close D3's stuck-owed state, and it reverses ADR-0045 D4
 (never overwrite; the row is the truth; the orphan is the operator's to clear) inside a change that
 does not ratify that reversal. Named here so the next relay item can take it deliberately.
+
+_Noted 2026-09-08 (ADR-0051): **not taken.** This was named "so the next relay item can take it
+deliberately", and the next relay item declined it deliberately: ADR-0051 changes which PROCESS
+delivers, and reversing ADR-0045 D4 inside it would have hidden a data-model reversal inside a
+hosting change. The stuck-owed state D3 describes is unchanged and still the runbook's._
 
 ## Consequences
 

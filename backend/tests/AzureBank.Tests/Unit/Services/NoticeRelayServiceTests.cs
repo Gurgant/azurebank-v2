@@ -200,14 +200,23 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(NoticeRunner.None, LogLevel.Information)]
-    [InlineData(NoticeRunner.Function, LogLevel.Warning)]
-    public async Task WhenTheRunnerIsNotThisProcess_TheLoopReturns_AndTouchesNothing(NoticeRunner runner, LogLevel level)
+    [InlineData(NoticeRunner.None)]
+    [InlineData(NoticeRunner.Function)]
+    public async Task WhenTheRunnerIsNotThisProcess_TheLoopReturns_AndTouchesNothing(NoticeRunner runner)
     {
         /*
           The flag is the seam that keeps two KINDS of runner from both sending, so every value that
-          is not Api must step aside — Function loudly, because nothing implements it yet and an
-          operator who set it believes something is delivering.
+          is not Api must step aside.
+
+          BOTH AT INFORMATION SINCE ADR-0051, and `Function` is the row that moved. It used to be a
+          WARNING, because the value named a runner nothing implemented and an operator who set it
+          believed something was delivering. `AzureBank.Functions.NoticeRelay` is that runner, so the
+          warning's premise is gone: `Runner=Function` is now a correct configuration in which this
+          process is simply not the one delivering — the same fact `None` states, and a Warning for a
+          correct configuration is the kind of line that teaches an operator to ignore warnings.
+
+          The message is asserted NOT to carry the old claim, because a level can be changed while
+          the sentence that justified it survives.
         */
         var owner = await OwnerAsync();
         var notice = await OwedAsync(owner);
@@ -222,7 +231,17 @@ public sealed class NoticeRelayServiceTests : IDisposable
         var stored = await StoredAsync(notice.Id);
         stored.DeliveredAt.Should().BeNull();
         stored.LeasedBy.Should().BeNull("nothing was claimed");
-        _logs.Lines.Should().Contain(l => l.Level == level && l.Message.Contains("delivers nothing") && l.Message.Contains(runner.ToString()));
+        _logs.Lines.Should().Contain(
+            l => l.Level == LogLevel.Information
+                 && l.Message.Contains("delivers nothing")
+                 && l.Message.Contains(runner.ToString()));
+        _logs.Lines.Should().NotContain(
+            l => l.Level == LogLevel.Warning,
+            "stepping aside is not a fault: since ADR-0051 every runner value this process is not "
+            + "names a runner that exists, so there is nothing to warn about");
+        _logs.Lines.Should().NotContain(
+            l => l.Message.Contains("nothing in this repository implements"),
+            "the sentence that justified the old Warning is false now that the Function ships");
         await relay.StopAsync(CancellationToken.None);
     }
 
@@ -501,6 +520,30 @@ public sealed class NoticeRelayServiceTests : IDisposable
         name.Length.Should().BeLessThanOrEqualTo(NoticeClaim.NameWidth);
         name.Should().EndWith($"/32384/{id.ToString("N")[..8]}", "the disambiguating suffix survives; the host is what gets cut");
         name.Should().StartWith("api/");
+    }
+
+    [Fact]
+    public void TheThreeRunnerKinds_AreTheLITERALSTHATLANDINLeasedBy()
+    {
+        /*
+          The constants exist so three projects stop writing three string literals (ADR-0051), and
+          this test exists because a constant makes its VALUE invisible. `LeasedBy` is read by a
+          person during an incident and matched by `HeldByOthersAsync`; renaming `FunctionKind`
+          from "func" to something else would change what a running deployment writes while every
+          test that compares two constants stayed green.
+
+          They must also be DISTINCT: two kinds sharing a prefix would make every log line and
+          every held-by-another count ambiguous, and nothing would fail.
+        */
+        NoticeClaim.ApiKind.Should().Be("api");
+        NoticeClaim.VerbKind.Should().Be("verb");
+        NoticeClaim.FunctionKind.Should().Be("func");
+
+        var kinds = new[] { NoticeClaim.ApiKind, NoticeClaim.VerbKind, NoticeClaim.FunctionKind };
+        kinds.Should().OnlyHaveUniqueItems();
+        kinds.Should().OnlyContain(
+            k => k.Length > 0 && !k.Contains('/'),
+            "the kind is the head of a slash-separated name, so it cannot carry a slash of its own");
     }
 
     [Fact]

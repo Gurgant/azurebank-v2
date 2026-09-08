@@ -232,7 +232,7 @@ public static class NotifyCommand
             var now = clock.GetUtcNow().UtcDateTime;
             var leaseEnd = now.Add(VerbLease);
             var runner = NoticeClaim.RunnerNameFor(
-                "verb", Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
+                NoticeClaim.VerbKind, Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
 
             /*
               THE VERB CLAIMS TOO (ADR-0048). A row a live runner holds is not this run's: rendering it
