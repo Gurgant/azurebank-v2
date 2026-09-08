@@ -240,14 +240,17 @@ public static class ServiceCollectionExtensions
           is mandatory content of every notice (NIST SP 800-63B-4 §4.6). Nothing here is a secret.
         */
         /*
-          THE FOUR RULES ARE NOT HERE ANY MORE, and that is ADR-0051 D3. They used to be written out
-          in this method, each guarded by `o.Runner != NoticeRunner.Api ||` — which meant that with
-          `Notices:Runner=Function` this API accepted a missing contact, a pickup directory that did
-          not exist, and one INSIDE A GIT REPOSITORY, in silence. Correct while nothing else could
-          deliver; an omission the moment the Function could. They are `ValidateAsRunner` in
-          Infrastructure now, asked here about THIS process, and asked by the Function about its own.
-          The alternative, a hand-written mirror, is the one this repository has already measured
-          failing: see AddVerifierServices' comment on `Audit:AnchorKey`.
+          THREE OF THE FOUR RULES ARE NOT HERE ANY MORE, and that is ADR-0051 D3. All four used to be
+          written out in this method, each guarded by `o.Runner != NoticeRunner.Api ||` — which meant
+          that with `Notices:Runner=Function` this API accepted a missing contact, a pickup directory
+          that did not exist, and one INSIDE A GIT REPOSITORY, in silence. Correct while nothing else
+          could deliver; an omission the moment the Function could. Those three are
+          `ValidateAsRunner` in Infrastructure now, asked here about THIS process and by the Function
+          about its own. The alternative, a hand-written mirror, is the one this repository has
+          already measured failing: see AddVerifierServices' comment on `Audit:AnchorKey`.
+
+          THE FOURTH STAYS, one line below, because it is not universal: `LeaseSeconds` against
+          `PeriodSeconds` is a rule for a host whose cadence IS `PeriodSeconds`. That is this one.
         */
         services.AddOptions<NoticeRelayOptions>()
             .Bind(configuration.GetSection(NoticeRelayOptions.SectionName))

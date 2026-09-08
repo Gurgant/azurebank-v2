@@ -127,12 +127,14 @@ Every rule this paragraph describes was written `o.Runner != NoticeRunner.Api ||
 composition root, so a section naming any OTHER runner was not checked at all: with
 `Notices:Runner=Function`, `main` accepts a missing contact, a pickup directory that does not exist,
 and one INSIDE A GIT REPOSITORY, in silence. Correct while the API was the only host that could
-deliver. The four rules are `ValidateAsRunner(NoticeRunner)` in Infrastructure now, asked by each
-host about itself; a host the flag does not name still starts, because refusing over a directory it
-will never write to would take one runner down for the other's misconfiguration. The lease rule is
-the one the Function cannot check the same way — its cadence is a trigger expression, not an option
-— so it compares the lease against the interval `TimerInfo.ScheduleStatus` reports and warns per
-tick instead (ADR-0051 D5)._
+deliver. THREE of them — the contact, the directory's existence, and the git-tree guard — are
+`ValidateAsRunner(NoticeRunner)` in Infrastructure now, asked by each host about itself; a host the
+flag does not name still starts, because refusing over a directory it will never write to would take
+one runner down for the other's misconfiguration. The FOURTH is not shared: `LeaseSeconds` against
+`PeriodSeconds` belongs to a host whose cadence IS `PeriodSeconds`, which is the API and nothing
+else, so it is `ValidateThePeriodItSleepsFor` and only the API adds it. The Function ticks on a
+trigger expression and never reads `PeriodSeconds`; it compares the lease against the interval
+between its OWN consecutive ticks and warns per tick instead (ADR-0051 D5)._
 
 **D7 — Logging, and no `SecurityEvent`.** Information per delivered notice — reference, kind,
 receipt; Warning for an unusable address, an unrenderable kind, a transport failure and a missing

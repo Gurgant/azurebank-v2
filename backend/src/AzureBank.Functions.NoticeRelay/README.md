@@ -14,8 +14,13 @@ notices, rehearsed locally against Azurite and never deployed
 When a transfer PIN is enrolled or changed, the API records — in the same save as the action — that
 the account holder is **owed a notice** (ADR-0045, ADR-0047). Something then has to render that row
 into a message. Three things can: the operator tool's `notify` verb, a hosted loop inside the API
-(ADR-0048), and this Function (ADR-0051). `Notices:Runner` names which one is live, and the other
-two step aside.
+(ADR-0048), and this Function (ADR-0051).
+
+`Notices:Runner` chooses between the two **hosted** runners — the API's loop and this Function — or
+names neither. It does **not** gate the verb: `notify` is run by a person and delivers whenever they
+run it, including when `Notices:Runner` is `None`. What keeps the verb from colliding with a live
+host is not the flag but the lease: ADR-0048 D5 has it claim rows under its own name and leave alone
+what another runner holds.
 
 **Parent solution**: [AzureBank Backend](../../README.md)
 
@@ -73,7 +78,7 @@ since ADR-0051 the same code.
 | Key | What it does |
 | --- | --- |
 | `ConnectionStrings:DefaultConnection` | The store the notices live in |
-| `Notices:Runner` | `Function` for this host to deliver; `Api` or `None` and it steps aside |
+| `Notices:Runner` | `Function` for this host to deliver; `Api` or `None` and it steps aside. Gates the hosted runners only — never the `notify` verb |
 | `Notices:Schedule` | The trigger's CRON or TimeSpan expression, bound as `%Notices:Schedule%` |
 | `Notices:PickupDirectory` | An existing directory outside any git tree; one `.eml` per notice |
 | `Notices:Contact` | How a recipient repudiates the event — mandatory content of every notice |
@@ -83,6 +88,19 @@ since ADR-0051 the same code.
 `Notices:PeriodSeconds` is **not** read here. It is the API's cadence; this host's is
 `Notices:Schedule`, and the lease is checked against the interval actually observed between ticks
 rather than against a number nothing uses (ADR-0051 D5).
+
+⚠️ **If `Notices:Schedule` is missing the host still starts, and delivers nothing.** The trigger's
+`%setting%` is resolved by the Functions host before any of this project's code runs, so the failure
+is an indexing failure and not a startup refusal. Measured — the three lines to look for are:
+
+```
+'%Notices:Schedule%' does not resolve to a value.
+Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
+Job host started
+```
+
+Nothing is delivered twice and no notice is lost; the rows simply stay owed. But the process is up
+and its exit code is zero, so a reader who does not check the log will see a healthy host.
 
 **No secret lives here.** `AddInfrastructure` registers a DbContext and validates nothing, the
 DbContext has no `SaveChangesInterceptor`, and a delivered notice writes no audit row — so none of

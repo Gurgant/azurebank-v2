@@ -125,6 +125,8 @@ least two; no endpoint changes it; no PIN reset stands behind the contact. A rel
 seeded store would still mail strangers. The Function delivers the same file, on a schedule, from a
 different process — which is a rehearsal of a deployment, not a delivery.
 
-The one thing it did close is smaller and worth recording: the four `Notices` configuration rules
-were written for the API alone, so a pickup directory INSIDE a git repository was accepted whenever
-the flag named anything else. Both hosts share them now.
+The one thing it did close is smaller and worth recording: the `Notices` configuration rules were
+written for the API alone, so a pickup directory INSIDE a git repository was accepted whenever the
+flag named anything else. The three that apply to any runner — the contact, the directory's
+existence, the git-tree guard — are shared now; the fourth, the lease against the period, stays the
+API's, because the Function never reads that period.

@@ -4,7 +4,7 @@
 [ADR-0048](0048-the-api-is-the-runner-that-delivers-owed-notices.md) named under "What would change
 this" and reserved a flag value for: *"the same claim protocol in a Function, developed against
 Azurite, and `Notices:Runner=Function` telling this loop to step aside."* Adds one project, moves
-the sweep and the four configuration rules into Infrastructure, and changes one log level. No
+the sweep and the shared configuration rules into Infrastructure, and changes one log level. No
 schema change, no endpoint, no client, no new secret, and nothing is deployed.
 
 ## Context
@@ -98,6 +98,16 @@ because a trigger's schedule must be a constant the host can bind — it cannot 
 `Notices:PeriodSeconds` the options carry later. That splits one concept across two keys, and D5
 says what is done about it.
 
+**A missing `Notices:Schedule` FAILS SAFE AND FAILS QUIET, and no code here can change that.** Measured by
+removing the key: the host prints *"'%Notices:Schedule%' does not resolve to a value"*, then
+*"Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled"*, and then **"Job
+host started"** — a running host that delivers nothing. Safe, because a runner that delivers nothing
+is the recoverable failure this design already prefers (D6); quiet, because the process is up and
+the exit code is zero. A worker-side validator was considered and NOT written: the binding is
+resolved by the host before the worker's own options are ever consulted, so the guard could not run
+earlier than the failure, and the host's message already names the exact key. What the omission
+needs is a reader who knows to look, so the runbook and the project README say it instead.
+
 **D3 — THREE configuration rules are shared, asked about the asking host; the fourth is not
 universal.** The contact, the directory's existence and the git-tree guard are
 `NoticeRelayOptionsValidation.ValidateAsRunner(NoticeRunner)` in Infrastructure; the API asks them
@@ -118,7 +128,7 @@ Shared rather than mirrored, and the repository has already paid for the alterna
 `AddVerifierServices` mirrors the API's audit-key validation by hand and records, in its own
 comment, that the mirror FAILED — `Audit:AnchorKey` was added to the API and not to the tool, *"so
 for one release this tool started, read the chain, and would have refused to write an anchor at the
-point of use"*. Three copies of four rules is three chances at that. The messages interpolate the
+point of use"*. Three copies of a rule is three chances at that. The messages interpolate the
 runner they were asked about, so an operator running two hosts learns which one refused. The
 `[Range]` annotations stay out of the shared rules on purpose: a period or a lease out of range is a
 misconfiguration even in a host that delivers nothing.
@@ -244,9 +254,11 @@ silences. A silence is not a pass, and the only way to tell was to make the warn
 Falsified, one mutant at a time, each restored byte-exact: the flag check removed turns the
 step-aside rows red; the lease warning removed turns its own row red; the runner name generated per
 read turns three red; the kind prefix set to the API's turns two red; and the Function's root
-validating as `Api` — which is precisely `main`'s behaviour — turns **all four refusal tests red**
+validating as `Api` — which is precisely `main`'s behaviour — turns **all three refusal tests red**
 plus the asymmetry row, which is how the gap in the Context is known to have been real rather than
-read. One mutant is worth naming for what it taught: `if (false)` around the flag check would not
+read. (That count was four before D3 split the lease rule out, and it was re-measured rather than
+carried forward: a number in a record is a measurement, and a measurement outlives the sentence
+around it only if somebody re-takes it.) One mutant is worth naming for what it taught: `if (false)` around the flag check would not
 COMPILE, because `TreatWarningsAsErrors` is on in Release and CS0162 is unreachable code — a mutant
 that will not build proves the build is strict, not that the guard works, so it was rewritten as the
 guard removed.

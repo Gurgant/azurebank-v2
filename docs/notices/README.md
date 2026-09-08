@@ -56,11 +56,9 @@ Then, from the repository root:
 
     azurite --silent --location %TEMP%\azurite-azurebank
 
-    copy backend\src\AzureBank.Functions.NoticeRelay\local.settings.sample.json ^
-         backend\src\AzureBank.Functions.NoticeRelay\local.settings.json
-    (edit ConnectionStrings:DefaultConnection and Notices:PickupDirectory)
-
     cd backend\src\AzureBank.Functions.NoticeRelay
+    copy local.settings.sample.json local.settings.json
+    (edit ConnectionStrings:DefaultConnection and Notices:PickupDirectory in it)
     func start
 
 `local.settings.json` is gitignored: it is this host's connection string and pickup directory, the
@@ -68,10 +66,17 @@ Function's equivalent of the API's user-secrets. The pickup directory must EXIST
 any git repository — the Function refuses to start otherwise, with a message naming the key, which
 is the same rule the verb and the API apply and now the same code.
 
-**Run one runner at a time.** `Notices:Runner` names which: `Api`, `Function`, or `None`. Both hosts
-step aside unless the flag names them, so a configuration naming neither delivers nothing — an owed
-notice waits, and that is the failure worth having. The API prints which it is at Information on
-every start:
+**Run one HOSTED runner at a time.** `Notices:Runner` names which: `Api`, `Function`, or `None`.
+Both hosts step aside unless the flag names them, so a configuration naming neither delivers nothing
+— an owed notice waits, and that is the failure worth having.
+
+⚠️ **The flag does not gate the verb.** `notify` above is run by a person and delivers whenever they
+run it, `Notices:Runner=None` included. It does not need the flag, because it takes the same lease a
+host takes (ADR-0048 D5): it claims what it delivers under its own name, counts and names rows a live
+runner holds, and takes them only once that lease has lapsed. So the verb beside a live relay is safe
+by the lease, not by configuration.
+
+The API prints which it is at Information on every start:
 
     Notice relay: runner is Function; this process delivers nothing (Notices:Runner)
 
