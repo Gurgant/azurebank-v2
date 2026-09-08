@@ -38,17 +38,16 @@ correctness-bearing loop, after two hygiene sweeps. It follows their shape exact
 cancellation absorbed as shutdown — and it is registered where they are, beside its options in
 `AddApplicationServices`, so a second host inherits it. It is ALWAYS registered and reads
 `Notices:Runner` once at start; unless that names this process it logs that no runner is live and
-returns — at Warning for `Function`, which nothing implements yet, so an operator who set it is told
-that notices stay owed. That flag, not the lease, is what keeps two KINDS of runner from both
+returns — ~~at Warning for `Function`, which nothing implements yet, so an operator who set it is
+told that notices stay owed~~ *(struck 2026-09-08: at Information for every value, ADR-0051 D4;
+correction below)*. That flag, not the lease, is what keeps two KINDS of runner from both
 sending; two hosts of this API with the flag set both run the loop, and the lease keeps them off
 each other's rows.
 
-_Noted 2026-09-08 (ADR-0051, the Function runner): **the Warning is gone, and the sentence that
-justified it was the thing that expired.** This paragraph said the API logs "at Warning for
-`Function`, which nothing implements yet, so an operator who set it is told that notices stay owed".
-`AzureBank.Functions.NoticeRelay` is that runner now, so `Notices:Runner=Function` is a correct
-configuration in which the API is simply not the one delivering — the same fact `None` states, and
-at the same level. A Warning for a correct configuration teaches an operator to ignore warnings.
+_Correction (2026-09-08, ADR-0051, the Function runner) — **the Warning is gone, and the sentence
+that justified it was the thing that expired.** `AzureBank.Functions.NoticeRelay` is that runner
+now, so `Notices:Runner=Function` is a correct configuration in which the API is simply not the one
+delivering — the same fact `None` states, and at the same level. A Warning for a correct configuration teaches an operator to ignore warnings.
 The test pins both halves: the level, and that the old claim does not survive the level change._
 
 **D2 — The claim is a lease on the row, taken in one statement, and shared.** Two nullable
@@ -234,11 +233,12 @@ Warning rather than printed.
 - **A sending transport.** A second `INoticeTransport` behind a provider credential — the seventh
   secret — is the change; the runner, the claim and the options are ready for it, and D3's duplicate
   becomes a mail the recipient sees twice, which is when an idempotency key stops being optional.
-- **The Azure Function.** The backlog's next relay item: the same claim protocol in a Function,
-  developed against Azurite, and `Notices:Runner=Function` telling this loop to step aside.
-  _Fired 2026-09-08 — ADR-0051, and it came out as written: one `NoticeSweep` in Infrastructure
-  rather than a second implementation, a timer trigger (this ADR's own declined queue is why), and
-  the flag telling this loop to step aside at Information rather than Warning. What it did NOT
-  inherit is the fourth configuration rule; see D6's note._
+- **The Azure Function.** ~~The backlog's next relay item:~~ the same claim protocol in a Function,
+  developed against Azurite, and `Notices:Runner=Function` telling this loop to step aside
+  *(struck 2026-09-08: shipped as ADR-0051; correction below)*.
+  _Correction (2026-09-08) — it came out as written: one `NoticeSweep` in Infrastructure rather than
+  a second implementation, a timer trigger (this ADR's own declined queue is why), and the flag
+  telling this loop to step aside at Information rather than Warning. What it did NOT inherit is the
+  fourth configuration rule; see D6's note._
 - **A second host of the API.** Two instances with the flag set both run the loop; the lease keeps
   them off each other's rows, and D3's at-least-once is the whole of what they are promised.
