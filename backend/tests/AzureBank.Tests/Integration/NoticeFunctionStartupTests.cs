@@ -181,6 +181,37 @@ public sealed class NoticeFunctionStartupTests : IDisposable
             .Should().Contain("Notices:LeaseSeconds");
     }
 
+    [Fact]
+    public void TheRootRegistersSTARTUPValidation_SoABadSectionStopsTheHostRatherThanTheFirstTick()
+    {
+        /*
+          WHY THIS EXISTS, and it is not a hypothetical. `.ValidateOnStart()` was removed from
+          Program.Register twice by accident while this PR was being reviewed, and the whole suite
+          stayed green both times — because every other test here resolves `IOptions<T>.Value`, and
+          resolving validates whether or not validation was asked for at startup. So the suite
+          pinned the RULES and not the MOMENT.
+
+          The moment matters. With startup validation the worker process refuses to start and the
+          operator gets the message once (measured 2026-09-08: removing Notices:Contact and running
+          `func start` gives "Failed to start language worker process" and an
+          OptionsValidationException naming the key and the runner). Without it the host starts,
+          every tick throws inside the Function's constructor, and a misconfiguration reads as a
+          recurring runtime fault instead of a configuration error.
+
+          Asserted on the REGISTRATION rather than by starting a host: starting one needs the Core
+          Tools and a storage account, which is not this suite's job. `ValidateOnStart()` is what
+          puts IStartupValidator in the container; nothing else here does.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        FunctionHost.Register(Configuration(("Notices:Runner", "None")), new StubEnvironment(), services);
+
+        services.Should().Contain(
+            d => d.ServiceType == typeof(IStartupValidator),
+            "ValidateOnStart() registers IStartupValidator, and it is the difference between a host "
+            + "that refuses to start on a bad Notices section and one that throws on every tick");
+    }
+
     private static IConfiguration Configuration(params (string Key, string Value)[] notices)
     {
         var values = new Dictionary<string, string?>

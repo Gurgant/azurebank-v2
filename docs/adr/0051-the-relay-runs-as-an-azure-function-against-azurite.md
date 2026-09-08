@@ -245,6 +245,33 @@ The address rule (ADR-0017, ADR-0048 D7) holds across the new host **without a l
 because it lives in `NoticeDeliveryRun`, which is the shared unit — which is D1 paying for itself
 the first time it is used.
 
+**D3's "refuses to start" was asserted for a week and measured on the day it was questioned.** The
+decision says each host refuses to start when the flag names it and the section cannot support it.
+That is a claim about a MOMENT, not only about a rule, and nothing had observed it. Measured by
+removing `Notices:Contact` and running `func start`:
+
+```
+Failed to start language worker process for runtime: dotnet-isolated.
+dotnet.exe exited with code -532462766 (0xE0434352). Unhandled exception.
+  Microsoft.Extensions.Options.OptionsValidationException: Notices:Contact must be set when
+  Notices:Runner is Function — it is mandatory content of every notice (NIST SP 800-63B-4 §4.6):
+  an address or a number a recipient uses to say "this was not me".
+func start itself: exit 1
+```
+
+So `ValidateOnStart` does work inside the isolated worker, the message reaches the operator once
+rather than on every tick, and it names both the key and the runner — the interpolation D3 added.
+
+**And nothing pinned that moment, which is how it was found.** While this PR was under review
+`.ValidateOnStart()` was twice removed from `Program.Register` by accident, and the whole suite
+stayed green both times: every other test in `NoticeFunctionStartupTests` resolves
+`IOptions<T>.Value`, and resolving validates whether or not startup validation was asked for. The
+suite pinned the RULES and not the MOMENT, and the difference is a host that refuses to start versus
+one that starts and throws on every tick — a configuration error wearing the costume of a recurring
+runtime fault. `TheRootRegistersSTARTUPValidation_SoABadSectionStopsTheHostRatherThanTheFirstTick`
+now asserts the `IStartupValidator` registration, and is the only one of the ten that goes red when
+the call is dropped.
+
 **One line of that transcript was read wrongly, and the pre-review caught it.** The first run
 produced no lease warning and it was recorded as the rule passing. It was the rule never running:
 the lease was 120s against a 15s tick, so nothing was due, and the guard would have said nothing
