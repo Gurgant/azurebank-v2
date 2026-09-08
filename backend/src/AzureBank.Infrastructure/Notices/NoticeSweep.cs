@@ -15,8 +15,9 @@ public sealed record NoticeSweepSummary(int Claimed, int Delivered, int Owed);
 /// <remarks>
 /// <para>
 /// WHY THIS IS IN INFRASTRUCTURE AND NOT IN A HOST. ADR-0048 D4 made this argument one level down:
-/// the per-row unit is <see cref="NoticeDeliveryRun"/> "so the two cannot drift on what 'delivered'
-/// costs". The sweep is the same argument one level up — the renew-then-read order, the capacity
+/// the per-row unit is <see cref="NoticeDeliveryRun"/>, which exists so two runners cannot drift
+/// on what "delivered" costs. The sweep is the same argument one level up — the renew-then-read
+/// order, the capacity
 /// arithmetic, the per-row lease check and the outcome arms are the protocol, not the host's
 /// business, and a second runner that reimplemented them would be a second protocol wearing the
 /// first one's name. Until ADR-0051 this lived in <c>AzureBank.Api</c> as an internal method, which

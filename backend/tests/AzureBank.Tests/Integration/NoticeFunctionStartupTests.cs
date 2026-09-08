@@ -20,8 +20,9 @@ namespace AzureBank.Tests.Integration;
 
 /// <summary>
 /// What the Function's real composition root does with the <c>Notices</c> section (ADR-0051 D3):
-/// the same four rules the API applies, asked about the Function instead — and refused here, where
-/// nothing refused them before.
+/// the three shared rules the API also applies, asked about the Function instead — and refused
+/// here, where nothing refused them before. The fourth rule, the lease against the period, is the
+/// API's alone and the test below says why.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -85,7 +86,7 @@ public sealed class NoticeFunctionStartupTests : IDisposable
     public void RunnerFunction_WithoutADirectory_IsRefused()
     {
         RefusalOf(("Notices:Runner", "Function"), ("Notices:Contact", "security@your-bank.example"))
-            .Should().Contain("Notices:PickupDirectory").And.Contain("EXISTING");
+            .Should().Contain("Notices:PickupDirectory").And.Contain("EXISTING").And.Contain("Function");
     }
 
     [Fact]
@@ -102,7 +103,9 @@ public sealed class NoticeFunctionStartupTests : IDisposable
                 ("Notices:Runner", "Function"),
                 ("Notices:PickupDirectory", inside),
                 ("Notices:Contact", "security@your-bank.example"))
-            .Should().Contain("inside a git repository");
+            .Should().Contain("inside a git repository").And.Contain("Function",
+                "D3 says the shared messages name the runner they were asked about, and this was the "
+                + "one of the three that could not: its message was a constant with no interpolation");
     }
 
     [Fact]
@@ -179,6 +182,34 @@ public sealed class NoticeFunctionStartupTests : IDisposable
         // is a misconfiguration even in a host that delivers nothing.
         RefusalOf(("Notices:Runner", "None"), ("Notices:LeaseSeconds", "5"))
             .Should().Contain("Notices:LeaseSeconds");
+    }
+
+    [Fact]
+    public void TheRootRegistersTheHostStateAsASINGLETON_WhichIsWhatMakesD8AndD5True()
+    {
+        /*
+          ONE KEYWORD DISABLES TWO DECISIONS WITH A GREEN SUITE, which is why this asserts the
+          registration and not a behaviour. Every other test here builds NoticeRelayHostState by
+          hand, so `AddSingleton` -> `AddTransient` was measured to leave the entire Notice filter
+          green — 76 of 76 — while breaking both:
+
+            D8: a fresh `func/...` name every tick, so a row left HELD by a failed delivery is
+                unrecognisable to the next sweep. Stranded until its lease lapses, then claimed as a
+                stranger — the duplicate the lease exists to prevent, reached from the other side.
+            D5: `_lastTick` always null, so ObserveTick returns null forever and the lease warning
+                can never fire. The guard becomes the wish six live ticks were spent arguing against.
+
+          The class-level mutant (a name generated per read) is a DIFFERENT mutant and is caught by
+          the tests above; the two are independent, and this is the layer that had nothing.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        FunctionHost.Register(Configuration(("Notices:Runner", "None")), new StubEnvironment(), services);
+
+        services.Should().Contain(
+            d => d.ServiceType == typeof(NoticeRelayHostState) && d.Lifetime == ServiceLifetime.Singleton,
+            "the runner name and the previous tick must outlive the invocation, and a Function class "
+            + "is constructed per invocation");
     }
 
     [Fact]

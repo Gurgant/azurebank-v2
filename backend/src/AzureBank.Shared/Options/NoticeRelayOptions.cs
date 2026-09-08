@@ -12,8 +12,10 @@ public enum NoticeRunner
     Api,
 
     /// <summary>
-    /// A runner outside this process — the Azure Function the backlog names — is live, and the API
-    /// must not also send. Reserved: nothing in this repository implements it yet.
+    /// A runner outside this process is live and the API must not also send: the Azure Function in
+    /// <c>AzureBank.Functions.NoticeRelay</c>, which runs the same <c>NoticeSweep</c> on a timer
+    /// trigger (ADR-0051). Until 2026-09-08 this said "Reserved: nothing in this repository
+    /// implements it yet", and the API logged a Warning to match.
     /// </summary>
     Function,
 }
@@ -26,14 +28,17 @@ public enum NoticeRunner
 /// <para>
 /// <see cref="Runner"/> is <see cref="NoticeRunner.None"/> unless configured, on purpose: the pickup
 /// directory is a spool of addresses at rest and must sit outside any git tree, so no default path
-/// can ship. Set <c>Notices__Runner=Api</c>, <c>Notices__PickupDirectory</c> and
-/// <c>Notices__Contact</c> together; the API refuses to start with a partial set (see the
-/// registration's validation). None of these is a secret, and none is added to the six.
+/// can ship. Set <c>Notices__Runner</c>, <c>Notices__PickupDirectory</c> and <c>Notices__Contact</c>
+/// together; the host the flag NAMES refuses to start with a partial set — the API and the Function
+/// alike, through the shared rules in <c>NoticeRelayOptionsValidation</c> (ADR-0051 D3). None of
+/// these is a secret, and none is added to the six.
 /// </para>
 /// <para>
-/// ONE RUNNER AT A TIME. The flag exists so that when a second runner ships it can be named here and
-/// the API's loop steps aside, rather than both sending. The lease stops two runners holding one
-/// row at the same moment; it does not stop two runners existing — only this flag does.
+/// ONE RUNNER AT A TIME. The second runner shipped (ADR-0051): naming it here is what makes the
+/// API's loop step aside and the Function deliver, rather than both sending. The lease stops two
+/// runners holding one row at the same moment; it does not stop two runners existing — only this
+/// flag does. It gates the two HOSTED runners and not the operator's <c>notify</c> verb, which
+/// delivers whenever a person runs it and is kept off a live host's rows by the lease alone.
 /// </para>
 /// </remarks>
 public class NoticeRelayOptions
@@ -44,18 +49,23 @@ public class NoticeRelayOptions
     public NoticeRunner Runner { get; set; } = NoticeRunner.None;
 
     /// <summary>
-    /// An existing directory OUTSIDE any git repository; one <c>.eml</c> per notice. Required when
-    /// <see cref="Runner"/> is <see cref="NoticeRunner.Api"/>.
+    /// An existing directory OUTSIDE any git repository; one <c>.eml</c> per notice. Required of
+    /// whichever host <see cref="Runner"/> names — the API or the Function (ADR-0051 D3).
     /// </summary>
     public string? PickupDirectory { get; set; }
 
     /// <summary>
     /// How a recipient repudiates the event: an address, a number. Mandatory content of every
-    /// notice (NIST SP 800-63B-4 §4.6). Required when <see cref="Runner"/> is <see cref="NoticeRunner.Api"/>.
+    /// notice (NIST SP 800-63B-4 §4.6). Required of whichever host <see cref="Runner"/> names.
     /// </summary>
     public string? Contact { get; set; }
 
-    /// <summary>How often the relay looks for owed rows. Seconds; the first look is one period after start.</summary>
+    /// <summary>
+    /// How often the API's relay looks for owed rows. Seconds; the first look is one period after
+    /// start. THE API'S ONLY: the Function's cadence is <c>Notices:Schedule</c>, a trigger
+    /// expression the Functions host binds before any of this project's code runs, and that host
+    /// never reads this value (ADR-0051 D3, D5).
+    /// </summary>
     [Range(5, 3600, ErrorMessage = "Notices:PeriodSeconds must be between 5 and 3600.")]
     public int PeriodSeconds { get; set; } = 15;
 

@@ -13,6 +13,19 @@ namespace AzureBank.Functions.NoticeRelay;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <c>UseMonitor = false</c> IS LOAD-BEARING, not tidiness. The attribute's default is <c>true</c>,
+/// and the generated <c>functions.metadata</c> emits no <c>useMonitor</c> key, so the default
+/// applies unless the SCHEDULE happens to clear it — <c>TimerSchedule.Create</c> forces it false
+/// only when the expression fires more than once a minute. At the sample cadence it was cleared by
+/// luck; at any schedule of a minute or more the ScheduleMonitor attaches and
+/// <c>TimerListener.StartAsync</c> runs a past-due check that can invoke this function ON STARTUP —
+/// precisely the <c>RunOnStartup = true</c> behaviour ADR-0051's "Alternatives declined" rejects,
+/// arrived at by a different door. With a per-process runner name (ADR-0051 D8) a restart that
+/// swept immediately would claim a fresh batch while its predecessor's rows stayed leased under a
+/// dead name — the crash-loop-into-backlog that paragraph exists to avoid. Pinned here so the
+/// property holds at every cadence rather than at the demonstration one.
+/// </para>
+/// <para>
 /// A TIMER, NOT A QUEUE, and ADR-0048 already decided it. Its "Alternatives declined" answered the
 /// queue: "a queue would carry a copy of the obligation, and the row is the obligation … A lease on
 /// the row keeps that property; a queue would have to be reconciled with it." A queue trigger needs
@@ -67,13 +80,19 @@ public sealed class DeliverOwedNotices
     /// be an <c>int</c> the options bind later.
     /// </summary>
     [Function(nameof(DeliverOwedNotices))]
-    public async Task RunAsync([TimerTrigger("%Notices:Schedule%")] TimerInfo timer, CancellationToken cancellationToken)
+    public async Task RunAsync(
+        [TimerTrigger("%Notices:Schedule%", UseMonitor = false)] TimerInfo timer,
+        CancellationToken cancellationToken)
     {
         if (_options.Runner != NoticeRunner.Function)
         {
-            _logger.LogInformation(
-                "Notice relay: runner is {Runner}; this process delivers nothing (Notices:Runner)",
-                _options.Runner);
+            if (_host.AnnounceStandingAside())
+            {
+                _logger.LogInformation(
+                    "Notice relay: runner is {Runner}; this process delivers nothing (Notices:Runner)",
+                    _options.Runner);
+            }
+
             return;
         }
 
@@ -89,7 +108,8 @@ public sealed class DeliverOwedNotices
 
     /// <summary>
     /// ADR-0048 D6's lease rule, checked against the interval this host is ACTUALLY ticking at
-    /// rather than against a declared number.
+    /// rather than against a declared number — and measured by this host, because with the monitor
+    /// pinned off at the trigger <see cref="TimerInfo.ScheduleStatus"/> is never populated.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -105,8 +125,10 @@ public sealed class DeliverOwedNotices
     /// <para>
     /// It repeats every tick on purpose: a standing fault should keep saying so, and it stops the
     /// moment it is fixed. The FIRST tick of a process says nothing — there is no previous tick to
-    /// measure against, and treating that as an interval of zero would warn on every cold start,
-    /// which is how a real warning becomes noise.
+    /// measure against, and a zero would be WORSE than a null here rather than merely noisier:
+    /// <c>Lease</c> is at least 30 seconds by its own <c>[Range]</c>, so <c>Lease &gt;= 2 * Zero</c>
+    /// can never be false and a zero interval would make EVERY lease look sufficient. The guard
+    /// would go permanently silent, which is the wrong direction for a guard to fail.
     /// </para>
     /// </remarks>
     private void WarnIfTheLeaseIsShorterThanTwoTicks(TimeSpan? interval)
@@ -121,6 +143,6 @@ public sealed class DeliverOwedNotices
             + "{IntervalSeconds}s; a lease shorter than two ticks lets a sweep and the next claim overlap "
             + "(ADR-0048 D6). Nothing is delivered twice — the pickup transport refuses a second file — "
             + "but rows will read as held by a runner that has moved on.",
-            _options.LeaseSeconds, (int)gap.TotalSeconds);
+            _options.LeaseSeconds, Math.Round(gap.TotalSeconds));
     }
 }

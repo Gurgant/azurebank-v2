@@ -69,7 +69,8 @@ claim protocol (`NoticeClaim`), the per-row unit (`NoticeDeliveryRun`), the rend
 transport were already shared; the SWEEP — renew, read holdings, compute capacity, claim, re-read,
 the per-row lease check, the six outcome arms — was `internal` in `AzureBank.Api`. It is
 `NoticeSweep` in `AzureBank.Infrastructure.Notices` now, and both runners call it. ADR-0048 D4 made
-this argument one level down ("so the two cannot drift on what 'delivered' costs"); a second runner
+this argument one level down — the unit exists so the two runners cannot drift on what "delivered"
+costs, in `NoticeDeliveryRun`'s own words rather than the ADR's; a second runner
 that reimplemented the sweep would be a second protocol wearing the first one's name.
 `NoticeRelayService` keeps what belongs to its host — the flag, the `PeriodicTimer`, the scope per
 sweep — and its `SweepAsync` stays as the thin delegate a test drives. **56 of the 57 existing
@@ -88,7 +89,7 @@ wearing a trigger. The backlog entry said "timer- or queue-triggered"; this is t
 the *or*.
 
 Which leaves Azurite doing what it actually does, and the ADR says so rather than implying a queue
-of notices: it is the **host's own** storage account — the timer's schedule state and the host
+of notices: it is the **host's own** storage account — the host
 singleton lease. That singleton is a second, independent one beside the row lease, at a different
 layer: it elects one host among instances of the same function app and knows nothing about the API's
 relay or the `notify` verb. It does not replace the row lease and nothing here claims it does.
@@ -106,7 +107,9 @@ is the recoverable failure this design already prefers (D6); quiet, because the 
 the exit code is zero. A worker-side validator was considered and NOT written: the binding is
 resolved by the host before the worker's own options are ever consulted, so the guard could not run
 earlier than the failure, and the host's message already names the exact key. What the omission
-needs is a reader who knows to look, so the runbook and the project README say it instead.
+needs is a reader who knows to look, so the project README says it instead — named there and in
+`docs/notices/README.md`, and NOT in a runbook: no runbook mentions the relay's silent failure, and
+claiming one did was easier than writing one. The gap is stated here rather than papered over.
 
 **D3 — THREE configuration rules are shared, asked about the asking host; the fourth is not
 universal.** The contact, the directory's existence and the git-tree guard are
@@ -151,16 +154,30 @@ instead of refusing to start. The first tick of a process says nothing — there
 and treating that as an interval of zero would warn on every cold start, which is how a real warning
 becomes noise.
 
-**The obvious source was tried first and is empty.** `TimerInfo.ScheduleStatus` reports `Last` and
-`Next` and would give the interval for free. It arrives null here. Measured 2026-09-08 with a
-20-second schedule and a 30-second lease, so a warning was due on every tick: three ticks with no
-`timers` section produced none, and three more with `"timers": { "useMonitor": true }` in `host.json`
-produced none either. Six consecutive ticks, a warning due on all six, and not one appeared — the
-guard had never refused, which this repository calls a wish rather than a guard. `useMonitor` was
-then REMOVED rather than kept and justified after the fact with a different reason. With the host's
-own tick memory, the same configuration warns on the second and third ticks and reports **19s then
-20s** — the interval that happened, not the one configured, which is the whole argument for
-measuring it.
+**The obvious source is empty, and the reason recorded first was wrong.**
+`TimerInfo.ScheduleStatus` reports `Last` and `Next` and would give the interval for free. It arrives
+null here. Measured 2026-09-08 with a 20-second schedule and a 30-second lease, so a warning was due
+on every tick: three ticks with no `timers` section produced none, and three more with
+`"timers": { "useMonitor": true }` in `host.json` produced none either. Six consecutive ticks, a
+warning due on all six, and not one appeared — the guard had never refused, which this repository
+calls a wish rather than a guard, and finding that was worth the run.
+
+The CONCLUSION drawn from it was not. That experiment could not have varied anything: `TimersOptions`
+— the only type `host.json`'s `timers` section binds to — declares no such member, the listener reads
+`UseMonitor` from the ATTRIBUTE and never from options, and at a 20-second cadence
+`TimerSchedule.Create` forces `UseMonitor` false on its own because the expression fires three times
+a minute. So the "two runs" were one configuration measured twice, and `ScheduleStatus` was null by
+construction rather than by any fault of the isolated worker. `useMonitor` was removed from
+`host.json` — correctly, since it does nothing — but for a reason that did not hold.
+
+What settles it now is D2's `UseMonitor = false` on the trigger: with the monitor pinned off at
+every cadence, `ScheduleStatus` is never populated by design, and the host measuring its own ticks is
+the consequence of a decision rather than a workaround for a surprise. With that tick memory the same
+configuration warns on the second and third ticks and reports **20s** — and it reports 20 rather than
+19 only since the number stopped being a cast: `(int)gap.TotalSeconds` truncated a 19.6-second gap to
+19, so part of the "19s then 20s" first recorded here was the truncation and not the schedule. The
+comparison always used the exact `TimeSpan`; only the operator's number was wrong, and that number is
+the whole point of the warning.
 
 **D6 — The flag is checked in BOTH runners, symmetrically.** The API's loop delivers only when the
 flag says `Api`; the Function delivers only when it says `Function`. Both step aside otherwise, so a
@@ -216,6 +233,17 @@ what is done instead.
 demonstration, and declined: it makes every restart a claim, which is exactly the behaviour that
 turns a crash-loop into a backlog of leases held by hosts that are gone. The first tick is one
 interval after start, matching the API's `PeriodicTimer` and its stated reason.
+
+_Noted 2026-09-08 (pre-review): **declining `RunOnStartup` did not hold the property, and a second
+door had to be shut.** `TimerTriggerAttribute.UseMonitor` defaults to TRUE and the generated
+`functions.metadata` emitted no `useMonitor` key, so the default stood — and with the monitor
+attached, `TimerListener` runs a past-due check at start that can invoke the function immediately.
+`TimerSchedule.Create` clears the flag only for schedules that fire more than once a minute, so the
+sample cadence was holding this paragraph true BY LUCK; at `0 */5 * * * *`, which this project's own
+README permits, a restart would have swept at once. The trigger now pins `UseMonitor = false`,
+`functions.metadata` carries it, and a test reads the attribute back — measured, because with the
+argument removed the whole suite stayed green. D5's null `ScheduleStatus` is a consequence of this
+decision, not an accident of the worker._
 
 ## Consequences
 

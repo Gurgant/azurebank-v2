@@ -54,7 +54,7 @@ Once, to install:
 
 Then, from the repository root:
 
-    azurite --silent --location %TEMP%\azurite-azurebank
+    azurite --silent --location $env:TEMP\azurite-azurebank
 
     cd backend\src\AzureBank.Functions.NoticeRelay
     copy local.settings.sample.json local.settings.json

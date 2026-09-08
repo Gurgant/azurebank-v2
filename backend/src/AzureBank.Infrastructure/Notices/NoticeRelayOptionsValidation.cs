@@ -11,16 +11,16 @@ namespace AzureBank.Infrastructure.Notices;
 /// </summary>
 /// <remarks>
 /// <para>
-/// WHY SHARED RATHER THAN MIRRORED, with a measurement behind it. Until ADR-0051 these four rules
+/// WHY SHARED RATHER THAN MIRRORED, with a measurement behind it. Until ADR-0051 all four rules
 /// lived in <c>AzureBank.Api</c>, each guarded by <c>o.Runner != NoticeRunner.Api ||</c> — correct
 /// while the API was the only host that could deliver, and silent for every other value: with
 /// <c>Notices:Runner=Function</c> the API accepted a missing contact, a pickup directory that did
 /// not exist, and one INSIDE A GIT REPOSITORY, because none of the rules applied to it. A second
-/// runner needs all four, and the repository has already paid for the alternative:
+/// runner needs the three below, and the repository has already paid for the alternative:
 /// <c>AddVerifierServices</c> mirrors the API's audit-key validation by hand and records, in its own
 /// comment, that the mirror failed — <c>Audit:AnchorKey</c> was added to the API and not to the
 /// tool, "so for one release this tool started, read the chain, and would have refused to write an
-/// anchor at the point of use". Three copies of four rules is three chances at that.
+/// anchor at the point of use". Three copies of a rule is three chances at that.
 /// </para>
 /// <para>
 /// THE RULES ARE RELATIVE TO THE ASKING HOST, which is why the runner is a parameter rather than a
@@ -68,9 +68,9 @@ public static class NoticeRelayOptionsValidation
                      || string.IsNullOrWhiteSpace(o.PickupDirectory)
                      || !Directory.Exists(o.PickupDirectory)
                      || !PickupDirectoryGuard.InsideAGitRepository(Path.GetFullPath(o.PickupDirectory)),
-                "Notices:PickupDirectory is inside a git repository. A pickup directory is a spool of "
-                + "addresses at rest, and one under a repository is one commit away from being "
-                + "published. Name a directory outside the tree.");
+                $"Notices:PickupDirectory is inside a git repository, and Notices:Runner is {thisProcess}. "
+                + "A pickup directory is a spool of addresses at rest, and one under a repository is one "
+                + "commit away from being published. Name a directory outside the tree.");
 
     /// <summary>
     /// The lease-against-period rule (ADR-0048 D6), for a host whose cadence IS

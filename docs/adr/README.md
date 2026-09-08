@@ -171,7 +171,7 @@ two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`, 
 leaving them as they are; from here the wording is struck in place instead, which costs less and
 reads better.
 
-The next free number is **0051**.
+The next free number is **0052**.
 
 <details>
 <summary>Full list in numeric order</summary>

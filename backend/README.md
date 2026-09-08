@@ -265,9 +265,16 @@ AzureBank.Backend/
 │   │   ├── Constants/                         # Error codes, rules
 │   │   └── README.md                          # Project documentation
 │   │
-│   └── 📦 AzureBank.Infrastructure/           # Data access layer
-│       ├── Data/                              # DbContext & configs
-│       ├── Migrations/                        # EF Core migrations
+│   ├── 📦 AzureBank.Infrastructure/           # Data access layer
+│   │   ├── Data/                              # DbContext & configs
+│   │   ├── Migrations/                        # EF Core migrations
+│   │   ├── Notices/                           # The shared notice relay
+│   │   └── README.md                          # Project documentation
+│   │
+│   └── 📦 AzureBank.Functions.NoticeRelay/    # The notice relay as an Azure Function
+│       ├── DeliverOwedNotices.cs              # Timer trigger: one sweep per tick
+│       ├── host.json                          # Functions host configuration
+│       ├── local.settings.sample.json         # Shape of the gitignored local settings
 │       └── README.md                          # Project documentation
 │
 ├── 📁 tests/                                  # Test projects
@@ -294,8 +301,12 @@ AzureBank.Backend/
 | [**AzureBank.Api**](src/AzureBank.Api/README.md)                       | Web API       | REST API with business logic, validation, and authentication       |
 | [**AzureBank.Bff**](src/AzureBank.Bff/README.md)                       | Web API       | BFF gateway with session management, rate limiting, and YARP proxy |
 | [**AzureBank.Shared**](src/AzureBank.Shared/README.md)                 | Class Library | Domain entities, DTOs, exceptions, and constants                   |
-| [**AzureBank.Infrastructure**](src/AzureBank.Infrastructure/README.md) | Class Library | EF Core DbContext, migrations, and data configurations             |
+| [**AzureBank.Infrastructure**](src/AzureBank.Infrastructure/README.md) | Class Library | EF Core DbContext, migrations, data configurations, and the shared notice relay |
+| [**AzureBank.Functions.NoticeRelay**](src/AzureBank.Functions.NoticeRelay/README.md) | Azure Function | Timer-triggered notice runner, rehearsed locally against Azurite (ADR-0051) |
 | [**AzureBank.Tests**](tests/AzureBank.Tests/README.md)                 | Test Project  | Unit, integration, and architecture tests                          |
+| **AzureBank.Bff.Tests**                                                | Test Project  | BFF gateway integration tests — the second "Test run for" line of the gate |
+| **AzureBank.AuditVerifier**                                            | Console Tool  | `verify`, `anchor`, `evidence`, `export` and `notify` over the audit trail |
+| **AzureBank.Seeder**                                                   | Console Tool  | `reset` / `seed` for the local LocalDB demo world                  |
 
 ---
 

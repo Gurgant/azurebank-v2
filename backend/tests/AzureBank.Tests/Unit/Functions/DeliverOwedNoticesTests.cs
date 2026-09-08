@@ -7,6 +7,7 @@ using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using System.Reflection;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -18,9 +19,9 @@ using Xunit;
 namespace AzureBank.Tests.Unit.Functions;
 
 /// <summary>
-/// The Function runner's trigger (ADR-0051): it sweeps when the flag names it, steps aside when it
-/// does not, claims under a <c>func/</c> name, and says when its lease is too short for its
-/// schedule.
+/// The Function runner's trigger (ADR-0051): it sweeps when the flag names it, steps aside once
+/// when it does not, claims under a <c>func/</c> name, and says when its lease is too short for the
+/// interval it is really ticking at.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -167,11 +168,12 @@ public sealed class DeliverOwedNoticesTests : IDisposable
     public async Task ALeaseShorterThanTwoTicks_IsAWarningNamingBothNumbers()
     {
         /*
-          ADR-0048 D6's rule, checked against the schedule this host is ACTUALLY running. The API
+          ADR-0048 D6's rule, checked against the interval this host is ACTUALLY ticking at. The API
           validates LeaseSeconds >= 2 * PeriodSeconds at start and refuses to start; the Function's
           cadence is a trigger expression, not an integer the options carry, so there is no number to
-          compare at start. ScheduleStatus reports the real interval instead — which catches a
-          schedule that behaves differently from what it says, and costs a running host that is
+          compare at start. The host measures the gap between its own ticks instead
+          (NoticeRelayHostState.ObserveTick) — NOT TimerInfo.ScheduleStatus, which the trigger's
+          UseMonitor = false guarantees is never populated. The cost is a running host that is
           misconfigured rather than one that refused to start.
         */
         var owner = await OwnerAsync();
@@ -187,9 +189,11 @@ public sealed class DeliverOwedNoticesTests : IDisposable
 
         _logs.Lines.Should().Contain(
             l => l.Level == LogLevel.Warning
-                 && l.Message.Contains("30s")
-                 && l.Message.Contains("20s"),
-            "the operator needs both numbers to fix it: the lease it set and the interval it is really getting");
+                 && l.Message.Contains("LeaseSeconds is 30s")
+                 && l.Message.Contains("ticking every 20s"),
+            "the operator needs both numbers IN THEIR ROLES: asserting the bare substrings \"30s\" and "
+            + "\"20s\" stays green if the two format arguments are exchanged, which would tell the "
+            + "operator to lengthen the wrong one");
     }
 
     [Fact]
@@ -208,19 +212,57 @@ public sealed class DeliverOwedNoticesTests : IDisposable
     }
 
     [Fact]
-    public async Task TheColdStartTick_IsSilentRatherThanGuessed()
+    public async Task TheColdStartTick_StillDELIVERS_AndSaysNothingAboutALeaseItCannotJudgeYet()
     {
         /*
-          A check that treated the first tick as an interval of zero would warn on every cold start,
-          which is how a real warning becomes noise. Restarting a host is not a misconfiguration.
+          THE HALF THAT IS TESTABLE, and the half that is not — said plainly, because an earlier
+          version of this test claimed the second.
+
+          Not testable: the difference between returning null on the first tick and returning
+          TimeSpan.Zero. `Lease` is at least 30 s by its own [Range], so `Lease >= 2 * Zero` can
+          never be false; a zero would be swallowed by the same guard the null short-circuits, and
+          the two are behaviourally identical. Measured: the mutant `interval ?? TimeSpan.Zero`
+          leaves this whole suite green. No test can refuse it, so no test here pretends to — the
+          reason to prefer null is that a zero would make EVERY lease look sufficient the day the
+          guard's shape changes, which is a design argument and not a behaviour.
+
+          Testable, and what this asserts: a cold start still DELIVERS. The lease check runs before
+          the sweep, so a first tick that fell into the warning path and returned early would be a
+          silent host, and the silence would look exactly like a correctly configured one.
         */
         var owner = await OwnerAsync();
-        await OwedAsync(owner);
+        var notice = await OwedAsync(owner);
         var function = Function(out _, leaseSeconds: 30);
 
         await function.RunAsync(new TimerInfo(), CancellationToken.None);
 
+        (await StoredAsync(notice.Id)).DeliveredAt.Should().NotBeNull(
+            "the first tick of a process delivers; it only declines to judge a lease it has nothing to compare against");
         _logs.Lines.Should().NotContain(l => l.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task WhenItStandsASIDE_ItSaysSoOnceRatherThanOnEveryTick()
+    {
+        /*
+          The API states this fact once, because its loop reads the flag once and returns from
+          ExecuteAsync. A Function is re-entered every tick, so the identical sentence would arrive
+          on a schedule forever — a standing configuration fact logged as if it were an event, on a
+          host that by definition nobody is watching closely. The lease warning repeats deliberately
+          because it is a fault that can be fixed while the host runs; this one cannot change
+          without a restart.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        var function = Function(out _, flag: NoticeRunner.Api);
+
+        await function.RunAsync(new TimerInfo(), CancellationToken.None);
+        await function.RunAsync(new TimerInfo(), CancellationToken.None);
+        await function.RunAsync(new TimerInfo(), CancellationToken.None);
+
+        _logs.Lines.Where(l => l.Message.Contains("delivers nothing")).Should().HaveCount(
+            1, "three ticks, one sentence: the flag cannot change under a running host");
+        _transport.Envelopes.Should().BeEmpty();
     }
 
     [Fact]
@@ -233,6 +275,80 @@ public sealed class DeliverOwedNoticesTests : IDisposable
         host.RunnerName.Should().Be(host.RunnerName, "the name is computed once and read many times");
         new NoticeRelayHostState().RunnerName.Should().NotBe(host.RunnerName,
             "two hosts on one machine must differ, or the lease cannot tell them apart");
+    }
+
+    [Fact]
+    public void TheTriggerPinsUseMonitorFALSE_SoNoCadenceCanGiveItAStartupSweep()
+    {
+        /*
+          THE ONE PROPERTY IN THIS FILE THAT NO BEHAVIOUR CAN REACH, and it is a major one, so it is
+          asserted on the metadata instead.
+
+          TimerTriggerAttribute.UseMonitor defaults to TRUE and the generated functions.metadata
+          emits no useMonitor key, so the default stands unless the SCHEDULE clears it —
+          TimerSchedule.Create forces it false only for expressions that fire more than once a
+          minute. At the sample sub-minute cadence it is cleared by luck. At a five-minute schedule,
+          which the project README explicitly permits, the ScheduleMonitor attaches and the listener's
+          past-due check can invoke this function ON STARTUP: the RunOnStartup behaviour ADR-0051's
+          "Alternatives declined" rejects, reached by another door. With a per-process runner name
+          (D8) that means every restart claims a fresh batch while the previous one stays leased
+          under a dead name.
+
+          Measured: with the attribute argument removed the whole suite stays green, which is why
+          this exists. The generated metadata is the other half of the proof and is not reachable
+          from a test — `bin/.../functions.metadata` carries "useMonitor": false only because of
+          this argument.
+        */
+        var parameter = typeof(DeliverOwedNotices)
+            .GetMethod(nameof(DeliverOwedNotices.RunAsync))!
+            .GetParameters()
+            .Single(p => p.ParameterType == typeof(TimerInfo));
+
+        var trigger = parameter.GetCustomAttribute<TimerTriggerAttribute>();
+
+        trigger.Should().NotBeNull("the timer trigger is what makes this a Function at all");
+        trigger!.Schedule.Should().Be("%Notices:Schedule%",
+            "the schedule is bound by the host before any of this code runs, so it must stay a setting reference");
+        trigger.UseMonitor.Should().BeFalse(
+            "the default is true, and a schedule of a minute or more would then attach the ScheduleMonitor "
+            + "and let a restart sweep a past-due tick immediately — the RunOnStartup behaviour ADR-0051 declines");
+        trigger.RunOnStartup.Should().BeFalse("the first tick is one interval after start, as the API's loop is");
+    }
+
+    [Fact]
+    public async Task TheReportedIntervalIsROUNDED_SoTheOperatorIsNotToldToFixTheWrongNumber()
+    {
+        /*
+          `(int)gap.TotalSeconds` truncates toward zero, so a real gap of 19.6 s prints as 19. The
+          COMPARISON uses the exact TimeSpan and is unaffected — only the number the operator reads
+          is wrong, and that number is the entire point of the warning. It also mattered to the
+          record: ADR-0051 D5 quoted "19s then 20s" from a 20-second schedule as evidence that the
+          host's real cadence differs from its configured one, when part of that gap was the
+          truncation.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner);
+        var function = Function(out _, leaseSeconds: 30);
+
+        await function.RunAsync(new TimerInfo(), CancellationToken.None);
+        _clock.Advance(TimeSpan.FromMilliseconds(19_600));
+        await function.RunAsync(new TimerInfo(), CancellationToken.None);
+
+        _logs.Lines.Should().Contain(
+            l => l.Level == LogLevel.Warning && l.Message.Contains("ticking every 20s"),
+            "19.6 seconds is 20 to one decimal place and 19 to a cast; the operator gets the one that is true");
+        _logs.Lines.Should().NotContain(
+            l => l.Message.Contains("ticking every 19s"));
+    }
+
+    [Fact]
+    public void StandingAsideIsAnnouncedOnce_HoweverManyTimesItIsAsked()
+    {
+        var host = new NoticeRelayHostState();
+
+        host.AnnounceStandingAside().Should().BeTrue("the first tick is the one that tells the operator");
+        host.AnnounceStandingAside().Should().BeFalse();
+        host.AnnounceStandingAside().Should().BeFalse();
     }
 
     [Fact]
