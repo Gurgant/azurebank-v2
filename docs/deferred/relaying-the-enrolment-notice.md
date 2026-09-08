@@ -84,6 +84,13 @@ directory in both composition roots — the tool's and, since ADR-0048, the API'
 D7 — delivery recorded on the row rather than in
 the chain — is the decision to reopen, because "delivered" will then mean something.
 
+_Noted 2026-09-08 (ADR-0051): **THREE composition roots now, not two** — the tool's, the API's, and
+the Function's, each with its own `AddSingleton<INoticeTransport, PickupDirectoryTransport>()`. The
+sentence above is otherwise unchanged and still describes the work. The third root is also the first
+argument for a shared registration extension: two hand-written copies were a coincidence, three are
+a pattern, and the day a sending transport arrives it must replace the pickup directory in all of
+them or one host will quietly keep writing files._
+
 ## Ratified 2026-09-04
 
 Decided, and recorded here so the deferral above reads as history rather than as an open
@@ -106,7 +113,12 @@ are still what "delivered" needs before it can mean anything.
 
 ## The Function landed, 2026-09-08 — ADR-0051
 
-The paragraph above is now past tense in its middle clause and unchanged at both ends.
+The ratification above is kept exactly as it was written, and this section records what became of
+it: its middle clause — "Later, as a feature before the UI/UX train, the same claim protocol runs as
+an Azure Function developed and exercised locally against Azurite (`func start`)" — is done, and its
+two ends still stand unaltered. (An earlier draft of this sentence said the paragraph above "is now
+past tense", which described an edit that was never made and must not be: this repository keeps a
+ratification as ratified and records the outcome beside it.)
 `AzureBank.Functions.NoticeRelay` is a timer-triggered isolated-worker Function that runs the same
 `NoticeSweep` the API runs — the sweep moved into Infrastructure so there is one of it, not two —
 selected by `Notices:Runner=Function`, developed and exercised locally with `func start` against

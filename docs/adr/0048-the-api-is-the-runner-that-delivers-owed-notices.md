@@ -236,5 +236,9 @@ Warning rather than printed.
   becomes a mail the recipient sees twice, which is when an idempotency key stops being optional.
 - **The Azure Function.** The backlog's next relay item: the same claim protocol in a Function,
   developed against Azurite, and `Notices:Runner=Function` telling this loop to step aside.
+  _Fired 2026-09-08 — ADR-0051, and it came out as written: one `NoticeSweep` in Infrastructure
+  rather than a second implementation, a timer trigger (this ADR's own declined queue is why), and
+  the flag telling this loop to step aside at Information rather than Warning. What it did NOT
+  inherit is the fourth configuration rule; see D6's note._
 - **A second host of the API.** Two instances with the flag set both run the loop; the lease keeps
   them off each other's rows, and D3's at-least-once is the whole of what they are promised.
