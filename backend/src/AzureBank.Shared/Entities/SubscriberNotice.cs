@@ -90,4 +90,32 @@ public class SubscriberNotice
     /// <see cref="LeasedUntil"/> is; the database refuses one without the other.
     /// </summary>
     public string? LeasedBy { get; set; }
+
+    /// <summary>
+    /// The audit row this notice belongs to (ADR-0052). Written in the same save as both, so the
+    /// evidence check can ask about THIS notice instead of asking whether the user has ever done
+    /// this kind of thing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// NULLABLE, AND BOTH REASONS ARE LOAD-BEARING. Every row written before ADR-0052 has none, and
+    /// a check that treated their absence as a finding would report the whole backlog on the first
+    /// run — a detective control turned into noise on the day it shipped. And a notice whose
+    /// evidence has gone missing must still be FOUND rather than refused, which is the sentence the
+    /// AddSubscriberNotices migration wrote and this column keeps.
+    /// </para>
+    /// <para>
+    /// NOT A FOREIGN KEY, deliberately, and not for the reason a reader might assume: the point is
+    /// not laxity but that the missing row is the FINDING. A constraint would refuse the write or
+    /// the delete that made it missing, which is the opposite of a control that reports. The user
+    /// reference beside it IS a foreign key — this table is not constraint-free, it is
+    /// constraint-free TOWARDS AuditEvents.
+    /// </para>
+    /// <para>
+    /// TAMPER-EVIDENT WITHOUT A CONSTRAINT. <c>AuditEvent.Id</c> is inside the hashed payload, so
+    /// re-pointing a notice by editing the audit row's identity breaks that row's <c>RowHash</c> and
+    /// the walk reports it. That is a property the reference gets for free and an FK would not add.
+    /// </para>
+    /// </remarks>
+    public Guid? AuditEventId { get; set; }
 }

@@ -28,7 +28,7 @@ public class AuditService : IAuditService
     }
 
     /// <inheritdoc />
-    public void Record(
+    public Guid Record(
         string securityEvent,
         AuditOutcome outcome,
         Guid? actorUserId = null,
@@ -55,7 +55,12 @@ public class AuditService : IAuditService
 
         // Add, never save — the contract of IIdempotencyService.MarkExecutedPending, and what makes
         // the row atomic with the business change at every call site without new machinery.
-        _context.AuditEvents.Add(Build(securityEvent, outcome, actorUserId, subjectType, subjectId, detail));
+        var row = Build(securityEvent, outcome, actorUserId, subjectType, subjectId, detail);
+        _context.AuditEvents.Add(row);
+
+        // The id, so a sibling row added in the same save can name this one (ADR-0052). Callers that
+        // do not need it ignore it, which is every call site but the two that owe a notice.
+        return row.Id;
     }
 
     /// <inheritdoc />

@@ -78,10 +78,15 @@ going further — the question has become "is the record intact", not "was this 
 NOT reach for `evidence`: it reads by a transfer's `TXN-…` number and a PIN event has none. The
 query above, by `ActorUserId`, is the whole of what can be looked up here.
 
-One limit to know before trusting that finding for a change. `notify` asks only whether a row of
-that kind EXISTS for the user, and a change can happen many times — so where several `PinChanged`
-notices are owed, one surviving audit row answers for all of them and a missing one raises nothing.
-Count the rows against the notices yourself when the reference is a change (ADR-0047).
+**Since ADR-0052 the finding is exact, and the line tells you which question it asked.** A notice
+written from then on names the audit row it belongs to, so `NO AUDIT ROW` means *that* row is gone —
+the line reads **"the `PinChanged` row it names is gone"**, and it is worth acting on.
+
+⚠️ **A notice written BEFORE that migration names no row and gets the older, weaker question**, and
+the line says so: **"no `PinChanged` row exists for that user at all"**. A change can happen many
+times, so for those rows one surviving audit row still answers for all of them and a missing one
+still raises nothing. **When you see the weaker wording, count the rows against the notices
+yourself** — the query above, by `ActorUserId`, is how.
 
 ## 2. Remove the PIN the subscriber repudiates
 

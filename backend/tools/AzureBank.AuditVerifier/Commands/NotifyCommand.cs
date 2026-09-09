@@ -314,8 +314,12 @@ public static class NotifyCommand
 
                     if (result.AuditRowMissing)
                     {
-                        lines.Add($"NO AUDIT ROW backs notice {reference}: no {notice.Event} row exists for that user. "
-                                  + "The notice is rendered anyway; the absence is the finding.");
+                        lines.Add(notice.AuditEventId is null
+                            ? $"NO AUDIT ROW backs notice {reference}: no {notice.Event} row exists for that user "
+                              + "at all — this notice names no row, so that is the weaker question (ADR-0052). "
+                              + "The notice is rendered anyway; the absence is the finding."
+                            : $"NO AUDIT ROW backs notice {reference}: the {notice.Event} row it names is gone. "
+                              + "The notice is rendered anyway; the absence is the finding.");
                     }
 
                     switch (result.Outcome)

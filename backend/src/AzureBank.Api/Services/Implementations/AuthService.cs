@@ -669,7 +669,7 @@ public class AuthService : IAuthService
               pack needs and the fact the log line will not outlive. Nothing about the PIN itself is
               recorded — not its hash, not its length.
             */
-            _audit.Record(
+            var enrolmentEvidence = _audit.Record(
                 SecurityEvents.PinEnrolled, AuditOutcome.Succeeded,
                 actorUserId: userId, subjectType: "User", subjectId: userId,
                 detail: "{\"passwordProved\":true}");
@@ -699,6 +699,11 @@ public class AuthService : IAuthService
                 UserId = userId,
                 Event = SecurityEvents.PinEnrolled,
                 OccurredAt = DateTime.UtcNow,
+
+                // The row above, named rather than searched for later (ADR-0052). Both are Added and
+                // neither is saved here, so the pair commits or rolls back together — the reference
+                // cannot outlive the row it points at.
+                AuditEventId = enrolmentEvidence,
             });
         }
         else
@@ -726,7 +731,7 @@ public class AuthService : IAuthService
               enrolment; and a subscriber told their PIN changed while the trail says nothing is the
               inversion of what the trail is for.
             */
-            _audit.Record(
+            var changeEvidence = _audit.Record(
                 SecurityEvents.PinChanged, AuditOutcome.Succeeded,
                 actorUserId: userId, subjectType: "User", subjectId: userId,
                 detail: "{\"currentPinProved\":true}");
@@ -737,6 +742,11 @@ public class AuthService : IAuthService
                 UserId = userId,
                 Event = SecurityEvents.PinChanged,
                 OccurredAt = DateTime.UtcNow,
+
+                // THIS change's row, which is the whole point of ADR-0052: PinChanged is repeatable,
+                // so (ActorUserId, Event) stopped identifying one notice the moment ADR-0047 shipped
+                // and one surviving row began answering for every change a user ever made.
+                AuditEventId = changeEvidence,
             });
         }
 

@@ -84,6 +84,13 @@ this would have been its first correctness-bearing loop.~~ (struck 2026-09-04; c
 > table. The deferral record this ADR pointed at was ratified the same day in the other direction,
 > and ADR-0048 adds the hosted loop this clause declined: it claims owed rows under a lease and
 > delivers them through the same transport, on a period. The verb stays, for a store where
+> _Note (2026-09-09) — **two later records cite this ADR for a decision it does not contain.**
+> ADR-0047 twice attributed the "no foreign key to `AuditEvents`" choice here; this document contains
+> the word "foreign" zero times. The decision is in the `AddSubscriberNotices` migration's own
+> remarks, and ADR-0052 is where it was reopened — a notice now names its audit row, still without a
+> constraint, because the missing row is the FINDING and a constraint would refuse the write that
+> made it missing. Recorded here because this is where a reader looking for it arrives._
+>
 > nothing runs and for the day the runner is down, and it now steps aside for a row ~~a live runner
 > holds~~ *(struck 2026-09-09: held under another runner's LIVE LEASE. Nothing probes the process —
 > and this same sentence says the verb exists "for the day the runner is down", which is exactly the

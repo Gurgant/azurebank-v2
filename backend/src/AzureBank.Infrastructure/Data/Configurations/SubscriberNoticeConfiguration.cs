@@ -61,6 +61,21 @@ public class SubscriberNoticeConfiguration : IEntityTypeConfiguration<Subscriber
         builder.Property(n => n.DeliveryReceipt)
             .HasMaxLength(64);
 
+        /*
+          A PLAIN COLUMN, AND NO FOREIGN KEY TO AuditEvents (ADR-0052 D1). The AddSubscriberNotices
+          migration decided that in as many words, and the reason survives the reference: a notice
+          whose evidence has gone missing must be FOUND rather than refused, and a constraint would
+          refuse the very write that makes it missing. Nothing about AuditEvents is touched.
+
+          It is indexed because the evidence check looks a notice up BY it once per delivery, and
+          because a null here means "written before ADR-0052" — a filtered index keeps that backlog
+          out of the tree instead of paying for rows the exact query never asks about.
+        */
+        builder.Property(n => n.AuditEventId);
+
+        builder.HasIndex(n => n.AuditEventId)
+            .HasFilter("[AuditEventId] IS NOT NULL");
+
         // The runner's name: host, process and a short id. Not an address, not a secret.
         builder.Property(n => n.LeasedBy)
             .HasMaxLength(64);

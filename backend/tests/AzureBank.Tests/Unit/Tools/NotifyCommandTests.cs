@@ -103,7 +103,7 @@ public class NotifyCommandTests : IDisposable
     }
 
     private async Task<SubscriberNotice> OwedAsync(
-        Guid userId, bool withAuditRow = true, string? @event = null)
+        Guid userId, bool withAuditRow = true, string? @event = null, bool namesItsRow = true)
     {
         // Defaulted rather than required so every caller written before ADR-0047 still reads as a
         // test about the enrolment. The audit row takes the SAME name on purpose: `notify` joins a
@@ -111,9 +111,14 @@ public class NotifyCommandTests : IDisposable
         // make `ANoticeWithoutItsAuditRow_…` pass for the wrong reason.
         @event ??= SecurityEvents.PinEnrolled;
 
+        // `namesItsRow` defaults TRUE because that is what production writes since ADR-0052: both
+        // rows go in one save and the notice carries the audit row's id. A caller passes false to
+        // build the shape of the BACKLOG — a notice written before that migration, which names
+        // nothing and gets the weaker question.
+        Guid? evidence = null;
         if (withAuditRow)
         {
-            _context.AuditEvents.Add(new AuditEvent
+            var row = new AuditEvent
             {
                 Id = Guid.CreateVersion7(),
                 OccurredAt = DateTime.UtcNow,
@@ -121,7 +126,9 @@ public class NotifyCommandTests : IDisposable
                 Outcome = AuditOutcome.Succeeded,
                 ActorUserId = userId,
                 RowHash = string.Empty,
-            });
+            };
+            _context.AuditEvents.Add(row);
+            evidence = namesItsRow ? row.Id : null;
         }
 
         var notice = new SubscriberNotice
@@ -130,6 +137,7 @@ public class NotifyCommandTests : IDisposable
             UserId = userId,
             Event = @event,
             OccurredAt = new DateTime(2026, 9, 3, 10, 15, 0, DateTimeKind.Utc),
+            AuditEventId = evidence,
         };
         _context.SubscriberNotices.Add(notice);
         await _context.SaveChangesAsync();
@@ -229,23 +237,29 @@ public class NotifyCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ARepeatableKind_MakesTheMissingAuditRowFindingWeaker_AndThisPinsHowMuch()
+    public async Task ANoticeThatNamesNoRow_StillGetsTheWeakerQuestion_WhichIsTheBacklogsShape()
     {
         /*
-          A LIMIT, PINNED RATHER THAN CLAIMED AWAY (ADR-0047 Consequences).
+          WHAT ADR-0052 DELIBERATELY DID NOT CHANGE, and why this test survived it.
 
           The evidence check is an EXISTENCE query — `AnyAsync(e.ActorUserId == n.UserId && e.Event
           == n.Event)` — not a per-notice match. While every kind happened once per account that was
           the same thing. `PinChanged` is repeatable, so two change notices with only ONE audit row
           between them raise no finding: the surviving row answers for both.
 
-          This test exists to make that visible and to fail if it is ever fixed, so whoever fixes it
-          has to move the ADR too. The fix needs a per-notice reference on the row, which ADR-0045
-          deliberately did not add (no foreign key, so a notice whose evidence is missing is FOUND
-          rather than refused) — a schema decision, not a patch.
+          ADR-0052 closes that, but only for notices that NAME a row. Every notice written before
+          the AddSubscriberNoticeAuditEventId migration names none, and asking them the exact
+          question would report the whole backlog as missing its evidence on the first run. They
+          keep the weaker answer, and this row pins that they do.
+
+          ⚠️ THE FORCING FUNCTION DID NOT FIRE, and saying so is the point. This test used to promise
+          it would go RED when the join became exact, so that whoever fixed it had to move ADR-0047.
+          It stayed GREEN: the notices it builds name no row and take exactly the fallback it now
+          describes. ADR-0047's Consequences was moved deliberately instead. A test guards the SHAPE
+          it builds, not the claim it says it guards.
         */
         var owner = await OwnerAsync();
-        await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+        await OwedAsync(owner, @event: SecurityEvents.PinChanged, namesItsRow: false);
         await OwedAsync(owner, withAuditRow: false, @event: SecurityEvents.PinChanged);
         await using var provider = Provider();
 
@@ -256,8 +270,46 @@ public class NotifyCommandTests : IDisposable
         _transport.Envelopes.Should().HaveCount(2, "both are rendered either way");
         text.Should().NotContain(
             "NO AUDIT ROW",
-            "the one surviving PinChanged row answers the existence query for both notices — this "
-            + "is the limit ADR-0047 records, not a property worth relying on");
+            "neither notice names a row, so both get the existence question and the one surviving "
+            + "PinChanged row answers it for both — the backlog's behaviour, unchanged by ADR-0052");
+    }
+
+    [Fact]
+    public async Task ANoticeWhoseOwnAuditRowIsGone_IsFOUND_WhileTheUsersOtherRowsSurvive()
+    {
+        /*
+          THE LIMIT ADR-0047 RECORDED AND ADR-0052 CLOSES. Two PinChanged notices, each naming its
+          own audit row in the same save; then ONE of those rows goes missing.
+
+          Under the existence query this raised nothing at all: the question was "has this user ever
+          changed a PIN", the surviving row said yes, and the notice whose evidence had gone was
+          delivered with no finding. The second notice is not decoration — without it a single
+          missing row would be found by either query and this test would pass on `main`.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+        var orphaned = await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+
+        var itsRow = await _context.AuditEvents.SingleAsync(e => e.Id == orphaned.AuditEventId!.Value);
+        _context.AuditEvents.Remove(itsRow);
+        await _context.SaveChangesAsync();
+
+        await using var provider = Provider();
+        var (exitCode, lines) = await RunAsync(provider);
+        var text = string.Join("\n", lines);
+
+        exitCode.Should().Be(
+            VerifyCommand.Intact,
+            "a notice whose evidence is missing is FOUND, not refused — the sentence the migration wrote");
+        _transport.Envelopes.Should().HaveCount(2, "both are rendered either way; the absence is the finding");
+        text.Should().Contain(
+            "row it names is gone",
+            "the EXACT question was asked and the line says which — the weaker wording would send an "
+            + "operator looking for a row that never existed rather than one that was removed");
+        (text.Split("NO AUDIT ROW").Length - 1).Should().Be(
+            1,
+            "exactly the notice whose evidence went missing. The other names a row that is still "
+            + "there, and reporting it too would make the finding useless");
     }
 
     [Fact]

@@ -128,8 +128,26 @@ public sealed class NoticeDeliveryRun
             return new NoticeResult(notice, reference, NoticeOutcome.UnusableAddress, null, false, null);
         }
 
-        var backed = await _context.AuditEvents
-            .AnyAsync(e => e.ActorUserId == notice.UserId && e.Event == notice.Event, cancellationToken);
+        /*
+          EXACT WHEN THE NOTICE NAMES ITS ROW, THE OLD QUESTION WHEN IT DOES NOT (ADR-0052).
+
+          The old question was `does a row of this KIND exist for this USER`, and it was exact only
+          while every kind happened once per account. ADR-0047 made PinChanged repeatable, and from
+          that moment one surviving row answered for every change notice the user had: delete the
+          evidence for the third change and nothing was reported, because the first change's row
+          still satisfied the query. That is the limit this closes.
+
+          The fallback is not politeness, it is the backlog: every notice written before the
+          AddSubscriberNoticeAuditEventId migration has no reference, and asking the exact question
+          of those rows would report all of them as missing on the first run — a detective control
+          turned into noise on the day it shipped. They get the weaker answer they always had, and
+          the caller says WHICH question it asked, because "the row it names is gone" and "no row of
+          that kind exists" are different findings and only one of them is precise.
+        */
+        var backed = notice.AuditEventId is { } evidence
+            ? await _context.AuditEvents.AnyAsync(e => e.Id == evidence, cancellationToken)
+            : await _context.AuditEvents.AnyAsync(
+                e => e.ActorUserId == notice.UserId && e.Event == notice.Event, cancellationToken);
         var auditRowMissing = !backed;
 
         RenderedNotice rendered;
