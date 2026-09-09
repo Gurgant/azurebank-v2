@@ -291,7 +291,8 @@ public sealed class DeliverOwedNoticesTests : IDisposable
           emits no useMonitor key, so the default stands unless the SCHEDULE clears it —
           TimerSchedule.Create forces it false only for expressions that fire more than once a
           minute. At the sample sub-minute cadence it is cleared by luck. At a five-minute schedule,
-          which the project README explicitly permits, the ScheduleMonitor attaches and the listener's
+          which nothing here forbids — the README's row for the key says only "The trigger's CRON or
+          TimeSpan expression" and names no cadence at all — the ScheduleMonitor attaches and the listener's
           past-due check can invoke this function ON STARTUP: the RunOnStartup behaviour ADR-0051's
           "Alternatives declined" rejects, reached by another door. With a per-process runner name
           (D8) that means every restart claims a fresh batch while the previous one stays leased

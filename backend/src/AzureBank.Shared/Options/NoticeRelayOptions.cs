@@ -21,8 +21,10 @@ public enum NoticeRunner
 }
 
 /// <summary>
-/// The <c>Notices</c> section: whether the API relays owed notices, where the last hop delivers, the
-/// repudiation contact every notice must carry, and the two clocks of the claim protocol.
+/// The <c>Notices</c> section: WHICH host relays owed notices, if any — the API or, since ADR-0051,
+/// the Function, never both — where the last hop delivers, the repudiation contact every notice must
+/// carry, and the three clocks of the claim protocol: the API's period, the Function's schedule, and
+/// the lease they both take.
 /// </summary>
 /// <remarks>
 /// <para>

@@ -110,7 +110,10 @@ owed, or everything owed leased by a live runner.
 
 **D6 — Options, off by default, refused when partial.** The `Notices` section: `Runner`
 (`None|Api|Function`, default `None`), `PickupDirectory`, `Contact`, `PeriodSeconds` (15),
-`LeaseSeconds` (120), `BatchSize` (100). `None` is the default on purpose: a pickup directory is a
+`LeaseSeconds` (120), `BatchSize` (100) — and, added to this list on 2026-09-09, `Schedule`, which
+ADR-0051 put in the section as the Function's cadence and which no host of THIS ADR's ever reads.
+The key shipped and the enumeration did not move, which is the drift the notes below exist to catch.
+`None` is the default on purpose: a pickup directory is a
 spool of addresses at rest and must sit outside any git tree, so no default path can ship. When
 `Runner` is `Api` the directory must exist and pass the verb's own git-tree guard (now shared from
 Infrastructure), the contact is mandatory content of every notice (NIST SP 800-63B-4 §4.6), and the
@@ -195,7 +198,8 @@ lease, then again with `Notices__Runner=None` as the control:
 19:06:03Z  Date: in the file    -> delivered within one period, 4 s after the enrolment
 19:07:10Z  enrol (second user)  -> 200
    +5 s    the row              -> delivered, file present, lease cleared: one period
-           API log              -> "live as GURGANT/32384/bcc2330c, every 5s, lease 60s, into …"
+           API log              -> "live as api/GURGANT/32384/bcc2330c, every 5s, lease 60s,
+                                   batch …, into …" (see the correction below)
                                    "delivered notice 01a06dd1… (PinEnrolled) as 01a06dd1….eml"
            the address in the API log: 0 occurrences
            notify beside the live relay (before the second enrolment) -> exit 2, "no notice is
@@ -204,6 +208,25 @@ lease, then again with `Notices__Runner=None` as the control:
 19:08:02Z  enrol, Runner=None   -> 200; the row is still owed 16 s later, no lease
            API log              -> "runner is None; this process delivers nothing (Notices:Runner)"
 ```
+
+_Correction (2026-09-09) — **the `API log` line above was abridged when it was pasted, and in the one
+place that matters now.** The emitter is `"Notice relay: live as {RunnerName}, every
+{PeriodSeconds}s, lease {LeaseSeconds}s, batch {BatchSize}, into {Directory}"`, and `{RunnerName}`
+comes from `NoticeClaim.RunnerNameFor`, which builds `{kind}/{host}/{pid}/{8 hex}` — so a real line
+opens `api/GURGANT/…` and names a batch. ⚠️ **Not drift: `git log -S` puts the transcript, the kind
+prefix and the `batch` field in ONE commit** (`9cc6c4e`, this ADR's own), so the line never matched
+the code and stayed unmatched for four months because nothing re-derived it. The `api/` half is what
+matters now, because ADR-0051 D7 makes the kind the thing a person matches `LeasedBy` against and
+this was the only place in the repository showing what an API runner name looks like. Now OBSERVED
+rather than transcribed, and pinned by
+`TheLineThatANNOUNCESTheLoop_CarriesTheKindPrefixedNameAndEveryNumberItClaims`:_
+
+```
+Notice relay: live as api/GURGANT/22280/2be449cb, every 5s, lease 120s, batch 100, into …
+```
+
+_(That assertion runs the options' default 120-second lease; the `60s` above is what the live run
+used. The batch of the live run was not recorded, which is why it is elided rather than filled in.)_
 
 (The transcript's own 24-second file check reported NO for the first notice: it tested a path built
 from an id captured with a trailing newline. The `Date:` header and the row are the evidence.)

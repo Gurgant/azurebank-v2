@@ -960,8 +960,10 @@ renders nothing without it. What that contact can actually do is a separate runb
 
 **A file in a pickup directory has reached the edge of this machine and nobody else.** Nothing here
 sends: a collector pointed at the directory, or a person, is what moves it — and neither exists in
-this deployment (whichever runner is live writes the file — the verb, the API's relay or the
-Function; none of them moves it), which is the gap `docs/deferred/` records with its trigger. Delete
+this deployment (the file is written by this verb, which runs when a person runs it, or by the
+hosted runner `Notices:Runner` NAMES — the API's relay or the Function, the unnamed one writing
+nothing however live it is; none of the three moves it), which is the gap `docs/deferred/` records
+with its trigger. Delete
 the spool after the demonstration; it holds addresses in clear.
 
 The headlines, and what each means from THIS verb:

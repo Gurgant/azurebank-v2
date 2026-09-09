@@ -110,9 +110,15 @@ ever consulted, so the guard could not run earlier than the failure.~~
 _Correction (2026-09-09) — **that reasoning was reasoned and false, and the review was right to
 press it.** `ValidateOnStart` runs as the worker PROCESS starts, which is before the worker reports
 its metadata for indexing; the order was already visible in the missing-`Notices:Contact` run, where
-the worker died with its message intact. So the guard can run first, and does:
-`ValidateTheScheduleItTicksOn(NoticeRunner.Function)` is the Function's rule the way
-`ValidateThePeriodItSleepsFor` is the API's. Measured with the key removed again:_
+the worker died with its message intact. So the guard can run first, and does. It is
+`ValidateTheScheduleItIsBoundTo()`, it takes no runner, and it is unconditional —
+~~`ValidateTheScheduleItTicksOn(NoticeRunner.Function)` is the Function's rule the way
+`ValidateThePeriodItSleepsFor` is the API's~~ *(struck 2026-09-09, hours after it was written: the
+rule was renamed and its SHAPE reversed one commit later, and D3 below says why. ⚠️ The transcript
+directly beneath this note already quotes the UNCONDITIONAL message — "WHATEVER `Notices:Runner`
+says" — which a runner-parameterised rule could not have emitted. The paragraph was refuted by its
+own evidence block, and the sweep that rewrote that transcript in place reached seven lines past
+this sentence without touching it.)*. Measured with the key removed again:_
 
 ```
 before   '%Notices:Schedule%' does not resolve to a value.

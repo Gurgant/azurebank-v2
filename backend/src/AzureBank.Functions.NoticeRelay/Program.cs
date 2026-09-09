@@ -21,10 +21,14 @@ namespace AzureBank.Functions.NoticeRelay;
 /// moving the entry point into a namespace is the cheaper half of that trade.
 /// </para>
 /// <para>
-/// IT REGISTERS WHAT ONE SWEEP NEEDS AND NOTHING ELSE: the DbContext, the pickup transport, and the
-/// Notices section validated as THIS runner. Compare <c>AddVerifierServices</c>, which is the same
-/// three registrations plus the audit key the verifier walks the chain with — this host walks
-/// nothing, so it holds no key.
+/// IT REGISTERS WHAT ONE SWEEP NEEDS, PLUS WHAT ONE INVOCATION CANNOT HOLD, AND NOTHING ELSE. Four:
+/// the DbContext, the pickup transport, the <c>Notices</c> section validated as THIS runner, and the
+/// singleton <see cref="NoticeRelayHostState"/> — the fourth because a Function class is constructed
+/// per invocation, so the runner name and the previous tick have to outlive it. Compare
+/// <c>AddVerifierServices</c>, which shares only the first two: it never binds this section at all
+/// (the verb takes its directory and contact as command-line arguments), and it adds
+/// <c>AuditOptions</c> and the two scoped chain services the verifier walks the chain with — this
+/// host walks nothing, so it holds no key.
 /// </para>
 /// <para>
 /// NO NOTICE SECRET LIVES HERE, and the qualifier NOTICE is load-bearing:

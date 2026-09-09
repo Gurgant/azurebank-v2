@@ -1,3 +1,4 @@
+using System.Reflection;
 using AzureBank.Api.Services;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
@@ -236,13 +237,56 @@ public sealed class NoticeRelayServiceTests : IDisposable
                  && l.Message.Contains("delivers nothing")
                  && l.Message.Contains(runner.ToString()));
         _logs.Lines.Should().NotContain(
-            l => l.Level == LogLevel.Warning,
+            l => l.Level >= LogLevel.Warning,
             "stepping aside is not a fault: since ADR-0051 every runner value this process is not "
-            + "names a runner that exists, so there is nothing to warn about");
+            + "names a runner that exists, so there is nothing to warn about. GREATER-OR-EQUAL, not "
+            + "equal: == LogLevel.Warning would let an Error through a guard whose whole claim is "
+            + "that nothing above Information is logged, and the Function's twin in "
+            + "DeliverOwedNoticesTests already reads >=");
         _logs.Lines.Should().NotContain(
             l => l.Message.Contains("nothing in this repository implements"),
             "the sentence that justified the old Warning is false now that the Function ships");
         await relay.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task TheLineThatANNOUNCESTheLoop_CarriesTheKindPrefixedNameAndEveryNumberItClaims()
+    {
+        /*
+          A DOCUMENT ASSERTED THIS LINE AND NOTHING PINNED IT, which is this repository's own rule
+          about comments applied to a transcript. ADR-0048's Consequences pasted an API log line the
+          format string could not emit: no `api/` on the runner name and no `batch` field at all.
+          It was not drift — `git log -S` puts the transcript, the kind prefix and the
+          `batch {BatchSize}` field in ONE commit, 9cc6c4e. It was wrong on the day it was written
+          and stayed wrong for four months because nothing re-derived it.
+
+          It matters now rather than then: ADR-0051 D7 makes the kind the thing a person matches
+          `LeasedBy` against during an incident, and that ADR line is the only place in the
+          repository showing a reader what an API runner name looks like.
+
+          The poll is not decoration. BackgroundService.StartAsync returns before ExecuteAsync has
+          reached this log call — measured: asserting straight after StartAsync captured ZERO lines,
+          not a wrong one.
+        */
+        await using var provider = Provider();
+        var relay = Relay(provider, periodSeconds: 5);
+
+        await relay.StartAsync(CancellationToken.None);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && !_logs.Lines.Any(l => l.Message.Contains("live as")))
+        {
+            await Task.Delay(25);
+        }
+
+        await relay.StopAsync(CancellationToken.None);
+
+        _logs.Lines.Should().ContainSingle(
+            l => l.Level == LogLevel.Information && l.Message.Contains("live as"),
+            "the loop announces itself once, before its first period").Which.Message
+            .Should().MatchRegex(
+                @"^Notice relay: live as api/[^/]+/\d+/[0-9a-f]{8}, every 5s, lease 120s, batch 100, into ",
+                "the name carries the KIND a reader matches against LeasedBy (ADR-0051 D7), and "
+                + "every number the line claims is one the loop actually runs on");
     }
 
     [Fact]
@@ -539,7 +583,25 @@ public sealed class NoticeRelayServiceTests : IDisposable
         NoticeClaim.VerbKind.Should().Be("verb");
         NoticeClaim.FunctionKind.Should().Be("func");
 
-        var kinds = new[] { NoticeClaim.ApiKind, NoticeClaim.VerbKind, NoticeClaim.FunctionKind };
+        /*
+          READ OFF THE TYPE, NOT RESTATED. Building this array from the same three constants the
+          three assertions above have just pinned made both checks below THEOREMS: once
+          ApiKind == "api" and VerbKind == "verb" and FunctionKind == "func" have passed, the array
+          is provably {"api","verb","func"} and neither uniqueness nor the slash rule can fail.
+          They read as an independent guard and were not one — the same shape as the joined-string
+          assertions this PR removed from NoticeFunctionStartupTests.
+
+          Reflected over the type instead, they bite on the case they are FOR: a fourth kind added
+          later, colliding with one of these or carrying a slash.
+        */
+        var kinds = typeof(NoticeClaim)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.Name.EndsWith("Kind", StringComparison.Ordinal))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToArray();
+
+        kinds.Should().HaveCount(3,
+            "a fourth kind is a fourth runner, and every count in ADR-0051 D7 would need re-taking");
         kinds.Should().OnlyHaveUniqueItems();
         kinds.Should().OnlyContain(
             k => k.Length > 0 && !k.Contains('/'),
