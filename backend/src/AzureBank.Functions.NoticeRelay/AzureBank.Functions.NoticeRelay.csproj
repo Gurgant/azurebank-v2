@@ -62,20 +62,43 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <!--
-      NEVER PUBLISHED. local.settings.json is this host's connection string and its pickup directory:
-      a developer's own configuration, gitignored beside the API's user-secrets, and the file the
-      Functions host reads INSTEAD of environment variables when it runs locally. Copied to the
-      output because `func start` reads it from there; excluded from publish because publishing it
-      would put a connection string in a package.
+      NEVER PUBLISHED, AND NEVER FLOWED. local.settings.json is this host's connection string and its
+      pickup directory: a developer's own configuration, gitignored beside the API's user-secrets,
+      and the file the Functions host reads INSTEAD of environment variables when it runs locally.
+      `func start` reads it from the output, so it has to land there — but it is copied by the target
+      below rather than by CopyToOutputDirectory, and that is the whole point.
+
+      WHY NOT CopyToOutputDirectory. A None item carrying it is offered to every project that
+      ProjectReferences this one, and AzureBank.Tests has referenced this project since #158 so the
+      tests can construct the Function's types. MEASURED on a clean Release build: the file landed in
+      backend/tests/AzureBank.Tests/bin/Release/net10.0 as well — a connection string in a second
+      place nobody expects, past the CopyToPublishDirectory guard, which governs publish and says
+      nothing about a referencing project's output. MSBuildCopyContentTransitively=false does not
+      help: the SDK's own comment says it makes copying "1 level deep", and the test project's
+      reference to this one IS that level. There is no per-item way to opt out of the flow, so the
+      item stops being content and a target does the copy instead.
     -->
     <None Update="local.settings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
       <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
     <None Update="local.settings.sample.json">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <!--
+    THIS host's output, and no other. Conditioned on the file existing because it is gitignored: CI
+    and a fresh clone have none, and a missing file must not fail the build. `func start` reads it
+    from $(OutDir), which is why it is copied at all.
+  -->
+  <Target Name="CopyLocalSettingsToThisHostsOutput"
+          AfterTargets="Build"
+          Condition="Exists('$(MSBuildProjectDirectory)\local.settings.json')">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\local.settings.json"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 
   <ItemGroup>
     <InternalsVisibleTo Include="AzureBank.Tests" />

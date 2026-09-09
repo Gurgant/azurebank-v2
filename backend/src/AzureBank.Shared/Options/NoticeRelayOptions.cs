@@ -71,7 +71,18 @@ public class NoticeRelayOptions
     /// expression the Functions host binds before any of this project's code runs, and that host
     /// never reads this value (ADR-0051 D3, D5).
     /// </summary>
-    [Range(5, 3600, ErrorMessage = "Notices:PeriodSeconds must be between 5 and 3600.")]
+    /// <remarks>
+    /// THE CEILING IS 1800 AND IT IS ARITHMETIC, not taste. The API also validates
+    /// <c>LeaseSeconds &gt;= 2 * PeriodSeconds</c>, and <see cref="LeaseSeconds"/> is itself capped
+    /// at 3600 — so a period above 1800 asks for a lease no admissible value can supply. Until
+    /// 2026-09-09 this said 3600 and advertised a band, 1801-3600, that was unusable in every case:
+    /// MEASURED through the real composition root, 1800 starts and 1801 refuses, and at 3600 no
+    /// lease starts the host at all. Worse, the refusal named <c>Notices:LeaseSeconds</c> — the one
+    /// key the operator could not fix — because the period was legal by its own annotation. No
+    /// other host reads this value, so the band was not merely unreachable for the API; it was
+    /// unreachable for anybody.
+    /// </remarks>
+    [Range(5, 1800, ErrorMessage = "Notices:PeriodSeconds must be between 5 and 1800.")]
     public int PeriodSeconds { get; set; } = 15;
 
     /// <summary>
