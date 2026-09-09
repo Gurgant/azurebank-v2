@@ -23,6 +23,11 @@ namespace AzureBank.Functions.NoticeRelay;
 /// </remarks>
 public sealed class NoticeRelayHostState
 {
+    // A PRIVATE GATE RATHER THAN lock(this), which is what this class had. This type is registered
+    // in DI and injected into every invocation, so `this` is a reference anything holding the
+    // singleton can lock on — a lock nobody can see is the only one whose contention is this class's
+    // to reason about. Same idiom as LoginTimingEqualizer's _dummyHashLock.
+    private readonly object _gate = new();
     private DateTime? _lastTick;
     private bool _saidItStandsAside;
 
@@ -44,7 +49,7 @@ public sealed class NoticeRelayHostState
     /// </remarks>
     public bool AnnounceStandingAside()
     {
-        lock (this)
+        lock (_gate)
         {
             if (_saidItStandsAside)
             {
@@ -57,8 +62,12 @@ public sealed class NoticeRelayHostState
     }
 
     /// <summary>
-    /// Records this tick and returns the gap since the previous one, or <c>null</c> on the first
-    /// tick of the process, when there is nothing to measure against.
+    /// Records this tick and returns the gap since the previous one, or <c>null</c> when there is no
+    /// gap to report: the first tick of the process, and any tick whose clock reading has not
+    /// ADVANCED past the last one. The second case is not pedantry — a non-advancing clock would
+    /// yield a zero, and a zero is worse than a null here, because
+    /// <c>Lease &gt;= 2 * Zero</c> is always true and the guard would go permanently silent
+    /// (<c>DeliverOwedNotices.WarnIfTheLeaseIsShorterThanTwoTicks</c> says why).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -89,7 +98,7 @@ public sealed class NoticeRelayHostState
     /// </remarks>
     public TimeSpan? ObserveTick(DateTime nowUtc)
     {
-        lock (this)
+        lock (_gate)
         {
             var previous = _lastTick;
             _lastTick = nowUtc;

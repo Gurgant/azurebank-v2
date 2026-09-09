@@ -355,7 +355,7 @@ public sealed class DeliverOwedNoticesTests : IDisposable
     }
 
     [Fact]
-    public void TheFirstTickHasNoIntervalToReport_AndEveryTickAfterItDoes()
+    public void OnlyATickWhoseClockADVANCEDHasAnIntervalToReport()
     {
         /*
           The host measures its own cadence because the obvious source is empty BY THIS PROJECT'S
@@ -379,6 +379,13 @@ public sealed class DeliverOwedNoticesTests : IDisposable
         host.ObserveTick(t0.AddSeconds(35)).Should().BeNull(
             "two ticks at the same instant is not an interval of zero; a zero would make every lease "
             + "look sufficient, which is the wrong way for this guard to fail");
+        host.ObserveTick(t0.AddSeconds(30)).Should().BeNull(
+            "a clock that read BACKWARD has no gap to report either, and a negative TimeSpan buys the "
+            + "same silence a zero would: Lease >= 2 * negative is true for every lease");
+        host.ObserveTick(t0.AddSeconds(50)).Should().Be(TimeSpan.FromSeconds(20),
+            "the backward reading still becomes the baseline — this records the LAST tick, not the "
+            + "highest one seen, so the host recovers on the next tick instead of measuring against "
+            + "a reading the clock has disowned");
     }
 
     private DeliverOwedNotices Function(
