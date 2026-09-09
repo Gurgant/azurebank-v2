@@ -43,6 +43,18 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" />
     <!-- The [Range] annotations on NoticeRelayOptions. Free inside ASP.NET Core, a reference here. -->
     <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <!--
+      DECLARED BECAUSE Program.cs USES IT, not because the restore graph needs it: `new HostBuilder()`
+      is Microsoft.Extensions.Hosting, and a project that news up a type from a package it does not
+      reference is one whose version nothing here governs. MEASURED before adding it: the only edge
+      to Hosting was Microsoft.Azure.Functions.Worker.Core 2.52.0 -> 10.0.0, which is BELOW Central
+      Package Management, so bin/Release/net10.0 shipped Microsoft.Extensions.Hosting.dll 10.0.0
+      beside Microsoft.Extensions.Hosting.Abstractions.dll 10.0.1 — the abstractions pinned (they
+      come through AzureBank.Infrastructure and CPM sees them) and the implementation not. Declaring
+      it hands the version back to Directory.Packages.props, which pins 10.0.1, and matches both
+      sibling console hosts: the Seeder and the AuditVerifier each declare it the same way.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 
   <ItemGroup>

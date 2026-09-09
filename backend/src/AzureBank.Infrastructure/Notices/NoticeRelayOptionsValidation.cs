@@ -100,8 +100,9 @@ public static class NoticeRelayOptionsValidation
         this OptionsBuilder<NoticeRelayOptions> builder, NoticeRunner thisProcess) =>
         builder.Validate(
             o => o.Runner != thisProcess || o.LeaseSeconds >= 2 * o.PeriodSeconds,
-            "Notices:LeaseSeconds must exceed Notices:PeriodSeconds — at least twice it — so a sweep and "
-            + "the next claim do not overlap in the normal case.");
+            $"Notices:LeaseSeconds must exceed Notices:PeriodSeconds — at least twice it — so a sweep "
+            + $"and the next claim do not overlap in the normal case. Asked about {thisProcess}, which "
+            + "is the host that sleeps for that period.");
 
     /// <summary>
     /// The schedule rule: a host that binds its trigger to <c>%Notices:Schedule%</c> needs the value

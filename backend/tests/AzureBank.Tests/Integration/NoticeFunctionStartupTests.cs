@@ -239,7 +239,13 @@ public sealed class NoticeFunctionStartupTests : IDisposable
         var resolve = () => provider.GetRequiredService<IOptions<NoticeRelayOptions>>().Value;
 
         resolve.Should().Throw<OptionsValidationException>()
-            .Which.Failures.Should().Contain(f => f.Contains("Notices:LeaseSeconds"));
+            .Which.Failures.Should().Contain(
+                f => f.Contains("Notices:LeaseSeconds") && f.Contains("Api"),
+                "ONE failure carrying both. This was the FOURTH runner-conditional rule and the only "
+                + "one whose message did not name the host it was asked about — the asymmetry D3 "
+                + "exists to remove, and the one the git-tree message was rewritten for earlier in "
+                + "this PR. Asserted per-failure for the reason FailuresOf gives: over the joined "
+                + "string a neighbour's text can satisfy it");
     }
 
     [Theory]
