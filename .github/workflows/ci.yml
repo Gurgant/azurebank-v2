@@ -456,9 +456,19 @@ jobs:
         working-directory: frontend
         run: npm run test:integration
 
+      # NO --with-deps, and that is the point rather than a saving. That flag runs apt-get, which
+      # on this image pulls Google's chrome-stable repository — and when THAT index is inconsistent
+      # upstream the step dies with "Hash Sum mismatch" and every pull request goes red for a reason
+      # nobody here can fix. Measured 2026-09-09: runs at 15:40, 16:06 and 16:22 passed, then main
+      # itself failed at 17:31, before any branch was involved, and stayed failing on re-run.
+      #
+      # ubuntu-latest already carries the shared libraries Chromium needs, so the browser binary is
+      # all this step has to fetch. The proof is not this step passing — it is the E2E step below
+      # LAUNCHING a real browser: a missing library shows up there and nowhere else, so a green e2e
+      # run is what says the dependencies were already present.
       - name: Install Playwright browser
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: E2E (real browser)
         working-directory: frontend
