@@ -97,4 +97,34 @@ public static class NoticeRelayOptionsValidation
             o => o.Runner != thisProcess || o.LeaseSeconds >= 2 * o.PeriodSeconds,
             "Notices:LeaseSeconds must exceed Notices:PeriodSeconds — at least twice it — so a sweep and "
             + "the next claim do not overlap in the normal case.");
+
+    /// <summary>
+    /// The schedule rule, for a host whose cadence IS <c>Notices:Schedule</c> — which is the Function
+    /// and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY A WORKER-SIDE CHECK FOR A VALUE THE WORKER DOES NOT READ. The Functions runtime resolves
+    /// the trigger's <c>%Notices:Schedule%</c> during indexing, and an unresolvable one is not a
+    /// startup refusal: the host prints "does not resolve to a value", disables the function, and
+    /// reports "Job host started". A process that is up with exit code zero and delivers nothing is
+    /// the worst shape a misconfiguration can take, because it looks exactly like a correct one.
+    /// </para>
+    /// <para>
+    /// ⚠️ An earlier draft of ADR-0051 declined this guard, reasoning that indexing happens before
+    /// the worker's options are consulted so the check could not run first. That was reasoned and
+    /// not measured, and it was wrong: <c>ValidateOnStart</c> runs as the worker process starts, and
+    /// a missing <c>Notices:Contact</c> was already observed killing the worker with its message
+    /// intact. This rule only asks for PRESENCE — the expression's validity is the trigger's to
+    /// judge, and a CRON parser here would be a second opinion about somebody else's grammar.
+    /// </para>
+    /// </remarks>
+    public static OptionsBuilder<NoticeRelayOptions> ValidateTheScheduleItTicksOn(
+        this OptionsBuilder<NoticeRelayOptions> builder, NoticeRunner thisProcess) =>
+        builder.Validate(
+            o => o.Runner != thisProcess || !string.IsNullOrWhiteSpace(o.Schedule),
+            $"Notices:Schedule must be set when Notices:Runner is {thisProcess} — it is the timer "
+            + "trigger's cadence, and the Functions host resolves it during indexing. Without it the "
+            + "function is DISABLED and the host still reports \"Job host started\": a process that "
+            + "is up, exits zero, and delivers nothing.");
 }

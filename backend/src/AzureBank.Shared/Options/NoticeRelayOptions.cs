@@ -92,6 +92,23 @@ public class NoticeRelayOptions
     public int LeaseSeconds { get; set; } = 120;
 
     /// <summary>
+    /// The Function's cadence: a CRON or TimeSpan expression the Functions host binds into the timer
+    /// trigger as <c>%Notices:Schedule%</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE FUNCTION'S ONLY, and the mirror image of <see cref="PeriodSeconds"/>: the API sleeps for
+    /// a number and never reads this; the Function ticks on this and never reads that. It is bound
+    /// here — where nothing in this process consumes it — SO THAT IT CAN BE VALIDATED. The Functions
+    /// runtime resolves the trigger's <c>%setting%</c> during indexing, and a value it cannot
+    /// resolve disables the function while leaving the host running: a process that is up, exit code
+    /// zero, and delivering nothing. A validator in the worker's own composition root refuses first,
+    /// with a message naming the key (ADR-0051 D3).
+    /// </para>
+    /// </remarks>
+    public string? Schedule { get; set; }
+
+    /// <summary>
     /// How many free owed rows one sweep claims, oldest first. Bounds a claim to what one lease can
     /// deliver: an unbounded claim over a backlog would hold the whole table while it ran out of
     /// lease, and leave the rest to nobody until the lease lapsed.

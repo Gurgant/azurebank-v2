@@ -64,18 +64,19 @@ Then, from the repository root:
     (edit ConnectionStrings:DefaultConnection, Notices:PickupDirectory and Notices:Schedule in it)
     func start
 
-⚠️ **`Notices:Schedule` is the one key whose absence does not stop the host.** It is a trigger
-expression the Functions runtime binds before any of this project's code runs, so a missing value is
-an indexing failure rather than a startup refusal — the host prints these three lines and then keeps
-running with nothing scheduled:
+**`Notices:Schedule` is refused like the others, and it took a review round to get there.** It is a
+trigger expression the Functions runtime binds during indexing, so a missing value used to be an
+indexing failure rather than a startup refusal: the host printed *"does not resolve to a value"*,
+disabled the function, reported **"Job host started"**, and exited zero — a healthy-looking host
+delivering nothing, which is the worst shape a misconfiguration can take. The worker now refuses
+first, because `ValidateOnStart` runs as the worker process starts and that is before the worker
+reports its functions for indexing:
 
-    '%Notices:Schedule%' does not resolve to a value.
-    Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
-    Job host started
+    OptionsValidationException: Notices:Schedule must be set when Notices:Runner is Function …
+    Failed to start language worker process for runtime: dotnet-isolated.
 
-Measured. Nothing is delivered twice and no notice is lost — the rows simply stay owed — but the
-process is up and its exit code is zero, so a reader who does not check the log sees a healthy host
-delivering nothing.
+Measured, and `func start` exits 1. ⚠️ The host's own *"Job host started"* line still appears — the
+host comes up and keeps retrying a worker it cannot get — so read the exit code, not that line.
 
 **What the rest of the section does, in three groups, because it is not uniform.** The ranges on
 `Notices:PeriodSeconds`, `Notices:LeaseSeconds` and `Notices:BatchSize` are checked WHATEVER the
@@ -83,7 +84,8 @@ runner: a value out of range is a misconfiguration even in a host that delivers 
 `Notices:Contact` and `Notices:PickupDirectory` are checked only when `Notices:Runner=Function`
 names THIS host — with `Api` or `None` the Function starts without them and steps aside, which is
 deliberate (ADR-0051 D3): refusing to start over a directory it will never write to would take one
-runner down for another's misconfiguration. And `Notices:Schedule` is checked by nobody, as above.
+runner down for another's misconfiguration. `Notices:Schedule` is in that second group too, since
+the review round above.
 
 `local.settings.json` is gitignored: it is this host's connection string and pickup directory, the
 Function's equivalent of the API's user-secrets. **When `Notices:Runner=Function`**, the pickup

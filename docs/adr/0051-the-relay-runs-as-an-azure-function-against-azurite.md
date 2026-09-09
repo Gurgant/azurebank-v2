@@ -99,17 +99,35 @@ because a trigger's schedule must be a constant the host can bind — it cannot 
 `Notices:PeriodSeconds` the options carry later. That splits one concept across two keys, and D5
 says what is done about it.
 
-**A missing `Notices:Schedule` FAILS SAFE AND FAILS QUIET, and no code here can change that.** Measured by
-removing the key: the host prints *"'%Notices:Schedule%' does not resolve to a value"*, then
-*"Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled"*, and then **"Job
-host started"** — a running host that delivers nothing. Safe, because a runner that delivers nothing
-is the recoverable failure this design already prefers (D6); quiet, because the process is up and
-the exit code is zero. A worker-side validator was considered and NOT written: the binding is
-resolved by the host before the worker's own options are ever consulted, so the guard could not run
-earlier than the failure, and the host's message already names the exact key. What the omission
-needs is a reader who knows to look, so the project README says it instead — named there and in
-`docs/notices/README.md`, and NOT in a runbook: no runbook mentions the relay's silent failure, and
-claiming one did was easier than writing one. The gap is stated here rather than papered over.
+~~**A missing `Notices:Schedule` FAILS SAFE AND FAILS QUIET, and no code here can change that.**~~
+*(struck 2026-09-09: code here changed it; correction below.)* Measured by removing the key: the host
+printed *"'%Notices:Schedule%' does not resolve to a value"*, then *"Function
+'Functions.DeliverOwedNotices' failed indexing and will be disabled"*, and then **"Job host
+started"** — a running host that delivers nothing, exit code zero. ~~A worker-side validator was
+considered and NOT written: the binding is resolved by the host before the worker's own options are
+ever consulted, so the guard could not run earlier than the failure.~~
+
+_Correction (2026-09-09) — **that reasoning was reasoned and false, and the review was right to
+press it.** `ValidateOnStart` runs as the worker PROCESS starts, which is before the worker reports
+its metadata for indexing; the order was already visible in the missing-`Notices:Contact` run, where
+the worker died with its message intact. So the guard can run first, and does:
+`ValidateTheScheduleItTicksOn(NoticeRunner.Function)` is the Function's rule the way
+`ValidateThePeriodItSleepsFor` is the API's. Measured with the key removed again:_
+
+```
+before   '%Notices:Schedule%' does not resolve to a value.
+         Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
+         Job host started                          -> exit 0, delivering nothing
+after    OptionsValidationException: Notices:Schedule must be set when Notices:Runner is Function …
+         Failed to start language worker process for runtime: dotnet-isolated.
+         "failed indexing": 0 occurrences          -> never indexed; func start exits 1
+```
+
+_The host's own "Job host started" line still appears, because the host comes up and keeps retrying
+a worker it cannot get — so the honest claim is not "the host refuses to start" but "the worker
+refuses, by name, and the process fails instead of succeeding silently". The rule asks only for
+PRESENCE: whether the expression is a valid CRON is the trigger's to judge, and a parser here would
+be a second opinion about somebody else's grammar._
 
 **D3 — THREE configuration rules are shared, asked about the asking host; the fourth is not
 universal.** The contact, the directory's existence and the git-tree guard are
@@ -123,9 +141,11 @@ call it: **this host never reads `Notices:PeriodSeconds`.** A rule guarding a nu
 not merely pointless — a host that validated a lease against a period and then ticked on
 `Notices:Schedule` would be offering an assurance about a cadence it does not have. The Function's
 equivalent is D5. A test asserts both sides of the split on identical numbers: refused for `Api`,
-accepted for `Function`. A host the flag does not name starts regardless — it is going to
-step aside anyway, and refusing to start over a directory it will never write to would take the API
-down for the Function's misconfiguration, and the other way round.
+accepted for `Function`. A host the flag does not name starts regardless OF THE RUNNER-SPECIFIC
+RULES — the contact, the directory's existence, the git-tree guard, and now the schedule — because
+it is going to step aside anyway, and refusing to start over a directory it will never write to
+would take the API down for the Function's misconfiguration, and the other way round. It does NOT
+start regardless of everything: the `[Range]` annotations below apply whatever the flag says.
 
 Shared rather than mirrored, and the repository has already paid for the alternative:
 `AddVerifierServices` mirrors the API's audit-key validation by hand and records, in its own
@@ -210,13 +230,17 @@ by reading `LeasedBy` back. A name generated per invocation would strand every f
 lease lapsed and then claim it as a stranger — the duplicate the lease exists to prevent, reached
 from the other side.
 
-**D9 — This host carries no secret, and that is checkable rather than asserted.**
+**D9 — This host carries no NOTICE secret, and that is checkable rather than asserted.**
 `AddInfrastructure` registers a DbContext and validates nothing; the DbContext has no
 `SaveChangesInterceptor` (rejected deliberately, `AuditChain`'s remarks say why); ADR-0048 D7 already
 decided a delivered notice writes no audit row. So the Function needs a connection string and the
 `Notices` section, and **none of the six validated secrets** — unlike the `notify` verb, which holds
-the chain key because it walks the chain. `local.settings.json` is this host's equivalent of the
-API's user-secrets and is gitignored; `local.settings.sample.json` is committed in its place.
+the chain key because it walks the chain. It is not nothing, though, and the heading says NOTICE
+secret for that reason: `ConnectionStrings:DefaultConnection` is private configuration and reaches
+the whole store, so this host is cheaper to reason about than one holding a signing key but is not a
+host that could be run by a stranger. `local.settings.json` is where both live, is this host's
+equivalent of the API's user-secrets, and is gitignored; `local.settings.sample.json` is committed in
+its place.
 
 ## Alternatives declined
 
@@ -270,7 +294,7 @@ directory outside any git tree.
            func start ->  Functions:  DeliverOwedNotices: timerTrigger
                           The next 5 occurrences of the schedule (Cron: '0,15,30,45 * * * * *')
 10:07:31Z  Notice relay: sweep as func/GURGANT/41396/920b6432
-           claimed 15, delivered 15, left 0 owed, into C:\Users\Drako\azurebank-pickup
+           claimed 15, delivered 15, left 0 owed, into …
 10:07:45Z  the next tick, same name: claimed 0, delivered 0, left 0 owed
            SubscriberNotices: owed 0, leased 0 — the mark cleared the lease
            files in the pickup directory: 0 before, 15 after

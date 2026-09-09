@@ -66,9 +66,11 @@ public sealed class NoticeFunctionStartupTests : IDisposable
             ("Notices:Runner", "Function"),
             ("Notices:PickupDirectory", _directory),
             ("Notices:Contact", "security@your-bank.example, +00 000 0000"),
+            ("Notices:Schedule", "*/15 * * * * *"),
             ("Notices:LeaseSeconds", "120"));
 
         options.Runner.Should().Be(NoticeRunner.Function);
+        options.Schedule.Should().Be("*/15 * * * * *", "the cadence binds like every other key");
         options.PickupDirectory.Should().Be(_directory);
         options.BatchSize.Should().Be(100, "the shipped default survives a section that does not set it");
     }
@@ -80,6 +82,46 @@ public sealed class NoticeFunctionStartupTests : IDisposable
             .Should().Contain("Notices:Contact").And.Contain("800-63B-4").And.Contain("Function",
                 "the shared rule interpolates the runner it was asked about, so an operator running two "
                 + "hosts learns WHICH one refused");
+    }
+
+    [Fact]
+    public void RunnerFunction_WithoutASchedule_IsRefused_SoTheHostCannotComeUpDeliveringNothing()
+    {
+        /*
+          THE GUARD ADR-0051 FIRST DECLINED, AND THE REASONING THAT DECLINED IT WAS WRONG.
+          The draft said a worker-side check could not run before the Functions runtime resolves the
+          trigger's %Notices:Schedule% during indexing. Reasoned, not measured. Measured now, with
+          the key removed and `func start`:
+
+            before  '%Notices:Schedule%' does not resolve to a value.
+                    Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
+                    Job host started                      <- exit 0, delivering nothing
+            after   OptionsValidationException: Notices:Schedule must be set when ...
+                    Failed to start language worker process for runtime: dotnet-isolated.
+                    'failed indexing': 0 occurrences       <- never indexed; func exits 1
+
+          ValidateOnStart runs as the worker process starts, which is BEFORE the worker reports its
+          metadata for indexing — the same order already observed for a missing Notices:Contact.
+        */
+        RefusalOf(
+                ("Notices:Runner", "Function"),
+                ("Notices:PickupDirectory", _directory),
+                ("Notices:Contact", "security@your-bank.example"))
+            .Should().Contain("Notices:Schedule").And.Contain("Function")
+            .And.Contain("delivers nothing",
+                "the message has to say what the operator would otherwise have seen: a healthy host");
+    }
+
+    [Theory]
+    [InlineData("None")]
+    [InlineData("Api")]
+    public void TheScheduleIsNotAskedOfAHostTheFlagDoesNotName(string runner)
+    {
+        // Same asymmetry as the other runner rules: this host is about to step aside, and the
+        // schedule is the cadence of a loop it will not run.
+        var resolve = () => Resolve(("Notices:Runner", runner), ("Notices:PickupDirectory", _directory));
+
+        resolve.Should().NotThrow();
     }
 
     [Fact]
@@ -127,6 +169,9 @@ public sealed class NoticeFunctionStartupTests : IDisposable
             ("Notices:Runner", "Function"),
             ("Notices:PickupDirectory", _directory),
             ("Notices:Contact", "security@your-bank.example"),
+            // Supplied because THIS host's cadence is the schedule and it is now required of it;
+            // the point of the row is the period rule, which must not fire.
+            ("Notices:Schedule", "*/15 * * * * *"),
             ("Notices:PeriodSeconds", "60"),
             ("Notices:LeaseSeconds", "100"));
 

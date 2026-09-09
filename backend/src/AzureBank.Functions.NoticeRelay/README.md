@@ -89,21 +89,24 @@ since ADR-0051 the same code.
 `Notices:Schedule`, and the lease is checked against the interval actually observed between ticks
 rather than against a number nothing uses (ADR-0051 D5).
 
-⚠️ **If `Notices:Schedule` is missing the host still starts, and delivers nothing.** The trigger's
-`%setting%` is resolved by the Functions host before any of this project's code runs, so the failure
-is an indexing failure and not a startup refusal. Measured — the three lines to look for are:
+`Notices:Schedule` is refused at startup like the rest, and that took a review round to get right.
+The trigger's `%setting%` is resolved by the Functions runtime during indexing, so a missing value
+USED to leave the host up with the function disabled — exit code zero, delivering nothing, which is
+the worst shape a misconfiguration can take. `ValidateOnStart` runs as the worker PROCESS starts,
+and that is before the worker reports its functions for indexing, so the worker refuses first:
 
 ```
-'%Notices:Schedule%' does not resolve to a value.
-Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
-Job host started
+OptionsValidationException: Notices:Schedule must be set when Notices:Runner is Function …
+Failed to start language worker process for runtime: dotnet-isolated.
 ```
 
-Nothing is delivered twice and no notice is lost; the rows simply stay owed. But the process is up
-and its exit code is zero, so a reader who does not check the log will see a healthy host.
+Measured, and `func start` exits 1. ⚠️ The host's own "Job host started" line still appears, because
+the host comes up and keeps retrying a worker it cannot get — read the exit code, not that line.
 
-**No secret lives here.** `AddInfrastructure` registers a DbContext and validates nothing, the
-DbContext has no `SaveChangesInterceptor`, and a delivered notice writes no audit row — so none of
+**No NOTICE secret lives here** — which is not the same as none. `ConnectionStrings:DefaultConnection`
+reaches the whole store and is private configuration; what this host does not hold is a signing key.
+`AddInfrastructure` registers a DbContext and validates nothing, the DbContext has no
+`SaveChangesInterceptor`, and a delivered notice writes no audit row — so none of
 the six validated secrets is needed. The `notify` verb holds the chain key because it walks the
 chain; this host walks nothing.
 
