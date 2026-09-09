@@ -2,10 +2,10 @@
 
 Two kinds of notice are owed to an account holder: one when a transfer PIN is set for the first
 time (ADR-0045) and one when an existing PIN is changed (ADR-0047). Nothing in the system SENDS
-either. The API's relay (ADR-0048), or the operator's `notify`, renders each owed notice to a file
-in a pickup directory, and getting that file to the holder is an operator's step. Once a notice
-has been passed on, it tells
-the holder to contact the address or number the operator put behind `--contact`, quoting a
+either. Whichever runner is live — the API's relay (ADR-0048), the Function (ADR-0051), or the
+operator's `notify` — renders each owed notice to a file in a pickup directory, and getting that
+file to the holder is an operator's step. Once a notice has been passed on, it tells the holder to
+contact the address or number the operator put behind `--contact`, quoting a
 reference. This page is what that contact does with the reference. It is short because the remedy
 is short — and it ends with the sentence that says where the remedy stops.
 

@@ -358,11 +358,16 @@ public sealed class DeliverOwedNoticesTests : IDisposable
     public void TheFirstTickHasNoIntervalToReport_AndEveryTickAfterItDoes()
     {
         /*
-          The host measures its own cadence because the obvious source is empty: TimerInfo's
-          ScheduleStatus arrives null in the isolated worker here — six consecutive live ticks across
-          two configurations, one with timers.useMonitor unset and one with it true, every one with a
-          lease short enough that a warning was due, and not one warning appeared. So the interval
-          comes from this host's clock instead.
+          The host measures its own cadence because the obvious source is empty BY THIS PROJECT'S
+          OWN CHOICE: the trigger pins UseMonitor = false, so no ScheduleMonitor attaches and
+          TimerInfo.ScheduleStatus is never populated. Measured on a once-a-minute schedule, where
+          the cadence leaves the flag alone and the attribute is the only variable — null on both
+          ticks with the attribute, non-null on both without it (ADR-0051 D5).
+
+          ⚠️ An earlier version of this comment credited a six-tick run across "two configurations,
+          one with timers.useMonitor true". That run varied nothing: host.json's timers section binds
+          TimersOptions, which has no such member, and its 20-second cadence cleared UseMonitor by
+          itself.
         */
         var host = new NoticeRelayHostState();
         var t0 = new DateTime(2026, 9, 8, 10, 0, 0, DateTimeKind.Utc);

@@ -9,10 +9,13 @@
     a deployment shape, run locally with `func start` against Azurite; nothing here is deployed, and
     the ADR says so in the same breath.
 
-    WHAT IT DOES NOT CONTAIN. The claim protocol, the sweep, the per-row unit, the renderer, the
-    transport and the four configuration rules are all in AzureBank.Infrastructure and are the SAME
-    code the API runs. What is here is a host: a trigger, a composition root, and the flag check that
-    keeps this process from delivering when it is not the runner the configuration names.
+    WHAT IT DOES NOT CONTAIN. The claim protocol, the sweep, the per-row unit, the renderer and the
+    transport are all in AzureBank.Infrastructure and are the SAME code the API runs, as are the
+    three shared configuration rules. Two rules are NOT shared: the API's lease-against-period, which
+    this host never applies because it never reads that period, and this host's own schedule rule,
+    which the API never applies because it binds no trigger. What is here is a host: a trigger, a
+    composition root, and the flag check that keeps this process from delivering when it is not the
+    runner the configuration names.
 
     THE TARGET FRAMEWORK IS INHERITED, net10.0, like every project in this solution — measured, not
     assumed: Microsoft.Azure.Functions.Worker.Sdk maps TargetFrameworkVersion v10.0 to the

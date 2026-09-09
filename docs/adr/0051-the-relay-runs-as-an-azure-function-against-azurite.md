@@ -118,7 +118,8 @@ the worker died with its message intact. So the guard can run first, and does:
 before   '%Notices:Schedule%' does not resolve to a value.
          Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
          Job host started                          -> exit 0, delivering nothing
-after    OptionsValidationException: Notices:Schedule must be set when Notices:Runner is Function …
+after    OptionsValidationException: Notices:Schedule must be set: it is the timer
+         trigger's cadence, … WHATEVER Notices:Runner says. …
          Failed to start language worker process for runtime: dotnet-isolated.
          "failed indexing": 0 occurrences          -> never indexed; func start exits 1
 ```
@@ -340,8 +341,8 @@ stayed green both times: every other test in `NoticeFunctionStartupTests` resolv
 suite pinned the RULES and not the MOMENT, and the difference is a host that refuses to start versus
 one that starts and throws on every tick — a configuration error wearing the costume of a recurring
 runtime fault. `TheRootRegistersSTARTUPValidation_SoABadSectionStopsTheHostRatherThanTheFirstTick`
-now asserts the `IStartupValidator` registration, and is the only one of the ten that goes red when
-the call is dropped.
+now asserts the `IStartupValidator` registration, and is the only one of the fourteen that goes red
+when the call is dropped.
 
 **One line of that transcript was read wrongly, and the pre-review caught it.** The first run
 produced no lease warning and it was recorded as the rule passing. It was the rule never running:

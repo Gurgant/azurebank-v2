@@ -207,8 +207,16 @@ public static class NoticeClaim
     /// A name whose head is none of the three is DROPPED rather than reported raw: <c>LeasedBy</c>
     /// is written by this protocol, but a hand-edited row could carry anything, and an operator
     /// message is the wrong place to echo an unvalidated string back at somebody. Dropping it leaves
-    /// the caller with an empty list, which its own wording must survive — and the count from
-    /// <see cref="HeldByOthersAsync"/> is unaffected, so nothing goes missing from the tally.
+    /// the caller with an empty list, which its own wording must survive.
+    /// </para>
+    /// <para>
+    /// TWO KINDS OF DROP, AND ONLY ONE OF THEM LEAVES THE COUNT ALONE. An unrecognised but NON-NULL
+    /// name is dropped here and still counted by <see cref="HeldByOthersAsync"/> — deliberately: the
+    /// row IS held by something, so the tally is right and only the name is unusable. A NULL name is
+    /// excluded by BOTH, because a row held until a time by nobody is not held by another runner,
+    /// and counting it while refusing to name it made the verb announce a holder it could not
+    /// produce. An earlier version of this paragraph said the count was unaffected FULL STOP, which
+    /// was true when only this query carried the null term and false the moment its sibling did.
     /// </para>
     /// </remarks>
     public static async Task<IReadOnlyList<string>> HolderKindsOtherThanAsync(

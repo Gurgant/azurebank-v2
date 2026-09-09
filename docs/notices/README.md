@@ -64,16 +64,18 @@ Then, from the repository root:
     (edit ConnectionStrings:DefaultConnection, Notices:PickupDirectory and Notices:Schedule in it)
     func start
 
-**`Notices:Schedule` is required WHATEVER `Notices:Runner` says** — the only key here that is not
-conditional on the flag, because the binding is resolved before the flag is read. It is a
-trigger expression the Functions runtime binds during indexing, so a missing value used to be an
-indexing failure rather than a startup refusal: the host printed *"does not resolve to a value"*,
-disabled the function, reported **"Job host started"**, and exited zero — a healthy-looking host
-delivering nothing, which is the worst shape a misconfiguration can take. The worker now refuses
-first, because `ValidateOnStart` runs as the worker process starts and that is before the worker
-reports its functions for indexing:
+**`Notices:Schedule` is required WHATEVER `Notices:Runner` says** — the only key whose PRESENCE is
+demanded of a host the flag does not name (the `[Range]` checks below are unconditional too, but
+they judge a value rather than require one), because the binding is resolved before the flag is
+read. It is a trigger expression the Functions runtime binds during indexing, so a missing value
+used to be an indexing failure rather than a startup refusal: the host printed *"does not resolve to
+a value"*, disabled the function, reported **"Job host started"**, and exited zero — a
+healthy-looking host delivering nothing, which is the worst shape a misconfiguration can take. The
+worker now refuses first, because `ValidateOnStart` runs as the worker process starts and that is
+before the worker reports its functions for indexing:
 
-    OptionsValidationException: Notices:Schedule must be set when Notices:Runner is Function …
+    OptionsValidationException: Notices:Schedule must be set: it is the timer trigger's
+    cadence, … WHATEVER Notices:Runner says. …
     Failed to start language worker process for runtime: dotnet-isolated.
 
 Measured, and `func start` exits 1. ⚠️ The host's own *"Job host started"* line still appears — the

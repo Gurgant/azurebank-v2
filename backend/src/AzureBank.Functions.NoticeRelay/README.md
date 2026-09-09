@@ -67,9 +67,10 @@ func start
 `local.settings.json` is **gitignored**: it is this host's connection string and pickup directory —
 the Function's equivalent of the API's user-secrets.
 
-The pickup directory must **exist** and must be **outside any git repository**. The host refuses to
-start otherwise, with a message naming the key; that is the same rule the verb and the API apply, and
-since ADR-0051 the same code.
+**When `Notices:Runner=Function`**, the pickup directory must **exist** and must be **outside any
+git repository**, or the host refuses to start with a message naming the key — the same rule the verb
+and the API apply, and since ADR-0051 the same code, asked about whichever host the flag names. With
+`Api` or `None` this host starts without it and steps aside (ADR-0051 D3).
 
 ---
 
@@ -89,15 +90,18 @@ since ADR-0051 the same code.
 `Notices:Schedule`, and the lease is checked against the interval actually observed between ticks
 rather than against a number nothing uses (ADR-0051 D5).
 
-`Notices:Schedule` is required WHATEVER `Notices:Runner` says — the only key here not conditional
-on the flag, because the binding is resolved during indexing, before the flag is read.
+`Notices:Schedule` is required WHATEVER `Notices:Runner` says — the only key whose PRESENCE is
+demanded of a host the flag does not name (the `[Range]` checks are unconditional too, but they
+judge a value rather than require one), because the binding is resolved during indexing, before the
+flag is read.
 The trigger's `%setting%` is resolved by the Functions runtime during indexing, so a missing value
 USED to leave the host up with the function disabled — exit code zero, delivering nothing, which is
 the worst shape a misconfiguration can take. `ValidateOnStart` runs as the worker PROCESS starts,
 and that is before the worker reports its functions for indexing, so the worker refuses first:
 
 ```
-OptionsValidationException: Notices:Schedule must be set when Notices:Runner is Function …
+OptionsValidationException: Notices:Schedule must be set: it is the timer trigger's cadence, …
+WHATEVER Notices:Runner says. …
 Failed to start language worker process for runtime: dotnet-isolated.
 ```
 

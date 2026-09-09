@@ -56,10 +56,10 @@ public sealed class NoticeSweep
 
     /// <summary>
     /// Binds one sweep to one unit of work. <paramref name="options"/> must carry a pickup directory
-    /// and a contact: the runner's own configuration is validated before it decides it is live
-    /// (<c>NoticeRelayConfiguration</c>), and this constructor is the second, unconditional guard —
-    /// a host that skipped that validation fails here rather than delivering a notice with no
-    /// repudiation contact in it.
+    /// and a contact: the runner's own configuration is validated by
+    /// <see cref="NoticeRelayOptionsValidation.ValidateAsRunner"/> at whatever moment its host
+    /// chose, and this constructor is the second, unconditional guard — a host that skipped that
+    /// validation fails here rather than delivering a notice with no repudiation contact in it.
     /// </summary>
     public NoticeSweep(
         AzureBankDbContext context,

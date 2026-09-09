@@ -203,9 +203,9 @@ public static class SecurityEvents
     /// subscriber via a mechanism independent of the transaction binding the new authenticator, as
     /// described in Sec. 4.6.") — that has to reach the account owner, not the operator. Since
     /// ADR-0045 that notice is a <c>SubscriberNotice</c> row written in the same save as this
-    /// record and rendered into a pickup directory by the API's relay or the operator tool
-    /// (ADR-0048); what this codebase still lacks is a transport that SENDS it. Do not let this
-    /// line stand in for either.
+    /// record and rendered into a pickup directory by whichever runner is live: the API's relay
+    /// (ADR-0048), the Function (ADR-0051) or the operator tool; what this codebase still lacks is
+    /// a transport that SENDS it. Do not let this line stand in for either.
     /// </para>
     /// </remarks>
     public const string PinEnrolled = "PinEnrolled";
@@ -224,8 +224,8 @@ public static class SecurityEvents
     /// an alert to raise, which is the precedent the money movements set. And, like the enrolment,
     /// the row is NOT the notification the subscriber is owed — that is the second
     /// <c>SubscriberNotice</c> written in the same save, rendered into a pickup directory by the
-    /// API's relay or the operator tool (ADR-0048); what still does not exist is a transport that
-    /// sends it.
+    /// API's relay (ADR-0048), the Function (ADR-0051) or the operator tool; what still does not
+    /// exist is a transport that sends it.
     /// </para>
     /// </remarks>
     public const string PinChanged = "PinChanged";

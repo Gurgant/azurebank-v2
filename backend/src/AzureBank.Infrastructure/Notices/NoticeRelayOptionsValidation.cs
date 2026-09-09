@@ -5,9 +5,11 @@ namespace AzureBank.Infrastructure.Notices;
 
 /// <summary>
 /// The three rules EVERY host must satisfy before it may call itself the notice runner (ADR-0048
-/// D6), written once for every host that can be one (ADR-0051 D3) — plus a fourth,
-/// <see cref="ValidateThePeriodItSleepsFor"/>, that belongs only to a host whose cadence is
-/// <c>Notices:PeriodSeconds</c>.
+/// D6), written once for every host that can be one (ADR-0051 D3) — plus two that are not shared:
+/// <see cref="ValidateThePeriodItSleepsFor"/>, which belongs to a host whose cadence is
+/// <c>Notices:PeriodSeconds</c>, and <see cref="ValidateTheScheduleItIsBoundTo"/>, which belongs to
+/// a host that binds a trigger to <c>Notices:Schedule</c> and is the only rule here that is not
+/// conditional on the runner at all.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,8 +29,11 @@ namespace AzureBank.Infrastructure.Notices;
 /// constant. A host validates the configuration it would act on: the API asks
 /// <see cref="NoticeRunner.Api"/>, the Function asks <see cref="NoticeRunner.Function"/>, and each
 /// refuses to start only when the flag names IT and the section cannot support it. A host the flag
-/// does not name starts regardless — it is going to step aside anyway, and refusing to start over
-/// a directory it will never write to would take the API down for the Function's misconfiguration.
+/// does not name starts regardless OF THESE THREE — it is going to step aside anyway, and refusing
+/// to start over a directory it will never write to would take the API down for the Function's
+/// misconfiguration. It does NOT start regardless of everything:
+/// <see cref="ValidateTheScheduleItIsBoundTo"/> applies to a host that binds a trigger whatever the
+/// flag says, as do the <c>[Range]</c> annotations, for the reason the next paragraph gives.
 /// </para>
 /// <para>
 /// TWO OF THE THREE TOUCH THE FILE SYSTEM (<c>Directory.Exists</c>, the git walk). That is

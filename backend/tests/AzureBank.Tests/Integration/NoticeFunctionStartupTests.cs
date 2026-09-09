@@ -78,10 +78,13 @@ public sealed class NoticeFunctionStartupTests : IDisposable
     [Fact]
     public void RunnerFunction_WithoutAContact_IsRefused_AndTheMessageNamesTheRunner()
     {
-        RefusalOf(("Notices:Runner", "Function"), ("Notices:PickupDirectory", _directory))
-            .Should().Contain("Notices:Contact").And.Contain("800-63B-4").And.Contain("Function",
-                "the shared rule interpolates the runner it was asked about, so an operator running two "
-                + "hosts learns WHICH one refused");
+        FailuresOf(("Notices:Runner", "Function"), ("Notices:PickupDirectory", _directory))
+            .Should().Contain(
+                f => f.Contains("Notices:Contact") && f.Contains("800-63B-4") && f.Contains("Function"),
+                "ONE failure must carry all three: the shared rule interpolates the runner it was asked "
+                + "about, so an operator running two hosts learns WHICH one refused. Asserted per-failure "
+                + "because the joined string also holds the schedule rule's \"Functions host\", which "
+                + "satisfies a bare Contain(\"Function\") whatever this rule interpolates");
     }
 
     [Fact]
@@ -96,7 +99,8 @@ public sealed class NoticeFunctionStartupTests : IDisposable
             before  '%Notices:Schedule%' does not resolve to a value.
                     Function 'Functions.DeliverOwedNotices' failed indexing and will be disabled.
                     Job host started                      <- exit 0, delivering nothing
-            after   OptionsValidationException: Notices:Schedule must be set when ...
+            after   OptionsValidationException: Notices:Schedule must be set: it is the
+                    timer trigger's cadence, … WHATEVER Notices:Runner says. …
                     Failed to start language worker process for runtime: dotnet-isolated.
                     'failed indexing': 0 occurrences       <- never indexed; func exits 1
 
@@ -139,8 +143,10 @@ public sealed class NoticeFunctionStartupTests : IDisposable
     [Fact]
     public void RunnerFunction_WithoutADirectory_IsRefused()
     {
-        RefusalOf(("Notices:Runner", "Function"), ("Notices:Contact", "security@your-bank.example"))
-            .Should().Contain("Notices:PickupDirectory").And.Contain("EXISTING").And.Contain("Function");
+        FailuresOf(("Notices:Runner", "Function"), ("Notices:Contact", "security@your-bank.example"))
+            .Should().Contain(
+                f => f.Contains("Notices:PickupDirectory") && f.Contains("EXISTING") && f.Contains("Function"),
+                "one failure carrying all three, for the reason the contact row gives");
     }
 
     [Fact]
@@ -153,11 +159,12 @@ public sealed class NoticeFunctionStartupTests : IDisposable
         */
         var inside = Path.Combine(RepoRoot(), "backend", "src", "AzureBank.Functions.NoticeRelay");
 
-        RefusalOf(
+        FailuresOf(
                 ("Notices:Runner", "Function"),
                 ("Notices:PickupDirectory", inside),
                 ("Notices:Contact", "security@your-bank.example"))
-            .Should().Contain("inside a git repository").And.Contain("Function",
+            .Should().Contain(
+                f => f.Contains("inside a git repository") && f.Contains("Function"),
                 "D3 says the shared messages name the runner they were asked about, and this was the "
                 + "one of the three that could not: its message was a constant with no interpolation");
     }
@@ -174,8 +181,9 @@ public sealed class NoticeFunctionStartupTests : IDisposable
           number nothing uses, and, worse, an assurance about a cadence this host does not have.
 
           What replaces it is a RUNTIME check against the interval between this host's own ticks
-          (ADR-0051 D5), which is the only cadence it can know, and which caught a 19-second gap on
-          a 20-second schedule when it was measured.
+          (ADR-0051 D5), which is the only cadence it can know — and which reports the gap ROUNDED,
+          since a cast made a 19.6-second gap print as 19 and D5 no longer offers that number as
+          evidence.
         */
         var options = Resolve(
             ("Notices:Runner", "Function"),
@@ -253,7 +261,7 @@ public sealed class NoticeFunctionStartupTests : IDisposable
           ONE KEYWORD DISABLES TWO DECISIONS WITH A GREEN SUITE, which is why this asserts the
           registration and not a behaviour. Every other test here builds NoticeRelayHostState by
           hand, so `AddSingleton` -> `AddTransient` was measured to leave the entire Notice filter
-          green — 76 of 76 — while breaking both:
+          green while breaking both:
 
             D8: a fresh `func/...` name every tick, so a row left HELD by a failed delivery is
                 unrecognisable to the next sweep. Stranded until its lease lapses, then claimed as a
@@ -262,7 +270,8 @@ public sealed class NoticeFunctionStartupTests : IDisposable
                 can never fire. The guard becomes the wish six live ticks were spent arguing against.
 
           The class-level mutant (a name generated per read) is a DIFFERENT mutant and is caught by
-          the tests above; the two are independent, and this is the layer that had nothing.
+          the tests in `DeliverOwedNoticesTests`; the two are independent, and this is the layer that
+          had nothing.
         */
         var services = new ServiceCollection();
         services.AddLogging();
@@ -329,12 +338,33 @@ public sealed class NoticeFunctionStartupTests : IDisposable
         return provider.GetRequiredService<IOptions<NoticeRelayOptions>>().Value;
     }
 
-    private static string RefusalOf(params (string Key, string Value)[] notices)
+    private static string RefusalOf(params (string Key, string Value)[] notices) =>
+        string.Join("\n", FailuresOf(notices));
+
+    /// <summary>
+    /// The refusals SEPARATELY, so an assertion cannot be satisfied by a different rule's message.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WHY THIS EXISTS, and it is not tidiness. The three runner-rule tests asserted
+    /// <c>RefusalOf(…).Should().Contain("Notices:Contact").And.Contain("Function")</c> against the
+    /// JOINED failures. Since the schedule rule became unconditional, every one of those
+    /// configurations also fails the schedule rule, and that message reads "resolved by the
+    /// Functions host during indexing" — and "Functions" contains "Function". So the interpolation
+    /// D3 is about was pinned by nothing.
+    /// </para>
+    /// <para>
+    /// MEASURED: hard-coding <c>Api</c> into all three shared messages, which is exactly main's
+    /// behaviour and the defect D3 exists to prevent, left this file 14 of 14 GREEN. Asserting on
+    /// one failure at a time is what makes the runner's name load-bearing again.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyCollection<string> FailuresOf(params (string Key, string Value)[] notices)
     {
         var resolve = () => Resolve(notices);
         var refusal = resolve.Should().Throw<OptionsValidationException>(
             "a partial Notices section must be refused by the validator the Function's own root registers").Which;
-        return string.Join("\n", refusal.Failures);
+        return refusal.Failures.ToList();
     }
 
     private static string RepoRoot()

@@ -10,8 +10,8 @@ namespace AzureBank.Functions.NoticeRelay;
 /// <para>
 /// A TYPE RATHER THAN TWO FIELDS ON THE FUNCTION, because a Function class in the isolated worker is
 /// constructed PER INVOCATION. The API's relay needs none of this: it is a singleton, so its name is
-/// a property and its schedule is its own <c>PeriodTimer</c>. Both members here exist for the same
-/// reason and are kept together to say so.
+/// a property and its schedule is its own <see cref="System.Threading.PeriodicTimer"/>. Both
+/// members here exist for the same reason and are kept together to say so.
 /// </para>
 /// <para>
 /// THE NAME MUST NOT BE PER INVOCATION. A row whose delivery failed stays owed and HELD under the

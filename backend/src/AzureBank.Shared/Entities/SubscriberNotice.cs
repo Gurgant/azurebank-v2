@@ -61,8 +61,8 @@ public class SubscriberNotice
     public DateTime OccurredAt { get; set; }
 
     /// <summary>
-    /// When a runner — the API's relay or the operator tool — rendered the notice (UTC). Null while
-    /// the notice is still owed.
+    /// When a runner — the operator tool (ADR-0045), the API's relay (ADR-0048) or the Function
+    /// (ADR-0051) — rendered the notice (UTC). Null while the notice is still owed.
     /// A concurrency token, so two runs cannot both claim to have rendered one notice: the second
     /// UPDATE carries <c>WHERE DeliveredAt IS NULL</c> and loses loudly.
     /// </summary>

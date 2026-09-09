@@ -27,13 +27,15 @@ namespace AzureBank.Functions.NoticeRelay;
 /// nothing, so it holds no key.
 /// </para>
 /// <para>
-/// NO SECRET LIVES HERE, and that is worth saying because it is not obvious.
+/// NO NOTICE SECRET LIVES HERE, and the qualifier NOTICE is load-bearing:
+/// <c>ConnectionStrings:DefaultConnection</c> is private configuration and reaches the whole store,
+/// so this is not a host that could be handed to a stranger. What it does not hold is a signing key.
 /// <c>AddInfrastructure</c> registers a DbContext and validates nothing; the DbContext has no
 /// <c>SaveChangesInterceptor</c> (rejected deliberately — see <c>AuditChain</c>'s remarks); and
 /// ADR-0048 D7 already decided that a delivered notice writes no audit row. So this host needs a
 /// connection string and the <c>Notices</c> section, and none of the six validated secrets. A second
-/// deployable that carries no secret is a smaller thing to reason about than one that does, and the
-/// ADR says so rather than leaving a reader to check.
+/// deployable that carries no SIGNING key is a smaller thing to reason about than one that does —
+/// the narrower claim ADR-0051 D9 actually makes, and the one this comment used to overstate.
 /// </para>
 /// <para>
 /// RETRY ON, unlike the verifier. That tool turns it off because a retrying execution strategy makes
@@ -76,9 +78,6 @@ internal static class Program
             // with Runner=Api, where the binding failed and the runner rules stayed silent. So the
             // schedule is what this host needs to EXIST, not what it needs to be the runner.
             .ValidateTheScheduleItIsBoundTo()
-            // This host's cadence is Notices:Schedule, so it takes the schedule rule the way the API
-            // takes the period rule. Without it a missing value is an indexing failure that leaves
-            // the host running and delivering nothing (ADR-0051 D3).
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
