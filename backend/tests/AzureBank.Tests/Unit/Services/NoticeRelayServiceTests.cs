@@ -649,8 +649,10 @@ public sealed class NoticeRelayServiceTests : IDisposable
 
         exitCode.Should().Be(VerifyCommand.NothingToVerify, "nothing was FREE for this run; not a success and not a failure");
         printed.Should().Contain("held under another runner's live lease");
-        printed.Should().Contain($"taken by {named}",
-            "the holder is in the column; printing a guess instead is what ADR-0051 D7's prefix exists to prevent");
+        printed.Should().Contain($"recognises: {named}",
+            "the holder is in the column; printing a guess instead is what ADR-0051 D7's prefix exists "
+            + "to prevent. RECOGNISES, not \"taken by\": the count covers every holder and this clause "
+            + "covers only the readable ones, so it must not read as an inventory of who holds the rows");
         printed.Should().NotContain("The API's relay",
             "the sentence that named one runner for all of them must not come back");
         printed.Should().NotContain("is delivering them",
@@ -725,8 +727,11 @@ public sealed class NoticeRelayServiceTests : IDisposable
         var (_, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
         var printed = string.Join("\n", lines);
 
-        printed.Should().Contain("A live lease holds them", "the fallback wording carries the same guidance");
-        printed.Should().NotContain("taken by", "there was no usable name to print");
+        printed.Should().Contain("under no name this build recognises",
+            "the fallback wording carries the same guidance and says plainly that nothing was readable");
+        printed.Should().NotContain("recognises:",
+            "there was no usable name to print. ⚠️ This string must track the message: pointed at "
+            + "wording the verb no longer prints, a NotContain passes vacuously and guards nothing");
         printed.Should().NotContain("DROP TABLE");
         printed.Should().Contain("held under another runner's live lease", "the COUNT is still right; only the name was unusable");
     }

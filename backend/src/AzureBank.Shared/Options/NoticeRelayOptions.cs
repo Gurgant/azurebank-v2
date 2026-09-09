@@ -12,10 +12,13 @@ public enum NoticeRunner
     Api,
 
     /// <summary>
-    /// A runner outside this process is live and the API must not also send: the Azure Function in
+    /// NAMES a runner outside this process, and the API must not also send: the Azure Function in
     /// <c>AzureBank.Functions.NoticeRelay</c>, which runs the same <c>NoticeSweep</c> on a timer
-    /// trigger (ADR-0051). Until 2026-09-08 this said "Reserved: nothing in this repository
-    /// implements it yet", and the API logged a Warning to match.
+    /// trigger (ADR-0051). Naming it does not START it — set this with that host not running and
+    /// nothing delivers, until somebody runs the tool's <c>notify</c> verb. Until 2026-09-08 this
+    /// said "Reserved: nothing in this repository implements it yet", and the API logged a Warning
+    /// to match; until 2026-09-09 it said that outside runner "is live", which is a thing the flag
+    /// cannot make true.
     /// </summary>
     Function,
 }

@@ -268,13 +268,16 @@ public static class NotifyCommand
                           does not say who holds them. The holder's kind is the head of the name in
                           LeasedBy, which is what that prefix exists for, so it is read here.
                           An unrecognised name is dropped rather than echoed, which is why this
-                          sentence still has to work with nothing to name.
+                          sentence still has to work with nothing to name — and why it says which
+                          names it RECOGNISES rather than who holds the rows. The count above covers
+                          every holder; this line covers only the ones it can read, and the two are
+                          not the same set.
                         */
                         holders.Count == 0
-                            ? "  A live lease holds them. This verb cannot see whether the holder is still"
-                            : $"  A live lease holds them, taken by {string.Join(" and ", holders.Select(k => $"`{k}`"))}. "
-                              + "This verb cannot see whether the holder is still",
-                        "  running: when that lease lapses the rows come free and a later run of this verb takes them.",
+                            ? "  Live leases hold them, under no name this build recognises. This verb cannot see whether"
+                            : $"  Live leases hold them; the names it recognises: {string.Join(" and ", holders.Select(k => $"`{k}`"))}. "
+                              + "This verb cannot see whether",
+                        "  a holder is still running: when a lease lapses those rows come free and a later run takes them.",
                     });
             }
 

@@ -974,6 +974,10 @@ The headlines, and what each means from THIS verb:
 - `NOTHING TO NOTIFY` — exit **2**, with two readings and the line says which: no notice is owed, or
   every owed notice is held under another runner's LIVE LEASE and none is free to this run — and
   since ADR-0051 the verb NAMES the kind, reading it out of `LeasedBy`: `api`, `func` or `verb`.
+  ⚠️ **The count is complete; the NAMES are not.** A holder whose name begins with none of those
+  three is counted and NOT echoed back at you — the verb says it recognises no name, which means
+  somebody wrote that row by hand. Read the column yourself:
+  `SELECT LeasedBy, LeasedUntil FROM SubscriberNotices WHERE DeliveredAt IS NULL AND LeasedUntil > SYSUTCDATETIME()`.
   ⚠️ **A live lease is not a live process.** Nothing here probes the holder: a runner that claimed
   and then died keeps its rows until the lease lapses, and looks identical to one mid-delivery. So
   the remedy is the lapse, which is what the verb's own next line tells you to wait for.

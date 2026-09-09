@@ -37,7 +37,12 @@ correctness-bearing loop, after two hygiene sweeps. It follows their shape exact
 `PeriodicTimer`, first look one full period after start, a catch-all per sweep logged at Error,
 cancellation absorbed as shutdown — and it is registered where they are, beside its options in
 `AddApplicationServices`, so a second host inherits it. It is ALWAYS registered and reads
-`Notices:Runner` once at start; unless that names this process it logs that no runner is live and
+`Notices:Runner` once at start; unless that names this process it logs ~~that no runner is live~~
+the flag's value and that THIS process delivers nothing *(struck 2026-09-09: nothing ever emitted
+"no runner is live". The line is `"Notice relay: runner is {Runner}; this process delivers nothing
+(Notices:Runner)"` — the flag's value and this process's own abstention, both of which it has. It
+cannot speak for another host, because nothing here probes a process; that is why every other reader
+in this system waits on the LEASE instead.)* and
 returns — ~~at Warning for `Function`, which nothing implements yet, so an operator who set it is
 told that notices stay owed~~ *(struck 2026-09-08: at Information for every value, ADR-0051 D4;
 correction below)*. That flag, not the lease, is what keeps two KINDS of runner from both
