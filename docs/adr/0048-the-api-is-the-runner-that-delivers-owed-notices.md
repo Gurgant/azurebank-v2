@@ -106,7 +106,11 @@ delivers only what it holds; rows another runner holds under a live lease are co
 and taken only once that lease has lapsed. A verb that merely read free rows and delivered them
 would leave a window between its read and its write in which the relay's claim takes the same
 rows; claiming closes it. The verb's exit 2 now has two readings, and the line says which: nothing
-owed, or everything owed leased by a live runner.
+owed, or everything owed ~~leased by a live runner~~ held under another runner's LIVE LEASE
+*(struck 2026-09-09: the count comes from `LeasedUntil > now`, which proves the lease is unexpired
+and nothing about the process. A runner that claimed and died is indistinguishable here from one
+mid-delivery — the distinction the rest of this ADR keeps, at D3 and at "under a live lease" three
+times above, and this one sentence dropped.)*.
 
 **D6 — Options, off by default, refused when partial.** The `Notices` section: `Runner`
 (`None|Api|Function`, default `None`), `PickupDirectory`, `Contact`, `PeriodSeconds` (15),

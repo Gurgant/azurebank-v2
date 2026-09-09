@@ -628,7 +628,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
     [InlineData("api/HOST/1/abcdef12", "`api`")]
     [InlineData("func/HOST/1/abcdef12", "`func`")]
     [InlineData("verb/HOST/1/abcdef12", "`verb`")]
-    public async Task TheVerbLeavesARowALiveRunnerHolds_AndNAMESIt(string heldBy, string named)
+    public async Task TheVerbLeavesARowHeldUnderAnothersLiveLease_AndNAMESTheKind(string heldBy, string named)
     {
         /*
           NAMED, NOT GUESSED. This line said "The API's relay is delivering them" until ADR-0051,
@@ -648,14 +648,17 @@ public sealed class NoticeRelayServiceTests : IDisposable
         var printed = string.Join("\n", lines);
 
         exitCode.Should().Be(VerifyCommand.NothingToVerify, "nothing was FREE for this run; not a success and not a failure");
-        printed.Should().Contain("leased by a live runner");
-        printed.Should().Contain($"A live {named} runner is delivering them",
+        printed.Should().Contain("held under another runner's live lease");
+        printed.Should().Contain($"taken by {named}",
             "the holder is in the column; printing a guess instead is what ADR-0051 D7's prefix exists to prevent");
         printed.Should().NotContain("The API's relay",
             "the sentence that named one runner for all of them must not come back");
-        printed.Should().Contain("leases lapse",
-            "the operator still needs to know that waiting is a remedy");
-        _transport.Envelopes.Should().BeEmpty("the verb must not render what a live runner is delivering");
+        printed.Should().NotContain("is delivering them",
+            "a live LEASE is not a live PROCESS: LeasedUntil > now cannot tell a holder mid-delivery "
+            + "from one that claimed and died, and the verb must not assert the difference");
+        printed.Should().Contain("lease lapses",
+            "the operator still needs to know that waiting is the remedy");
+        _transport.Envelopes.Should().BeEmpty("the verb must not render what another runner holds");
         (await StoredAsync(notice.Id)).DeliveredAt.Should().BeNull();
     }
 
@@ -686,9 +689,12 @@ public sealed class NoticeRelayServiceTests : IDisposable
         printed.Should().NotContain("could not be read or written",
             "a row the store would have refused must not be reported as the store failing");
         printed.Should().NotContain("NullReferenceException");
-        printed.Should().NotContain("leased by a live runner",
+        printed.Should().NotContain("held under another runner's live lease",
             "no runner holds it — counting it as held made the verb name a holder that does not exist, "
-            + "which is why HeldByOthersAsync carries the same null term as the holder query");
+            + "which is why HeldByOthersAsync carries the same null term as the holder query. ⚠️ This "
+            + "string must track the message: a NotContain left pointing at wording the verb no longer "
+            + "prints passes vacuously and stops guarding, which is the one assertion in this file "
+            + "that a message change does not turn red");
         printed.Should().Contain("NOTHING TO NOTIFY: no notice is owed.");
         exitCode.Should().NotBe(VerifyCommand.Misconfigured);
 
@@ -719,9 +725,10 @@ public sealed class NoticeRelayServiceTests : IDisposable
         var (_, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
         var printed = string.Join("\n", lines);
 
-        printed.Should().Contain("A live relay runner is delivering them", "the fallback wording carries the same guidance");
+        printed.Should().Contain("A live lease holds them", "the fallback wording carries the same guidance");
+        printed.Should().NotContain("taken by", "there was no usable name to print");
         printed.Should().NotContain("DROP TABLE");
-        printed.Should().Contain("leased by a live runner", "the COUNT is still right; only the name was unusable");
+        printed.Should().Contain("held under another runner's live lease", "the COUNT is still right; only the name was unusable");
     }
 
     [Fact]
@@ -736,7 +743,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
 
         exitCode.Should().Be(VerifyCommand.Intact);
         var text = string.Join("\n", lines);
-        text.Should().Contain("NOTIFIED 1 of 1").And.Contain("1 more owed notice(s) are leased by a live runner");
+        text.Should().Contain("NOTIFIED 1 of 1").And.Contain("1 more owed notice(s) are held under another runner's live lease");
         _transport.Envelopes.Should().ContainSingle();
         var stored = await StoredAsync(lapsed.Id);
         stored.DeliveredAt.Should().NotBeNull();

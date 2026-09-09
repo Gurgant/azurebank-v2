@@ -102,9 +102,10 @@ Both hosts step aside unless the flag names them, so a configuration naming neit
 
 ⚠️ **The flag does not gate the verb.** `notify` above is run by a person and delivers whenever they
 run it, `Notices:Runner=None` included. It does not need the flag, because it takes the same lease a
-host takes (ADR-0048 D5): it claims what it delivers under its own name, counts and names rows a live
-runner holds, and takes them only once that lease has lapsed. So the verb beside a live relay is safe
-by the lease, not by configuration.
+host takes (ADR-0048 D5): it claims what it delivers under its own name, counts and names rows
+another runner holds under a live lease, and takes them only once that lease has lapsed. So the verb
+beside a running relay is safe by the lease, not by configuration — and safe beside a relay that has
+DIED too, which is the same code path: nothing probes the process, the lease simply lapses.
 
 The API prints which it is at Information on every start:
 

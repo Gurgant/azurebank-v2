@@ -972,8 +972,11 @@ The headlines, and what each means from THIS verb:
   every waiting notice was written and marked; **6** when at least one is still owed, with a line
   per notice saying why. A marked notice is never rewritten: fix what the line names and run again.
 - `NOTHING TO NOTIFY` — exit **2**, with two readings and the line says which: no notice is owed, or
-  every owed notice is leased by a live runner and none is free to this run — and since ADR-0051
-  the verb NAMES which, reading the kind out of `LeasedBy`: a live `api`, `func` or `verb` runner.
+  every owed notice is held under another runner's LIVE LEASE and none is free to this run — and
+  since ADR-0051 the verb NAMES the kind, reading it out of `LeasedBy`: `api`, `func` or `verb`.
+  ⚠️ **A live lease is not a live process.** Nothing here probes the holder: a runner that claimed
+  and then died keeps its rows until the lease lapses, and looks identical to one mid-delivery. So
+  the remedy is the lapse, which is what the verb's own next line tells you to wait for.
   Its own answer, not a success, for the reason `verify`'s **2** is. A row that stays owed
   beside a file that already exists — a runner delivered it and died before the mark — is refused
   again on every retry (`NOT NOTIFIED … (IOException)`, exit **6**): the row is the truth; move the

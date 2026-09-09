@@ -176,8 +176,8 @@ public static class NoticeClaim
     /// <remarks>
     /// <c>LeasedBy != null</c> for the same reason its sibling below carries it, and because the two
     /// must AGREE: a row held until a time by nobody is not held by another runner, so counting it
-    /// here while excluding it there made the verb print "N owed notice(s) are leased by a live
-    /// runner" with no runner to name. The store forbids the state (CK_SubscriberNotices_Lease) and
+    /// here while excluding it there made the verb print "N owed notice(s) are held under another
+    /// runner's live lease" with no runner to name. The store forbids the state (CK_SubscriberNotices_Lease) and
     /// the InMemory provider does not, which is where the two answers could diverge.
     /// </remarks>
     public static Task<int> HeldByOthersAsync(

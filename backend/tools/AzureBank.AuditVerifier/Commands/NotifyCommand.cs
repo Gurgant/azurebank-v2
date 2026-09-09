@@ -49,7 +49,8 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </para>
 /// <para>
 /// EXIT CODES, none of them new. 0: every notice this run claimed was written and marked. 2:
-/// nothing was FREE — no notice is owed, or every owed one is leased by a live runner, and the
+/// nothing was FREE — no notice is owed, or every owed one is held under another runner's live
+/// lease, and the
 /// line says which — its own answer, not a success, for the reason
 /// <see cref="VerifyCommand.NothingToVerify"/> gives. 3: the tool is not configured, the ring will not build, or the store could not be read.
 /// 4: the command line was wrong — no contact, no directory, or a directory inside a git
@@ -235,7 +236,8 @@ public static class NotifyCommand
                 NoticeClaim.VerbKind, Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
 
             /*
-              THE VERB CLAIMS TOO (ADR-0048). A row a live runner holds is not this run's: rendering it
+              THE VERB CLAIMS TOO (ADR-0048). A row another runner holds under a live lease is not
+              this run's: rendering it
               would produce the duplicate the lease exists to prevent, and a row this run read without
               claiming could be taken by the relay between the read and the write. So the verb takes
               the same lease the relay takes, under its own name, batch by batch, and delivers only
@@ -258,7 +260,7 @@ public static class NotifyCommand
                     }
                     : new[]
                     {
-                        $"NOTHING TO NOTIFY: {leased} owed notice(s) are leased by a live runner and none is free.",
+                        $"NOTHING TO NOTIFY: {leased} owed notice(s) are held under another runner's live lease and none is free.",
                         /*
                           NAMED, NOT GUESSED (ADR-0051 D7). This line used to say "The API's relay is
                           delivering them" — true while the API was the only runner, and a guess from
@@ -269,9 +271,10 @@ public static class NotifyCommand
                           sentence still has to work with nothing to name.
                         */
                         holders.Count == 0
-                            ? "  A live relay runner is delivering them. If it is not running, its leases lapse"
-                            : $"  A live {string.Join(" and ", holders.Select(k => $"`{k}`"))} runner is delivering them. If it is not running, its leases lapse",
-                        "  within minutes and a later run of this verb takes them.",
+                            ? "  A live lease holds them. This verb cannot see whether the holder is still"
+                            : $"  A live lease holds them, taken by {string.Join(" and ", holders.Select(k => $"`{k}`"))}. "
+                              + "This verb cannot see whether the holder is still",
+                        "  running: when that lease lapses the rows come free and a later run of this verb takes them.",
                     });
             }
 
@@ -369,7 +372,7 @@ public static class NotifyCommand
             }
             if (leased > 0)
             {
-                lines.Add($"{leased} more owed notice(s) are leased by a live runner and were left to it.");
+                lines.Add($"{leased} more owed notice(s) are held under another runner's live lease and were left to it.");
             }
             lines.Insert(1, "  Each file is a complete message addressed to the email held on the account, and it has");
             lines.Insert(2, "  reached this machine's disk and nobody else: nothing here sends. Point a relay at the");
