@@ -608,7 +608,21 @@ public sealed class NoticeRelayServiceTests : IDisposable
         printed.Should().NotContain("could not be read or written",
             "a row the store would have refused must not be reported as the store failing");
         printed.Should().NotContain("NullReferenceException");
+        printed.Should().NotContain("leased by a live runner",
+            "no runner holds it — counting it as held made the verb name a holder that does not exist, "
+            + "which is why HeldByOthersAsync carries the same null term as the holder query");
+        printed.Should().Contain("NOTHING TO NOTIFY: no notice is owed.");
         exitCode.Should().NotBe(VerifyCommand.Misconfigured);
+
+        /*
+          ⚠️ THE LIMIT OF THAT LAST LINE, said rather than left for a reader to find: the row IS owed
+          (DeliveredAt is null) and the verb reports that nothing is. Both of the verb's answers are
+          wrong for this row, because its model has two states — free, or held by a runner — and a
+          row leased until a time by nobody is in neither. The state is impossible on the real store,
+          so the choice is between two wrong sentences about something that cannot happen; this one
+          at least does not invent a runner. Making the verb describe it properly would mean a third
+          state in the protocol for a row the database refuses to store.
+        */
     }
 
     [Fact]

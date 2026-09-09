@@ -79,7 +79,7 @@ since ADR-0051 the same code.
 | --- | --- |
 | `ConnectionStrings:DefaultConnection` | The store the notices live in |
 | `Notices:Runner` | `Function` for this host to deliver; `Api` or `None` and it steps aside. Gates the hosted runners only — never the `notify` verb |
-| `Notices:Schedule` | The trigger's CRON or TimeSpan expression, bound as `%Notices:Schedule%` |
+| `Notices:Schedule` | The trigger's CRON or TimeSpan expression, bound as `%Notices:Schedule%`. Required whatever the runner |
 | `Notices:PickupDirectory` | An existing directory outside any git tree; one `.eml` per notice |
 | `Notices:Contact` | How a recipient repudiates the event — mandatory content of every notice |
 | `Notices:LeaseSeconds` | How long a claimed row stays this runner's |
@@ -89,7 +89,8 @@ since ADR-0051 the same code.
 `Notices:Schedule`, and the lease is checked against the interval actually observed between ticks
 rather than against a number nothing uses (ADR-0051 D5).
 
-`Notices:Schedule` is refused at startup like the rest, and that took a review round to get right.
+`Notices:Schedule` is required WHATEVER `Notices:Runner` says — the only key here not conditional
+on the flag, because the binding is resolved during indexing, before the flag is read.
 The trigger's `%setting%` is resolved by the Functions runtime during indexing, so a missing value
 USED to leave the host up with the function disabled — exit code zero, delivering nothing, which is
 the worst shape a misconfiguration can take. `ValidateOnStart` runs as the worker PROCESS starts,

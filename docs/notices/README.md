@@ -64,7 +64,8 @@ Then, from the repository root:
     (edit ConnectionStrings:DefaultConnection, Notices:PickupDirectory and Notices:Schedule in it)
     func start
 
-**`Notices:Schedule` is refused like the others, and it took a review round to get there.** It is a
+**`Notices:Schedule` is required WHATEVER `Notices:Runner` says** — the only key here that is not
+conditional on the flag, because the binding is resolved before the flag is read. It is a
 trigger expression the Functions runtime binds during indexing, so a missing value used to be an
 indexing failure rather than a startup refusal: the host printed *"does not resolve to a value"*,
 disabled the function, reported **"Job host started"**, and exited zero — a healthy-looking host
@@ -84,8 +85,8 @@ runner: a value out of range is a misconfiguration even in a host that delivers 
 `Notices:Contact` and `Notices:PickupDirectory` are checked only when `Notices:Runner=Function`
 names THIS host — with `Api` or `None` the Function starts without them and steps aside, which is
 deliberate (ADR-0051 D3): refusing to start over a directory it will never write to would take one
-runner down for another's misconfiguration. `Notices:Schedule` is in that second group too, since
-the review round above.
+runner down for another's misconfiguration. And `Notices:Schedule` is in a group of its own —
+the unconditional one above: the binding needs it before the flag is ever consulted.
 
 `local.settings.json` is gitignored: it is this host's connection string and pickup directory, the
 Function's equivalent of the API's user-secrets. **When `Notices:Runner=Function`**, the pickup

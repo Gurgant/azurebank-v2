@@ -107,7 +107,9 @@ public sealed class NoticeFunctionStartupTests : IDisposable
                 ("Notices:Runner", "Function"),
                 ("Notices:PickupDirectory", _directory),
                 ("Notices:Contact", "security@your-bank.example"))
-            .Should().Contain("Notices:Schedule").And.Contain("Function")
+            .Should().Contain("Notices:Schedule")
+            .And.Contain("WHATEVER Notices:Runner says",
+                "the binding is resolved during indexing, before the flag is read")
             .And.Contain("delivers nothing",
                 "the message has to say what the operator would otherwise have seen: a healthy host");
     }
@@ -115,13 +117,23 @@ public sealed class NoticeFunctionStartupTests : IDisposable
     [Theory]
     [InlineData("None")]
     [InlineData("Api")]
-    public void TheScheduleIsNotAskedOfAHostTheFlagDoesNotName(string runner)
+    public void TheScheduleIsAskedOfTHISHOST_WhateverTheFlagSays(string runner)
     {
-        // Same asymmetry as the other runner rules: this host is about to step aside, and the
-        // schedule is the cadence of a loop it will not run.
+        /*
+          THE ONE RULE HERE THAT IS NOT RUNNER-CONDITIONAL, and an earlier version of this test
+          asserted the opposite. The trigger binds %Notices:Schedule% and the Functions host resolves
+          it during INDEXING, which happens before the flag is read — the flag is checked inside the
+          invocation, and there are no invocations of a function that failed to index.
+
+          Measured with Notices:Runner=Api and the key removed: three "'%Notices:Schedule%' does not
+          resolve to a value" lines and one "failed indexing", with every runner-conditional
+          validator silent. So a host set to step aside still cannot come up without a schedule; what
+          it gets without this rule is an indexing error instead of a named refusal.
+        */
         var resolve = () => Resolve(("Notices:Runner", runner), ("Notices:PickupDirectory", _directory));
 
-        resolve.Should().NotThrow();
+        resolve.Should().Throw<OptionsValidationException>()
+            .Which.Failures.Should().Contain(f => f.Contains("Notices:Schedule"));
     }
 
     [Fact]
@@ -215,7 +227,12 @@ public sealed class NoticeFunctionStartupTests : IDisposable
           will never write to would take it down for another runner's misconfiguration — and, run the
           other way, would take the API down for this one's.
         */
-        var resolve = () => Resolve(("Notices:Runner", runner), ("Notices:PickupDirectory", "Z:\\nowhere"));
+        var resolve = () => Resolve(
+            ("Notices:Runner", runner),
+            ("Notices:PickupDirectory", "Z:\\nowhere"),
+            // Supplied because the schedule is NOT a runner rule — it is what this host needs to
+            // exist, and without it the refusal below would be about the wrong key.
+            ("Notices:Schedule", "*/15 * * * * *"));
 
         resolve.Should().NotThrow("the flag does not name this host, so the runner rules are not its to enforce");
     }

@@ -71,10 +71,11 @@ internal static class Program
         services.AddOptions<NoticeRelayOptions>()
             .Bind(configuration.GetSection(NoticeRelayOptions.SectionName))
             .ValidateAsRunner(NoticeRunner.Function)
-            // This host's cadence is Notices:Schedule, so it takes the schedule rule the way the API
-            // takes the period rule. Without it a missing value is an indexing failure that leaves
-            // the host running and delivering nothing (ADR-0051 D3).
-            .ValidateTheScheduleItTicksOn(NoticeRunner.Function)
+            // UNCONDITIONAL, unlike the three above. The trigger binds %Notices:Schedule% and the
+            // Functions host resolves it during INDEXING, before the flag is ever read — measured
+            // with Runner=Api, where the binding failed and the runner rules stayed silent. So the
+            // schedule is what this host needs to EXIST, not what it needs to be the runner.
+            .ValidateTheScheduleItIsBoundTo()
             // This host's cadence is Notices:Schedule, so it takes the schedule rule the way the API
             // takes the period rule. Without it a missing value is an indexing failure that leaves
             // the host running and delivering nothing (ADR-0051 D3).

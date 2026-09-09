@@ -173,10 +173,21 @@ public static class NoticeClaim
             .ThenBy(n => n.Id);
 
     /// <summary>How many owed rows another runner holds under a live lease right now.</summary>
+    /// <remarks>
+    /// <c>LeasedBy != null</c> for the same reason its sibling below carries it, and because the two
+    /// must AGREE: a row held until a time by nobody is not held by another runner, so counting it
+    /// here while excluding it there made the verb print "N owed notice(s) are leased by a live
+    /// runner" with no runner to name. The store forbids the state (CK_SubscriberNotices_Lease) and
+    /// the InMemory provider does not, which is where the two answers could diverge.
+    /// </remarks>
     public static Task<int> HeldByOthersAsync(
         AzureBankDbContext context, string runner, DateTime now, CancellationToken cancellationToken) =>
         context.SubscriberNotices.CountAsync(
-            n => n.DeliveredAt == null && n.LeasedUntil != null && n.LeasedUntil > now && n.LeasedBy != runner,
+            n => n.DeliveredAt == null
+                 && n.LeasedUntil != null
+                 && n.LeasedUntil > now
+                 && n.LeasedBy != null
+                 && n.LeasedBy != runner,
             cancellationToken);
 
     /// <summary>

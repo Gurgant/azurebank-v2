@@ -99,8 +99,8 @@ public static class NoticeRelayOptionsValidation
             + "the next claim do not overlap in the normal case.");
 
     /// <summary>
-    /// The schedule rule, for a host whose cadence IS <c>Notices:Schedule</c> — which is the Function
-    /// and nothing else.
+    /// The schedule rule: a host that binds its trigger to <c>%Notices:Schedule%</c> needs the value
+    /// to EXIST, whatever <c>Notices:Runner</c> says.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -118,13 +118,22 @@ public static class NoticeRelayOptionsValidation
     /// intact. This rule only asks for PRESENCE — the expression's validity is the trigger's to
     /// judge, and a CRON parser here would be a second opinion about somebody else's grammar.
     /// </para>
+    /// <para>
+    /// NOT CONDITIONAL ON THE RUNNER, unlike every other rule in this file, and that asymmetry is
+    /// the point. The trigger's <c>%setting%</c> is resolved by the Functions host during INDEXING,
+    /// which happens whatever <c>Notices:Runner</c> says — the flag is read later, inside the
+    /// invocation. Measured with <c>Notices:Runner=Api</c> and the key removed: three
+    /// "'%Notices:Schedule%' does not resolve to a value" lines and one "failed indexing", with the
+    /// runner-conditional validators silent. So a schedule is not something this host needs in order
+    /// to be the RUNNER; it is something it needs in order to EXIST, like its storage account.
+    /// </para>
     /// </remarks>
-    public static OptionsBuilder<NoticeRelayOptions> ValidateTheScheduleItTicksOn(
-        this OptionsBuilder<NoticeRelayOptions> builder, NoticeRunner thisProcess) =>
+    public static OptionsBuilder<NoticeRelayOptions> ValidateTheScheduleItIsBoundTo(
+        this OptionsBuilder<NoticeRelayOptions> builder) =>
         builder.Validate(
-            o => o.Runner != thisProcess || !string.IsNullOrWhiteSpace(o.Schedule),
-            $"Notices:Schedule must be set when Notices:Runner is {thisProcess} — it is the timer "
-            + "trigger's cadence, and the Functions host resolves it during indexing. Without it the "
-            + "function is DISABLED and the host still reports \"Job host started\": a process that "
-            + "is up, exits zero, and delivers nothing.");
+            o => !string.IsNullOrWhiteSpace(o.Schedule),
+            "Notices:Schedule must be set: it is the timer trigger's cadence, resolved by the "
+            + "Functions host during indexing WHATEVER Notices:Runner says. Without it the function "
+            + "fails indexing and is DISABLED while the host still reports \"Job host started\" — a "
+            + "process that is up, exits zero, and delivers nothing.");
 }

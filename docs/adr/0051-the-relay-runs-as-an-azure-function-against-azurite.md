@@ -142,10 +142,20 @@ not merely pointless — a host that validated a lease against a period and then
 `Notices:Schedule` would be offering an assurance about a cadence it does not have. The Function's
 equivalent is D5. A test asserts both sides of the split on identical numbers: refused for `Api`,
 accepted for `Function`. A host the flag does not name starts regardless OF THE RUNNER-SPECIFIC
-RULES — the contact, the directory's existence, the git-tree guard, and now the schedule — because
-it is going to step aside anyway, and refusing to start over a directory it will never write to
-would take the API down for the Function's misconfiguration, and the other way round. It does NOT
-start regardless of everything: the `[Range]` annotations below apply whatever the flag says.
+RULES — the contact, the directory's existence, the git-tree guard — because it is going to step
+aside anyway, and refusing to start over a directory it will never write to would take the API down
+for the Function's misconfiguration, and the other way round.
+
+It does NOT start regardless of everything, and the exceptions are two different kinds. The
+`[Range]` annotations apply whatever the flag says, because a period out of range is a
+misconfiguration in a host that delivers nothing. And `Notices:Schedule` is not a runner rule at all,
+though a first version of this decision filed it as one: the trigger binds `%Notices:Schedule%` and
+the Functions host resolves it during INDEXING, which happens before the flag is read — the flag is
+checked inside the invocation, and a function that failed to index has no invocations. Measured with
+`Notices:Runner=Api` and the key removed: three *"does not resolve to a value"* lines and one
+*"failed indexing"*, with every runner-conditional validator silent. So the schedule is what this
+host needs in order to EXIST, like its storage account, and `ValidateTheScheduleItIsBoundTo` is
+unconditional to match.
 
 Shared rather than mirrored, and the repository has already paid for the alternative:
 `AddVerifierServices` mirrors the API's audit-key validation by hand and records, in its own
