@@ -75,9 +75,9 @@ public class AzureBankDbContext : IdentityDbContext<ApplicationUser, IdentityRol
 
     /// <summary>
     /// What an account holder is owed and has not yet been told (ADR-0045). Written by the API in
-    /// the same save as the action that owes the notice; claimed, read and marked by whichever
-    /// runner is live — the API's relay (ADR-0048), the Function (ADR-0051) or the operator tool
-    /// (ADR-0045); purged by nothing.
+    /// the same save as the action that owes the notice; claimed, read and marked by the runner
+    /// <c>Notices:Runner</c> NAMES — the API's relay (ADR-0048) or the Function (ADR-0051) — or by
+    /// the operator tool (ADR-0045), which that flag does not gate; purged by nothing.
     /// </summary>
     public DbSet<SubscriberNotice> SubscriberNotices => Set<SubscriberNotice>();
 

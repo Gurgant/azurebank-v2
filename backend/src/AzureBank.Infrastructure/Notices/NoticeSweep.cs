@@ -10,7 +10,8 @@ public sealed record NoticeSweepSummary(int Claimed, int Delivered, int Owed);
 
 /// <summary>
 /// ONE sweep of the notice relay — claim, deliver what this runner holds, report — for whichever
-/// runner is live (ADR-0048 D1, ADR-0051).
+/// host is RUNNING it (ADR-0048 D1, ADR-0051). Which host that may be is the caller's business:
+/// this class is handed a runner name and never reads <c>Notices:Runner</c>.
 /// </summary>
 /// <remarks>
 /// <para>

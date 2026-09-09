@@ -203,9 +203,9 @@ public static class SecurityEvents
     /// subscriber via a mechanism independent of the transaction binding the new authenticator, as
     /// described in Sec. 4.6.") — that has to reach the account owner, not the operator. Since
     /// ADR-0045 that notice is a <c>SubscriberNotice</c> row written in the same save as this
-    /// record and rendered into a pickup directory by whichever runner is live: the API's relay
-    /// (ADR-0048), the Function (ADR-0051) or the operator tool; what this codebase still lacks is
-    /// a transport that SENDS it. Do not let this line stand in for either.
+    /// record and rendered into a pickup directory by the runner <c>Notices:Runner</c> NAMES — the
+    /// API's relay (ADR-0048) or the Function (ADR-0051) — or by the operator tool, which that flag
+    /// does not gate; what this codebase still lacks is a transport that SENDS it. Do not let this line stand in for either.
     /// </para>
     /// </remarks>
     public const string PinEnrolled = "PinEnrolled";

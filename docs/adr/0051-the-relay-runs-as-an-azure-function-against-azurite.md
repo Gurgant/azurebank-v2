@@ -56,10 +56,15 @@ NuGet cache for Microsoft.NETCore.App.Ref, before: empty   after: 8.0.30
 The SDK downloads the reference pack it needs. CI requires no second `dotnet-version`, and this ADR
 says so with the experiment rather than with a shrug.
 
-And a defect found while reading, not while running: every rule in the API's `Notices` validation is
-written `o.Runner != NoticeRunner.Api || …`, so on `main` a configuration of `Notices:Runner=Function`
-with **no contact**, **no pickup directory**, one **inside a git repository**, or a lease shorter
-than two periods starts every host without a word. Correct while the API was the only host that
+And a defect found while reading, not while running: the FOUR runner rules in the API's `Notices`
+validation are each written `o.Runner != NoticeRunner.Api || …`, so on `main` a configuration of
+`Notices:Runner=Function` with **no contact**, **no pickup directory**, one **inside a git
+repository**, or a lease shorter than two periods starts every host without a word.
+~~every rule in the API's `Notices` validation is written `o.Runner != NoticeRunner.Api || …`~~
+*(struck 2026-09-09: four, not every. `ValidateDataAnnotations()` is the next link in the same chain
+and is not runner-guarded, so the three `[Range]` rules always applied — D3 below says so and this
+sentence contradicted it. The four configurations listed above do all start `main` in silence, so
+only the quantifier was wrong.)* Correct while the API was the only host that
 could deliver; an omission the moment a second one could.
 
 ## Decision

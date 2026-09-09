@@ -20,9 +20,10 @@
   // the seven trees alone, making them the odd ones out among their own siblings — the failure
   // `docs/.markdownlint.jsonc` already names.
   //
-  // Encoding it here is the point, and this is the FOURTH corpus to need it. The rule went into
-  // `docs/adr/` and `docs/runbooks/` after the same linter asked in BOTH directions across #94, #96
-  // and #127; on #158 it asked a fourth time, against a block the README itself calls measured
+  // Encoding it here is the point. The rule went into `docs/adr/` and `docs/runbooks/` after the
+  // same linter asked in BOTH directions across #94, #96 and #127, and `docs/` root followed on
+  // #129 (`b80f280`); `docs/adr/README.md` counts those four. #158 is the FIFTH ask, against a
+  // block the README itself calls measured
   // ("Measured, and `func start` exits 1" — the sentence directly under it). A rule a tool cannot
   // read is a rule that gets re-litigated.
   //

@@ -26,13 +26,28 @@ namespace AzureBank.Tests.Integration;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THIS IS THE SUITE FOR THE GAP THE PR CLOSES. Before ADR-0051 every rule in the API's root was
-/// written <c>o.Runner != NoticeRunner.Api || …</c>, so with <c>Notices:Runner=Function</c> the
-/// whole section went unchecked: no contact, no directory, a directory INSIDE A GIT REPOSITORY, and
-/// a lease shorter than two periods were all accepted in silence. Nothing was wrong with that while
-/// the API was the only host that could deliver. Every test below would have passed on <c>main</c>
-/// by accepting what it now refuses, which is why each one asserts the MESSAGE and not merely that
-/// something threw.
+/// THIS IS THE SUITE FOR THE GAP THE PR CLOSES. Before ADR-0051 the API's root wrote its FOUR
+/// runner rules <c>o.Runner != NoticeRunner.Api || …</c>, so with <c>Notices:Runner=Function</c>
+/// none of the four reached anybody: no contact, no directory, a directory INSIDE A GIT REPOSITORY,
+/// and a lease shorter than two periods were all accepted in silence. Nothing was wrong with that
+/// while the API was the only host that could deliver.
+/// </para>
+/// <para>
+/// ⚠️ TWO SENTENCES HERE OVERSTATED IT UNTIL 2026-09-09, and both are the same mistake. This said
+/// "every rule in the API's root" and "the whole section went unchecked": it was FOUR rules, and
+/// the three <c>[Range]</c> annotations were never runner-guarded —
+/// <c>AnOutOfRangeLease_IsRefusedWhateverTheRunner</c> below is this file's own refutation of it,
+/// and <c>APeriodBelowTheRange_IsRefused_WhateverTheRunner</c> has been green on <c>main</c> the
+/// whole time. It also said "every test below would have passed on <c>main</c> by accepting what it
+/// now refuses", and no test below could have run on <c>main</c> AT ALL: this suite drives
+/// <see cref="FunctionHost.Register"/>, and there is no Function project on <c>main</c> to register.
+/// The true statement is about the RULES, not the tests — on <c>main</c> the four runner rules
+/// applied to nobody but the API. Four of the cases below assert ACCEPTANCE rather than a refusal,
+/// and two assert a registration, so "every test" was wrong twice over.
+/// </para>
+/// <para>
+/// Each refusal test asserts the MESSAGE and not merely that something threw, because the message is
+/// the only thing an operator sees.
 /// </para>
 /// <para>
 /// Through <see cref="FunctionHost.Register"/> on a bare collection — the <c>NoticeRelayStartupTests</c>
@@ -155,7 +170,10 @@ public sealed class NoticeFunctionStartupTests : IDisposable
         /*
           The rule ADR-0045 D4 wrote and ADR-0048 D6 kept: a pickup directory is a spool of addresses
           at rest, and one under a repository is one commit away from being published. On main this
-          exact configuration started an API and a Function host without a word.
+          exact configuration started the API without a word. (Not "an API and a Function host",
+          which is what this said until 2026-09-09: there is no Function project on main —
+          `git ls-tree -r --name-only origin/main | grep Functions.NoticeRelay` is empty — so there
+          was no second host to start.)
         */
         var inside = Path.Combine(RepoRoot(), "backend", "src", "AzureBank.Functions.NoticeRelay");
 

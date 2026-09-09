@@ -125,11 +125,22 @@ set stops the host, with a message that names the key and the fix, which is the 
 operator sees. Nothing in the section is a secret and none joins the six.
 
 _Noted 2026-09-08 (ADR-0051 D3): **"refused when partial" was true of the API and of nothing else.**
-Every rule this paragraph describes was written `o.Runner != NoticeRunner.Api || …` in the API's
-composition root, so a section naming any OTHER runner was not checked at all: with
-`Notices:Runner=Function`, `main` accepts a missing contact, a pickup directory that does not exist,
-and one INSIDE A GIT REPOSITORY, in silence. Correct while the API was the only host that could
-deliver. THREE of them — the contact, the directory's existence, and the git-tree guard — are
+~~Every rule this paragraph describes was written `o.Runner != NoticeRunner.Api || …` in the API's
+composition root, so a section naming any OTHER runner was not checked at all~~ *(struck 2026-09-09:
+"every" and "at all" are both wrong, and the paragraph this note sits against had already given the
+counterexample — the ranges apply whatever the runner. There are FOUR runner-guarded validators in
+that root and a separate, unconditional `ValidateDataAnnotations()` carrying THREE `[Range]` rules:
+the period, the lease and the batch size. `main`'s own comment beside those validators says it, and
+`main` carries a green test saying it — `APeriodBelowTheRange_IsRefused_WhateverTheRunner`. MEASURED
+on the real API binary rather than read: `Notices__Runner=Function` with `Notices__PeriodSeconds=4`
+refuses to start, `OptionsValidationException … 'PeriodSeconds'`, which is the exact configuration
+this sentence called unchecked.)* **FOUR of the rules it describes** were written
+`o.Runner != NoticeRunner.Api || …` in the API's composition root — the contact, the directory's
+existence, the git-tree guard, and the lease against the period — so a section naming any OTHER
+runner was not checked against THOSE FOUR: with `Notices:Runner=Function`, `main` accepts a missing
+contact, a pickup directory that does not exist, and one INSIDE A GIT REPOSITORY, in silence.
+Correct while the API was the only host that could
+deliver. THREE of the four — the contact, the directory's existence, and the git-tree guard — are
 `ValidateAsRunner(NoticeRunner)` in Infrastructure now, asked by each host about itself; a host the
 flag does not name still starts, because refusing over a directory it will never write to would take
 one runner down for the other's misconfiguration. The FOURTH is not shared: `LeaseSeconds` against
@@ -215,9 +226,16 @@ place that matters now.** The emitter is `"Notice relay: live as {RunnerName}, e
 comes from `NoticeClaim.RunnerNameFor`, which builds `{kind}/{host}/{pid}/{8 hex}` — so a real line
 opens `api/GURGANT/…` and names a batch. ⚠️ **Not drift: `git log -S` puts the transcript, the kind
 prefix and the `batch` field in ONE commit** (`9cc6c4e`, this ADR's own), so the line never matched
-the code and stayed unmatched for four months because nothing re-derived it. The `api/` half is what
-matters now, because ADR-0051 D7 makes the kind the thing a person matches `LeasedBy` against and
-this was the only place in the repository showing what an API runner name looks like. Now OBSERVED
+the code and stayed unmatched for FOUR DAYS because nothing re-derived it — `9cc6c4e` is
+2026-09-05 and the correction is 2026-09-09. *(This note said "four months" until later the same
+day. The repository's first commit is 2026-07-12, so four months was not merely wrong but
+impossible: a number written for its ring rather than derived, which is the defect this very note
+is about.)* The `api/` half is what matters now, because ADR-0051 D7 makes the kind the thing a
+person matches `LeasedBy` against — ~~and this was the only place in the repository showing what an
+API runner name looks like~~ *(struck the same day: false. `NoticeRelayService`'s own XML doc has
+carried `api/{host}/{pid}/{8 hex}` since this ADR's commit and is on `main`, and three test literals
+spell out `api/HOST/1/…`. What was singular about this line is that it is the only place a reader
+sees a WHOLE rendered API log line, which is a smaller claim and the true one.)* Now OBSERVED
 rather than transcribed, and pinned by
 `TheLineThatANNOUNCESTheLoop_CarriesTheKindPrefixedNameAndEveryNumberItClaims`:_
 
@@ -225,8 +243,10 @@ rather than transcribed, and pinned by
 Notice relay: live as api/GURGANT/22280/2be449cb, every 5s, lease 120s, batch 100, into …
 ```
 
-_(That assertion runs the options' default 120-second lease; the `60s` above is what the live run
-used. The batch of the live run was not recorded, which is why it is elided rather than filled in.)_
+_(That assertion's helper SETS `LeaseSeconds = 120` and `BatchSize = 100` as its own literals —
+they equal the type's defaults, but nothing there exercises the default path, so a mutant changing
+either default leaves it green. The `60s` above is what the live run used. The live run's batch was
+not recorded, which is why it is elided rather than filled in.)_
 
 (The transcript's own 24-second file check reported NO for the first notice: it tested a path built
 from an id captured with a trailing newline. The `Date:` header and the row are the evidence.)

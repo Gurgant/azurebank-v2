@@ -22,7 +22,8 @@ namespace AzureBank.Functions.NoticeRelay;
 /// </para>
 /// <para>
 /// IT REGISTERS WHAT ONE SWEEP NEEDS, PLUS WHAT ONE INVOCATION CANNOT HOLD, AND NOTHING ELSE. Four:
-/// the DbContext, the pickup transport, the <c>Notices</c> section validated as THIS runner, and the
+/// the DbContext, the pickup transport, the <c>Notices</c> section — validated as THIS runner, plus
+/// the schedule rule and the ranges, which are not about being the runner at all — and the
 /// singleton <see cref="NoticeRelayHostState"/> — the fourth because a Function class is constructed
 /// per invocation, so the runner name and the previous tick have to outlive it. Compare
 /// <c>AddVerifierServices</c>, which shares only the first two: it never binds this section at all

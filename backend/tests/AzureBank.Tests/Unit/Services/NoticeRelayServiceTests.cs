@@ -9,6 +9,7 @@ using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -258,11 +259,15 @@ public sealed class NoticeRelayServiceTests : IDisposable
           format string could not emit: no `api/` on the runner name and no `batch` field at all.
           It was not drift — `git log -S` puts the transcript, the kind prefix and the
           `batch {BatchSize}` field in ONE commit, 9cc6c4e. It was wrong on the day it was written
-          and stayed wrong for four months because nothing re-derived it.
+          and stayed wrong for FOUR DAYS — 2026-09-05 to 2026-09-09 — because nothing re-derived it.
+          (This said "four months" when it was written. The repo's first commit is 2026-07-12, so
+          four months was impossible: a number written for its ring rather than derived.)
 
           It matters now rather than then: ADR-0051 D7 makes the kind the thing a person matches
-          `LeasedBy` against during an incident, and that ADR line is the only place in the
-          repository showing a reader what an API runner name looks like.
+          `LeasedBy` against during an incident, and that ADR line is the only place showing a
+          reader a WHOLE rendered API log line. (Not "the only place showing what an API runner
+          name looks like" — `NoticeRelayService`'s XML doc carries `api/{host}/{pid}/{8 hex}` and
+          is on main, and three literals in this file spell out `api/HOST/1/…`.)
 
           The poll is not decoration. BackgroundService.StartAsync returns before ExecuteAsync has
           reached this log call — measured: asserting straight after StartAsync captured ZERO lines,
@@ -579,6 +584,17 @@ public sealed class NoticeRelayServiceTests : IDisposable
           They must also be DISTINCT: two kinds sharing a prefix would make every log line and
           every held-by-another count ambiguous, and nothing would fail.
         */
+        /*
+          THE SCOPE IS LOAD-BEARING, AND IT HAS TO OPEN HERE RATHER THAN LOWER DOWN.
+          FluentAssertions throws on the FIRST failure, so without it the three literals below
+          short-circuit every mutant that CHANGES a kind, and `HaveCount(3)` short-circuits every
+          mutant that ADDS one — which between them is every mutant there is, leaving the
+          uniqueness and slash rules unreachable with a bad array. They read as independent guards
+          and were not any. Placing the scope after the literals, which is where it went first, does
+          not fix it: MEASURED, `VerbKind = "api"` still reported only the literal.
+        */
+        using var scope = new AssertionScope();
+
         NoticeClaim.ApiKind.Should().Be("api");
         NoticeClaim.VerbKind.Should().Be("verb");
         NoticeClaim.FunctionKind.Should().Be("func");
