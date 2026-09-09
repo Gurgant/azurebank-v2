@@ -158,6 +158,44 @@ public sealed class NoticeRelayStartupTests : IDisposable
             .Should().Contain("LeaseSeconds").And.Contain("exceed").And.Contain("twice");
     }
 
+    [Theory]
+    [InlineData("1800", true)]
+    [InlineData("1801", false)]
+    public void ThePeriodCeilingIsWhereTheLeaseRuleRunsOut(string period, bool accepted)
+    {
+        /*
+          1800 IS ARITHMETIC, NOT TASTE, and this pins the boundary rather than the number.
+          The API validates LeaseSeconds >= 2 * PeriodSeconds and LeaseSeconds is capped at 3600, so
+          1800 is the largest period any admissible lease can satisfy. The annotation said 3600
+          until 2026-09-09, which advertised 1801-3600 as legal and then refused the host — naming
+          Notices:LeaseSeconds, the one key the operator could not fix, because the period was legal
+          by its own rule. If either bound moves, this row moves with it or the band comes back.
+        */
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplicationServices(Configuration(
+            ("Notices:Runner", "Api"),
+            ("Notices:PickupDirectory", _directory),
+            ("Notices:Contact", "security@your-bank.example"),
+            ("Notices:PeriodSeconds", period),
+            ("Notices:LeaseSeconds", "3600")));
+        using var provider = services.BuildServiceProvider();
+        var resolve = () => provider.GetRequiredService<IOptions<NoticeRelayOptions>>().Value;
+
+        if (accepted)
+        {
+            resolve.Should().NotThrow("the largest period a 3600-second lease can cover is 1800");
+        }
+        else
+        {
+            resolve.Should().Throw<OptionsValidationException>()
+                .Which.Failures.Should().Contain(
+                    f => f.Contains("Notices:PeriodSeconds") && f.Contains("1800"),
+                    "the refusal must name the key the operator can actually change, and the "
+                    + "ceiling it has to come under");
+        }
+    }
+
     [Fact]
     public void APeriodBelowTheRange_IsRefused_WhateverTheRunner()
     {

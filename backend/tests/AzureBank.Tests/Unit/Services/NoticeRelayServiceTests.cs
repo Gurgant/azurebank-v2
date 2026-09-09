@@ -48,13 +48,19 @@ public sealed class NoticeRelayServiceTests : IDisposable
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 4, 19, 0, 0, TimeSpan.Zero));
     private readonly string _directory;
 
+    // The store's name, kept so a test can open a SECOND context over it. That is the only way to
+    // be another runner here: the sweep resolves this fixture's own context, so a row marked
+    // through it would be the same tracked entity and its concurrency token could never conflict.
+    private readonly string _database;
+
     public NoticeRelayServiceTests()
     {
         var options = Options.Create(new AuditOptions { ChainKey = ChainKey, AnchorKey = AnchorKey });
         var chain = new AuditChain(options, NullLogger<AuditChain>.Instance);
+        _database = Guid.NewGuid().ToString();
         _context = new AzureBankDbContext(
             new DbContextOptionsBuilder<AzureBankDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                .UseInMemoryDatabase(_database)
                 .Options,
             timeProvider: null,
             auditChain: chain);
@@ -123,13 +129,15 @@ public sealed class NoticeRelayServiceTests : IDisposable
         return id;
     }
 
-    private async Task<SubscriberNotice> OwedAsync(Guid userId, DateTime? leasedUntil = null, string? leasedBy = null)
+    private async Task<SubscriberNotice> OwedAsync(
+        Guid userId, DateTime? leasedUntil = null, string? leasedBy = null, string? @event = null)
     {
+        var kind = @event ?? SecurityEvents.PinEnrolled;
         _context.AuditEvents.Add(new AuditEvent
         {
             Id = Guid.CreateVersion7(),
             OccurredAt = DateTime.UtcNow,
-            Event = SecurityEvents.PinEnrolled,
+            Event = kind,
             Outcome = AuditOutcome.Succeeded,
             ActorUserId = userId,
             RowHash = string.Empty,
@@ -138,7 +146,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
         {
             Id = Guid.CreateVersion7(),
             UserId = userId,
-            Event = SecurityEvents.PinEnrolled,
+            Event = kind,
             OccurredAt = new DateTime(2026, 9, 4, 18, 42, 9, DateTimeKind.Utc),
             LeasedUntil = leasedUntil,
             LeasedBy = leasedBy,
@@ -357,6 +365,102 @@ public sealed class NoticeRelayServiceTests : IDisposable
         _logs.Lines.Should().Contain(l => l.Level == LogLevel.Warning && l.Message.Contains(failure.Name));
         _logs.Lines.Should().NotContain(l => l.Level == LogLevel.Error, "a transport failure is never a failed sweep");
         _logs.Lines.Should().OnlyContain(l => !l.Message.Contains(Address));
+    }
+
+    [Fact]
+    public async Task AKindThisBuildCannotRender_StaysOWED_AndTheSweepNamesTheEvent()
+    {
+        /*
+          THE Unrenderable ARM, WHICH NOTHING REACHED. Six outcomes leave this switch and two of them
+          had no test anywhere in the suite — measured: `git grep MarkedByAnother\|Unrenderable --
+          backend/tests` returned nothing. The verb's own suite covers the kind at ITS level
+          (AKindThisBuildCannotRender_StaysOwed_AndIsNamed); the SWEEP's arm, which is what both
+          hosted runners execute, did not.
+
+          The property that matters is `owed++`: a row this build cannot render must come back, and a
+          row marked delivered by mistake is a notice nobody will ever receive.
+        */
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner, @event: "PinAbdicated");
+        await using var provider = Provider();
+        var relay = Relay(provider);
+
+        var summary = await relay.SweepAsync(CancellationToken.None);
+
+        summary.Should().Be(new NoticeSweepSummary(Claimed: 1, Delivered: 0, Owed: 1));
+        (await StoredAsync(notice.Id)).DeliveredAt.Should().BeNull(
+            "a kind with no renderer arm stays owed rather than being marked delivered");
+        _transport.Envelopes.Should().BeEmpty("nothing may be handed to a transport unrendered");
+        _logs.Lines.Should().Contain(
+            l => l.Level == LogLevel.Warning
+                 && l.Message.Contains("cannot render")
+                 && l.Message.Contains("PinAbdicated"),
+            "the operator needs the EVENT to know which kind shipped half-built");
+    }
+
+    [Fact]
+    public async Task ARowANOTHERRunnerMarkedFirst_IsNotOwed_AndTheDuplicateIsNamed()
+    {
+        /*
+          THE MarkedByAnother ARM, AND THE ASYMMETRY NOTHING PINNED. It is the only arm of the six
+          that deliberately does NOT do `owed++`: the arm above it counts a delivery and the three
+          below it all count the row back as owed, so an edit that added `owed++` here out of
+          mechanical symmetry would look right and be wrong. The row IS marked — by somebody — and
+          owing it again would have the next sweep chase a notice that is already accounted for.
+
+          At-least-once, named rather than hidden (ADR-0048): this runner's artefact is a second
+          copy, and the operator is told so instead of the duplicate passing as a delivery.
+
+          Another runner here is a SECOND context over the same store. Through the fixture's own
+          context it would be the same tracked entity and the concurrency token could never conflict.
+        */
+        var owner = await OwnerAsync();
+        var notice = await OwedAsync(owner);
+
+        await using var elsewhere = new AzureBankDbContext(
+            new DbContextOptionsBuilder<AzureBankDbContext>().UseInMemoryDatabase(_database).Options,
+            timeProvider: null,
+            auditChain: new AuditChain(
+                Options.Create(new AuditOptions { ChainKey = ChainKey, AnchorKey = AnchorKey }),
+                NullLogger<AuditChain>.Instance));
+
+        var transport = new MarksTheRowMidDelivery(async () =>
+        {
+            var theirs = await elsewhere.SubscriberNotices.SingleAsync(n => n.Id == notice.Id);
+            theirs.DeliveredAt = DateTime.UtcNow;
+            theirs.DeliveryReceipt = "the-other-runner.eml";
+            theirs.LeasedUntil = null;
+            theirs.LeasedBy = null;
+            await elsewhere.SaveChangesAsync();
+        });
+
+        await using var provider = Provider(transport);
+        var relay = Relay(provider);
+
+        var summary = await relay.SweepAsync(CancellationToken.None);
+
+        summary.Should().Be(
+            new NoticeSweepSummary(Claimed: 1, Delivered: 0, Owed: 0),
+            "the row is marked, by somebody, so it is neither this runner's delivery NOR still owed "
+            + "— the one arm of the six that counts nothing, and the asymmetry this test exists for");
+        (await StoredAsync(notice.Id)).DeliveryReceipt.Should().Be(
+            "the-other-runner.eml", "the first mark stands; this runner's write lost the token");
+        _logs.Lines.Should().Contain(
+            l => l.Level == LogLevel.Warning
+                 && l.Message.Contains("marked by another runner")
+                 && l.Message.Contains("duplicate"),
+            "the artefact this runner produced is a second copy and the line says so");
+    }
+
+    /// <summary>A transport that lets another runner mark the row before this one writes.</summary>
+    private sealed class MarksTheRowMidDelivery(Func<Task> markFirst) : INoticeTransport
+    {
+        public async Task<string> DeliverAsync(
+            RenderedNotice notice, string toAddress, string directory, CancellationToken cancellationToken)
+        {
+            await markFirst();
+            return "this-runner.eml";
+        }
     }
 
     [Fact]
