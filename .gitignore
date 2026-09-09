@@ -38,3 +38,19 @@ frontend/e2e/.auth/
 frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/
+
+# The Functions host's local configuration (ADR-0051). local.settings.json is this machine's
+# connection string and pickup directory — the Function's equivalent of the API's user-secrets, and
+# the file `func start` reads INSTEAD of environment variables. local.settings.sample.json is
+# committed in its place, with the shape and no values worth protecting.
+backend/src/AzureBank.Functions.NoticeRelay/local.settings.json
+
+# Azurite's on-disk emulator state, written wherever it is started from. It is a local storage
+# account: the host's own singleton lease lives in it, and none of it is this repository's to carry.
+# NOT the timer's schedule state — the trigger pins UseMonitor = false, so no ScheduleMonitor
+# attaches and none is persisted (ADR-0051 D2).
+__blobstorage__/
+__queuestorage__/
+__azurite_db*.json
+AzuriteConfig
+.azurite/

@@ -44,6 +44,23 @@ public static class NoticeClaim
     /// <summary>The width of <c>SubscriberNotices.LeasedBy</c>.</summary>
     public const int NameWidth = 64;
 
+    /// <summary>
+    /// The KIND prefix of a runner name — the head of what lands in <c>LeasedBy</c>, and the only
+    /// part of it a person reads to know which runner holds a row.
+    /// </summary>
+    /// <remarks>
+    /// Constants rather than three string literals in three projects, because the prefix is a
+    /// namespace: two kinds that shared one would make every log line and every held-by-another
+    /// count ambiguous, and nothing would fail. ADR-0051 names all three.
+    /// </remarks>
+    public const string ApiKind = "api";
+
+    /// <inheritdoc cref="ApiKind"/>
+    public const string VerbKind = "verb";
+
+    /// <inheritdoc cref="ApiKind"/>
+    public const string FunctionKind = "func";
+
     /// <summary><c>{kind}/{host}/{pid}/{8 hex}</c>, at most <see cref="NameWidth"/> characters.</summary>
     public static string RunnerNameFor(string kind, string host, int processId, Guid id)
     {
@@ -156,9 +173,81 @@ public static class NoticeClaim
             .ThenBy(n => n.Id);
 
     /// <summary>How many owed rows another runner holds under a live lease right now.</summary>
+    /// <remarks>
+    /// <c>LeasedBy != null</c> for the same reason its sibling below carries it, and because the two
+    /// must AGREE: a row held until a time by nobody is not held by another runner, so counting it
+    /// here while excluding it there made the verb print "N owed notice(s) are held under another
+    /// runner's live lease" with no runner to name. The store forbids the state (CK_SubscriberNotices_Lease) and
+    /// the InMemory provider does not, which is where the two answers could diverge.
+    /// </remarks>
     public static Task<int> HeldByOthersAsync(
         AzureBankDbContext context, string runner, DateTime now, CancellationToken cancellationToken) =>
         context.SubscriberNotices.CountAsync(
-            n => n.DeliveredAt == null && n.LeasedUntil != null && n.LeasedUntil > now && n.LeasedBy != runner,
+            n => n.DeliveredAt == null
+                 && n.LeasedUntil != null
+                 && n.LeasedUntil > now
+                 && n.LeasedBy != null
+                 && n.LeasedBy != runner,
             cancellationToken);
+
+    /// <summary>
+    /// The distinct KINDS of runner holding owed rows under a live lease right now, other than this
+    /// one — <see cref="ApiKind"/>, <see cref="VerbKind"/>, <see cref="FunctionKind"/> — in the order
+    /// they are declared, so the answer reads the same twice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THIS IS WHAT THE KIND PREFIX IS FOR. <see cref="HeldByOthersAsync"/> answers "how many" and
+    /// the verb used to guess the rest, telling an operator that "the API's relay is delivering
+    /// them" whichever runner actually held the rows — true while the API was the only one, and a
+    /// guess the moment the Function shipped (ADR-0051 D7). The name is already in the column; this
+    /// reads it rather than assuming it.
+    /// </para>
+    /// <para>
+    /// A name whose head is none of the three is DROPPED rather than reported raw: <c>LeasedBy</c>
+    /// is written by this protocol, but a hand-edited row could carry anything, and an operator
+    /// message is the wrong place to echo an unvalidated string back at somebody. Dropping it leaves
+    /// the caller with an empty list, which its own wording must survive.
+    /// </para>
+    /// <para>
+    /// TWO KINDS OF DROP, AND ONLY ONE OF THEM LEAVES THE COUNT ALONE. An unrecognised but NON-NULL
+    /// name is dropped here and still counted by <see cref="HeldByOthersAsync"/> — deliberately: the
+    /// row IS held by something, so the tally is right and only the name is unusable. A NULL name is
+    /// excluded by BOTH, because a row held until a time by nobody is not held by another runner,
+    /// and counting it while refusing to name it made the verb announce a holder it could not
+    /// produce. An earlier version of this paragraph said the count was unaffected FULL STOP, which
+    /// was true when only this query carried the null term and false the moment its sibling did.
+    /// </para>
+    /// </remarks>
+    public static async Task<IReadOnlyList<string>> HolderKindsOtherThanAsync(
+        AzureBankDbContext context, string runner, DateTime now, CancellationToken cancellationToken)
+    {
+        /*
+          `LeasedBy != null` IS NOT REDUNDANT, THOUGH THE STORE MAKES IT UNREACHABLE.
+          CK_SubscriberNotices_Lease pairs the two halves — "([LeasedUntil] IS NULL AND [LeasedBy] IS
+          NULL) OR (both NOT NULL)" — so on SQL Server a row cannot be held until a time by nobody,
+          and SubscriberNoticeSqlServerTests watches the store refuse one. But `null != runner` is
+          TRUE, so without this term the predicate would admit such a row, and unlike its siblings
+          this query DEREFERENCES what it selects. The InMemory provider enforces no check
+          constraint, and NotifyCommand wraps everything in a catch that reports "the store could
+          not be read or written" — measured: with the term removed the operator is told
+          "CANNOT NOTIFY: the store could not be read or written (NullReferenceException)", an
+          accusation against the database for a bug in this query. A query that dereferences must
+          not lean on an invariant two layers away that it cannot see.
+        */
+        var names = await context.SubscriberNotices
+            .Where(n => n.DeliveredAt == null
+                        && n.LeasedUntil != null
+                        && n.LeasedUntil > now
+                        && n.LeasedBy != null
+                        && n.LeasedBy != runner)
+            .Select(n => n.LeasedBy!)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        string[] known = [ApiKind, VerbKind, FunctionKind];
+        return known
+            .Where(kind => names.Any(name => name.StartsWith(kind + "/", StringComparison.Ordinal)))
+            .ToList();
+    }
 }

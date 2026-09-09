@@ -25,6 +25,17 @@
     <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.1" />
   </ItemGroup>
+  <ItemGroup Label="Azure Functions (isolated worker)">
+    <!--
+      The notice relay's second runner (ADR-0051). Versions measured against nuget.org rather than
+      copied from a template: Worker 2.52.0 ships lib/net10.0 and Worker.Sdk 2.1.0 maps
+      TargetFrameworkVersion v10.0 to the net10-isolated tooling suffix, which is what lets the
+      Function project inherit this solution's net10.0 and reference Infrastructure directly.
+    -->
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.1.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
+  </ItemGroup>
   <ItemGroup Label="Entity Framework Core">
     <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.1" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.1" />
@@ -66,6 +77,9 @@
     <PackageVersion Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.1" />
+    <!-- ValidateDataAnnotations() on an OptionsBuilder. The API and the BFF get it from the
+         ASP.NET Core shared framework; a worker host (the Functions relay) has to reference it. -->
+    <PackageVersion Include="Microsoft.Extensions.Options.DataAnnotations" Version="10.0.1" />
   </ItemGroup>
   <ItemGroup Label="Configuration">
     <PackageVersion Include="Microsoft.Extensions.Configuration.FileExtensions" Version="10.0.1" />

@@ -239,38 +239,28 @@ public static class ServiceCollectionExtensions
           directory must exist and sit outside any git tree (the verb's own guard), and the contact
           is mandatory content of every notice (NIST SP 800-63B-4 §4.6). Nothing here is a secret.
         */
+        /*
+          THREE OF THE FOUR RULES ARE NOT HERE ANY MORE, and that is ADR-0051 D3. All four used to be
+          written out in this method, each guarded by `o.Runner != NoticeRunner.Api ||` — which meant
+          that with `Notices:Runner=Function` this API accepted a missing contact, a pickup directory
+          that did not exist, and one INSIDE A GIT REPOSITORY, in silence. Correct while nothing else
+          could deliver; an omission the moment the Function could. Those three are
+          `ValidateAsRunner` in Infrastructure now, asked here about THIS process and by the Function
+          about its own. The alternative, a hand-written mirror, is the one this repository has
+          already measured failing: see AddVerifierServices' comment on `Audit:AnchorKey`.
+
+          THE FOURTH STAYS, one line below, because it is not universal: `LeaseSeconds` against
+          `PeriodSeconds` is a rule for a host whose cadence IS `PeriodSeconds`. That is this one.
+        */
         services.AddOptions<NoticeRelayOptions>()
             .Bind(configuration.GetSection(NoticeRelayOptions.SectionName))
-            .Validate(
-                o => o.Runner != NoticeRunner.Api || !string.IsNullOrWhiteSpace(o.Contact),
-                "Notices:Contact must be set when Notices:Runner is Api — it is mandatory content of "
-                + "every notice (NIST SP 800-63B-4 §4.6): an address or a number a recipient uses to "
-                + "say \"this was not me\".")
-            .Validate(
-                o => o.Runner != NoticeRunner.Api
-                     || (!string.IsNullOrWhiteSpace(o.PickupDirectory)
-                         && !o.PickupDirectory.Contains('\0')
-                         && Directory.Exists(o.PickupDirectory)),
-                "Notices:PickupDirectory must name an EXISTING directory when Notices:Runner is Api. "
-                + "The relay does not create it: a spool of addresses should land only where somebody "
-                + "meant it to.")
-            .Validate(
-                o => o.Runner != NoticeRunner.Api
-                     || string.IsNullOrWhiteSpace(o.PickupDirectory)
-                     || !Directory.Exists(o.PickupDirectory)
-                     || !PickupDirectoryGuard.InsideAGitRepository(Path.GetFullPath(o.PickupDirectory)),
-                "Notices:PickupDirectory is inside a git repository. A pickup directory is a spool of "
-                + "addresses at rest, and one under a repository is one commit away from being "
-                + "published. Name a directory outside the tree.")
-            .Validate(
-                o => o.Runner != NoticeRunner.Api || o.LeaseSeconds >= 2 * o.PeriodSeconds,
-                "Notices:LeaseSeconds must exceed Notices:PeriodSeconds — at least twice it — so a sweep and "
-                + "the next claim do not overlap in the normal case.")
+            .ValidateAsRunner(NoticeRunner.Api)
+            // The API's cadence IS Notices:PeriodSeconds, so it takes the fourth rule too. The
+            // Function does not: it ticks on Notices:Schedule and checks the lease against the
+            // interval it observes (ADR-0051 D5).
+            .ValidateThePeriodItSleepsFor(NoticeRunner.Api)
             .ValidateDataAnnotations()
             .ValidateOnStart();
-        // The three Api-only rules touch the file system (Directory.Exists, the git walk). That is
-        // acceptable because the only consumer is IOptions<T>, which is built once and cached; a
-        // future IOptionsSnapshot/IOptionsMonitor consumer would pay the walk on every resolve.
         // The [Range] annotations apply whatever the runner: a period or lease out of range is a
         // misconfiguration even when nothing runs.
 

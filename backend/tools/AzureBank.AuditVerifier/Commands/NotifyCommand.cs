@@ -49,7 +49,8 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </para>
 /// <para>
 /// EXIT CODES, none of them new. 0: every notice this run claimed was written and marked. 2:
-/// nothing was FREE — no notice is owed, or every owed one is leased by a live runner, and the
+/// nothing was FREE — no notice is owed, or every owed one is held under another runner's live
+/// lease, and the
 /// line says which — its own answer, not a success, for the reason
 /// <see cref="VerifyCommand.NothingToVerify"/> gives. 3: the tool is not configured, the ring will not build, or the store could not be read.
 /// 4: the command line was wrong — no contact, no directory, or a directory inside a git
@@ -232,10 +233,11 @@ public static class NotifyCommand
             var now = clock.GetUtcNow().UtcDateTime;
             var leaseEnd = now.Add(VerbLease);
             var runner = NoticeClaim.RunnerNameFor(
-                "verb", Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
+                NoticeClaim.VerbKind, Environment.MachineName, Environment.ProcessId, Guid.NewGuid());
 
             /*
-              THE VERB CLAIMS TOO (ADR-0048). A row a live runner holds is not this run's: rendering it
+              THE VERB CLAIMS TOO (ADR-0048). A row another runner holds under a live lease is not
+              this run's: rendering it
               would produce the duplicate the lease exists to prevent, and a row this run read without
               claiming could be taken by the relay between the read and the write. So the verb takes
               the same lease the relay takes, under its own name, batch by batch, and delivers only
@@ -244,6 +246,7 @@ public static class NotifyCommand
             */
             await NoticeClaim.ClaimAsync(context, runner, now, leaseEnd, VerbBatch, cancellationToken);
             var leased = await NoticeClaim.HeldByOthersAsync(context, runner, now, cancellationToken);
+            var holders = await NoticeClaim.HolderKindsOtherThanAsync(context, runner, now, cancellationToken);
             var waiting = await NoticeClaim.HeldBy(context, runner, now).ToListAsync(cancellationToken);
 
             if (waiting.Count == 0)
@@ -257,9 +260,24 @@ public static class NotifyCommand
                     }
                     : new[]
                     {
-                        $"NOTHING TO NOTIFY: {leased} owed notice(s) are leased by a live runner and none is free.",
-                        "  The API's relay is delivering them. If it is not running, its leases lapse within",
-                        "  minutes and a later run of this verb takes them.",
+                        $"NOTHING TO NOTIFY: {leased} owed notice(s) are held under another runner's live lease and none is free.",
+                        /*
+                          NAMED, NOT GUESSED (ADR-0051 D7). This line used to say "The API's relay is
+                          delivering them" — true while the API was the only runner, and a guess from
+                          the moment the Function shipped, because HeldByOthersAsync counts rows and
+                          does not say who holds them. The holder's kind is the head of the name in
+                          LeasedBy, which is what that prefix exists for, so it is read here.
+                          An unrecognised name is dropped rather than echoed, which is why this
+                          sentence still has to work with nothing to name — and why it says which
+                          names it RECOGNISES rather than who holds the rows. The count above covers
+                          every holder; this line covers only the ones it can read, and the two are
+                          not the same set.
+                        */
+                        holders.Count == 0
+                            ? "  Live leases hold them, under no name this build recognises. This verb cannot see whether"
+                            : $"  Live leases hold them; the names it recognises: {string.Join(" and ", holders.Select(k => $"`{k}`"))}. "
+                              + "This verb cannot see whether",
+                        "  a holder is still running: when a lease lapses those rows come free and a later run takes them.",
                     });
             }
 
@@ -357,7 +375,7 @@ public static class NotifyCommand
             }
             if (leased > 0)
             {
-                lines.Add($"{leased} more owed notice(s) are leased by a live runner and were left to it.");
+                lines.Add($"{leased} more owed notice(s) are held under another runner's live lease and were left to it.");
             }
             lines.Insert(1, "  Each file is a complete message addressed to the email held on the account, and it has");
             lines.Insert(2, "  reached this machine's disk and nobody else: nothing here sends. Point a relay at the");

@@ -32,7 +32,7 @@ plan.
   ADR-0044 carries both and says why neither replaces the other.
 - [`relaying-the-enrolment-notice.md`](relaying-the-enrolment-notice.md) — the notice an account
   holder is owed when a PIN is enrolled is recorded with the enrolment and rendered into a pickup
-  directory — by the operator tool, or since ADR-0048 by the API's own relay — and nothing sends
-  it. Sending needs a relay: unattended,
-  third-party, and outside a demo paid for — and the account holds one unvalidated address, with no
+  directory — by the operator tool, since ADR-0048 by the API's own relay, and since ADR-0051 by an
+  Azure Function — and nothing sends it. Sending needs a relay: unattended, third-party, and outside
+  a demo paid for — and the account holds one unvalidated address, with no
   second one and no PIN reset behind the contact. ADR-0045 says where the built half stops.

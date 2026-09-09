@@ -1,0 +1,33 @@
+// markdownlint configuration for `backend/` only. markdownlint-cli2 reads the config nearest each
+// linted file, so this applies to the project READMEs under backend/ and to nothing else. Until now
+// nothing on the walk-up from `backend/src/**` carried one, so MD040 defaulted ON over a corpus that
+// has never followed it.
+{
+  // MD040 (fenced-code-language) is OFF here for the reason it is off in `docs/adr/` and
+  // `docs/runbooks/`: the bare fence is what this corpus uses for a block that is neither source nor
+  // a command — a directory tree, or a MEASURED transcript. Counted 2026-09-09 over every tracked
+  // .md under backend/: NINE bare opening fences, and they split two ways. SEVEN are the project's
+  // own directory tree, one per README — backend, Api, Bff, Functions.NoticeRelay, Infrastructure,
+  // Shared, Tests — unanimous, no exceptions. TWO are pasted host output, both in
+  // `AzureBank.Functions.NoticeRelay/README.md`. The 89 tagged fences are source and commands:
+  // csharp 49, bash 16, mermaid 13, json 8, powershell 2, yaml 1.
+  //
+  // It is off rather than satisfied with `text` for three measured reasons. `text` has never
+  // appeared under backend/ — zero occurrences; repo-wide there are five, all under docs/. The only
+  // project-README precedent for a measured-output block runs the same way: `tests/contract/
+  // README.md` fences a Schemathesis transcript under a heading titled "Expected Output", and it is
+  // bare. And satisfying it would tag the two blocks that happen to sit in an open PR while leaving
+  // the seven trees alone, making them the odd ones out among their own siblings — the failure
+  // `docs/.markdownlint.jsonc` already names.
+  //
+  // Encoding it here is the point. The rule went into `docs/adr/` and `docs/runbooks/` after the
+  // same linter asked in BOTH directions across #94, #96 and #127, and `docs/` root followed on
+  // #129 (`b80f280`); `docs/adr/README.md` counts those four. #158 is the FIFTH ask, against a
+  // block the README itself calls measured
+  // ("Measured, and `func start` exits 1" — the sentence directly under it). A rule a tool cannot
+  // read is a rule that gets re-litigated.
+  //
+  // NOT COVERED YET: `tests/`, which has no config either and holds the clearest case in the repo,
+  // the `tests/contract/README.md` transcript above. Left alone here because #158 does not touch it.
+  "MD040": false
+}

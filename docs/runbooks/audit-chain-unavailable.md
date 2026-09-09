@@ -960,9 +960,11 @@ renders nothing without it. What that contact can actually do is a separate runb
 
 **A file in a pickup directory has reached the edge of this machine and nobody else.** Nothing here
 sends: a collector pointed at the directory, or a person, is what moves it — and neither exists in
-this deployment (the API's relay, ADR-0048, writes the file; it does not move it), which is the
-gap `docs/deferred/` records with its trigger. Delete the spool after the
-demonstration; it holds addresses in clear.
+this deployment (the file is written by this verb, which runs when a person runs it, or by the
+hosted runner `Notices:Runner` NAMES — the API's relay or the Function, the unnamed one writing
+nothing however live it is; none of the three moves it), which is the gap `docs/deferred/` records
+with its trigger. Delete
+the spool after the demonstration; it holds addresses in clear.
 
 The headlines, and what each means from THIS verb:
 
@@ -970,8 +972,16 @@ The headlines, and what each means from THIS verb:
   every waiting notice was written and marked; **6** when at least one is still owed, with a line
   per notice saying why. A marked notice is never rewritten: fix what the line names and run again.
 - `NOTHING TO NOTIFY` — exit **2**, with two readings and the line says which: no notice is owed, or
-  every owed notice is leased by a live runner (the API's relay, ADR-0048) and none is free to this
-  run. Its own answer, not a success, for the reason `verify`'s **2** is. A row that stays owed
+  every owed notice is held under another runner's LIVE LEASE and none is free to this run — and
+  since ADR-0051 the verb NAMES the kind, reading it out of `LeasedBy`: `api`, `func` or `verb`.
+  ⚠️ **The count is complete; the NAMES are not.** A holder whose name begins with none of those
+  three is counted and NOT echoed back at you — the verb says it recognises no name, which means
+  somebody wrote that row by hand. Read the column yourself:
+  `SELECT LeasedBy, LeasedUntil FROM SubscriberNotices WHERE DeliveredAt IS NULL AND LeasedUntil > SYSUTCDATETIME()`.
+  ⚠️ **A live lease is not a live process.** Nothing here probes the holder: a runner that claimed
+  and then died keeps its rows until the lease lapses, and looks identical to one mid-delivery. So
+  the remedy is the lapse, which is what the verb's own next line tells you to wait for.
+  Its own answer, not a success, for the reason `verify`'s **2** is. A row that stays owed
   beside a file that already exists — a runner delivered it and died before the mark — is refused
   again on every retry (`NOT NOTIFIED … (IOException)`, exit **6**): the row is the truth; move the
   file out and run again, or mark the row by hand, as the repudiation runbook's §2 marks a PIN.
@@ -1002,9 +1012,9 @@ The headlines, and what each means from THIS verb:
 - `LEASE LAPSED` — the verb claims what it renders, under its own name and a two-minute lease
   (ADR-0048), batch after batch; a run too large or too slow to finish inside that lease stops
   delivering and says how many it did not reach. Those rows are not lost: they are free to the next
-  claim — this verb again, or the API's relay — and delivering them here, under a lease the verb no
-  longer held, would be the duplicate the lease exists to prevent. Exit **6**, because notices are
-  still owed. Run again.
+  claim — this verb again, the API's relay, or the Function (ADR-0051) — and delivering them here,
+  under a lease the verb no longer held, would be the duplicate the lease exists to prevent. Exit
+  **6**, because notices are still owed. Run again.
 - `CANNOT NOTIFY` — exit **3**: the tool is not configured, the ring will not build, or the store
   could not be read or written. Not a statement about any notice.
 - `INTERRUPTED` — exit **5**. Notices written and marked before the interruption stay marked.

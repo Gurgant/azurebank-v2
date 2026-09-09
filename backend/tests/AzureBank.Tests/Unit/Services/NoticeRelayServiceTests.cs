@@ -1,3 +1,4 @@
+using System.Reflection;
 using AzureBank.Api.Services;
 using AzureBank.AuditVerifier.Commands;
 using AzureBank.Infrastructure.Data;
@@ -8,6 +9,7 @@ using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -200,14 +202,23 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(NoticeRunner.None, LogLevel.Information)]
-    [InlineData(NoticeRunner.Function, LogLevel.Warning)]
-    public async Task WhenTheRunnerIsNotThisProcess_TheLoopReturns_AndTouchesNothing(NoticeRunner runner, LogLevel level)
+    [InlineData(NoticeRunner.None)]
+    [InlineData(NoticeRunner.Function)]
+    public async Task WhenTheRunnerIsNotThisProcess_TheLoopReturns_AndTouchesNothing(NoticeRunner runner)
     {
         /*
           The flag is the seam that keeps two KINDS of runner from both sending, so every value that
-          is not Api must step aside — Function loudly, because nothing implements it yet and an
-          operator who set it believes something is delivering.
+          is not Api must step aside.
+
+          BOTH AT INFORMATION SINCE ADR-0051, and `Function` is the row that moved. It used to be a
+          WARNING, because the value named a runner nothing implemented and an operator who set it
+          believed something was delivering. `AzureBank.Functions.NoticeRelay` is that runner, so the
+          warning's premise is gone: `Runner=Function` is now a correct configuration in which this
+          process is simply not the one delivering — the same fact `None` states, and a Warning for a
+          correct configuration is the kind of line that teaches an operator to ignore warnings.
+
+          The message is asserted NOT to carry the old claim, because a level can be changed while
+          the sentence that justified it survives.
         */
         var owner = await OwnerAsync();
         var notice = await OwedAsync(owner);
@@ -222,8 +233,65 @@ public sealed class NoticeRelayServiceTests : IDisposable
         var stored = await StoredAsync(notice.Id);
         stored.DeliveredAt.Should().BeNull();
         stored.LeasedBy.Should().BeNull("nothing was claimed");
-        _logs.Lines.Should().Contain(l => l.Level == level && l.Message.Contains("delivers nothing") && l.Message.Contains(runner.ToString()));
+        _logs.Lines.Should().Contain(
+            l => l.Level == LogLevel.Information
+                 && l.Message.Contains("delivers nothing")
+                 && l.Message.Contains(runner.ToString()));
+        _logs.Lines.Should().NotContain(
+            l => l.Level >= LogLevel.Warning,
+            "stepping aside is not a fault: since ADR-0051 every runner value this process is not "
+            + "names a runner that exists, so there is nothing to warn about. GREATER-OR-EQUAL, not "
+            + "equal: == LogLevel.Warning would let an Error through a guard whose whole claim is "
+            + "that nothing above Information is logged, and the Function's twin in "
+            + "DeliverOwedNoticesTests already reads >=");
+        _logs.Lines.Should().NotContain(
+            l => l.Message.Contains("nothing in this repository implements"),
+            "the sentence that justified the old Warning is false now that the Function ships");
         await relay.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task TheLineThatANNOUNCESTheLoop_CarriesTheKindPrefixedNameAndEveryNumberItClaims()
+    {
+        /*
+          A DOCUMENT ASSERTED THIS LINE AND NOTHING PINNED IT, which is this repository's own rule
+          about comments applied to a transcript. ADR-0048's Consequences pasted an API log line the
+          format string could not emit: no `api/` on the runner name and no `batch` field at all.
+          It was not drift — `git log -S` puts the transcript, the kind prefix and the
+          `batch {BatchSize}` field in ONE commit, 9cc6c4e. It was wrong on the day it was written
+          and stayed wrong for FOUR DAYS — 2026-09-05 to 2026-09-09 — because nothing re-derived it.
+          (This said "four months" when it was written. The repo's first commit is 2026-07-12, so
+          four months was impossible: a number written for its ring rather than derived.)
+
+          It matters now rather than then: ADR-0051 D7 makes the kind the thing a person matches
+          `LeasedBy` against during an incident, and that ADR line is the only place showing a
+          reader a WHOLE rendered API log line. (Not "the only place showing what an API runner
+          name looks like" — `NoticeRelayService`'s XML doc carries `api/{host}/{pid}/{8 hex}` and
+          is on main, and three literals in this file spell out `api/HOST/1/…`.)
+
+          The poll is not decoration. BackgroundService.StartAsync returns before ExecuteAsync has
+          reached this log call — measured: asserting straight after StartAsync captured ZERO lines,
+          not a wrong one.
+        */
+        await using var provider = Provider();
+        var relay = Relay(provider, periodSeconds: 5);
+
+        await relay.StartAsync(CancellationToken.None);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && !_logs.Lines.Any(l => l.Message.Contains("live as")))
+        {
+            await Task.Delay(25);
+        }
+
+        await relay.StopAsync(CancellationToken.None);
+
+        _logs.Lines.Should().ContainSingle(
+            l => l.Level == LogLevel.Information && l.Message.Contains("live as"),
+            "the loop announces itself once, before its first period").Which.Message
+            .Should().MatchRegex(
+                @"^Notice relay: live as api/[^/]+/\d+/[0-9a-f]{8}, every 5s, lease 120s, batch 100, into ",
+                "the name carries the KIND a reader matches against LeasedBy (ADR-0051 D7), and "
+                + "every number the line claims is one the loop actually runs on");
     }
 
     [Fact]
@@ -504,18 +572,168 @@ public sealed class NoticeRelayServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TheVerbLeavesARowALiveRunnerHolds_AndSaysSo()
+    public void TheThreeRunnerKinds_AreTheLITERALSTHATLANDINLeasedBy()
     {
+        /*
+          The constants exist so three projects stop writing three string literals (ADR-0051), and
+          this test exists because a constant makes its VALUE invisible. `LeasedBy` is read by a
+          person during an incident and matched by `HeldByOthersAsync`; renaming `FunctionKind`
+          from "func" to something else would change what a running deployment writes while every
+          test that compares two constants stayed green.
+
+          They must also be DISTINCT: two kinds sharing a prefix would make every log line and
+          every held-by-another count ambiguous, and nothing would fail.
+        */
+        /*
+          THE SCOPE IS LOAD-BEARING, AND IT HAS TO OPEN HERE RATHER THAN LOWER DOWN.
+          FluentAssertions throws on the FIRST failure, so without it the three literals below
+          short-circuit every mutant that CHANGES a kind, and `HaveCount(3)` short-circuits every
+          mutant that ADDS one — which between them is every mutant there is, leaving the
+          uniqueness and slash rules unreachable with a bad array. They read as independent guards
+          and were not any. Placing the scope after the literals, which is where it went first, does
+          not fix it: MEASURED, `VerbKind = "api"` still reported only the literal.
+        */
+        using var scope = new AssertionScope();
+
+        NoticeClaim.ApiKind.Should().Be("api");
+        NoticeClaim.VerbKind.Should().Be("verb");
+        NoticeClaim.FunctionKind.Should().Be("func");
+
+        /*
+          READ OFF THE TYPE, NOT RESTATED. Building this array from the same three constants the
+          three assertions above have just pinned made both checks below THEOREMS: once
+          ApiKind == "api" and VerbKind == "verb" and FunctionKind == "func" have passed, the array
+          is provably {"api","verb","func"} and neither uniqueness nor the slash rule can fail.
+          They read as an independent guard and were not one — the same shape as the joined-string
+          assertions this PR removed from NoticeFunctionStartupTests.
+
+          Reflected over the type instead, they bite on the case they are FOR: a fourth kind added
+          later, colliding with one of these or carrying a slash.
+        */
+        var kinds = typeof(NoticeClaim)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.Name.EndsWith("Kind", StringComparison.Ordinal))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToArray();
+
+        kinds.Should().HaveCount(3,
+            "a fourth kind is a fourth runner, and every count in ADR-0051 D7 would need re-taking");
+        kinds.Should().OnlyHaveUniqueItems();
+        kinds.Should().OnlyContain(
+            k => k.Length > 0 && !k.Contains('/'),
+            "the kind is the head of a slash-separated name, so it cannot carry a slash of its own");
+    }
+
+    [Theory]
+    [InlineData("api/HOST/1/abcdef12", "`api`")]
+    [InlineData("func/HOST/1/abcdef12", "`func`")]
+    [InlineData("verb/HOST/1/abcdef12", "`verb`")]
+    public async Task TheVerbLeavesARowHeldUnderAnothersLiveLease_AndNAMESTheKind(string heldBy, string named)
+    {
+        /*
+          NAMED, NOT GUESSED. This line said "The API's relay is delivering them" until ADR-0051,
+          which was true while the API was the only runner and a guess the moment the Function
+          shipped: HeldByOthersAsync counts rows and does not say who holds them. The kind prefix in
+          LeasedBy is what D7 exists for, and the operator reading this under pressure needs to know
+          WHICH process to go and look at.
+
+          Three rows rather than one, because a message that named the holder correctly for `api`
+          and wrongly for `func` is exactly the defect being fixed.
+        */
         var owner = await OwnerAsync();
-        var notice = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: "api/HOST/1/abcdef12");
+        var notice = await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: heldBy);
         await using var provider = Provider();
 
         var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+        var printed = string.Join("\n", lines);
 
         exitCode.Should().Be(VerifyCommand.NothingToVerify, "nothing was FREE for this run; not a success and not a failure");
-        string.Join("\n", lines).Should().Contain("leased by a live runner");
-        _transport.Envelopes.Should().BeEmpty("the verb must not render what the relay is delivering");
+        printed.Should().Contain("held under another runner's live lease");
+        printed.Should().Contain($"recognises: {named}",
+            "the holder is in the column; printing a guess instead is what ADR-0051 D7's prefix exists "
+            + "to prevent. RECOGNISES, not \"taken by\": the count covers every holder and this clause "
+            + "covers only the readable ones, so it must not read as an inventory of who holds the rows");
+        printed.Should().NotContain("The API's relay",
+            "the sentence that named one runner for all of them must not come back");
+        printed.Should().NotContain("is delivering them",
+            "a live LEASE is not a live PROCESS: LeasedUntil > now cannot tell a holder mid-delivery "
+            + "from one that claimed and died, and the verb must not assert the difference");
+        printed.Should().Contain("lease lapses",
+            "the operator still needs to know that waiting is the remedy");
+        _transport.Envelopes.Should().BeEmpty("the verb must not render what another runner holds");
         (await StoredAsync(notice.Id)).DeliveredAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ARowHeldUNTILATIMEBYNOBODY_IsExcluded_RatherThanBlamedOnTheStore()
+    {
+        /*
+          A STATE THE STORE FORBIDS AND THIS QUERY MUST NOT ASSUME AWAY.
+          CK_SubscriberNotices_Lease pairs the halves — "(both NULL) OR (both NOT NULL)" — and
+          SubscriberNoticeSqlServerTests watches SQL Server refuse a half-set lease. So this row
+          cannot exist there. It can exist HERE, because the InMemory provider enforces no check
+          constraint, and that is the point: `null != runner` is TRUE, so the holder query would
+          admit the row and then dereference a null name.
+
+          What made it worth a term in the predicate rather than a shrug is where the failure would
+          land. NotifyCommand catches everything and prints "the store could not be read or written
+          ({Type})" — so a null-reference bug would arrive at the operator as an accusation against
+          the database, during exactly the incident where they are deciding whether the store is
+          sound. The count is unaffected either way, which is why nothing else caught this.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: null);
+        await using var provider = Provider();
+
+        var (exitCode, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+        var printed = string.Join("\n", lines);
+
+        printed.Should().NotContain("could not be read or written",
+            "a row the store would have refused must not be reported as the store failing");
+        printed.Should().NotContain("NullReferenceException");
+        printed.Should().NotContain("held under another runner's live lease",
+            "no runner holds it — counting it as held made the verb name a holder that does not exist, "
+            + "which is why HeldByOthersAsync carries the same null term as the holder query. ⚠️ This "
+            + "string must track the message: a NotContain left pointing at wording the verb no longer "
+            + "prints passes vacuously and stops guarding, which is the one assertion in this file "
+            + "that a message change does not turn red");
+        printed.Should().Contain("NOTHING TO NOTIFY: no notice is owed.");
+        exitCode.Should().NotBe(VerifyCommand.Misconfigured);
+
+        /*
+          ⚠️ THE LIMIT OF THAT LAST LINE, said rather than left for a reader to find: the row IS owed
+          (DeliveredAt is null) and the verb reports that nothing is. Both of the verb's answers are
+          wrong for this row, because its model has two states — free, or held by a runner — and a
+          row leased until a time by nobody is in neither. The state is impossible on the real store,
+          so the choice is between two wrong sentences about something that cannot happen; this one
+          at least does not invent a runner. Making the verb describe it properly would mean a third
+          state in the protocol for a row the database refuses to store.
+        */
+    }
+
+    [Fact]
+    public async Task AHolderWhoseNameIsNotOneOfTheThreeKinds_IsNotEchoedBackAtTheOperator()
+    {
+        /*
+          LeasedBy is written by this protocol, so a name outside the three kinds means somebody
+          edited the row. An operator message is the wrong place to echo an unvalidated string, and
+          the count is unaffected — so the sentence has to work with nothing to name, and this is the
+          row that proves it does.
+        */
+        var owner = await OwnerAsync();
+        await OwedAsync(owner, leasedUntil: DateTime.UtcNow.AddMinutes(2), leasedBy: "'; DROP TABLE --/x/1/abcdef12");
+        await using var provider = Provider();
+
+        var (_, lines) = await NotifyCommand.RunAsync(provider, _directory, Contact, CancellationToken.None);
+        var printed = string.Join("\n", lines);
+
+        printed.Should().Contain("under no name this build recognises",
+            "the fallback wording carries the same guidance and says plainly that nothing was readable");
+        printed.Should().NotContain("recognises:",
+            "there was no usable name to print. ⚠️ This string must track the message: pointed at "
+            + "wording the verb no longer prints, a NotContain passes vacuously and guards nothing");
+        printed.Should().NotContain("DROP TABLE");
+        printed.Should().Contain("held under another runner's live lease", "the COUNT is still right; only the name was unusable");
     }
 
     [Fact]
@@ -530,7 +748,7 @@ public sealed class NoticeRelayServiceTests : IDisposable
 
         exitCode.Should().Be(VerifyCommand.Intact);
         var text = string.Join("\n", lines);
-        text.Should().Contain("NOTIFIED 1 of 1").And.Contain("1 more owed notice(s) are leased by a live runner");
+        text.Should().Contain("NOTIFIED 1 of 1").And.Contain("1 more owed notice(s) are held under another runner's live lease");
         _transport.Envelopes.Should().ContainSingle();
         var stored = await StoredAsync(lapsed.Id);
         stored.DeliveredAt.Should().NotBeNull();

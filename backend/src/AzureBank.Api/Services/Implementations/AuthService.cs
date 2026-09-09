@@ -754,8 +754,10 @@ public class AuthService : IAuthService
               Detective control, in the OPERATOR's log — see SecurityEvents.PinEnrolled: this is
               deliberately NOT the independent notification to the account owner that NIST
               SP 800-63B-4 §4.1.2.1 also requires. That notice is the SubscriberNotice row added
-              above, rendered later by the API's relay or the operator tool into a pickup directory
-              (ADR-0045, ADR-0048); what this system still lacks is a transport that SENDS it.
+              above, rendered later by the runner Notices:Runner NAMES — the API's relay or the
+              Function — or by the operator tool, which that flag does not gate, into a pickup
+              directory (ADR-0045, ADR-0048, ADR-0051); what this system still lacks is a transport
+              that SENDS it.
               Saying so here rather than letting the line read as compliance.
 
               AFTER the update, unlike the audit row above, and the asymmetry is deliberate rather

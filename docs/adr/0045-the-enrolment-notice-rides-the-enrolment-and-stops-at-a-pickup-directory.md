@@ -84,9 +84,11 @@ this would have been its first correctness-bearing loop.~~ (struck 2026-09-04; c
 > table. The deferral record this ADR pointed at was ratified the same day in the other direction,
 > and ADR-0048 adds the hosted loop this clause declined: it claims owed rows under a lease and
 > delivers them through the same transport, on a period. The verb stays, for a store where
-> nothing runs and for the day the runner is down, and it now steps aside for a row a live runner
-> holds. The reasoning here was sound for the deployment it described; what changed is the decision
-> that the deployment should have a runner.
+> nothing runs and for the day the runner is down, and it now steps aside for a row ~~a live runner
+> holds~~ *(struck 2026-09-09: held under another runner's LIVE LEASE. Nothing probes the process —
+> and this same sentence says the verb exists "for the day the runner is down", which is exactly the
+> case where the holder is not live.)*. The reasoning here was sound for the deployment it
+> described; what changed is the decision that the deployment should have a runner.
 
 **D4 — The last hop is a pickup directory, and the ADR says so rather than the file.** The
 transport writes one RFC 5322 message per notice — `From: no-reply@azurebank.invalid` (RFC 2606: it

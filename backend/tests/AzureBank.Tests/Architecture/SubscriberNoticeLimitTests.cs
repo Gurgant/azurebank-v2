@@ -15,7 +15,9 @@ namespace AzureBank.Tests.Architecture;
 /// move a send inside <c>POST /api/auth/pin</c>. Since ADR-0048 the renderer and the pickup
 /// transport live in Infrastructure, which this test DOES police: they hand-write RFC 5322 rather
 /// than referencing a mail library, and the guard stays green because of that. The operator tool
-/// is excluded because it only calls them.
+/// is excluded because it only calls them; the Function runner (ADR-0051) is NOT, because it is a
+/// host rather than a tool — it runs on a schedule with nobody watching, which is the situation a
+/// send would be added into.
 /// </para>
 /// <para>
 /// WATCHED REFUSING before it shipped: with <c>_ = new System.Net.Mail.SmtpClient();</c> placed in
@@ -30,6 +32,10 @@ public class SubscriberNoticeLimitTests
         typeof(AzureBank.Api.Services.Implementations.AuthService).Assembly,
         typeof(AzureBank.Infrastructure.Data.AzureBankDbContext).Assembly,
         typeof(AzureBank.Shared.Entities.SubscriberNotice).Assembly,
+        // The Function runner joined the list with ADR-0051. It is a HOST, not a tool: it runs
+        // unattended on a schedule and is the likeliest place a send would be added, so it is
+        // policed like the API rather than excused like the operator verb.
+        typeof(AzureBank.Functions.NoticeRelay.DeliverOwedNotices).Assembly,
     ];
 
     [Fact]
@@ -44,9 +50,10 @@ public class SubscriberNoticeLimitTests
 
             result.IsSuccessful.Should().BeTrue(
                 "{0} must not be able to send: the notice is RECORDED in the request and rendered later, "
-                + "by the operator tool (ADR-0045) or by the API's own relay (ADR-0048) — both into a "
-                + "pickup directory, neither through a mail library; a send inside the request would be "
-                + "lost between the commit and the call or would hold the audit tail lock across I/O. "
+                + "by the operator tool (ADR-0045), by the API's own relay (ADR-0048) or by the Function "
+                + "(ADR-0051) — all three into a pickup directory, none through a mail library; a send "
+                + "inside the request would be lost between the commit and the call or would hold the "
+                + "audit tail lock across I/O. "
                 + "Offending types: {1}",
                 assembly.GetName().Name,
                 string.Join(", ", result.FailingTypes?.Select(t => t.FullName) ?? []));

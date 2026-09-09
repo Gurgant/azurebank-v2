@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AzureBank.Functions.NoticeRelay: the notice relay as an Azure Function (ADR-0051).
+
+    WHY A SECOND DEPLOYABLE AT ALL. ADR-0048 put the runner inside the API and said, in "What would
+    change this", what came next: "the same claim protocol in a Function, developed against Azurite,
+    and Notices:Runner=Function telling this loop to step aside". This is that. It is a rehearsal of
+    a deployment shape, run locally with `func start` against Azurite; nothing here is deployed, and
+    the ADR says so in the same breath.
+
+    WHAT IT DOES NOT CONTAIN. The claim protocol, the sweep, the per-row unit, the renderer and the
+    transport are all in AzureBank.Infrastructure and are the SAME code the API runs, as are the
+    three shared configuration rules. Two rules are NOT shared: the API's lease-against-period, which
+    this host never applies because it never reads that period, and this host's own schedule rule,
+    which the API never applies because it binds no trigger. What is here is a host: a trigger, a
+    composition root, and the flag check that keeps this process from delivering when it is not the
+    runner the configuration names.
+
+    THE TARGET FRAMEWORK IS INHERITED, net10.0, like every project in this solution — measured, not
+    assumed: Microsoft.Azure.Functions.Worker.Sdk maps TargetFrameworkVersion v10.0 to the
+    net10-isolated tooling suffix, Microsoft.Azure.Functions.Worker ships lib/net10.0, and a timer
+    trigger fires on Core Tools 4.13.0 against Azurite on this machine. Had it not, this project
+    could not reference Infrastructure at all and the claim protocol would have had to be duplicated
+    across a framework boundary - which is the version of this PR that must never be written.
+  -->
+
+  <PropertyGroup>
+    <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AzureBank.Functions.NoticeRelay</RootNamespace>
+    <AssemblyName>azurebank-notice-relay</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AzureBank.Infrastructure\AzureBank.Infrastructure.csproj" />
+    <ProjectReference Include="..\AzureBank.Shared\AzureBank.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" />
+    <!-- The [Range] annotations on NoticeRelayOptions. Free inside ASP.NET Core, a reference here. -->
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+    <!--
+      DECLARED BECAUSE Program.cs USES IT, not because the restore graph needs it: `new HostBuilder()`
+      is Microsoft.Extensions.Hosting, and a project that news up a type from a package it does not
+      reference is one whose version nothing here governs. MEASURED before adding it: the only edge
+      to Hosting was Microsoft.Azure.Functions.Worker.Core 2.52.0 -> 10.0.0, which is BELOW Central
+      Package Management, so bin/Release/net10.0 shipped Microsoft.Extensions.Hosting.dll 10.0.0
+      beside Microsoft.Extensions.Hosting.Abstractions.dll 10.0.1 — the abstractions pinned (they
+      come through AzureBank.Infrastructure and CPM sees them) and the implementation not. Declaring
+      it hands the version back to Directory.Packages.props, which pins 10.0.1, and matches both
+      sibling console hosts: the Seeder and the AuditVerifier each declare it the same way.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="host.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!--
+      NEVER PUBLISHED. local.settings.json is this host's connection string and its pickup directory:
+      a developer's own configuration, gitignored beside the API's user-secrets, and the file the
+      Functions host reads INSTEAD of environment variables when it runs locally. Copied to the
+      output because `func start` reads it from there; excluded from publish because publishing it
+      would put a connection string in a package.
+    -->
+    <None Update="local.settings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </None>
+    <None Update="local.settings.sample.json">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AzureBank.Tests" />
+  </ItemGroup>
+
+</Project>
