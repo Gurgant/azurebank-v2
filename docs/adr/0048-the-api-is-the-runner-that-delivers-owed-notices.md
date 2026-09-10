@@ -279,8 +279,13 @@ it still does not; the lease joins the mark on the row rather than moving either
 The API-side mail limit (`SubscriberNoticeLimitTests`) holds unchanged: the relay uses the pickup
 transport, which uses no mail library. Its because-string now names the relay beside the verb.
 
-The `NO AUDIT ROW` finding's limit (ADR-0047) is inherited by the relay unchanged, and logged at
-Warning rather than printed.
+The `NO AUDIT ROW` finding's limit (ADR-0047) is inherited by the relay — whatever that limit is at
+the time — and logged at Warning rather than printed. ⚠️ **It is no longer the limit ADR-0047
+recorded.** ADR-0052 made the check EXACT for a notice that names its audit row, and the relay took
+that change for free precisely because it shares `NoticeDeliveryRun` with the verb (D1 above): there
+is one arm, not two. What the relay inherits is therefore the CURRENT limit — today, that the pair
+`(ActorUserId, Event)` cannot see a re-point within one kind — and this line says "inherited", not
+"unchanged", so that the next change to it does not have to come back and edit this sentence.
 
 ## What would change this
 

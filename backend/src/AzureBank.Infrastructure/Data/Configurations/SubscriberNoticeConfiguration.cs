@@ -67,9 +67,22 @@ public class SubscriberNoticeConfiguration : IEntityTypeConfiguration<Subscriber
           whose evidence has gone missing must be FOUND rather than refused, and a constraint would
           refuse the very write that makes it missing. Nothing about AuditEvents is touched.
 
-          It is indexed because the evidence check looks a notice up BY it once per delivery, and
-          because a null here means "written before ADR-0052" — a filtered index keeps that backlog
-          out of the tree instead of paying for rows the exact query never asks about.
+          ⚠️ THE INDEX IS NOT FOR THE EVIDENCE CHECK, and saying it was is how this comment read
+          until it was measured. DeliverAsync reads AuditEventId off a notice it has ALREADY
+          materialised and then looks AuditEvents up by its PRIMARY KEY; no code path filters
+          SubscriberNotices on this column, so that query would never touch this index.
+
+          It is here for the one reader that does: the DUPLICATE-POINTER SWEEP in
+          docs/runbooks/pin-enrolment-repudiated.md. ADR-0052 D3 compares (ActorUserId, Event)
+          against the named row, which cannot see a re-point to another row of the same user and
+          the same kind — but that attack leaves TWO notices naming ONE audit row, and
+
+              SELECT AuditEventId, COUNT(*) FROM SubscriberNotices
+              WHERE AuditEventId IS NOT NULL GROUP BY AuditEventId HAVING COUNT(*) > 1
+
+          finds it. That is a scan of exactly the rows this filter keeps, which is also why the
+          filter is right: a null here means "written before ADR-0052", and those rows name nothing
+          and can collide with nothing.
         */
         builder.Property(n => n.AuditEventId);
 

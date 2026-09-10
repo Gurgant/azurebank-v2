@@ -724,8 +724,11 @@ public class AuthService : IAuthService
               "User {UserId} set their PIN" log line.
 
               THE AUDIT ROW IS NOT OPTIONAL HERE, for three mechanical reasons rather than symmetry:
-              the notify verb joins a notice to its evidence by (ActorUserId, Event), so a notice
-              with no audit row of the same name prints NO AUDIT ROW on every run; the owned chain
+              the notify verb reads a notice's evidence through the id this block is about to store
+              on it, and a notice whose evidence is absent prints NO AUDIT ROW on every run — since
+              ADR-0052 this path takes the EXACT arm, and the (ActorUserId, Event) pair named in the
+              older comments below is now the FALLBACK, for notices written before that migration;
+              the owned chain
               transaction opens only when an AuditEvent is Added (AzureBankDbContext), so without one
               this path would not have the both-directions rollback ADR-0045 D1 proved for the
               enrolment; and a subscriber told their PIN changed while the trail says nothing is the

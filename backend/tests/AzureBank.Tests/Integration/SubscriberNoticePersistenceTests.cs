@@ -61,6 +61,11 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
         var audit = await context.AuditEvents.AsNoTracking()
             .SingleAsync(e => e.ActorUserId == userId && e.Event == SecurityEvents.PinEnrolled);
         notice.OccurredAt.Should().BeCloseTo(audit.OccurredAt, TimeSpan.FromSeconds(5));
+
+        notice.AuditEventId.Should().Be(
+            audit.Id,
+            "ADR-0052: the ENROLMENT path names its row too, and it is a separate write from the "
+            + "change path — proving one says nothing about the other, so both are asserted here");
     }
 
     [Fact]
@@ -154,11 +159,19 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
     public async Task ChangingAPin_WritesTheAuditRowItsNoticeIsJoinedTo()
     {
         /*
-          NOT SYMMETRY — the join. `notify` matches a notice to its evidence by (ActorUserId, Event)
-          and prints `NO AUDIT ROW backs notice …` when it cannot, so a change notice without an
-          audit row of the SAME name would raise that finding on every run. It is also what opens
-          the owned chain transaction (`NeedsOwnChainTransaction` fires on an Added AuditEvent), so
-          without it the change path would not have the rollback ADR-0045 D1 proved for enrolment.
+          NOT SYMMETRY — the join. `notify` matches a notice to its evidence and prints
+          `NO AUDIT ROW backs notice …` when it cannot, so a change notice without an audit row
+          would raise that finding on every run. It is also what opens the owned chain transaction
+          (`NeedsOwnChainTransaction` fires on an Added AuditEvent), so without it the change path
+          would not have the rollback ADR-0045 D1 proved for enrolment.
+
+          🔒 SINCE ADR-0052 THE NOTICE NAMES THE ROW, and this test is the only place that
+          assertion is made against the REAL endpoint rather than a hand-built context. The unit
+          tests build their own notices, so they can only prove the QUERY reads a pointer; nothing
+          but this proves the WRITE PATH sets one. If `AuthService` ever stopped passing the id the
+          unit suite would stay green and the pointer would be null in production — which is the
+          exact shape of the bug this whole file was written for (an audit row added after the save,
+          endpoint 200, writer-was-called test green, table empty).
         */
         var (token, userId, _) = await RegisterTestUserAsync();
         await SetPinAsync(token, pin: "123456");
@@ -179,6 +192,12 @@ public class SubscriberNoticePersistenceTests : IntegrationTestBase
         var notice = (await NoticesForAsync(userId))
             .Single(n => n.Event == SecurityEvents.PinChanged);
         notice.OccurredAt.Should().BeCloseTo(audit.OccurredAt, TimeSpan.FromSeconds(5));
+
+        notice.AuditEventId.Should().Be(
+            audit.Id,
+            "ADR-0052: the notice NAMES its evidence, and the real write path is the only thing that "
+            + "can prove the id it carries is the row this endpoint actually wrote. Null here means "
+            + "every notice from this path silently takes the weaker (ActorUserId, Event) fallback");
     }
 
     [Fact]

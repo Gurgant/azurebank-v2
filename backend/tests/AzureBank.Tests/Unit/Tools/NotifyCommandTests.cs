@@ -388,12 +388,26 @@ public class NotifyCommandTests : IDisposable
         var (_, lines) = await RunAsync(provider);
         var text = string.Join("\n", lines);
 
+        /*
+          🔒 THE POSITIVE CONTROL COMES FIRST, because the claim below is an ABSENCE and an
+          absence proves nothing until the event that would produce it was DUE. Without these two
+          lines a run that examined no notices at all — a broken query, a transport that threw, a
+          fixture that owed nothing — would satisfy "zero findings" and this test would pin the
+          limit by accident rather than by measurement. This repo has been bitten by exactly that
+          shape before: a guard that could not speak, read as a guard that had nothing to say.
+        */
+        _transport.Envelopes.Should().HaveCount(
+            2, "both notices must actually have been examined and delivered for the count below to "
+               + "mean anything; this is what makes the finding DUE if D3 could see the re-point");
+        text.Should().Contain(
+            "NOTIFIED 2 of 2", "the run has to have done the work whose silence is being asserted");
+
         (text.Split("NO AUDIT ROW").Length - 1).Should().Be(
             0,
-            "the row it now names carries the same user and the same kind, so D3's pair is satisfied "
-            + "and the evidence reads as present. This is the limit, not a property to rely on — if "
-            + "this row ever goes red, an integrity binding arrived and ADR-0052's Consequences has "
-            + "to move with it");
+            "with both notices examined and delivered: the row the second one now names carries the "
+            + "same user and the same kind, so D3's pair is satisfied and the evidence reads as "
+            + "present. This is the limit, not a property to rely on — if this row ever goes red, an "
+            + "integrity binding arrived and ADR-0052's Consequences has to move with it");
     }
 
     [Fact]

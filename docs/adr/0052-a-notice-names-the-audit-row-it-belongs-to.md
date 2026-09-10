@@ -26,8 +26,11 @@ noticing removals.
 ADR-0047 recorded that rather than claiming it away, and named the fix: a per-notice reference. It
 also said the fix reopened a decision, and there the record was wrong in a way worth stating.
 
-**The "no foreign key" decision is not in ADR-0045.** That document contains the word "foreign" zero
-times. The decision is in the `AddSubscriberNotices` migration's own remarks: *"there is deliberately
+**The "no foreign key" decision is not in ADR-0045.** Before this change that document did not
+contain the word "foreign" at ALL. ⚠️ **It does now — twice — and both are inside the note this
+change added to ADR-0045 to say the decision lives elsewhere, so a grep run today answers 2 and the
+answer is this ADR's own doing.** Do not re-derive the claim from that grep; the original count is
+recoverable with `git show` at any commit before this branch. The decision is in the `AddSubscriberNotices` migration's own remarks: *"there is deliberately
 no foreign key to AuditEvents: the audit row and the notice are written in the same save and joined
 by (ActorUserId, Event) when the notice is rendered, so that a notice whose evidence has gone missing
 is FOUND rather than refused."* ADR-0047 cited ADR-0045 for it twice. Both citations are corrected

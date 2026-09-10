@@ -57,8 +57,10 @@ directory for `<reference>.eml` before concluding anything; if it is there, the 
 be holding it, and the row is the one to fix — mark it by hand, or move the file out and let the
 next sweep re-render it.
 
-The audit row is NAMED by the notice since ADR-0052, and joined by (actor, event) only when it
-names none — never by time, because the two are written in one transaction but read two clocks.
+The audit row is NAMED by the notice since ADR-0052. ⚠️ **The pair `(actor, event)` is used in
+BOTH arms and does a different job in each** — it is the LOOKUP KEY when the notice names no row,
+and a CHECK on the row it does name, which is what makes a re-pointed notice findable. It is never
+joined by time, because the two rows are written in one transaction but read two clocks.
 
 **`AuditEventId` is not null.** That is the row, and it must also be this notice's:
 
@@ -97,15 +99,42 @@ is one line over both outcomes and they do not call for the same act. These are 
 - **A NAMED row that is THERE and whose `ActorUserId` or `Event` does not match the notice.** The
   trail is fine and the notice was re-pointed — somebody wrote `SubscriberNotices`. ⚠️ `verify` will
   come back CLEAN here, and a session that ran it first reads that as reassurance; it is the tell.
-- **No row at all, for a notice that names none.** The older question, and `ActorUserId` is the
-  whole of what can be looked up for those rows.
+- **No row at all, for a notice that names none.** The older question. Those rows carry no
+  `AuditEventId`, so the pair `(ActorUserId, Event)` is the whole of what can be looked up —
+  ⚠️ **both terms, never the actor alone.** The query above uses both, and dropping `Event` hands
+  an operator an ENROLMENT's row as a change's evidence, which is the one mistake this page's own
+  warning about `PinEnrolled` already tells you not to make.
 
-⚠️ **And one re-point none of the three can show you.** If the named row was swapped for ANOTHER row
-of the same user and the same kind, every check above passes and no finding appears at all — the
-pair the verb compares is satisfied by any `PinChanged` row that user has. ADR-0052 records why that
-is pinned rather than closed. **When a repeated `PinChanged` is what is under dispute, count the rows
-against the notices anyway**, exactly as you would for a notice that names none: the weaker question
-is still worth asking here.
+⚠️ **And one re-point none of the three can show you — but this query can.** If the named row was
+swapped for ANOTHER row of the same user and the same kind, every check above passes and no finding
+appears at all: the pair the verb compares is satisfied by any `PinChanged` row that user has.
+ADR-0052 records why that is pinned rather than closed. **It is not invisible to YOU, though.** The
+swap has to leave the notice pointing somewhere, and the row it now points at already belongs to
+another notice — so two notices name one audit row, and nothing legitimate does that:
+
+    SELECT AuditEventId, COUNT(*) AS Notices
+    FROM SubscriberNotices
+    WHERE AuditEventId IS NOT NULL
+    GROUP BY AuditEventId
+    HAVING COUNT(*) > 1;
+
+**Zero rows is the healthy answer**, and it is the answer on a clean database — measured against
+`AzureBankDev` on 2026-09-10, which returned the header and no rows. Run it that way once yourself
+so you know what clean looks like. (The filtered index it scans was checked at the same time:
+`sys.indexes` reports `IX_SubscriberNotices_AuditEventId` with `filter_definition = ([AuditEventId]
+IS NOT NULL)` and `has_filter = 1`.) Any row it returns names an audit event that more than one
+notice claims as its evidence: take the `AuditEventId` back to the query in §1 and read both
+notices. ⚠️ **This is a SWEEP, not a per-notice check** — it is the one question here you ask of the
+whole table rather than of the notice in front of you, so it belongs in a periodic pass as much as
+in an investigation. The filtered index on `AuditEventId` exists for exactly this scan and for
+nothing else; `SubscriberNoticeConfiguration` says so where somebody wondering about the index will
+read it.
+
+⚠️ **What it cannot see**: a re-point onto a row that NO other notice names — an audit row belonging
+to no notice at all. Those exist (an `AuditEvents` row is written for events that owe no notice), so
+a zero here narrows the question, it does not close it. **When a repeated `PinChanged` is what is
+under dispute, still count the rows against the notices by hand**, exactly as you would for a notice
+that names none.
 
 Do NOT reach for `evidence` in any of these, the same-kind re-point included: it reads by a
 transfer's `TXN-…` number and a PIN event has none.
@@ -113,8 +142,8 @@ transfer's `TXN-…` number and a PIN event has none.
 **Since ADR-0052 the finding is exact, and the line tells you which question it asked.** A notice
 written from then on names the audit row it belongs to, so `NO AUDIT ROW` is about THAT row rather
 than about the user's history — the line reads **"the `PinChanged` row it names is gone, or is not
-this notice's"**. ⚠️ It does not say which of the two states above it found: the FIRST
-TWO bullets are how you tell, and they do not call for the same act.
+this notice's"**. ⚠️ It does not say which of the two states above it found: the FIRST TWO bullets
+are how you tell, and they do not call for the same act.
 
 ⚠️ **A notice written BEFORE that migration names no row and gets the older, weaker question**, and
 the line says so: **"no `PinChanged` row exists for that user at all"**. A change can happen many
