@@ -84,8 +84,11 @@ hand-edit that only reordered keys, which is still a document nobody generated. 
   `\r\n` in the committed file, which was generated on Windows. A Linux runner is expected to
   produce `\n`. **That is predicted, not observed**: converting a controller to LF on Windows did
   NOT change the output, so the newline comes from the platform rather than from the source file,
-  and only a Linux run can show which. Normalising both sides makes the gate hold either way, and
-  this pull request's first CI run is that observation.
+  and only a Linux run can show which. Normalising both sides makes the gate hold either way —
+  which is also why this pull request's CI run cannot settle it: a green backend job on Linux shows
+  the gate HOLDS there, and says nothing about which newline Linux emitted, because the comparison
+  normalises that away. The prediction stays a prediction until something reads the generated
+  document on a Linux runner.
 
 When the two differ, the failure names the first JSON paths that disagree, committed → generated,
 and reports a pure formatting difference as one rather than blaming the file for it.
