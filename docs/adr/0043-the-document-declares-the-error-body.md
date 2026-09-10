@@ -53,6 +53,15 @@ and compares them, which proves generated code matches the document and never th
 matches the server. Schemathesis, the one tool that could, ends its step with
 `|| true  # report, don't gate`.
 
+_Note (2026-09-10, ADR-0053) — **half of the paragraph above is now closed, and it is NOT the
+half this ADR was about.** "Matches the server" names two claims. One is that the committed document
+is what the CODE generates; ADR-0053 now proves that on every test run, and a stale document goes
+red. The other is that what the code generates tells the truth about what the server DOES — and
+that is the claim every defect listed above violated: the transformers generated those 400s and that
+`application/json`, so the document faithfully described a wrong generator. ADR-0053's gate would
+have passed on every one of them. **So "nothing could catch any of it" is still true of this ADR's
+defects**, and Schemathesis is still the tool that could, and still reports without gating._
+
 ## Decision
 
 **The document declares the body, the shared component declares every member the API sends, and a

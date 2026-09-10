@@ -79,6 +79,7 @@ like a transfer
 [0031](0031-e2e-playwright.md) the app in a real browser ·
 [0032](0032-real-stack-layers-in-ci.md) the real-stack layers in CI ·
 [0043](0043-the-document-declares-the-error-body.md) the document declares the error body ·
+[0053](0053-the-committed-contract-is-what-the-api-generates.md) the spec is what the API generates ·
 [0044](0044-the-audit-trail-is-append-only-and-chained.md) the audit trail is append-only and chained
 
 **Operations** — [0016](0016-observability-three-pillars.md) observability, three pillars ·
@@ -172,14 +173,24 @@ leaving them as they are; from here the wording is struck in place instead, whic
 reads better.
 
 ADR-0052 takes the limit ADR-0047 recorded rather than claimed away: a notice now carries the id of
-the audit row it belongs to, so `NO AUDIT ROW` asks about THAT row instead of asking whether the user
-has ever done this kind of thing. ⚠️ It also corrects a citation this directory had carried twice —
-the "no foreign key to `AuditEvents`" decision is the `AddSubscriberNotices` MIGRATION's, not
-ADR-0045's, which contains the word zero times; ADR-0045 now says where it lives, because that is
-where a reader looking for it arrives. 🔒 And it records a failure of the convention itself: the test
-ADR-0047 relied on to force this decision **stayed green** when the decision was taken, because it
-builds only the shape the fix leaves alone. A test guards the shape it builds, not the claim its name
-announces.
+the audit row it belongs to, so `NO AUDIT ROW` asks about THAT row instead of asking whether the
+user has ever done this kind of thing. ⚠️ It also corrects a citation this directory had carried
+twice — the "no foreign key to `AuditEvents`" decision is the `AddSubscriberNotices` MIGRATION's,
+not ADR-0045's, which did not contain the word at all *(corrected 2026-09-10: it does now, twice,
+both inside the note that says the decision lives elsewhere — so a grep answers 2 and that is the
+note's own doing; this sentence said "zero times" in the present tense and outlived the edit that
+made it false)*; ADR-0045 now says where it lives, because that is where a reader looking for it
+arrives. 🔒 And it records a failure of the convention itself: the test ADR-0047 relied on to force
+this decision **stayed green** when the decision was taken, because it builds only the shape the fix
+leaves alone. A test guards the shape it builds, not the claim its name announces.
+
+ADR-0053 closes half of a gap ADR-0043 named while deciding something else: CI proved the generated
+client matches the committed document, and nothing proved the document matches the code. Measured,
+not argued — with a property added to a DTO and the document left alone, both frontend "up to date"
+steps exited 0. A backend test now generates the document from the real composition through
+`IOpenApiDocumentProvider` and compares it byte for byte. 🔒 It proves the document is what the code
+GENERATES, and says in as many words that it does not prove the code generates the TRUTH: ADR-0043's
+own defects were of that kind, and this gate would have passed on every one.
 
 The next free number is **0053**.
 
@@ -241,6 +252,7 @@ The next free number is **0053**.
 | [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) | A UTC day bounds a user's external transfers, and the mint says so before the PIN | Accepted | 2026-09-07 |
 | [ADR-0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) | The relay runs as an Azure Function, rehearsed locally against Azurite | Accepted | 2026-09-08 |
 | [ADR-0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | A notice names the audit row it belongs to | Accepted | 2026-09-09 |
+| [ADR-0053](0053-the-committed-contract-is-what-the-api-generates.md) | The committed contract is what the API generates | Accepted | 2026-09-10 |
 
 </details>
 ## Creating a New ADR

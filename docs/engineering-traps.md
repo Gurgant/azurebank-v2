@@ -698,3 +698,23 @@ happened.
 The shape that works is the one ADR-0044 D1 already uses for the audit row: record the OBLIGATION in
 the same transaction as the action, and deliver from somewhere else, later, from the row. What
 "later" means is a decision about runners (ADR-0045 D3), not about the request.
+
+## Restoring a file with `mv` from a backup can leave the build running the MUTATED binary
+
+A falsification changes a source file, builds, watches the test go red, then puts the file back. The
+tempting way to put it back is `cp f f.bak` before the change and `mv f.bak f` after. **That restores
+the CONTENT and the OLD TIMESTAMP** — the backup was taken before the mutation, so its mtime is older
+than the DLL the mutated build produced. MSBuild's incremental check compares exactly those two: a
+source older than its output is up to date. The next `dotnet test` does not recompile, and every run
+after the "restore" still executes the mutated code.
+
+Measured on ADR-0053's gate, 2026-09-10: `SetPinRequest.cs` restored at **18:21:16**, the
+`AzureBank.Shared.dll` built with the mutation in it at **18:21:19**. The next two runs were meant to
+test two OTHER mutations, and both still generated the sentinel property from the first. One of them
+went red and would have been recorded as proof it worked — it was red for the wrong reason, and it
+was caught only because the failure MESSAGE was read rather than the exit code. `--no-build` made it
+worse but is not the cause: a plain rebuild skipped the project for the same reason.
+
+**Restore by writing, not by moving** — `cp -f f.bak f` gives the file a new mtime, or `touch f`
+after an `mv`. And after any restore, **re-run the baseline and watch it PASS before the next
+falsification**: a baseline that still fails is the stale binary telling you so, and it costs one run.
