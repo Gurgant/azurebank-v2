@@ -50,15 +50,20 @@ a second value in the `Event` column `SubscriberNotice` already carries. No migr
 `UserId` index is not unique, so a second row of a second kind was already legal.
 
 **D2 — And the audit row it is joined to.** Not symmetry, and not a nice-to-have. `notify` matches a
-notice to its evidence by `(ActorUserId, Event)` and prints `NO AUDIT ROW backs notice …` when it
-cannot, so a change notice without an audit row of the same name would raise that finding on every
-run — a permanent false alarm in the runbook's most alarming line. The audit row is also what puts
-this save under the OWNED chain transaction, which opens only when an `AuditEvent` is Added; the
-change therefore rides the same locking path the enrolment does, and the both-directions rollback
-ADR-0045 D1 proved for the enrolment is proved for the change by two SQL-gated tests rather than
-inherited by assertion. Remove the `_audit.Record` and the first of them fails on `fault.Fired`,
-which is the assertion that says why. Its detail is `{"currentPinProved":true}`, because
-`{"passwordProved":true}` would be false here.
+notice to its evidence by ~~`(ActorUserId, Event)`~~ *(struck 2026-09-10: that pair is the FALLBACK
+since ADR-0052, kept only for notices written before its migration. A notice that names its row is
+matched on that `Id`, with the pair checked against it. Left in the sentence rather than rewritten
+because the CONSEQUENCE below is unchanged either way — and because this document has now had three
+separate clauses go stale behind ADR-0052, which is itself the argument for the per-notice reference
+it asked for.)* and prints `NO AUDIT ROW backs notice …` when it cannot, so a change notice without
+an audit row of the same name would raise that finding on every run — a permanent false alarm in the
+runbook's most alarming line. The audit row is also what puts this save under the OWNED chain
+transaction, which opens only when an `AuditEvent` is Added; the change therefore rides the same
+locking path the enrolment does, and the both-directions rollback ADR-0045 D1 proved for the
+enrolment is proved for the change by two SQL-gated tests rather than inherited by assertion. Remove
+the `_audit.Record` and the first of them fails on `fault.Fired`, which is the assertion that says
+why. Its detail is `{"currentPinProved":true}`, because `{"passwordProved":true}` would be false
+here.
 
 **D3 — No `SecurityEvent` log line.** The row is evidence to keep, not an alert to wake someone for.
 This follows the money-movement precedent ADR-0044 records: a durable row with no operator alert. It
