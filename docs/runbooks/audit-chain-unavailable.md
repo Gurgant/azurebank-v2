@@ -995,9 +995,11 @@ The headlines, and what each means from THIS verb:
   is the `SubscriberNotices` table having been written, not the trail. *"No `PinChanged` row exists
   for that user at all"* is the older, weaker question, asked only of a notice written before that
   migration, which names no row. The notice is rendered anyway — the account holder is not punished
-  for the gap — and the absence is the finding: run `verify` for the chain's verdict, then read the
-  notice row and, when it names one, that `AuditEvents` row BY ITS ID; by `ActorUserId` otherwise
-  (the first two statements of `docs/runbooks/pin-enrolment-repudiated.md`, which carry both). `evidence` does not apply here — it reads by a
+  for the gap — and the absence is the finding. Read the NOTICE row first and, when it names one,
+  that `AuditEvents` row BY ITS ID; by `ActorUserId` otherwise (the first two statements of
+  `docs/runbooks/pin-enrolment-repudiated.md`, which carry both). ⚠️ Run `verify` when the named row
+  is GONE — that is the trail's problem. A row that is THERE and does not match the notice is the
+  notice's problem, and `verify` comes back clean, which is why reading the row comes first. `evidence` does not apply here — it reads by a
   transfer's `TXN-…` number, and a PIN event has none. (From `evidence` the same words mean a
   LEDGER row with no audit row naming it; see above.)
 - `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, a directory

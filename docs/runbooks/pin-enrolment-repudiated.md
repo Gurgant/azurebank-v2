@@ -88,10 +88,20 @@ been run and the subscriber has since re-enrolled; the trail keeps both. For
 PIN being replaced repeatedly, which is what an attacker holding a PIN does. `Detail` names what was
 proved: `{"passwordProved":true}` for an enrolment, `{"currentPinProved":true}` for a change.
 
-Zero rows with a notice present is the `NO AUDIT ROW` finding `notify` prints; run `verify` before
-going further — the question has become "is the record intact", not "was this the subscriber". Do
-NOT reach for `evidence`: it reads by a transfer's `TXN-…` number and a PIN event has none. The
-query above, by `ActorUserId`, is the whole of what can be looked up here.
+Zero rows with a notice present is the `NO AUDIT ROW` finding `notify` prints, and **what to do
+next depends on which of the two queries above came back empty** — the finding is one line and the
+remedies are not the same.
+
+- **A NAMED row that is gone.** The trail lost it: run `verify`, because the question has become
+  "is the record intact", not "was this the subscriber".
+- **A NAMED row that is THERE and whose `ActorUserId` or `Event` does not match the notice.** The
+  trail is fine and the notice was re-pointed — somebody wrote `SubscriberNotices`. ⚠️ `verify` will
+  come back CLEAN here, and a session that ran it first reads that as reassurance; it is the tell.
+- **No row at all, for a notice that names none.** The older question, and `ActorUserId` is the
+  whole of what can be looked up for those rows.
+
+Do NOT reach for `evidence` in any of the three: it reads by a transfer's `TXN-…` number and a PIN
+event has none.
 
 **Since ADR-0052 the finding is exact, and the line tells you which question it asked.** A notice
 written from then on names the audit row it belongs to, so `NO AUDIT ROW` means *that* row is gone —
