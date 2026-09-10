@@ -117,6 +117,24 @@ The fix has its own test, `ANoticeWhoseOwnAuditRowIsGone_IsFOUND_WhileTheUsersOt
 change notices each naming their own row, one row deleted, exactly one finding. Falsified — reverting
 the query to the existence check reddens it and nothing else.
 
+⚠️ **D3 REACHES ACROSS KINDS AND NOT WITHIN ONE, and that is pinned rather than claimed away.** The
+pair it compares is `(ActorUserId, Event)`, so a change notice re-pointed at an ENROLMENT's row is
+caught and one re-pointed at another `PinChanged` row OF THE SAME USER is not. Measured — zero
+findings — by `ARePointToANOTHERRowOfTHESAMEKind_AndThisPinsHowFarD3Reaches`, which builds exactly
+the re-point an integrity binding would catch, so it goes red the day one arrives. (Unlike ADR-0047's
+forcing function, which built only the shape its fix left alone and stayed green: that is the lesson
+this ADR's Consequences opened with, applied.)
+
+Closing it needs an integrity-protected binding — a MAC over the pair, and therefore a **seventh
+validated secret**, *"taught to the five places the other six live"*, which
+`docs/deferred/relaying-the-enrolment-notice.md` already prices. It is not taken here for a reason
+stronger than cost: **it would close one door in a room with several open.** `SubscriberNotices` is
+deliberately unchained (ADR-0045 D7), and whoever can write it suppresses this finding far more
+cheaply than by re-pointing — setting `DeliveredAt` and `DeliveryReceipt` takes the row out of every
+claim path, all of which filter `DeliveredAt == null`, so the check never runs on it at all. A MAC on
+the pointer would leave that untouched. What makes tampering EVIDENT in this system is the chain, and
+the chain is on `AuditEvents` by decision, not by oversight.
+
 ⚠️ **An unmigrated database now fails every enrolment and every PIN change**, not just the notice:
 the insert names a column the table does not have and it is part of the same transaction, so the PIN
 is not set either. The migration's remarks say so where somebody applying it will read them.
@@ -130,6 +148,9 @@ is not set either. The migration's remarks say so where somebody applying it wil
   A retention policy that removed rows on purpose would make this finding fire routinely, and the
   control would need to distinguish *expired* from *removed* — which the chain can answer and this
   column cannot.
+- **A chained notice table.** If `SubscriberNotices` ever gained a hash chain of its own, the pointer
+  would become tamper-evident with no new secret and the arithmetic above changes: the room stops
+  having several open doors, and the integrity binding stops being one door in it.
 - **A sending transport.** The finding is currently read by a person running `notify` or reading the
   relay's log. Once a notice is actually sent, "delivered without its evidence" becomes a thing that
   happened to a subscriber rather than a line in a console, and may deserve to block rather than

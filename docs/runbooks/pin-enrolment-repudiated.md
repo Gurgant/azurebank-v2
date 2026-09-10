@@ -88,9 +88,10 @@ been run and the subscriber has since re-enrolled; the trail keeps both. For
 PIN being replaced repeatedly, which is what an attacker holding a PIN does. `Detail` names what was
 proved: `{"passwordProved":true}` for an enrolment, `{"currentPinProved":true}` for a change.
 
-Zero rows with a notice present is the `NO AUDIT ROW` finding `notify` prints, and **what to do
-next depends on which of the two queries above came back empty** — the finding is one line and the
-remedies are not the same.
+⚠️ **`NO AUDIT ROW` is not "the query came back empty".** For a notice that NAMES a row it covers
+two outcomes and prints the same line for both: the row is gone, or the row is there and is not this
+notice's — in which case the query above returns a row, and the mismatch is the point. What to do
+next depends on which, and these are how you tell:
 
 - **A NAMED row that is gone.** The trail lost it: run `verify`, because the question has become
   "is the record intact", not "was this the subscriber".
@@ -99,6 +100,13 @@ remedies are not the same.
   come back CLEAN here, and a session that ran it first reads that as reassurance; it is the tell.
 - **No row at all, for a notice that names none.** The older question, and `ActorUserId` is the
   whole of what can be looked up for those rows.
+
+⚠️ **And one re-point none of the three can show you.** If the named row was swapped for ANOTHER row
+of the same user and the same kind, every check above passes and no finding appears at all — the
+pair the verb compares is satisfied by any `PinChanged` row that user has. ADR-0052 records why that
+is pinned rather than closed. **When a repeated `PinChanged` is what is under dispute, count the rows
+against the notices anyway**, exactly as you would for a notice that names none: the weaker question
+is still worth asking here.
 
 Do NOT reach for `evidence` in any of the three: it reads by a transfer's `TXN-…` number and a PIN
 event has none.

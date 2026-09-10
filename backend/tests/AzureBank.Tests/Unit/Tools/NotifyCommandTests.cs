@@ -349,6 +349,51 @@ public class NotifyCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ARePointToANOTHERRowOfTHESAMEKind_IsNotCaught_AndThisPinsHowFarD3Reaches()
+    {
+        /*
+          A LIMIT, PINNED RATHER THAN CLAIMED AWAY (ADR-0052 Consequences), and the shape that
+          matters most for the kind ADR-0047 made repeatable.
+
+          D3 checks that the named row carries the notice's own (ActorUserId, Event). That catches a
+          re-point ACROSS kinds — a change notice aimed at an enrolment's row — and it cannot catch a
+          re-point WITHIN one: another PinChanged row of the same user satisfies both terms. MEASURED
+          here: zero findings, where an exact binding would raise one.
+
+          ⚠️ IT IS PINNED RATHER THAN CLOSED because closing it needs an integrity-protected binding
+          — a MAC over the pair, and therefore a SEVENTH validated secret, "taught to the five places
+          the other six live" (docs/deferred/relaying-the-enrolment-notice.md). That is an ADR-level
+          cost, and it would close ONE door in a room with several open: whoever can write this table
+          suppresses the finding far more cheaply by setting DeliveredAt, since every claim path
+          filters DeliveredAt == null and the check never runs on a row marked delivered.
+
+          🔒 UNLIKE ADR-0047'S FORCING FUNCTION, THIS ONE BUILDS THE SHAPE A FIX WOULD CHANGE. That
+          test constructed notices naming no row, so it stayed green when the join became exact and
+          nobody was forced to move the ADR. This one constructs exactly the re-point an integrity
+          binding would catch, so it goes red the day somebody adds one.
+        */
+        var owner = await OwnerAsync();
+        var first = await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+        var second = await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+
+        var itsRow = await _context.AuditEvents.SingleAsync(e => e.Id == second.AuditEventId!.Value);
+        _context.AuditEvents.Remove(itsRow);
+        second.AuditEventId = first.AuditEventId;
+        await _context.SaveChangesAsync();
+
+        await using var provider = Provider();
+        var (_, lines) = await RunAsync(provider);
+        var text = string.Join("\n", lines);
+
+        (text.Split("NO AUDIT ROW").Length - 1).Should().Be(
+            0,
+            "the row it now names carries the same user and the same kind, so D3's pair is satisfied "
+            + "and the evidence reads as present. This is the limit, not a property to rely on — if "
+            + "this row ever goes red, an integrity binding arrived and ADR-0052's Consequences has "
+            + "to move with it");
+    }
+
+    [Fact]
     public async Task AKindThisBuildCannotRender_StaysOwed_AndIsNamed()
     {
         /*
