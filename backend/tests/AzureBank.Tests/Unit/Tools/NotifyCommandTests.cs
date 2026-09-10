@@ -443,7 +443,26 @@ public class NotifyCommandTests : IDisposable
 
         exitCode.Should().Be(VerifyCommand.Intact, "the account holder is not punished for a missing row");
         _transport.Envelopes.Should().ContainSingle();
-        lines.Should().Contain(l => l.StartsWith("NO AUDIT ROW") && l.Contains(notice.Id.ToString("N")));
+        /*
+          THE WORDING, NOT JUST THE HEADLINE. Both runbooks QUOTE these two lines, and a quote is a
+          claim: when the exact arm's wording changed, the repudiation runbook went on quoting the
+          old one and nothing here noticed — the fifth time on this PR that a document outlived the
+          string it cited. Asserting the phrase is what makes the next change to it visible.
+
+          ⚠️ Grepping the source for it finds NOTHING: the message is built by concatenation,
+          "...for that user " + "at all — ...", so it exists only once rendered. That is why the
+          assertion is here, against the printed line, and not a grep in a sweep.
+        */
+        var finding = lines.Should().ContainSingle(
+            l => l.StartsWith("NO AUDIT ROW") && l.Contains(notice.Id.ToString("N")),
+            "the notice is named by its own reference so an operator can look the row up").Which;
+        finding.Should().Contain(
+            "row exists for that user at all",
+            "this notice names no row, so it gets the WEAKER question, and the line has to say so — "
+            + "the exact arm's wording is pinned by ANoticeWhoseOwnAuditRowIsGone_… instead");
+        finding.Should().Contain(
+            "names no row",
+            "an operator reading it must know the finding is the weak one before acting on it");
         (await _context.SubscriberNotices.AsNoTracking().SingleAsync(n => n.Id == notice.Id))
             .DeliveredAt.Should().NotBeNull();
     }
