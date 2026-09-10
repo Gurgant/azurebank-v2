@@ -669,7 +669,7 @@ public class AuthService : IAuthService
               pack needs and the fact the log line will not outlive. Nothing about the PIN itself is
               recorded — not its hash, not its length.
             */
-            _audit.Record(
+            var enrolmentEvidence = _audit.Record(
                 SecurityEvents.PinEnrolled, AuditOutcome.Succeeded,
                 actorUserId: userId, subjectType: "User", subjectId: userId,
                 detail: "{\"passwordProved\":true}");
@@ -699,6 +699,11 @@ public class AuthService : IAuthService
                 UserId = userId,
                 Event = SecurityEvents.PinEnrolled,
                 OccurredAt = DateTime.UtcNow,
+
+                // The row above, named rather than searched for later (ADR-0052). Both are Added and
+                // neither is saved here, so the pair commits or rolls back together — the reference
+                // cannot outlive the row it points at.
+                AuditEventId = enrolmentEvidence,
             });
         }
         else
@@ -719,14 +724,17 @@ public class AuthService : IAuthService
               "User {UserId} set their PIN" log line.
 
               THE AUDIT ROW IS NOT OPTIONAL HERE, for three mechanical reasons rather than symmetry:
-              the notify verb joins a notice to its evidence by (ActorUserId, Event), so a notice
-              with no audit row of the same name prints NO AUDIT ROW on every run; the owned chain
+              the notify verb reads a notice's evidence through the id this block is about to store
+              on it, and a notice whose evidence is absent prints NO AUDIT ROW on every run — since
+              ADR-0052 this path takes the EXACT arm, and the (ActorUserId, Event) pair named in the
+              older comments below is now the FALLBACK, for notices written before that migration;
+              the owned chain
               transaction opens only when an AuditEvent is Added (AzureBankDbContext), so without one
               this path would not have the both-directions rollback ADR-0045 D1 proved for the
               enrolment; and a subscriber told their PIN changed while the trail says nothing is the
               inversion of what the trail is for.
             */
-            _audit.Record(
+            var changeEvidence = _audit.Record(
                 SecurityEvents.PinChanged, AuditOutcome.Succeeded,
                 actorUserId: userId, subjectType: "User", subjectId: userId,
                 detail: "{\"currentPinProved\":true}");
@@ -737,6 +745,11 @@ public class AuthService : IAuthService
                 UserId = userId,
                 Event = SecurityEvents.PinChanged,
                 OccurredAt = DateTime.UtcNow,
+
+                // THIS change's row, which is the whole point of ADR-0052: PinChanged is repeatable,
+                // so (ActorUserId, Event) stopped identifying one notice the moment ADR-0047 shipped
+                // and one surviving row began answering for every change a user ever made.
+                AuditEventId = changeEvidence,
             });
         }
 

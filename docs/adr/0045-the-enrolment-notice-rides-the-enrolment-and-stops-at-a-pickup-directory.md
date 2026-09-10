@@ -90,6 +90,16 @@ this would have been its first correctness-bearing loop.~~ (struck 2026-09-04; c
 > case where the holder is not live.)*. The reasoning here was sound for the deployment it
 > described; what changed is the decision that the deployment should have a runner.
 
+> _Note (2026-09-09, and the count in it has since changed — read the whole line) — **two later
+> records cite this ADR for a decision it does not contain.** ADR-0047 twice attributed the "no
+> foreign key to `AuditEvents`" choice here. ⚠️ **Before that note this document did not contain the
+> word "foreign" at all; it now does, twice, and both are in this note** — so a grep run today
+> answers 2 and the answer is this note's own doing. The decision is in the `AddSubscriberNotices`
+> migration's own remarks, and ADR-0052 is where it was reopened: a notice now names its audit row,
+> still without a constraint, because the missing row is the FINDING and a constraint would refuse
+> the write that made it missing. Recorded here because this is where a reader looking for it
+> arrives._
+
 **D4 — The last hop is a pickup directory, and the ADR says so rather than the file.** The
 transport writes one RFC 5322 message per notice — `From: no-reply@azurebank.invalid` (RFC 2606: it
 resolves nowhere and impersonates nobody), `To:` the account's email, a `Message-ID` that is the

@@ -419,6 +419,47 @@ public class AuditProseGuardTests
     private static readonly string[] DeclaredElsewhere =
         ["IDbContextOptionsConfiguration", "SqlServerRetryingExecutionStrategy"];
 
+    /// <summary>
+    /// Index, key and constraint names — declared as STRING LITERALS in migrations, never as C#.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ The declaration scan above reads C# TYPE and METHOD declarations, so a database object
+    /// name could never resolve through it, however real the object. That is a false negative in
+    /// the RESOLVER, not a dead citation, and it bit for the first time when the repudiation
+    /// runbook began naming <c>IX_SubscriberNotices_AuditEventId</c> to say what an operator sees
+    /// in <c>sys.indexes</c> — a name that resolves twice in
+    /// <c>20260909173646_AddSubscriberNoticeAuditEventId.cs</c> and once in the database itself.
+    /// <para>
+    /// The prefix list is deliberately CLOSED. A bare literal scan would let any quoted string in
+    /// the solution vouch for any citation, which is the opposite of what this guard is for; only
+    /// the four EF naming conventions for database objects are admitted, so a citation of an index
+    /// that does not exist still fails.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<string> DatabaseObjectNames(string root)
+    {
+        var names = Directory
+            .EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
+            .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
+                        && !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .SelectMany(p => Regex.Matches(File.ReadAllText(p), @"""((?:IX|PK|FK|AK)_[A-Za-z0-9_]+)""")
+                .Select(m => m.Groups[1].Value))
+            .ToList();
+
+        /*
+          THE GUARD ON THIS GUARD, in the idiom the rest of this file uses. A regex that stopped
+          matching would contribute nothing and every index citation would go back to failing --
+          loud, and therefore the safe direction. The dangerous direction is a pattern that admits
+          too much, which is why the prefix list is closed rather than open.
+        */
+        names.Should().HaveCountGreaterThan(
+            5,
+            "the migrations declare many named indexes and keys; a scan returning almost none means "
+            + "the literal pattern stopped matching and this concat is contributing nothing");
+
+        return names;
+    }
+
     [Fact]
     public void EverySymbolNamedInTheAuditCorpus_Exists()
     {
@@ -462,6 +503,7 @@ public class AuditProseGuardTests
                         .Select(m => m.Groups[1].Value));
             })
             .Concat(DeclaredElsewhere)
+            .Concat(DatabaseObjectNames(root))
             .ToHashSet(StringComparer.Ordinal);
 
         declared.Should().HaveCountGreaterThan(

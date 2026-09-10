@@ -58,7 +58,13 @@ public interface IAuditService
     /// <param name="subjectType">What kind of thing <paramref name="subjectId"/> names.</param>
     /// <param name="subjectId">The object acted on.</param>
     /// <param name="detail">Event-specific JSON. Must contain no personal data (ADR-0044 D5).</param>
-    void Record(
+    /// <returns>
+    /// The <c>Id</c> of the row just added, so a caller writing a sibling row in the same save can
+    /// point at it (ADR-0052). It exists before <c>SaveChanges</c> because the writer mints it;
+    /// <c>Sequence</c> and <c>RowHash</c> do NOT — those are assigned inside the save, which is why
+    /// this returns the id and could not return either of them.
+    /// </returns>
+    Guid Record(
         string securityEvent,
         AuditOutcome outcome,
         Guid? actorUserId = null,

@@ -72,10 +72,19 @@ public sealed record NoticeResult(
 /// which is reported as <see cref="NoticeOutcome.MarkedByAnother"/>.
 /// </para>
 /// <para>
-/// JOINED BY (ACTOR, EVENT), NEVER BY TIME, and reported rather than refused: a notice whose audit
-/// row is missing is still delivered — the account holder is not punished for the gap — and the
-/// absence is the finding. Since ADR-0047 made a kind repeatable this check is an existence check
-/// only; ADR-0047 records the limit and the backlog carries the exact join.
+/// NAMED BY THE NOTICE, NEVER JOINED BY TIME, and reported rather than refused: a notice whose
+/// audit row is missing is still delivered — the account holder is not punished for the gap — and
+/// the absence is the finding. Since ADR-0052 the check is EXACT when the notice names a row: it
+/// asks for that <c>Id</c>, and asks that the row also carry the notice's own actor and event, so
+/// a notice re-pointed at somebody else's row is still found. A notice written BEFORE that
+/// migration names none, and only those fall back to the old existence question by
+/// (ActorUserId, Event) — which is why that question survives here at all.
+/// </para>
+/// <para>
+/// ⚠️ WHAT THE EXACT CHECK STILL CANNOT SEE: the pair it compares is (ActorUserId, Event), so a
+/// re-point to ANOTHER row of the same user and the same kind satisfies it. That limit is
+/// deliberate and priced in ADR-0052's Consequences, and pinned by
+/// ARePointToANOTHERRowOfTHESAMEKind_IsNotCaught_AndThisPinsHowFarD3Reaches.
 /// </para>
 /// </remarks>
 public sealed class NoticeDeliveryRun
@@ -128,8 +137,36 @@ public sealed class NoticeDeliveryRun
             return new NoticeResult(notice, reference, NoticeOutcome.UnusableAddress, null, false, null);
         }
 
-        var backed = await _context.AuditEvents
-            .AnyAsync(e => e.ActorUserId == notice.UserId && e.Event == notice.Event, cancellationToken);
+        /*
+          EXACT WHEN THE NOTICE NAMES ITS ROW, THE OLD QUESTION WHEN IT DOES NOT (ADR-0052).
+
+          The old question was `does a row of this KIND exist for this USER`, and it was exact only
+          while every kind happened once per account. ADR-0047 made PinChanged repeatable, and from
+          that moment one surviving row answered for every change notice the user had: delete the
+          evidence for the third change and nothing was reported, because the first change's row
+          still satisfied the query. That is the limit this closes.
+
+          The fallback is not politeness, it is the backlog: every notice written before the
+          AddSubscriberNoticeAuditEventId migration has no reference, and asking the exact question
+          of those rows would report all of them as missing on the first run — a detective control
+          turned into noise on the day it shipped. They get the weaker answer they always had, and
+          the caller says WHICH question it asked, because "the row it names is gone" and "no row of
+          that kind exists" are different findings and only one of them is precise.
+        */
+        /*
+          THE NAMED ROW MUST ALSO BE THIS NOTICE'S, which is why the exact arm carries the same two
+          terms the fallback does. Asking only `Id == evidence` would accept ANY surviving audit row:
+          whoever can write SubscriberNotices could delete the evidence and re-point the notice at a
+          row that is still there, and the finding would go quiet. The chain cannot catch that —
+          nothing in AuditEvents was touched, so every RowHash still verifies. Checking the pair the
+          notice already carries costs two predicates on a primary-key lookup and closes it.
+        */
+        var backed = notice.AuditEventId is { } evidence
+            ? await _context.AuditEvents.AnyAsync(
+                e => e.Id == evidence && e.ActorUserId == notice.UserId && e.Event == notice.Event,
+                cancellationToken)
+            : await _context.AuditEvents.AnyAsync(
+                e => e.ActorUserId == notice.UserId && e.Event == notice.Event, cancellationToken);
         var auditRowMissing = !backed;
 
         RenderedNotice rendered;

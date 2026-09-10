@@ -988,13 +988,22 @@ The headlines, and what each means from THIS verb:
 - `NO ADDRESS` — that notice's account holds no email, or one that cannot head a message because it
   contains a line break (either is unreachable through registration and reachable by seed or raw
   SQL). Nothing is rendered for it and it stays owed.
-- `NO AUDIT ROW backs notice …` — from THIS verb it means the audit row the notice belongs to is
-  missing for that user: the join is by (actor, event), so it is the row named `PinEnrolled` or
-  `PinChanged` to match the notice's own kind. The notice is rendered anyway — the account holder is not punished for the
-  gap — and the absence is the finding: run `verify` for the chain's verdict, then read the notice
-  row and that user's `AuditEvents` by `ActorUserId` (the first two statements of
-  `docs/runbooks/pin-enrolment-repudiated.md`). `evidence` does not apply here — it reads by a
-  transfer's `TXN-…` number, and a PIN event has none. (From `evidence` the same words mean a
+- `NO AUDIT ROW backs notice …` — from THIS verb it means the audit row the notice belongs to could
+  not be found, and **since ADR-0052 the line tells you which question was asked**. *"The `PinChanged`
+  row it names is gone, or is not this notice's"* is the exact one: the notice carries that row's id
+  and either the row went, or it is there and belongs to something else — a re-pointed notice, which
+  is the `SubscriberNotices` table having been written, not the trail. *"No `PinChanged` row exists
+  for that user at all"* is the older, weaker question, asked only of a notice written before that
+  migration, which names no row. The notice is rendered anyway — the account holder is not punished
+  for the gap — and the absence is the finding. Read the NOTICE row first and, when it names one,
+  that `AuditEvents` row BY ITS ID; by the `(ActorUserId, Event)` PAIR otherwise — never by the
+  actor alone, which would offer an enrolment's row as a change's evidence. ⚠️ **Three statements
+  carry that, not two**: `docs/runbooks/pin-enrolment-repudiated.md` §1 reads the notice row first
+  (it selects `AuditEventId`), then asks by id, then by the pair. ⚠️ Run `verify` when the named
+  row is GONE — that is the trail's problem. A row that is THERE and does not match the notice is
+  the notice's problem, and `verify` comes back clean, which is why reading the row comes first.
+  `evidence` does not apply here — it reads by a transfer's `TXN-…` number, and a PIN event has
+  none. (From `evidence` the same words mean a
   LEDGER row with no audit row naming it; see above.)
 - `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, a directory
   that does not exist (the verb never creates one), or a directory inside a git working tree — where

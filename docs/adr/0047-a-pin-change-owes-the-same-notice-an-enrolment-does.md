@@ -50,15 +50,20 @@ a second value in the `Event` column `SubscriberNotice` already carries. No migr
 `UserId` index is not unique, so a second row of a second kind was already legal.
 
 **D2 — And the audit row it is joined to.** Not symmetry, and not a nice-to-have. `notify` matches a
-notice to its evidence by `(ActorUserId, Event)` and prints `NO AUDIT ROW backs notice …` when it
-cannot, so a change notice without an audit row of the same name would raise that finding on every
-run — a permanent false alarm in the runbook's most alarming line. The audit row is also what puts
-this save under the OWNED chain transaction, which opens only when an `AuditEvent` is Added; the
-change therefore rides the same locking path the enrolment does, and the both-directions rollback
-ADR-0045 D1 proved for the enrolment is proved for the change by two SQL-gated tests rather than
-inherited by assertion. Remove the `_audit.Record` and the first of them fails on `fault.Fired`,
-which is the assertion that says why. Its detail is `{"currentPinProved":true}`, because
-`{"passwordProved":true}` would be false here.
+notice to its evidence by ~~`(ActorUserId, Event)`~~ *(struck 2026-09-10: that pair is the FALLBACK
+since ADR-0052, kept only for notices written before its migration. A notice that names its row is
+matched on that `Id`, with the pair checked against it. Left in the sentence rather than rewritten
+because the CONSEQUENCE below is unchanged either way — and because this document has now had three
+separate clauses go stale behind ADR-0052, which is itself the argument for the per-notice reference
+it asked for.)* and prints `NO AUDIT ROW backs notice …` when it cannot, so a change notice without
+an audit row of the same name would raise that finding on every run — a permanent false alarm in the
+runbook's most alarming line. The audit row is also what puts this save under the OWNED chain
+transaction, which opens only when an `AuditEvent` is Added; the change therefore rides the same
+locking path the enrolment does, and the both-directions rollback ADR-0045 D1 proved for the
+enrolment is proved for the change by two SQL-gated tests rather than inherited by assertion. Remove
+the `_audit.Record` and the first of them fails on `fault.Fired`, which is the assertion that says
+why. Its detail is `{"currentPinProved":true}`, because `{"passwordProved":true}` would be false
+here.
 
 **D3 — No `SecurityEvent` log line.** The row is evidence to keep, not an alert to wake someone for.
 This follows the money-movement precedent ADR-0044 records: a durable row with no operator alert. It
@@ -126,10 +131,21 @@ now: once a relay exists, a row wrongly marked delivered is a notice nobody will
 to its own. While every kind happened once per account those were the same question. A change can
 happen many times, so where several change notices are owed, one surviving audit row answers for all
 of them and a missing one raises nothing. Making the check exact needs a per-notice reference on the
-row — which ADR-0045 deliberately did not add, so that a notice whose evidence has gone missing is
-found rather than refused. That is a schema decision and it is not taken here: the limit is pinned
-by a test that fails if anyone closes it without moving this paragraph, named in the repudiation
-runbook so an operator counts the rows themselves, and carried in the backlog.
+row — which ~~ADR-0045 deliberately did not add~~ *(struck 2026-09-09: ADR-0045 says nothing about a
+foreign key and never did — the word appears in it zero times. The decision is in the
+`AddSubscriberNotices` MIGRATION's remarks, which is where the next reader should be sent.)* the
+`AddSubscriberNotices` migration deliberately did not add, so that a notice whose evidence has gone
+missing is found rather than refused. That is a schema decision and it is not taken here: the limit
+is pinned by a test that fails if anyone closes it without moving this paragraph, named in the
+repudiation runbook so an operator counts the rows themselves, and carried in the backlog.
+
+_Correction (2026-09-09) — **taken, by ADR-0052.** A notice now carries the id of the audit row it
+belongs to, written in the same save, and the check asks about THAT row. ⚠️ Only for notices that
+name one: every row written before the migration names none and keeps the weaker question, or the
+first run after deployment would report the whole backlog. ⚠️ **And the forcing function this
+paragraph relied on did NOT fire.** The test built notices that name no row, so it took the fallback
+and stayed GREEN when the join became exact — it was reframed and this paragraph moved deliberately,
+not because a red test demanded it. A test guards the shape it builds, not the claim it announces._
 
 ## What would change this
 
@@ -137,9 +153,13 @@ runbook so an operator counts the rows themselves, and carried in the backlog.
   message, and D4's no-suppression decision is worth re-measuring rather than re-asserting.
 - **A PIN reset or revocation flow.** D5's remedy sentence currently asks the reader to contact a
   human; when the flow exists the notice should name it.
-- **An exact evidence join.** A per-notice reference from the notice to its audit row would restore
+- ~~**An exact evidence join.** A per-notice reference from the notice to its audit row would restore
   the `NO AUDIT ROW` finding to what it was when every kind was singular. It is a schema change and
-  it reopens ADR-0045's no-foreign-key decision, so it is a decision of its own rather than a fix.
+  it reopens ADR-0045's no-foreign-key decision, so it is a decision of its own rather than a fix.~~
+  *(struck 2026-09-09: done, ADR-0052 — and the citation was wrong twice over. The no-foreign-key
+  decision is the `AddSubscriberNotices` migration's, not ADR-0045's, and ADR-0052 does not reverse
+  it: the reference is a plain column, because a notice whose evidence is missing must still be
+  FOUND rather than refused. Naming a row is not constraining it.)*
 - **A change-email endpoint.** ADR-0045 D2's trigger, unchanged here: the old address would then
   have to be notified too, and this notice's "addressed to the email held on your account" line
   becomes the weaker of two claims.

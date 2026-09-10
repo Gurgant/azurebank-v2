@@ -171,7 +171,17 @@ two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`, 
 leaving them as they are; from here the wording is struck in place instead, which costs less and
 reads better.
 
-The next free number is **0052**.
+ADR-0052 takes the limit ADR-0047 recorded rather than claimed away: a notice now carries the id of
+the audit row it belongs to, so `NO AUDIT ROW` asks about THAT row instead of asking whether the user
+has ever done this kind of thing. ⚠️ It also corrects a citation this directory had carried twice —
+the "no foreign key to `AuditEvents`" decision is the `AddSubscriberNotices` MIGRATION's, not
+ADR-0045's, which contains the word zero times; ADR-0045 now says where it lives, because that is
+where a reader looking for it arrives. 🔒 And it records a failure of the convention itself: the test
+ADR-0047 relied on to force this decision **stayed green** when the decision was taken, because it
+builds only the shape the fix leaves alone. A test guards the shape it builds, not the claim its name
+announces.
+
+The next free number is **0053**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -230,6 +240,7 @@ The next free number is **0052**.
 | [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) | Closing an account is authorised like a transfer | Accepted | 2026-09-06 |
 | [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) | A UTC day bounds a user's external transfers, and the mint says so before the PIN | Accepted | 2026-09-07 |
 | [ADR-0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) | The relay runs as an Azure Function, rehearsed locally against Azurite | Accepted | 2026-09-08 |
+| [ADR-0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | A notice names the audit row it belongs to | Accepted | 2026-09-09 |
 
 </details>
 ## Creating a New ADR
