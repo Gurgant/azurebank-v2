@@ -188,7 +188,9 @@ ADR-0053 closes half of a gap ADR-0043 named while deciding something else: CI p
 client matches the committed document, and nothing proved the document matches the code. Measured,
 not argued — with a property added to a DTO and the document left alone, both frontend "up to date"
 steps exited 0. A backend test now generates the document from the real composition through
-`IOpenApiDocumentProvider` and compares it byte for byte. 🔒 It proves the document is what the code
+`IOpenApiDocumentProvider` and compares it byte for byte, apart from the line endings and the
+newlines inside strings, which belong to the machine rather than the contract (ADR-0053 D3). 🔒 It
+proves the document is what the code
 GENERATES, and says in as many words that it does not prove the code generates the TRUTH: ADR-0043's
 own defects were of that kind, and this gate would have passed on every one.
 
