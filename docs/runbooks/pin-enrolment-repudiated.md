@@ -88,10 +88,9 @@ been run and the subscriber has since re-enrolled; the trail keeps both. For
 PIN being replaced repeatedly, which is what an attacker holding a PIN does. `Detail` names what was
 proved: `{"passwordProved":true}` for an enrolment, `{"currentPinProved":true}` for a change.
 
-⚠️ **`NO AUDIT ROW` is not "the query came back empty".** For a notice that NAMES a row it covers
-two outcomes and prints the same line for both: the row is gone, or the row is there and is not this
-notice's — in which case the query above returns a row, and the mismatch is the point. What to do
-next depends on which, and these are how you tell:
+⚠️ **`NO AUDIT ROW` is not "the query came back empty".** A notice that names a row can have that
+row sitting THERE and mismatched, which is what the annotation on the query above is for. The finding
+is one line over both outcomes and they do not call for the same act. These are how you tell:
 
 - **A NAMED row that is gone.** The trail lost it: run `verify`, because the question has become
   "is the record intact", not "was this the subscriber".
@@ -108,14 +107,14 @@ is pinned rather than closed. **When a repeated `PinChanged` is what is under di
 against the notices anyway**, exactly as you would for a notice that names none: the weaker question
 is still worth asking here.
 
-Do NOT reach for `evidence` in any of the three: it reads by a transfer's `TXN-…` number and a PIN
-event has none.
+Do NOT reach for `evidence` in any of these, the same-kind re-point included: it reads by a
+transfer's `TXN-…` number and a PIN event has none.
 
 **Since ADR-0052 the finding is exact, and the line tells you which question it asked.** A notice
 written from then on names the audit row it belongs to, so `NO AUDIT ROW` is about THAT row rather
 than about the user's history — the line reads **"the `PinChanged` row it names is gone, or is not
-this notice's"**. ⚠️ It covers TWO states and does not say which: the three bullets above are how you
-tell them apart, and they do not call for the same act.
+this notice's"**. ⚠️ It does not say which of the two states above it found: the FIRST
+TWO bullets are how you tell, and they do not call for the same act.
 
 ⚠️ **A notice written BEFORE that migration names no row and gets the older, weaker question**, and
 the line says so: **"no `PinChanged` row exists for that user at all"**. A change can happen many

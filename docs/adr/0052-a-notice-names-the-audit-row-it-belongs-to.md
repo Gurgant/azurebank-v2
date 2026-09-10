@@ -108,10 +108,13 @@ summary-equality assertion in the suite was safe and stayed green.
 ⚠️ **The forcing function ADR-0047 relied on did not fire, and that is the most useful thing this
 ADR records.** `ARepeatableKind_MakesTheMissingAuditRowFindingWeaker_AndThisPinsHowMuch` existed to
 go RED when the join became exact, so that whoever fixed it had to move ADR-0047's paragraph. It
-stayed GREEN: the notices it builds name no row, so they take the fallback this ADR introduced, and
-the test now describes that path correctly. ADR-0047 was moved deliberately instead. **A test guards
-the shape it builds, not the claim its name announces** — and a limit pinned by a test that
-constructs only the old shape will survive the fix that closes it.
+stayed GREEN: the notices it builds name no row, so they take the fallback this ADR introduced. ⚠️
+**That name no longer resolves** — the test was renamed in this change to describe the path it
+actually covers, and is now
+`ANoticeThatNamesNoRow_StillGetsTheWeakerQuestion_WhichIsTheBacklogsShape`; the old name is kept in
+this sentence only because it is what ADR-0047 was relying on. ADR-0047 was moved deliberately
+instead. **A test guards the shape it builds, not the claim its name announces** — and a limit
+pinned by a test that constructs only the old shape will survive the fix that closes it.
 
 The fix has its own test, `ANoticeWhoseOwnAuditRowIsGone_IsFOUND_WhileTheUsersOtherRowsSurvive`: two
 change notices each naming their own row, one row deleted, exactly one finding. Falsified — reverting
@@ -120,20 +123,24 @@ the query to the existence check reddens it and nothing else.
 ⚠️ **D3 REACHES ACROSS KINDS AND NOT WITHIN ONE, and that is pinned rather than claimed away.** The
 pair it compares is `(ActorUserId, Event)`, so a change notice re-pointed at an ENROLMENT's row is
 caught and one re-pointed at another `PinChanged` row OF THE SAME USER is not. Measured — zero
-findings — by `ARePointToANOTHERRowOfTHESAMEKind_AndThisPinsHowFarD3Reaches`, which builds exactly
-the re-point an integrity binding would catch, so it goes red the day one arrives. (Unlike ADR-0047's
-forcing function, which built only the shape its fix left alone and stayed green: that is the lesson
-this ADR's Consequences opened with, applied.)
+findings — by `ARePointToANOTHERRowOfTHESAMEKind_IsNotCaught_AndThisPinsHowFarD3Reaches`, which
+builds exactly the re-point an integrity binding would catch, so it goes red the day one arrives.
+(Unlike ADR-0047's forcing function, which built only the shape its fix left alone and stayed green:
+that is the lesson this ADR's Consequences opened with, applied.)
 
-Closing it needs an integrity-protected binding — a MAC over the pair, and therefore a **seventh
-validated secret**, *"taught to the five places the other six live"*, which
-`docs/deferred/relaying-the-enrolment-notice.md` already prices. It is not taken here for a reason
-stronger than cost: **it would close one door in a room with several open.** `SubscriberNotices` is
-deliberately unchained (ADR-0045 D7), and whoever can write it suppresses this finding far more
-cheaply than by re-pointing — setting `DeliveredAt` and `DeliveryReceipt` takes the row out of every
-claim path, all of which filter `DeliveredAt == null`, so the check never runs on it at all. A MAC on
-the pointer would leave that untouched. What makes tampering EVIDENT in this system is the chain, and
-the chain is on `AuditEvents` by decision, not by oversight.
+Closing it needs an integrity-protected binding — a MAC over the pair, and therefore a **new
+validated secret**, at the price `docs/deferred/relaying-the-enrolment-notice.md` already puts on
+one: *"taught to the five places the other six live"*. ⚠️ **That document is costing a TRANSPORT
+credential, not this** — both would be additions to the same six, so whichever lands first is the
+seventh and the other is the eighth; the price per secret is what carries over, not the number.
+
+It is not taken here for a reason stronger than cost: **it would close one door in a room with
+several open.** `SubscriberNotices` is deliberately unchained (ADR-0045 D7), and whoever can write
+it suppresses this finding far more cheaply than by re-pointing — setting `DeliveredAt` and
+`DeliveryReceipt` takes the row out of every claim path, all of which filter `DeliveredAt == null`,
+so the check never runs on it at all. A MAC on the pointer would leave that untouched. What makes
+tampering EVIDENT in this system is the chain, and the chain is on `AuditEvents` by decision, not by
+oversight.
 
 ⚠️ **An unmigrated database now fails every enrolment and every PIN change**, not just the notice:
 the insert names a column the table does not have and it is part of the same transaction, so the PIN

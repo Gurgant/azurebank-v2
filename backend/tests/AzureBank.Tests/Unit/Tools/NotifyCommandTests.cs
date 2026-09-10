@@ -361,8 +361,11 @@ public class NotifyCommandTests : IDisposable
           here: zero findings, where an exact binding would raise one.
 
           ⚠️ IT IS PINNED RATHER THAN CLOSED because closing it needs an integrity-protected binding
-          — a MAC over the pair, and therefore a SEVENTH validated secret, "taught to the five places
-          the other six live" (docs/deferred/relaying-the-enrolment-notice.md). That is an ADR-level
+          — a MAC over the pair, and therefore a NEW validated secret, at the price the deferred
+          record puts on one: "taught to the five places the other six live"
+          (docs/deferred/relaying-the-enrolment-notice.md). ⚠️ THAT RECORD IS PRICING A TRANSPORT
+          CREDENTIAL, NOT THIS ONE — both add to the same six, so whichever lands first is the
+          seventh; what carries over is the price per secret, not the number. That is an ADR-level
           cost, and it would close ONE door in a room with several open: whoever can write this table
           suppresses the finding far more cheaply by setting DeliveredAt, since every claim path
           filters DeliveredAt == null and the check never runs on a row marked delivered.
