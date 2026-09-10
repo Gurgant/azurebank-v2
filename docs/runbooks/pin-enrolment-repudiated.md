@@ -104,8 +104,10 @@ Do NOT reach for `evidence` in any of the three: it reads by a transfer's `TXN-�
 event has none.
 
 **Since ADR-0052 the finding is exact, and the line tells you which question it asked.** A notice
-written from then on names the audit row it belongs to, so `NO AUDIT ROW` means *that* row is gone —
-the line reads **"the `PinChanged` row it names is gone"**, and it is worth acting on.
+written from then on names the audit row it belongs to, so `NO AUDIT ROW` is about THAT row rather
+than about the user's history — the line reads **"the `PinChanged` row it names is gone, or is not
+this notice's"**. ⚠️ It covers TWO states and does not say which: the three bullets above are how you
+tell them apart, and they do not call for the same act.
 
 ⚠️ **A notice written BEFORE that migration names no row and gets the older, weaker question**, and
 the line says so: **"no `PinChanged` row exists for that user at all"**. A change can happen many
