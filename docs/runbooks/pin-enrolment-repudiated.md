@@ -133,8 +133,8 @@ read it.
 ⚠️ **What it cannot see**: a re-point onto a row that NO other notice names — an audit row belonging
 to no notice at all. Those exist (an `AuditEvents` row is written for events that owe no notice), so
 a zero here narrows the question, it does not close it. **When a repeated `PinChanged` is what is
-under dispute, still count the rows against the notices by hand**, exactly as you would for a notice
-that names none.
+under dispute, still count the rows against the notices by hand** — on the `(ActorUserId, Event)`
+pair, exactly as you would for a notice that names none.
 
 Do NOT reach for `evidence` in any of these, the same-kind re-point included: it reads by a
 transfer's `TXN-…` number and a PIN event has none.
@@ -149,7 +149,9 @@ are how you tell, and they do not call for the same act.
 the line says so: **"no `PinChanged` row exists for that user at all"**. A change can happen many
 times, so for those rows one surviving audit row still answers for all of them and a missing one
 still raises nothing. **When you see the weaker wording, count the rows against the notices
-yourself** — the query above, by `ActorUserId`, is how.
+yourself** — the query above is how, and it takes BOTH `ActorUserId` and `Event`. ⚠️ **Counting by
+actor alone is the mistake this page warns about twice already**: it lets a `PinEnrolled` row answer
+for a `PinChanged` notice, which is the one comparison that must never pass.
 
 ## 2. Remove the PIN the subscriber repudiates
 
