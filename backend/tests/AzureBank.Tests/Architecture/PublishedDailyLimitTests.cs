@@ -15,7 +15,10 @@ namespace AzureBank.Tests.Architecture;
 /// <remarks>
 /// <para>
 /// Reads the COMMITTED file, like <see cref="PublishedMoneyBoundsTests"/>, because the regen is
-/// manual (ADR-0046 D5) and this is the only guard that fails until it is done. Two traps it
+/// manual (ADR-0046 D5). Until 2026-09-10 this was the only guard that failed until it was done;
+/// <c>CommittedOpenApiDocumentTests</c> (ADR-0053) now fails too, on any difference at all. This one
+/// is kept because it asserts what the document must SAY, which a comparison with the generator
+/// cannot — both would agree on a wrong declaration. Two traps it
 /// exists for: a <c>[ProducesResponseType(422)]</c> attribute on the mint action OUTRANKS the
 /// transformer entry and publishes "Unprocessable Entity" (ADR-0049 row 14 — the state of the
 /// external mint until this change), and on an idempotent endpoint the 422 is written by

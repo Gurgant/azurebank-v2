@@ -89,7 +89,7 @@ like a transfer
 [0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
 [0025](0025-originals-reference-mine.md) the originals are a reference mine
 
-All fifty **decisions** are Accepted and shipped, which is why there is no Proposed tier — but
+Every **decision** listed is Accepted and shipped, which is why there is no Proposed tier — but
 "shipped" is a claim about the decision, not about every line of illustration around it. **Four of
 ADR-0008's five C# blocks diverge from the source** — three of them name a type that was never
 built at all (`enum AuthLevel`, and `RequireAuthLevelAttribute` in two blocks), the fourth shows an
@@ -192,7 +192,7 @@ steps exited 0. A backend test now generates the document from the real composit
 GENERATES, and says in as many words that it does not prove the code generates the TRUTH: ADR-0043's
 own defects were of that kind, and this gate would have passed on every one.
 
-The next free number is **0053**.
+The next free number is **0054**.
 
 <details>
 <summary>Full list in numeric order</summary>
