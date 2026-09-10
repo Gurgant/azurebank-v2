@@ -313,6 +313,42 @@ public class NotifyCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ANoticeRePointedAtAnotherRow_IsStillFound_BecauseTheNamedRowMustBeThisNotices()
+    {
+        /*
+          THE SUPPRESSION AN Id-ONLY LOOKUP WOULD HAVE INVITED. Whoever can write SubscriberNotices
+          could delete a notice's evidence and re-point AuditEventId at any row that is still there.
+          `Id == evidence` alone would accept it and the finding would go quiet — and the CHAIN
+          cannot catch it, because nothing in AuditEvents was touched and every RowHash still
+          verifies. So the exact arm carries the same (ActorUserId, Event) pair the fallback does.
+
+          Here the enrolment's row is the survivor and the change notice is aimed at it: same user,
+          wrong kind. It exists, and it is not this notice's.
+        */
+        var owner = await OwnerAsync();
+        var enrolment = await OwedAsync(owner, @event: SecurityEvents.PinEnrolled);
+        var change = await OwedAsync(owner, @event: SecurityEvents.PinChanged);
+
+        var itsRow = await _context.AuditEvents.SingleAsync(e => e.Id == change.AuditEventId!.Value);
+        _context.AuditEvents.Remove(itsRow);
+        change.AuditEventId = enrolment.AuditEventId;
+        await _context.SaveChangesAsync();
+
+        await using var provider = Provider();
+        var (_, lines) = await RunAsync(provider);
+        var text = string.Join("\n", lines);
+
+        text.Should().Contain(
+            "row it names is gone, or is not this notice's",
+            "the row it points at is there — it just is not this notice's, and an Id-only check "
+            + "would have called that evidence");
+        (text.Split("NO AUDIT ROW").Length - 1).Should().Be(
+            1,
+            "only the re-pointed notice. The enrolment names its own row, which is present and "
+            + "matches, so reporting it too would make the finding useless");
+    }
+
+    [Fact]
     public async Task AKindThisBuildCannotRender_StaysOwed_AndIsNamed()
     {
         /*

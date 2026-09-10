@@ -51,12 +51,30 @@ missing. Naming a row is not constraining it. `SubscriberNotices` is not constra
 cascading foreign key to `AspNetUsers`, which is how a notice is erased, with its owner and never on
 its own. It is constraint-free **towards `AuditEvents`**, and remains so.
 
-**D3 — Tamper-evidence comes free, and an FK would not have added it.** `AuditEvent.Id` is element
-three of the hashed payload, so re-pointing a notice by editing the audit row's identity breaks that
-row's `RowHash` and the walk reports it. A referential constraint checks that a row EXISTS; the chain
-already checks that it has not been altered.
+**D3 — The named row must also BE this notice's, and the chain cannot cover this one.** The exact
+check carries the same `(ActorUserId, Event)` pair the fallback does, against the row the id names.
+Asking only `Id == evidence` would accept any surviving audit row: whoever can write
+`SubscriberNotices` could delete a notice's evidence and re-point it at a row that is still there,
+and the finding would go quiet. ⚠️ **`AuditEvent.Id` being inside the hashed payload does not help
+here** — nothing in `AuditEvents` is touched by that edit, so every `RowHash` still verifies. The
+chain protects the row; only this pair protects the POINTER. It costs two predicates on a
+primary-key lookup, and `ANoticeRePointedAtAnotherRow_…` is falsified against the `Id`-only shape.
 
-**D4 — `IAuditService.Record` returns the id it minted.** The value exists before `SaveChanges`
+The two failures print as one finding, *"gone, or is not this notice's"*, because the verb cannot
+distinguish them without reading the row — and the repudiation runbook carries the query that does,
+in the idiom that document already uses for `DeliveredAt` having two readings. Naming them
+separately would have needed a third state threaded through the result for a distinction the
+operator resolves with one `SELECT`.
+
+**D4 — What the chain DOES cover, which is the other half of D3 and not a contradiction of it.**
+`AuditEvent.Id` is element three of the hashed payload, so nobody can quietly give an audit row a
+different identity to make some other notice's pointer land on it: that edit breaks the row's
+`RowHash` and the walk reports it. **D3 protects the POINTER, this protects the ROW**, and the two
+edits are different — re-aiming a notice touches `SubscriberNotices` and leaves every hash intact,
+which is precisely why D3 has to check the pair itself. A referential constraint would have checked
+only that a row EXISTS, and covered neither.
+
+**D5 — `IAuditService.Record` returns the id it minted.** The value exists before `SaveChanges`
 because the writer assigns it — `Id = Guid.CreateVersion7()` in `AuditService.Build` — so the notice
 can carry it in the same unit of work, with no second round trip and no second save. ⚠️ `Sequence`
 and `RowHash` are NOT available: both are assigned inside the `SaveChanges` funnel by `AuditChain`,
@@ -68,7 +86,7 @@ no interface change and it was declined: it would couple the notice writer to th
 writer adds to this same context and has not saved yet — true today, invisible if it ever stopped
 being true, and wrong silently rather than loudly.
 
-**D5 — Nullable, with the old question as the fallback, and the line says which it asked.** Every
+**D6 — Nullable, with the old question as the fallback, and the line says which it asked.** Every
 notice written before the migration names no row. Asking them the exact question would report the
 entire existing backlog as missing its evidence on the first run — a detective control turned into
 noise on the day it shipped. So: exact when the reference is present, the old existence question when

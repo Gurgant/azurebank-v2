@@ -169,8 +169,8 @@ public sealed class NoticeSweep
                         ? "Notice relay: NO AUDIT ROW backs notice {Reference} ({Event}); this notice names no row, "
                           + "so no row of that kind exists for the user at all — the weaker question (ADR-0052). "
                           + "Delivered anyway, the absence is the finding"
-                        : "Notice relay: NO AUDIT ROW backs notice {Reference} ({Event}); the row it names is gone. "
-                          + "Delivered anyway, the absence is the finding",
+                        : "Notice relay: NO AUDIT ROW backs notice {Reference} ({Event}); the row it names is "
+                          + "gone, or is not this notice's. Delivered anyway, the absence is the finding",
                     result.Reference, notice.Event);
             }
 

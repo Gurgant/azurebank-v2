@@ -42,7 +42,7 @@ whatever they happened to spell. Run against the API's database:
     SET @ref = TRIM(@ref);
     IF LEN(@ref) <> 32 OR @ref LIKE '%[^0-9A-Fa-f]%'
         THROW 50000, 'The reference must be exactly the 32 hex digits the notice prints.', 1;
-    SELECT n.Id, n.UserId, n.Event, n.OccurredAt, n.DeliveredAt, n.DeliveryReceipt
+    SELECT n.Id, n.UserId, n.Event, n.OccurredAt, n.DeliveredAt, n.DeliveryReceipt, n.AuditEventId
     FROM SubscriberNotices n
     WHERE n.Id = CONVERT(uniqueidentifier,
         STUFF(STUFF(STUFF(STUFF(@ref, 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-'));
@@ -57,8 +57,23 @@ directory for `<reference>.eml` before concluding anything; if it is there, the 
 be holding it, and the row is the one to fix — mark it by hand, or move the file out and let the
 next sweep re-render it.
 
-The audit row is joined by (actor, event), never by time — the two are written in one transaction
-but read two clocks:
+The audit row is NAMED by the notice since ADR-0052, and joined by (actor, event) only when it
+names none — never by time, because the two are written in one transaction but read two clocks.
+
+**`AuditEventId` is not null.** That is the row, and it must also be this notice's:
+
+    SELECT e.Id, e.Sequence, e.OccurredAt, e.Outcome, e.Detail, e.ActorUserId, e.Event
+    FROM AuditEvents e
+    WHERE e.Id = '<AuditEventId from above>';
+
+⚠️ **Zero rows and a mismatch are different things, and `notify` prints them as one finding** —
+*"gone, or is not this notice's"* — because it cannot tell you which without this query. Zero rows
+means the audit row is gone: the TRAIL lost it, so run `verify`. A row whose `ActorUserId` or
+`Event` does not match the notice's means the row is fine and the NOTICE was re-pointed: somebody
+wrote the `SubscriberNotices` table, and the trail is not where to look.
+
+**`AuditEventId` is null.** The notice predates ADR-0052 and names nothing, so the older question is
+all there is:
 
     SELECT e.Sequence, e.OccurredAt, e.Outcome, e.Detail
     FROM AuditEvents e

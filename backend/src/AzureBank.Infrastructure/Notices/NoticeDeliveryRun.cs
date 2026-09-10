@@ -144,8 +144,18 @@ public sealed class NoticeDeliveryRun
           the caller says WHICH question it asked, because "the row it names is gone" and "no row of
           that kind exists" are different findings and only one of them is precise.
         */
+        /*
+          THE NAMED ROW MUST ALSO BE THIS NOTICE'S, which is why the exact arm carries the same two
+          terms the fallback does. Asking only `Id == evidence` would accept ANY surviving audit row:
+          whoever can write SubscriberNotices could delete the evidence and re-point the notice at a
+          row that is still there, and the finding would go quiet. The chain cannot catch that —
+          nothing in AuditEvents was touched, so every RowHash still verifies. Checking the pair the
+          notice already carries costs two predicates on a primary-key lookup and closes it.
+        */
         var backed = notice.AuditEventId is { } evidence
-            ? await _context.AuditEvents.AnyAsync(e => e.Id == evidence, cancellationToken)
+            ? await _context.AuditEvents.AnyAsync(
+                e => e.Id == evidence && e.ActorUserId == notice.UserId && e.Event == notice.Event,
+                cancellationToken)
             : await _context.AuditEvents.AnyAsync(
                 e => e.ActorUserId == notice.UserId && e.Event == notice.Event, cancellationToken);
         var auditRowMissing = !backed;

@@ -318,8 +318,9 @@ public static class NotifyCommand
                             ? $"NO AUDIT ROW backs notice {reference}: no {notice.Event} row exists for that user "
                               + "at all — this notice names no row, so that is the weaker question (ADR-0052). "
                               + "The notice is rendered anyway; the absence is the finding."
-                            : $"NO AUDIT ROW backs notice {reference}: the {notice.Event} row it names is gone. "
-                              + "The notice is rendered anyway; the absence is the finding.");
+                            : $"NO AUDIT ROW backs notice {reference}: the {notice.Event} row it names is gone, "
+                              + "or is not this notice's. The notice is rendered anyway; the absence is the "
+                              + "finding, and the repudiation runbook says how to tell the two apart.");
                     }
 
                     switch (result.Outcome)
