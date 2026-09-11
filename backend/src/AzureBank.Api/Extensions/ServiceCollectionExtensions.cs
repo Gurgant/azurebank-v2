@@ -616,6 +616,12 @@ public static class ServiceCollectionExtensions
                 options.JsonSerializerOptions.PropertyNamingPolicy =
                     System.Text.Json.JsonNamingPolicy.CamelCase;
 
+                // A key sent twice is refused, not resolved. The default took the LAST value, so a
+                // proxy, a log or a WAF reading the first saw a different request from the one the
+                // API executed. Measured 2026-09-11 on a deposit: "amount":1,"amount":2 moved 2, and
+                // "amount":1,"Amount":3 moved 3, because binding is also case-insensitive.
+                options.JsonSerializerOptions.AllowDuplicateProperties = false;
+
                 // Strict enum converter: rejects integer values, only accepts strings
                 // Fixes Schemathesis "API accepted schema-violating request" for enum fields
                 options.JsonSerializerOptions.Converters.Add(
