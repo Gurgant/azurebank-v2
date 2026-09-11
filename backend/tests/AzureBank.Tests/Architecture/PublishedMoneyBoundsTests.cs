@@ -16,14 +16,18 @@ namespace AzureBank.Tests.Architecture;
 /// has one manual step: <c>node scripts/openapi-spec.mjs regen</c>, which is deliberately not in
 /// CI. So a constant changed without a regen would leave the committed document, and every client
 /// generated from it, promising the OLD bound while the server enforced the new one. That is the
-/// second of the two drifts ADR-0046 names — the constant changed without a regen — and nothing else
-/// in the pipeline can see it:
-/// the drift gate proves generated == committed, never committed == server.
+/// second of the two drifts ADR-0046 names — the constant changed without a regen — and until
+/// 2026-09-10 nothing else in the pipeline could see it, because the drift gate proves generated ==
+/// committed, never committed == server. <c>CommittedOpenApiDocumentTests</c> (ADR-0053) now sees it
+/// too, and this guard is still not redundant: that one proves the document matches the generator,
+/// and would pass if both agreed on a wrong bound; this one asserts the bound EQUALS the constant the
+/// server enforces.
 /// </para>
 /// <para>
 /// Reads the COMMITTED file, like <see cref="PublishedErrorContractTests"/>, because the committed
-/// file is what downstream generation consumes. Whether it matches a running API is
-/// <c>openapi-spec.mjs check</c>'s question.
+/// file is what downstream generation consumes. Whether it matches what the code generates is
+/// <c>CommittedOpenApiDocumentTests</c>' question; whether it matches a running server is
+/// <c>openapi-spec.mjs check</c>'s.
 /// </para>
 /// </remarks>
 public class PublishedMoneyBoundsTests

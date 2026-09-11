@@ -37,13 +37,18 @@
  * shows up as all of its entries doing so. The failure worth catching is a regeneration that
  * silently drops something a human wrote, and a 3,000-line textual diff hides that perfectly.
  *
- * What it does NOT compare: schemas, parameters, examples, tags, security. A change confined to
- * those is reported as "the difference is elsewhere" rather than pretended away — the scope is
- * stated in the fallback message so the report never claims more than it checked.
+ * What the REPORT does not cover: schemas, parameters, examples, tags, security. The byte comparison
+ * above still catches a change confined to those — `check` fails on it — but the report can only
+ * say "the difference is elsewhere" rather than name it; the scope is stated in the fallback message
+ * so the report never claims more than it checked. (This line used to read "What it does NOT
+ * compare", which describes the report and reads like the check. It misled at least one reader into
+ * writing that `check` ignores schemas; it does not.)
  *
- * NOT wired into CI here, deliberately. Closing that loop needs a running API in the pipeline and is
- * tracked as its own decision in the working repo's backlog; this script is what such a job would
- * call, and it is useful on its own long before that.
+ * NOT wired into CI, and since 2026-09-10 it does not need to be for the gate: the loop this line
+ * used to say "needs a running API in the pipeline" is closed by CommittedOpenApiDocumentTests
+ * (ADR-0053), which generates the document in the test host with no API and no secrets. This script
+ * remains the way to check a server that is actually running, and its prose report is still the
+ * better way to read what a regeneration did to the words a human wrote.
  */
 
 import { readFile, writeFile } from 'node:fs/promises';
@@ -128,9 +133,10 @@ const toLf = (text) => text.split('\r\n').join('\n');
  * Every piece of hand-written prose in the document, keyed so a move is not mistaken for a rewrite.
  *
  * Three kinds, and the first two were missing until a review asked whether the report covered what
- * its documentation claimed. It did not, and the gap was not hypothetical: this spec carries a
- * summary on ALL 24 of its operations, none of which were compared — so a regeneration could have
- * dropped every one of them while `check` printed "nothing changed".
+ * its documentation claimed. It did not, and the gap was not hypothetical: this spec carried a
+ * summary on ALL 24 of its operations at the time (27 of 27 on 2026-09-10), none of which were
+ * compared — so a regeneration could have dropped every one of them while `check` printed "nothing
+ * changed".
  *
  *   "GET /api/accounts [summary]"     -> "List accounts"
  *   "GET /api/accounts [description]" -> "Returns every account the caller owns."

@@ -185,17 +185,22 @@ jobs:
 
       - name: API schema up to date
         working-directory: frontend
-        # The FE↔BE contract gate: regenerate schema.d.ts from the committed OpenAPI spec
-        # and fail if it differs from what's checked in — spec drift becomes a red build,
-        # never a runtime surprise.
+        # Regenerates schema.d.ts FROM the committed OpenAPI document and fails if it differs
+        # from what's checked in. That proves the generated client matches the DOCUMENT — and
+        # nothing more. It does NOT catch a stale document: this comment used to say "spec
+        # drift becomes a red build", and measured 2026-09-10 it does not — with a property added
+        # to a DTO and the document left alone, this step and the Zod step below both exited 0,
+        # because both regenerate from the same stale file. The document-versus-code half is
+        # CommittedOpenApiDocumentTests, in the backend suite (ADR-0053).
         run: |
           npm run generate:api
           git diff --exit-code src/api/schema.d.ts
 
       - name: Zod schemas up to date
         working-directory: frontend
-        # Same gate for the RUNTIME validators: the spec-generated Zod schemas must match
-        # the committed spec, so the strict money-response parsing can never drift silently.
+        # Same gate for the RUNTIME validators: the generated Zod schemas must match the
+        # committed document. Same limit as the step above — it cannot see a stale document,
+        # only a stale regeneration of it (ADR-0053).
         run: |
           npm run generate:zod
           git diff --exit-code src/api/generated/apiSchemas.ts

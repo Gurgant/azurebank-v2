@@ -159,4 +159,10 @@ form's literal edited away from the constant — is the same tripwire, run throu
   a schema change.*
 - **A relay for the contract check into CI** (`openapi-spec.mjs check` against a running API) would
   make D5's guard redundant; until then it is the only thing standing between a constant and the
-  document.
+  document. *(Corrected 2026-09-10, ADR-0053: a different route closed that loop — a backend test
+  now fails whenever the committed document is not what the code generates, so a constant changed
+  without a regen goes red there too, and D5's guard is no longer the only thing. It is also NOT
+  redundant, which is what this bullet predicted: a byte comparison proves the document matches the
+  generator, and says nothing if the generator and the document AGREE on a wrong bound. D5's guard
+  asserts the published `maximum` EQUALS the constant the server enforces, which is the value, and
+  only it can see that.)*

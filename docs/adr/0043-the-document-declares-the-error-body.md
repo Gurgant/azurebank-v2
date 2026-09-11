@@ -53,6 +53,22 @@ and compares them, which proves generated code matches the document and never th
 matches the server. Schemathesis, the one tool that could, ends its step with
 `|| true  # report, don't gate`.
 
+_Note (2026-09-10, ADR-0053) — **half of the paragraph above is now closed, and it is NOT the
+half this ADR was about.** "Matches the server" names two claims. One is that the committed document
+is what the CODE generates; ADR-0053 now proves that on every test run, and a stale document goes
+red. The other is that what the code generates tells the truth about what the server DOES — and
+that is the claim every defect listed above violated: the transformers generated those 400s, and
+generated NO body where the server writes `application/json` (the table's left column is what the
+document said), so the document faithfully described a wrong generator. ADR-0053's gate would have
+passed on every one of them. **What catches that kind is content-specific, not a comparison**: this
+ADR's own guards under Consequences, which assert what the document must declare, and Schemathesis,
+which still reports without gating and runs only when somebody starts it by hand._
+
+_(Corrected in the same pull request, before it merged: this note first said "that
+`application/json`" — the column the SERVER writes, not what the generator produced — and closed with
+"'nothing could catch any of it' is still true of this ADR's defects", which ignored the guards this
+ADR added for exactly that purpose.)_
+
 ## Decision
 
 **The document declares the body, the shared component declares every member the API sends, and a
@@ -104,4 +120,7 @@ after.
   deliberately broken document before being trusted.
 - **What is still not gated:** that the committed document matches a *running* API. That is
   `node scripts/openapi-spec.mjs check`, which no job runs. The guards above close the gap that
-  mattered — a document contradicting the code — but a stale commit of it would still pass.
+  mattered — a document contradicting the code — ~~but a stale commit of it would still pass~~
+  *(struck 2026-09-10: a stale commit now fails the backend suite — ADR-0053 generates the document
+  from the same composition the running API serves, measured byte-identical to it, and compares.
+  The script is still run by no job, and for this no longer needs to be.)*

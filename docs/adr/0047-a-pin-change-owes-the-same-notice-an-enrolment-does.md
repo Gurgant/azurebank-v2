@@ -132,7 +132,10 @@ to its own. While every kind happened once per account those were the same quest
 happen many times, so where several change notices are owed, one surviving audit row answers for all
 of them and a missing one raises nothing. Making the check exact needs a per-notice reference on the
 row — which ~~ADR-0045 deliberately did not add~~ *(struck 2026-09-09: ADR-0045 says nothing about a
-foreign key and never did — the word appears in it zero times. The decision is in the
+foreign key and never did — the word appears in it zero times *(corrected 2026-09-10: zero was
+true when this was written; the word now appears twice, both inside the note ADR-0045 carries to
+say the decision lives elsewhere — so a grep now answers 2, and that is the note's own doing)*. The
+decision is in the
 `AddSubscriberNotices` MIGRATION's remarks, which is where the next reader should be sent.)* the
 `AddSubscriberNotices` migration deliberately did not add, so that a notice whose evidence has gone
 missing is found rather than refused. That is a schema decision and it is not taken here: the limit
