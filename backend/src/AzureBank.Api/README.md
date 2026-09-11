@@ -104,7 +104,7 @@ AzureBank.Api/
 │       ├── TransferService.cs      # Transfer logic
 │       ├── UserService.cs          # User operations
 │       ├── JwtService.cs           # JWT generation
-│       ├── PasswordHasher.cs       # Argon2id hashing
+│       ├── PasswordHasher.cs       # Argon2id hashing, used for PINs
 │       └── AccountAccessService.cs # Access control
 │
 ├── 📁 Validators/                  # FluentValidation
@@ -362,7 +362,7 @@ This project uses packages from the central `Directory.Packages.props`:
 | `Microsoft.AspNetCore.OpenApi` | OpenAPI schema generation |
 | `Microsoft.AspNetCore.Authentication.JwtBearer` | JWT authentication |
 | `FluentValidation.DependencyInjectionExtensions` | Validation |
-| `Konscious.Security.Cryptography.Argon2` | Password hashing |
+| `Konscious.Security.Cryptography.Argon2` | PIN hashing (passwords use Identity's PBKDF2) |
 | `Riok.Mapperly` | Object mapping |
 | `Scalar.AspNetCore` | API documentation |
 | `Serilog.AspNetCore` | Structured logging |

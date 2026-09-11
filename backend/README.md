@@ -16,10 +16,9 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/.NET-10.0-512BD4?style=for-the-badge&logo=dotnet&logoColor=white" alt=".NET 10" />
-  <img src="https://img.shields.io/badge/C%23-13.0-239120?style=for-the-badge&logo=csharp&logoColor=white" alt="C# 13" />
+  <img src="https://img.shields.io/badge/C%23-14.0-239120?style=for-the-badge&logo=csharp&logoColor=white" alt="C# 14" />
   <img src="https://img.shields.io/badge/SQL_Server-2022-CC2927?style=for-the-badge&logo=microsoftsqlserver&logoColor=white" alt="SQL Server" />
   <img src="https://img.shields.io/badge/Entity_Framework-10.0-512BD4?style=for-the-badge&logo=dotnet&logoColor=white" alt="EF Core" />
-  <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License" />
 </p>
 
 ---
@@ -69,7 +68,8 @@ The Backend-For-Frontend pattern provides:
 ### Authentication & Security
 
 - JWT Bearer token authentication with refresh tokens
-- Argon2id password hashing (OWASP recommended)
+- Passwords hashed by ASP.NET Core Identity's default (PBKDF2, HMAC-SHA512, 100,000 iterations);
+  PINs hashed with Argon2id and peppered (ADR-0011)
 - Step-up authentication with 6-digit PIN for sensitive operations
 - Session management with configurable timeouts
 - Rate limiting (100 requests/minute per client)
@@ -197,7 +197,7 @@ flowchart LR
 
 | Category          | Technology            | Version | Purpose                        |
 | ----------------- | --------------------- | ------- | ------------------------------ |
-| **Runtime**       | .NET                  | 10.0    | Latest LTS with C# 13 features |
+| **Runtime**       | .NET                  | 10.0    | Latest LTS with C# 14 features |
 | **Framework**     | ASP.NET Core          | 10.0    | Web API framework              |
 | **ORM**           | Entity Framework Core | 10.0.1  | Database access & migrations   |
 | **Database**      | SQL Server            | 2022    | Primary data store             |
@@ -209,7 +209,7 @@ flowchart LR
 | --------------------- | ------- | ------------------------ |
 | ASP.NET Core Identity | 10.0.1  | User management          |
 | JWT Bearer            | 10.0.1  | API authentication       |
-| Argon2id              | 1.3.1   | Password hashing (OWASP) |
+| Argon2id              | 1.3.1   | PIN hashing (passwords use Identity's PBKDF2) |
 
 ### Validation & Mapping
 
@@ -357,7 +357,7 @@ CPM centralizes all NuGet package versions in a single file, ensuring:
 
 | Package                                  | Version | What           | How Used       | Why Chosen        |
 | ---------------------------------------- | ------- | -------------- | -------------- | ----------------- |
-| `Konscious.Security.Cryptography.Argon2` | 1.3.1   | Argon2 hashing | Hash passwords | OWASP recommended |
+| `Konscious.Security.Cryptography.Argon2` | 1.3.1   | Argon2 hashing | Hash PINs (passwords use Identity's PBKDF2) | OWASP recommended |
 
 #### Gateway & Proxy
 
@@ -635,18 +635,12 @@ Key architectural decisions are documented as ADRs:
 | ------------------------------------------------------- | ---------------------------- | -------- |
 | [ADR-0001](../docs/adr/0001-bff-pattern.md)                | Backend-For-Frontend Pattern | Accepted |
 | [ADR-0002](../docs/adr/0002-yarp-proxy.md)                 | YARP Reverse Proxy Selection | Accepted |
-| [ADR-0003](../docs/adr/0003-argon2id-password-hashing.md)  | Argon2id Password Hashing    | Accepted |
+| [ADR-0003](../docs/adr/0003-argon2id-password-hashing.md)  | Argon2id hashing — built for PINs; passwords use Identity's PBKDF2 (see its correction) | Accepted |
 | [ADR-0004](../docs/adr/0004-central-package-management.md) | Central Package Management   | Accepted |
 | [ADR-0005](../docs/adr/0005-scalar-api-documentation.md)   | Scalar API Documentation     | Accepted |
 | [ADR-0006](../docs/adr/0006-mapperly-object-mapping.md)    | Mapperly Object Mapping      | Accepted |
 | [ADR-0007](../docs/adr/0007-fluentvalidation.md)           | FluentValidation Strategy    | Accepted |
 | [ADR-0008](../docs/adr/0008-step-up-authentication.md)     | Step-Up Authentication       | Accepted |
-
----
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
@@ -658,9 +652,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [FluentValidation](https://fluentvalidation.net/) - Validation library
 - [Serilog](https://serilog.net/) - Structured logging
 - [Scalar](https://github.com/scalar/scalar) - API documentation
-
----
-
-<p align="center">
-  Made with ❤️ by the AzureBank Team
-</p>

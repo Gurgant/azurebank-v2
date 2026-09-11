@@ -51,7 +51,7 @@ UTC day bounds a user's external transfers, and the mint says so before the PIN
 **Interface** — [0027](0027-dark-mode-through-css-custom-properties.md) dark mode through CSS custom properties ·
 [0033](0033-root-error-boundary.md) a root error boundary, so a render error is not a blank page
 
-**Authentication and account safety** — [0003](0003-argon2id-password-hashing.md) Argon2id password hashing ·
+**Authentication and account safety** — [0003](0003-argon2id-password-hashing.md) Argon2id, built for PINs only ·
 [0008](0008-step-up-authentication.md) step-up authentication ·
 [0010](0010-pin-attempt-limiting.md) PIN attempt-limiting ·
 [0011](0011-pin-hash-pepper.md) PIN-hash pepper ·
@@ -204,7 +204,7 @@ The next free number is **0054**.
 | [ADR-0000](0000-template.md) | ADR Template | Template | - |
 | [ADR-0001](0001-bff-pattern.md) | BFF Pattern | Accepted | 2026-01-12 |
 | [ADR-0002](0002-yarp-proxy.md) | YARP Reverse Proxy | Accepted | 2026-01-12 |
-| [ADR-0003](0003-argon2id-password-hashing.md) | Argon2id Password Hashing | Accepted | 2026-01-12 |
+| [ADR-0003](0003-argon2id-password-hashing.md) | Argon2id hashing — built for PINs; passwords use Identity's PBKDF2 (see its correction) | Accepted | 2026-01-12 |
 | [ADR-0004](0004-central-package-management.md) | Central Package Management | Accepted | 2026-01-10 |
 | [ADR-0005](0005-scalar-api-documentation.md) | Scalar API Documentation | Accepted | 2026-01-10 |
 | [ADR-0006](0006-mapperly-object-mapping.md) | Mapperly Object Mapping | Accepted | 2026-01-11 |
