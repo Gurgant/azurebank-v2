@@ -422,12 +422,15 @@ over the prose around it, and re-measure before believing either.
   takes the business action down with it, so past the login the same typo used to surface as failed
   money movements, at request time and however long after the deploy that caused it.
 
-  ⚠️ **AND THE PROCESS STILL EXITS 0.** `Program.cs` catches every startup exception, logs
-  `Application terminated unexpectedly` and falls off the end of `Main`, so a supervisor reading
-  exit codes sees a clean shutdown rather than a crash-loop. This is older than the ring and not
-  specific to it: the same holds for every `ValidateOnStart` failure, measured the same day against
-  a missing `Audit:AnchorKey`. **Alert on the absence of `Application started`, never on the exit
-  code.**
+  ⚠️ **AND THE PROCESS EXITED 0, UNTIL 2026-09-11.** `Program.cs` caught every startup exception,
+  logged `Application terminated unexpectedly` and fell off the end of `Main`, so a supervisor
+  reading exit codes saw a clean shutdown rather than a crash-loop. This was older than the ring and
+  not specific to it: the same held for every `ValidateOnStart` failure, measured the same day
+  against a missing `Audit:AnchorKey`. The catch now also sets exit code **1**, as the BFF's already
+  did: measured against that same missing key, 0 before the change and 1 after, and pinned by
+  `FailedStartupExitCodeTests`, which runs the API as a real process. **Either signal works now.**
+  The absence of `Application started` is still worth alerting on, because it also catches a start
+  that hangs instead of exiting, which no exit code can.
 - **The verifier says so plainly, and all five verbs say the same thing.** A ring that will not
   construct answers `CANNOT PROCEED: this tool is not configured to read the chain` — **exit 3** —
   with the reason on the next line. Where the refusal is about a particular entry it names that
