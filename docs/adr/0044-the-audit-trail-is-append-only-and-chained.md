@@ -913,13 +913,23 @@ the placement and the shape of `MoneyTransferRefused` at the two transfer kinds.
 the refusal inventory is three events at five sites, and `AccountDeleted` now pairs with a refusal
 the way the money movements do. What the closure path deliberately does NOT audit, for this ADR's
 own reasons: its two 422 guards (a funded or a primary account — business validation the owner can
-trigger at will from a list they already hold), a wrong or locked PIN at the deletion mint (as at
-the transfer mints, which have no `IAuditService`), and an expired or invalid authorisation on the
-DELETE (as on a transfer). It emits no `SecurityEvent` log line, following the money-refusal
+trigger at will from a list they already hold), ~~a wrong or locked PIN at the deletion mint (as at
+the transfer mints, which have no `IAuditService`)~~ *(audited since 2026-09-11, see the next
+paragraph)*, and an expired or invalid authorisation on the DELETE (as on a transfer). It emits no `SecurityEvent` log line, following the money-refusal
 precedent, so the logged-site inventory does not move; the row-writing one does, by one event and
 one `_audit.RecordRefusalAsync` site, and
 `SecurityEventConstantTests.TheEventInventoryThisAdrStatesIsStillTheOneInTheSource` moves with it in
 the same commit.
+
+**Wrong and locked PINs at the three mints, added 2026-09-11.** `MintAsync` in
+`StepUpAuthorizationService` now records what `WithdrawAsync` records: a wrong PIN (`Detail`
+`INVALID_PIN`) or a locked one (`PIN_LOCKED`), through `RecordRefusalAsync` on its own connection —
+as `MoneyTransferRefused` at the two transfer mints and `AccountDeletionRefused` at the closure
+mint, the subject being the account the mint was asked about, which every mint has proved the
+actor owns before it gets there. Measured before, on the running API: three wrong PINs across the
+three mints and three more against the lock wrote no row. One call site serves all three mints and
+both outcomes, so the refusal inventory is three events at six sites, and the source holds nine
+`RecordRefusalAsync` calls with the three token paths.
 
 ⚠️ **The `Detail` rule INVERTS on these ~~two~~ three, and D5 is why it inverts rather than
 lapsing.** *(struck 2026-09-06: `AccountDeletionRefused` carries `AUTHORIZATION_REQUIRED` the same
@@ -1007,7 +1017,8 @@ _Instance added 2026-09-06 (ADR-0049): the account closure follows the same line
 refusals — a non-zero balance, the primary account — are business validation and stay log-only; the
 one refusal that is about a control, a DELETE presented with no step-up authorisation, writes
 `AccountDeletionRefused` on its own connection. The paragraph's "a wrong PIN at the mint" is still
-not wired, for the deletion mint as for the transfer mints._
+not wired, for the deletion mint as for the transfer mints._ *(Wired 2026-09-11, for all three
+mints at once: see "Wrong and locked PINs at the three mints" above.)*
 
 _Instance added 2026-09-07
 ([ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md)):
