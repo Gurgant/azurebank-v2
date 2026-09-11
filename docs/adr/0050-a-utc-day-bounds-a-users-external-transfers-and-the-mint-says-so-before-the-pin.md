@@ -456,15 +456,25 @@ not the code that is wrong, and it is the same gap the paragraph above keeps ope
 may infer the daily refusal from `requested`'s presence. The client branches on `errorCode` and says
 so where the members are declared._
 
+_Noted 2026-09-11: **the separate small PR the two notes above name has landed.** `available` and
+`requested` are declared on the three money moves' inline 422 schemas, and `requested`'s description
+names every code that carries it — both on `POST /api/transfers`, where it read
+*"DAILY_LIMIT_EXCEEDED only"*. Measured first on the running API: the internal transfer, never
+observed before, answered `"available":100.2500,"requested":500.5` like the other two. The SPA still
+does not type `available`, because nothing reads it: `useFundsGate` re-reads the balance instead.
+The internal mint's bare 422, which D8 names below, went in the same change._
+
 **D8 — Not decided here, named so the umbrella finds them.** Rolling windows; tiers by account type
 or verification level; amount-scaled step-up; velocity rules; withdrawals and internal transfers
 under any aggregate; per-account limits; customer-adjustable ceilings (with SCA on a raise); a
 "remaining today" read — `GET /api/transactions/allowance` is named as the seam such a surface would
 read from, assigned to U8 (last, as always) and not built; auditing the refusal as a fraud signal;
 an API-side per-user limiter on the external mint — the bound the extra query before the PIN does
-NOT have (Consequences, "Cost accepted"); the internal mint's bare "Unprocessable Entity" 422 in
+NOT have (Consequences, "Cost accepted"); ~~the internal mint's bare "Unprocessable Entity" 422 in
 the document (an existing ADR-0049 row-14 instance: `TransferController.cs:103` carries the
-attribute and the transformer has no entry — its own small fix); partitioning the audit chain
+attribute and the transformer has no entry — its own small fix)~~ *(fixed 2026-09-11: the attribute
+is gone and the transformer names the mint's one code, `PIN_REQUIRED`)*; partitioning the audit
+chain
 (ADR-0044's question, untouched by D5).
 
 ### Error codes on the external-transfer rail after this ADR

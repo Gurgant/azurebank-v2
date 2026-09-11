@@ -72,8 +72,7 @@ public class TransferController : ControllerBase
       that entry: the generator publishes the attribute's bare "Unprocessable Entity" and the
       transformer, seeing a 422 already declared, adds nothing. That is what the document carried
       until this change (ADR-0049 row 14 recorded the same trap on the deletion mint). The internal
-      mint below still carries its attribute and still publishes the bare phrase — an existing
-      instance of the same drift, named in ADR-0050 and left for its own fix.
+      mint below kept its attribute, and the bare phrase, until 2026-09-11.
     */
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseTransfer(
@@ -100,7 +99,8 @@ public class TransferController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    // No 422 attribute, for the reason on AuthoriseTransfer above: BusinessRulesDocumentTransformer
+    // names this action's one 422 code, and an attribute would outrank it with the bare phrase.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseInternalTransfer(
         [FromBody] InternalTransferAuthorizationRequest request)
