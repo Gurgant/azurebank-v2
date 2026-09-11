@@ -38,14 +38,16 @@ doubled — stops with the error message below instead of matching. That check i
 `char(32)` variable would silently keep the first 32 characters of a longer paste and look up
 whatever they happened to spell. Run against the API's database:
 
-    DECLARE @ref varchar(100) = '<reference, exactly as printed>';
-    SET @ref = TRIM(@ref);
-    IF LEN(@ref) <> 32 OR @ref LIKE '%[^0-9A-Fa-f]%'
-        THROW 50000, 'The reference must be exactly the 32 hex digits the notice prints.', 1;
-    SELECT n.Id, n.UserId, n.Event, n.OccurredAt, n.DeliveredAt, n.DeliveryReceipt, n.AuditEventId
-    FROM SubscriberNotices n
-    WHERE n.Id = CONVERT(uniqueidentifier,
-        STUFF(STUFF(STUFF(STUFF(@ref, 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-'));
+```sql
+DECLARE @ref varchar(100) = '<reference, exactly as printed>';
+SET @ref = TRIM(@ref);
+IF LEN(@ref) <> 32 OR @ref LIKE '%[^0-9A-Fa-f]%'
+    THROW 50000, 'The reference must be exactly the 32 hex digits the notice prints.', 1;
+SELECT n.Id, n.UserId, n.Event, n.OccurredAt, n.DeliveredAt, n.DeliveryReceipt, n.AuditEventId
+FROM SubscriberNotices n
+WHERE n.Id = CONVERT(uniqueidentifier,
+    STUFF(STUFF(STUFF(STUFF(@ref, 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-'));
+```
 
 `Event` is which of the two kinds this is, and it decides how the paragraphs above and §4 read.
 `OccurredAt` is when the PIN was set or changed (UTC). `DeliveredAt` is when a runner — the relay
@@ -64,9 +66,11 @@ joined by time, because the two rows are written in one transaction but read two
 
 **`AuditEventId` is not null.** That is the row, and it must also be this notice's:
 
-    SELECT e.Id, e.Sequence, e.OccurredAt, e.Outcome, e.Detail, e.ActorUserId, e.Event
-    FROM AuditEvents e
-    WHERE e.Id = '<AuditEventId from above>';
+```sql
+SELECT e.Id, e.Sequence, e.OccurredAt, e.Outcome, e.Detail, e.ActorUserId, e.Event
+FROM AuditEvents e
+WHERE e.Id = '<AuditEventId from above>';
+```
 
 ⚠️ **Zero rows and a mismatch are different things, and `notify` prints them as one finding** —
 *"gone, or is not this notice's"* — because it cannot tell you which without this query. Zero rows
@@ -77,9 +81,11 @@ wrote the `SubscriberNotices` table, and the trail is not where to look.
 **`AuditEventId` is null.** The notice predates ADR-0052 and names nothing, so the older question is
 all there is:
 
-    SELECT e.Sequence, e.OccurredAt, e.Outcome, e.Detail
-    FROM AuditEvents e
-    WHERE e.ActorUserId = '<UserId from above>' AND e.Event = '<Event from above>';
+```sql
+SELECT e.Sequence, e.OccurredAt, e.Outcome, e.Detail
+FROM AuditEvents e
+WHERE e.ActorUserId = '<UserId from above>' AND e.Event = '<Event from above>';
+```
 
 Use the notice's own `Event` in that WHERE clause. Filtering on `PinEnrolled` for a change reference
 returns zero rows, which reads exactly like the finding below and is not one.
@@ -112,11 +118,13 @@ ADR-0052 records why that is pinned rather than closed. **It is not invisible to
 swap has to leave the notice pointing somewhere, and the row it now points at already belongs to
 another notice — so two notices name one audit row, and nothing legitimate does that:
 
-    SELECT AuditEventId, COUNT(*) AS Notices
-    FROM SubscriberNotices
-    WHERE AuditEventId IS NOT NULL
-    GROUP BY AuditEventId
-    HAVING COUNT(*) > 1;
+```sql
+SELECT AuditEventId, COUNT(*) AS Notices
+FROM SubscriberNotices
+WHERE AuditEventId IS NOT NULL
+GROUP BY AuditEventId
+HAVING COUNT(*) > 1;
+```
 
 **Zero rows is the healthy answer**, and it is the answer on a clean database — measured against
 `AzureBankDev` on 2026-09-10, which returned the header and no rows. Run it that way once yourself
@@ -158,9 +166,11 @@ for a `PinChanged` notice, which is the one comparison that must never pass.
 There is no endpoint for this; it is one statement, run by hand, and it is the whole of what an
 operator can do:
 
-    UPDATE AspNetUsers
-    SET PinHash = NULL, PinAccessFailedCount = 0, PinLockoutEnd = NULL
-    WHERE Id = '<UserId>';
+```sql
+UPDATE AspNetUsers
+SET PinHash = NULL, PinAccessFailedCount = 0, PinLockoutEnd = NULL
+WHERE Id = '<UserId>';
+```
 
 The account is back where it was before the enrolment: no PIN, so no transfer, withdrawal or
 full-number reveal is possible until one is enrolled again — which costs the password (T8). The
@@ -174,9 +184,11 @@ down who ran it and when, beside the reference, somewhere the database cannot re
 Refresh tokens are the API's long-lived sessions. `RefreshTokenService.RevokeAllForUserAsync` does
 this in code, and nothing exposes it to an operator, so by hand:
 
-    UPDATE RefreshTokens
-    SET RevokedAt = SYSUTCDATETIME()
-    WHERE UserId = '<UserId>' AND RevokedAt IS NULL;
+```sql
+UPDATE RefreshTokens
+SET RevokedAt = SYSUTCDATETIME()
+WHERE UserId = '<UserId>' AND RevokedAt IS NULL;
+```
 
 Access tokens already issued live until they expire — 15 minutes (`Jwt:ExpirationMinutes`) — and the
 BFF's own session has its own windows (30 minutes idle, 60 absolute; 10 and 20 in Development).
