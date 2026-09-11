@@ -178,9 +178,19 @@ try
 
     app.Run();
 }
-catch (Exception ex)
+// HostAbortedException is how host-building tooling stops the app on purpose — it is not a
+// failure, so it must not set a failing exit code. The filter is the BFF's, copied so the two
+// hosts fail the same way. Nothing sends one here today: `dotnet ef` takes
+// DesignTimeDbContextFactory and never builds this host. Hide that factory and it does, and
+// without this filter its output then carries a false "[FTL] Application terminated
+// unexpectedly" over HostAbortedException (measured 2026-09-11; ef exited 0 either way).
+catch (Exception ex) when (ex.GetType().Name is not "HostAbortedException")
 {
+    // Log AND fail. This used to log only, so a host that refused to start — any ValidateOnStart
+    // check, the audit key ring's startup check — ended the process with 0, which a supervisor
+    // reads as a clean shutdown rather than a crash-loop. Pinned by FailedStartupExitCodeTests.
     Log.Fatal(ex, "Application terminated unexpectedly");
+    Environment.ExitCode = 1;
 }
 finally
 {
