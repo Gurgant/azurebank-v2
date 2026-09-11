@@ -44,7 +44,7 @@ public class ApplicationUser : IdentityUser<Guid>
     /// <summary>
     /// Timestamp when the user was created. Set automatically by DbContext.UpdateTimestamps().
     /// </summary>
-    public DateTime CreatedAt { get; set; } 
+    public DateTime CreatedAt { get; set; }
 
     public DateTime? UpdatedAt { get; set; }
 
