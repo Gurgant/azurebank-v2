@@ -547,9 +547,11 @@ public class TransferService : ITransferService
 
                         // No amount in the log line: logs are exported (Loki), and a money amount
                         // is financial data — the transaction number is the audit-trail key.
+                        // Accounts, not handles (ADR-0017's log-identifier rule, 2026-09-11): the
+                        // same ids the internal transfer's line below already logs.
                         _logger.LogInformation(
-                            "Transfer from {SenderTag} to {RecipientTag} completed. Transaction: {TransactionNumber}",
-                            senderUser.AzureTag, recipient.AzureTag, transactionNumber);
+                            "Transfer from account {FromId} to {ToId}. Transaction: {TransactionNumber}",
+                            fromAccount.Id, recipientAccount.Id, transactionNumber);
                         ApiMetrics.Transfers.Add(1, new KeyValuePair<string, object?>("azurebank.kind", "external"));
 
                         return new TransferResponse

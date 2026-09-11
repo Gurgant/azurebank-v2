@@ -9,6 +9,7 @@ using AzureBank.Bff.Models;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.Utilities;
 
 namespace AzureBank.Bff.Services.Implementations;
 
@@ -149,7 +150,7 @@ public class TokenRefresher : ITokenRefresher
             // usable and the upstream call fails naturally / retries. (TaskCanceledException derives
             // from OperationCanceledException, so a timeout is caught here too.)
             _logger.LogWarning(ex,
-                "Refresh call to API failed transiently for session {SessionId}", Redact(sessionId));
+                "Refresh call to API failed transiently for session {SessionId}", SecretPrefix.Of(sessionId));
             return currentAccessToken;
         }
 
@@ -163,7 +164,7 @@ public class TokenRefresher : ITokenRefresher
                 _gates.TryRemove(sessionId, out _);
                 _logger.LogWarning(
                     "SecurityEvent {SecurityEvent}: refresh rejected for session {SessionId}; session revoked",
-                    SecurityEvents.RefreshRejected, Redact(sessionId));
+                    SecurityEvents.RefreshRejected, SecretPrefix.Of(sessionId));
                 return null;
             }
 
@@ -172,7 +173,7 @@ public class TokenRefresher : ITokenRefresher
                 // A non-401 error (5xx) is transient-ish: keep the session, serve the current token.
                 _logger.LogWarning(
                     "Refresh call to API returned {StatusCode} for session {SessionId}",
-                    (int)response.StatusCode, Redact(sessionId));
+                    (int)response.StatusCode, SecretPrefix.Of(sessionId));
                 return currentAccessToken;
             }
 
@@ -189,23 +190,21 @@ public class TokenRefresher : ITokenRefresher
             catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or JsonException)
             {
                 _logger.LogWarning(ex,
-                    "Failed to read/parse the refresh response for session {SessionId}", Redact(sessionId));
+                    "Failed to read/parse the refresh response for session {SessionId}", SecretPrefix.Of(sessionId));
                 return currentAccessToken;
             }
 
             if (refreshed is null || string.IsNullOrEmpty(refreshed.AccessToken))
             {
                 _logger.LogError(
-                    "Refresh response from API was malformed for session {SessionId}", Redact(sessionId));
+                    "Refresh response from API was malformed for session {SessionId}", SecretPrefix.Of(sessionId));
                 return currentAccessToken;
             }
 
             _sessionService.RefreshSession(
                 sessionId, refreshed.AccessToken, refreshed.ExpiresAt, refreshed.RefreshToken);
-            _logger.LogDebug("Re-minted access token for session {SessionId}", Redact(sessionId));
+            _logger.LogDebug("Re-minted access token for session {SessionId}", SecretPrefix.Of(sessionId));
             return refreshed.AccessToken;
         }
     }
-
-    private static string Redact(string sessionId) => sessionId[..Math.Min(8, sessionId.Length)];
 }

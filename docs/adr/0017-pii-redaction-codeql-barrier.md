@@ -80,8 +80,11 @@ and CodeQL's `cs/log-forging` query kept re-flagging user-controlled values at l
   gives no classification seam for future fields.
 - **Full enterprise pipeline**: rejected on evidence — it would kill the log pillar (see the
   pinned incompatibility above). Kept as a documented experiment branch.
-- **`HmacRedactor`** (correlatable hashes): rejected — it needs a production-looking managed
-  key in a public repo, and the opaque user id already serves as the correlation key.
+- **`HmacRedactor`** (correlatable hashes): rejected — ~~it needs a production-looking managed
+  key in a public repo, and~~ the opaque user id already serves as the correlation key.
+  *(First reason struck 2026-09-11: this repository already holds six keys, every one in
+  user-secrets and none in the repo, so a seventh would need no key in a public repo. The second
+  reason stands, and it is the one the log-identifier rule below rests on.)*
 - **Advanced CodeQL setup with query filters**: rejected — its only extra lever (excluding
   queries) would silence true positives; the model pack works under default setup.
 
@@ -89,6 +92,37 @@ and CodeQL's `cs/log-forging` query kept re-flagging user-controlled values at l
 
 - Loki receives no raw email, no amounts; the two auth sites emit an operator-useful masked
   form; blanket tests assert the raw address never reaches any log call at any level.
+  *(Corrected 2026-09-11: "no amounts" was false from the day it was written — the deposit and
+  withdrawal lines logged the amount and the new balance. Both are gone, and
+  `LogPlaceholderClassTests` keeps them out; see the rule below.)*
+
+## The log-identifier rule (added 2026-09-11)
+
+The question this record left open — pseudonymise identifiers in logs everywhere, or nowhere — is
+closed by the reason already given against `HmacRedactor`: the opaque id IS the correlation key,
+and hashing one site while the others log it in clear would make that one line the only one that
+cannot be read against the rest. So every placeholder in a log template has exactly one class:
+
+1. **Surrogate keys** — user, account, transaction, authorisation, token-row and notice ids —
+   are logged in clear. Not credentials, not personal data, useless without the database.
+2. **Secrets** appear only as their first eight characters, through one helper,
+   `SecretPrefix.Of`; the BFF's session id is the one secret any line names.
+3. **Direct identifiers** — a handle, a name, anything a person chose to be known by — never
+   appear. An email appears only as the redactor's masked form (D1-D3 above).
+4. **Money** never appears (D5).
+
+Everything else is operational: counts, codes, durations, event and endpoint names.
+`LogPlaceholderClassTests` scans every log template in the API, the BFF, Infrastructure and the
+Function, and fails on an unclassified placeholder, on a direct identifier or an amount, on a
+session id not passed through `SecretPrefix.Of`, and on an email not passed through the redactor.
+Its first run found amounts and balances on two lines, handles on three and an account's chosen
+name on one; all six were fixed in the same change.
+
+**What it does not see**, named rather than hidden: a value that reaches a log through an
+operational placeholder. The request log prints the request path, and `GET /api/users/{azureTag}`
+puts a handle in it — measured, `HTTP GET /api/users/janesmith responded 200`. The guard reads
+templates, and a path is a value; logging the route template instead of the path is its own
+change.
 - Future `cs/log-forging` findings on values routed through `LogSanitizer.Sanitize` stop at
   the barrier instead of restarting the dismissal treadmill; the pack's pickup is verifiable
   in the code-scanning tool status of the first hosted run on this PR.
