@@ -81,7 +81,7 @@ public class PublishedRefusalCodesTests
             schema.Should().NotBeNull(
                 $"{path} answered {ErrorCodes.InsufficientFunds} with {member} in the body");
             schema!.Value.GetProperty("type").GetString().Should().Be(
-                "number", $"{member} is money, and the client formats it in the user's locale");
+                "number", $"{member} is money, and the client formats it, not the server");
             schema.Value.GetProperty("description").GetString().Should().Contain(
                 ErrorCodes.InsufficientFunds,
                 "the member rides only some of this operation's 422 codes, and the description is "
