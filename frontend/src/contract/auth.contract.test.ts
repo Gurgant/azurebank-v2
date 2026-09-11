@@ -131,6 +131,35 @@ describe('contract: the BFF answers in its own envelope', () => {
   });
 });
 
+describe('contract: changing a PIN', () => {
+  it('refuses a change that does not name the current PIN, before any PIN is consulted', async () => {
+    /*
+      The request Settings' Change PIN dialog sends, minus the one field that makes it a change.
+      The fixture HAS a PIN, so set-pin takes the change branch, and this refusal comes before the
+      verifier runs. That is what makes it the one refusal of the change that is safe to send to a
+      shared fixture: it spends no PIN attempt, where a wrong current PIN would (stepUp's header).
+      No password either — on a fixture without a PIN that would be an ENROLMENT, and change it.
+
+      Measured through the real BFF on 2026-09-11, on a fresh user with a PIN (M2):
+        {"pin":"246802"} -> 422 {"type":"https://httpstatuses.com/422",
+                                 "title":"Unprocessable Entity","status":422,
+                                 "detail":"The current PIN is required to change it.",
+                                 "instance":"/api/auth/pin","errorCode":"PIN_REQUIRED"}
+      The API's problem, forwarded by the BFF untouched: its errorCode and its own path survive.
+    */
+    const { status, body } = await call('/bff/auth/set-pin', {
+      method: 'POST',
+      body: JSON.stringify({ pin: '246802' }),
+    });
+    const problem = asProblem(body);
+
+    expect(status).toBe(422);
+    expect(problem.errorCode).toBe('PIN_REQUIRED');
+    expect(problem.detail).toBe('The current PIN is required to change it.');
+    expect(problem.instance).toBe('/api/auth/pin');
+  });
+});
+
 describe('contract: the inactivity clock', () => {
   /** `inactivityExpiresAt` is the only value that reports LastActivity, so it is the instrument. */
   const clock = async (): Promise<string> => {
