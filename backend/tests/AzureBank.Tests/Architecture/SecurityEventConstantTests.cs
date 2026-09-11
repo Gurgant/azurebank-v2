@@ -493,14 +493,16 @@ public class SecurityEventConstantTests
             + "administrative, B1 added four money movements, and ADR-0047 added the PIN change. "
             + "Moving this means moving that section in the same commit");
         refusals.Should().Be(
-            8,
+            9,
             "the out-of-band half is counted separately because it answers a different question — "
             + "which refusals survive their own rollback. Three were token paths; four were added "
             + "on 2026-08-29 for money refusals — a locked PIN and a wrong PIN on the withdrawal, "
             + "and an absent step-up at both transfer kinds; the eighth was added on 2026-09-06 "
-            + "for an account closure presenting no step-up (AccountDeletionRefused, ADR-0049). "
-            + "Insufficient funds is NOT among them, on purpose, and neither are the closure's two "
-            + "422 guards. Moving this means moving ADR-0044's \"What is wired\" section too");
+            + "for an account closure presenting no step-up (AccountDeletionRefused, ADR-0049); the "
+            + "ninth on 2026-09-11, one site in StepUpAuthorizationService for a wrong or locked PIN "
+            + "at all three mints. Insufficient funds is NOT among them, on purpose, and neither are "
+            + "the closure's two 422 guards. Moving this means moving ADR-0044's \"What is wired\" "
+            + "section too");
 
         perProject["Infrastructure"].Should().Be(
             2,

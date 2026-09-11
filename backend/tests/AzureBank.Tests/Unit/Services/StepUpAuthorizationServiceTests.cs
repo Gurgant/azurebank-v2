@@ -69,6 +69,7 @@ public class StepUpAuthorizationServiceTests : IDisposable
         _sut = new StepUpAuthorizationService(
             _context,
             pinVerifier.Object,
+            new Mock<IAuditService>().Object,
             Options.Create(new StepUpOptions { BindingKey = new string('k', 32) }),
             new Mock<ILogger<StepUpAuthorizationService>>().Object);
     }

@@ -571,6 +571,130 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             2, "the attempt that trips it, and the one refused afterwards by the lock itself");
     }
 
+    [Theory]
+    [InlineData("external")]
+    [InlineData("internal")]
+    [InlineData("deletion")]
+    public async Task AWrongPinAtAMint_WritesItsRow_TheWayAWithdrawalDoes(string mint)
+    {
+        /*
+          THE MINT IS WHERE A TRANSFER OR A CLOSURE SPENDS ITS PIN (ADR-0042, ADR-0049), and until
+          2026-09-11 a wrong one there wrote nothing. Measured that day on the running API: a wrong
+          PIN at each of the three mints answered 401 INVALID_PIN, then 429 PIN_LOCKED, and the
+          user's only audit row was the PinEnrolled of the setup.
+        */
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        var (path, body, securityEvent, subject) = await MintScenarioAsync(mint, accountId);
+
+        var response = await Client.PostAsJsonAsync(path, body("999999"), JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "999999 is not the PIN");
+
+        var row = await SingleRowForActorAsync(userId, securityEvent);
+        row.Outcome.Should().Be(AuditOutcome.Refused);
+        row.Detail.Should().Be(ErrorCodes.InvalidPin);
+        row.SubjectType.Should().Be("Account");
+        row.SubjectId.Should().Be(
+            subject, "the row names the account the mint was asked about, which the actor owns");
+    }
+
+    [Theory]
+    [InlineData("external")]
+    [InlineData("internal")]
+    [InlineData("deletion")]
+    public async Task TheLockoutAtAMint_LeavesItsRows_WithTheWithdrawalsOffByOne(string mint)
+    {
+        // The same shape TheLockoutItself_LeavesARow_AndItIsNotTheWrongPinOne pins for a
+        // withdrawal, and for the same reason: the attempt that trips the lock is recorded as the
+        // lockout, not as a wrong PIN. Measured at the deletion mint: the third wrong PIN answered
+        // 429 PIN_LOCKED, not 401.
+        var (token, userId, accountId) = await RegisterTestUserAsync();
+        SetAuthHeader(token);
+        await SetPinAsync(token);
+        var (path, body, securityEvent, _) = await MintScenarioAsync(mint, accountId);
+
+        for (var i = 0; i < ValidationRules.MaxPinAttempts; i++)
+        {
+            await Client.PostAsJsonAsync(path, body("999999"), JsonOptions);
+        }
+
+        var locked = await Client.PostAsJsonAsync(path, body("123456"), JsonOptions);
+        locked.StatusCode.Should().Be(
+            HttpStatusCode.TooManyRequests, "the correct PIN is refused too once the PIN is locked");
+
+        var rows = await RowsForActorAsync(userId, securityEvent);
+        rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
+            ValidationRules.MaxPinAttempts - 1,
+            "the attempt that trips the lock is recorded as the lockout instead");
+        rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
+            2, "the attempt that trips it, and the one refused afterwards by the lock itself");
+    }
+
+    /// <summary>
+    /// One of the three mints, ready to be asked with any PIN: its path, its body for a given PIN,
+    /// the event a refused PIN there must write, and the account that row must name.
+    /// </summary>
+    private async Task<(string Path, Func<string, object> Body, string Event, Guid Subject)>
+        MintScenarioAsync(string mint, Guid accountId)
+    {
+        switch (mint)
+        {
+            case "external":
+                {
+                    var (_, payeeId, _) = await RegisterTestUserAsync();
+                    string payeeTag;
+                    using (var lookup = Factory.Services.CreateScope())
+                    {
+                        var db = lookup.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+                        payeeTag = (await db.Users.AsNoTracking().SingleAsync(u => u.Id == payeeId)).AzureTag;
+                    }
+
+                    return ("/api/transfers/authorizations",
+                        pin => new TransferAuthorizationRequest
+                        {
+                            FromAccountId = accountId,
+                            RecipientAzureTag = payeeTag,
+                            Amount = 10m,
+                            Pin = pin,
+                        },
+                        SecurityEvents.MoneyTransferRefused, accountId);
+                }
+            case "internal":
+                {
+                    var spare = await CreateSpareAccountAsync();
+                    return ("/api/transfers/internal/authorizations",
+                        pin => new InternalTransferAuthorizationRequest
+                        {
+                            FromAccountId = accountId,
+                            ToAccountId = spare,
+                            Amount = 10m,
+                            Pin = pin,
+                        },
+                        SecurityEvents.MoneyTransferRefused, accountId);
+                }
+            case "deletion":
+                {
+                    var spare = await CreateSpareAccountAsync();
+                    return ($"/api/accounts/{spare}/deletion-authorizations",
+                        pin => new AccountDeletionAuthorizationRequest { Pin = pin },
+                        SecurityEvents.AccountDeletionRefused, spare);
+                }
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mint), mint, "external, internal or deletion");
+        }
+    }
+
+    /// <summary>A second, empty, non-primary account: an internal payee, or a closable account.</summary>
+    private async Task<Guid> CreateSpareAccountAsync()
+    {
+        var response = await Client.PostAsJsonAsync(
+            "/api/accounts", new CreateAccountRequest { Name = "Spare", Type = AccountType.Savings }, JsonOptions);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(JsonOptions);
+        return body!.Data!.Id;
+    }
+
     [Fact]
     public async Task ATransferWithoutStepUp_IsSubjectedToTheAccountTheMoneyWouldHaveLeft()
     {
