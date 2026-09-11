@@ -195,14 +195,18 @@ public class AuthEndpointTests : IntegrationTestBase
         {
             AzureTag = $"fresh_{Guid.NewGuid().ToString("N")[..8]}",
             Email = existing.Email,
-            Password = "SecurePass123!", FirstName = "Alice", LastName = "Anders"
+            Password = "SecurePass123!",
+            FirstName = "Alice",
+            LastName = "Anders"
         }, JsonOptions);
 
         var dupHandle = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
             AzureTag = existing.AzureTag,
             Email = $"fresh{Guid.NewGuid():N}@example.com",
-            Password = "SecurePass123!", FirstName = "Bob", LastName = "Brown"
+            Password = "SecurePass123!",
+            FirstName = "Bob",
+            LastName = "Brown"
         }, JsonOptions);
 
         // Assert - identical status + detail + code, so the response can't reveal WHICH
@@ -300,7 +304,10 @@ public class AuthEndpointTests : IntegrationTestBase
         await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
             AzureTag = $"lock_{Guid.NewGuid().ToString("N")[..8]}",
-            Email = email, Password = password, FirstName = "Lock", LastName = "Out"
+            Email = email,
+            Password = password,
+            FirstName = "Lock",
+            LastName = "Out"
         }, JsonOptions);
 
         var wrong = new LoginRequest { Email = email, Password = "WrongPass123!" };
@@ -581,7 +588,10 @@ public class AuthEndpointTests : IntegrationTestBase
         (await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
         {
             AzureTag = $"rtl_{Guid.NewGuid().ToString("N")[..8]}",
-            Email = email, Password = "SecurePass123!", FirstName = "Ref", LastName = "Log"
+            Email = email,
+            Password = "SecurePass123!",
+            FirstName = "Ref",
+            LastName = "Log"
         }, JsonOptions)).EnsureSuccessStatusCode();
         var login = await Client.PostAsJsonAsync("/api/auth/login",
             new LoginRequest { Email = email, Password = "SecurePass123!" }, JsonOptions);

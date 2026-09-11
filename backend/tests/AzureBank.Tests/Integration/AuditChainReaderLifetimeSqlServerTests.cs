@@ -59,8 +59,12 @@ public sealed class AuditChainReaderLifetimeSqlServerTests : IDisposable
             {
                 var row = new AuditEvent
                 {
-                    Id = Guid.CreateVersion7(), OccurredAt = DateTime.UtcNow, Event = "ReaderLifetime",
-                    Outcome = AuditOutcome.Succeeded, ActorUserId = Guid.NewGuid(), RowHash = string.Empty,
+                    Id = Guid.CreateVersion7(),
+                    OccurredAt = DateTime.UtcNow,
+                    Event = "ReaderLifetime",
+                    Outcome = AuditOutcome.Succeeded,
+                    ActorUserId = Guid.NewGuid(),
+                    RowHash = string.Empty,
                 };
                 context.AuditEvents.Add(row);
                 await context.SaveChangesAsync();

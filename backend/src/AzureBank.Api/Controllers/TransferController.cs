@@ -137,7 +137,7 @@ public class TransferController : ControllerBase
     */
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<ApiResponse<TransferResponse>>> Transfer(
-        [Description("Transfer details")] [FromBody] TransferRequest request,
+        [Description("Transfer details")][FromBody] TransferRequest request,
         [Description("Authorisation reference minted by POST /api/transfers/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.")]
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {
@@ -166,7 +166,7 @@ public class TransferController : ControllerBase
     // 401 only, and 422/429 gone with the PIN check — see the note on Transfer above.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<ApiResponse<InternalTransferResponse>>> InternalTransfer(
-        [Description("Internal transfer details")] [FromBody] InternalTransferRequest request,
+        [Description("Internal transfer details")][FromBody] InternalTransferRequest request,
         [Description("Authorisation reference minted by POST /api/transfers/internal/authorizations (ADR-0042). REQUIRED to EXECUTE a transfer: presenting none is refused 401 AUTHORIZATION_REQUIRED. A retry of a completed transfer is the one exception — the idempotency middleware returns its stored response before this action runs, so a replay needs no header.")]
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {

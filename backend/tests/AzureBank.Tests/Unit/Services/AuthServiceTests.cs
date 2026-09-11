@@ -437,7 +437,7 @@ public class AuthServiceTests : IDisposable
 
     #region RegisterAsync Tests
 
-[Fact]
+    [Fact]
     public async Task RegisterAsync_DuplicateEmail_ThrowsConflictException()
     {
         // Arrange
@@ -637,7 +637,7 @@ public class AuthServiceTests : IDisposable
                 + "being reported to the caller as a duplicate");
     }
 
-#endregion
+    #endregion
 
     #region PII redaction in logs
 

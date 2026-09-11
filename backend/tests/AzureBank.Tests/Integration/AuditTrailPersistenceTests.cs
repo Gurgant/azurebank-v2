@@ -449,7 +449,10 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             "/api/transfers/authorizations",
             new TransferAuthorizationRequest
             {
-                FromAccountId = accountId, RecipientAzureTag = payeeTag, Amount = 1_500m, Pin = "123456"
+                FromAccountId = accountId,
+                RecipientAzureTag = payeeTag,
+                Amount = 1_500m,
+                Pin = "123456"
             },
             JsonOptions);
         atTheMint.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity, "4,000 + 1,500 exceeds 5,000");
