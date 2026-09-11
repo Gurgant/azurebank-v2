@@ -411,6 +411,52 @@ public class NotifyCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt()
+    {
+        /*
+          T17'S NULL-POINTER DOOR, the sibling of the re-point above and priced the same way. Since
+          ADR-0052 a notice names its row, and a NULL name is read as "written before that migration"
+          -- but nulling it is one more write to SubscriberNotices, and the run cannot tell the two
+          apart. Either way it asks the fallback question, does a row of this KIND exist for this
+          USER, and for a kind ADR-0047 made repeatable another change answers yes.
+
+          TWO OWNERS, SO THE ABSENCE IS DUE. Each has one change notice with its evidence deleted and
+          its pointer nulled; only the first has a second change left. The second owner's notice IS
+          reported, in the fallback's own words, which shows both nulled notices were asked the old
+          question; the first owner's is not, because its surviving change answers it.
+
+          FALSIFIED by reporting every null pointer as missing: the first owner's notice is found too.
+        */
+        var twice = await OwnerAsync();
+        await OwedAsync(twice, @event: SecurityEvents.PinChanged);
+        var nulled = await OwedAsync(twice, @event: SecurityEvents.PinChanged);
+        var once = await OwnerAsync();
+        var alone = await OwedAsync(once, @event: SecurityEvents.PinChanged);
+
+        foreach (var notice in new[] { nulled, alone })
+        {
+            _context.AuditEvents.Remove(
+                await _context.AuditEvents.SingleAsync(e => e.Id == notice.AuditEventId!.Value));
+            notice.AuditEventId = null;
+        }
+        await _context.SaveChangesAsync();
+
+        await using var provider = Provider();
+        var (_, lines) = await RunAsync(provider);
+        var text = string.Join("\n", lines);
+
+        _transport.Envelopes.Should().HaveCount(3, "every notice was examined and delivered");
+        text.Should().Contain("NOTIFIED 3 of 3", "the run did the work whose silence is asserted below");
+        text.Should().NotContain(
+            "row it names is gone", "neither nulled notice names a row, so neither got the exact question");
+        (text.Split("NO AUDIT ROW").Length - 1).Should().Be(
+            1,
+            "the owner with no other change is reported by the fallback; the owner with one is not, "
+            + "because that change answers for the deleted one. This is the limit, not a property");
+        text.Should().Contain($"no {SecurityEvents.PinChanged} row exists for that user at all");
+    }
+
+    [Fact]
     public async Task AKindThisBuildCannotRender_StaysOwed_AndIsNamed()
     {
         /*
