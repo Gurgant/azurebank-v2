@@ -41,7 +41,9 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
 
 ### Data Protection
 - **No secrets in source code.** Every key comes from user-secrets locally, and the API refuses to
-  start without them (`ValidateOnStart`).
+  start when one fails its check (`ValidateOnStart`) — except the JWT signing key, which has no
+  check. Measured on 2026-09-11: with `Jwt:Secret` empty, or 12 characters long, the API started
+  and answered its first registration with a 500 when it came to sign the token.
 - **The PIN pepper lives outside the database** (ADR-0011), and the audit trail's chain and anchor
   keys are separate secrets from each other and from everything else (ADR-0044).
 - **Nothing here configures a TLS version or encryption at rest.** The project is not deployed, so
