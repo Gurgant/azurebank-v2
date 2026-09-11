@@ -92,12 +92,9 @@ public class AccountService : IAccountService
 
         await _context.SaveChangesAsync();
 
-        // Sanitize the user-controlled name before logging — defence-in-depth against
-        // log-forging into the plain-text sink (the structured template already mitigates most).
-        // Central LogSanitizer (not inline Replace): one audited contract, pinned by tests and
-        // declared to CodeQL as a log-injection barrier (see the model pack under .github/codeql).
-        var safeName = LogSanitizer.Sanitize(request.Name);
-        _logger.LogInformation("Updated account {AccountId} name to '{Name}'", accountId, safeName);
+        // The account id, not the new name (ADR-0017's log-identifier rule, 2026-09-11): the name
+        // is text the user chose, so it can hold anything, a name or an address included.
+        _logger.LogInformation("Updated account {AccountId} name", accountId);
 
         return _mapper.ToResponse(account);
     }
@@ -398,8 +395,9 @@ public class AccountService : IAccountService
           identity of the affected resource, and OWASP's Logging Cheat Sheet gives "user database
           table primary key-value" as its first example of a correct identity field. Masking is
           scoped to secrets, PAN and descriptive PII. See ADR-0017 ("log the opaque id, not PII");
-          pseudonymising one site while twenty others log ids in clear is task #206, and it is
-          decided: no, for the reason above — there is no trust boundary to buy anything with.
+          pseudonymising one site while the others log ids in clear was an open question until
+          2026-09-11, when ADR-0017's log-identifier rule closed it: surrogate keys in clear,
+          everywhere, for the reason above — there is no trust boundary to buy anything with.
         */
         /*
           The row rides the SaveChanges inside the transaction above (ADR-0044). Record only adds;
@@ -442,10 +440,11 @@ public class AccountService : IAccountService
           THE TWO IDENTIFIERS STAY IN CLEAR, and that is the control, not an oversight.
           CodeQL raises cs/cleartext-storage here (twice now: dismissed as alert #25, reopened the
           moment this line moved), and the automated suggestion is to log SHA-256 prefixes of both
-          Guids instead. That must not be applied: hashing them makes the record un-joinable to the
-          accounts and users tables, so the line stops answering the only question it exists to
-          answer — who revealed which account. A control that cannot be correlated is not a weaker
-          control, it is a decoration.
+          Guids instead. That must not be applied, and not because a hash is un-joinable — a
+          deterministic one can be joined by hashing every candidate, and an earlier version of this
+          comment overstated that. It is because ADR-0017's log-identifier rule logs surrogate keys
+          in clear at EVERY site: hashing this one would leave it the only line that cannot be read
+          against the others, for an id that is not sensitive in the first place.
 
           They are also not sensitive. Both are opaque surrogate keys: not credentials, not PII, and
           useless to anyone without the database they index. The sensitive value in this method is
