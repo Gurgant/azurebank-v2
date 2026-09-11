@@ -224,7 +224,7 @@ Adds OWASP-recommended security headers to all responses:
 |--------|-------|---------|
 | `X-Content-Type-Options` | `nosniff` | Prevent MIME sniffing |
 | `X-Frame-Options` | `DENY` | Prevent clickjacking |
-| `X-XSS-Protection` | `1; mode=block` | XSS filtering |
+| `X-XSS-Protection` | `0` | Off, as OWASP recommends: the old filter could create XSS |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Control referrer |
 | `Permissions-Policy` | `accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()` | Disable sensitive browser features |
 | `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';` | Content restrictions |

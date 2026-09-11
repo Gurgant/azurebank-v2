@@ -21,8 +21,10 @@ public class SecurityHeadersMiddleware
         // Prevent clickjacking
         context.Response.Headers.Append("X-Frame-Options", "DENY");
 
-        // XSS protection (legacy browsers)
-        context.Response.Headers.Append("X-XSS-Protection", "1; mode=block");
+        // "0", not "1; mode=block", as the OWASP HTTP Headers cheat sheet recommends: it warns that
+        // the filter this header turns on "can create XSS vulnerabilities in otherwise safe
+        // websites". The protection is the CSP below, which allows no inline script.
+        context.Response.Headers.Append("X-XSS-Protection", "0");
 
         // Referrer policy
         context.Response.Headers.Append("Referrer-Policy", "strict-origin-when-cross-origin");
