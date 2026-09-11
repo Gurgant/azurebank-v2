@@ -116,12 +116,12 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
     /// </remarks>
     private static readonly Dictionary<string, string[]> RefusalsWithMembers =
         new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["POST /api/transfers"] = [ErrorCodes.DailyLimitExceeded, ErrorCodes.InsufficientFunds],
-        ["POST /api/transfers/authorizations"] = [ErrorCodes.DailyLimitExceeded],
-        ["POST /api/transfers/internal"] = [ErrorCodes.InsufficientFunds],
-        ["POST /api/transactions/withdraw"] = [ErrorCodes.InsufficientFunds],
-    };
+        {
+            ["POST /api/transfers"] = [ErrorCodes.DailyLimitExceeded, ErrorCodes.InsufficientFunds],
+            ["POST /api/transfers/authorizations"] = [ErrorCodes.DailyLimitExceeded],
+            ["POST /api/transfers/internal"] = [ErrorCodes.InsufficientFunds],
+            ["POST /api/transactions/withdraw"] = [ErrorCodes.InsufficientFunds],
+        };
 
     public Task TransformAsync(
         OpenApiDocument document,
