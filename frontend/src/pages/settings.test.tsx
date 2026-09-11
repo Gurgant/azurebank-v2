@@ -62,6 +62,14 @@ describe('settings page', () => {
     await user.click(screen.getByRole('button', { name: 'Change' }));
 
     const input = await screen.findByRole('textbox');
+    /*
+      Focus it first, as a user must: fireEvent.change alone edits a field nothing has focused, and
+      an open Fluent dialog with nothing focused inside is what tabster aria-hides (test/layout.ts).
+      Measured 2026-09-11, full suite under eight spinning cores: without the click this test failed
+      5 of 6 runs, four of them at the Save query below; with it, 0 of 6. The fifth failure was at
+      the textbox query above, before any click, which this cannot reach.
+    */
+    await user.click(input);
     fireEvent.change(input, { target: { value: 'newtag' } });
     await user.click(await screen.findByRole('button', { name: 'Save' }));
 
@@ -81,6 +89,7 @@ describe('settings page', () => {
 
     await user.click(screen.getByRole('button', { name: 'Change' }));
     const input = await screen.findByRole('textbox');
+    await user.click(input); // focus first, as above
     fireEvent.change(input, { target: { value: 'friend' } }); // a seeded recipient → 409
     await user.click(await screen.findByRole('button', { name: 'Save' }));
 
