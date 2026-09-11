@@ -392,7 +392,8 @@ still read `DateTime.UtcNow`, so the two-clock question is narrowed, not closed.
 **D7 — The refusal: `422 DAILY_LIMIT_EXCEEDED`, figure-free, four numeric extension members.**
 `DailyLimitExceededException : BusinessRuleException`, sentence *"Daily transfer limit exceeded."*
 with no digits (the rule `InsufficientFundsException` records: figures travel as numbers and are
-formatted in the user's locale), `Details {limit, used, requested, resetsAt}` spread into the
+formatted ~~in the user's locale~~ *(by the client, in a fixed en-IE locale — corrected 2026-09-11:
+the client never reads the user's)*), `Details {limit, used, requested, resetsAt}` spread into the
 problem body's top level by `AppExceptionHandler` exactly as `available` / `requested` ride today
 (B2/B3 in Context). Undeclared in the published document by that precedent — ADR-0043's component
 declares seven members and `available` is not among them — and NOT yet typed on the client either:

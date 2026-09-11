@@ -189,7 +189,7 @@ public class PublishedDailyLimitTests
             schema.Should().NotBeNull(
                 $"{path}'s 422 can answer {ErrorCodes.DailyLimitExceeded}, which carries {member}");
             schema!.Value.GetProperty("type").GetString().Should().Be(
-                "number", $"{member} is money and is formatted by the client in the user's locale");
+                "number", $"{member} is money, and the client formats it, not the server");
             schema.Value.GetProperty("description").GetString().Should().Contain(
                 ErrorCodes.DailyLimitExceeded,
                 "the member rides only one of this operation's several 422 codes, and the "
