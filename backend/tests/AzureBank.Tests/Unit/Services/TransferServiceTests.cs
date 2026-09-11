@@ -70,6 +70,7 @@ public class TransferServiceTests : IDisposable
         _stepUp = new StepUpAuthorizationService(
             _context,
             _pinVerifierMock.Object,
+            _auditMock.Object,
             Options.Create(new StepUpOptions { BindingKey = new string('k', 32) }),
             new Mock<ILogger<StepUpAuthorizationService>>().Object);
 

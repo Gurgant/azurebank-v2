@@ -190,8 +190,9 @@ expired/invalid) → the transaction (D8).
 `MoneyTransferRefused` in `TransferService` (after ownership, so the row names an account the caller
 owns; the refusal survives the 401's own rollback). Nothing else on the path writes a row, for
 ADR-0044's reasons: the two 422s are business validation the owner can trigger at will from a list
-they already hold; a wrong or locked PIN at the mint is unaudited exactly as it is for the transfer
-mints (the mint has no `IAuditService`); EXPIRED and INVALID on the DELETE are unaudited as they are
+they already hold; ~~a wrong or locked PIN at the mint is unaudited exactly as it is for the transfer
+mints (the mint has no `IAuditService`)~~ *(audited at all three mints since 2026-09-11, ADR-0044)*;
+EXPIRED and INVALID on the DELETE are unaudited as they are
 on a transfer. The ADR-0044 inventory moves by one event and one `RecordRefusalAsync` site and no
 log template: the refusal emits no `SecurityEvent {SecurityEvent}` line, following the money-refusal
 precedent, so the seventeen logged API sites stay seventeen.
@@ -385,8 +386,10 @@ the 403 is the one every foreign account id gets.
   after. ADR-0045's test — could the attacker have prevented the notice — was written for
   authenticator events; whether a closure owes the holder a notice is a decision in ADR-0047's
   shape, taken on its own, not folded into a PR about the gate.
-- **A wrong or locked PIN at the mint writes no row**, as at the transfer mints: the mint has no
-  `IAuditService`, and adding one there is a change to every mint, not to this one.
+- ~~**A wrong or locked PIN at the mint writes no row**, as at the transfer mints: the mint has no
+  `IAuditService`, and adding one there is a change to every mint, not to this one.~~ *(Done
+  2026-09-11 as exactly that: one change to every mint, recording `AccountDeletionRefused` here —
+  ADR-0044, "Wrong and locked PINs at the three mints".)*
 - **EXPIRED and INVALID on the DELETE write no row**, as on a transfer. The transfer precedent
   audits the absent authorisation only, and this ADR follows it rather than widening it in passing.
 - **No `authorization:<id>` link on the `AccountDeleted` success row.** It would make a closure

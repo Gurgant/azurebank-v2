@@ -162,12 +162,14 @@ public static class SecurityEvents
     public const string AccountDeleted = "AccountDeleted";
 
     /// <summary>
-    /// A closure was refused because no step-up authorisation was presented (ADR-0049). Detail
-    /// carries the ErrorCodes reason, which is always <c>AUTHORIZATION_REQUIRED</c>.
+    /// A closure was refused (ADR-0049): at the DELETE because no step-up authorisation was
+    /// presented, or, since 2026-09-11, at the deletion mint for a wrong or locked PIN. Detail
+    /// carries the ErrorCodes reason: <c>AUTHORIZATION_REQUIRED</c>, <c>INVALID_PIN</c> or
+    /// <c>PIN_LOCKED</c>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// RAISED FOR AN ABSENT AUTHORISATION ONLY, matching the transfer precedent
+    /// AT THE DELETE, RAISED FOR AN ABSENT AUTHORISATION ONLY, matching the transfer precedent
     /// (<see cref="MoneyTransferRefused"/>): an authorisation that is EXPIRED or INVALID is not
     /// recorded for a closure any more than it is for a transfer, and the omission is inherited
     /// rather than decided afresh — ADR-0049 lists it under "not done".
@@ -375,7 +377,13 @@ public static class SecurityEvents
     /// <remarks>
     /// Raised at both transfer kinds when the step-up authorisation is absent, which is the one
     /// refusal on that path that is about a control rather than about a typo.
-    /// <para>OWASP: <c>authz_fail:[userid,resource]</c>.</para>
+    /// <para>
+    /// And since 2026-09-11 at both transfer MINTS, for a wrong PIN (<c>INVALID_PIN</c>) or a locked
+    /// one (<c>PIN_LOCKED</c>): the guess a withdrawal already recorded as
+    /// <see cref="MoneyWithdrawalRefused"/>, which until then left only a log line at the mint.
+    /// </para>
+    /// <para>OWASP: <c>authz_fail:[userid,resource]</c> for the absent authorisation;
+    /// <c>authn_login_fail</c> for the PIN.</para>
     /// </remarks>
     public const string MoneyTransferRefused = "MoneyTransferRefused";
 
