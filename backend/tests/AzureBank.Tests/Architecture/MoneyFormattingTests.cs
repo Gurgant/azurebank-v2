@@ -46,13 +46,18 @@ public class MoneyFormattingTests
     }
 
     /// <summary>
-    /// Both projects that can put a sentence in front of a user or into the published contract. The
-    /// BFF is not scanned: it forwards the API's problem bodies and composes none of its own.
+    /// Every project that can put a sentence in front of a person or into the published contract:
+    /// the API and Shared (its responses and the contract), Infrastructure (since ADR-0045 it
+    /// renders the notice emails) and the audit tool (its evidence pack is read outside the
+    /// system). The last two were added on 2026-09-11, measured clean. The BFF is not scanned: it
+    /// forwards the API's problem bodies and composes none of its own.
     /// </summary>
     private static readonly string[] ScannedFolders =
     [
         Path.Combine("src", "AzureBank.Api"),
         Path.Combine("src", "AzureBank.Shared"),
+        Path.Combine("src", "AzureBank.Infrastructure"),
+        Path.Combine("tools", "AzureBank.AuditVerifier"),
     ];
 
     private static IEnumerable<string> SourceFiles(DirectoryInfo root)
