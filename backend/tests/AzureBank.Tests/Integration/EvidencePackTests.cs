@@ -129,6 +129,11 @@ public class EvidencePackTests : IntegrationTestBase
             .SingleAsync(e => e.SubjectId == movement.Id && e.Event == SecurityEvents.MoneyTransferred);
         AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(
             consumed.Id, "the name the pack printed is the name the CHAINED row carries");
+
+        // The amount carries its unit. The pack is read by somebody outside the system, and until
+        // 2026-09-11 it printed "TransferOut of 40.00 on account …": a number with no currency.
+        text.Should().Contain(
+            $"{movement.Type} of {ValidationRules.DescribeAmount(Amount)} on account {account:D}");
         text.Should().Contain(
             "The NAME is inside the chain; the instants above are read from the",
             "the limit travels with every positive answer, not only with the docs");
