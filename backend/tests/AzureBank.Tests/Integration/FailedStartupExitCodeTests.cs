@@ -19,7 +19,11 @@ namespace AzureBank.Tests.Integration;
 /// </para>
 /// <para>
 /// The environment is <c>Testing</c>, never <c>Development</c>: Development loads user-secrets, and
-/// a developer whose secrets hold a valid anchor key would get a host that STARTS. The factory's
+/// a developer whose secrets hold a valid anchor key would get a host that STARTS. BOTH variables
+/// are set, because the ASP.NET one alone does not decide it: with
+/// <c>ASPNETCORE_ENVIRONMENT=Testing</c> and an inherited <c>DOTNET_ENVIRONMENT=Development</c>,
+/// the real API logged "Hosting environment: Development" (measured 2026-09-11; Testing once both
+/// are set). The factory's
 /// test keys are passed as environment variables, all but the anchor key, which is removed so an
 /// inherited one cannot fill it. <c>--urls http://127.0.0.1:0</c> sends a host that does start to a
 /// free port rather than the BFF's 5000, where a bind failure would exit 1 for the wrong reason —
@@ -45,6 +49,7 @@ public sealed class FailedStartupExitCodeTests
         start.ArgumentList.Add("http://127.0.0.1:0");
 
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Testing";
+        start.Environment["DOTNET_ENVIRONMENT"] = "Testing";
         start.Environment["Jwt__Secret"] =
             "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef";
         start.Environment["Idempotency__HashKey"] = CustomWebApplicationFactory.IdempotencyHashKey;
