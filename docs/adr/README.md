@@ -37,7 +37,9 @@ detail hanging off them.
 [0002](0002-yarp-proxy.md) YARP reverse proxy ·
 [0018](0018-bff-origin-hardening.md) BFF origin hardening ·
 [0019](0019-spa-bff-integration.md) SPA/BFF integration ·
-[0039](0039-bff-session-cache-is-a-fallback.md) the BFF session cache is a fallback, never the answer
+[0039](0039-bff-session-cache-is-a-fallback.md) the BFF session cache is a fallback, never the answer ·
+[0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) the BFF serves the
+built SPA under a CSP measured against it
 
 **Money** — [0009](0009-idempotency-monetary-operations.md) idempotent monetary operations (server) ·
 [0022](0022-client-money-mutation-protocol.md) client money-mutation protocol ·
@@ -194,7 +196,14 @@ proves the document is what the code
 GENERATES, and says in as many words that it does not prove the code generates the TRUTH: ADR-0043's
 own defects were of that kind, and this gate would have passed on every one.
 
-The next free number is **0054**.
+ADR-0054 served the SPA from the BFF for the first time, and the policy written for it met the real
+bundle there: Zod probed for `eval` on every page load, and `style-src 'self'` refused Griffel's
+`<style>` elements 99 times. Zod now runs `jitless`, and the style rule admits the SHA-256 of the
+empty string instead of `'unsafe-inline'` — the elements Griffel creates are empty, and it fills
+them through CSSOM. CI runs the e2e suite against that build, with a walk that fails on any
+violation.
+
+The next free number is **0055**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -255,6 +264,7 @@ The next free number is **0054**.
 | [ADR-0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) | The relay runs as an Azure Function, rehearsed locally against Azurite | Accepted | 2026-09-08 |
 | [ADR-0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | A notice names the audit row it belongs to | Accepted | 2026-09-09 |
 | [ADR-0053](0053-the-committed-contract-is-what-the-api-generates.md) | The committed contract is what the API generates | Accepted | 2026-09-10 |
+| [ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) | The BFF serves the built SPA under a CSP measured against it | Accepted | 2026-09-11 |
 
 </details>
 ## Creating a New ADR

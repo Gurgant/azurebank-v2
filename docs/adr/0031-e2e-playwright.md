@@ -29,6 +29,10 @@ React*. Two consequences followed, and both are the kind of defect a user notice
 **1. Playwright, driving the dev topology unchanged.** vite on 5173 proxies `/api` and `/bff` to the
 BFF on 5000, which proxies to the API on 7215 over SQL Server LocalDB — exactly what a developer's
 browser does. Playwright owns the vite server (`webServer`) and does NOT own the backend.
+*(Changed for CI on 2026-09-11 by
+[ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md): the real-stack
+job runs the suite against the build the BFF serves, under its real CSP, with `E2E_BASE_URL` set
+and no vite. Locally this topology is still the default.)*
 
 **2. One login per run, reused via `storageState`.** Not an optimisation: the BFF allows 10 auth
 requests per 60s per IP, so a suite that signed in per test would rate-limit itself into red before

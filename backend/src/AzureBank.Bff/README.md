@@ -224,10 +224,19 @@ Adds OWASP-recommended security headers to all responses:
 |--------|-------|---------|
 | `X-Content-Type-Options` | `nosniff` | Prevent MIME sniffing |
 | `X-Frame-Options` | `DENY` | Prevent clickjacking |
-| `X-XSS-Protection` | `0` | Off, as OWASP recommends: the old filter could create XSS |
+| `X-XSS-Protection` | `0` | Off, as OWASP recommends: the old filter could create XSS (ADR-0054) |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Control referrer |
 | `Permissions-Policy` | `accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()` | Disable sensitive browser features |
-| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';` | Content restrictions |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';` | Content restrictions, measured against the served SPA; the hash is the empty string's, for Griffel's empty `<style>` elements (ADR-0054) |
+
+### The built SPA (`Spa:RootPath`)
+
+When `Spa:RootPath` names a Vite build (`frontend/dist`), the BFF serves it: fingerprinted files
+under `/assets` as `immutable`, everything else revalidated, and the page shell for any GET
+navigation no endpoint claimed. Never under `/api`, `/bff` or `/health`, and never for a file name,
+so an unknown API route stays a 404 and a POST-only route stays a 405. Unset, the BFF serves no
+pages and vite does, as in the dev loop; set to a directory with no `index.html`, the host refuses
+to start. ADR-0054.
 
 ### Session Activity Middleware
 

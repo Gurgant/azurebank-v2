@@ -4,22 +4,24 @@ using Microsoft.AspNetCore.Mvc.Testing;
 namespace AzureBank.Bff.Tests;
 
 /// <summary>
-/// The whole security-header set, pinned value by value. Nothing asserted any of it
-/// before 2026-09-11, so the X-XSS-Protection value OWASP advises against had nothing standing in
-/// its way.
+/// The whole security-header set, pinned value by value (ADR-0054). Nothing asserted any of it
+/// before 2026-09-11, so the X-XSS-Protection value OWASP advises against, and a CSP comment saying
+/// the SPA "would need a more permissive policy", had nothing standing in their way.
 /// </summary>
 /// <remarks>
-/// Every expected value was read off a running BFF (http profile) with <c>curl -D - /health/live</c>:
-/// the five this change keeps from main 7ceb16f at 2026-09-11T14:35:08Z, X-XSS-Protection from this
-/// branch at 14:52:57Z. It is the same set on every response: a problem 401 and a proxied API
-/// refusal as well.
+/// Every expected value was read off the running BFF (http profile, 2026-09-11T14:52:57Z) with
+/// <c>curl -D - /health/live</c>, and it is the same set on every response: a problem 401, a proxied
+/// API refusal and, when <c>Spa:RootPath</c> is set, the page shell and its files
+/// (<see cref="SpaHostingTests"/>).
 /// </remarks>
 public class SecurityHeadersTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    /// <summary>The policy every response carries.</summary>
+    /// <summary>The policy the built SPA was walked under with zero violations (see the middleware).</summary>
     public const string ContentSecurityPolicy =
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';";
+        "default-src 'self'; script-src 'self'; " +
+        "style-src 'self' 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='; " +
+        "img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; " +
+        "base-uri 'none'; form-action 'self'; frame-ancestors 'none';";
 
     private readonly WebApplicationFactory<Program> _factory;
 
@@ -34,6 +36,16 @@ public class SecurityHeadersTests : IClassFixture<WebApplicationFactory<Program>
         var response = await _factory.CreateClient().GetAsync(path);
 
         AssertTheWholeSet(response);
+    }
+
+    [Fact]
+    public void TheEmptyStringHash_IsTheHashOfTheEmptyString()
+    {
+        // The one opaque token in the policy, recomputed rather than trusted: if it named any other
+        // content it would admit a <style> that says something, which is what it exists not to do.
+        var hash = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData([]));
+
+        ContentSecurityPolicy.Should().Contain($"'sha256-{hash}'");
     }
 
     internal static void AssertTheWholeSet(HttpResponseMessage response)

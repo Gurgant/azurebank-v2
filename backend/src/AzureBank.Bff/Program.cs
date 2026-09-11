@@ -83,6 +83,12 @@ try
         .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<ProxyOptions>, ProxyOptionsValidator>();
 
+    // Where the built SPA lives, when this host serves it (ADR-0054). Unset in the dev loop.
+    builder.Services.AddOptions<SpaOptions>()
+        .Bind(builder.Configuration.GetSection(SpaOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<SpaOptions>, SpaOptionsValidator>();
+
     // ═══════════════════════════════════════════════════════════════════════════
     // SERILOG CONFIGURATION (reads from appsettings.json)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -377,6 +383,10 @@ try
     // before it can refresh session activity, consume rate-limit budget, or reach the
     // controllers/proxy.
     app.UseFetchMetadata();
+
+    // 3b. The built SPA, when Spa:RootPath is set (ADR-0054): static files, then the page shell for
+    // any navigation no endpoint claimed. After the headers above, so every page carries the CSP.
+    app.UseSpaHosting();
 
     // 4. Session activity tracking (updates LastActivity on every request except the
     // session-status probe)
