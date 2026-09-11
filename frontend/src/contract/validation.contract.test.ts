@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, login } from './client';
+import { asProblem, call, closeAccount, idempotencyKey, login } from './client';
+import { FIXTURES } from './target';
 
 /**
  * The backend has TWO validation envelopes, and which one you get depends on the endpoint.
@@ -246,6 +247,65 @@ describe('contract: validation envelopes', () => {
 
     expect(status).toBe(200);
     expect((body as { pagination?: { page?: number } }).pagination?.page).toBe(page);
+  });
+
+  it.each([
+    ['wraps to OFFSET -200', 2147483647, 100],
+    ['wraps to exactly 0', 1073741825, 20],
+  ])('answers a page whose Int32 offset %s with an empty page', async (_case, page, pageSize) => {
+    /*
+      (Page - 1) * PageSize was int arithmetic on the API while [Range] lets Page reach
+      int.MaxValue. Measured 2026-09-11 on SQL Server, before the fix:
+        ?Page=2147483647&PageSize=100 -> 500 "The offset specified in a OFFSET clause may not
+                                          be negative."
+        ?Page=1073741825&PageSize=20  -> 200 holding the FIRST page's rows
+      The mock was right all along, because JS numbers do not wrap at 2^31; the server was wrong.
+
+      The pages are read through a fresh account holding one row, so the control is exact: the
+      real target's fixture user has no seeded transactions, and against an empty history the
+      second case would pass on the old code.
+    */
+    const created = await call('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Contract Paging', type: 'Savings' }),
+    });
+    expect(created.status).toBe(201);
+    const accountId = (created.body as { data: { id: string } }).data.id;
+    type Paged = { data: unknown[]; pagination: { page: number; totalItems: number } };
+
+    try {
+      const deposited = await call('/api/transactions/deposit', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey() },
+        body: JSON.stringify({ accountId, amount: 1 }),
+      });
+      expect(deposited.status).toBe(201);
+
+      const control = await call(
+        `/api/transactions?Page=1&PageSize=${pageSize}&AccountId=${accountId}`,
+      );
+      expect(control.status).toBe(200);
+      expect((control.body as Paged).data.length).toBeGreaterThan(0);
+
+      const { status, body } = await call(
+        `/api/transactions?Page=${page}&PageSize=${pageSize}&AccountId=${accountId}`,
+      );
+      expect(status).toBe(200);
+      expect((body as Paged).data).toEqual([]);
+      expect((body as Paged).pagination.page).toBe(page);
+      expect((body as Paged).pagination.totalItems).toBe(
+        (control.body as Paged).pagination.totalItems,
+      );
+    } finally {
+      // Drain with the PIN, then close — the funded-account row's cleanup in money.contract.test.ts,
+      // so the probe does not stay listed on a seeded database.
+      await call('/api/transactions/withdraw', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey() },
+        body: JSON.stringify({ accountId, amount: 1, pin: FIXTURES.pin }),
+      }).catch(() => {});
+      await closeAccount(accountId);
+    }
   });
 
   it('keys the azuretag rename PascalCase, in the framework envelope', async () => {

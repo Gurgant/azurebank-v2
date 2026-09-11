@@ -336,12 +336,24 @@ public class TransactionService : ITransactionService
           milliseconds UUIDv7 does read chronologically — but two rows in one SaveChanges are exactly
           the case where it may not, so nothing here depends on it.
         */
-        var transactions = await query
-            .OrderByDescending(t => t.CreatedAt)
-            .ThenByDescending(t => t.Id)
-            .Skip((filter.Page - 1) * filter.PageSize)
-            .Take(filter.PageSize)
-            .ToListAsync();
+        /*
+          THE OFFSET IS A LONG, and a page past the end is answered without a query. It was
+          (Page - 1) * PageSize in int arithmetic while [Range] lets Page reach int.MaxValue, so it
+          wrapped. Measured 2026-09-11 on SQL Server: Page=2147483647&PageSize=100 wrapped to
+          OFFSET -200 and answered 500 ("The offset specified in a OFFSET clause may not be
+          negative."), and Page=1073741825&PageSize=20 wrapped to exactly 0 and answered 200 with
+          the FIRST page's rows, labelled page 1073741825. An offset too large for an int is past
+          TotalItems, which is an int, so this comparison settles every such case before the cast.
+        */
+        var offset = (long)(filter.Page - 1) * filter.PageSize;
+        List<Transaction> transactions = offset >= totalItems
+            ? []
+            : await query
+                .OrderByDescending(t => t.CreatedAt)
+                .ThenByDescending(t => t.Id)
+                .Skip((int)offset)
+                .Take(filter.PageSize)
+                .ToListAsync();
 
         var totalPages = (int)Math.Ceiling((double)totalItems / filter.PageSize);
 
