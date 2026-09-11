@@ -8,13 +8,21 @@ import { defineConfig, devices } from '@playwright/test';
  * has no React at all, and it stubs out the one genuinely visual piece of the step-up flow — the
  * modal. Everything a component does with a correct response is invisible to it.
  *
- * The topology is the dev one, unchanged: vite on 5173 proxies `/api` and `/bff` to the BFF on
+ * By default the topology is the dev one: vite on 5173 proxies `/api` and `/bff` to the BFF on
  * 5000, which proxies to the API on 7215 over SQL Server. So the browser talks to exactly what a
  * developer's browser talks to, and no production code knows this suite exists.
  */
 
 const PORT = 5173;
-export const BASE_URL = `http://localhost:${PORT}`;
+
+/*
+  A SECOND TARGET, chosen by E2E_BASE_URL. Unset, the suite runs the dev topology above and starts
+  vite. Set — CI sets it to the BFF — it runs against the BUILT app, served by the BFF under its real
+  Content-Security-Policy (ADR-0054), and starts no dev server. Vite's dev server sends no CSP at
+  all, so a suite that only ever ran there could not meet the policy the product ships with.
+*/
+const SERVED_BUILD = process.env.E2E_BASE_URL;
+export const BASE_URL = SERVED_BUILD ?? `http://localhost:${PORT}`;
 
 /** Written by the setup project, read by every test. Gitignored — it holds a live session. */
 export const STORAGE_STATE = 'e2e/.auth/user.json';
@@ -71,12 +79,14 @@ export default defineConfig({
     `npm run dev` and never `dev:mock` — this suite has no mock target, and the setup project
     fails loudly rather than skipping if the API and BFF are not answering.
   */
-  webServer: {
-    command: 'npm run dev',
-    url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    stdout: 'ignore',
-    stderr: 'pipe',
-  },
+  webServer: SERVED_BUILD
+    ? undefined
+    : {
+        command: 'npm run dev',
+        url: BASE_URL,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+        stdout: 'ignore',
+        stderr: 'pipe',
+      },
 });

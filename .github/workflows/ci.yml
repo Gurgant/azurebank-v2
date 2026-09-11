@@ -232,6 +232,22 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      # The BFF serves this page under `script-src 'self'` with no 'unsafe-inline' (ADR-0054), so an
+      # inline <script> or on*= handler in it would pass every test that runs against vite, which
+      # sends no CSP, and be refused in production. The real-stack job's csp.spec.ts walks the
+      # served build; this catches the page itself in seconds, before anything is started.
+      - name: No inline script in the built page
+        working-directory: frontend
+        run: |
+          if grep -Eo '<script[^>]*>' dist/index.html | grep -v ' src='; then
+            echo "::error::dist/index.html has an inline <script>, which the BFF's CSP refuses (ADR-0054)"
+            exit 1
+          fi
+          if grep -Eq '<[^>]+\son[a-z]+=' dist/index.html; then
+            echo "::error::dist/index.html has an inline event handler, which the BFF's CSP refuses (ADR-0054)"
+            exit 1
+          fi
+
   # ---------------------------------------------------------------------------------------
   # The unit suite AGAIN, in two zones that are not Greenwich.
   #
@@ -358,6 +374,10 @@ jobs:
       # The suites expect the dev topology: API on 5068 (http — no dev cert in CI), BFF on 5000.
       API_URL: "http://localhost:5068"
       BFF_URL: "http://localhost:5000"
+      # The e2e suite runs against the BUILT app, served by the BFF under its real CSP (ADR-0054),
+      # rather than against vite's dev server, which sends no CSP at all. Same address as BFF_URL:
+      # the BFF is the one origin the browser sees.
+      E2E_BASE_URL: "http://localhost:5000"
 
     steps:
       - name: Checkout
@@ -401,6 +421,16 @@ jobs:
           nohup dotnet run --urls "${{ env.API_URL }}" > "$RUNNER_TEMP/api.log" 2>&1 &
           echo "API starting, log at $RUNNER_TEMP/api.log"
 
+      # Before the BFF starts: Spa:RootPath must hold an index.html at startup or the host refuses
+      # to start (SpaOptionsValidator), so the build comes first.
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build the SPA the BFF serves
+        working-directory: frontend
+        run: npm run build
+
       - name: Start BFF
         working-directory: backend/src/AzureBank.Bff
         env:
@@ -427,6 +457,7 @@ jobs:
             --BackendApi:BaseUrl="${{ env.API_URL }}" \
             --ReverseProxy:Clusters:backend-api:Destinations:primary:Address="${{ env.API_URL }}" \
             --RateLimiting:AuthPermitLimit=1000 \
+            --Spa:RootPath="$GITHUB_WORKSPACE/frontend/dist" \
             > "$RUNNER_TEMP/bff.log" 2>&1 &
           echo "BFF starting, log at $RUNNER_TEMP/bff.log"
 
@@ -448,10 +479,6 @@ jobs:
           }
           wait_for API "${{ env.API_URL }}/health/ready" || { cat "$RUNNER_TEMP/api.log"; exit 1; }
           wait_for BFF "${{ env.BFF_URL }}/health/ready" || { cat "$RUNNER_TEMP/bff.log"; exit 1; }
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
 
       - name: Contract suite against the REAL backend
         working-directory: frontend
