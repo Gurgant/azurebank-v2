@@ -120,6 +120,11 @@ public class EvidencePackTests : IntegrationTestBase
             .SingleAsync(a => a.UserId == userId && a.ConsumedByTransactionId == movement.Id);
 
         text.Should().Contain($"authorisation {consumed.Id:D} paid for this transfer");
+
+        // The amount carries its unit. The pack is read by somebody outside the system, and until
+        // 2026-09-11 it printed "TransferOut of 40.00 on account …": a number with no currency.
+        text.Should().Contain(
+            $"{movement.Type} of {ValidationRules.DescribeAmount(Amount)} on account {account:D}");
         text.Should().Contain(
             "This row is evidence the application wrote, and it is NOT inside the",
             "the limit travels with every positive answer, not only with the docs");

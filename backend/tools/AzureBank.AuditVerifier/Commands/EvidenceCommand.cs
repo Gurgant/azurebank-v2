@@ -1,7 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
-using System.Globalization;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
@@ -265,7 +265,10 @@ public static class EvidenceCommand
         yield return "Movement, from the ledger row (readable by anyone holding the database; not";
         yield return "hashed, and printed here because Art. 72 asks what moved, not only that";
         yield return "something did):";
-        var amount = movement.Amount.ToString("F2", CultureInfo.InvariantCulture);
+        // With its unit, through the one formatter the server has for a figure a person reads:
+        // invariant digits, then the ISO code. The pack is read outside the system, where "40.00"
+        // alone names no currency; it printed exactly that until 2026-09-11.
+        var amount = ValidationRules.DescribeAmount(movement.Amount);
         yield return $"  {movement.Type} of {amount} on account {movement.AccountId:D},"
             + $" status {movement.Status}";
         yield return $"  Created {movement.CreatedAt:O}";
