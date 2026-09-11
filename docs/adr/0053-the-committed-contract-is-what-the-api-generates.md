@@ -151,12 +151,21 @@ today), so a provider resolved for the wrong name, or a host composed without it
 cannot produce an empty document that agrees with an empty regeneration.
 
 **Two defects found on the way, recorded and deliberately NOT fixed here**, because each changes the
-product rather than the gate:
+product rather than the gate — ⚠️ *and the first of them is withdrawn, see the note under it:*
 
-- **The API serves invalid JSON on a server with a comma-decimal locale.** D4's bug is not the
+- ~~**The API serves invalid JSON on a server with a comma-decimal locale.** D4's bug is not the
   test's: `/openapi/v1.json` is written through the same library. Production and CI run on Linux
   with the invariant culture, so nothing is broken today; a developer serving it from an Italian,
-  German or French Windows profile would get `0,01`.
+  German or French Windows profile would get `0,01`.~~ *(WITHDRAWN 2026-09-11 — false. It was
+  extrapolated from the TEST's own writer to the API's route, and the route was never measured.
+  Measured now, through the real route: the API hosted in Development so `MapOpenApi` is mapped,
+  with it-IT and then de-DE as the default culture of every thread, `GET /openapi/v1.json` returned
+  200, a 140,392-character body containing `0.01` and never `0,01`, which parsed as JSON — the same
+  as under en-US. The measurement is not vacuous: in the same run a thread-pool thread, which is
+  where the request is served, formatted `0.01m` as `0,01` under both cultures, so the comma was
+  due and the route still did not write one. `MapOpenApi` builds its writer with
+  `InvariantCulture`. **D4 still stands**: it is about the test's writer, and a plain
+  `StringWriter()` under it-IT does write `0,01` — which is exactly why the test pins its own.)*
 - **The target meant to stop the XML-comment generator removes nothing.** `AzureBank.Api.csproj`
   removes the analyzer at `$(PkgMicrosoft_AspNetCore_OpenApi)/analyzers/…`, and that property is
   only defined when the package reference sets `GeneratePathProperty="true"`, which it does not — it
@@ -184,6 +193,10 @@ matter.
   own case, and the operations floor would stop meaning what it says.
 - **Gating Schemathesis.** If runtime conformance were ever made a gate, D6's paragraph would move,
   and claim 3 would stop being the open one.
-- **Either defect above being fixed.** The XML-generator fix would remove D3's in-string newlines
+- ~~**Either defect above being fixed.** The XML-generator fix would remove D3's in-string newlines
   from the contract altogether and make that normalisation dead code; the culture fix in the product
-  would make D4's pin redundant but not wrong.
+  would make D4's pin redundant but not wrong.~~ **The XML-generator defect above being fixed.** It
+  would remove D3's in-string newlines from the contract altogether and make that normalisation dead
+  code. *(Corrected 2026-09-11: the struck bullet also named a culture fix in the product, and there
+  is none to make — the product defect it assumed is withdrawn, above — so D4's pin stays, guarding
+  the test's own writer.)*
