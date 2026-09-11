@@ -421,7 +421,7 @@ public class TransferServiceTests : IDisposable
 
     #region TransferAsync - Successful Transfer Tests
 
-#endregion
+    #endregion
 
     #region The day's ceiling (ADR-0050)
 
@@ -755,5 +755,5 @@ public class TransferServiceTests : IDisposable
 
     #region InternalTransferAsync - Successful Transfer Tests
 
-#endregion
+    #endregion
 }

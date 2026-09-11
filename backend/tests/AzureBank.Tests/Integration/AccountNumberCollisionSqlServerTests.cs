@@ -171,16 +171,16 @@ public sealed class AccountNumberCollisionSqlServerTests : IDisposable
 
     private static Shared.Entities.Transaction NewProbeTransaction(
         Shared.Entities.Account account, string number) => new()
-    {
-        Account = account,
-        AccountId = account.Id,
-        TransactionNumber = number,
-        Type = Shared.Enums.TransactionType.Deposit,
-        Amount = 1m,
-        BalanceBefore = 0m,
-        BalanceAfter = 1m,
-        Description = "narrowing probe",
-    };
+        {
+            Account = account,
+            AccountId = account.Id,
+            TransactionNumber = number,
+            Type = Shared.Enums.TransactionType.Deposit,
+            Amount = 1m,
+            BalanceBefore = 0m,
+            BalanceAfter = 1m,
+            Description = "narrowing probe",
+        };
 
     /// <summary>
     /// Registers a user and returns an authenticated client plus the number of the primary account

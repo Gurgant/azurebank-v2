@@ -43,6 +43,14 @@ jobs:
         working-directory: backend
         run: dotnet restore AzureBank.slnx
 
+      # Whitespace only, because no .editorconfig is tracked: indentation, trailing whitespace,
+      # final newlines and brace placement, at the formatter's defaults. The frontend's prettier step
+      # is the other half. It runs on this Linux checkout, where every file is LF; on a Windows
+      # working tree a file checked out LF can read as a violation, and that is the checkout.
+      - name: Whitespace format
+        working-directory: backend
+        run: dotnet format whitespace AzureBank.slnx --no-restore --verify-no-changes
+
       - name: Build
         working-directory: backend
         run: dotnet build AzureBank.slnx --no-restore --configuration Release

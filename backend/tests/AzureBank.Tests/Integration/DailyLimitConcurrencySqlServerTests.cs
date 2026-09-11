@@ -651,7 +651,10 @@ public sealed class DailyLimitConcurrencySqlServerTests : IDisposable
         => SendAsync(client, token, HttpMethod.Post, "/api/transfers/authorizations",
             new TransferAuthorizationRequest
             {
-                FromAccountId = accountId, RecipientAzureTag = payeeTag, Amount = Amount, Pin = pin
+                FromAccountId = accountId,
+                RecipientAzureTag = payeeTag,
+                Amount = Amount,
+                Pin = pin
             });
 
     private static Task<HttpResponseMessage> TransferAsync(

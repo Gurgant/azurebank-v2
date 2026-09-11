@@ -87,7 +87,10 @@ public class DailyLimitEndpointTests : IntegrationTestBase, IClassFixture<DailyL
             "/api/transfers/authorizations",
             new TransferAuthorizationRequest
             {
-                FromAccountId = fromAccountId, RecipientAzureTag = payeeTag, Amount = amount, Pin = pin
+                FromAccountId = fromAccountId,
+                RecipientAzureTag = payeeTag,
+                Amount = amount,
+                Pin = pin
             },
             JsonOptions);
 
