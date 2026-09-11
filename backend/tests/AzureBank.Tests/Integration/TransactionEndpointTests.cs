@@ -115,6 +115,50 @@ public class TransactionEndpointTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.Created, "the bound is inclusive: 100000 answered 201 on the running API");
     }
 
+    [Theory]
+    [InlineData("amount", "amount")]
+    [InlineData("amount", "Amount")]
+    public async Task Deposit_WithAKeySentTwice_IsRefused_AndMovesNothing(string first, string second)
+    {
+        /*
+          Refused, not resolved. Before 2026-09-11 the LAST value won, measured on the running API:
+          "amount":1,"amount":2 deposited 2, and "amount":1,"Amount":3 deposited 3, since binding is
+          also case-insensitive. After, the same request answered:
+
+            400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
+                 "title":"One or more validation errors occurred.","status":400,
+                 "errors":{"request":["The request field is required."],
+                           "$.amount":["Duplicate property 'amount' encountered during
+                                        deserialization of type '…DepositRequest'."]},
+                 "traceId":"00-…-01"}
+
+          — the envelope every malformed body already gets (a string where the amount belongs
+          answers the same way), keyed by the JSON path of the second occurrence.
+        */
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        var balance = await DepositAsync(token, accountId, 100m);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/transactions/deposit")
+        {
+            Content = new StringContent(
+                $"{{\"accountId\":\"{accountId}\",\"{first}\":1,\"{second}\":2}}",
+                System.Text.Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        var response = await Client.SendAsync(request);
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.BadRequest, "which of the two values the sender meant is not ours to guess");
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        problem.GetProperty("errors").GetProperty($"$.{second}")[0].GetString()
+            .Should().Contain("Duplicate property 'amount'");
+
+        var after = await Client.GetFromJsonAsync<ApiResponse<BalanceResponse>>(
+            $"/api/accounts/{accountId}/balance", JsonOptions);
+        after!.Data!.Balance.Should().Be(balance, "a refused deposit moves nothing");
+    }
+
     [Fact]
     public async Task Deposit_ToOtherUsersAccount_ReturnsForbidden()
     {
