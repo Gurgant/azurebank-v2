@@ -84,6 +84,12 @@ all there is:
 Use the notice's own `Event` in that WHERE clause. Filtering on `PinEnrolled` for a change reference
 returns zero rows, which reads exactly like the finding below and is not one.
 
+⚠️ **A null `AuditEventId` is not proof the notice is old.** Nulling it is a write to
+`SubscriberNotices`, like a re-point, and the query above then answers for ANY row of the same kind —
+for `PinChanged`, any other change the user made. A notice written after this deployment applied the
+`AddSubscriberNoticeAuditEventId` migration always names its row, so on a notice that recent a null
+is itself the finding: somebody wrote the table (ADR-0052, the dated line under D3's limit).
+
 For `PinEnrolled`, one row per enrolment — normally exactly one, and more only where §2 below has
 been run and the subscriber has since re-enrolled; the trail keeps both. For
 `PinChanged` there is one row per change, and several is not a fault — it is the account holder's

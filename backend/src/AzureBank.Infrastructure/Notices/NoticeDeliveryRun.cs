@@ -77,8 +77,15 @@ public sealed record NoticeResult(
 /// the absence is the finding. Since ADR-0052 the check is EXACT when the notice names a row: it
 /// asks for that <c>Id</c>, and asks that the row also carry the notice's own actor and event, so
 /// a notice re-pointed at somebody else's row is still found. A notice written BEFORE that
-/// migration names none, and only those fall back to the old existence question by
-/// (ActorUserId, Event) — which is why that question survives here at all.
+/// migration names none, and falls back to the old existence question by (ActorUserId, Event) —
+/// which is why that question survives here at all.
+/// </para>
+/// <para>
+/// ⚠️ NOT ONLY THOSE. Until 2026-09-11 this said "only those fall back", and the run cannot make
+/// that true: a notice whose name was NULLED after it was written looks exactly like one written
+/// before the migration, so it is asked the old question too — and for a repeatable kind another
+/// row of the same user answers it. Pinned beside the re-point limit below by
+/// ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt (T17).
 /// </para>
 /// <para>
 /// ⚠️ WHAT THE EXACT CHECK STILL CANNOT SEE: the pair it compares is (ActorUserId, Event), so a
