@@ -91,6 +91,11 @@ shared registration extension: two hand-written copies were a coincidence, three
 the day a sending transport arrives it must replace the pickup directory in all of them or one host
 will quietly keep writing files._
 
+_Pinned (2026-09-11): `NoticeTransportRegistrationTests` builds all three roots and fails unless
+each registers exactly one `INoticeTransport` and the three agree on its lifetime and
+implementation. Until then, deleting the tool's line or the Function's left every test green, and
+without the tool's, `notify` exited 4, the usage-error code, on a correct command line._
+
 ## Ratified 2026-09-04
 
 Decided, and recorded here so the deferral above reads as history rather than as an open
