@@ -750,7 +750,7 @@ const AZURE_TAG_RE = /^[a-z][a-z0-9_]{2,19}$/;
   "Cannot delete account with non-zero balance. Current balance: $50,042.00" — and this file quoted
   both, then kept quoting them after 3769dc9 (2026-08-18) had removed the figures:
   `InsufficientFundsException` says "Insufficient funds." and carries `available`/`requested` as
-  NUMERIC extensions (the client formats them in the user's locale), and
+  NUMERIC extensions (the client formats them, in a fixed en-IE), and
   `AccountService.DeleteAccountAsync` says "Cannot delete an account with a non-zero balance." —
   reworded, not merely shortened. `MoneyFormattingTests` forbids `:C` and currency symbols in Api
   and Shared, so a symbol cannot return without a red backend build. Re-measured 2026-09-03 (23:25Z)
