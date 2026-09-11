@@ -43,7 +43,14 @@ export default defineConfig({
   retries: 0,
 
   forbidOnly: !!process.env.CI,
-  reporter: process.env.CI ? [['github'], ['list']] : [['list']],
+  /*
+    The JSON report in CI is read by `scripts/assert-e2e-ran.mjs`, which fails the job if any spec
+    was SKIPPED. Until 2026-09-11 the two specs that need a throwaway user skipped on every run and the
+    job still read green — `test.skip` is quiet by design, so the refusal has to live somewhere else.
+  */
+  reporter: process.env.CI
+    ? [['github'], ['list'], ['json', { outputFile: 'playwright-report/e2e-results.json' }]]
+    : [['list']],
 
   use: {
     baseURL: BASE_URL,
