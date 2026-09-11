@@ -248,21 +248,14 @@ public class AuthService : IAuthService
         if (await _context.Users.AnyAsync(u => u.AzureTag == normalizedAzureTag))
         {
             /*
-              Sanitized for the LOG only — never for the query above, which must match the value
-              the user actually claimed.
-
-              The handle is already pattern-validated (ValidationRules.AzureTagPattern is anchored,
-              ^[a-z][a-z0-9_]{2,19}$, so it cannot carry CR/LF), and that is exactly the argument
-              this site was dismissed on twice. Twice is the point: the alert reopens every time the
-              line moves, and the argument depends on a validator in another file continuing to run
-              on every path that reaches here. Routing through the audited barrier costs one local
-              and settles it — the same reasoning, and the same helper, as AccountService's
-              CreateAccountAsync.
+              NO HANDLE IN THE LINE, since 2026-09-11. A handle is a direct identifier, and ADR-0017's
+              log-identifier rule keeps those out of exported logs entirely; the email sibling above
+              logs only the redactor's MASKED form. It used to carry the claimed handle, sanitized
+              for log-forging, which answered the forging question and not the identity one.
             */
-            var safeAzureTag = LogSanitizer.Sanitize(normalizedAzureTag);
             _logger.LogWarning(
-                "SecurityEvent {SecurityEvent}: registration rejected, handle already taken ({AzureTag})",
-                SecurityEvents.DuplicateRegistration, safeAzureTag);
+                "SecurityEvent {SecurityEvent}: registration rejected, handle already taken",
+                SecurityEvents.DuplicateRegistration);
             throw new ConflictException("Registration could not be completed.", ErrorCodes.RegistrationFailed);
         }
 

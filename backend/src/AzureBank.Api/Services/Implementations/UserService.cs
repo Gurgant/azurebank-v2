@@ -129,21 +129,15 @@ public class UserService : IUserService
         }
 
         /*
-          Sanitized for the LOG only; `normalized` is still returned unchanged.
-
-          Both values are AzureTags and therefore already pattern-constrained (anchored
-          ^[a-z][a-z0-9_]{2,19}$), which is the argument this alert was dismissed on. It reopened
-          the moment the line moved, and it will keep reopening: the barrier is what ends that, and
-          it does not rely on a validator in a different file staying in force on every path.
-          `previous` is the older handle read back from the row — user-authored once, so it gets the
-          same treatment as the new one rather than being trusted for having been stored.
+          NEITHER HANDLE IN THE LINE, since 2026-09-11 — the same choice the AzureTagRenamed audit
+          row made from the start ("carrying neither handle"). A handle is a direct identifier, and
+          ADR-0017's log-identifier rule keeps those out of exported logs; the user id is the
+          correlation key. The line used to name both, sanitized for log-forging.
         */
         _logger.LogInformation(
-            "SecurityEvent {SecurityEvent}: user {UserId} renamed their handle from {PreviousAzureTag} to {AzureTag}",
+            "SecurityEvent {SecurityEvent}: user {UserId} renamed their handle",
             SecurityEvents.AzureTagRenamed,
-            userId,
-            LogSanitizer.Sanitize(previous),
-            LogSanitizer.Sanitize(normalized));
+            userId);
 
         return normalized;
     }
