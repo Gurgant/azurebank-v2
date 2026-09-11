@@ -127,8 +127,9 @@ aggregates. 596 tests across 58 files, and a test that writes to `console.error`
 end-to-end against the running stack, not only against mocks.
 
 **Known gaps**, tracked rather than hidden: the accessibility sweep is a dedicated phase not yet
-run; the production CSP is designed but unverifiable until the BFF serves the built SPA, which it
-does not yet do. A UI/UX overhaul is in progress.
+run. A UI/UX overhaul is in progress. (The production CSP used to be listed here as unverifiable;
+the BFF now serves the built SPA under it, and CI's e2e run walks that build with no violations
+— ADR-0054.)
 
 The end-to-end browser suite that used to be listed here **exists**: Playwright drives a real
 Chromium against the real BFF, API and SQL Server, and CI runs it in the same job as the contract
