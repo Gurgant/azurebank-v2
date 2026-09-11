@@ -42,6 +42,11 @@ namespace AzureBank.Tests.Architecture;
 /// untouched, and <c>available</c> / <c>requested</c> are still missing everywhere — named below so
 /// the gap is a known small PR rather than a silence.
 /// </para>
+/// <para>
+/// That small PR landed on 2026-09-11: <c>INSUFFICIENT_FUNDS</c>'s members are declared on the
+/// three money moves, and <see cref="PublishedRefusalCodesTests"/> pins them. What changed here is
+/// only what that made false: <c>requested</c> now rides two codes.
+/// </para>
 /// </remarks>
 public class PublishedDailyLimitTests
 {
@@ -151,11 +156,12 @@ public class PublishedDailyLimitTests
     /// <remarks>
     /// A 422 schema in this document is either an INLINE object (every business-rule endpoint, and
     /// the idempotent ones, whose bodies are built by the two transformers) or a <c>$ref</c> to the
-    /// shared ProblemDetails component (<c>POST /api/transfers/internal/authorizations</c>,
-    /// <c>POST /api/auth/pin</c>). A <c>$ref</c> has no <c>properties</c> of its own and declares
-    /// exactly what the component declares — which the component test below
-    /// (<c>TheProblemDetailsComponent_IsUntouched_AndInsufficientFundsMembersAreStillMissing</c>)
-    /// asserts separately — so "declares nothing here" is the honest answer for it, not an error.
+    /// shared ProblemDetails component. A <c>$ref</c> has no <c>properties</c> of its own and
+    /// declares exactly what the component declares — which the component test below
+    /// (<c>TheProblemDetailsComponent_IsUntouched</c>) asserts separately — so "declares nothing
+    /// here" is the honest answer for it, not an error. No 422 has been a <c>$ref</c> since
+    /// 2026-09-11, when the internal mint and <c>POST /api/auth/pin</c> lost the attribute that
+    /// made theirs one; the branch stays for the next.
     /// </remarks>
     private static JsonElement? Member422(string path, string member)
     {
@@ -214,6 +220,11 @@ public class PublishedDailyLimitTests
         // the document — DELETE /api/accounts/{id} and GET /api/transactions/summary carry one too,
         // and neither is a money move nor a mint; that the whole rest of the document stayed
         // byte-identical is a claim the committed diff carries, not this test.
+        //
+        // `requested` is the exception since 2026-09-11: INSUFFICIENT_FUNDS carries it too, so the
+        // withdrawal and the internal transfer declare it, for that code. What is asserted for it
+        // here is that it never claims the day's ceiling; PublishedRefusalCodesTests pins where it
+        // may appear.
         foreach (var path in new[]
                  {
                      "/api/transactions/withdraw", "/api/transactions/deposit",
@@ -221,16 +232,23 @@ public class PublishedDailyLimitTests
                      "/api/accounts/{id}/deletion-authorizations",
                  })
         {
-            foreach (var member in new[] { "limit", "used", "requested", "resetsAt" })
+            foreach (var member in new[] { "limit", "used", "resetsAt" })
             {
                 Member422(path, member).Should().BeNull(
                     $"{path} does not check the day's ceiling, so it cannot answer {member}");
+            }
+
+            if (Member422(path, "requested") is { } requested)
+            {
+                requested.GetProperty("description").GetString().Should().NotContain(
+                    ErrorCodes.DailyLimitExceeded,
+                    $"{path} does not check the day's ceiling, so its requested is not that code's");
             }
         }
     }
 
     [Fact]
-    public void TheProblemDetailsComponent_IsUntouched_AndInsufficientFundsMembersAreStillMissing()
+    public void TheProblemDetailsComponent_IsUntouched()
     {
         /*
           WHAT THIS CHANGE DID NOT DO, pinned so the next reader does not have to diff for it.
@@ -240,12 +258,11 @@ public class PublishedDailyLimitTests
           already builds business-rule bodies (BusinessRulesDocumentTransformer,
           IdempotencyOperationTransformer), so nothing that $refs the component moved.
 
-          `available` and `requested` — the pair INSUFFICIENT_FUNDS spreads the same way — are still
-          undeclared ANYWHERE. That is deliberate and it is not a decision that they should stay
-          hidden: it spans more operations than these two (every money move can answer the code) and
-          it is its own small PR. It was the "precedent" this file used to cite for leaving the
-          daily-limit four undeclared, which is why the omission is now asserted rather than
-          assumed: a silence cannot be a precedent, and a test that names it cannot be one.
+          `available` and `requested` — the pair INSUFFICIENT_FUNDS spreads the same way — were
+          undeclared ANYWHERE when this was written, and this test asserted it, so the omission was
+          a named gap rather than a silence mistaken for a precedent. Since 2026-09-11 they are
+          declared, on the three money moves' own inline schemas and still not on the component;
+          the flipped assertion lives in PublishedRefusalCodesTests.
         */
         var component = Document().GetProperty("components").GetProperty("schemas")
             .GetProperty("ProblemDetails").GetProperty("properties");
@@ -253,12 +270,8 @@ public class PublishedDailyLimitTests
         foreach (var member in new[] { "limit", "used", "requested", "resetsAt", "available" })
         {
             component.TryGetProperty(member, out _).Should().BeFalse(
-                $"{member} is not on the shared component; the four ride the two operations' own "
+                $"{member} is not on the shared component; every member rides the operations' own "
                 + "inline 422 schemas");
         }
-
-        Member422("/api/transactions/withdraw", "available").Should().BeNull(
-            "INSUFFICIENT_FUNDS's own {available, requested} stay undeclared — named here as an "
-            + "open omission, and its own small PR, not a ruling that it should stay that way");
     }
 }

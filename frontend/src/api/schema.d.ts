@@ -1039,13 +1039,26 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unprocessable Entity */
+                /** @description Business Rule Violation - the proof this change needs is missing: the password when enrolling a PIN (errorCode PASSWORD_REQUIRED), or the current PIN when changing one (errorCode PIN_REQUIRED). */
                 422: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ProblemDetails"];
+                        "application/json": {
+                            /** @description A URI reference identifying the problem type */
+                            type?: string;
+                            /** @description A short, human-readable summary (e.g., 'Business Rule Violation') */
+                            title?: string;
+                            /** @description The HTTP status code (422) */
+                            status?: number;
+                            /** @description A human-readable explanation of the business rule violation */
+                            detail?: string;
+                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            errorCode?: string;
+                            /** @description Request trace identifier for debugging */
+                            traceId?: string;
+                        };
                     };
                 };
                 /** @description Too Many Requests */
@@ -1658,7 +1671,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Business Rule Violation - The request violates domain constraints (e.g., insufficient funds). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED, checked before the balance), or the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1677,6 +1690,10 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /** @description INSUFFICIENT_FUNDS only: the balance of the account the money would have left, when this request was refused. It is less than requested. */
+                            available?: number;
+                            /** @description INSUFFICIENT_FUNDS only: the amount this request asked to move. It was not moved: it is more than available. */
+                            requested?: number;
                         };
                     };
                 };
@@ -1887,13 +1904,26 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unprocessable Entity */
+                /** @description Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED). */
                 422: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ProblemDetails"];
+                        "application/json": {
+                            /** @description A URI reference identifying the problem type */
+                            type?: string;
+                            /** @description A short, human-readable summary (e.g., 'Business Rule Violation') */
+                            title?: string;
+                            /** @description The HTTP status code (422) */
+                            status?: number;
+                            /** @description A human-readable explanation of the business rule violation */
+                            detail?: string;
+                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            errorCode?: string;
+                            /** @description Request trace identifier for debugging */
+                            traceId?: string;
+                        };
                     };
                 };
                 /** @description Too Many Requests */
@@ -2035,7 +2065,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Business Rule Violation - The request violates domain constraints (e.g., recipient not found, self transfer, insufficient funds) or the day's external transfer limit (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance), or the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -2058,7 +2088,9 @@ export interface paths {
                             limit?: number;
                             /** @description DAILY_LIMIT_EXCEEDED only: how much of that ceiling the user's completed outgoing external transfers had already taken when this request was refused. Today's remaining headroom is limit - used; no member carries it, so there is one source of truth. */
                             used?: number;
-                            /** @description DAILY_LIMIT_EXCEEDED only: the amount this request asked to move. It was not moved: used + requested would have exceeded limit, and nothing was written. */
+                            /** @description INSUFFICIENT_FUNDS only: the balance of the account the money would have left, when this request was refused. It is less than requested. */
+                            available?: number;
+                            /** @description DAILY_LIMIT_EXCEEDED and INSUFFICIENT_FUNDS: the amount this request asked to move, under either code. It was not moved: under DAILY_LIMIT_EXCEEDED, used + requested would have exceeded limit; under INSUFFICIENT_FUNDS, it is more than available. */
                             requested?: number;
                             /**
                              * Format: date-time
@@ -2198,7 +2230,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Business Rule Violation - the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -2217,6 +2249,10 @@ export interface paths {
                             errorCode?: string;
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
+                            /** @description INSUFFICIENT_FUNDS only: the balance of the account the money would have left, when this request was refused. It is less than requested. */
+                            available?: number;
+                            /** @description INSUFFICIENT_FUNDS only: the amount this request asked to move. It was not moved: it is more than available. */
+                            requested?: number;
                         };
                     };
                 };

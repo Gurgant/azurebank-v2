@@ -142,9 +142,10 @@ public class AuthController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     // Declared because a client implementing PIN CHANGE meets all three, and the spec listed none of
-    // them: 401 a wrong currentPin, 422 a missing one, 429 the lockout.
+    // them: 401 a wrong currentPin, 422 a missing one, 429 the lockout. The 422 is declared by
+    // BusinessRulesDocumentTransformer instead, since 2026-09-11: an attribute here outranks that
+    // entry and published the bare "Unprocessable Entity", where the entry names both codes.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<ApiResponse>> SetPin([FromBody] SetPinRequest request)
     {

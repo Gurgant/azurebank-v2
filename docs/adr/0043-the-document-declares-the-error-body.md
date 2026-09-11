@@ -124,3 +124,11 @@ after.
   *(struck 2026-09-10: a stale commit now fails the backend suite — ADR-0053 generates the document
   from the same composition the running API serves, measured byte-identical to it, and compares.
   The script is still run by no job, and for this no longer needs to be.)*
+
+_Note (2026-09-11) — **the extension members are declared too, where they ride.** ADR-0050 put the
+day's-ceiling four on the two operations that can answer that code; `INSUFFICIENT_FUNDS`'s
+`available` and `requested` now sit on the three money moves' own inline 422 schemas, and the shared
+component is untouched. The same change gave `POST /api/auth/pin` and the internal mint their codes
+in place of the bare reason phrase, and dropped two 422 examples the server answers with another
+status (400, 404). Every code and member was measured on the running API first;
+`PublishedRefusalCodesTests` pins them._
