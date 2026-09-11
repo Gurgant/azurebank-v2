@@ -1106,6 +1106,19 @@ What a recipient does with the reference, and what the contact can do about it, 
   written to stop exactly that. `Audit:AnchorKey` authenticates the anchor records, and `verify` needs
   it because it reads them now: see the uncovered window below.
 
+  ⚠️ **`Audit:AnchorKey` HAS NO RING, so pass the key that WROTE the anchors.** The ring lines below
+  are for `Audit:ChainKey` only. Rotating the anchor key does not start a new run of records, it
+  stops the chain — measured 2026-09-11 on a scratch database, under the new key:
+
+  ```
+  anchor  -> EXIT=6   NOT RECORDED ... Broke at anchor: 1
+  verify  -> EXIT=0   CHAIN INTACT ... UNCOVERED WINDOW: not computed
+  anchor  -> EXIT=6   NOT RECORDED ... Broke at anchor: 1
+  ```
+
+  and under the old key both were normal again. So "the wrong key" in that refusal includes the
+  new key after a rotation, and the remedy is the old one (ADR-0044 D7).
+
   ⚠️ **AND `verify` WAS THE ONLY VERB THAT ANSWERED LIKE THAT.** Running the same misconfiguration
   through the other two, on the build shipped before this page was corrected:
 

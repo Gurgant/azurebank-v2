@@ -89,12 +89,22 @@ public class AuditAnchor
 
     /// <summary>Non-secret identity of the <c>Audit:AnchorKey</c> that authenticated this record.</summary>
     /// <remarks>
+    /// <para>
     /// WITHOUT THIS, A FAILED MAC MEANS NOTHING IN PARTICULAR. A verifier could not tell "MACed
     /// under a key I no longer hold" from "minted by somebody who never held one", so the single
-    /// signal the sixth secret exists to produce would be uninterpretable — and the design would
-    /// have quietly frozen the anchor key forever, which is the option this project rejected for
-    /// audit rows one change earlier. Derived from the key rather than configured, and under its own
-    /// domain string: sharing the row's would weld two constants that must be free to move apart.
+    /// signal the sixth secret exists to produce would be uninterpretable. Derived from the key rather
+    /// than configured, and under its own domain string: sharing the row's would weld two constants
+    /// that must be free to move apart.
+    /// </para>
+    /// <para>
+    /// ⚠️ IT NAMES THE KEY; IT DOES NOT MAKE THE KEY ROTATABLE. Until 2026-09-11 this remark went on
+    /// to say that without it "the design would have quietly frozen the anchor key forever", which
+    /// read as if the key were not frozen. It is: nothing holds a retired anchor key, so after a
+    /// rotation every record names a key the run does not hold and <c>anchor</c> refuses to append
+    /// on every run. Measured on a scratch database: exit 6 and "Broke at anchor: 1" twice under
+    /// the new key, and appending again as soon as the old key came back. See
+    /// <see cref="AzureBank.Shared.Options.AuditOptions.AnchorKey"/>.
+    /// </para>
     /// </remarks>
     public string AnchorKeyId { get; set; } = string.Empty;
 

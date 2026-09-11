@@ -131,6 +131,13 @@ builds exactly the re-point an integrity binding would catch, so it goes red the
 (Unlike ADR-0047's forcing function, which built only the shape its fix left alone and stayed green:
 that is the lesson this ADR's Consequences opened with, applied.)
 
+⚠️ **And a NULLED pointer is asked the old question** *(added 2026-09-11)*. The fallback is there for
+notices written before the migration, and the run knows them by a null `AuditEventId` — which is
+also what a notice looks like after somebody nulls it. For a repeatable kind the old question is then
+answered by another row of the same user, as with a re-point within the kind: measured, zero
+findings, by `ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt`, whose second owner, with no other change left, IS reported. The same
+binding would close both doors, and the cheaper one below would stay open beside them.
+
 Closing it needs an integrity-protected binding — a MAC over the pair, and therefore a **new
 validated secret**, at the price `docs/deferred/relaying-the-enrolment-notice.md` already puts on
 one: *"taught to the five places the other six live"*. ⚠️ **That document is costing a TRANSPORT
