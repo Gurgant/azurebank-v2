@@ -362,6 +362,35 @@ public class TransactionEndpointTests : IntegrationTestBase
         result!.Data.Should().NotBeEmpty();
     }
 
+    [Theory]
+    // (1073741825 - 1) * 20 is exactly 5 * 2^32, so in int arithmetic the offset wrapped to 0 and
+    // this page came back holding the FIRST page's rows — measured on SQL Server 2026-09-11, and
+    // the same here. (2147483647 - 1) * 100 wrapped to -200: SQL Server refuses that with a 500
+    // (PageOffsetSqlServerTests), and this provider skips a negative count as zero, so here it
+    // came back as every row.
+    [InlineData(1073741825, 20)]
+    [InlineData(2147483647, 100)]
+    public async Task ListTransactions_APageWhoseOffsetOverflowsAnInt_IsEmpty_NotTheFirstPage(
+        int page, int pageSize)
+    {
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await DepositAsync(token, accountId, 100m);
+        await DepositAsync(token, accountId, 200m);
+
+        // The control: the user HAS rows, so an empty answer below is the paging and not the data.
+        var first = await Client.GetFromJsonAsync<PaginatedResponse<TransactionResponse>>(
+            $"/api/transactions?Page=1&PageSize={pageSize}", JsonOptions);
+        first!.Data.Should().NotBeEmpty();
+
+        var response = await Client.GetAsync($"/api/transactions?Page={page}&PageSize={pageSize}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<PaginatedResponse<TransactionResponse>>(JsonOptions);
+        result!.Data.Should().BeEmpty($"page {page} at {pageSize} a page starts far past every row");
+        result.Pagination.Page.Should().Be(page);
+        result.Pagination.TotalItems.Should().Be(first.Pagination.TotalItems);
+    }
+
     #endregion
 
     #region Get Transaction Tests
