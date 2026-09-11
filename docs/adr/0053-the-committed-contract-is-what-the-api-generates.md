@@ -193,7 +193,10 @@ matter.
   own case, and the operations floor would stop meaning what it says.
 - **Gating Schemathesis.** If runtime conformance were ever made a gate, D6's paragraph would move,
   and claim 3 would stop being the open one.
-- **The XML-generator defect above being fixed.** It would remove D3's in-string newlines from the
-  contract altogether and make that normalisation dead code. *(This bullet also named "the culture
-  fix in the product"; there is no such fix to make — the product defect it assumed was withdrawn
-  on 2026-09-11, above — so D4's pin stays, guarding the test's own writer.)*
+- ~~**Either defect above being fixed.** The XML-generator fix would remove D3's in-string newlines
+  from the contract altogether and make that normalisation dead code; the culture fix in the product
+  would make D4's pin redundant but not wrong.~~ **The XML-generator defect above being fixed.** It
+  would remove D3's in-string newlines from the contract altogether and make that normalisation dead
+  code. *(Corrected 2026-09-11: the struck bullet also named a culture fix in the product, and there
+  is none to make — the product defect it assumed is withdrawn, above — so D4's pin stays, guarding
+  the test's own writer.)*
