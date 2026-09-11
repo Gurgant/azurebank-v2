@@ -25,7 +25,8 @@ public class DesignRuleTests
             .ResideInNamespace("AzureBank.Shared.Entities")
             .Should()
             .BePublic()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all entities must be public for EF Core to access them");
@@ -39,7 +40,8 @@ public class DesignRuleTests
             .ResideInNamespace("AzureBank.Shared.Exceptions")
             .Should()
             .Inherit(typeof(Exception))
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all custom exceptions must inherit from Exception");
@@ -53,7 +55,8 @@ public class DesignRuleTests
             .ResideInNamespace("AzureBank.Api.Controllers")
             .Should()
             .BePublic()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all controllers must be public for ASP.NET Core routing");
@@ -67,7 +70,8 @@ public class DesignRuleTests
             .ResideInNamespace("AzureBank.Api.Services.Interfaces")
             .Should()
             .BePublic()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "service interfaces must be public for DI registration");
@@ -81,7 +85,8 @@ public class DesignRuleTests
             .ResideInNamespaceContaining("DTOs")
             .Should()
             .BePublic()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "DTOs must be public for serialization and API contracts");
@@ -97,7 +102,8 @@ public class DesignRuleTests
             .ResideInNamespace("AzureBank.Infrastructure.Data.Configurations")
             .Should()
             .BeClasses()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "EF Core configurations should be concrete classes");
@@ -111,7 +117,8 @@ public class DesignRuleTests
             .ResideInNamespaceContaining("Validators")
             .ShouldNot()
             .BeAbstract()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "validators should be concrete classes for DI registration");
@@ -128,7 +135,8 @@ public class DesignRuleTests
             .DoNotHaveNameEndingWith("Extensions") // Exclude extension classes
             .ShouldNot()
             .BeStatic()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "middleware classes (except extension classes) should not be static");
@@ -142,7 +150,8 @@ public class DesignRuleTests
             .ResideInNamespace("AzureBank.Shared.Enums")
             .Should()
             .BePublic()
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "enums must be public for API contracts and serialization");
