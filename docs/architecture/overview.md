@@ -140,9 +140,9 @@ narrowed rather than closed. Closing it needs out-of-band email confirmation, wh
 infrastructure this project does not have. That is a bounded, accepted risk, written down as a
 decision rather than left as an oversight. *(Since ADR-0045 and ADR-0047 a notice to the account's
 email is recorded in the same save as a PIN enrolment or change, and since ADR-0048 and ADR-0051 a
-relay —
-in the API, or as an Azure Function — delivers it into a pickup directory with no operator in the
-loop. Nothing emails it, so the sentence still holds.)*
+relay — in the API, or as an Azure Function rehearsed locally against Azurite and not deployed —
+delivers it into a pickup directory with no operator in the loop. Nothing emails it, so the
+sentence still holds.)*
 
 *Depth: ADR-0013, ADR-0014, ADR-0020, ADR-0012.*
 
