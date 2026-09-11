@@ -614,8 +614,7 @@ export function AccountsPage() {
           lazy useState initializer, so a persistent instance would pre-select from a
           stale (or, at page load, empty) list — remounting re-reads the CURRENT
           selection and unmounting on close drops all internal state. No onSuccess:
-          their own Done button closes them, so the success screen stays reachable.
-          (They still format USD — they die in the deposit/withdraw PRs.) */}
+          their own Done button closes them, so the success screen stays reachable. */}
       {/* Mount-on-open like every other dialog on this page: a persistent Fluent
           Dialog instance re-opened after a close can race its own exit presence
           under load (the surface never re-mounts — seen as a CI-only flake); a

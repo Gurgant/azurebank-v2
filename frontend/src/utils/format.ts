@@ -2,13 +2,20 @@ import { format } from 'date-fns';
 import type { TransactionType } from '../api/enums';
 
 /**
- * Display formatting for contract data. The API's currency is EUR (BalanceResponse
- * default) — the old mock pages showed USD, which dies as pages go live.
+ * The one currency and the one locale this client formats money in. The API states its currency
+ * on every balance (`"currency":"EUR"`, measured 2026-09-11), and readPath.integration.test.ts
+ * asserts on the real stack that it equals CURRENCY, so a server in another currency turns that
+ * test red instead of being shown in euros. The locale is FIXED, not the browser's: every amount
+ * reads as en-IE euros whatever language the user runs.
  */
+export const CURRENCY = 'EUR';
+export const LOCALE = 'en-IE';
+
+/** Display formatting for contract data, in CURRENCY and LOCALE. */
 export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-IE', {
+  return new Intl.NumberFormat(LOCALE, {
     style: 'currency',
-    currency: 'EUR',
+    currency: CURRENCY,
     minimumFractionDigits: 2,
   }).format(amount);
 }

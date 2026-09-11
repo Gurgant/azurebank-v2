@@ -38,7 +38,7 @@ public class DailyLimitExceededExceptionTests
         exception.Message.Should().Be("Daily transfer limit exceeded.");
         exception.Message.Should().NotContainAny("5000", "4000", "1000");
         exception.Message.Any(char.IsDigit).Should().BeFalse(
-            "the figures travel as numeric members the client formats in the user's locale; "
+            "the figures travel as numeric members the client formats itself; "
             + "rendered into the sentence they would carry the server process culture (the 3769dc9 rule)");
         exception.ErrorCode.Should().Be(ErrorCodes.DailyLimitExceeded);
         exception.StatusCode.Should().Be(422);
