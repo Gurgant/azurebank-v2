@@ -101,7 +101,9 @@ something, because replacement is no longer a way around guessing.
 `PIN_REQUIRED` until they send `CurrentPin`. Stated separately from the enrolment case because the
 two differ. **Enrolment is unaffected**, and the frontend's only caller is `PinSetupPage`, which
 bounces a user whose `hasPin` is already true — so this repo's own client reaches the endpoint
-exclusively on the enrolment path. Any other consumer replacing a PIN must be updated.
+exclusively on the enrolment path. *(True until 2026-09-11: Settings' Change PIN dialog is a
+second caller, on the change path, and it sends the current PIN this decision requires.)* Any other
+consumer replacing a PIN must be updated.
 
 ## Notes on the evidence
 

@@ -24,7 +24,7 @@ import { useAppSelector } from '../app/hooks';
 import { useProblemToast } from '../components/feedback';
 import { selectCurrentUser } from '../features/auth/authSlice';
 import { useLogoutMutation } from '../features/api/apiSlice';
-import { RenameAzureTagDialog } from '../components';
+import { ChangePinDialog, RenameAzureTagDialog } from '../components';
 
 // Features with a designed home here but no backend yet — shown as disabled "Coming soon" rows so
 // the page is honest about the roadmap instead of pretending dead controls work. The UI/UX overhaul
@@ -239,27 +239,27 @@ const useStyles = makeStyles({
     color: colors.neutral[400],
   },
 
-  // ===== Danger zone =====
-  dangerRow: {
+  // ===== Action rows (security, danger zone) =====
+  actionRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: '16px',
   },
 
-  dangerInfo: {
+  actionInfo: {
     display: 'flex',
     flexDirection: 'column',
     gap: '4px',
   },
 
-  dangerTitle: {
+  actionTitle: {
     fontSize: '15px',
     fontWeight: 500,
     color: colors.neutral[800],
   },
 
-  dangerSubtitle: {
+  actionSubtitle: {
     fontSize: '13px',
     fontWeight: 400,
     color: colors.neutral[500],
@@ -285,6 +285,7 @@ export function SettingsPage() {
   const [logout] = useLogoutMutation();
   const showProblem = useProblemToast();
   const [renameOpen, setRenameOpen] = useState(false);
+  const [changePinOpen, setChangePinOpen] = useState(false);
 
   // Identity comes from the session — the shell shows the same user, and the two must never
   // disagree on one screen.
@@ -364,6 +365,43 @@ export function SettingsPage() {
         </div>
       </section>
 
+      {/* ===== Security ===== */}
+      <section className={styles.card}>
+        <div className={styles.cardHeader}>
+          <Text className={styles.cardTitle}>Security</Text>
+        </div>
+        <div className={styles.cardBody}>
+          {/*
+            Change needs the current PIN; a user with none has nothing to change, and the dialog's
+            request would be an enrolment without the password that enrolment costs (422
+            PASSWORD_REQUIRED). So that user goes to the page that asks for it, and comes back.
+          */}
+          <div className={styles.actionRow}>
+            <div className={styles.actionInfo}>
+              <Text className={styles.actionTitle}>PIN</Text>
+              <Text className={styles.actionSubtitle}>
+                {user?.hasPin
+                  ? 'Used to confirm withdrawals, transfers and account closures, and to show full account numbers.'
+                  : 'Not set up yet.'}
+              </Text>
+            </div>
+            {user?.hasPin ? (
+              <Button appearance="secondary" onClick={() => setChangePinOpen(true)}>
+                Change PIN
+              </Button>
+            ) : (
+              <Button
+                appearance="secondary"
+                onClick={() => navigate('/pin-setup?returnTo=/settings')}
+                disabled={!user}
+              >
+                Set up PIN
+              </Button>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* ===== Appearance ===== */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
@@ -421,10 +459,10 @@ export function SettingsPage() {
           <Text className={styles.cardTitle}>Danger zone</Text>
         </div>
         <div className={styles.cardBody}>
-          <div className={styles.dangerRow}>
-            <div className={styles.dangerInfo}>
-              <Text className={styles.dangerTitle}>Log out</Text>
-              <Text className={styles.dangerSubtitle}>
+          <div className={styles.actionRow}>
+            <div className={styles.actionInfo}>
+              <Text className={styles.actionTitle}>Log out</Text>
+              <Text className={styles.actionSubtitle}>
                 Sign out of your account on this device.
               </Text>
             </div>
@@ -447,6 +485,7 @@ export function SettingsPage() {
       {renameOpen && user && (
         <RenameAzureTagDialog currentTag={user.azureTag} onClose={() => setRenameOpen(false)} />
       )}
+      {changePinOpen && <ChangePinDialog onClose={() => setChangePinOpen(false)} />}
     </div>
   );
 }
