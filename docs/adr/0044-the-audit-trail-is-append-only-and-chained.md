@@ -847,6 +847,14 @@ struck 2026-09-03, the count moved twice since; the property held each time.)*
   the raise made it read as one remedy for two different failures. A read-side setting an operator
   can turn green is not the same kind of object as a hash; the anchor is still the thing that would
   change the picture.
+- **The ring covers `Audit:ChainKey` only; `Audit:AnchorKey` has none** *(added 2026-09-11)*. Every
+  anchor record names the key that authenticated it, and a run holding another key cannot check
+  it, so rotating the anchor key does not open a new epoch: it ends the anchor chain. Measured on a
+  scratch database, after the rotation `anchor` refused on every run, exit 6 and "Broke at anchor:
+  1", while `verify` still read CHAIN INTACT with its uncovered window "not computed"; the old key
+  restored both. The anchor key is therefore kept for the life of the anchor chain, and no ring is
+  built for it. Pinned by
+  `ARotatedAnchorKey_IsRefusedOnEVERYRun_AndOnlyTheKeyThatWroteTheChainResumesIt`.
 
 ### D8 — the evidence pack reads by transaction, and says which half the chain vouches for
 

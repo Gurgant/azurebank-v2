@@ -173,6 +173,48 @@ public class AnchorCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ARotatedAnchorKey_IsRefusedOnEVERYRun_AndOnlyTheKeyThatWroteTheChainResumesIt()
+    {
+        /*
+          NO RING FOR Audit:AnchorKey (ADR-0044 D7 covers Audit:ChainKey only), so a rotation does
+          not start a new run of anchors: it stops the chain. The test above shows ONE refusal under
+          another key; this pins that it is not a refusal an operator can run past. Every run under
+          the new key is refused, and the key that wrote the chain resumes it at once.
+
+          Measured 2026-09-11 with the real verifier on a scratch database: EXIT=6 "Broke at anchor:
+          1" twice under the new key, then "ANCHOR 3 recorded" under the old one.
+
+          FALSIFIED by letting a record the run cannot check pass as checked: the rotated runs append.
+        */
+        await WriteRowsAsync(2);
+        await AnchorCommand.RunAsync(_services, CancellationToken.None);
+
+        var rotated = Options.Create(new AuditOptions
+        {
+            ChainKey = ChainKey,
+            AnchorKey = "a-rotated-anchor-key-0123456789abcdefghij",
+        });
+        var collection = new ServiceCollection();
+        collection.AddSingleton<IOptions<AuditOptions>>(rotated);
+        collection.AddSingleton<IAuditChain>(new AuditChain(rotated, NullLogger<AuditChain>.Instance));
+        collection.AddSingleton<IAuditAnchorChain>(new AuditAnchorChain(rotated));
+        collection.AddSingleton(_context);
+        using var services = collection.BuildServiceProvider();
+
+        for (var run = 1; run <= 2; run++)
+        {
+            var (refused, _) = await AnchorCommand.RunAsync(services, CancellationToken.None);
+            refused.Should().Be(AnchorCommand.NotRecorded, "run {0} under the rotated key", run);
+        }
+
+        var (resumed, _) = await AnchorCommand.RunAsync(_services, CancellationToken.None);
+
+        resumed.Should().Be(VerifyCommand.Intact, "the key that wrote the chain can still check it");
+        (await _context.Set<AuditAnchor>().CountAsync()).Should().Be(
+            2, "one record before the rotation, none under it, one after the old key came back");
+    }
+
+    [Fact]
     public async Task AMissingAnchorKey_IsRefusedBeforeAnythingIsRead()
     {
         var options = Options.Create(new AuditOptions { ChainKey = ChainKey, AnchorKey = "too-short" });

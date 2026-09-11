@@ -65,6 +65,15 @@ public class AuditOptions
     /// honest-looking anchors over the result. That is why the anchor's value is the number an
     /// operator wrote down somewhere else, and why nothing here is called proof.
     /// </para>
+    /// <para>
+    /// THERE IS NO RING FOR THIS KEY, unlike <see cref="ChainKey"/>'s (ADR-0044 D7), so rotating it
+    /// does not start a new run of anchors: it stops the chain. Every record names the key that wrote
+    /// it, a run holding another cannot check any of them, and <c>anchor</c> refuses to append — on
+    /// every run, not once. Measured 2026-09-11 on a scratch database: exit 6 and "Broke at anchor:
+    /// 1" twice under the new key, <c>verify</c> still CHAIN INTACT but its uncovered window "not
+    /// computed", and both back to normal under the old key. Keep this key for the life of the
+    /// anchor chain; a ring for it is not built.
+    /// </para>
     /// </remarks>
     public string AnchorKey { get; set; } = string.Empty;
 
