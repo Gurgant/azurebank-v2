@@ -570,15 +570,18 @@ public class AuditProseGuardTests
           the test would pass having checked nothing at all.
         */
         checkedCitations.Should().BeGreaterThanOrEqualTo(
-            45,
+            57,
             "the scan checked {0} citations across {1} files. THE FLOOR SITS JUST UNDER THE MEASURED "
-            + "VALUE ON PURPOSE — 45 against 49 observed by raising this number until the assertion "
-            + "printed it. It was first written at 20, and 20 is the defect this reason exists to "
-            + "name: a floor set far below the truth passes with most of the scan dead, and this one "
-            + "did exactly that while the citation scan was skipping every block comment -- measured "
-            + "by putting that regression back, the scan then sees 40, and 40 clears 20 twice over. "
-            + "Four of slack absorbs a sentence being reworded; it does not absorb the scan going "
-            + "quiet",
+            + "VALUE ON PURPOSE — 57 against 61 observed on 2026-09-11 by raising this number until the "
+            + "assertion printed it. It was first written at 20, and 20 is the defect this reason exists "
+            + "to name: a floor set far below the truth passes with most of the scan dead, and this one "
+            + "did exactly that while the citation scan was skipping every block comment. Put that "
+            + "regression back today and the scan sees 52, which the previous floor of 45 CLEARED: main "
+            + "measured 59, and 50 with the regression, so the guard had stopped catching the defect it "
+            + "names while this reason still said 40. The regressed count grows with every citation the "
+            + "markdown gains, which the regression does not touch, so re-measure BOTH numbers whenever "
+            + "this floor moves. Four of slack absorbs a sentence being reworded; it does not absorb "
+            + "the scan going quiet",
             checkedCitations, AuditCorpus.Length);
 
         unresolved.Should().BeEmpty(
