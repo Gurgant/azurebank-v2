@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { apiSlice } from '../features/api/apiSlice';
+import { CURRENCY } from '../utils/format';
 import { makeStore, run, signIn, type IntegrationStore } from './harness';
 
 /**
@@ -118,5 +119,11 @@ describe('integration: the real backend satisfies the app’s strict schemas', (
       store.dispatch(apiSlice.endpoints.getAccountBalance.initiate({ id })),
     );
     expect(balance.ok, balance.ok ? '' : explain(balance)).toBe(true);
+    if (!balance.ok) return;
+
+    // The client formats every amount in CURRENCY and never reads this field anywhere else, so
+    // this is the one place that ties the two. Observed 2026-09-11 on the running API:
+    //   GET /api/accounts/{id}/balance -> {"data":{…,"balance":12463.0000,"currency":"EUR",…}}
+    expect(balance.data.currency, 'the currency every amount on screen is shown in').toBe(CURRENCY);
   });
 });
