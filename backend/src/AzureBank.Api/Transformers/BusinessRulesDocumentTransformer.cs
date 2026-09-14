@@ -1,3 +1,4 @@
+using AzureBank.Shared.Constants;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 
@@ -8,9 +9,10 @@ namespace AzureBank.Api.Transformers;
 /// to endpoints that have business rule validations.
 ///
 /// Business rules are domain constraints that cannot be expressed in JSON Schema:
-/// - Same account transfer (fromAccountId != toAccountId)
 /// - Insufficient funds
 /// - Cannot delete primary account
+/// (Not the same account on both sides of an internal transfer: the validators refuse that as a
+/// 400 before any service runs, measured 2026-09-11.)
 ///
 /// This transformer ensures these endpoints document 422 as a possible response,
 /// which aligns with how BusinessRuleException now returns 422.
@@ -37,20 +39,22 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
     /// </summary>
     private static readonly Dictionary<string, string> BusinessRuleEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
+        // The three money moves name their codes rather than examples, each one measured on the
+        // real API on 2026-09-11. Two of the examples they replaced could not happen: the same
+        // account on both sides is refused by the validator as a 400 before the service is
+        // reached, and an unknown recipient is a 404 (ACCOUNT_NOT_FOUND), never this 422.
         ["POST /api/transfers/internal"] =
-            "Business Rule Violation - The request violates domain constraints (e.g., same account transfer, insufficient funds).",
+            "Business Rule Violation - the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
         ["POST /api/transfers"] =
-            "Business Rule Violation - The request violates domain constraints (e.g., recipient not found, self transfer, insufficient funds) or the day's external transfer limit (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance).",
+            "Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance), or the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
         ["POST /api/transactions/withdraw"] =
-            "Business Rule Violation - The request violates domain constraints (e.g., insufficient funds).",
+            "Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED, checked before the balance), or the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
         // ADR-0050: the external mint answers 422 four ways, named here in wire order — the payee
         // resolution's two codes (TransferService.ResolveExternalPayeeAsync, before the daily check),
         // the day's ceiling BEFORE the PIN is consulted (the ADR-0049 D4 rung), and the PIN
         // verifier's PIN_REQUIRED. Declared here and NOT by an attribute on
         // TransferController.AuthoriseTransfer, which was removed for the reason on the deletion
-        // mint below: it outranked this entry and published the bare reason phrase. The internal
-        // mint has no entry on purpose — it checks no daily limit — and still carries its
-        // attribute, so its 422 stays the bare phrase: an existing drift named, not fixed here.
+        // mint below: it outranked this entry and published the bare reason phrase.
         ["POST /api/transfers/authorizations"] =
             "Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED).",
         ["DELETE /api/accounts/{id}"] =
@@ -61,6 +65,17 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         // publish the bare reason phrase, which is what the document carried until 2026-09-06.
         ["POST /api/accounts/{id}/deletion-authorizations"] =
             "Business Rule Violation - the account cannot be closed (errorCode NON_ZERO_BALANCE or PRIMARY_ACCOUNT_DELETE, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED).",
+        // The internal mint published the bare reason phrase until 2026-09-11, through the same
+        // outranking attribute. Its one 422 is the PIN verifier's: AuthoriseInternalTransferAsync
+        // also throws SAME_ACCOUNT_TRANSFER, but the validator refuses that pair first, as a 400
+        // (measured), so naming it here would promise a refusal the server never sends.
+        ["POST /api/transfers/internal/authorizations"] =
+            "Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED).",
+        // ADR-0040: each PIN transition costs a proof, and a MISSING one is this 422 — both codes
+        // measured 2026-09-11. Declared here, not by an attribute on AuthController.SetPin, which
+        // published the bare reason phrase until then.
+        ["POST /api/auth/pin"] =
+            "Business Rule Violation - the proof this change needs is missing: the password when enrolling a PIN (errorCode PASSWORD_REQUIRED), or the current PIN when changing one (errorCode PIN_REQUIRED).",
         ["GET /api/transactions/summary"] =
             "Business Rule Violation - The resolved date window is invalid, e.g. a lone future FromDate against the defaulted ToDate (errorCode: INVALID_DATE_RANGE)."
     };
@@ -73,34 +88,40 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
         => BusinessRuleEndpoints.TryGetValue(operationKey, out description!);
 
     /// <summary>
-    /// The operations whose 422 can carry <c>DAILY_LIMIT_EXCEEDED</c>, and therefore the four
-    /// numeric members that refusal spreads into the body (ADR-0050 D7).
+    /// The refusals whose 422 body carries numeric members, per operation.
+    /// <c>DAILY_LIMIT_EXCEEDED</c> spreads <c>limit</c>, <c>used</c>, <c>requested</c> and
+    /// <c>resetsAt</c> into the body (ADR-0050 D7); <c>INSUFFICIENT_FUNDS</c> spreads
+    /// <c>available</c> and <c>requested</c>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// EXACTLY THESE TWO, and the pair is the same one <c>PublishedDailyLimitTests</c> pins from
-    /// the other side: the external mint (<c>TransferService.AuthoriseTransferAsync</c>) and the
-    /// external transfer. A withdrawal, a deposit, an internal transfer and the internal mint check
-    /// no aggregate, so publishing the members there would be a contract wider than the code — the
-    /// same failure the per-endpoint 422 prose above exists to avoid.
+    /// EXACTLY THESE, and each pairing was measured on the real API. The day's ceiling is checked
+    /// by the external mint (<c>TransferService.AuthoriseTransferAsync</c>) and the external
+    /// transfer only — the pair <c>PublishedDailyLimitTests</c> pins from the other side. The
+    /// balance is checked by the three money moves and by neither mint: on 2026-09-11 both mints
+    /// answered 201 for more than the balance, and the transfer each authorised then answered
+    /// <c>INSUFFICIENT_FUNDS</c>. A deposit checks neither. Publishing a member where no path can
+    /// send it would be a contract wider than the code — the same failure the per-endpoint 422
+    /// prose above exists to avoid.
     /// </para>
     /// <para>
     /// WHY THE MEMBERS ARE ADDED AFTER THE RESPONSE RATHER THAN INSIDE IT.
-    /// <c>POST /api/transfers</c> is <c>[RequireIdempotency]</c>, so its 422 is written EARLIER by
+    /// The three money moves are <c>[RequireIdempotency]</c>, so their 422 is written EARLIER by
     /// <see cref="IdempotencyOperationTransformer"/> and <see cref="Add422Response"/> returns
     /// without touching it. A member set written only into this class's own schema factory would
-    /// therefore have reached one of the two operations and silently missed the other — the trap
-    /// that made the three money entries' prose dead text before ADR-0050. This amends whichever
-    /// 422 schema is there when document transformers run, which is after every operation
-    /// transformer.
+    /// therefore have reached the mint alone and silently missed all three — the trap that made
+    /// the three money entries' prose dead text before ADR-0050. This amends whichever 422 schema
+    /// is there when document transformers run, which is after every operation transformer.
     /// </para>
     /// </remarks>
-    private static readonly HashSet<string> DailyLimitOperations =
+    private static readonly Dictionary<string, string[]> RefusalsWithMembers =
         new(StringComparer.OrdinalIgnoreCase)
-    {
-        "POST /api/transfers",
-        "POST /api/transfers/authorizations",
-    };
+        {
+            ["POST /api/transfers"] = [ErrorCodes.DailyLimitExceeded, ErrorCodes.InsufficientFunds],
+            ["POST /api/transfers/authorizations"] = [ErrorCodes.DailyLimitExceeded],
+            ["POST /api/transfers/internal"] = [ErrorCodes.InsufficientFunds],
+            ["POST /api/transactions/withdraw"] = [ErrorCodes.InsufficientFunds],
+        };
 
     public Task TransformAsync(
         OpenApiDocument document,
@@ -124,9 +145,9 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
                     Add422Response(operation, description);
                 }
 
-                if (DailyLimitOperations.Contains(operationKey))
+                if (RefusalsWithMembers.TryGetValue(operationKey, out var codes))
                 {
-                    DeclareDailyLimitMembers(operation);
+                    DeclareRefusalMembers(operation, codes);
                 }
             }
         }
@@ -155,31 +176,33 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
     }
 
     /// <summary>
-    /// Declares the four members a <c>DAILY_LIMIT_EXCEEDED</c> body carries, on the 422 schema this
-    /// operation already has — whoever wrote it.
+    /// Declares the members this operation's refusals put in the body, on the 422 schema it
+    /// already has — whoever wrote it.
     /// </summary>
     /// <remarks>
     /// <para>
     /// WHY DECLARE THEM AT ALL. ADR-0043's thesis is that the document declares the error body so
-    /// a generated client can branch on it; four numbers that arrive on the wire and appear
-    /// nowhere in the contract cannot be branched on without hand-written types. The 422 schemas
-    /// on these two operations are already INLINE objects rather than a <c>$ref</c> to the
-    /// ProblemDetails component, so adding members to them is this document's existing idiom and
-    /// not a new practice, and it leaves the shared component alone.
+    /// a generated client can branch on it; numbers that arrive on the wire and appear nowhere in
+    /// the contract cannot be branched on without hand-written types. The 422 schemas on these
+    /// operations are already INLINE objects rather than a <c>$ref</c> to the ProblemDetails
+    /// component, so adding members to them is this document's existing idiom and not a new
+    /// practice, and it leaves the shared component alone.
     /// </para>
     /// <para>
-    /// PRESENT ONLY ON ONE CODE, so none of them is required: the same 422 answers
-    /// <c>SELF_TRANSFER_NOT_ALLOWED</c>, <c>RECIPIENT_NO_ACCOUNT</c>, <c>PIN_REQUIRED</c>,
-    /// <c>INSUFFICIENT_FUNDS</c> and <c>IDEMPOTENCY_KEY_REUSE</c> with none of them, and each
-    /// description says so rather than leaving a client to discover it.
+    /// EACH MEMBER RIDES SOME CODES AND NOT OTHERS, so none of them is required: the same 422
+    /// answers <c>SELF_TRANSFER_NOT_ALLOWED</c>, <c>RECIPIENT_NO_ACCOUNT</c>, <c>PIN_REQUIRED</c>
+    /// and <c>IDEMPOTENCY_KEY_REUSE</c> with none of them, and each description names the codes
+    /// that carry it rather than leaving a client to discover it.
     /// </para>
     /// <para>
-    /// <c>INSUFFICIENT_FUNDS</c>'s own <c>available</c> / <c>requested</c> stay UNDECLARED here.
-    /// That is the older omission, it spans more operations than these two, and it is its own small
-    /// PR; naming it is what keeps this from reading as a decision that they should stay hidden.
+    /// <c>requested</c> is the one member two codes share, so its description is built from the
+    /// operation's codes. On <c>POST /api/transfers</c> it read "DAILY_LIMIT_EXCEEDED only" until
+    /// 2026-09-11, while the <c>INSUFFICIENT_FUNDS</c> body there carried it too — measured on
+    /// 2026-09-07 as <c>{"available": 300.0, "requested": 400}</c>, and again on 2026-09-11 as
+    /// <c>"available":100.2500,"requested":500.5</c>.
     /// </para>
     /// </remarks>
-    private static void DeclareDailyLimitMembers(OpenApiOperation operation)
+    private static void DeclareRefusalMembers(OpenApiOperation operation, string[] codes)
     {
         if (operation.Responses is null
             || !operation.Responses.TryGetValue("422", out var response)
@@ -188,43 +211,79 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
             || media.Schema is not OpenApiSchema { Properties: not null } schema)
         {
             // Nothing to amend means nothing published the 422 this document transformer runs
-            // after. Silent here on purpose: PublishedDailyLimitTests fails on the committed
-            // document if that ever happens, which is a louder place to find out than a throw
-            // during document generation.
+            // after. Silent here on purpose: PublishedDailyLimitTests and
+            // PublishedRefusalCodesTests fail on the committed document if that ever happens,
+            // which is a louder place to find out than a throw during document generation.
             return;
         }
 
-        schema.Properties["limit"] = new OpenApiSchema
+        var dailyLimit = codes.Contains(ErrorCodes.DailyLimitExceeded);
+        var insufficientFunds = codes.Contains(ErrorCodes.InsufficientFunds);
+
+        if (dailyLimit)
         {
-            Type = JsonSchemaType.Number,
-            Description =
-                "DAILY_LIMIT_EXCEEDED only: the ceiling on the sum of this user's completed "
-                + "outgoing external transfers in the current UTC day."
-        };
-        schema.Properties["used"] = new OpenApiSchema
+            schema.Properties["limit"] = new OpenApiSchema
+            {
+                Type = JsonSchemaType.Number,
+                Description =
+                    "DAILY_LIMIT_EXCEEDED only: the ceiling on the sum of this user's completed "
+                    + "outgoing external transfers in the current UTC day."
+            };
+            schema.Properties["used"] = new OpenApiSchema
+            {
+                Type = JsonSchemaType.Number,
+                Description =
+                    "DAILY_LIMIT_EXCEEDED only: how much of that ceiling the user's completed "
+                    + "outgoing external transfers had already taken when this request was "
+                    + "refused. Today's remaining headroom is limit - used; no member carries it, "
+                    + "so there is one source of truth."
+            };
+        }
+
+        if (insufficientFunds)
         {
-            Type = JsonSchemaType.Number,
-            Description =
-                "DAILY_LIMIT_EXCEEDED only: how much of that ceiling the user's completed outgoing "
-                + "external transfers had already taken when this request was refused. Today's "
-                + "remaining headroom is limit - used; no member carries it, so there is one "
-                + "source of truth."
-        };
+            schema.Properties["available"] = new OpenApiSchema
+            {
+                Type = JsonSchemaType.Number,
+                Description =
+                    "INSUFFICIENT_FUNDS only: the balance of the account the money would have "
+                    + "left, when this request was refused. It is less than requested."
+            };
+        }
+
         schema.Properties["requested"] = new OpenApiSchema
         {
             Type = JsonSchemaType.Number,
-            Description =
-                "DAILY_LIMIT_EXCEEDED only: the amount this request asked to move. It was not "
-                + "moved: used + requested would have exceeded limit, and nothing was written."
+            Description = (dailyLimit, insufficientFunds) switch
+            {
+                (true, false) =>
+                    "DAILY_LIMIT_EXCEEDED only: the amount this request asked to move. It was not "
+                    + "moved: used + requested would have exceeded limit, and nothing was written.",
+                (false, true) =>
+                    "INSUFFICIENT_FUNDS only: the amount this request asked to move. It was not "
+                    + "moved: it is more than available.",
+                (true, true) =>
+                    "DAILY_LIMIT_EXCEEDED and INSUFFICIENT_FUNDS: the amount this request asked to "
+                    + "move, under either code. It was not moved: under DAILY_LIMIT_EXCEEDED, used "
+                    + "+ requested would have exceeded limit; under INSUFFICIENT_FUNDS, it is more "
+                    + "than available.",
+                (false, false) => throw new InvalidOperationException(
+                    "RefusalsWithMembers lists an operation with no code that carries a member."),
+            }
         };
-        schema.Properties["resetsAt"] = new OpenApiSchema
+
+        if (dailyLimit)
         {
-            Type = JsonSchemaType.String,
-            Format = "date-time",
-            Description =
-                "DAILY_LIMIT_EXCEEDED only: the UTC instant the window reopens — the start of the "
-                + "next UTC day. Sent so a client need not know that the window is a calendar day."
-        };
+            schema.Properties["resetsAt"] = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Format = "date-time",
+                Description =
+                    "DAILY_LIMIT_EXCEEDED only: the UTC instant the window reopens — the start of "
+                    + "the next UTC day. Sent so a client need not know that the window is a "
+                    + "calendar day."
+            };
+        }
     }
 
     /// <summary>
