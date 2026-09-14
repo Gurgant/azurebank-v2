@@ -316,6 +316,9 @@ public static class SecurityEvents
       MONEY REFUSED, and the Detail rule INVERTS here. The four events above carry a null Detail
       because the amount, the counterparty and the account are already on the Transaction row and
       SubjectId reaches it -- the row is a pointer, and the thing it points at holds the facts.
+      (Narrowed 2026-09-14: the two transfers name the authorisation they consumed in Detail,
+      AuditDetails.ConsumedAuthorisation, and nothing else; deposit and withdrawal stay null. An
+      authorisation id is on no ledger row and is not financial data, so the rule below is intact.)
 
       A REFUSAL HAS NO TRANSACTION ROW. Nothing was committed, so there is nothing to point at, and
       a pointer-shaped row would answer no question at all: "a withdrawal was refused" without

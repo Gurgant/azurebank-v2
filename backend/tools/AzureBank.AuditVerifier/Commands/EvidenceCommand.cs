@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Globalization;
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Options;
@@ -196,6 +197,24 @@ public static class EvidenceCommand
                 .OrderBy(e => e.Sequence)
                 .ToListAsync(cancellationToken);
 
+            /*
+              THE BINDING THE CHAIN VOUCHES FOR (AuditDetails, since 2026-09-14). The success row
+              names the authorisation it consumed, inside the hash; the pointer in the unchained
+              authorisation table is checked against that name rather than trusted on its own. A
+              row written before that date names none, and is reported as a pre-binding row,
+              never as a finding.
+            */
+            var successRow = auditRows.FirstOrDefault(e =>
+                e.Outcome == AuditOutcome.Succeeded
+                && (e.Event == SecurityEvents.MoneyTransferred
+                    || e.Event == SecurityEvents.MoneyTransferredInternally));
+            var boundId = AuditDetails.ConsumedAuthorisationOf(successRow?.Detail);
+            var bound = boundId is { } named
+                ? await context.StepUpAuthorizations
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.Id == named, cancellationToken)
+                : null;
+
             var verification = await chain.VerifyAsync(context, cancellationToken);
             var (chainCode, chainLines) = VerifyCommand.Report(
                 verification, verification.LowestSequence, verification.HighestSequence);
@@ -208,7 +227,7 @@ public static class EvidenceCommand
 
             lines.AddRange(Movement(movement, related));
             lines.Add(string.Empty);
-            lines.AddRange(StrongAuthentication(movement, authorisation));
+            lines.AddRange(StrongAuthentication(movement, authorisation, successRow is not null, boundId, bound));
             lines.Add(string.Empty);
             lines.AddRange(AuditRows(movement, auditRows));
             lines.Add(string.Empty);
@@ -281,8 +300,18 @@ public static class EvidenceCommand
         }
     }
 
-    private static IEnumerable<string> StrongAuthentication(
-        Transaction movement, StepUpAuthorization? authorisation)
+    /// <summary>
+    /// The second-factor verdict. <paramref name="authorisation"/> is what the unchained table's
+    /// pointer says paid for the movement; <paramref name="boundId"/> is what the CHAINED audit
+    /// row names, and <paramref name="bound"/> that row if it still exists. The chained name wins
+    /// every disagreement, because it is the half a database writer cannot rewrite unnoticed.
+    /// </summary>
+    internal static IEnumerable<string> StrongAuthentication(
+        Transaction movement,
+        StepUpAuthorization? authorisation,
+        bool hasSuccessRow,
+        Guid? boundId,
+        StepUpAuthorization? bound)
     {
         var appliesToType = movement.Type is TransactionType.TransferOut;
 
@@ -297,27 +326,100 @@ public static class EvidenceCommand
             yield break;
         }
 
-        if (authorisation is null)
+        if (boundId is null)
         {
-            yield return "NOT STRONGLY AUTHENTICATED: no consumed authorisation names this transaction.";
-            yield return "  A transfer cannot be accepted without one (ADR-0042 refuses it 401), so";
-            yield return "  either this movement predates that rule, or the row that paid for it is";
-            yield return "  gone -- and the table it lived in is NOT chained, so its absence leaves no";
-            yield return "  break to find.";
+            // A pre-binding row (or no success row at all): the pointer is all there is.
+            if (authorisation is null)
+            {
+                yield return "NOT STRONGLY AUTHENTICATED: no consumed authorisation names this transaction.";
+                yield return "  A transfer cannot be accepted without one (ADR-0042 refuses it 401), so";
+                yield return "  either this movement predates that rule, or the row that paid for it is";
+                yield return "  gone -- and the table it lived in is NOT chained, so its absence leaves no";
+                yield return "  break to find.";
+            }
+            else
+            {
+                yield return $"STRONGLY AUTHENTICATED: authorisation {authorisation.Id:D} paid for this"
+                    + " transfer.";
+                foreach (var line in Instants(authorisation))
+                {
+                    yield return line;
+                }
+
+                yield return "  ⚠️ This row is evidence the application wrote, and it is NOT inside the";
+                yield return "  chain:";
+                yield return "  minting writes no audit row, so the second factor is vouched for by a mutable";
+                yield return "  table, not by a hash. The chain below covers the audit row that names the";
+                yield return "  movement; it does not cover this one.";
+            }
+
+            yield return hasSuccessRow
+                ? "  Bound authorisation: none. The audit row for this movement is a pre-binding row,"
+                : "  Bound authorisation: none, because no audit row names this movement (see below).";
+            if (hasSuccessRow)
+            {
+                yield return "  written before success rows began naming the authorisation they consumed";
+                yield return "  (2026-09-14); the pointer above is all the binding this movement has.";
+            }
+
             yield break;
         }
 
-        yield return $"STRONGLY AUTHENTICATED: authorisation {authorisation.Id:D} paid for this"
-            + " transfer.";
+        if (bound is null)
+        {
+            yield return $"BOUND AUTHORISATION MISSING: the chained audit row names authorisation"
+                + $" {boundId:D}, and no such row exists.";
+            yield return "  The chain vouches for the NAME: this movement was paid for by that";
+            yield return "  authorisation. The row that would show when the PIN was proved and spent";
+            yield return "  is gone -- a write around the application, or a purge -- and its absence";
+            yield return "  is the finding. The chain below stays intact, because that table was";
+            yield return "  never inside it.";
+            if (authorisation is not null)
+            {
+                yield return $"  ⚠️ A different authorisation, {authorisation.Id:D}, claims to have paid";
+                yield return "  for this movement. The chained name is the one to believe.";
+            }
+
+            yield break;
+        }
+
+        var paid = bound.Status == StepUpAuthorizationStatus.Consumed
+            && bound.ConsumedByTransactionId == movement.Id;
+        if (!paid)
+        {
+            yield return $"BOUND AUTHORISATION DOES NOT MATCH: the chained audit row names authorisation"
+                + $" {boundId:D},";
+            yield return bound.ConsumedByTransactionId is { } other
+                ? $"  and that row says it paid for {other:D} instead."
+                : $"  and that row says it was never spent (status {bound.Status}).";
+            yield return "  The chained name is the evidence; the authorisation table was written";
+            yield return "  around the application. Treat it as a finding.";
+            yield break;
+        }
+
+        yield return "STRONGLY AUTHENTICATED, BOUND IN THE CHAIN: the audit row for this movement names"
+            + $" authorisation {bound.Id:D}, and that row paid for it.";
+        foreach (var line in Instants(bound))
+        {
+            yield return line;
+        }
+
+        yield return "  The NAME is inside the chain; the instants above are read from the";
+        yield return "  authorisation row, which is not. Deleting or re-pointing that row is reported";
+        yield return "  as a finding above rather than silently downgrading this verdict.";
+        if (authorisation is not null && authorisation.Id != bound.Id)
+        {
+            yield return $"  ⚠️ A second authorisation, {authorisation.Id:D}, also claims this movement";
+            yield return "  through the unchained pointer.";
+        }
+    }
+
+    private static IEnumerable<string> Instants(StepUpAuthorization authorisation)
+    {
         yield return $"  Operation {authorisation.Operation}, status {authorisation.Status}";
         yield return $"  PIN proved (minted) {authorisation.CreatedAt:O}";
         yield return $"  Spent (consumed)   {authorisation.ConsumedAt?.ToString("O") ?? "(never)"}";
         yield return $"  Window closed      {authorisation.ExpiresAt:O}";
-        yield return "  ⚠️ This row is evidence the application wrote, and it is NOT inside the";
-        yield return "  chain:";
-        yield return "  minting writes no audit row, so the second factor is vouched for by a mutable";
-        yield return "  table, not by a hash. The chain below covers the audit row that names the";
-        yield return "  movement; it does not cover this one.";
     }
 
     private static IEnumerable<string> AuditRows(Transaction movement, IReadOnlyList<AuditEvent> rows)

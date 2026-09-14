@@ -873,6 +873,18 @@ guarantee it actually has — and the test that deletes the consumed row pins th
 STRONGLY AUTHENTICATED beside CHAIN INTACT, both true, neither implying the other. Wiring an audit
 event at consumption would close that gap and is a separate decision with its own tests.
 
+_Narrowed 2026-09-14 (`AuditDetails`): the success row now NAMES the authorisation it consumed, in
+its `Detail` — `{"authorizationId":"<id>"}`, under the hash — so the binding from a movement to its
+second factor no longer rests on the unchained pointer alone. The pack reads the name from the
+chained row and checks the table against it: `STRONGLY AUTHENTICATED, BOUND IN THE CHAIN` when the
+row agrees, `BOUND AUTHORISATION MISSING` when it is gone, `BOUND AUTHORISATION DOES NOT MATCH` when
+it points elsewhere or was never spent. The test that deletes the consumed row now pins MISSING
+beside CHAIN INTACT
+(`EvidencePackTests.ATransferWhoseAuthorisationRowIsGone_IsBOUNDAUTHORISATIONMISSING_AndTheChainStaysIntact`),
+and the honest shape above survives for rows written before this date, which the pack calls
+pre-binding rows (`EvidenceVerdictTests`). What is still not chained: the instants. Minting still
+writes no audit row, and the separate decision above still stands._
+
 ⚠️ **AN INTACT VERDICT IS NOT AN INCLUSION PROOF.** The anchor is a tail hash, not a Merkle tree
 (`docs/audit-trail-against-real-practice.md` names the gap), so the pack can say these rows are in a
 chain that verified at this instant and cannot hand a third party a proof that one row is in the set
@@ -960,10 +972,17 @@ independently for the first time, which is why
 `_audit.Record` and `_audit.RecordRefusalAsync` sites as well as log templates. A guard that only
 counted templates would have let this very paragraph go stale in silence, exactly as D4 did.
 
-**`Detail` is null on all four.** The amount, the counterparty, the description and the account are
+**~~`Detail` is null on all four.~~ `Detail` is null on the two that consume no authorisation, and
+on the two transfers it names the authorisation consumed — nothing else** *(struck 2026-09-14:
+`AuditDetails` writes `{"authorizationId":"<id>"}` on `MoneyTransferred`, `MoneyTransferredInternally`
+and ADR-0049's `AccountDeleted`; the note under the second-factor paragraph above says what that
+buys)*. The amount, the counterparty, the description and the account are
 already on the ledger row that `SubjectId` reaches, and copying them here would break D5 — an amount
 tied to an actor id is financial data about an identifiable person, in a table designed never to be
 purged. The audit row answers *who did what to which movement*; the ledger row answers *what moved*.
+An authorisation id is none of those: an opaque identifier of the SAME actor's own act, on no ledger
+row, so it passes this paragraph's own test — and what it buys is the one link the chain could not
+vouch for before.
 
 **A transfer writes ONE row, and its subject is the OUTGOING ledger row.** Two ledger rows are the
 bookkeeping of a single act, and the outgoing leg is the act itself — money leaving, under the

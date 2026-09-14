@@ -172,6 +172,13 @@ mint now, which is the only place on this path that can spend an attempt.
 should follow this route as its own task. Nothing sweeps the table — rows are the Art. 72 evidence B3
 assembles, so a retention policy is a later decision that brings its own index.
 
+_2026-09-14: the audit row a consumed authorisation buys now names it. `AuditDetails` writes
+`{"authorizationId":"<id>"}` into the `Detail` of `MoneyTransferred`, `MoneyTransferredInternally`
+and `AccountDeleted`, so the binding lives under the chain's hash and not only in this table's
+`ConsumedByTransactionId`. The rows are still the Art. 72 evidence and are still not swept; what
+changed is that sweeping or re-pointing one is now something the evidence pack can see and name
+(ADR-0044, second-factor note of the same date). Withdraw's in-body PIN is untouched here._
+
 _Generalised 2026-09-06 by [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md).
 The rail built here for transfers now carries its first operation that moves no money: closing an
 account. What that cost, and what it did not: `ConsumeAsync`'s `consumedByTransactionId` became

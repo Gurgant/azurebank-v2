@@ -916,10 +916,31 @@ What the second section can say, and what it cannot:
   writes no audit row (measured: the step-up service never calls the audit service), so the second
   factor is vouched for by a mutable table, not by a hash. The chain covers the `MoneyTransferred`
   row naming the movement; it does not cover the authorisation. The pack says so under the line.
+  _Since 2026-09-14 this shape is printed only for a **pre-binding row** — a `MoneyTransferred` row
+  written before success rows began naming the authorisation they consumed (`AuditDetails`); the
+  pack says so under the line. A row written after prints the BOUND verdict below._
 - `NOT STRONGLY AUTHENTICATED` — a transfer with no consumed authorisation naming it. A transfer
   cannot be accepted without one since ADR-0042, so either the movement predates that rule or the
   row that paid for it is gone — and because that table is unchained, its absence leaves no break
   for `verify` to find. Treat it as a finding.
+  _Since 2026-09-14 only for a pre-binding row, or for a movement with no audit row at all; the
+  row-gone case on a bound row is `BOUND AUTHORISATION MISSING` below, which is the sharper answer._
+- `STRONGLY AUTHENTICATED, BOUND IN THE CHAIN` — _(since 2026-09-14)_ the chained `MoneyTransferred`
+  row itself names the authorisation it consumed — `Detail` is `{"authorizationId":"<id>"}`, under
+  the hash — and the authorisation row agrees: it exists, it is `Consumed`, and it points back at
+  this movement. The NAME is inside the chain; the instants under the line are still read from the
+  unchained table, so a row that goes missing or is re-pointed is reported as one of the two
+  findings below rather than silently downgrading this verdict. This is what a transfer written
+  after 2026-09-14 prints when nothing is wrong.
+- `BOUND AUTHORISATION MISSING` — the chained row names an authorisation and no such row exists.
+  The chain vouches for the name, so this is not "nothing paid": something paid, and the record of
+  when the PIN was proved and spent is gone — a write around the application, or a purge. The chain
+  verdict below stays intact, because that table was never inside it. A finding. If a DIFFERENT
+  row claims the movement through its pointer, the pack names it under the line; the chained name
+  is the one to believe.
+- `BOUND AUTHORISATION DOES NOT MATCH` — the chained row names an authorisation whose row exists
+  but says it paid for another movement, or was never spent. The chained name is the evidence; the
+  table was written around the application. A finding.
 - `NO AUTHORISATION APPLIES` — a deposit, a withdrawal, or the INCOMING leg of a transfer. ADR-0042
   binds an authorisation to the two transfer endpoints only; ask for the OUTGOING leg's number.
 - `NO AUDIT ROW` — a ledger row with no audit row naming it. Every money movement writes one in the

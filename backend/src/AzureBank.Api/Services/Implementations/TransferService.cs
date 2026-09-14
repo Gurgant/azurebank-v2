@@ -516,13 +516,18 @@ public class TransferService : ITransferService
                           different by construction. Subjecting the audit row to that row would name
                           the wrong person.
 
-                          Detail stays null, as on every money event: amount, counterparty and
-                          description are on the ledger rows SubjectId reaches (ADR-0044 D5).
+                          Detail names the authorisation this transfer consumes, and nothing else:
+                          amount, counterparty and description are on the ledger rows SubjectId
+                          reaches (ADR-0044 D5). The id is on no ledger row and is the actor's own
+                          act, so D5 holds; what it buys is a binding inside the chain, where the
+                          only one until 2026-09-14 lived in the unchained authorisation table
+                          (AuditDetails, ADR-0044 D4).
                         */
                         _audit.Record(
                             SecurityEvents.MoneyTransferred, AuditOutcome.Succeeded,
                             actorUserId: userId, subjectType: "Transaction",
-                            subjectId: outgoingTransaction.Id);
+                            subjectId: outgoingTransaction.Id,
+                            detail: AuditDetails.ConsumedAuthorisation(authorizationId));
                         await _context.SaveChangesAsync();
 
                         // Write-once back-link (permitted by the immutability
@@ -755,7 +760,8 @@ public class TransferService : ITransferService
                         _audit.Record(
                             SecurityEvents.MoneyTransferredInternally, AuditOutcome.Succeeded,
                             actorUserId: userId, subjectType: "Transaction",
-                            subjectId: outgoingTransaction.Id);
+                            subjectId: outgoingTransaction.Id,
+                            detail: AuditDetails.ConsumedAuthorisation(authorizationId));
                         await _context.SaveChangesAsync();
 
                         // Write-once back-link (see immutability guard)

@@ -432,7 +432,10 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
 
         var closures = await RowsForActorAsync(userId, SecurityEvents.AccountDeleted);
         closures.Should().ContainSingle().Which.SubjectId.Should().Be(spare);
-        closures[0].Detail.Should().BeNull("success rows carry no Detail (ADR-0044 D5)");
+        AuditDetails.ConsumedAuthorisationOf(closures[0].Detail).Should().Be(
+            minted.AuthorizationId,
+            "a closure has no ledger row for ConsumedByTransactionId to point at, so the chained row's "
+            + "own name is the only tamper-evident link to the PIN proof (AuditDetails, 2026-09-14)");
         (await RowsForActorAsync(userId, SecurityEvents.AccountDeletionRefused)).Should().BeEmpty();
     }
 

@@ -296,7 +296,10 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         var row = await SingleRowForActorAsync(payerId, SecurityEvents.MoneyTransferred);
         row.Outcome.Should().Be(AuditOutcome.Succeeded);
         row.SubjectType.Should().Be("Transaction");
-        row.Detail.Should().BeNull("the ledger rows hold amount and counterparty; this table does not");
+        AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(
+            authorization,
+            "the row names the authorisation this transfer consumed and nothing else: amount and "
+            + "counterparty stay on the ledger rows (AuditDetails, 2026-09-14)");
 
         using var scope = Factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
@@ -357,7 +360,8 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         response.IsSuccessStatusCode.Should().BeTrue(await response.Content.ReadAsStringAsync());
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyTransferredInternally);
-        row.Detail.Should().BeNull();
+        AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(
+            authorization, "an internal transfer consumes an authorisation too, and its row names it");
 
         using var scope = Factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
