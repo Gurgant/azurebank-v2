@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get all accounts for the authenticated user. */
+        /**
+         * List accounts
+         * @description Get all accounts for the authenticated user.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -51,7 +54,10 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a new bank account. */
+        /**
+         * Create account
+         * @description Create a new bank account.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -119,7 +125,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a specific account by ID. */
+        /**
+         * Get account
+         * @description Get a specific account by ID.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -173,7 +182,8 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete (soft delete) an account.
+         * Delete account
+         * @description Delete (soft delete) an account.
          *     Balance must be zero and account cannot be primary.
          */
         delete: {
@@ -262,7 +272,10 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Update account details (name only). */
+        /**
+         * Update account
+         * @description Update account details (name only).
+         */
         patch: {
             parameters: {
                 query?: never;
@@ -338,7 +351,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get account balance (current or historical). */
+        /**
+         * Get balance
+         * @description Get account balance (current or historical).
+         */
         get: {
             parameters: {
                 query?: {
@@ -430,7 +446,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Reveal the full (unmasked) account number of one owned account.
+         * Reveal full account number
+         * @description Reveal the full (unmasked) account number of one owned account.
          *     Every other endpoint returns the masked form; behind the BFF this exact path is
          *     step-up-gated (PIN, auth level 2) and the response must never be cached.
          */
@@ -505,7 +522,10 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Set an account as the primary account. */
+        /**
+         * Set primary account
+         * @description Set an account as the primary account.
+         */
         patch: {
             parameters: {
                 query?: never;
@@ -568,7 +588,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Authorise the closure of one owned account (ADR-0049).
+         * Authorise an account closure
+         * @description Authorise the closure of one owned account (ADR-0049).
          *     The account must be closable — zero balance, not primary — before the PIN is consulted.
          */
         post: {
@@ -683,7 +704,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Authenticate user and receive JWT token. */
+        /**
+         * Login
+         * @description Authenticate user and receive JWT token.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -753,7 +777,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Register a new user account with initial bank account. */
+        /**
+         * Register
+         * @description Register a new user account with initial bank account.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -814,7 +841,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exchange a refresh token for a fresh access + refresh token pair (rotation). */
+        /**
+         * Refresh access token
+         * @description Exchange a refresh token for a fresh access + refresh token pair (rotation).
+         */
         post: {
             parameters: {
                 query?: never;
@@ -873,7 +903,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get current authenticated user information. */
+        /**
+         * Get current user
+         * @description Get current authenticated user information.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -929,7 +962,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Logout and invalidate session. */
+        /**
+         * Logout
+         * @description Logout and invalidate session.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -984,8 +1020,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Set or update user's PIN for step-up authentication.
-         * @description Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does not, because the account password already gated getting here. A `currentPin` is verified with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count toward the lockout and a locked PIN cannot be replaced even by supplying the correct one. See ADR-0040.
+         * Set or change PIN
+         * @description Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does
+         *     not, because the account password already gated getting here. A `currentPin` is verified
+         *     with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count
+         *     toward the lockout and a locked PIN cannot be replaced even by supplying the correct one.
+         *     See ADR-0040.
          */
         post: {
             parameters: {
@@ -1087,7 +1127,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Verify user's PIN for step-up authentication. */
+        /**
+         * Verify PIN
+         * @description Verify user's PIN for step-up authentication.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1164,7 +1207,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get transaction history with filtering and pagination. */
+        /**
+         * List transactions
+         * @description Get transaction history with filtering and pagination.
+         */
         get: {
             parameters: {
                 query?: {
@@ -1247,7 +1293,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get aggregated income/expenses/net and pending count over a date window
+         * Transaction summary
+         * @description Get aggregated income/expenses/net and pending count over a date window
          *     (defaults to the current UTC calendar month).
          */
         get: {
@@ -1339,7 +1386,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a specific transaction by ID. */
+        /**
+         * Get transaction
+         * @description Get a specific transaction by ID.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -1407,7 +1457,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Deposit money into an account. */
+        /**
+         * Deposit
+         * @description Deposit money into an account.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1558,7 +1611,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Withdraw money from an account.
+         * Withdraw
+         * @description Withdraw money from an account.
          *     Requires PIN verification.
          */
         post: {
@@ -1723,7 +1777,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Authorise a transfer to another user. */
+        /**
+         * Authorise a transfer
+         * @description Authorise a transfer to another user.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1843,7 +1900,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Authorise a transfer between your own accounts. */
+        /**
+         * Authorise an internal transfer
+         * @description Authorise a transfer between your own accounts.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1952,7 +2012,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Transfer money to another user's primary account. */
+        /**
+         * Transfer to user
+         * @description Transfer money to another user's primary account.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -2117,7 +2180,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Transfer money between own accounts. */
+        /**
+         * Internal transfer
+         * @description Transfer money between own accounts.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -2272,7 +2338,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.
+         * Look up a recipient by AzureTag
+         * @description Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.
          *     Returns the masked display name (e.g. "Vladislav A.") for confirmation. This is an
          *     exact-match confirmation oracle by design — there is deliberately no substring/prefix
          *     directory search, which would let an authenticated user harvest the customer list
@@ -2350,7 +2417,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Renames the caller's own public AzureTag handle (ADR-0015). The handle is decoupled
+         * Rename my AzureTag
+         * @description Renames the caller's own public AzureTag handle (ADR-0015). The handle is decoupled
          *     from the login identity (UserName is the immutable user id), so this is a plain update.
          *     The bearer token still carries the old handle in its azure_tag claim until it is
          *     refreshed on next login.

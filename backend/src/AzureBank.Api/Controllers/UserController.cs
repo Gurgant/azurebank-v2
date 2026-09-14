@@ -27,12 +27,15 @@ public class UserController : ControllerBase
     }
 
     /// <summary>
+    /// Look up a recipient by AzureTag
+    /// </summary>
+    /// <remarks>
     /// Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.
     /// Returns the masked display name (e.g. "Vladislav A.") for confirmation. This is an
     /// exact-match confirmation oracle by design — there is deliberately no substring/prefix
     /// directory search, which would let an authenticated user harvest the customer list
     /// (ADR-0014; the Zelle/Cash App model).
-    /// </summary>
+    /// </remarks>
     /// <param name="azureTag">Full AzureTag to look up (3-20 chars, AzureTag charset).</param>
     [HttpGet("{azureTag}")]
     [AlwaysFound] // An unknown handle is 200 with exists:false, never 404 (ADR-0014).
@@ -47,11 +50,14 @@ public class UserController : ControllerBase
     }
 
     /// <summary>
+    /// Rename my AzureTag
+    /// </summary>
+    /// <remarks>
     /// Renames the caller's own public AzureTag handle (ADR-0015). The handle is decoupled
     /// from the login identity (UserName is the immutable user id), so this is a plain update.
     /// The bearer token still carries the old handle in its azure_tag claim until it is
     /// refreshed on next login.
-    /// </summary>
+    /// </remarks>
     [HttpPatch("me/azuretag")]
     [ProducesResponseType(typeof(ApiResponse<UpdateAzureTagResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

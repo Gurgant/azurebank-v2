@@ -10,7 +10,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Get all accounts for the authenticated user.",
+        "summary": "List accounts",
+        "description": "Get all accounts for the authenticated user.",
         "responses": {
           "200": {
             "description": "List of user's accounts",
@@ -48,7 +49,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Create a new bank account.",
+        "summary": "Create account",
+        "description": "Create a new bank account.",
         "requestBody": {
           "description": "Account creation details",
           "content": {
@@ -119,7 +121,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Get a specific account by ID.",
+        "summary": "Get account",
+        "description": "Get a specific account by ID.",
         "parameters": [
           {
             "name": "id",
@@ -179,7 +182,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Update account details (name only).",
+        "summary": "Update account",
+        "description": "Update account details (name only).",
         "parameters": [
           {
             "name": "id",
@@ -270,7 +274,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Delete (soft delete) an account.\r\nBalance must be zero and account cannot be primary.",
+        "summary": "Delete account",
+        "description": "Delete (soft delete) an account.\r\nBalance must be zero and account cannot be primary.",
         "parameters": [
           {
             "name": "id",
@@ -388,7 +393,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Get account balance (current or historical).",
+        "summary": "Get balance",
+        "description": "Get account balance (current or historical).",
         "parameters": [
           {
             "name": "id",
@@ -497,7 +503,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Reveal the full (unmasked) account number of one owned account.\r\nEvery other endpoint returns the masked form; behind the BFF this exact path is\r\nstep-up-gated (PIN, auth level 2) and the response must never be cached.",
+        "summary": "Reveal full account number",
+        "description": "Reveal the full (unmasked) account number of one owned account.\r\nEvery other endpoint returns the masked form; behind the BFF this exact path is\r\nstep-up-gated (PIN, auth level 2) and the response must never be cached.",
         "parameters": [
           {
             "name": "id",
@@ -559,7 +566,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Set an account as the primary account.",
+        "summary": "Set primary account",
+        "description": "Set an account as the primary account.",
         "parameters": [
           {
             "name": "id",
@@ -621,7 +629,8 @@
         "tags": [
           "Account"
         ],
-        "summary": "Authorise the closure of one owned account (ADR-0049).\r\nThe account must be closable — zero balance, not primary — before the PIN is consulted.",
+        "summary": "Authorise an account closure",
+        "description": "Authorise the closure of one owned account (ADR-0049).\r\nThe account must be closable — zero balance, not primary — before the PIN is consulted.",
         "parameters": [
           {
             "name": "id",
@@ -760,7 +769,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Authenticate user and receive JWT token.",
+        "summary": "Login",
+        "description": "Authenticate user and receive JWT token.",
         "requestBody": {
           "description": "Login credentials",
           "content": {
@@ -834,7 +844,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Register a new user account with initial bank account.",
+        "summary": "Register",
+        "description": "Register a new user account with initial bank account.",
         "requestBody": {
           "description": "Registration details",
           "content": {
@@ -898,7 +909,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Exchange a refresh token for a fresh access + refresh token pair (rotation).",
+        "summary": "Refresh access token",
+        "description": "Exchange a refresh token for a fresh access + refresh token pair (rotation).",
         "requestBody": {
           "description": "The current refresh token",
           "content": {
@@ -962,7 +974,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Get current authenticated user information.",
+        "summary": "Get current user",
+        "description": "Get current authenticated user information.",
         "responses": {
           "200": {
             "description": "OK",
@@ -1002,7 +1015,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Logout and invalidate session.",
+        "summary": "Logout",
+        "description": "Logout and invalidate session.",
         "responses": {
           "200": {
             "description": "Success message",
@@ -1042,8 +1056,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Set or update user's PIN for step-up authentication.",
-        "description": "Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does not, because the account password already gated getting here. A `currentPin` is verified with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count toward the lockout and a locked PIN cannot be replaced even by supplying the correct one. See ADR-0040.",
+        "summary": "Set or change PIN",
+        "description": "Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does\r\nnot, because the account password already gated getting here. A `currentPin` is verified\r\nwith the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count\r\ntoward the lockout and a locked PIN cannot be replaced even by supplying the correct one.\r\nSee ADR-0040.",
         "requestBody": {
           "description": "PIN to set",
           "content": {
@@ -1160,7 +1174,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Verify user's PIN for step-up authentication.",
+        "summary": "Verify PIN",
+        "description": "Verify user's PIN for step-up authentication.",
         "requestBody": {
           "description": "PIN to verify",
           "content": {
@@ -1241,7 +1256,8 @@
         "tags": [
           "Transaction"
         ],
-        "summary": "Get transaction history with filtering and pagination.",
+        "summary": "List transactions",
+        "description": "Get transaction history with filtering and pagination.",
         "parameters": [
           {
             "name": "AccountId",
@@ -1367,7 +1383,8 @@
         "tags": [
           "Transaction"
         ],
-        "summary": "Get aggregated income/expenses/net and pending count over a date window\r\n(defaults to the current UTC calendar month).",
+        "summary": "Transaction summary",
+        "description": "Get aggregated income/expenses/net and pending count over a date window\r\n(defaults to the current UTC calendar month).",
         "parameters": [
           {
             "name": "AccountId",
@@ -1480,7 +1497,8 @@
         "tags": [
           "Transaction"
         ],
-        "summary": "Get a specific transaction by ID.",
+        "summary": "Get transaction",
+        "description": "Get a specific transaction by ID.",
         "parameters": [
           {
             "name": "id",
@@ -1542,7 +1560,8 @@
         "tags": [
           "Transaction"
         ],
-        "summary": "Deposit money into an account.",
+        "summary": "Deposit",
+        "description": "Deposit money into an account.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -1751,7 +1770,8 @@
         "tags": [
           "Transaction"
         ],
-        "summary": "Withdraw money from an account.\r\nRequires PIN verification.",
+        "summary": "Withdraw",
+        "description": "Withdraw money from an account.\r\nRequires PIN verification.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -1978,7 +1998,8 @@
         "tags": [
           "Transfer"
         ],
-        "summary": "Authorise a transfer to another user.",
+        "summary": "Authorise a transfer",
+        "description": "Authorise a transfer to another user.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2121,7 +2142,8 @@
         "tags": [
           "Transfer"
         ],
-        "summary": "Authorise a transfer between your own accounts.",
+        "summary": "Authorise an internal transfer",
+        "description": "Authorise a transfer between your own accounts.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2247,7 +2269,8 @@
         "tags": [
           "Transfer"
         ],
-        "summary": "Transfer money to another user's primary account.",
+        "summary": "Transfer to user",
+        "description": "Transfer money to another user's primary account.",
         "parameters": [
           {
             "name": "Step-Up-Authorization",
@@ -2487,7 +2510,8 @@
         "tags": [
           "Transfer"
         ],
-        "summary": "Transfer money between own accounts.",
+        "summary": "Internal transfer",
+        "description": "Transfer money between own accounts.",
         "parameters": [
           {
             "name": "Step-Up-Authorization",
@@ -2714,7 +2738,8 @@
         "tags": [
           "User"
         ],
-        "summary": "Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.\r\nReturns the masked display name (e.g. \"Vladislav A.\") for confirmation. This is an\r\nexact-match confirmation oracle by design — there is deliberately no substring/prefix\r\ndirectory search, which would let an authenticated user harvest the customer list\r\n(ADR-0014; the Zelle/Cash App model).",
+        "summary": "Look up a recipient by AzureTag",
+        "description": "Look up a single user by their EXACT AzureTag, to confirm a transfer recipient.\r\nReturns the masked display name (e.g. \"Vladislav A.\") for confirmation. This is an\r\nexact-match confirmation oracle by design — there is deliberately no substring/prefix\r\ndirectory search, which would let an authenticated user harvest the customer list\r\n(ADR-0014; the Zelle/Cash App model).",
         "parameters": [
           {
             "name": "azureTag",
@@ -2778,7 +2803,8 @@
         "tags": [
           "User"
         ],
-        "summary": "Renames the caller's own public AzureTag handle (ADR-0015). The handle is decoupled\r\nfrom the login identity (UserName is the immutable user id), so this is a plain update.\r\nThe bearer token still carries the old handle in its azure_tag claim until it is\r\nrefreshed on next login.",
+        "summary": "Rename my AzureTag",
+        "description": "Renames the caller's own public AzureTag handle (ADR-0015). The handle is decoupled\r\nfrom the login identity (UserName is the immutable user id), so this is a plain update.\r\nThe bearer token still carries the old handle in its azure_tag claim until it is\r\nrefreshed on next login.",
         "requestBody": {
           "content": {
             "application/json": {

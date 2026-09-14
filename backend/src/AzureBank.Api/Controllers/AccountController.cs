@@ -32,8 +32,11 @@ public class AccountController(
         deletionAuthValidator;
 
     /// <summary>
-    /// Get all accounts for the authenticated user.
+    /// List accounts
     /// </summary>
+    /// <remarks>
+    /// Get all accounts for the authenticated user.
+    /// </remarks>
     /// <returns>List of user's accounts</returns>
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<List<AccountResponse>>), StatusCodes.Status200OK)]
@@ -45,8 +48,11 @@ public class AccountController(
     }
 
     /// <summary>
-    /// Get a specific account by ID.
+    /// Get account
     /// </summary>
+    /// <remarks>
+    /// Get a specific account by ID.
+    /// </remarks>
     /// <param name="id">Account ID</param>
     /// <returns>Account details</returns>
     [HttpGet("{id:guid}")]
@@ -61,8 +67,11 @@ public class AccountController(
     }
 
     /// <summary>
-    /// Get account balance (current or historical).
+    /// Get balance
     /// </summary>
+    /// <remarks>
+    /// Get account balance (current or historical).
+    /// </remarks>
     /// <param name="id">Account ID</param>
     /// <param name="at">Optional: Get balance at specific point in time (ISO 8601)</param>
     /// <returns>Balance information</returns>
@@ -78,10 +87,13 @@ public class AccountController(
     }
 
     /// <summary>
+    /// Reveal full account number
+    /// </summary>
+    /// <remarks>
     /// Reveal the full (unmasked) account number of one owned account.
     /// Every other endpoint returns the masked form; behind the BFF this exact path is
     /// step-up-gated (PIN, auth level 2) and the response must never be cached.
-    /// </summary>
+    /// </remarks>
     /// <param name="id">Account ID</param>
     /// <returns>The full account number</returns>
     [HttpGet("{id:guid}/full-number")]
@@ -102,8 +114,11 @@ public class AccountController(
     }
 
     /// <summary>
-    /// Create a new bank account.
+    /// Create account
     /// </summary>
+    /// <remarks>
+    /// Create a new bank account.
+    /// </remarks>
     /// <param name="request">Account creation details</param>
     /// <returns>Created account</returns>
     [HttpPost]
@@ -121,8 +136,11 @@ public class AccountController(
     }
 
     /// <summary>
-    /// Update account details (name only).
+    /// Update account
     /// </summary>
+    /// <remarks>
+    /// Update account details (name only).
+    /// </remarks>
     /// <param name="id">Account ID</param>
     /// <param name="request">Update details</param>
     /// <returns>Updated account</returns>
@@ -141,8 +159,11 @@ public class AccountController(
     }
 
     /// <summary>
-    /// Set an account as the primary account.
+    /// Set primary account
     /// </summary>
+    /// <remarks>
+    /// Set an account as the primary account.
+    /// </remarks>
     /// <param name="id">Account ID to set as primary</param>
     /// <returns>Success message</returns>
     [HttpPatch("{id:guid}/set-primary")]
@@ -157,9 +178,12 @@ public class AccountController(
     }
 
     /// <summary>
+    /// Authorise an account closure
+    /// </summary>
+    /// <remarks>
     /// Authorise the closure of one owned account (ADR-0049).
     /// The account must be closable — zero balance, not primary — before the PIN is consulted.
-    /// </summary>
+    /// </remarks>
     /// <param name="id">Account ID</param>
     /// <param name="request">The PIN</param>
     /// <returns>The authorisation reference to present on DELETE, and when it expires</returns>
@@ -199,9 +223,12 @@ public class AccountController(
     }
 
     /// <summary>
+    /// Delete account
+    /// </summary>
+    /// <remarks>
     /// Delete (soft delete) an account.
     /// Balance must be zero and account cannot be primary.
-    /// </summary>
+    /// </remarks>
     /// <param name="id">Account ID</param>
     /// <param name="stepUpAuthorizationId">The authorisation reference minted for this
     /// account</param>

@@ -38,8 +38,11 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Authenticate user and receive JWT token.
+    /// Login
     /// </summary>
+    /// <remarks>
+    /// Authenticate user and receive JWT token.
+    /// </remarks>
     /// <param name="request">Login credentials</param>
     /// <returns>JWT token and user information</returns>
     [HttpPost("login")]
@@ -57,8 +60,11 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Register a new user account with initial bank account.
+    /// Register
     /// </summary>
+    /// <remarks>
+    /// Register a new user account with initial bank account.
+    /// </remarks>
     /// <param name="request">Registration details</param>
     /// <returns>User, account, and token information</returns>
     [HttpPost("register")]
@@ -76,8 +82,11 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Exchange a refresh token for a fresh access + refresh token pair (rotation).
+    /// Refresh access token
     /// </summary>
+    /// <remarks>
+    /// Exchange a refresh token for a fresh access + refresh token pair (rotation).
+    /// </remarks>
     /// <param name="request">The current refresh token</param>
     /// <returns>New access token, new refresh token, and its expiry</returns>
     [HttpPost("refresh")]
@@ -92,8 +101,11 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Get current authenticated user information.
+    /// Get current user
     /// </summary>
+    /// <remarks>
+    /// Get current authenticated user information.
+    /// </remarks>
     /// <returns>User profile information</returns>
     [HttpGet("me")]
     [Authorize]
@@ -107,8 +119,11 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Logout and invalidate session.
+    /// Logout
     /// </summary>
+    /// <remarks>
+    /// Logout and invalidate session.
+    /// </remarks>
     /// <returns>Success message</returns>
     [HttpPost("logout")]
     [Authorize]
@@ -121,16 +136,17 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Set or update user's PIN for step-up authentication.
+    /// Set or change PIN
     /// </summary>
+    /// <remarks>
+    /// Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does
+    /// not, because the account password already gated getting here. A `currentPin` is verified
+    /// with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count
+    /// toward the lockout and a locked PIN cannot be replaced even by supplying the correct one.
+    /// See ADR-0040.
+    /// </remarks>
     /// <param name="request">PIN to set</param>
     /// <returns>Success message</returns>
-    [EndpointDescription(
-        "Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does "
-        + "not, because the account password already gated getting here. A `currentPin` is verified "
-        + "with the same attempt-limiting as every other PIN check (ADR-0010), so wrong values count "
-        + "toward the lockout and a locked PIN cannot be replaced even by supplying the correct one. "
-        + "See ADR-0040.")]
     [HttpPost("pin")]
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
@@ -151,8 +167,11 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Verify user's PIN for step-up authentication.
+    /// Verify PIN
     /// </summary>
+    /// <remarks>
+    /// Verify user's PIN for step-up authentication.
+    /// </remarks>
     /// <param name="request">PIN to verify</param>
     /// <returns>Verification result</returns>
     [HttpPost("pin/verify")]

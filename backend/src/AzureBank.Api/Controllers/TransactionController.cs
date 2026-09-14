@@ -33,8 +33,11 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
-    /// Get transaction history with filtering and pagination.
+    /// List transactions
     /// </summary>
+    /// <remarks>
+    /// Get transaction history with filtering and pagination.
+    /// </remarks>
     /// <param name="filter">Filter and pagination options</param>
     /// <returns>Paginated list of transactions</returns>
     [HttpGet]
@@ -47,9 +50,12 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
+    /// Transaction summary
+    /// </summary>
+    /// <remarks>
     /// Get aggregated income/expenses/net and pending count over a date window
     /// (defaults to the current UTC calendar month).
-    /// </summary>
+    /// </remarks>
     /// <param name="filter">Optional inclusive date window</param>
     /// <returns>Server-side aggregated totals for the caller's accounts</returns>
     [HttpGet("summary")]
@@ -64,8 +70,11 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
-    /// Get a specific transaction by ID.
+    /// Get transaction
     /// </summary>
+    /// <remarks>
+    /// Get a specific transaction by ID.
+    /// </remarks>
     /// <param name="id">Transaction ID</param>
     /// <returns>Transaction details</returns>
     [HttpGet("{id:guid}")]
@@ -80,8 +89,11 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
-    /// Deposit money into an account.
+    /// Deposit
     /// </summary>
+    /// <remarks>
+    /// Deposit money into an account.
+    /// </remarks>
     /// <param name="request">Deposit details</param>
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("deposit")]
@@ -103,9 +115,12 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
+    /// Withdraw
+    /// </summary>
+    /// <remarks>
     /// Withdraw money from an account.
     /// Requires PIN verification.
-    /// </summary>
+    /// </remarks>
     /// <param name="request">Withdrawal details including PIN</param>
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("withdraw")]
