@@ -6,6 +6,28 @@
 
 **Decision Makers**: Vladislav Aleshaev
 
+> **Correction (2026-09-11) — this decision was built for PINs, and never for passwords.**
+> Passwords are hashed by ASP.NET Core Identity's default: **PBKDF2 with HMAC-SHA512 and 100,000
+> iterations**, the Identity V3 format. Measured, not read: every stored `PasswordHash` on a seeded
+> store starts `AQAAAAIAAYag`, whose header decodes to format `0x01` (V3), PRF `2` (HMACSHA512) and
+> `100000` iterations; every `PinHash` starts `$argon2id$v=19$`. The cause is structural — the API
+> calls `AddIdentity` and registers no custom `IPasswordHasher<ApplicationUser>`, so Identity's own
+> hasher is the one every password goes through, and the Argon2id `HashPassword`/`VerifyPassword`
+> in `PasswordHasher.cs` are called only from tests. ADR-0012 already described the shipped path
+> correctly ("the same dominant PBKDF2 cost"); this record did not.
+>
+> **What stays true below:** everything said for Argon2id is true of the PIN hash, which is where
+> it matters most — six digits are exhausted instantly, so the PIN is also peppered (ADR-0011).
+> **What does not:** the heading "Why Not ASP.NET Core Identity Default?" argues against the hasher
+> passwords actually use, and the argument now has a number behind it: **100,000 iterations is below
+> OWASP's current recommendation for PBKDF2-HMAC-SHA512, which is 220,000** (Password Storage Cheat
+> Sheet, read 2026-09-11), and PBKDF2 is not memory-hard. Neither is changed here. Raising the
+> iteration count is a setting (`PasswordHasherOptions.IterationCount`; login goes through
+> `UserManager.CheckPasswordAsync`, which rehashes a stored hash it finds weaker than the setting on
+> the next successful sign-in), but the login path's timing defence is calibrated to this hasher's
+> cost (ADR-0012) and must move with it — so it is its own change, recorded in the backlog, not a
+> line in a documentation correction.
+
 ---
 
 ## Context
@@ -124,7 +146,8 @@ public class Argon2PasswordHasher : IPasswordHasher<ApplicationUser>
 ## Validation
 
 Success criteria:
-- All password hashes use Argon2id
+- ~~All password hashes use Argon2id~~ *(struck 2026-09-11: never met — every password hash is
+  Identity's PBKDF2; see the correction at the top. PIN hashes do use Argon2id.)*
 - Hash verification completes < 500ms
 - Memory usage during hashing as expected
 - No timing attacks possible

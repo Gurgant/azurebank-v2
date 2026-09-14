@@ -1,49 +1,26 @@
 # Security Policy
 
-## Supported Versions
+This is a solo portfolio project, not a service with users: it is not deployed, holds no real data,
+and has no supported version or response-time promise. To report a vulnerability, use GitHub's
+**private vulnerability reporting** on this repository (Security → Report a vulnerability), not a
+public issue. The most useful findings are about the cryptography, the authorisation rails and the
+audit trail, because those are where the project makes its claims.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.x     | :white_check_mark: |
-
-## Reporting a Vulnerability
-
-We take security seriously. If you discover a security vulnerability, please report it responsibly.
-
-### How to Report
-
-1. **Do NOT** open a public GitHub issue
-2. Email security concerns to: [security@azurebank.example.com]
-3. Include:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Any suggested fixes
-
-### What to Expect
-
-- Acknowledgment within 48 hours
-- Regular updates on progress
-- Credit in security advisory (if desired)
-
-### Scope
-
-In scope:
-- Authentication/authorization bypasses
-- SQL injection, XSS, CSRF
-- Sensitive data exposure
-- Cryptographic weaknesses
-
-Out of scope:
-- Denial of service attacks
-- Social engineering
-- Physical security
+_(This section used to promise a 48-hour acknowledgement and give `security@azurebank.example.com`
+as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it reaches nobody.)_
 
 ## Security Measures
 
 ### Authentication
-- **Argon2id password hashing** — memory-hard, so GPU and ASIC attacks lose most of their
-  advantage over a defender's commodity hardware (ADR-0003).
+- **Passwords are hashed by ASP.NET Core Identity's default: PBKDF2 with HMAC-SHA512 and 100,000
+  iterations** (the Identity V3 format). Measured, not read: every stored `PasswordHash` on a seeded
+  store starts `AQAAAAIAAYag`, which decodes to exactly that. **That iteration count is below
+  OWASP's current recommendation for this PRF (220,000)**, and PBKDF2 is not memory-hard; raising it
+  is tracked as its own change, because the login path's timing defence is calibrated to this
+  hasher (ADR-0012) and has to move with it.
+  _(This line used to say "Argon2id password hashing (ADR-0003)". ADR-0003 decided that, and it
+  was built for PINs, never for passwords — the API registers Identity with no custom password
+  hasher. ADR-0003 now carries the correction.)_
 - **A 15-minute access token, silently re-minted** by the BFF from a 7-day rotating refresh token.
   Short-lived so a leaked token is nearly worthless; re-minted server-side so the user never sees
   an expiry. An active session is bounded by inactivity and absolute timeouts, not by the token
@@ -51,17 +28,27 @@ Out of scope:
 - **Refresh tokens rotate on every use, and a reuse revokes the whole family** — a replayed
   refresh token is the signature of theft, so the response is to end every session descended from
   it rather than to serve the request (ADR-0021).
-- **PIN step-up for sensitive operations**, with the elevation held in the BFF session rather than
-  in the token, so it cannot be replayed from a captured bearer (ADR-0008).
-- **PINs are peppered before hashing** with a server-side secret held outside the database: six
-  digits is a space you can exhaust instantly, so a stolen database must not be enough (ADR-0011).
+- **A PIN for every move of money and for closing an account, on three rails.** A withdrawal
+  carries the PIN in its request body. A transfer and an account closure first mint a one-shot
+  authorisation with the PIN, bound to exactly that operation and spent once (ADR-0042, ADR-0049).
+  Only the account-number reveal still uses an elevation held in the BFF session (ADR-0008). None
+  of them is granted by the bearer token alone.
+- **PINs are hashed with Argon2id and peppered first** with a server-side secret held outside the
+  database: six digits is a space you can exhaust instantly, so a stolen database must not be
+  enough (ADR-0011).
   Three wrong attempts lock the PIN, counted atomically in SQL so parallel guesses cannot race
   past the limit (ADR-0010).
 
 ### Data Protection
-- TLS 1.3 for all connections
-- Sensitive data encrypted at rest
-- No secrets in source code
+- **No secrets in source code.** Every key comes from user-secrets locally, and the API refuses to
+  start when one fails its check (`ValidateOnStart`) — except the JWT signing key, which has no
+  check. Measured on 2026-09-11: with `Jwt:Secret` empty, or 12 characters long, the API started
+  and answered its first registration with a 500 when it came to sign the token.
+- **The PIN pepper lives outside the database** (ADR-0011), and the audit trail's chain and anchor
+  keys are separate secrets from each other and from everything else (ADR-0044).
+- **Nothing here configures a TLS version or encryption at rest.** The project is not deployed, so
+  neither is claimed. _(This section used to list "TLS 1.3 for all connections" and "Sensitive
+  data encrypted at rest"; no code or configuration in the repository does either.)_
 
 ### Session Security
 - **`__Host-` prefixed, HttpOnly, Secure, SameSite=Strict session cookie** in production. The
