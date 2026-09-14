@@ -477,7 +477,25 @@ jobs:
 
       - name: E2E (real browser)
         working-directory: frontend
+        # TWO throwaway users, and they must be two. balanceGuard deposits then DRAINS its account to
+        # zero; pinLockExpiry enters three wrong PINs and the server LOCKS that account's PIN for 15
+        # minutes. On one account each would break the other: the lock blocks the drain, the empty
+        # balance stops the lock spec before it ever reaches the PIN step. balanceGuard falls back to
+        # the lock user when E2E_PROBE_EMAIL is absent, which is exactly the collision to avoid. Both
+        # are seeded with the specs' password and PIN (SeedDataOptions: Test123! / 123456); the rest
+        # of the suite signs in as admin@azurebank.dev and never touches either.
+        env:
+          E2E_PROBE_EMAIL: jane@example.com
+          E2E_LOCK_PROBE_EMAIL: mike@example.com
         run: npm run test:e2e
+
+      # A skipped spec proves nothing and still reads green. These two had skipped on every run since
+      # they were written, so the job was green over two money-safety proofs that never ran. The
+      # script reads the JSON report and fails on any skip, the way the SQL proofs' step refuses a
+      # .trx that executed nothing.
+      - name: Assert every e2e spec ran
+        working-directory: frontend
+        run: node scripts/assert-e2e-ran.mjs
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
