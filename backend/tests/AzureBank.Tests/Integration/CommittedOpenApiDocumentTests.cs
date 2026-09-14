@@ -78,8 +78,11 @@ namespace AzureBank.Tests.Integration;
 /// <see cref="CultureInfo.InvariantCulture"/>, and that is the line which holds — swapping each in
 /// turn showed that pinning <see cref="CultureInfo.CurrentCulture"/> alone does not. Without it this
 /// test would fail falsely on such a machine, and regeneration there would write a document no JSON
-/// parser accepts. The same bug reaches the running API: served from a server with a comma-decimal
-/// locale, <c>/openapi/v1.json</c> is invalid JSON. That is recorded in ADR-0053, not fixed here.
+/// parser accepts. ⚠️ It does NOT reach the running API, which this remark used to say it did:
+/// measured 2026-09-11 through the real route under it-IT and de-DE, <c>/openapi/v1.json</c> writes
+/// <c>0.01</c> and parses as JSON, because <c>MapOpenApi</c> builds its own writer with
+/// <see cref="CultureInfo.InvariantCulture"/>. The risk is confined to a writer this test builds, which
+/// is why the test builds it invariant (ADR-0053, the withdrawal note under its Consequences).
 /// </para>
 /// </remarks>
 public class CommittedOpenApiDocumentTests : IntegrationTestBase
