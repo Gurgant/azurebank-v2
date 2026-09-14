@@ -924,7 +924,10 @@ What the second section can say, and what it cannot:
   row that paid for it is gone — and because that table is unchained, its absence leaves no break
   for `verify` to find. Treat it as a finding.
   _Since 2026-09-14 only for a pre-binding row, or for a movement with no audit row at all; the
-  row-gone case on a bound row is `BOUND AUTHORISATION MISSING` below, which is the sharper answer._
+  row-gone case on a bound row is `BOUND AUTHORISATION MISSING` below, which is the sharper answer.
+  A non-null `Detail` the tool cannot read prints `Bound authorisation: UNREADABLE` under the line
+  instead of calling the row pre-binding; `Detail` is hashed, so the chain verdict below says
+  whether that row is to be believed at all._
 - `STRONGLY AUTHENTICATED, BOUND IN THE CHAIN` — _(since 2026-09-14)_ the chained `MoneyTransferred`
   row itself names the authorisation it consumed — `Detail` is `{"authorizationId":"<id>"}`, under
   the hash — and the authorisation row agrees: it exists, it is `Consumed`, and it points back at

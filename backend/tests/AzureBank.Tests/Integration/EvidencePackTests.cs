@@ -102,6 +102,11 @@ public class EvidencePackTests : IntegrationTestBase
         exitCode.Should().Be(
             VerifyCommand.Intact, "the chain is untouched, and the pack exits with the chain's verdict");
         lines[0].Should().Be($"EVIDENCE PACK for {number}");
+        // Observed on the running API, 2026-09-14, scratch database, one external transfer:
+        //   STRONGLY AUTHENTICATED, BOUND IN THE CHAIN: the audit row for this movement names
+        //   authorisation 01a0a08b-f599-7a01-8758-83a8f08dff71, and that row paid for it.
+        //   CHAIN INTACT: 3 rows verified.                                          (exit 0)
+        // and the row itself: Detail = {"authorizationId":"01a0a08b-f599-7a01-8758-83a8f08dff71"}.
         text.Should().Contain("STRONGLY AUTHENTICATED, BOUND IN THE CHAIN: the audit row for this movement names");
         text.Should().Contain($"{SecurityEvents.MoneyTransferred} -> Succeeded");
         text.Should().Contain("CHAIN INTACT");
@@ -158,6 +163,11 @@ public class EvidencePackTests : IntegrationTestBase
         var text = string.Join("\n", lines);
 
         exitCode.Should().Be(VerifyCommand.Intact, "the authorisation table is not in the chain");
+        // Observed on the running API, 2026-09-14, after UPDATE StepUpAuthorizations SET
+        // ConsumedByTransactionId = NEWID() on the named row:
+        //   BOUND AUTHORISATION DOES NOT MATCH: the chained audit row names authorisation
+        //   01a0a08b-f762-7ae8-b429-eb5b3b1f814d,
+        //   CHAIN INTACT: 3 rows verified.                                          (exit 0)
         text.Should().Contain("BOUND AUTHORISATION DOES NOT MATCH: the chained audit row names authorisation");
         text.Should().Contain("and that row says it paid for ");
         text.Should().Contain("CHAIN INTACT");
@@ -239,6 +249,11 @@ public class EvidencePackTests : IntegrationTestBase
         exitCode.Should().Be(
             VerifyCommand.Intact,
             "the chain does not cover that table, and the pack must not pretend it does");
+        // Observed on the running API, 2026-09-14, after DELETE FROM StepUpAuthorizations WHERE Id =
+        // the named id:
+        //   BOUND AUTHORISATION MISSING: the chained audit row names authorisation
+        //   01a0a08b-f599-7a01-8758-83a8f08dff71, and no such row exists.
+        //   CHAIN INTACT: 3 rows verified.                                          (exit 0)
         text.Should().Contain("BOUND AUTHORISATION MISSING: the chained audit row names authorisation");
         text.Should().Contain("CHAIN INTACT");
         // A phrase that sits on ONE printed line: the sentence it belongs to wraps, and a Contains
@@ -356,6 +371,64 @@ public class EvidencePackBrokenChainTests : IntegrationTestBase
             $"EVIDENCE PACK for {number}", "the pack is still printed; the code is what changes");
         text.Should().Contain("STRONGLY AUTHENTICATED: authorisation ");
         text.Should().Contain("CHAIN BROKEN at sequence");
+    }
+
+    [Fact]
+    public async Task ARowWhoseDetailIsRewritten_BreaksTheChain_BecauseTheNameIsUnderTheHash()
+    {
+        /*
+          Second chain-breaking test in this class, on purpose: neither asserts an intact chain, so
+          their order does not matter, and the first class keeps the root it reads as intact.
+          THE PROPERTY THE BINDING RESTS ON, pinned rather than assumed. Naming the authorisation in
+          Detail buys tamper-evidence only if Detail is inside RowHash. This nulls it on the success
+          row -- the one write that would turn a bound row back into a pre-binding one -- and expects
+          the CHAIN, not the verdict section, to be what notices: the section reads the row as it
+          finds it and calls it pre-binding, and the chain verdict under it says why not to believe
+          that. Observed on the running API, 2026-09-14, scratch database, after UPDATE AuditEvents
+          SET Detail = NULL on the internal transfer's row (sequence 3):
+            STRONGLY AUTHENTICATED: authorisation 01a0a08b-f7ba-71f7-86a2-ef383a9f00aa paid for this
+            transfer.
+            Bound authorisation: none. The audit row for this movement is a pre-binding row,
+            CHAIN BROKEN at sequence 3.                                              (exit 1)
+        */
+        var (account, recipient) = await ScenarioAsync();
+        var authorisation = await AuthoriseTransferAsync(account, recipient, Amount);
+        var response = await PostMonetaryAsync(
+            "/api/transfers",
+            new TransferRequest
+            {
+                FromAccountId = account,
+                RecipientAzureTag = recipient,
+                Amount = Amount,
+                Description = "evidence pack, rewritten detail",
+            },
+            stepUpAuthorizationId: authorisation);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<TransferResponse>>(JsonOptions);
+        var number = body!.Data!.TransactionNumber;
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
+            var movement = await store.Transactions.AsNoTracking()
+                .SingleAsync(t => t.TransactionNumber == number);
+            var row = await store.AuditEvents.SingleAsync(e => e.SubjectId == movement.Id);
+            AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().NotBeNull("the row was bound before the write");
+            row.Detail = null;
+            await store.SaveChangesAsync();
+        }
+
+        var (exitCode, lines) = await EvidenceCommand.RunAsync(
+            Factory.Services, number, CancellationToken.None);
+        var text = string.Join("\n", lines);
+
+        exitCode.Should().Be(
+            VerifyCommand.Broken, "Detail is hashed, so rewriting it is a break the chain finds");
+        text.Should().Contain("CHAIN BROKEN at sequence");
+        text.Should().Contain(
+            "The audit row for this movement is a pre-binding row,",
+            "the verdict section reports the row as found; the chain verdict is what refuses it");
+        text.Should().NotContain("BOUND IN THE CHAIN");
     }
 
 }

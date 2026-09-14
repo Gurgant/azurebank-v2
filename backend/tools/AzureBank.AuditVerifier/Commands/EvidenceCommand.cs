@@ -227,7 +227,13 @@ public static class EvidenceCommand
 
             lines.AddRange(Movement(movement, related));
             lines.Add(string.Empty);
-            lines.AddRange(StrongAuthentication(movement, authorisation, successRow is not null, boundId, bound));
+            lines.AddRange(StrongAuthentication(
+                movement,
+                authorisation,
+                hasSuccessRow: successRow is not null,
+                detailUnreadable: successRow?.Detail is not null && boundId is null,
+                boundId,
+                bound));
             lines.Add(string.Empty);
             lines.AddRange(AuditRows(movement, auditRows));
             lines.Add(string.Empty);
@@ -305,11 +311,15 @@ public static class EvidenceCommand
     /// pointer says paid for the movement; <paramref name="boundId"/> is what the CHAINED audit
     /// row names, and <paramref name="bound"/> that row if it still exists. The chained name wins
     /// every disagreement, because it is the half a database writer cannot rewrite unnoticed.
+    /// <paramref name="detailUnreadable"/> is the row that HAS a Detail the reader could not use:
+    /// reported as such, never as a pre-binding row, since Detail is under the row's hash and the
+    /// chain verdict below is what says whether to believe it.
     /// </summary>
     internal static IEnumerable<string> StrongAuthentication(
         Transaction movement,
         StepUpAuthorization? authorisation,
         bool hasSuccessRow,
+        bool detailUnreadable,
         Guid? boundId,
         StepUpAuthorization? bound)
     {
@@ -353,13 +363,23 @@ public static class EvidenceCommand
                 yield return "  movement; it does not cover this one.";
             }
 
-            yield return hasSuccessRow
-                ? "  Bound authorisation: none. The audit row for this movement is a pre-binding row,"
-                : "  Bound authorisation: none, because no audit row names this movement (see below).";
-            if (hasSuccessRow)
+            if (detailUnreadable)
             {
+                yield return "  Bound authorisation: UNREADABLE. The audit row for this movement carries a";
+                yield return "  Detail that is not the shape the application writes, so the name it should";
+                yield return "  carry cannot be read. Detail is under that row's hash: read the chain";
+                yield return "  verdict below, and treat this as a finding whatever it says.";
+            }
+            else if (hasSuccessRow)
+            {
+                yield return "  Bound authorisation: none. The audit row for this movement is a pre-binding row,";
                 yield return "  written before success rows began naming the authorisation they consumed";
                 yield return "  (2026-09-14); the pointer above is all the binding this movement has.";
+            }
+            else
+            {
+                yield return "  Bound authorisation: none, because no Succeeded transfer row names this";
+                yield return "  movement (the rows below say what does).";
             }
 
             yield break;
@@ -383,17 +403,26 @@ public static class EvidenceCommand
             yield break;
         }
 
-        var paid = bound.Status == StepUpAuthorizationStatus.Consumed
-            && bound.ConsumedByTransactionId == movement.Id;
-        if (!paid)
+        var pointsHere = bound.ConsumedByTransactionId == movement.Id;
+        var consumed = bound.Status == StepUpAuthorizationStatus.Consumed;
+        if (!(pointsHere && consumed))
         {
             yield return $"BOUND AUTHORISATION DOES NOT MATCH: the chained audit row names authorisation"
                 + $" {boundId:D},";
-            yield return bound.ConsumedByTransactionId is { } other
-                ? $"  and that row says it paid for {other:D} instead."
-                : $"  and that row says it was never spent (status {bound.Status}).";
+            yield return bound.ConsumedByTransactionId switch
+            {
+                { } other when other != movement.Id => $"  and that row says it paid for {other:D} instead.",
+                { } => $"  and that row points at this movement, but its status is {bound.Status}, not Consumed.",
+                null => $"  and that row records no movement against it (status {bound.Status}).",
+            };
             yield return "  The chained name is the evidence; the authorisation table was written";
             yield return "  around the application. Treat it as a finding.";
+            if (authorisation is not null && authorisation.Id != bound.Id)
+            {
+                yield return $"  ⚠️ A different authorisation, {authorisation.Id:D}, claims this movement";
+                yield return "  through the unchained pointer.";
+            }
+
             yield break;
         }
 

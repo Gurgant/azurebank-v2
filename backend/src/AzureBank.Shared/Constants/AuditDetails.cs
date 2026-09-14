@@ -55,9 +55,12 @@ public static class AuditDetails
                 return id;
             }
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or ArgumentException)
         {
-            // Not this shape; the caller reports the row as it found it.
+            // Not this shape -- or not even a UTF-16 string JsonDocument will read: a lone surrogate
+            // raises ArgumentException ("Cannot transcode invalid UTF-16 string to UTF-8 JSON text"),
+            // not JsonException, and an nvarchar written around the application can hold one. The
+            // caller reports the row as it found it (EvidenceVerdictTests pins both).
         }
 
         return null;

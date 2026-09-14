@@ -296,6 +296,8 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         var row = await SingleRowForActorAsync(payerId, SecurityEvents.MoneyTransferred);
         row.Outcome.Should().Be(AuditOutcome.Succeeded);
         row.SubjectType.Should().Be("Transaction");
+        // Observed on the running API, 2026-09-14, scratch database, external transfer, sequence 1:
+        // Detail = {"authorizationId":"01a0a08b-f599-7a01-8758-83a8f08dff71"}, the id the mint returned.
         AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(
             authorization,
             "the row names the authorisation this transfer consumed and nothing else: amount and "
@@ -360,6 +362,8 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         response.IsSuccessStatusCode.Should().BeTrue(await response.Content.ReadAsStringAsync());
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyTransferredInternally);
+        // Observed on the running API, 2026-09-14, internal transfer, sequence 3:
+        // Detail = {"authorizationId":"01a0a08b-f7ba-71f7-86a2-ef383a9f00aa"}, the id the mint returned.
         AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(
             authorization, "an internal transfer consumes an authorisation too, and its row names it");
 

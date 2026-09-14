@@ -52,8 +52,13 @@ public class EvidenceVerdictTests
     };
 
     private static string[] Verdict(
-        StepUpAuthorization? pointer, bool hasSuccessRow, Guid? boundId, StepUpAuthorization? bound) =>
-        EvidenceCommand.StrongAuthentication(Outgoing(), pointer, hasSuccessRow, boundId, bound).ToArray();
+        StepUpAuthorization? pointer,
+        bool hasSuccessRow,
+        Guid? boundId,
+        StepUpAuthorization? bound,
+        bool detailUnreadable = false) =>
+        EvidenceCommand.StrongAuthentication(
+            Outgoing(), pointer, hasSuccessRow, detailUnreadable, boundId, bound).ToArray();
 
     [Fact]
     public void ABoundRowThatPaid_IsSTRONGLYAUTHENTICATEDBOUNDINTHECHAIN()
@@ -131,7 +136,43 @@ public class EvidenceVerdictTests
         var lines = Verdict(pointer: null, hasSuccessRow: true, BoundId, unspent);
 
         lines[0].Should().StartWith("BOUND AUTHORISATION DOES NOT MATCH:");
-        lines[1].Should().Be("  and that row says it was never spent (status Pending).");
+        lines[1].Should().Be("  and that row records no movement against it (status Pending).");
+    }
+
+    [Fact]
+    public void ABoundRowWhoseStatusWasRewritten_IsBOUNDAUTHORISATIONDOESNOTMATCH_AndSaysWhichHalf()
+    {
+        // The pointer still names this movement; only the status was written around the application.
+        // The first wording printed "paid for <this very movement> instead" here, found in review.
+        var tampered = Consumed(BoundId, MovementId);
+        tampered.Status = StepUpAuthorizationStatus.Pending;
+
+        var lines = Verdict(pointer: null, hasSuccessRow: true, BoundId, tampered);
+
+        lines[0].Should().StartWith("BOUND AUTHORISATION DOES NOT MATCH:");
+        lines[1].Should().Be("  and that row points at this movement, but its status is Pending, not Consumed.");
+    }
+
+    [Fact]
+    public void ARePointedRow_WhileAnotherRowPointsHere_NamesTheImpostorToo()
+    {
+        var rePointed = Consumed(BoundId, OtherId);
+        var impostor = Consumed(OtherId, MovementId);
+
+        var lines = Verdict(pointer: impostor, hasSuccessRow: true, BoundId, rePointed);
+
+        lines[0].Should().StartWith("BOUND AUTHORISATION DOES NOT MATCH:");
+        lines.Should().Contain($"  ⚠️ A different authorisation, {OtherId:D}, claims this movement");
+    }
+
+    [Fact]
+    public void ARowWhoseDetailCannotBeRead_IsReportedAsUnreadable_NotAsPreBinding()
+    {
+        var lines = Verdict(pointer: null, hasSuccessRow: true, boundId: null, bound: null, detailUnreadable: true);
+
+        lines[0].Should().StartWith("NOT STRONGLY AUTHENTICATED:");
+        lines.Should().Contain("  Bound authorisation: UNREADABLE. The audit row for this movement carries a");
+        lines.Should().NotContain(l => l.Contains("pre-binding", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -168,7 +209,7 @@ public class EvidenceVerdictTests
 
         lines[0].Should().StartWith("NOT STRONGLY AUTHENTICATED:");
         lines.Should().Contain(
-            "  Bound authorisation: none, because no audit row names this movement (see below).");
+            "  Bound authorisation: none, because no Succeeded transfer row names this");
         lines.Should().NotContain(l => l.Contains("pre-binding", StringComparison.Ordinal));
     }
 
@@ -179,7 +220,7 @@ public class EvidenceVerdictTests
         movement.Type = TransactionType.Deposit;
         var bound = Consumed(BoundId, MovementId);
 
-        var lines = EvidenceCommand.StrongAuthentication(movement, bound, true, BoundId, bound).ToArray();
+        var lines = EvidenceCommand.StrongAuthentication(movement, bound, true, false, BoundId, bound).ToArray();
 
         lines[0].Should().StartWith("NO AUTHORISATION APPLIES");
     }
@@ -201,5 +242,14 @@ public class EvidenceVerdictTests
         AuditDetails.ConsumedAuthorisationOf("[\"0b1c2d3e-4f50-4617-8899-aabbccddeeff\"]").Should().BeNull();
         AuditDetails.ConsumedAuthorisationOf("{\"authorizationId\":\"{0b1c2d3e-4f50-4617-8899-aabbccddeeff}\"}")
             .Should().BeNull("only the D format is written, so only the D format is read");
+        /*
+          NOT A JsonException. JsonDocument.Parse refuses a lone surrogate with an ArgumentException
+          ("Cannot transcode invalid UTF-16 string to UTF-8 JSON text", observed on .NET 10.0.12),
+          and an nvarchar written around the application can hold one. The first reader caught
+          JsonException only, so this input escaped to the command's outer catch and printed
+          CANNOT ASSEMBLE -- blaming configuration for a tampered row. Red before the second catch.
+        */
+        AuditDetails.ConsumedAuthorisationOf("{\"authorizationId\":\"\uD800\"}").Should().BeNull(
+            "a lone surrogate is not JSON this reader can use, and it is not an exception either");
     }
 }
