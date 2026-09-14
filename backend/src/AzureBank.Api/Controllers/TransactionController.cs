@@ -38,7 +38,6 @@ public class TransactionController : ControllerBase
     /// <param name="filter">Filter and pagination options</param>
     /// <returns>Paginated list of transactions</returns>
     [HttpGet]
-    [EndpointSummary("List transactions")]
     [ProducesResponseType(typeof(PaginatedResponse<TransactionResponse>), StatusCodes.Status200OK)]
     public async Task<ActionResult<PaginatedResponse<TransactionResponse>>> GetTransactions([FromQuery] TransactionFilter filter)
     {
@@ -54,7 +53,6 @@ public class TransactionController : ControllerBase
     /// <param name="filter">Optional inclusive date window</param>
     /// <returns>Server-side aggregated totals for the caller's accounts</returns>
     [HttpGet("summary")]
-    [EndpointSummary("Transaction summary")]
     [ProducesResponseType(typeof(ApiResponse<TransactionSummaryResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<TransactionSummaryResponse>>> GetSummary(
@@ -71,7 +69,6 @@ public class TransactionController : ControllerBase
     /// <param name="id">Transaction ID</param>
     /// <returns>Transaction details</returns>
     [HttpGet("{id:guid}")]
-    [EndpointSummary("Get transaction")]
     [ProducesResponseType(typeof(ApiResponse<TransactionResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
@@ -88,7 +85,6 @@ public class TransactionController : ControllerBase
     /// <param name="request">Deposit details</param>
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("deposit")]
-    [EndpointSummary("Deposit")]
     [RequireIdempotency]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<DepositResponse>), StatusCodes.Status201Created)]
@@ -113,7 +109,6 @@ public class TransactionController : ControllerBase
     /// <param name="request">Withdrawal details including PIN</param>
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("withdraw")]
-    [EndpointSummary("Withdraw")]
     [RequireIdempotency]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<WithdrawResponse>), StatusCodes.Status201Created)]

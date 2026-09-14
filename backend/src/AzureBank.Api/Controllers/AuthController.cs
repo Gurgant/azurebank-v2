@@ -42,7 +42,6 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <param name="request">Login credentials</param>
     /// <returns>JWT token and user information</returns>
-    [EndpointSummary("Login")]
     [HttpPost("login")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
@@ -62,7 +61,6 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <param name="request">Registration details</param>
     /// <returns>User, account, and token information</returns>
-    [EndpointSummary("Register")]
     [HttpPost("register")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ApiResponse<RegisterResponse>), StatusCodes.Status201Created)]
@@ -82,7 +80,6 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <param name="request">The current refresh token</param>
     /// <returns>New access token, new refresh token, and its expiry</returns>
-    [EndpointSummary("Refresh access token")]
     [HttpPost("refresh")]
     [AllowAnonymous] // the refresh token IS the credential; the access token may be expired
     [ProducesResponseType(typeof(ApiResponse<RefreshResponse>), StatusCodes.Status200OK)]
@@ -98,7 +95,6 @@ public class AuthController : ControllerBase
     /// Get current authenticated user information.
     /// </summary>
     /// <returns>User profile information</returns>
-    [EndpointSummary("Get current user")]
     [HttpGet("me")]
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse<UserResponse>), StatusCodes.Status200OK)]
@@ -114,7 +110,6 @@ public class AuthController : ControllerBase
     /// Logout and invalidate session.
     /// </summary>
     /// <returns>Success message</returns>
-    [EndpointSummary("Logout")]
     [HttpPost("logout")]
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
@@ -130,7 +125,6 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <param name="request">PIN to set</param>
     /// <returns>Success message</returns>
-    [EndpointSummary("Set or change PIN")]
     [EndpointDescription(
         "Enrols a PIN, or changes an existing one. CHANGING requires `currentPin`; enrolling does "
         + "not, because the account password already gated getting here. A `currentPin` is verified "
@@ -161,7 +155,6 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <param name="request">PIN to verify</param>
     /// <returns>Verification result</returns>
-    [EndpointSummary("Verify PIN")]
     [HttpPost("pin/verify")]
     [Authorize]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]

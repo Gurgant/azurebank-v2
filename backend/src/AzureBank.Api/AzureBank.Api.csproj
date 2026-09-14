@@ -78,25 +78,6 @@
     <ProjectReference Include="..\AzureBank.Shared\AzureBank.Shared.csproj" />
   </ItemGroup>
 
-  <!--
-    Disable OpenAPI XML Comment Injection
-    =====================================
-    The ASP.NET Core OpenAPI source generator automatically injects XML <summary> comments
-    into OpenAPI summary fields, overriding [EndpointSummary] attributes.
-
-    This target removes the source generator so:
-    - XML comments still work for IntelliSense in IDE
-    - [EndpointSummary] attributes control Scalar/OpenAPI titles
-    - We get clean, controllable endpoint documentation
-
-    See: project-docs/22-openapi-scalar-configuration.md
-  -->
-  <Target Name="DisableCompileTimeOpenApiXmlGenerator" BeforeTargets="CoreCompile">
-    <ItemGroup>
-      <Analyzer Remove="$(PkgMicrosoft_AspNetCore_OpenApi)/analyzers/dotnet/cs/Microsoft.AspNetCore.OpenApi.SourceGenerators.dll" />
-    </ItemGroup>
-  </Target>
-
 
   <ItemGroup>
     <!--

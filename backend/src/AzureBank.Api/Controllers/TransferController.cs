@@ -57,7 +57,6 @@ public class TransferController : ControllerBase
     /// Authorise a transfer to another user.
     /// </summary>
     [HttpPost("authorizations")]
-    [EndpointSummary("Authorise a transfer")]
     [RequestSizeLimit(32_768)]
     [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -92,7 +91,6 @@ public class TransferController : ControllerBase
     /// Authorise a transfer between your own accounts.
     /// </summary>
     [HttpPost("internal/authorizations")]
-    [EndpointSummary("Authorise an internal transfer")]
     [RequestSizeLimit(32_768)]
     [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -118,7 +116,6 @@ public class TransferController : ControllerBase
     /// </summary>
     /// <returns>Transfer result with new balance</returns>
     [HttpPost]
-    [EndpointSummary("Transfer to user")]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
@@ -155,7 +152,6 @@ public class TransferController : ControllerBase
     /// </summary>
     /// <returns>Transfer result with both account balances</returns>
     [HttpPost("internal")]
-    [EndpointSummary("Internal transfer")]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)

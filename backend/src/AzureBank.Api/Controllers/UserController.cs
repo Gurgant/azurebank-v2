@@ -35,7 +35,6 @@ public class UserController : ControllerBase
     /// </summary>
     /// <param name="azureTag">Full AzureTag to look up (3-20 chars, AzureTag charset).</param>
     [HttpGet("{azureTag}")]
-    [EndpointSummary("Get user by AzureTag")]
     [AlwaysFound] // An unknown handle is 200 with exists:false, never 404 (ADR-0014).
     [ProducesResponseType(typeof(ApiResponse<RecipientLookupResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -54,7 +53,6 @@ public class UserController : ControllerBase
     /// refreshed on next login.
     /// </summary>
     [HttpPatch("me/azuretag")]
-    [EndpointSummary("Rename my AzureTag")]
     [ProducesResponseType(typeof(ApiResponse<UpdateAzureTagResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]

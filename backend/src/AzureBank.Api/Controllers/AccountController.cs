@@ -36,7 +36,6 @@ public class AccountController(
     /// </summary>
     /// <returns>List of user's accounts</returns>
     [HttpGet]
-    [EndpointSummary("List accounts")]
     [ProducesResponseType(typeof(ApiResponse<List<AccountResponse>>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetAccounts()
     {
@@ -51,7 +50,6 @@ public class AccountController(
     /// <param name="id">Account ID</param>
     /// <returns>Account details</returns>
     [HttpGet("{id:guid}")]
-    [EndpointSummary("Get account")]
     [ProducesResponseType(typeof(ApiResponse<AccountResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
@@ -69,7 +67,6 @@ public class AccountController(
     /// <param name="at">Optional: Get balance at specific point in time (ISO 8601)</param>
     /// <returns>Balance information</returns>
     [HttpGet("{id:guid}/balance")]
-    [EndpointSummary("Get balance")]
     [ProducesResponseType(typeof(ApiResponse<BalanceResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
@@ -88,7 +85,6 @@ public class AccountController(
     /// <param name="id">Account ID</param>
     /// <returns>The full account number</returns>
     [HttpGet("{id:guid}/full-number")]
-    [EndpointSummary("Reveal full account number")]
     [ProducesResponseType(typeof(ApiResponse<AccountNumberResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
@@ -111,7 +107,6 @@ public class AccountController(
     /// <param name="request">Account creation details</param>
     /// <returns>Created account</returns>
     [HttpPost]
-    [EndpointSummary("Create account")]
     [ProducesResponseType(typeof(ApiResponse<AccountResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<AccountResponse>>> CreateAccount([FromBody] CreateAccountRequest request)
@@ -132,7 +127,6 @@ public class AccountController(
     /// <param name="request">Update details</param>
     /// <returns>Updated account</returns>
     [HttpPatch("{id:guid}")]
-    [EndpointSummary("Update account")]
     [ProducesResponseType(typeof(ApiResponse<AccountResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -152,7 +146,6 @@ public class AccountController(
     /// <param name="id">Account ID to set as primary</param>
     /// <returns>Success message</returns>
     [HttpPatch("{id:guid}/set-primary")]
-    [EndpointSummary("Set primary account")]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
@@ -181,7 +174,6 @@ public class AccountController(
       collision, and the OpenAPI operation reads as what it is (ADR-0049).
     */
     [HttpPost("{id:guid}/deletion-authorizations")]
-    [EndpointSummary("Authorise an account closure")]
     [RequestSizeLimit(32_768)]
     [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -215,7 +207,6 @@ public class AccountController(
     /// account</param>
     /// <returns>Success message</returns>
     [HttpDelete("{id:guid}")]
-    [EndpointSummary("Delete account")]
     [RequireStepUpAuthorization]
     [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status200OK)]
     // 400 was declared before ADR-0049 and unreachable then (a DELETE has no body to validate);
