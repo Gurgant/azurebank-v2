@@ -27,17 +27,20 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
     */
     private readonly AzureBankDbContext _context;
     private readonly IPinVerifier _pinVerifier;
+    private readonly IAuditService _audit;
     private readonly StepUpOptions _options;
     private readonly ILogger<StepUpAuthorizationService> _logger;
 
     public StepUpAuthorizationService(
         AzureBankDbContext context,
         IPinVerifier pinVerifier,
+        IAuditService audit,
         IOptions<StepUpOptions> options,
         ILogger<StepUpAuthorizationService> logger)
     {
         _context = context;
         _pinVerifier = pinVerifier;
+        _audit = audit;
         _options = options.Value;
         _logger = logger;
     }
@@ -77,8 +80,27 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
         // here, and here is now the ONLY place a transfer can spend one — minting IS the
         // authentication event, so the ADR-0010 lockout lives on this endpoint rather than on the
         // transfer that used to verify in-band.
-        if (!await _pinVerifier.VerifyPinAsync(userId, pin))
+        //
+        // Both outcomes are AUDITED since 2026-09-11, the way WithdrawAsync audits its own: a
+        // guessed PIN is the security signal ADR-0044 kept for "the step-up path", and until then
+        // it left only a log line here while the same guess on a withdrawal wrote a row. Measured
+        // that day: three wrong PINs at the three mints, then three more against the lock, wrote
+        // no row at all. RecordRefusalAsync, never Record: every branch here throws, so a row in
+        // the caller's unit of work would be rolled back by the refusal it documents.
+        bool pinOk;
+        try
         {
+            pinOk = await _pinVerifier.VerifyPinAsync(userId, pin);
+        }
+        catch (PinLockedException)
+        {
+            await RecordPinRefusalAsync(userId, operation, binding, ErrorCodes.PinLocked);
+            throw;
+        }
+
+        if (!pinOk)
+        {
+            await RecordPinRefusalAsync(userId, operation, binding, ErrorCodes.InvalidPin);
             throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
         }
 
@@ -103,6 +125,29 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
 
         return authorization;
     }
+
+    /// <summary>
+    /// A refused PIN at a mint, on its own connection: <c>MoneyTransferRefused</c> for the two
+    /// transfer mints, <c>AccountDeletionRefused</c> for the closure mint, <c>Detail</c> the
+    /// <c>ErrorCodes</c> constant the caller received.
+    /// </summary>
+    /// <remarks>
+    /// The subject is <c>binding.FromAccountId</c>, and it is safe to write because every caller
+    /// has proved ownership of that account before minting (TransferService's two mints and
+    /// AccountService.AuthoriseDeletionAsync each call GetAccountWithOwnershipCheckAsync first), so
+    /// the row names an account the actor owns, never one they merely named.
+    /// </remarks>
+    private Task RecordPinRefusalAsync(
+        Guid userId, StepUpOperation operation, StepUpBinding binding, string errorCode) =>
+        _audit.RecordRefusalAsync(
+            operation == StepUpOperation.AccountDeletion
+                ? SecurityEvents.AccountDeletionRefused
+                : SecurityEvents.MoneyTransferRefused,
+            AuditOutcome.Refused,
+            actorUserId: userId,
+            subjectType: "Account",
+            subjectId: binding.FromAccountId,
+            detail: errorCode);
 
     /// <inheritdoc />
     public async Task ValidateAsync(
