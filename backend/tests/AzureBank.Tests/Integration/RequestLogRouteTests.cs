@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using AzureBank.Shared.Constants;
+using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Serilog.Events;
@@ -132,5 +134,69 @@ public sealed class RequestLogRouteTests : IDisposable
         status.Should().Be(HttpStatusCode.NotFound);
         IsTheRequestLine(line, "(unmatched)", HttpStatusCode.NotFound);
         NothingNamesTheValue("janesmith");
+    }
+}
+
+/// <summary>
+/// The one domain refusal whose message carries a string the CLIENT typed, read through the host:
+/// an unknown recipient handle on the transfer mint.
+/// </summary>
+/// <remarks>
+/// Confirmed by two independent refuters on 2026-09-14: of the ten <c>NotFoundException</c> sites,
+/// only <c>TransferService</c>'s recipient lookup interpolates a client string, and
+/// <c>AppExceptionHandler</c> logged that message as <c>{Message}</c> with the exception attached —
+/// "Recipient with identifier 'nobody_here_at_all' was not found." in every sink. The handler logs
+/// the code and the type now. The response is the control: the value was in play, and the client
+/// is still told what was not found.
+/// </remarks>
+public sealed class DomainRefusalLogTests : IntegrationTestBase, IDisposable
+{
+    private static CustomWebApplicationFactory Capturing()
+    {
+        var factory = new CustomWebApplicationFactory();
+        factory.CaptureLog(LogEventLevel.Information);
+        return factory;
+    }
+
+    public DomainRefusalLogTests() : base(Capturing()) { }
+
+    public void Dispose() => Factory.Dispose();
+
+    [Fact]
+    public async Task AnUnknownRecipient_IsRefusedWithItsHandleInTheResponse_AndInNoLogEvent()
+    {
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token);
+        const string unknownHandle = "nobody_here_at_all";
+        SetAuthHeader(token);
+
+        var response = await Client.PostAsJsonAsync(
+            "/api/transfers/authorizations",
+            new TransferAuthorizationRequest
+            {
+                FromAccountId = accountId,
+                RecipientAzureTag = unknownHandle,
+                Amount = 1m,
+                Pin = "123456",
+            },
+            JsonOptions);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await response.Content.ReadAsStringAsync()).Should().Contain(
+            unknownHandle, "the control: the handle was in play, and the client is told what was not found");
+
+        var events = Factory.CapturedEvents.ToList();
+        var handled = events.Single(e =>
+            e.MessageTemplate.Text.StartsWith("Domain exception: {ErrorCode}", StringComparison.Ordinal));
+        handled.Properties["ErrorCode"].Should().Be(new ScalarValue(ErrorCodes.AccountNotFound));
+        handled.Properties.Should().NotContainKey("Message");
+        handled.Exception.Should().BeNull();
+        foreach (var e in events)
+        {
+            e.Properties.Select(p => $"{p.Key}={p.Value}").Should()
+                .NotContain(p => p.Contains(unknownHandle, StringComparison.Ordinal), "no property of any event carries the handle");
+            e.RenderMessage().Should().NotContain(unknownHandle);
+            (e.Exception?.ToString() ?? string.Empty).Should().NotContain(unknownHandle);
+        }
     }
 }
