@@ -6,6 +6,7 @@ using System.Threading.RateLimiting;
 using AzureBank.Bff;
 using AzureBank.Bff.Extensions;
 using AzureBank.Bff.Middleware;
+using AzureBank.Bff.Observability;
 using AzureBank.Bff.Options;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
@@ -96,6 +97,9 @@ try
     builder.Host.UseSerilog((context, services, configuration) =>
     {
         configuration
+            // ReadFrom.Services stays AFTER ReadFrom.Configuration: FromLogContext (appsettings
+            // Enrich) carries the hosting scope's RequestPath onto every event, and the DI-registered
+            // RequestPathEnricher must run after it to strip it. RequestLogRouteTests pins this.
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services);
 
@@ -123,6 +127,12 @@ try
         }
     },
         preserveStaticLogger: true);
+
+    // The route pattern on every event, the path on none: ASP.NET Core's hosting scope attaches
+    // RequestPath to each line written during a request, whatever its template says
+    // (RequestPathEnricher records how that was measured). ReadFrom.Services above picks it up.
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddSingleton<Serilog.Core.ILogEventEnricher, RequestPathEnricher>();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SERVICE REGISTRATION
@@ -313,11 +323,17 @@ try
             // This limiter IS the anti-brute-force control (ADR-0013), so a burst that trips
             // it is exactly the signal an operator must be able to alert on. Rejecting
             // silently would ship the control with no telemetry.
-            Log.Warning(
-                "SecurityEvent {SecurityEvent}: {Method} {Path} rejected for partition {Partition}",
+            // Through the host logger, like every other request-time line: the static Log is the
+            // console-only bootstrap logger under preserveStaticLogger, outside every enricher and
+            // sink (ADR-0017's log-identifier rule, 2026-09-14). Named `logger` so the log guard's
+            // scan keeps seeing this site.
+            var logger = context.HttpContext.RequestServices.GetRequiredService<Serilog.ILogger>();
+            logger.Warning(
+                "SecurityEvent {SecurityEvent}: {Method} {RoutePattern} ({Resource}) rejected for partition {Partition}",
                 SecurityEvents.RateLimitExceeded,
                 context.HttpContext.Request.Method,
-                context.HttpContext.Request.Path.Value,
+                RequestLogRoute.Of(context.HttpContext),
+                RequestLogRoute.ResourceOf(context.HttpContext),
                 ClientIp(context.HttpContext));
 
             var problem = new ProblemDetails
@@ -364,10 +380,20 @@ try
     //    request, and so the id is on Request.Headers before YARP proxies it to the API.
     app.UseCorrelationId();
 
-    // 1. Serilog request logging
+    // 1. Serilog request logging. The ROUTE PATTERN, never the path: a proxied
+    //    GET /api/users/{azureTag} put a handle in every request line until 2026-09-14 (ADR-0017's
+    //    log-identifier rule). RequestLogRoute also replaces the property set, so RequestPath is not
+    //    exported as an attribute either.
     app.UseSerilogRequestLogging(options =>
     {
-        options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000}ms";
+        options.MessageTemplate = "HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms";
+        options.GetMessageTemplateProperties = RequestLogRoute.MessageTemplateProperties;
+        // The HOST logger, not the static one the middleware defaults to: with preserveStaticLogger
+        // the static logger is the console-only bootstrap logger, so the request line and the
+        // rate-limit rejection below were the two request-time lines outside the configured
+        // pipeline -- no enrichers, no exporter, and nothing a test could read. Same sinks and rule
+        // as every other line now (RequestLogRouteTests reads this one there).
+        options.Logger = app.Services.GetRequiredService<Serilog.ILogger>();
     });
 
     // 2. Security headers (OWASP)

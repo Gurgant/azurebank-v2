@@ -1,3 +1,4 @@
+using AzureBank.Bff.Observability;
 using AzureBank.Shared.Constants;
 using System.Diagnostics;
 using AzureBank.Bff.Options;
@@ -109,10 +110,10 @@ public class AuthLevelMiddleware
         IOptions<BffSessionOptions> sessionOptions)
     {
         var path = context.Request.Path.Value ?? "";
-        // Sanitize ONCE, up front, and use safePath in EVERY log statement below — a branch
-        // that logs the raw path would bypass the log-forging defence (route matching still
-        // uses the raw path: sanitizing could alter which rules match).
-        var safePath = LogSanitizer.Sanitize(path);
+        // The path is matched, never logged: its value carries route parameters, a handle among
+        // them, so every log statement below names RequestLogRoute.Of(context), the pattern that
+        // matched (ADR-0017's log-identifier rule, 2026-09-14). Until then a sanitized copy of the
+        // path stood here for the log-forging barrier; a pattern is a constant of the code.
         var method = context.Request.Method;
         // Kestrel rejects a request line whose method token holds CR/LF, so this is belt-and-braces
         // rather than a live hole — but the log sink cannot tell where its input came from, and one
@@ -129,7 +130,8 @@ public class AuthLevelMiddleware
         if (path.TrimEnd('/').Equals("/api/auth/refresh", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning(
-                "SecurityEvent {SecurityEvent}: blocked raw proxied {Path}", SecurityEvents.RawRefreshBlocked, safePath);
+                "SecurityEvent {SecurityEvent}: blocked raw proxied {RoutePattern}",
+                SecurityEvents.RawRefreshBlocked, RequestLogRoute.Of(context));
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
@@ -163,8 +165,8 @@ public class AuthLevelMiddleware
         if (BlockedProxiedAuthPaths.Contains(path.TrimEnd('/')))
         {
             _logger.LogWarning(
-                "SecurityEvent {SecurityEvent}: blocked raw proxied {Path}",
-                SecurityEvents.RawAuthEntryBlocked, safePath);
+                "SecurityEvent {SecurityEvent}: blocked raw proxied {RoutePattern}",
+                SecurityEvents.RawAuthEntryBlocked, RequestLogRoute.Of(context));
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
@@ -222,14 +224,16 @@ public class AuthLevelMiddleware
                 if (requiresPin)
                 {
                     _logger.LogWarning(
-                        "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {Path}",
-                        SecurityEvents.StepUpWithoutSession, safeMethod, safePath);
+                        "SecurityEvent {SecurityEvent}: no session on PIN-protected {Method} {RoutePattern} ({Resource})",
+                        SecurityEvents.StepUpWithoutSession, safeMethod, RequestLogRoute.Of(context),
+                        RequestLogRoute.ResourceOf(context));
                 }
                 else
                 {
                     _logger.LogWarning(
-                        "SecurityEvent {SecurityEvent}: no session on proxied {Method} {Path}",
-                        SecurityEvents.SessionRequired, safeMethod, safePath);
+                        "SecurityEvent {SecurityEvent}: no session on proxied {Method} {RoutePattern} ({Resource})",
+                        SecurityEvents.SessionRequired, safeMethod, RequestLogRoute.Of(context),
+                        RequestLogRoute.ResourceOf(context));
                 }
 
                 /*
@@ -265,8 +269,9 @@ public class AuthLevelMiddleware
             if (requiresPin && authLevel < 2)
             {
                 _logger.LogWarning(
-                    "SecurityEvent {SecurityEvent}: AuthLevel {CurrentLevel} < 2 required for {Method} {Path}",
-                    SecurityEvents.StepUpRequired, authLevel, safeMethod, safePath);
+                    "SecurityEvent {SecurityEvent}: AuthLevel {CurrentLevel} < 2 required for {Method} {RoutePattern} ({Resource})",
+                    SecurityEvents.StepUpRequired, authLevel, safeMethod, RequestLogRoute.Of(context),
+                    RequestLogRoute.ResourceOf(context));
 
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 context.Response.Headers.Append("X-Auth-Level-Required", "2");

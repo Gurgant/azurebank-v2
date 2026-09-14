@@ -1,5 +1,6 @@
 using AzureBank.Api.Extensions;
 using AzureBank.Api.Middleware;
+using AzureBank.Api.Observability;
 using AzureBank.Infrastructure.Extensions;
 using Scalar.AspNetCore;
 using Serilog;
@@ -31,6 +32,9 @@ try
     builder.Host.UseSerilog((context, services, configuration) =>
     {
         configuration
+            // ReadFrom.Services stays AFTER ReadFrom.Configuration: FromLogContext (appsettings
+            // Enrich) carries the hosting scope's RequestPath onto every event, and the DI-registered
+            // RequestPathEnricher must run after it to strip it. RequestLogRouteTests pins this.
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services);
 
@@ -62,6 +66,12 @@ try
         }
     },
         preserveStaticLogger: true);
+
+    // The route pattern on every event, the path on none: ASP.NET Core's hosting scope attaches
+    // RequestPath to each line written during a request, whatever its template says
+    // (RequestPathEnricher records how that was measured). ReadFrom.Services above picks it up.
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddSingleton<Serilog.Core.ILogEventEnricher, RequestPathEnricher>();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SERVICE REGISTRATION (using extension methods for clean organization)
@@ -104,7 +114,35 @@ try
     // MIDDLEWARE PIPELINE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Exception handling (must be first to catch all errors)
+    // Correlation ID for request tracing. Outermost, so that the request line below -- written
+    // inside this scope, when the response completes -- carries the id like every other line.
+    app.UseCorrelationId();
+
+    // Serilog request logging (replaces default ASP.NET Core logging). The ROUTE PATTERN, never the
+    // path: a path's value carries its route parameters, and GET /api/users/{azureTag} put a handle
+    // in every request line until 2026-09-14 (ADR-0017's log-identifier rule). RequestLogRoute also
+    // replaces the property set, so RequestPath is not exported as an attribute either.
+    //
+    // OUTSIDE the exception handler, since 2026-09-14. Inside it, a domain refusal unwound through
+    // this middleware as an exception and it logged "responded 500" at Error, with the stack trace,
+    // for every 422 or 401 the handler then wrote -- measured through the host: a wrong password
+    // read `HTTP POST /api/auth/login responded 500` at Error. Out here it completes after the
+    // handler, with the status the client saw; RequestLogRoute reads the endpoint the exception
+    // handler nulled from the feature it preserves. RequestLogRouteTests pins both.
+    app.UseSerilogRequestLogging(options =>
+    {
+        options.MessageTemplate = "HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms";
+        options.GetMessageTemplateProperties = RequestLogRoute.MessageTemplateProperties;
+        // The HOST logger, not the static one the middleware defaults to: with preserveStaticLogger
+        // the static logger is the console-only bootstrap logger, so the request line was the one
+        // request-time line outside the configured pipeline -- no enrichers, no exporter, and nothing
+        // a test could read. Same sinks and rule as every other line now (RequestLogRouteTests reads
+        // it there).
+        options.Logger = app.Services.GetRequiredService<Serilog.ILogger>();
+    });
+
+    // Exception handling: catches everything below it (the two middlewares above respond for
+    // themselves and do not throw).
     app.UseExceptionHandler();
 
     // Status code pages (converts empty error responses to ProblemDetails)
@@ -114,15 +152,6 @@ try
     // Invalid request handling (catches BadHttpRequestException from invalid UTF-8, etc.)
     // Must be early in pipeline, before routing processes the request
     app.UseInvalidRequestHandling();
-
-    // Correlation ID for request tracing
-    app.UseCorrelationId();
-
-    // Serilog request logging (replaces default ASP.NET Core logging)
-    app.UseSerilogRequestLogging(options =>
-    {
-        options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000}ms";
-    });
 
     app.UseHttpsRedirection();
 
