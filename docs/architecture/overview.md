@@ -96,9 +96,11 @@ Server, three deterministic rounds per run, in CI.
 
 ## A second factor that is actually a second factor
 
-Three operations need a PIN — a withdrawal, a transfer, and the account-number reveal — and it is
-verified by the API, never by the BFF alone. Closing an account is the gap: it is authenticated and
-owned, but nothing asks for a second factor (ADR-0008 records it as an open hole). Money
+Four operations need a PIN — a withdrawal, a transfer, closing an account, and the account-number
+reveal — and it is verified by the API, never by the BFF alone. *(This said three, and called
+closing an account "the gap" that ADR-0008 records as an open hole. ADR-0049 closed it on
+2026-09-06: a closure now mints a one-shot authorisation from the PIN, exactly as a transfer does.)*
+Money
 moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is part of
 what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** — bound to
 payer, payee and amount, valid two minutes, spent once — presented in a `Step-Up-Authorization`
@@ -136,8 +138,11 @@ number never appears in a list response.
 **Honest residual:** registration auto-logs-in, which means the account-existence oracle is
 narrowed rather than closed. Closing it needs out-of-band email confirmation, which needs email
 infrastructure this project does not have. That is a bounded, accepted risk, written down as a
-decision rather than left as an oversight. *(Since ADR-0045 the operator tool can render a message
-to the account's email into a pickup directory; nothing sends it, so the sentence still holds.)*
+decision rather than left as an oversight. *(Since ADR-0045 and ADR-0047 a notice to the account's
+email is recorded in the same save as a PIN enrolment or change, and since ADR-0048 and ADR-0051 a
+relay — in the API, or as an Azure Function rehearsed locally against Azurite and not deployed —
+delivers it into a pickup directory with no operator in the loop. Nothing emails it, so the
+sentence still holds.)*
 
 *Depth: ADR-0013, ADR-0014, ADR-0020, ADR-0012.*
 
@@ -164,11 +169,13 @@ trace, because the trace context propagates through the proxy hop.
 
 ## What proves it
 
-- **618 backend tests** passing, plus 33 held behind a SQL Server flag that run in CI against a
-  real database — those are the concurrency proofs, and they are skipped locally rather than
-  faked.
-- **188 frontend tests**, against MSW mocks that are themselves validated against the real
+- **The backend suite**, plus the proofs held behind a SQL Server flag that run in CI against a real
+  database — the concurrency proofs, skipped locally rather than faked, and CI fails the job if they
+  skip instead of proving anything.
+- **The frontend suite**, against MSW mocks that are themselves validated against the real
   contract, so a mock that drifts fails the suite instead of passing quietly.
+- *No counts here, on purpose: this listed 618 and 188, which were long out of date, and any number
+  written into prose goes stale within days. CI's jobs are the source.*
 - **Architecture tests** that fail the build on a layer-dependency violation.
 - **Schemathesis** contract tests driving the API from its own spec.
 - Every pull request runs the full suite, CodeQL on three languages, and an AI review, and a

@@ -21,6 +21,8 @@ If you want more after that:
 | [`docs/adr/`](docs/adr/README.md) | Every decision with its alternatives and residuals. The index names four to start with. |
 | [`docs/engineering-traps.md`](docs/engineering-traps.md) | The things that fail silently — each one cost a debugging session. |
 | [`SECURITY.md`](SECURITY.md) | The security posture in one place. |
+| [ADR-0038](docs/adr/0038-bff-session-is-the-only-credential.md) | Why the BFF accepts its session and nothing else. Measured before it: a bearer sent through the BFF with no session cookie reached the transfer endpoint, so a transfer could have been paid with no PIN. |
+| [`docs/deferred/`](docs/deferred/README.md) | What this deployment deliberately does not do yet — anchoring, sending the notice — and what would have to be true first. |
 
 ## Running it
 
@@ -116,19 +118,22 @@ and user-controlled values pass a central sanitizer whose contract is pinned by 
 
 ## Status
 
-**Backend** — builds with zero warnings. 674 tests passing, plus 36 held behind the SQL Server flag
-that run in CI against a real database — 710 in total once `AZUREBANK_TEST_SQLSERVER` is set, with
-nothing skipped. Both auth modes verified live. Monetary operations are idempotent and
-concurrency-safe under 24 parallel duplicates.
+**Backend** — warnings are errors in a Release build, which is what CI builds. The suite runs in CI
+together with the SQL Server proofs against a real database, and the job fails if those skip.
+Monetary operations are idempotent and concurrency-safe under 24 parallel duplicates.
 
 **Frontend** — fully wired to the real API through the BFF: authentication, accounts, transaction
 history, the four money flows with idempotency keys and step-up PIN, and the dashboard on real
-aggregates. 596 tests across 58 files, and a test that writes to `console.error` fails. Verified
+aggregates. A test that writes to `console.error` fails. Verified
 end-to-end against the running stack, not only against mocks.
 
 **Known gaps**, tracked rather than hidden: the accessibility sweep is a dedicated phase not yet
 run; the production CSP is designed but unverifiable until the BFF serves the built SPA, which it
-does not yet do. A UI/UX overhaul is in progress.
+does not yet do. A UI/UX overhaul is the final planned phase.
+
+*(This section used to give test counts — 674, 36, 710, 596 — that disagreed with each other and
+with CI, and said "Both auth modes verified live", an observation made once and never re-run.
+Counts written into prose go stale within days; CI's jobs are the source.)*
 
 The end-to-end browser suite that used to be listed here **exists**: Playwright drives a real
 Chromium against the real BFF, API and SQL Server, and CI runs it in the same job as the contract
