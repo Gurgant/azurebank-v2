@@ -5,18 +5,22 @@ import { expect, test, type Page } from '@playwright/test';
 /**
  * The accessibility sweep, measured and reported — not yet gated.
  *
- * axe-core runs over every page a signed-in user reaches from the navigation, the two public
- * pages, and the deposit dialog, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. Each scan
+ * axe-core runs over the five navigation places, the Transfer wizard and the internal-transfer
+ * page it links to (not the transaction detail or PIN setup), the login and register pages without
+ * a session (/about is public too, but is scanned here only inside the signed-in shell), and the
+ * deposit dialog: ten scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. Each scan
  * writes its violations to `test-results/axe/<page>.json` (a CI artifact) and attaches them to
  * the Playwright report; nothing here fails on a violation. That is deliberate: this is the
  * measurement the README used to list as "a dedicated phase not yet run", and a gate over
  * findings nobody has read yet would be a gate nobody could pass. Fixing them, and turning the
  * count into a floor, is a later item.
  *
- * What DOES fail: a scan that inspected nothing. axe reports the rules that passed as well as the
- * ones that failed, and a page with no passes was not scanned — a blank page, a redirect that
- * landed elsewhere, a session that had expired. That is the control that keeps an empty report
- * from reading as a clean one.
+ * What DOES fail, so an empty or misdirected report cannot read as a clean one:
+ * - a page that never became ready (each scan first waits for the page's h1 or form field);
+ * - a scan that landed somewhere else. An expired session is redirected to /login, which has an h1
+ *   and passing rules of its own, so neither of the other two checks would notice; the path is
+ *   asserted before axe runs;
+ * - a scan axe reports with zero passed rules, which inspected nothing.
  */
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
 const REPORT_DIR = 'test-results/axe';
@@ -50,7 +54,10 @@ function labelled(label: string) {
   };
 }
 
-async function scan(page: Page, name: string) {
+async function scan(page: Page, name: string, path: string) {
+  // A redirect is not a scan of this page: /login would pass every other check here.
+  expect(new URL(page.url()).pathname, `${name}: the scan landed on another page`).toBe(path);
+
   const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
 
   // The control, before anything is written: a scan with no passes scanned nothing.
@@ -70,7 +77,8 @@ async function scan(page: Page, name: string) {
       help: v.help,
       helpUrl: v.helpUrl,
       nodes: v.nodes.length,
-      // Griffel's hashed class names say nothing on their own; the markup does.
+      // Griffel's hashed class names say nothing on their own; the selector and the first 160
+      // characters of each node's markup do, for the first five nodes of each violation.
       targets: v.nodes
         .slice(0, 5)
         .map((n) => ({ target: n.target.join(' '), html: n.html.slice(0, 160) })),
@@ -91,7 +99,7 @@ test.describe('accessibility, signed in', () => {
     test(`${name} is scanned and reported`, async ({ page }) => {
       await page.goto(path);
       await ready(page);
-      await scan(page, name);
+      await scan(page, name, path);
     });
   }
 
@@ -100,19 +108,19 @@ test.describe('accessibility, signed in', () => {
     await heading(1)(page);
     await page.getByRole('button', { name: 'Deposit', exact: true }).click();
     await expect(page.getByRole('dialog', { name: /deposit money/i })).toBeVisible();
-    await scan(page, 'dashboard-deposit-dialog');
+    await scan(page, 'dashboard-deposit-dialog', '/dashboard');
   });
 });
 
 test.describe('accessibility, signed out', () => {
-  // No session: the public pages, reached as a visitor reaches them.
+  // No session: login and register, reached as a visitor reaches them.
   test.use({ storageState: { cookies: [], origins: [] } });
 
   for (const { name, path, ready } of PUBLIC) {
     test(`${name} is scanned and reported`, async ({ page }) => {
       await page.goto(path);
       await ready(page);
-      await scan(page, name);
+      await scan(page, name, path);
     });
   }
 });
