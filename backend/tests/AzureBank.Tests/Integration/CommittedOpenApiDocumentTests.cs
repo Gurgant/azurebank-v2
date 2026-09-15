@@ -58,15 +58,16 @@ namespace AzureBank.Tests.Integration;
 /// and a Windows checkout rewrites all 4,307 of them to CRLF.
 /// </description></item>
 /// <item><description>
-/// Newlines INSIDE string values. Twenty-four strings in the document — seven operation summaries
-/// and seventeen descriptions, forty-seven line breaks between them (measured 2026-09-10) — carry
-/// the generating machine's newline: <c>\r\n</c> in the committed file, which was generated on
-/// Windows. The one traced to its source is a multi-line XML <c>&lt;summary&gt;</c> comment. A Linux
-/// runner is expected to produce <c>\n</c>: converting a controller to LF on Windows did NOT change the
-/// output, so the newline comes from the platform rather than from the source file, and only a Linux
-/// run can show which. Normalising both sides makes the gate hold either way. (Those summaries reach
-/// the document at all only because the target meant to stop the XML-comment generator removes
-/// nothing — see ADR-0053.)
+/// Newlines INSIDE string values. Twenty-five strings in the document — eight operation
+/// descriptions and seventeen schema descriptions, fifty-one line breaks between them (measured
+/// 2026-09-14; on 2026-09-10 it was twenty-four, seven of them operation summaries) — carry the
+/// generating machine's newline: <c>\r\n</c> in the committed file, which was generated on
+/// Windows. The ones traced to their source are multi-line XML <c>&lt;remarks&gt;</c> comments,
+/// which were the actions' <c>&lt;summary&gt;</c> comments until each summary became a one-line
+/// title (ADR-0053, corrected 2026-09-14). A Linux runner is expected to produce <c>\n</c>:
+/// converting a controller to LF on Windows did NOT change the output, so the newline comes from
+/// the platform rather than from the source file, and only a Linux run can show which. Normalising
+/// both sides makes the gate hold either way.
 /// </description></item>
 /// </list>
 /// <para>

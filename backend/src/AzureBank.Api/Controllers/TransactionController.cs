@@ -33,12 +33,14 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
-    /// Get transaction history with filtering and pagination.
+    /// List transactions
     /// </summary>
+    /// <remarks>
+    /// Get transaction history with filtering and pagination.
+    /// </remarks>
     /// <param name="filter">Filter and pagination options</param>
     /// <returns>Paginated list of transactions</returns>
     [HttpGet]
-    [EndpointSummary("List transactions")]
     [ProducesResponseType(typeof(PaginatedResponse<TransactionResponse>), StatusCodes.Status200OK)]
     public async Task<ActionResult<PaginatedResponse<TransactionResponse>>> GetTransactions([FromQuery] TransactionFilter filter)
     {
@@ -48,13 +50,15 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
+    /// Transaction summary
+    /// </summary>
+    /// <remarks>
     /// Get aggregated income/expenses/net and pending count over a date window
     /// (defaults to the current UTC calendar month).
-    /// </summary>
+    /// </remarks>
     /// <param name="filter">Optional inclusive date window</param>
     /// <returns>Server-side aggregated totals for the caller's accounts</returns>
     [HttpGet("summary")]
-    [EndpointSummary("Transaction summary")]
     [ProducesResponseType(typeof(ApiResponse<TransactionSummaryResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ApiResponse<TransactionSummaryResponse>>> GetSummary(
@@ -66,12 +70,14 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
-    /// Get a specific transaction by ID.
+    /// Get transaction
     /// </summary>
+    /// <remarks>
+    /// Get a specific transaction by ID.
+    /// </remarks>
     /// <param name="id">Transaction ID</param>
     /// <returns>Transaction details</returns>
     [HttpGet("{id:guid}")]
-    [EndpointSummary("Get transaction")]
     [ProducesResponseType(typeof(ApiResponse<TransactionResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
@@ -83,12 +89,14 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
-    /// Deposit money into an account.
+    /// Deposit
     /// </summary>
+    /// <remarks>
+    /// Deposit money into an account.
+    /// </remarks>
     /// <param name="request">Deposit details</param>
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("deposit")]
-    [EndpointSummary("Deposit")]
     [RequireIdempotency]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<DepositResponse>), StatusCodes.Status201Created)]
@@ -107,13 +115,15 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
+    /// Withdraw
+    /// </summary>
+    /// <remarks>
     /// Withdraw money from an account.
     /// Requires PIN verification.
-    /// </summary>
+    /// </remarks>
     /// <param name="request">Withdrawal details including PIN</param>
     /// <returns>Transaction details and new balance</returns>
     [HttpPost("withdraw")]
-    [EndpointSummary("Withdraw")]
     [RequireIdempotency]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<WithdrawResponse>), StatusCodes.Status201Created)]

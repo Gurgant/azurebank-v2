@@ -171,9 +171,15 @@ product rather than the gate — ⚠️ *and the first of them is withdrawn, see
   only defined when the package reference sets `GeneratePathProperty="true"`, which it does not — it
   evaluates empty, and the path matches no analyzer. Measured: `XmlComment` is in the compiled
   assembly, and not one `[EndpointSummary]` string reaches the document, although the project file
-  says they "control Scalar/OpenAPI titles". It is why D3's newlines are in the contract at all.
+  says they "control Scalar/OpenAPI titles". ~~It is why D3's newlines are in the contract at all.~~
   Fixing it would replace the published summaries across the contract, Scalar and the frontend
-  types, which is a decision about content, not about this gate.
+  types, which is a decision about content, not about this gate. *(Decided and done 2026-09-14: the
+  target and the 27 attributes are deleted — regenerating with them gone left the document
+  byte-identical, measured — and each action's `<summary>` is now its short title, with the prose
+  moved to `<remarks>`; `PublishedOperationTitlesTests` holds every summary to one line of at most
+  fifty characters, and was red on the old document: 11 of 27. The struck clause was wrong even
+  then: 17 of the 24 strings carrying a newline were schema descriptions, which never came from a
+  summary.)*
 
 **`ci.yml`'s comment is corrected** to say what its steps actually prove and to point here.
 **ADR-0043 carries a dated note** separating the half this closes from the half it does not, and the
@@ -195,8 +201,12 @@ matter.
   and claim 3 would stop being the open one.
 - ~~**Either defect above being fixed.** The XML-generator fix would remove D3's in-string newlines
   from the contract altogether and make that normalisation dead code; the culture fix in the product
-  would make D4's pin redundant but not wrong.~~ **The XML-generator defect above being fixed.** It
-  would remove D3's in-string newlines from the contract altogether and make that normalisation dead
-  code. *(Corrected 2026-09-11: the struck bullet also named a culture fix in the product, and there
-  is none to make — the product defect it assumed is withdrawn, above — so D4's pin stays, guarding
-  the test's own writer.)*
+  would make D4's pin redundant but not wrong.~~ ~~**The XML-generator defect above being fixed.**
+  It would remove D3's in-string newlines from the contract altogether and make that normalisation
+  dead code.~~ *(Corrected 2026-09-11: the struck bullet also named a culture fix in the product,
+  and there is none to make — the product defect it assumed is withdrawn, above — so D4's pin
+  stays, guarding the test's own writer.)* *(Fixed 2026-09-14, and the prediction was wrong: the
+  newlines did not leave the contract, they moved. Measured on the regenerated document: 25 strings
+  carry the machine's newline against 24 before — none of them a summary now, 8 of them operation
+  descriptions that hold the moved prose, 17 of them schema descriptions that never depended on this
+  defect. D3's normalisation stays, and is still exercised.)*

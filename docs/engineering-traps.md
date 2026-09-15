@@ -420,6 +420,23 @@ So every source-scanning guard in `tests/AzureBank.Tests/Architecture/` now carr
 Add both when adding a scanner. The coverage theory is the one that pays: writing it for the
 currency rule immediately exposed a second hole the scan could never have shown.
 
+## A `$(PkgSomePackage)` path property is EMPTY unless the PackageReference asks for it
+
+`AzureBank.Api.csproj` carried a target that removed the OpenAPI XML-comment generator at
+`$(PkgMicrosoft_AspNetCore_OpenApi)/analyzers/…`, so that `[EndpointSummary]` attributes would
+control the published titles. NuGet defines `Pkg<PackageId>` only when the `PackageReference`
+sets `GeneratePathProperty="true"`; this one did not, the property evaluated to the empty string,
+and `<Analyzer Remove="/analyzers/dotnet/cs/…" />` matched nothing. The build did not warn: an
+`Analyzer Remove` of a path that is not in the list is not an error. Measured with
+`dotnet msbuild -getProperty:PkgMicrosoft_AspNetCore_OpenApi` (empty) and by the document itself:
+not one of the 27 attribute strings had ever reached `docs/api/openapiv1.json`, while seven XML
+summaries several lines long had (ADR-0053, corrected 2026-09-14).
+
+Two things to recognise by sight: a target whose only effect is a `Remove` of a computed path,
+and a comment that describes the intended outcome ("attributes control the titles") rather than
+an observed one. Check `-getProperty` before trusting any `$(Pkg…)`, and check the ARTEFACT the
+target is meant to change — here the committed document — not the build log.
+
 ## An OpenAPI transformer that ASSIGNS silently discards what the controller declared
 
 `AuthorizationResponseTransformer` set `operation.Responses["401"]` outright, with the comment

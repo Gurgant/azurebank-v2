@@ -54,10 +54,12 @@ public class TransferController : ControllerBase
     */
 
     /// <summary>
-    /// Authorise a transfer to another user.
+    /// Authorise a transfer
     /// </summary>
+    /// <remarks>
+    /// Authorise a transfer to another user.
+    /// </remarks>
     [HttpPost("authorizations")]
-    [EndpointSummary("Authorise a transfer")]
     [RequestSizeLimit(32_768)]
     [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -89,10 +91,12 @@ public class TransferController : ControllerBase
     }
 
     /// <summary>
-    /// Authorise a transfer between your own accounts.
+    /// Authorise an internal transfer
     /// </summary>
+    /// <remarks>
+    /// Authorise a transfer between your own accounts.
+    /// </remarks>
     [HttpPost("internal/authorizations")]
-    [EndpointSummary("Authorise an internal transfer")]
     [RequestSizeLimit(32_768)]
     [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -114,11 +118,13 @@ public class TransferController : ControllerBase
     }
 
     /// <summary>
-    /// Transfer money to another user's primary account.
+    /// Transfer to user
     /// </summary>
+    /// <remarks>
+    /// Transfer money to another user's primary account.
+    /// </remarks>
     /// <returns>Transfer result with new balance</returns>
     [HttpPost]
-    [EndpointSummary("Transfer to user")]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
@@ -151,11 +157,13 @@ public class TransferController : ControllerBase
     }
 
     /// <summary>
-    /// Transfer money between own accounts.
+    /// Internal transfer
     /// </summary>
+    /// <remarks>
+    /// Transfer money between own accounts.
+    /// </remarks>
     /// <returns>Transfer result with both account balances</returns>
     [HttpPost("internal")]
-    [EndpointSummary("Internal transfer")]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
