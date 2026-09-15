@@ -277,12 +277,15 @@ public static class SecurityEvents
       durable home; every one of them was administrative or authentication. A bank whose audit trail
       records a renamed handle and not a transfer is not audited, so this is the gap B1 closes.
 
-      WHAT THESE ROWS DO NOT CARRY, and why the Detail column stays null on all four: the amount, the
-      counterparty handle, the description and the account are already on the Transaction row, and
-      SubjectId reaches it. Copying them into a table designed never to be purged is exactly how
-      personal data arrives there — ADR-0044 D5 — and an amount tied to an actor id is financial data
-      about an identifiable person. The audit row answers WHO DID WHAT TO WHICH transaction; the
-      ledger row answers what moved.
+      WHAT THESE ROWS DO NOT CARRY, and why the Detail column holds none of it on all four: the
+      amount, the counterparty handle, the description and the account are already on the
+      Transaction row, and SubjectId reaches it. Copying them into a table designed never to be
+      purged is exactly how personal data arrives there — ADR-0044 D5 — and an amount tied to an
+      actor id is financial data about an identifiable person. The audit row answers WHO DID WHAT TO
+      WHICH transaction; the ledger row answers what moved. Deposit and withdrawal keep a null
+      Detail; the two transfers carry only the id of the authorisation they consumed (AuditDetails),
+      which is on no ledger row. (This said "stays null on all four" until 2026-09-14, when the
+      transfers began naming it.)
 
       A transfer writes ONE row, not two. Two ledger rows are the bookkeeping of a single act, and
       the subject is the OUTGOING one — the row whose owner is the actor, and the one the step-up
@@ -316,11 +319,14 @@ public static class SecurityEvents
       MONEY REFUSED, and the Detail rule INVERTS here. The four events above carry a null Detail
       because the amount, the counterparty and the account are already on the Transaction row and
       SubjectId reaches it -- the row is a pointer, and the thing it points at holds the facts.
+      (Narrowed 2026-09-14: the two transfers name the authorisation they consumed in Detail,
+      AuditDetails.ConsumedAuthorisation, and nothing else; deposit and withdrawal stay null. An
+      authorisation id is on no ledger row and is not financial data, so the rule below is intact.)
 
       A REFUSAL HAS NO TRANSACTION ROW. Nothing was committed, so there is nothing to point at, and
       a pointer-shaped row would answer no question at all: "a withdrawal was refused" without
       saying what refused it is indistinguishable from noise. So these two carry a Detail, and the
-      four above still must not.
+      four above still must not carry the facts the ledger holds.
 
       ⚠️ WHAT THE DETAIL IS ALLOWED TO BE, because ADR-0044 D5 did not stop applying. The Detail is
       the ERROR CODE and nothing else -- a closed vocabulary from ErrorCodes, the same string the

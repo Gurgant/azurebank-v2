@@ -317,11 +317,14 @@ public class AccountService : IAccountService
 
                         // Enlisted BEFORE the save, so the audit row and the soft delete are one unit: if
                         // the audit insert fails, the account is not closed either (ADR-0044 D1). Detail
-                        // stays null, as on every success row (ADR-0044 D5); the authorisation that paid
-                        // for the closure is found by the operator query ADR-0049 records.
+                        // names the authorisation that paid for the closure (AuditDetails, since
+                        // 2026-09-14): a closure has no ledger row for ConsumedByTransactionId to point
+                        // at, so this chained name is the only tamper-evident link to the PIN proof; the
+                        // operator query ADR-0049 records still finds the row by its user and instant.
                         _audit.Record(
                             SecurityEvents.AccountDeleted, AuditOutcome.Succeeded,
-                            actorUserId: userId, subjectType: "Account", subjectId: accountId);
+                            actorUserId: userId, subjectType: "Account", subjectId: accountId,
+                            detail: AuditDetails.ConsumedAuthorisation(authorizationId));
 
                         await _context.SaveChangesAsync();
 

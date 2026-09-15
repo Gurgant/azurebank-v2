@@ -281,10 +281,15 @@ public class AuditProseGuardTests
           The exact count is what notices it: a new verdict cannot arrive without this number
           moving, whatever the runbook happens to say. (It moved 28 -> 29 on 2026-09-04 when the
           verb learned to claim under a lease and gained LEASE LAPSED, ADR-0048 — documented in the
-          notify section of the runbook, deliberately, before this number was touched.)
+          notify section of the runbook, deliberately, before this number was touched. And 29 -> 31
+          on 2026-09-14, when `evidence` learned to read the bound authorisation out of the chained
+          row and gained BOUND AUTHORISATION MISSING and BOUND AUTHORISATION DOES NOT MATCH — both
+          in the evidence-pack section of the runbook first. The third new first line, "STRONGLY
+          AUTHENTICATED, BOUND IN THE CHAIN", extracts as the existing STRONGLY AUTHENTICATED because
+          the pattern stops at the comma; it has its own bullet on the page all the same.)
         */
         headlines.Should().HaveCount(
-            29,
+            31,
             "the extraction found {0}, from {1}. FEWER means the regex or the comment stripper "
             + "regressed -- the first version of this guard shipped blind to four verdicts for want "
             + "of a colon, and the second to any headline behind a warning prefix. MORE means a "
