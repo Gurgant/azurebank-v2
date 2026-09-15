@@ -29,6 +29,10 @@ React*. Two consequences followed, and both are the kind of defect a user notice
 **1. Playwright, driving the dev topology unchanged.** vite on 5173 proxies `/api` and `/bff` to the
 BFF on 5000, which proxies to the API on 7215 over SQL Server LocalDB — exactly what a developer's
 browser does. Playwright owns the vite server (`webServer`) and does NOT own the backend.
+*(Changed for CI on 2026-09-11 by
+[ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md): the real-stack
+job runs the suite against the build the BFF serves, under its real CSP, with `E2E_BASE_URL` set
+and no vite. Locally this topology is still the default.)*
 
 **2. One login per run, reused via `storageState`.** Not an optimisation: the BFF allows 10 auth
 requests per 60s per IP, so a suite that signed in per test would rate-limit itself into red before
@@ -143,5 +147,10 @@ tab driven over CDP.
 - **Money still accumulates.** Each run deposits €1.00 into the shared dev database. Every assertion
   is relative to a figure read moments earlier, so nothing depends on a fixed starting balance, but
   it is not a clean-room. A database the suite owns belongs with Phase 4.
-- **Not wired into CI.** Phase 4. It needs a backend in the runner, and the auth budget is per IP
-  rather than per process, so concurrent jobs would steal each other's quota.
+- ~~**Not wired into CI.** Phase 4. It needs a backend in the runner, and the auth budget is per IP
+  rather than per process, so concurrent jobs would steal each other's quota.~~ *(struck 2026-09-15,
+  in the same PR as the note under §1 — a review caught the two paragraphs contradicting each other:
+  the real-stack CI job runs the suite against the build the BFF serves, with the backend in the
+  runner and `E2E_BASE_URL` set (ADR-0054); the auth-budget point is met by starting that BFF with
+  `--RateLimiting:AuthPermitLimit=1000`, which the workflow marks as environmental, not a weakened
+  assertion.)*
