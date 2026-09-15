@@ -121,9 +121,11 @@ describe('integration: the real backend satisfies the app’s strict schemas', (
     expect(balance.ok, balance.ok ? '' : explain(balance)).toBe(true);
     if (!balance.ok) return;
 
-    // The client formats every amount in CURRENCY and never reads this field anywhere else, so
-    // this is the one place that ties the two. Observed 2026-09-11 on the running API:
+    // formatCurrency and describeMoneyBound format in CURRENCY, and the client never reads this
+    // field anywhere else, so this is the one place that ties the two. Not every euro sign on
+    // screen comes from CURRENCY: the amount field's prefix, the quick-amount chips and the four
+    // "Minimum … is €0.01." messages are literal. Observed 2026-09-11 on the running API:
     //   GET /api/accounts/{id}/balance -> {"data":{…,"balance":12463.0000,"currency":"EUR",…}}
-    expect(balance.data.currency, 'the currency every amount on screen is shown in').toBe(CURRENCY);
+    expect(balance.data.currency, 'the currency the client formats amounts in').toBe(CURRENCY);
   });
 });
