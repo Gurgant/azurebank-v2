@@ -135,8 +135,11 @@ that is the lesson this ADR's Consequences opened with, applied.)
 notices written before the migration, and the run knows them by a null `AuditEventId` — which is
 also what a notice looks like after somebody nulls it. For a repeatable kind the old question is then
 answered by another row of the same user, as with a re-point within the kind: measured, zero
-findings, by `ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt`, whose second owner, with no other change left, IS reported. The same
-binding would close both doors, and the cheaper one below would stay open beside them.
+findings, by `ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt`, whose second
+owner, with no other change left, IS reported. A binding over the pair would not close this door by
+itself: nulling the pointer and its MAC together leaves the backlog's shape, so it would also need
+every pre-migration notice bound, or the fallback retired. The cheaper door below would stay open
+beside it either way.
 
 Closing it needs an integrity-protected binding — a MAC over the pair, and therefore a **new
 validated secret**, at the price `docs/deferred/relaying-the-enrolment-notice.md` already puts on

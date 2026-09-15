@@ -414,11 +414,14 @@ public class NotifyCommandTests : IDisposable
     public async Task ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt()
     {
         /*
-          T17'S NULL-POINTER DOOR, the sibling of the re-point above and priced the same way. Since
-          ADR-0052 a notice names its row, and a NULL name is read as "written before that migration"
-          -- but nulling it is one more write to SubscriberNotices, and the run cannot tell the two
-          apart. Either way it asks the fallback question, does a row of this KIND exist for this
-          USER, and for a kind ADR-0047 made repeatable another change answers yes.
+          THE NULL-POINTER DOOR (ADR-0052's Consequences, the line added 2026-09-11 under D3's
+          limit), the sibling of the re-point above, and dearer: a MAC over the pair alone does not
+          close it, because nulling pointer and MAC together is the backlog's shape, so it also
+          needs every pre-migration notice bound or the fallback retired. Since ADR-0052 a notice
+          names its row, and a NULL name is read as "written before that migration" -- but nulling
+          it is one more write to SubscriberNotices, and the run cannot tell the two apart. Either
+          way it asks the fallback question, does a row of this KIND exist for this USER, and for a
+          kind ADR-0047 made repeatable another change answers yes.
 
           TWO OWNERS, SO THE ABSENCE IS DUE. Each has one change notice with its evidence deleted and
           its pointer nulled; only the first has a second change left. The second owner's notice IS

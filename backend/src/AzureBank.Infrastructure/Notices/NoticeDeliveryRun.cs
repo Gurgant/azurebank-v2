@@ -85,7 +85,8 @@ public sealed record NoticeResult(
 /// that true: a notice whose name was NULLED after it was written looks exactly like one written
 /// before the migration, so it is asked the old question too — and for a repeatable kind another
 /// row of the same user answers it. Pinned beside the re-point limit below by
-/// ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt (T17).
+/// ANULLEDPointer_IsAskedTheOldQuestion_SoAnotherRowOfItsKindAnswersForIt (ADR-0052's Consequences,
+/// the line added 2026-09-11 under D3's limit).
 /// </para>
 /// <para>
 /// ⚠️ WHAT THE EXACT CHECK STILL CANNOT SEE: the pair it compares is (ActorUserId, Event), so a
