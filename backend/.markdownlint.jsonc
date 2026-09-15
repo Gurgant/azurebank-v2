@@ -22,7 +22,8 @@
   //
   // Encoding it here is the point. The rule went into `docs/adr/` and `docs/runbooks/` after the
   // same linter asked in BOTH directions across #94, #96 and #127, and `docs/` root followed on
-  // #129 (`b80f280`); `docs/adr/README.md` counts those four. #158 is the FIFTH ask, against a
+  // #129 (`b80f280`); `docs/engineering-practices.md` ("Correcting a document") counts those four.
+  // #158 is the FIFTH ask, against a
   // block the README itself calls measured
   // ("Measured, and `func start` exits 1" — the sentence directly under it). A rule a tool cannot
   // read is a rule that gets re-litigated.

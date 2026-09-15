@@ -129,12 +129,12 @@ parallel guesses cannot race past the limit.
 
 ## A tamper-evident record of what happened
 
-Fifteen security events — twelve successes and three kinds of refusal — each write a row to one
-`AuditEvents` table, and each row carries a keyed HMAC over its own fields and the previous row's
-hash (ADR-0044). A success rides the act's own transaction, so a row that cannot be written stops
-the act, with one recorded exception; a refusal commits on its own connection at once, or its
-rollback would take the record with it. Rows hold ids and no amounts; the table is never purged.
-`backend/tools/AzureBank.AuditVerifier` verifies the chain and records anchors. The claim is narrow:
+Fifteen security events — nine successes and six on the refusal path — each write a row to one
+`AuditEvents` table, each carrying a keyed HMAC over its own fields and the previous row's hash
+(ADR-0044). A success rides the act's own transaction, so a row that cannot be written stops the
+act; a refusal commits on its own connection at once, or its rollback would take the record with it,
+and a reused refresh token is contained before its row is written. Rows hold ids and no amounts; the
+table is never purged, and `backend/tools/AzureBank.AuditVerifier` verifies it. The claim is narrow:
 a rewrite by whoever holds the database but not that epoch's key is caught; truncating the tail past
 the last anchor needs no key and is not, and nothing verifies the chain on a schedule.
 

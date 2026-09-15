@@ -161,10 +161,10 @@ a reversal of this decision, not a test cleanup. The six behaviours they hold:
    key with an edited body", which is the one case the server answers 422 `IDEMPOTENCY_KEY_REUSE`
    for. Both halves are now asserted, and the body is compared as raw text: two parsed objects
    would match even if the property order changed, which the server's HMAC fingerprint would not.)*
-   *(Noted 2026-09-15: since ADR-0041 the only route replayed after an elevation is the bodiless
-   GET reveal, so the body half of this behaviour is held by the test and exercised by no live
-   caller. Kept — the interceptor is written for the general case, and the test is what keeps it
-   general.)*
+   *(Noted 2026-09-15: since ADR-0041 the only route replayed after an elevation is the bodiless,
+   keyless GET reveal, so the body and key halves of this behaviour are held by the test and
+   exercised by no live caller; the replay itself still runs for the reveal. Kept — the interceptor
+   is written for the general case, and the test is what keeps it general.)*
 5. Withdraw with a wrong PIN does **not** dispatch `sessionExpired`, and drops the key.
 6. `IN_FLIGHT` keeps the key across a Retry, while `RESULT_UNKNOWN` forces the verify dialog before
    any new key can exist.
