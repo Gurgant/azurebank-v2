@@ -2,6 +2,9 @@
 
 **Status**: Accepted. The hole this ADR was written admitting — live-session authentication on
 `/api/*` — is CLOSED. The gate remains a floor rather than full coverage; see “What is NOT covered”.
+_Noted 2026-09-15: [ADR-0043](0043-the-document-declares-the-error-body.md) (2026-08-18) corrects
+the generation pipeline this gate consumes — the document now declares the error body the API
+sends._
 
 **Date**: 2026-07-31
 

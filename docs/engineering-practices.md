@@ -151,6 +151,38 @@ title; the log shows one commit carrying a number and it is an anomaly, not the 
 automated changelog and version bump, this repository runs neither, and a consistent plain log reads
 better than a half-applied taxonomy.
 
+## Correcting a document
+
+A decision record is never rewritten to look as if it had always been right: what changed is
+recorded beside what it changes. This rule lived in the ADR index until 2026-09-15, written down
+because it had never been stated and a review round went on it; it applies to every document here,
+so it moved.
+
+**The note goes immediately against what it corrects.** That is the load-bearing half: a note in a
+section further down is one that the reader of the wrong sentence never reaches, and the reader of
+the note has to go hunting for what it refers to. **And nothing is deleted — a superseded clause
+is struck in place with `~~…~~` and the note follows it inline**, which is what ADR-0044 already
+does at its #231 revisit and ADR-0007 at its envelope note. Struck rather than merely annotated,
+because a wrong sentence left looking current is read as current: that is not a hypothetical here,
+it is why `docs/runbooks/audit-chain-unavailable.md` went on repeating a claim ADR-0044 had already
+withdrawn.
+
+**The one exception is text an operator reads under pressure** — runbooks, printed verdicts, error
+strings. There the wrong wording is removed rather than struck, because nobody scrolls past a struck
+line during an incident and a `~~` renders as noise in a terminal. Everything else that describes
+the system AS IT IS rather than as it was decided — `docs/deferred/`, code comments, XML docs — is
+simply corrected in place, with a line saying what it used to claim.
+
+**What this rule does not ask anybody to decide.** An earlier draft of it split corrections by kind
+— a decision that was right when made versus a statement of fact that was never true — and that is a
+real distinction, but it puts a judgement in the middle of a rule, and a rule with a judgement in it
+is one that gets re-argued every time somebody new reads the file. The ADR directory has already
+learnt that about MD040, four times across #94, #96, #127 and #129. Adjacency needs no
+classification. The two corrections ADR-0044 made before this rule existed (`Corrected 2026-08-25`,
+`CORRECTED 2026-08-20`) are already adjacent and quote the superseded wording in full, so nothing is
+lost by leaving them as they are; from here the wording is struck in place instead, which costs less
+and reads better.
+
 ## Code style
 
 Follow the [Microsoft C# conventions](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions).

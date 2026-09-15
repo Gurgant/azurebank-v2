@@ -292,7 +292,7 @@ fixture PIN and deletes with the header, ~~falling back to the bare DELETE where
 unhandled (the mock, until the follow-up adds it)~~ *(struck 2026-09-06: both targets handle the
 mint; the `mint?.status === 201` branch stays as cleanup shape, not as a fallback)*.
 
-*Closed 2026-09-06 by the frontend follow-up (PR number and sha to be filled at its merge):*
+*Closed 2026-09-06 by the frontend follow-up, #155, merged 2026-09-07 as `3c30122`:*
 `DeleteAccountDialog` mints on the sixth digit and deletes with the header; the mock's delete
 handler enforces binding → ownership → guards → presence → validate → spend, and its mint mirrors
 the API's. Every mock status, `errorCode` and `detail` on the mint (M0–M5) and on the DELETE

@@ -56,6 +56,16 @@ owner). The anomaly was the substring sweep, not the confirmation.
   handle per request — the attack is reduced from "sweep the directory" to "guess handles at
   20/min/account", and the rejections are logged for detection. This is harvest-resistance, not
   prevention; closing it fully needs bot-defense / device signals (out of scope for a demo).
+- **The limit is the BFF's, and the API has none** _(measured 2026-09-15 on `main`, f1b3509, both
+  hosts running)_. 21 × `GET /api/users/janesmith` inside a minute answered 200 ×20 then 429
+  through the BFF on :5000, and 200 ×21 sent straight to the API on :7215 with a bearer token. The
+  API registers no rate limiter at all, so a caller holding a JWT — its login hands one to anyone
+  with the password — guesses handles at network speed, not at 20 a minute. The browser cannot
+  reach that surface (the JWT never reaches the SPA and the BFF clears inbound `Authorization`:
+  ADR-0001, ADR-0038, ADR-0041), so this narrows the guarantee above rather than voiding it:
+  "20/min/account" is the BFF's number, and the API's is unbounded. `SECURITY.md` tabulates it
+  beside the other controls that stop at the BFF. Closing it means a limiter in the API,
+  partitioned on the token's subject — a change this note records the need for and does not make.
 - **`AzureTag` is currently the Identity `UserName`.** Harmless today (login is by email;
   nothing authenticates by `UserName`), but decoupling it (set `UserName` to the immutable
   user Id, keep `AzureTag` as a plain public-handle column) is tracked as a separate hygiene
@@ -79,9 +89,10 @@ owner). The anomaly was the substring sweep, not the confirmation.
 
 ## Consequences
 
-**Positive** — the directory is no longer browsable; the mandated anti-automation control
-(OWASP ASVS 5.0 §2.4.1, L2, names *data exfiltration* explicitly) is enforced per-user on the
-lookup path; the exact lookup no longer loads secrets into memory and validates its input.
+**Positive** — the directory is no longer browsable; the mandated anti-automation control (OWASP
+ASVS 5.0 §2.4.1, L2, names *data exfiltration* explicitly) is enforced per-user on the lookup path
+*(at the BFF — see the 2026-09-15 residual)*; the exact lookup no longer loads secrets into memory
+and validates its input.
 
 **Negative** — there is no in-app recipient type-ahead; finding a payee requires their exact
 handle (obtained out-of-band). This matches how real payment apps work and is the intended
