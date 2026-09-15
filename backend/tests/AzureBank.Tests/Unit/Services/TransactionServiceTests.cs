@@ -580,7 +580,7 @@ public class TransactionServiceTests : IDisposable
     }
 
 
-[Fact]
+    [Fact]
     public async Task GetTransactionsAsync_PaginatesCorrectly()
     {
         // Arrange
