@@ -1,6 +1,9 @@
 # ADR-0010: API-side PIN attempt-limiting (lockout)
 
-**Status**: Accepted
+**Status**: Accepted · _Noted 2026-09-15:
+[ADR-0040](0040-changing-a-credential-requires-the-current-one.md) (2026-08-12) found a PIN could be
+replaced with no proof of the current one, so nothing was guessed and this limiting never engaged
+there; it closes that by requiring the current credential. The counting here is unchanged._
 
 **Date**: 2026-07-14
 

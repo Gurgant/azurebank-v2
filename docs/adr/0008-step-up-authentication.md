@@ -21,8 +21,10 @@
 > **Four tables and lists** also state things that are no longer true, and each carries a note.
 >
 > Corrections are **inline, and nothing below is deleted** — this repo's convention
-> ([README](README.md)): *"the earlier keeps an inline supersession note at the affected clause
-> rather than being rewritten."* What an ADR got wrong is part of what it records.
+> ~~([README](README.md)): *"the earlier keeps an inline supersession note at the affected clause
+> rather than being rewritten."*~~ *(moved 2026-09-15: the rule now lives in
+> [`engineering-practices.md`](../engineering-practices.md#correcting-a-document), worded as "what
+> changed is recorded beside what it changes")*. What an ADR got wrong is part of what it records.
 
 ---
 

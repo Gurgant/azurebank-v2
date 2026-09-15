@@ -1,6 +1,8 @@
 # ADR-0023: Runtime response validation — spec-generated Zod, fail-closed on money
 
-**Status**: Accepted
+**Status**: Accepted · _Noted 2026-09-15:
+[ADR-0043](0043-the-document-declares-the-error-body.md) (2026-08-18) corrects the generation
+pipeline this validation consumes — the document now declares the error body the API sends._
 
 **Date**: 2026-07-25
 
