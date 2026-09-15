@@ -174,7 +174,9 @@ export function ChangePinDialog({ onClose }: ChangePinDialogProps) {
           <DialogBody>
             <DialogTitle>Change your PIN</DialogTitle>
             <DialogContent>
-              <MessageBar intent="success">
+              {/* role="status": Fluent's MessageBar is no live region by itself, and the form
+                  this replaces was where focus sat, so the change is announced (review, 2026-09-15). */}
+              <MessageBar intent="success" role="status">
                 <MessageBarBody>Your PIN has been changed.</MessageBarBody>
               </MessageBar>
             </DialogContent>

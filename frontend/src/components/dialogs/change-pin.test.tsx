@@ -78,17 +78,30 @@ async function fillAll(current: string, next: string, confirm = next) {
   await fill('Confirm new PIN', confirm);
 }
 
-/** Every set-pin body sent from now on, observed without replacing the handler that answers it. */
+/**
+ * Every set-pin body sent from now on, observed without replacing the handler that answers it.
+ * Returns a function that resolves to the bodies once every read that started has landed: the
+ * body is read asynchronously, so an assertion that looked at the list directly could pass on an
+ * empty one a request was about to fill (review, 2026-09-15).
+ */
 function observeSetPin() {
   const bodies: unknown[] = [];
+  const reads: Promise<void>[] = [];
   server.events.on('request:start', ({ request }) => {
     if (!request.url.endsWith('/bff/auth/set-pin')) return;
-    void request
-      .clone()
-      .text()
-      .then((body) => bodies.push(JSON.parse(body)));
+    reads.push(
+      request
+        .clone()
+        .text()
+        .then((body) => {
+          bodies.push(JSON.parse(body));
+        }),
+    );
   });
-  return bodies;
+  return async () => {
+    await Promise.all(reads);
+    return bodies;
+  };
 }
 
 describe('Settings — the PIN row', () => {
@@ -129,7 +142,7 @@ describe('ChangePinDialog', () => {
 
     expect(await within(dialog).findByText('Your PIN has been changed.')).toBeInTheDocument();
     // The body is the change branch's and only that: no password, which is the ENROLMENT proof.
-    expect(sent).toEqual([{ pin: '246802', currentPin: TEST_PIN }]);
+    expect(await sent()).toEqual([{ pin: '246802', currentPin: TEST_PIN }]);
     expect(mockState.pin).toBe('246802');
 
     await userEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
@@ -146,7 +159,7 @@ describe('ChangePinDialog', () => {
     expect(submit).toBeDisabled();
 
     await userEvent.click(submit);
-    expect(sent).toEqual([]);
+    expect(await sent()).toEqual([]);
   });
 
   it('checks the confirmation before sending, so a mismatch costs no attempt', async () => {
@@ -158,7 +171,7 @@ describe('ChangePinDialog', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Change PIN' }));
 
     expect(await within(dialog).findByText('PINs do not match. Please try again.')).toBeVisible();
-    expect(sent).toEqual([]);
+    expect(await sent()).toEqual([]);
     expect(mockState.pinAttempts).toBe(0);
     // Only the confirmation is asked for again; the two PINs that were fine are kept.
     for (const box of boxes('Confirm new PIN')) {
@@ -236,6 +249,6 @@ describe('ChangePinDialog', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(sent).toEqual([]);
+    expect(await sent()).toEqual([]);
   });
 });
