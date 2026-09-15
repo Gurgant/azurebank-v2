@@ -539,3 +539,156 @@ jobs:
         run: |
           echo "===== API ====="; tail -n 200 "$RUNNER_TEMP/api.log" || true
           echo "===== BFF ====="; tail -n 200 "$RUNNER_TEMP/bff.log" || true
+
+  conformance:
+    name: Runtime conformance (Schemathesis against the running API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Its own SQL Server, its own seed: the run mints users, accounts and authorisations, and the
+    # real-stack job's shared database is the one the contract and e2e suites reason about.
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          SA_PASSWORD: YourStrong@Passw0rd123
+          ACCEPT_EULA: Y
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd123 -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DOTNET_NOLOGO: true
+      # CI-only throwaway values, the same ones the real-stack job uses; the database and the API
+      # live only for this job.
+      CONNECTION_STRING: "Server=localhost,1433;Database=AzureBankConformance;User Id=sa;Password=YourStrong@Passw0rd123;TrustServerCertificate=true"
+      JWT_SECRET: "ci-only-throwaway-signing-key-0123456789abcdef0123456789abcdef"
+      IDEMPOTENCY_HASH_KEY: "ci-only-throwaway-idempotency-hmac-key-0123456789abcdef"
+      STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
+      AUDIT_CHAIN_KEY: "ci-only-throwaway-audit-chain-key-0123456789abcdef"
+      AUDIT_ANCHOR_KEY: "ci-only-throwaway-audit-anchor-key-fedcba9876543210"
+      PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"
+      API_URL: "http://localhost:5068"
+      # PINNED. The manual workflow this replaces passed `--junit-xml`, an option Schemathesis 4.0
+      # renamed, and ended its step with `|| true`, so it ran zero times in two months and would
+      # have reported nothing if it had. A version drift here must be a red job, not a silent one.
+      SCHEMATHESIS_VERSION: "4.27.1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Schemathesis
+        run: pip install "schemathesis==${{ env.SCHEMATHESIS_VERSION }}"
+
+      - name: Create and seed database
+        working-directory: backend
+        env:
+          ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+          Security__PinPepper: ${{ env.PIN_PEPPER }}
+        run: |
+          dotnet run --project tools/AzureBank.Seeder -- reset --confirm
+          dotnet run --project tools/AzureBank.Seeder -- seed
+
+      - name: Start API
+        working-directory: backend/src/AzureBank.Api
+        env:
+          ConnectionStrings__DefaultConnection: ${{ env.CONNECTION_STRING }}
+          Jwt__Secret: ${{ env.JWT_SECRET }}
+          Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
+          StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
+          Audit__ChainKey: ${{ env.AUDIT_CHAIN_KEY }}
+          Audit__AnchorKey: ${{ env.AUDIT_ANCHOR_KEY }}
+          Security__PinPepper: ${{ env.PIN_PEPPER }}
+          ASPNETCORE_ENVIRONMENT: Development
+        run: |
+          nohup dotnet run --urls "${{ env.API_URL }}" > "$RUNNER_TEMP/api.log" 2>&1 &
+          echo "API starting, log at $RUNNER_TEMP/api.log"
+
+      - name: Wait for the API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 3 "${{ env.API_URL }}/health/ready" > /dev/null 2>&1; then
+              echo "API ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API never became ready at ${{ env.API_URL }}"
+          cat "$RUNNER_TEMP/api.log"
+          exit 1
+
+      # A bearer token from the REAL login, on the seeded demo user, so the authenticated
+      # operations are exercised as themselves and not as 23 identical 401s (that is the run the
+      # manual workflow would have produced, had it ever run). Masked, and handed on through the
+      # job environment rather than a step output.
+      - name: Bearer token from the real login
+        run: |
+          TOKEN=$(curl -fsS -H 'Content-Type: application/json' \
+            -d '{"email":"john@example.com","password":"Test123!"}' \
+            "${{ env.API_URL }}/api/auth/login" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["token"])')
+          echo "::add-mask::$TOKEN"
+          echo "API_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # Response conformance only: does the running server answer with the statuses, media types,
+      # headers and bodies the committed document declares? Positive and negative inputs on every
+      # operation; the input-side checks (negative_data_rejection and friends) are a different
+      # question and stay out. No `|| true`: a finding is a red job (ADR-0053 D6, moved 2026-09-15).
+      - name: Response conformance (Schemathesis)
+        run: |
+          schemathesis run docs/api/openapiv1.json \
+            --url "${{ env.API_URL }}" \
+            -H "Authorization: Bearer $API_TOKEN" \
+            --checks status_code_conformance,content_type_conformance,response_headers_conformance,response_schema_conformance \
+            --max-examples 50 \
+            --workers 1 \
+            --continue-on-failure \
+            --report junit \
+            --report-junit-path "$RUNNER_TEMP/schemathesis.xml" \
+            --no-color
+
+      # The guard on the guard: a run that tested nothing would be green. The document declares 27
+      # operations (PublishedOperationTitlesTests holds that floor too) and the JUnit report carries
+      # one test case per operation plus one for the stateful phase.
+      - name: Assert the run covered the document
+        if: always()
+        run: |
+          python3 - "$RUNNER_TEMP/schemathesis.xml" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          cases = [c.get("name") for c in root.iter("testcase")]
+          operations = [c for c in cases if c != "Stateful tests"]
+          print(f"{len(operations)} operations tested, {len(cases)} test cases in the report")
+          if len(operations) < 27:
+              print(f"::error::Schemathesis tested {len(operations)} operations; the document declares 27")
+              sys.exit(1)
+          PY
+
+      - name: Upload the report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: schemathesis-report
+          path: ${{ runner.temp }}/schemathesis.xml
+          if-no-files-found: warn
+
+      - name: API log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/api.log"

@@ -110,6 +110,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -168,13 +177,14 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -237,13 +247,14 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
                 /** @description Business Rule Violation - The request violates domain constraints (e.g., primary account, non-zero balance). */
@@ -331,8 +342,18 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -419,13 +440,14 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -490,13 +512,14 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -565,13 +588,14 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -647,8 +671,18 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -751,6 +785,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Too Many Requests */
                 429: {
                     headers: {
@@ -824,6 +867,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -881,6 +933,15 @@ export interface paths {
                 };
                 /** @description Unauthorized */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1079,6 +1140,15 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Business Rule Violation - the proof this change needs is missing: the password when enrolling a PIN (errorCode PASSWORD_REQUIRED), or the current PIN when changing one (errorCode PIN_REQUIRED). */
                 422: {
                     headers: {
@@ -1176,6 +1246,15 @@ export interface paths {
                 };
                 /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1429,13 +1508,14 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). */
+                /** @description Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode. */
                 404: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": components["schemas"]["ProblemDetails"];
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -1569,6 +1649,15 @@ export interface paths {
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
                         };
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
                 /** @description Unprocessable Entity - this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
@@ -1725,6 +1814,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED, checked before the balance), or the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
@@ -1834,6 +1932,15 @@ export interface paths {
                 };
                 /** @description Not Found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1957,6 +2064,15 @@ export interface paths {
                 };
                 /** @description Not Found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2128,6 +2244,15 @@ export interface paths {
                         };
                     };
                 };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
                 /** @description Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance), or the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
@@ -2294,6 +2419,15 @@ export interface paths {
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
                         };
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
                 /** @description Business Rule Violation - the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
@@ -2494,6 +2628,15 @@ export interface paths {
                             /** @description Request trace identifier for debugging */
                             traceId?: string;
                         };
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
                 /** @description Too Many Requests */

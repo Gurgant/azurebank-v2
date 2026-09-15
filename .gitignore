@@ -54,3 +54,6 @@ __queuestorage__/
 __azurite_db*.json
 AzuriteConfig
 .azurite/
+
+# Schemathesis keeps its example database here when the CLI runs from the repo root (the CI job does).
+.schemathesis/
