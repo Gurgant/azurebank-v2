@@ -332,6 +332,10 @@ public class LogPlaceholderClassTests
     [Fact]
     public void ASecretReachesALogOnlyAsItsPrefix()
     {
+        // The helper's own behaviour -- eight characters, never more -- is SecretPrefixTests' to
+        // hold; this rule holds that every session-id site goes through it and nothing else.
+        AzureBank.Shared.Utilities.SecretPrefix.Length.Should().Be(8, "ADR-0017: the first eight characters");
+
         var bare = Offenders(Sites(), SecretPrefix, SecretPrefixCall);
 
         bare.Should().BeEmpty("a session id is a credential; the log may carry its first eight characters, through the one helper, "
