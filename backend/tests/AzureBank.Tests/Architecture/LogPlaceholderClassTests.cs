@@ -323,10 +323,16 @@ public class LogPlaceholderClassTests
         unbound.Should().BeEmpty("every placeholder takes the argument at its own position, and only that one");
     }
 
+    /// <summary>The argument is one call to <c>SecretPrefix.Of</c> and nothing else.</summary>
+    private static readonly Func<string, bool> SecretPrefixCall = value => IsExactlyACallTo(value, "SecretPrefix.Of");
+
+    /// <summary>The argument is one call to <c>Redact</c>, on whatever holds the redactor, and nothing else.</summary>
+    private static readonly Func<string, bool> RedactCall = value => IsExactlyACallTo(value, "Redact", receiverAllowed: true);
+
     [Fact]
     public void ASecretReachesALogOnlyAsItsPrefix()
     {
-        var bare = Offenders(Sites(), SecretPrefix, value => value.TrimStart().StartsWith("SecretPrefix.Of(", StringComparison.Ordinal));
+        var bare = Offenders(Sites(), SecretPrefix, SecretPrefixCall);
 
         bare.Should().BeEmpty("a session id is a credential; the log may carry its first eight characters, through the one helper, "
             + "on the argument that placeholder owns");
@@ -335,7 +341,7 @@ public class LogPlaceholderClassTests
     [Fact]
     public void AnEmailReachesALogOnlyMasked()
     {
-        var bare = Offenders(Sites(), MaskedPii, value => value.Contains("Redact(", StringComparison.Ordinal));
+        var bare = Offenders(Sites(), MaskedPii, RedactCall);
 
         bare.Should().BeEmpty("an address reaches a log only through the PII redactor (ADR-0017 D1-D3), "
             + "on the argument that placeholder owns");
@@ -353,7 +359,10 @@ public class LogPlaceholderClassTests
           pass over the rewrite found the same day — an interpolated template, a '??' default and a
           '+ expression' tail (all three read as readable literals), an EventId's text taken for the
           template, a generic type argument splitting a value at its comma, a raw-string literal
-          mis-tokenised, and a request-log template joined with '+' read to its first piece.
+          mis-tokenised, and a request-log template joined with '+' read to its first piece. And the
+          shape a third review round named: a guarded argument that is the helper PLUS something
+          else -- "SecretPrefix.Of(other) + sessionId" -- which a prefix or substring test accepted;
+          the argument must now be one call to the helper and nothing more.
         */
         const string code = """""
             _logger.LogInformation("Plain {Count} and {$Forced} and {@Whole}", count, tag, user);
@@ -371,18 +380,21 @@ public class LogPlaceholderClassTests
                 """", tag, count);
             options.MessageTemplate = "HTTP {RequestMethod} " + "{RequestPath} responded {StatusCode}";
             options.MessageTemplate = SharedTemplate;
+            _logger.LogInformation("Session {SessionId}", SecretPrefix.Of(other) + sessionId);
+            _logger.LogWarning("Failed login attempt for email {Email}", _piiRedactor.Redact(other) + email);
+            _logger.LogWarning("Failed login attempt for email {Email}", _piiRedactor.Redact(request.Email));
             """"";
 
         var sites = SitesIn(code, "snippet.cs");
 
-        sites.Should().HaveCount(13);
+        sites.Should().HaveCount(16);
         sites[0].Placeholders.Should().Equal("Count", "Forced", "Whole");
         sites[0].Destructured.Should().Equal("Whole");
         sites[1].Templates.Should().Equal("Yes {A}", "No {B} {C}");
         sites[1].Values!.Select(v => v.Trim()).Should().Equal("a", "b");
         sites[2].HasLiteralTemplate.Should().BeFalse("a variable is a template this parser cannot read");
         sites[3].Values!.Select(v => v.Trim()).Should().Equal("sessionId", "SecretPrefix.Of(token)");
-        Offenders([sites[3]], SecretPrefix, v => v.TrimStart().StartsWith("SecretPrefix.Of(", StringComparison.Ordinal))
+        Offenders([sites[3]], SecretPrefix, SecretPrefixCall)
             .Should().ContainSingle("the helper guards the token, not the session id: the old Contains passed this")
             .Which.Should().Be("{SessionId} at snippet.cs:4");
         sites[4].Templates.Should().Equal("HTTP {RequestMethod} {RequestPath}");
@@ -393,12 +405,66 @@ public class LogPlaceholderClassTests
         sites[8].Templates.Should().Equal(["User {UserId} in {Count}"], "the EventId's text is at depth 1, so it is not the template");
         sites[8].Values!.Select(v => v.Trim()).Should().Equal("id", "new Dictionary<string, int>().Count");
         sites[9].Templates.Should().Equal("a {SessionId}", "b {SessionId}");
-        Offenders([sites[9]], SecretPrefix, v => v.TrimStart().StartsWith("SecretPrefix.Of(", StringComparison.Ordinal))
+        Offenders([sites[9]], SecretPrefix, SecretPrefixCall)
             .Should().BeEmpty("both branches bind the one guarded argument");
         sites[10].Placeholders.Should().Equal("AzureTag", "Count");
         sites[10].Values!.Select(v => v.Trim()).Should().Equal("tag", "count");
         sites[11].Templates.Should().Equal("HTTP {RequestMethod} {RequestPath} responded {StatusCode}");
         sites[12].HasLiteralTemplate.Should().BeFalse("a request-log template held in a constant is not readable here");
+        Offenders([sites[13]], SecretPrefix, SecretPrefixCall)
+            .Should().ContainSingle("the helper plus a bare value is a bare value: a prefix test passed this")
+            .Which.Should().Be("{SessionId} at snippet.cs:16");
+        Offenders([sites[14]], MaskedPii, RedactCall)
+            .Should().ContainSingle("the redactor plus a bare value is a bare value: a substring test passed this")
+            .Which.Should().Be("{Email} at snippet.cs:17");
+        Offenders([sites[15]], MaskedPii, RedactCall).Should().BeEmpty("one call to the redactor, nothing else");
+    }
+
+    /// <summary>
+    /// Whether <paramref name="value"/> is ONE call to <paramref name="method"/> and nothing else:
+    /// the callee (behind a receiver such as <c>_piiRedactor.</c> when <paramref name="receiverAllowed"/>),
+    /// an opening parenthesis, a balanced argument list, and the closing parenthesis as the last
+    /// character. A prefix or substring test accepted <c>SecretPrefix.Of(other) + sessionId</c> and
+    /// <c>Redact(other) + email</c>, which a review round named on 2026-09-14.
+    /// </summary>
+    private static bool IsExactlyACallTo(string value, string method, bool receiverAllowed = false)
+    {
+        var text = value.Trim();
+        var open = text.IndexOf('(');
+        if (open < 0 || text[^1] != ')')
+        {
+            return false;
+        }
+
+        var callee = text[..open].Trim();
+        var named = receiverAllowed
+            ? (callee == method || callee.EndsWith("." + method, StringComparison.Ordinal))
+                && callee.All(c => char.IsLetterOrDigit(c) || c is '_' or '.')
+            : callee == method;
+        if (!named)
+        {
+            return false;
+        }
+
+        // The '(' after the callee must be the one that closes at the very end.
+        var depth = 0;
+        for (var i = open; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c is '"' or '\'')
+            {
+                i = SkipLiteral(text, i) - 1;
+                continue;
+            }
+
+            depth += c == '(' ? 1 : c == ')' ? -1 : 0;
+            if (depth == 0)
+            {
+                return i == text.Length - 1;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
