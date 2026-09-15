@@ -161,7 +161,8 @@ export function classifyMoneyProblem(
 
     THE CLIENT COMPOSES THE SENTENCE; it does not render the server's. ADR-0050 D7 is the
     ratification, in its own words: the server's sentence is figure-free because "figures travel as
-    numbers and are formatted in the user's locale", and the mirror PR is what "adds the typed
+    numbers and are formatted in the user's locale" (formatted in a fixed en-IE, in fact: see
+    CURRENCY and LOCALE in utils/format.ts), and the mirror PR is what "adds the typed
     members, the classifier copy … and derives `remaining` there as `limit − used`". Rendering the
     server's sentence would leave all four members typed and unread.
 
