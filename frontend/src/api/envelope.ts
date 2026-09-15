@@ -14,8 +14,9 @@ import type { ZodType } from 'zod';
  * Unwrap the API success envelope. Pass a Zod `schema` to ALSO runtime-validate `data` at the
  * trust boundary (currently the BFF responses, whose types are hand-written): a shape mismatch
  * throws here, so the query rejects rather than caching a mis-typed body. Without a schema the
- * data is trusted as `T` (the /api/* surface is already covered by the OpenAPI drift gate +
- * Schemathesis — see the Zod scope decision doc).
+ * data is trusted as `T` (the /api/* surface is covered by the OpenAPI drift gate, ADR-0053, and
+ * since 2026-09-15 by the Schemathesis conformance gate in CI, which checks the running API's
+ * responses against that document on every PR — see the Zod scope decision doc).
  */
 export function unwrap<T>(envelope: ApiEnvelope<T>, schema?: ZodType<T>): T {
   if (envelope.data == null) {

@@ -112,6 +112,16 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -147,9 +157,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -239,9 +254,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -260,6 +280,16 @@
           },
           "401": {
             "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -320,9 +350,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -428,9 +463,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -529,9 +569,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -592,9 +637,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -706,9 +756,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -717,6 +772,16 @@
           },
           "429": {
             "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -832,6 +897,16 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -897,6 +972,16 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -955,6 +1040,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1130,6 +1225,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Business Rule Violation - the proof this change needs is missing: the password when enrolling a PIN (errorCode PASSWORD_REQUIRED), or the current PIN when changing one (errorCode PIN_REQUIRED).",
             "content": {
@@ -1240,6 +1345,16 @@
           },
           "403": {
             "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1523,9 +1638,14 @@
             }
           },
           "404": {
-            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).",
+            "description": "Not Found - the resource does not exist, or is not visible to the caller. The body is a ProblemDetails whose errorCode names the resource (e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND). A segment that is not a GUID matches no route: the framework answers that 404 itself, as application/problem+json with no errorCode.",
             "content": {
               "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1646,6 +1766,16 @@
           },
           "401": {
             "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1874,6 +2004,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict - a request with this idempotency key is currently in flight (IDEMPOTENCY_IN_FLIGHT), or it executed but its response was not recorded (IDEMPOTENCY_RESULT_UNKNOWN: verify via GET /api/transactions).",
             "content": {
@@ -2081,6 +2221,16 @@
               }
             }
           },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the PIN is consulted), or no PIN is enrolled (errorCode PIN_REQUIRED).",
             "content": {
@@ -2217,6 +2367,16 @@
           },
           "429": {
             "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2365,6 +2525,16 @@
           },
           "401": {
             "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2606,6 +2776,16 @@
           },
           "401": {
             "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2894,6 +3074,16 @@
           },
           "403": {
             "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
             "content": {
               "application/json": {
                 "schema": {

@@ -109,18 +109,34 @@ public class AccountService : IAccountService
         var currentPrimary = await _context.Accounts
             .FirstOrDefaultAsync(a => a.UserId == userId && a.IsPrimary && !a.IsDeleted);
 
-        // Unset current primary
-        if (currentPrimary != null && currentPrimary.Id != accountId)
+        /*
+          TWO SAVES IN ONE TRANSACTION, THE OLD PRIMARY FIRST. UX_Accounts_UserId_Primary allows one
+          primary per user (a filtered unique index), and one SaveChanges carrying both updates let
+          SQL Server run the new row's UPDATE before the old row's -- 500, "Cannot insert duplicate
+          key row in object 'dbo.Accounts' with unique index 'UX_Accounts_UserId_Primary'", found by
+          the first run of the Schemathesis gate on 2026-09-15 and pinned by SetPrimarySqlServerTests
+          (the InMemory provider enforces no such index, so AccountEndpointTests never saw it). The
+          transaction makes the two saves one act; the execution strategy re-runs the whole delegate
+          on a transient fault, the pattern DeleteAccountAsync uses.
+        */
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
         {
-            currentPrimary.IsPrimary = false;
-            currentPrimary.UpdatedAt = DateTime.UtcNow;
-        }
+            await using var dbTransaction = await _context.Database.BeginTransactionAsync();
 
-        // Set new primary
-        account.IsPrimary = true;
-        account.UpdatedAt = DateTime.UtcNow;
+            if (currentPrimary != null && currentPrimary.Id != accountId)
+            {
+                currentPrimary.IsPrimary = false;
+                currentPrimary.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
 
-        await _context.SaveChangesAsync();
+            account.IsPrimary = true;
+            account.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            await dbTransaction.CommitAsync();
+        });
 
         _logger.LogInformation("Set account {AccountId} as primary for user {UserId}", accountId, userId);
     }

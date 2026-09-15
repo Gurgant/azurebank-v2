@@ -61,10 +61,17 @@ public sealed class NotFoundResponseTransformer : IOpenApiOperationTransformer
                  "detail":"Account with identifier '…' was not found.","instance":"/api/accounts/…",
                  "errorCode":"ACCOUNT_NOT_FOUND","traceId":"d23fb0a6631cbb55fc84a32313f15191"}
 
-              A genuinely EMPTY 404 does exist on these routes, and it is a different thing: a
-              segment that fails the {id:guid} route constraint matches no route at all, so the
-              framework answers before MVC with application/problem+json and a W3C trace-context
-              traceId. That is not this response and is not documented as it.
+              A second 404 does exist on these routes, and it is a different thing: a segment that
+              fails the {id:guid} route constraint matches no route at all, so the framework answers
+              before MVC with application/problem+json and a W3C trace-context traceId -- measured
+              2026-09-15, GET /api/accounts/not-a-guid:
+                HTTP/1.1 404 Not Found
+                Content-Type: application/problem+json
+                {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found",
+                 "status":404,"traceId":"00-a312a2025a7caa5f8f598243ed9a3fe3-ec5554599395a843-01"}
+              Until 2026-09-15 this note ended "is not documented as it"; the Schemathesis gate's
+              first run found the omission on six operations, and it is declared below as a second
+              media type on the same 404, since a client generated from this document meets both.
             */
             ProblemDetailsResponses.Declare(
                 operation.Responses,
@@ -73,6 +80,23 @@ public sealed class NotFoundResponseTransformer : IOpenApiOperationTransformer
                 "Not Found - the resource does not exist, or is not visible to the caller. The body "
                 + "is a ProblemDetails whose errorCode names the resource "
                 + "(e.g. ACCOUNT_NOT_FOUND, TRANSACTION_NOT_FOUND).");
+
+            var constrainedToGuid = context.Description.ActionDescriptor.AttributeRouteInfo?.Template?
+                .Contains(":guid", StringComparison.Ordinal) == true;
+            if (constrainedToGuid && operation.Responses["404"] is OpenApiResponse notFound)
+            {
+                notFound.Content ??= new Dictionary<string, OpenApiMediaType>();
+                notFound.Content.TryAdd(
+                    "application/problem+json",
+                    new OpenApiMediaType { Schema = new OpenApiSchemaReference("ProblemDetails") });
+                const string routeMiss =
+                    " A segment that is not a GUID matches no route: the framework answers that 404 "
+                    + "itself, as application/problem+json with no errorCode.";
+                if (notFound.Description?.Contains("matches no route", StringComparison.Ordinal) != true)
+                {
+                    notFound.Description += routeMiss;
+                }
+            }
         }
 
         return Task.CompletedTask;

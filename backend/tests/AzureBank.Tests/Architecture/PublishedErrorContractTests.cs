@@ -14,7 +14,10 @@ namespace AzureBank.Tests.Architecture;
 /// could see it. The drift gate regenerates the frontend artefacts from this document and compares
 /// them, which proves the generated code matches the document and never that the document matches
 /// the server. Schemathesis could have caught it and does not: its job in
-/// <c>contract-tests.yml</c> ends with <c>|| true # report, don't gate</c>.
+/// <c>contract-tests.yml</c> ends with <c>|| true # report, don't gate</c>. (True until
+/// 2026-09-15: Schemathesis is the <c>conformance</c> job in <c>ci.yml</c> now, gating on every
+/// PR, and its first run found the two shapes this document had never declared — 415 on every
+/// body-taking operation and the route-miss 404 as application/problem+json; ADR-0053 D6.)
 /// </para>
 /// <para>
 /// So the document said 58 refusals carried no body at all. Measured, 53 of them answer

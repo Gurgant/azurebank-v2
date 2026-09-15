@@ -316,8 +316,8 @@ tests are silent:
 3. `README.md` and `docs/engineering-practices.md` — both carry the same setup recipe — and the
    env-var tables in `backend/README.md` and `backend/src/AzureBank.Api/README.md`, which drifted
    to one secret of six because they were not on this list.
-4. `.github/workflows/*.yml` — an env var plus **every** "Start API" step. `ci.yml` has one,
-   `contract-tests.yml` has two.
+4. `.github/workflows/*.yml` — an env var plus **every** "Start API" step. `ci.yml` has two (the
+   real-stack job and, since 2026-09-15, the `conformance` job), `contract-tests.yml` one (Bruno).
 5. `CustomWebApplicationFactory` — `UseSetting`, which is the one that makes the tests pass while
    everything above is still missing.
 
