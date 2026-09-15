@@ -180,10 +180,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _clock ?? throw new InvalidOperationException("Call UseFakeClock() before CreateClient().");
 
     private bool _captureLog;
+    private LogEventLevel _captureFrom = LogEventLevel.Warning;
 
     /// <summary>
-    /// Every log event the host emits at Warning or above, rendered, in emission order. Filled
-    /// only after <see cref="CaptureLog"/>; empty otherwise.
+    /// Every log event the host emits at the level <see cref="CaptureLog"/> asked for (Warning and
+    /// above by default), rendered, in emission order. Filled only after <see cref="CaptureLog"/>;
+    /// empty otherwise.
     /// </summary>
     /// <remarks>
     /// A Serilog sink registered in DI, which the host's <c>ReadFrom.Services</c> picks up — NOT an
@@ -195,29 +197,39 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public ConcurrentQueue<string> CapturedLog { get; } = new();
 
     /// <summary>
-    /// Starts filling <see cref="CapturedLog"/>. Call before <c>CreateClient()</c>.
+    /// The same events, unrendered, so a test can read a property — or assert its absence, which is
+    /// what the request-line test does with <c>RequestPath</c>.
     /// </summary>
-    public void CaptureLog()
+    public ConcurrentQueue<LogEvent> CapturedEvents { get; } = new();
+
+    /// <summary>
+    /// Starts filling <see cref="CapturedLog"/> and <see cref="CapturedEvents"/> from
+    /// <paramref name="from"/> upward. Call before <c>CreateClient()</c>.
+    /// </summary>
+    public void CaptureLog(LogEventLevel from = LogEventLevel.Warning)
     {
         _captureLog = true;
+        _captureFrom = from;
     }
 
-    private sealed class CapturingSink(ConcurrentQueue<string> sink) : ILogEventSink
+    private sealed class CapturingSink(
+        ConcurrentQueue<string> lines, ConcurrentQueue<LogEvent> events, LogEventLevel from) : ILogEventSink
     {
         public void Emit(LogEvent logEvent)
         {
-            if (logEvent.Level < LogEventLevel.Warning)
+            if (logEvent.Level < from)
             {
                 return;
             }
 
+            events.Enqueue(logEvent);
             var line = $"[{logEvent.Level}] {logEvent.RenderMessage(CultureInfo.InvariantCulture)}";
             if (logEvent.Exception is not null)
             {
                 line += " | " + logEvent.Exception.GetType().Name + ": " + logEvent.Exception.Message;
             }
 
-            sink.Enqueue(line);
+            lines.Enqueue(line);
         }
     }
 
@@ -291,7 +303,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             if (_captureLog)
             {
-                services.AddSingleton<ILogEventSink>(new CapturingSink(CapturedLog));
+                services.AddSingleton<ILogEventSink>(new CapturingSink(CapturedLog, CapturedEvents, _captureFrom));
             }
         });
 

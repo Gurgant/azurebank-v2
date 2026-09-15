@@ -3,6 +3,7 @@ using AzureBank.Bff.Models;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using Microsoft.Extensions.Options;
+using AzureBank.Shared.Utilities;
 
 namespace AzureBank.Bff.Services.Implementations;
 
@@ -49,7 +50,7 @@ public class InMemoryTokenStore : ITokenStoreService
 
             // Session expired, remove it
             _sessions.TryRemove(sessionId, out _);
-            _logger.LogDebug("Expired session removed: {SessionId}", sessionId[..Math.Min(8, sessionId.Length)]);
+            _logger.LogDebug("Expired session removed: {SessionId}", SecretPrefix.Of(sessionId));
         }
 
         return Task.FromResult<UserSession?>(null);
@@ -64,7 +65,7 @@ public class InMemoryTokenStore : ITokenStoreService
     public Task RemoveSessionAsync(string sessionId)
     {
         _sessions.TryRemove(sessionId, out _);
-        _logger.LogDebug("Session removed: {SessionId}", sessionId[..Math.Min(8, sessionId.Length)]);
+        _logger.LogDebug("Session removed: {SessionId}", SecretPrefix.Of(sessionId));
         return Task.CompletedTask;
     }
 

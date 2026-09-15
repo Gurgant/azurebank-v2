@@ -26,11 +26,16 @@ public class AppExceptionHandler : IExceptionHandler
         if (exception is not AppException appException)
             return false; // Let next handler deal with it
 
+        // The code and the type, not the message and not the exception object: a domain
+        // refusal's message names what it refused, and for a recipient lookup that is the typed
+        // handle -- "Recipient with identifier 'janesmith' was not found." reached every sink as
+        // {Message} and again as exception.message, the two slots a template guard cannot see
+        // (ADR-0017's log-identifier rule; found by an adversarial pass, 2026-09-14). The client
+        // still receives the message in the ProblemDetails below, which is where it belongs.
         _logger.LogWarning(
-            exception,
-            "Domain exception: {ErrorCode} - {Message}",
+            "Domain exception: {ErrorCode} ({ExceptionType})",
             appException.ErrorCode,
-            appException.Message);
+            exception.GetType().Name);
 
         var problemDetails = new ProblemDetails
         {

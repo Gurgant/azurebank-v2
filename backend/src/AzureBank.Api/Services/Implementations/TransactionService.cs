@@ -120,9 +120,12 @@ public class TransactionService : ITransactionService
                 continue;
             }
 
+            // No amount and no balance: logs are exported, money is financial data, and the
+            // transaction number is the key to both (ADR-0017 D5). This line carried both until
+            // 2026-09-11, while the ADR said it did not; LogPlaceholderClassTests now keeps it out.
             _logger.LogInformation(
-                "Deposit of {Amount} to account {AccountId}. New balance: {Balance}",
-                request.Amount, account.Id, balanceAfter);
+                "Deposit to account {AccountId}. Transaction: {TransactionNumber}",
+                account.Id, transaction.TransactionNumber);
 
             return _mapper.ToDepositResponse(transaction, balanceAfter);
         }
@@ -259,9 +262,10 @@ public class TransactionService : ITransactionService
                 continue;
             }
 
+            // No amount and no balance, for the reason on the deposit's line above.
             _logger.LogInformation(
-                "Withdrawal of {Amount} from account {AccountId}. New balance: {Balance}",
-                request.Amount, account.Id, balanceAfter);
+                "Withdrawal from account {AccountId}. Transaction: {TransactionNumber}",
+                account.Id, transaction.TransactionNumber);
 
             return _mapper.ToWithdrawResponse(transaction, balanceAfter);
         }

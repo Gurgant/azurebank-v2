@@ -1,3 +1,4 @@
+using AzureBank.Bff.Observability;
 using AzureBank.Shared.Constants;
 using System.Diagnostics;
 using AzureBank.Shared.Utilities;
@@ -32,14 +33,17 @@ public class FetchMetadataMiddleware
     {
         if (IsCrossSiteStateChange(context.Request))
         {
-            // Header value, method and path are attacker-controlled — everything goes
-            // through the one audited sanitizer (log-forging barrier, ADR-0017), even
-            // though Kestrel already rejects non-token method names.
+            // Header value and method are attacker-controlled — both go through the one audited
+            // sanitizer (log-forging barrier, ADR-0017), even though Kestrel already rejects
+            // non-token method names. The path is not logged at all: its value carries route
+            // parameters, a handle among them, so the line names the route pattern that matched
+            // (ADR-0017's log-identifier rule, 2026-09-14).
             _logger.LogWarning(
-                "SecurityEvent {SecurityEvent}: cross-site {Method} to {Path} blocked (Sec-Fetch-Site: {Site})",
+                "SecurityEvent {SecurityEvent}: cross-site {Method} to {RoutePattern} ({Resource}) blocked (Sec-Fetch-Site: {Site})",
                 SecurityEvents.CrossSiteRequestBlocked,
                 LogSanitizer.Sanitize(context.Request.Method),
-                LogSanitizer.Sanitize(context.Request.Path.Value ?? string.Empty),
+                RequestLogRoute.Of(context),
+                RequestLogRoute.ResourceOf(context),
                 LogSanitizer.Sanitize(context.Request.Headers[SecFetchSiteHeader].ToString()));
 
             context.Response.StatusCode = StatusCodes.Status403Forbidden;

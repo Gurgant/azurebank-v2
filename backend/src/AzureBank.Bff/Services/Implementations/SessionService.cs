@@ -4,6 +4,7 @@ using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using Microsoft.Extensions.Options;
+using AzureBank.Shared.Utilities;
 
 namespace AzureBank.Bff.Services.Implementations;
 
@@ -96,7 +97,7 @@ public class SessionService : ISessionService
     public void RevokeSession(string sessionId)
     {
         _tokenStore.RemoveSessionAsync(sessionId).GetAwaiter().GetResult();
-        _logger.LogInformation("Session revoked: {SessionId}", sessionId[..Math.Min(8, sessionId.Length)]);
+        _logger.LogInformation("Session revoked: {SessionId}", SecretPrefix.Of(sessionId));
     }
 
     /// <inheritdoc />
@@ -108,7 +109,7 @@ public class SessionService : ISessionService
             session.AuthLevel = 2;
             session.PinVerifiedAt = DateTime.UtcNow;
             _tokenStore.UpdateSessionAsync(session).GetAwaiter().GetResult();
-            _logger.LogInformation("PIN verified for session: {SessionId}", sessionId[..Math.Min(8, sessionId.Length)]);
+            _logger.LogInformation("PIN verified for session: {SessionId}", SecretPrefix.Of(sessionId));
         }
     }
 
@@ -158,7 +159,7 @@ public class SessionService : ISessionService
             session.TokenExpiry = expiresAt;
             session.RefreshToken = newRefreshToken;
             _tokenStore.UpdateSessionAsync(session).GetAwaiter().GetResult();
-            _logger.LogDebug("Session refreshed: {SessionId}", sessionId[..Math.Min(8, sessionId.Length)]);
+            _logger.LogDebug("Session refreshed: {SessionId}", SecretPrefix.Of(sessionId));
         }
     }
 
