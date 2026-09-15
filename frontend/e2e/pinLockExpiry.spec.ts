@@ -61,13 +61,26 @@ test.describe('the PIN lock counts down and expires', () => {
       the threshold — but this loops on the observed response rather than on a count, because the
       count is the backend's business and a spec that hard-codes it fails for the wrong reason the
       day it changes.
+
+      It waits for the API's ANSWER to each attempt, not for a fixed delay. This used to sleep
+      600 ms and re-check the banner; the third wrong PIN is the slow one — it writes the lock and
+      its audit row — and on CI it once answered later than that. The loop then saw no banner,
+      clicked a PIN box the arriving 429 had just disabled, and waited out the whole test timeout
+      (run 34981468961, 2026-09-15: the snapshot shows the banner and "Try again in 14:34", 26 s
+      after the lock landed). A 429 ends the loop here; the banner is asserted below, where the
+      assertion retries until React has rendered it.
     */
     const lockBanner = dialog.getByText(/Too many incorrect PIN attempts/);
-    for (let attempt = 1; attempt <= 4 && !(await lockBanner.isVisible()); attempt++) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
       await dialog.getByLabel('Digit 1 of 6').click();
       await page.keyboard.type(WRONG_PIN);
+      const answered = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          response.url().includes('/api/transactions/withdraw'),
+      );
       await dialog.getByRole('button', { name: /^Withdraw/ }).click();
-      await page.waitForTimeout(600);
+      if ((await answered).status() === 429) break;
     }
 
     await expect(lockBanner).toBeVisible();
