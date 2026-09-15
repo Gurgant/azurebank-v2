@@ -127,15 +127,15 @@ gate: the `conformance` job in `ci.yml` runs its four response-conformance check
 media type, headers, body schema — against the running API on every PR, with its own SQL Server, a
 bearer token from the real login, the version pinned at 4.27.1, no `|| true`, and a floor of 27
 operations in the JUnit report so a run that tested nothing cannot pass. Claim 3 has its guard.
-What its first run found, against a document every gate here had passed: `415` on all fourteen
+What its first run found, against a document every gate here had passed: `415` on all fifteen
 operations that take a body (the framework's refusal of a non-JSON body, never declared), a second
-`404` on the six GUID-constrained routes (a segment that is not a GUID matches no route and comes
-back as `application/problem+json`, which the `NotFoundResponseTransformer` note had described and
-deliberately left undocumented), and one real defect: `PATCH /api/accounts/{id}/set-primary`
-answered 500 on SQL Server, whose one-primary-per-user index refused a single SaveChanges that
-updated the new row before the old — `SetPrimarySqlServerTests` pins it, red before the fix. The
-manual workflow's Schemathesis job and the `schemathesis/` hooks folder are gone; Bruno stays
-manual there._
+`404` on the eight operations of the six GUID-constrained routes (a segment that is not a GUID
+matches no route and comes back as `application/problem+json`, which the
+`NotFoundResponseTransformer` note had described and deliberately left undocumented), and one real
+defect: `PATCH /api/accounts/{id}/set-primary` answered 500 on SQL Server, whose
+one-primary-per-user index refused a single SaveChanges that updated the new row before the old —
+`SetPrimarySqlServerTests` pins it, red before the fix. The manual workflow's Schemathesis job and
+the `schemathesis/` hooks folder are gone; Bruno stays manual there._
 
 ## Consequences
 
