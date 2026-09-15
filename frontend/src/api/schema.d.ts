@@ -110,7 +110,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -352,7 +352,7 @@ export interface paths {
                         "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -681,7 +681,7 @@ export interface paths {
                         "application/problem+json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -785,7 +785,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -867,7 +867,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -940,7 +940,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -1140,7 +1140,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -1253,7 +1253,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -1651,7 +1651,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -1814,7 +1814,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -1939,7 +1939,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -2071,7 +2071,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -2244,7 +2244,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -2421,7 +2421,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;
@@ -2630,7 +2630,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Unsupported Media Type - the request body is not application/json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
                 415: {
                     headers: {
                         [name: string]: unknown;

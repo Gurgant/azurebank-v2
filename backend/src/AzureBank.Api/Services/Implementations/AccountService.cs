@@ -102,13 +102,6 @@ public class AccountService : IAccountService
     /// <inheritdoc />
     public async Task SetPrimaryAccountAsync(Guid userId, Guid accountId)
     {
-        // Verify the account exists and belongs to user
-        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
-
-        // Get current primary account (if any)
-        var currentPrimary = await _context.Accounts
-            .FirstOrDefaultAsync(a => a.UserId == userId && a.IsPrimary && !a.IsDeleted);
-
         /*
           TWO SAVES IN ONE TRANSACTION, THE OLD PRIMARY FIRST. UX_Accounts_UserId_Primary allows one
           primary per user (a filtered unique index), and one SaveChanges carrying both updates let
@@ -118,25 +111,64 @@ public class AccountService : IAccountService
           (the InMemory provider enforces no such index, so AccountEndpointTests never saw it). The
           transaction makes the two saves one act; the execution strategy re-runs the whole delegate
           on a transient fault, the pattern DeleteAccountAsync uses.
+
+          EVERYTHING IS READ INSIDE THE DELEGATE, and re-read on every run of it. Found in review on
+          2026-09-15 and measured red first: the target and the current primary were loaded before
+          the transaction, so two swaps for the same user each cleared a primary the other had
+          already moved, and the loser threw DbUpdateConcurrencyException ("expected to affect 1
+          row(s), but actually affected 0") -- a 500, since the execution strategy retries transient
+          faults only. The reload makes each attempt start from the store rather than from what a
+          failed attempt left tracked (EF does not refresh a tracked entity from a later query), and
+          the ownership check runs there too, so a foreign or missing account is still 403 or 404.
+
+          A SWAP THAT LOSES A RACE RUNS AGAIN, bounded and jittered by ConcurrencyRetry exactly as the
+          money paths are, and past the bound the conflict surfaces as it does on them. The race is
+          another swap or a deposit or transfer moving the same account's RowVersion; both are pinned
+          by SetPrimarySqlServerTests. A per-user application lock was written first and measured
+          unnecessary: with it disabled and this retry kept, the concurrent-swap test passed five runs
+          in five, so it is not here.
         */
         var strategy = _context.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () =>
+        for (var attempt = 1; ; attempt++)
         {
-            await using var dbTransaction = await _context.Database.BeginTransactionAsync();
-
-            if (currentPrimary != null && currentPrimary.Id != accountId)
+            try
             {
-                currentPrimary.IsPrimary = false;
-                currentPrimary.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
+                await strategy.ExecuteAsync(async () =>
+                {
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+
+                    foreach (var entry in _context.ChangeTracker.Entries<Account>().ToList())
+                    {
+                        await entry.ReloadAsync();
+                    }
+
+                    var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(accountId, userId);
+                    var currentPrimary = await _context.Accounts
+                        .FirstOrDefaultAsync(a => a.UserId == userId && a.IsPrimary && !a.IsDeleted);
+
+                    if (currentPrimary != null && currentPrimary.Id != accountId)
+                    {
+                        currentPrimary.IsPrimary = false;
+                        currentPrimary.UpdatedAt = DateTime.UtcNow;
+                        await _context.SaveChangesAsync();
+                    }
+
+                    account.IsPrimary = true;
+                    account.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+
+                    await dbTransaction.CommitAsync();
+                });
+                break;
             }
-
-            account.IsPrimary = true;
-            account.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            await dbTransaction.CommitAsync();
-        });
+            catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
+            {
+                _logger.LogInformation(
+                    "Concurrency conflict setting account {AccountId} as primary (attempt {Attempt}); retrying",
+                    accountId, attempt);
+                await Task.Delay(Random.Shared.Next(5, 30));
+            }
+        }
 
         _logger.LogInformation("Set account {AccountId} as primary for user {UserId}", accountId, userId);
     }

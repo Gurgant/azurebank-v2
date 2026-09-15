@@ -3,9 +3,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
@@ -55,6 +57,102 @@ public sealed class SetPrimarySqlServerTests : IDisposable
             .Data!.IsPrimary.Should().BeTrue();
         (await client.GetFromJsonAsync<ApiResponse<AccountResponse>>($"/api/accounts/{first}", Json))!
             .Data!.IsPrimary.Should().BeFalse("the old primary was cleared in the same act");
+    }
+
+    /// <summary>
+    /// Swaps racing for the same user all succeed, and exactly one account is primary afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Found in review on 2026-09-15: the service loaded the target and the current primary BEFORE
+    /// its transaction, so two concurrent swaps each cleared a primary the other had already moved.
+    /// Measured red before the fix: the loser threw DbUpdateConcurrencyException ("expected to affect
+    /// 1 row(s), but actually affected 0") and answered 500, because the execution strategy retries
+    /// transient faults only. Each round fires every account at once, twice over, so every request
+    /// races at least one other swap.
+    /// </remarks>
+    [SqlServerFact]
+    public async Task ConcurrentSwapsForOneUser_AllSucceed_AndExactlyOneAccountEndsPrimary()
+    {
+        var (client, first) = await SeedAccountAsync();
+        var accounts = new List<Guid> { first };
+        for (var i = 0; i < 5; i++)
+        {
+            var created = await client.PostAsJsonAsync(
+                "/api/accounts", new CreateAccountRequest { Name = $"Extra {i}", Type = AccountType.Savings }, Json);
+            created.EnsureSuccessStatusCode();
+            accounts.Add((await created.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(Json))!.Data!.Id);
+        }
+
+        var failures = new List<string>();
+        for (var round = 0; round < 4; round++)
+        {
+            var responses = await Task.WhenAll(
+                accounts.Concat(accounts).Select(id => client.PatchAsync($"/api/accounts/{id}/set-primary", null)));
+            foreach (var response in responses.Where(r => r.StatusCode != HttpStatusCode.OK))
+            {
+                failures.Add($"{(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+            }
+        }
+
+        failures.Should().BeEmpty("a swap that loses a race with another swap for the same user runs again");
+        var listed = (await client.GetFromJsonAsync<ApiResponse<List<AccountResponse>>>("/api/accounts", Json))!.Data!;
+        listed.Count(a => a.IsPrimary).Should().Be(1, "the index allows one primary per user, and the service must leave one");
+    }
+
+    /// <summary>
+    /// A swap racing deposits on the same accounts reloads and runs again instead of answering 500.
+    /// </summary>
+    /// <remarks>
+    /// Deposits do not take the swap's lock, and each one moves the account's RowVersion, so a swap
+    /// that read an account before a deposit landed saves against a stale token. The bounded retry in
+    /// <c>SetPrimaryAccountAsync</c> is what absorbs it. Measured 2026-09-15 as the positive control:
+    /// with that catch disabled this test answered 500 in five runs of five, and passed five of five
+    /// with it (six rounds caught it only two runs in three, hence fifteen). Balances are asserted
+    /// too, so a retry that replayed a deposit, or a swap that lost one, cannot pass.
+    /// </remarks>
+    [SqlServerFact]
+    public async Task SwapsRacingDepositsOnTheSameAccounts_AllSucceed_AndNoDepositIsLost()
+    {
+        var (client, first) = await SeedAccountAsync();
+        var accounts = new List<Guid> { first };
+        for (var i = 0; i < 3; i++)
+        {
+            var created = await client.PostAsJsonAsync(
+                "/api/accounts", new CreateAccountRequest { Name = $"Race {i}", Type = AccountType.Savings }, Json);
+            created.EnsureSuccessStatusCode();
+            accounts.Add((await created.Content.ReadFromJsonAsync<ApiResponse<AccountResponse>>(Json))!.Data!.Id);
+        }
+
+        const int rounds = 15;
+        const decimal amount = 10m;
+        var failures = new List<string>();
+        for (var round = 0; round < rounds; round++)
+        {
+            var work = accounts.SelectMany(id => new Func<Task<HttpResponseMessage>>[]
+            {
+                () => client.PatchAsync($"/api/accounts/{id}/set-primary", null),
+                () =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Post, "/api/transactions/deposit")
+                    {
+                        Content = JsonContent.Create(new DepositRequest { AccountId = id, Amount = amount }, options: Json),
+                    };
+                    request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+                    return client.SendAsync(request);
+                },
+            });
+            var responses = await Task.WhenAll(work.Select(start => start()));
+            foreach (var response in responses.Where(r => !r.IsSuccessStatusCode))
+            {
+                failures.Add($"{(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+            }
+        }
+
+        failures.Should().BeEmpty("a RowVersion moved by a deposit is retried by the swap, not surfaced");
+        var listed = (await client.GetFromJsonAsync<ApiResponse<List<AccountResponse>>>("/api/accounts", Json))!.Data!;
+        listed.Count(a => a.IsPrimary).Should().Be(1);
+        listed.Sum(a => a.Balance).Should().Be(
+            amount * rounds * accounts.Count, "every deposit landed exactly once while the swaps ran");
     }
 
     private async Task<(HttpClient Client, Guid AccountId)> SeedAccountAsync()

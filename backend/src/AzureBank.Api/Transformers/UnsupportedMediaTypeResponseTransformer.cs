@@ -44,8 +44,9 @@ public sealed class UnsupportedMediaTypeResponseTransformer : IOpenApiOperationT
             operation.Responses,
             "415",
             "Unsupported Media Type",
-            "Unsupported Media Type - the request body is not application/json. Refused by the "
-            + "framework before model binding, as a ProblemDetails with no errorCode.");
+            "Unsupported Media Type - the request's Content-Type is not application/json, text/json or "
+            + "application/*+json. Refused by the framework before model binding, as a ProblemDetails "
+            + "with no errorCode.");
         return Task.CompletedTask;
     }
 }
