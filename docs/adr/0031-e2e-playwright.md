@@ -147,5 +147,10 @@ tab driven over CDP.
 - **Money still accumulates.** Each run deposits €1.00 into the shared dev database. Every assertion
   is relative to a figure read moments earlier, so nothing depends on a fixed starting balance, but
   it is not a clean-room. A database the suite owns belongs with Phase 4.
-- **Not wired into CI.** Phase 4. It needs a backend in the runner, and the auth budget is per IP
-  rather than per process, so concurrent jobs would steal each other's quota.
+- ~~**Not wired into CI.** Phase 4. It needs a backend in the runner, and the auth budget is per IP
+  rather than per process, so concurrent jobs would steal each other's quota.~~ *(struck 2026-09-15,
+  in the same PR as the note under §1 — a review caught the two paragraphs contradicting each other:
+  the real-stack CI job runs the suite against the build the BFF serves, with the backend in the
+  runner and `E2E_BASE_URL` set (ADR-0054); the auth-budget point is met by starting that BFF with
+  `--RateLimiting:AuthPermitLimit=1000`, which the workflow marks as environmental, not a weakened
+  assertion.)*
