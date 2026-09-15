@@ -121,9 +121,10 @@ public class TransactionEndpointTests : IntegrationTestBase
     public async Task Deposit_WithAKeySentTwice_IsRefused_AndMovesNothing(string first, string second)
     {
         /*
-          Refused, not resolved. Before 2026-09-11 the LAST value won, measured on the running API:
-          "amount":1,"amount":2 deposited 2, and "amount":1,"Amount":3 deposited 3, since binding is
-          also case-insensitive. After, the same request answered:
+          Refused, not resolved. Without AllowDuplicateProperties = false the LAST value won,
+          measured on the running API on 2026-09-11: "amount":1,"amount":2 deposited 2, and
+          "amount":1,"Amount":3 deposited 3, since binding is also case-insensitive. With it, the
+          same request answered:
 
             400 {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1",
                  "title":"One or more validation errors occurred.","status":400,
