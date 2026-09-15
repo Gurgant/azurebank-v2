@@ -521,7 +521,7 @@ public class TransferService : ITransferService
                           reaches (ADR-0044 D5). The id is on no ledger row and is the actor's own
                           act, so D5 holds; what it buys is a binding inside the chain, where the
                           only one until 2026-09-14 lived in the unchained authorisation table
-                          (AuditDetails, ADR-0044 D4).
+                          (AuditDetails, ADR-0044 D8).
                         */
                         _audit.Record(
                             SecurityEvents.MoneyTransferred, AuditOutcome.Succeeded,

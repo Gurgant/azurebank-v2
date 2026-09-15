@@ -883,8 +883,8 @@ NOT MATCH` when any of those fields disagree. The test that deletes the consumed
 beside CHAIN INTACT
 (`EvidencePackTests.ATransferWhoseAuthorisationRowIsGone_IsBOUNDAUTHORISATIONMISSING_AndTheChainStaysIntact`),
 and the honest shape above survives for rows written before this date, which the pack calls
-pre-binding rows (`EvidenceVerdictTests`). What is still not chained: the instants. Minting still
-writes no audit row, and the separate decision above still stands._
+pre-binding rows (`EvidenceVerdictTests`). What is still not chained: the instants. A successful
+mint still writes no audit row, and the separate decision above still stands._
 
 ⚠️ **AN INTACT VERDICT IS NOT AN INCLUSION PROOF.** The anchor is a tail hash, not a Merkle tree
 (`docs/audit-trail-against-real-practice.md` names the gap), so the pack can say these rows are in a
@@ -947,7 +947,10 @@ both outcomes, so the refusal inventory is three events at six sites, and the so
 ⚠️ **The `Detail` rule INVERTS on these ~~two~~ three, and D5 is why it inverts rather than
 lapsing.** *(struck 2026-09-06: `AccountDeletionRefused` carries `AUTHORIZATION_REQUIRED` the same
 way, and for the same reason — a refused closure commits no row for a pointer to reach.)* The four
-successes below carry a null `Detail` because the facts live on the ledger row `SubjectId` reaches. A
+successes below carry ~~a null `Detail`~~ no amount, counterparty or account in `Detail` *(narrowed
+2026-09-14: deposit and withdrawal still carry a null one, and the two transfers carry only the id
+of the authorisation they consumed, `AuditDetails`; see the struck sentence below)* because the
+facts live on the ledger row `SubjectId` reaches. A
 refusal commits no ledger row, so a pointer-shaped row would point at nothing and "a withdrawal was
 refused" without a reason is indistinguishable from noise. So these carry a `Detail` — **the
 `ErrorCodes` constant and nothing else**, the same string the caller already received over HTTP. Not

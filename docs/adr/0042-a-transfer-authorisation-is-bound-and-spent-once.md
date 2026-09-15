@@ -176,8 +176,10 @@ _2026-09-14: the audit row a consumed authorisation buys now names it. `AuditDet
 `{"authorizationId":"<id>"}` into the `Detail` of `MoneyTransferred`, `MoneyTransferredInternally`
 and `AccountDeleted`, so the binding lives under the chain's hash and not only in this table's
 `ConsumedByTransactionId`. The rows are still the Art. 72 evidence and are still not swept; what
-changed is that sweeping or re-pointing one is now something the evidence pack can see and name
-(ADR-0044, second-factor note of the same date). Withdraw's in-body PIN is untouched here._
+changed is that sweeping or re-pointing a transfer's row, for transfers written since this date, is
+now something the evidence pack can see and name (ADR-0044, second-factor note of the same date); a
+closure still has no `evidence` verb (ADR-0049), so its row is looked up by the id its
+`AccountDeleted` row now names. Withdraw's in-body PIN is untouched here._
 
 _Generalised 2026-09-06 by [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md).
 The rail built here for transfers now carries its first operation that moves no money: closing an

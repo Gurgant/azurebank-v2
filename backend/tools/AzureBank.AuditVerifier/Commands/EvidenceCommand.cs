@@ -26,12 +26,17 @@ namespace AzureBank.AuditVerifier.Commands;
 /// </para>
 /// <para>
 /// ⚠️ <b>THE AUTHORISATION ROW IS NOT INSIDE THE CHAIN, AND THE OUTPUT SAYS SO ON EVERY RUN.</b>
-/// Minting an authorisation writes no audit row — measured: <c>StepUpAuthorizationService</c> never
-/// calls <c>IAuditService</c>, and neither does the mint endpoint — so the PIN proof lives only in a
-/// table anybody holding the database can rewrite. What the chain vouches for is the
-/// <c>MoneyTransferred</c> row naming the transaction; what ties that row to a second factor is a
-/// pointer in an unchained table. Reporting the join as if the chain covered both halves would be
-/// the green-and-false this repository treats as the worst state, so the pack reports each half
+/// A successful mint writes no audit row — measured: <c>StepUpAuthorizationService</c> calls
+/// <c>IAuditService</c> only to record a wrong or locked PIN (since 2026-09-14; this said "never
+/// calls" until then), and the mint endpoint not at all — so the PIN proof lives only in a table
+/// anybody holding the database can rewrite. What the chain vouches for is the
+/// <c>MoneyTransferred</c> (or <c>MoneyTransferredInternally</c>) row naming the transaction and,
+/// since 2026-09-14, the authorisation it consumed (<c>AuditDetails</c>, in the hashed
+/// <c>Detail</c>), against which the pack checks the unchained pointer. The authorisation row
+/// itself, with its instants, is still in an unchained table, and for a pre-binding row written
+/// before that date the pointer is still the only tie. (This remark said the pointer was the only
+/// tie, full stop, until that date.) Reporting the join as if the chain covered both halves would
+/// be the green-and-false this repository treats as the worst state, so the pack reports each half
 /// with the guarantee it actually has.
 /// </para>
 /// <para>
