@@ -28,20 +28,24 @@ public class EvidenceVerdictTests
     private static readonly Guid MovementId = Guid.Parse("9d3ab0f2-6c4e-4c1d-9a5c-1f2e3d4c5b6a");
     private static readonly Guid BoundId = Guid.Parse("0b1c2d3e-4f50-4617-8899-aabbccddeeff");
     private static readonly Guid OtherId = Guid.Parse("ffeeddcc-bbaa-4998-8776-655443322110");
+    private static readonly Guid OwnerId = Guid.Parse("11111111-2222-4333-8444-555555555555");
+    private static readonly Guid StrangerId = Guid.Parse("66666666-7777-4888-8999-000000000000");
 
+    /// <summary>The outgoing leg of an EXTERNAL transfer: a recipient handle marks the rail.</summary>
     private static Transaction Outgoing() => new()
     {
         Id = MovementId,
         TransactionNumber = "TXN-20260914-0000000001X",
         Type = TransactionType.TransferOut,
         Amount = 25m,
-        Account = null!,
+        RecipientAzureTag = "janesmith",
+        Account = new Account { UserId = OwnerId, AccountNumber = "AB-0000-0000-00", Name = "Checking", User = null! },
     };
 
     private static StepUpAuthorization Consumed(Guid id, Guid? by) => new()
     {
         Id = id,
-        UserId = Guid.NewGuid(),
+        UserId = OwnerId,
         Operation = StepUpOperation.Transfer,
         BindingHash = "not read by the verdict",
         Status = by is null ? StepUpAuthorizationStatus.Pending : StepUpAuthorizationStatus.Consumed,
@@ -151,6 +155,58 @@ public class EvidenceVerdictTests
 
         lines[0].Should().StartWith("BOUND AUTHORISATION DOES NOT MATCH:");
         lines[1].Should().Be("  and that row points at this movement, but its status is Pending, not Consumed.");
+    }
+
+    [Fact]
+    public void ABoundRowMintedByAnotherUser_IsBOUNDAUTHORISATIONDOESNOTMATCH_AndNamesBothOwners()
+    {
+        // Pointer and status intact; only the owner was written around the application.
+        var stranger = Consumed(BoundId, MovementId);
+        stranger.UserId = StrangerId;
+
+        var lines = Verdict(pointer: null, hasSuccessRow: true, BoundId, stranger);
+
+        lines[0].Should().StartWith("BOUND AUTHORISATION DOES NOT MATCH:");
+        lines[1].Should().Be(
+            $"  and that row was minted by {StrangerId:D}, not by this account's owner {OwnerId:D}.");
+    }
+
+    [Fact]
+    public void ABoundRowMintedForTheOtherOperation_IsBOUNDAUTHORISATIONDOESNOTMATCH_AndNamesBoth()
+    {
+        var wrongRail = Consumed(BoundId, MovementId);
+        wrongRail.Operation = StepUpOperation.InternalTransfer;
+
+        var lines = Verdict(pointer: null, hasSuccessRow: true, BoundId, wrongRail);
+
+        lines[0].Should().StartWith("BOUND AUTHORISATION DOES NOT MATCH:");
+        lines[1].Should().Be("  and that row was minted for InternalTransfer, not for the Transfer this movement is.");
+    }
+
+    [Fact]
+    public void ABoundRowMarkedConsumedWithNoInstant_IsBOUNDAUTHORISATIONDOESNOTMATCH()
+    {
+        var noInstant = Consumed(BoundId, MovementId);
+        noInstant.ConsumedAt = null;
+
+        var lines = Verdict(pointer: null, hasSuccessRow: true, BoundId, noInstant);
+
+        lines[0].Should().StartWith("BOUND AUTHORISATION DOES NOT MATCH:");
+        lines[1].Should().Be("  and that row is marked Consumed but records no instant of spending.");
+    }
+
+    [Fact]
+    public void AnInternalTransfer_BoundToAnInternalAuthorisation_IsSTRONGLYAUTHENTICATEDBOUNDINTHECHAIN()
+    {
+        // No recipient handle: the internal rail, so the expected operation is InternalTransfer.
+        var movement = Outgoing();
+        movement.RecipientAzureTag = null;
+        var bound = Consumed(BoundId, MovementId);
+        bound.Operation = StepUpOperation.InternalTransfer;
+
+        var lines = EvidenceCommand.StrongAuthentication(movement, bound, true, false, BoundId, bound).ToArray();
+
+        lines[0].Should().StartWith("STRONGLY AUTHENTICATED, BOUND IN THE CHAIN:");
     }
 
     [Fact]

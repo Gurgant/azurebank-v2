@@ -403,18 +403,58 @@ public static class EvidenceCommand
             yield break;
         }
 
-        var pointsHere = bound.ConsumedByTransactionId == movement.Id;
-        var consumed = bound.Status == StepUpAuthorizationStatus.Consumed;
-        if (!(pointsHere && consumed))
+        /*
+          THE TABLE IS NOT IN THE CHAIN, so every field this verdict leans on is checked, not only
+          the pointer and the status. A row rewritten around the application can keep both of those
+          and still lie about who minted it, what for, or whether it was ever spent -- and the first
+          version of this check would have called such a row STRONGLY AUTHENTICATED (found in review,
+          2026-09-15). The owner is the outgoing account's; the operation follows the movement's
+          shape, a recipient handle marking the external rail; a consumed row always records its
+          instant.
+        */
+        var expectedOperation = movement.RecipientAzureTag is null
+            ? StepUpOperation.InternalTransfer
+            : StepUpOperation.Transfer;
+        var reasons = new List<string>();
+        if (bound.ConsumedByTransactionId != movement.Id)
+        {
+            reasons.Add(bound.ConsumedByTransactionId switch
+            {
+                { } other => $"  and that row says it paid for {other:D} instead.",
+                null => $"  and that row records no movement against it (status {bound.Status}).",
+            });
+        }
+        else if (bound.Status != StepUpAuthorizationStatus.Consumed)
+        {
+            reasons.Add($"  and that row points at this movement, but its status is {bound.Status}, not Consumed.");
+        }
+
+        if (bound.UserId != movement.Account.UserId)
+        {
+            reasons.Add($"  and that row was minted by {bound.UserId:D}, not by this account's owner"
+                + $" {movement.Account.UserId:D}.");
+        }
+
+        if (bound.Operation != expectedOperation)
+        {
+            reasons.Add($"  and that row was minted for {bound.Operation}, not for the {expectedOperation}"
+                + " this movement is.");
+        }
+
+        if (bound.ConsumedAt is null && bound.Status == StepUpAuthorizationStatus.Consumed)
+        {
+            reasons.Add("  and that row is marked Consumed but records no instant of spending.");
+        }
+
+        if (reasons.Count > 0)
         {
             yield return $"BOUND AUTHORISATION DOES NOT MATCH: the chained audit row names authorisation"
                 + $" {boundId:D},";
-            yield return bound.ConsumedByTransactionId switch
+            foreach (var reason in reasons)
             {
-                { } other when other != movement.Id => $"  and that row says it paid for {other:D} instead.",
-                { } => $"  and that row points at this movement, but its status is {bound.Status}, not Consumed.",
-                null => $"  and that row records no movement against it (status {bound.Status}).",
-            };
+                yield return reason;
+            }
+
             yield return "  The chained name is the evidence; the authorisation table was written";
             yield return "  around the application. Treat it as a finding.";
             if (authorisation is not null && authorisation.Id != bound.Id)

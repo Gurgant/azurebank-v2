@@ -877,8 +877,9 @@ _Narrowed 2026-09-14 (`AuditDetails`): the success row now NAMES the authorisati
 its `Detail` — `{"authorizationId":"<id>"}`, under the hash — so the binding from a movement to its
 second factor no longer rests on the unchained pointer alone. The pack reads the name from the
 chained row and checks the table against it: `STRONGLY AUTHENTICATED, BOUND IN THE CHAIN` when the
-row agrees, `BOUND AUTHORISATION MISSING` when it is gone, `BOUND AUTHORISATION DOES NOT MATCH` when
-it points elsewhere or was never spent. The test that deletes the consumed row now pins MISSING
+row agrees — it points back, is `Consumed` with an instant, and was minted by the account's owner
+for the movement's rail — `BOUND AUTHORISATION MISSING` when it is gone, `BOUND AUTHORISATION DOES
+NOT MATCH` when any of those fields disagree. The test that deletes the consumed row now pins MISSING
 beside CHAIN INTACT
 (`EvidencePackTests.ATransferWhoseAuthorisationRowIsGone_IsBOUNDAUTHORISATIONMISSING_AndTheChainStaysIntact`),
 and the honest shape above survives for rows written before this date, which the pack calls

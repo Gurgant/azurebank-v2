@@ -930,8 +930,9 @@ What the second section can say, and what it cannot:
   whether that row is to be believed at all._
 - `STRONGLY AUTHENTICATED, BOUND IN THE CHAIN` — _(since 2026-09-14)_ the chained `MoneyTransferred`
   row itself names the authorisation it consumed — `Detail` is `{"authorizationId":"<id>"}`, under
-  the hash — and the authorisation row agrees: it exists, it is `Consumed`, and it points back at
-  this movement. The NAME is inside the chain; the instants under the line are still read from the
+  the hash — and the authorisation row agrees: it exists, it is `Consumed` with an instant of
+  spending, it points back at this movement, and it was minted by this account's owner for this
+  kind of transfer. The NAME is inside the chain; the instants under the line are still read from the
   unchained table, so a row that goes missing or is re-pointed is reported as one of the two
   findings below rather than silently downgrading this verdict. This is what a transfer written
   after 2026-09-14 prints when nothing is wrong.
@@ -942,8 +943,9 @@ What the second section can say, and what it cannot:
   row claims the movement through its pointer, the pack names it under the line; the chained name
   is the one to believe.
 - `BOUND AUTHORISATION DOES NOT MATCH` — the chained row names an authorisation whose row exists
-  but says it paid for another movement, or was never spent. The chained name is the evidence; the
-  table was written around the application. A finding.
+  but says it paid for another movement, was never spent, was minted by another user or for the
+  other kind of transfer, or is marked spent with no instant; the lines under it say which. The
+  chained name is the evidence; the table was written around the application. A finding.
 - `NO AUTHORISATION APPLIES` — a deposit, a withdrawal, or the INCOMING leg of a transfer. ADR-0042
   binds an authorisation to the two transfer endpoints only; ask for the OUTGOING leg's number.
 - `NO AUDIT ROW` — a ledger row with no audit row naming it. Every money movement writes one in the
