@@ -82,10 +82,11 @@ public class TransactionService : ITransactionService
               that takes three attempts still commits exactly ONE row rather than three claiming
               three deposits.
 
-              Detail stays null on every money event. The amount, the description and the account are
-              already on the ledger row SubjectId reaches; copying them into a table designed never to
-              be purged is precisely how D5 gets broken, and an amount tied to an actor id is
-              financial data about an identifiable person.
+              Detail stays null on every money event that consumes no authorisation (since
+              2026-09-14 the two transfers name theirs: AuditDetails). The amount, the description
+              and the account are already on the ledger row SubjectId reaches; copying them into a
+              table designed never to be purged is precisely how D5 gets broken, and an amount tied
+              to an actor id is financial data about an identifiable person.
             */
             _audit.Record(
                 SecurityEvents.MoneyDeposited, AuditOutcome.Succeeded,

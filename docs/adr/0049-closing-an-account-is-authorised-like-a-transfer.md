@@ -171,6 +171,12 @@ The five-second window is a reading aid, not a key: the consume and the audit ro
 transaction (D8), so on the running stack they are milliseconds apart. The query is run once against
 the after-table (row 16) and its output pasted there.
 
+_2026-09-14: the closure's authorisation IS reachable from the closure now, and by the chained half
+rather than a foreign key — the `AccountDeleted` row's `Detail` names the authorisation it consumed
+(`AuditDetails`, ADR-0044 note of the same date), and `AccountDeletionAuthorizationTests` asserts
+the id. The query above still works and is still the record for rows written before this date; for
+rows written after, read the id off the audit row and look the authorisation up by it._
+
 **D6 — The two 422 guards stay AHEAD of the presence check.** This is a deliberate placement
 difference from ADR-0042, which put the transfer's `AUTHORIZATION_REQUIRED` at the ownership rung so
 that a caller holding no second factor could not use the endpoint to enumerate payee handles one 404
@@ -392,11 +398,14 @@ the 403 is the one every foreign account id gets.
   ADR-0044, "Wrong and locked PINs at the three mints".)*
 - **EXPIRED and INVALID on the DELETE write no row**, as on a transfer. The transfer precedent
   audits the absent authorisation only, and this ADR follows it rather than widening it in passing.
-- **No `authorization:<id>` link on the `AccountDeleted` success row.** It would make a closure
+- ~~**No `authorization:<id>` link on the `AccountDeleted` success row.** It would make a closure
   traceable to its second factor without D5's query, and it would be the first success row to carry
   a non-null `Detail` — ADR-0044 says success rows carry none because the ledger row reaches the
   facts, and an account row has no column that reaches the authorisation. That is a dated ADR-0044
-  correction of its own, named here rather than taken as a free rider.
+  correction of its own, named here rather than taken as a free rider.~~ *(Done 2026-09-14 as that
+  dated ADR-0044 correction, and not alone: `AuditDetails` writes `{"authorizationId":"<id>"}` into
+  `Detail` on `AccountDeleted` and on both transfer success rows, under the hash; see the D5 note
+  above and ADR-0044's notes of the same date.)*
 - **The owner's history loss stays open** (ADR-0008, 2026-08-18): `TransactionService` still scopes
   `GET /api/transactions` to accounts that are not deleted, so the closed account's rows leave the
   owner's view. A read-side change, not a gate change.
