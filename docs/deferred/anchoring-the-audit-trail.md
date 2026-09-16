@@ -175,9 +175,13 @@ non-issue — but it is a decision to take rather than a property to assume, and
 alone is the cheap way to take it.
 
 Two payloads are involved, and the difference between them matters enough to name. The **anchored
-value** is what a TSA signs: a digest over the chain's state, `(lowest sequence, highest sequence,
-row count, tail hash)`. The **anchor record** is what gets stored and published, and it carries the
-same four fields plus its own counter and the previous record's hash — so the anchors form a second
+value** is what a TSA signs: a digest over the chain's state, ~~`(lowest sequence, highest sequence,
+row count, tail hash)`~~ *(corrected 2026-09-11: eight elements, not four — those four plus the
+scheme version, the anchor's own counter, the chain key's identity and the previous record's hash;
+`ComputeAnchoredValue` lists them and says why the rest are left out)*. The **anchor record** is
+what gets stored and published, and it carries ~~the same four fields plus its own counter and the
+previous record's hash~~ *(twelve elements: the imprint's eight plus the anchor key's identity, the
+kind, the imprint itself and the creation time — `RenderPayload`)* — so the anchors form a second
 chain, over the first. Writing and verification would have to agree on one canonical byte rendering
 of each, ~~and neither exists yet~~ *(corrected 2026-08-27: both exist —
 `AuditAnchorChain.RenderPayload` and `ComputeAnchoredValue`. The export verb deliberately adds no
