@@ -90,6 +90,21 @@ public sealed class NoticeTransportRegistrationTests
         registrations.Should().HaveCount(
             3, "there are three hosts, and every one of them can deliver");
 
+        /*
+          BY TYPE, OR THE COMPARISON BELOW PROVES NOTHING. A factory or an instance registration
+          leaves ImplementationType null, and two nulls are equal: two hosts delivering through
+          different transports would agree here as long as neither named its type. Measured
+          2026-09-16 with all three roots switched to AddSingleton<INoticeTransport>(sp => ...):
+          without this loop both tests in this file passed; with it, this one fails on the API's
+          root first. All three register AddSingleton<INoticeTransport, PickupDirectoryTransport>().
+        */
+        foreach (var (root, descriptor) in registrations)
+        {
+            descriptor.ImplementationType.Should().NotBeNull(
+                $"{root} must register its transport by type, or the comparison below compares "
+                + "nulls");
+        }
+
         var (firstRoot, first) = registrations[0];
         foreach (var (root, descriptor) in registrations.Skip(1))
         {

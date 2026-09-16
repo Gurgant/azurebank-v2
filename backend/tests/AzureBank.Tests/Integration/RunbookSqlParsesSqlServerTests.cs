@@ -68,6 +68,10 @@ public sealed class RunbookSqlParsesSqlServerTests
         { "docs/runbooks/pin-enrolment-repudiated.md", 6, [] },
     };
 
+    /// <summary>A <c>SET PARSEONLY</c> in any case or spacing, ON or OFF.</summary>
+    private static readonly Regex ParseOnlySwitch = new(
+        @"\bSET\s+PARSEONLY\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     private readonly ITestOutputHelper _output;
 
     public RunbookSqlParsesSqlServerTests(ITestOutputHelper output) => _output = output;
@@ -128,6 +132,20 @@ public sealed class RunbookSqlParsesSqlServerTests
                 skipped.Add(placeholder);
                 continue;
             }
+
+            /*
+              A BLOCK THAT SETS PARSEONLY ITSELF IS REFUSED, NEVER SENT. The ON above holds only
+              until something turns it off, and SQL Server applies SET PARSEONLY while parsing the
+              batch that carries it. Measured 2026-09-16 on this test's own connection, with a
+              block reading `SET PARSEONLY OFF; PRINT 'probe ran'; SELECT 1/0;` appended to the PIN
+              runbook: the output held "probe ran" and the test failed on Msg 8134, Divide by zero
+              -- the block RAN. It failed only because 1/0 throws; an UPDATE in its place would
+              have run and passed. With sqlcmd the same day, the block AFTER such a one ran too,
+              and the control without the OFF printed nothing.
+            */
+            ParseOnlySwitch.IsMatch(block).Should().BeFalse(
+                "a block that sets PARSEONLY would be executed by this guard rather than parsed, "
+                + $"and so would every block after it:\n{block.Trim()}");
 
             await using var command = connection.CreateCommand();
             command.CommandText = block;
