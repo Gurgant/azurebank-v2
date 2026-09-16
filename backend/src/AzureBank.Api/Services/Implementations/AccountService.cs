@@ -99,6 +99,27 @@ public class AccountService : IAccountService
         return _mapper.ToResponse(account);
     }
 
+    /*
+      THE PER-USER LOCK ONE USER'S PRIMARY SWAPS QUEUE BEHIND. The same statement shape as
+      TransferService.DailyLimitLockSql, and for the same reasons: sp_getapplock reports a refusal
+      as a return value, so any negative becomes a raised error, and the wait is bounded rather than
+      left at @@LOCK_TIMEOUT's "forever". The bound sits below the 30-second CommandTimeout so a
+      refusal is always this one and never the statement's. A different resource from the daily
+      limit's, so the two never wait on each other.
+    */
+    internal const string PrimaryLockSql =
+        "DECLARE @r int, @t int = {1}; "
+        + "EXEC @r = sp_getapplock @Resource = {0}, @LockMode = N'Exclusive', @LockOwner = N'Transaction', @LockTimeout = @t; "
+        + "IF @r < 0 BEGIN DECLARE @m nvarchar(200) = CASE WHEN @r = -1 "
+        + "THEN CONCAT(N'sp_getapplock timed out after ', @t, N' ms waiting for the user''s primary-account lock') "
+        + "ELSE CONCAT(N'sp_getapplock returned ', @r) END; THROW 50000, @m, 1; END";
+
+    /// <summary>How long a swap waits for another swap by the same user, in milliseconds.</summary>
+    internal const int PrimaryLockTimeoutMilliseconds = 10_000;
+
+    /// <summary>The applock resource for one user's primary account: one lock per user.</summary>
+    internal static string PrimaryLockResource(Guid userId) => $"set-primary:{userId:D}";
+
     /// <inheritdoc />
     public async Task SetPrimaryAccountAsync(Guid userId, Guid accountId)
     {
@@ -121,12 +142,25 @@ public class AccountService : IAccountService
           failed attempt left tracked (EF does not refresh a tracked entity from a later query), and
           the ownership check runs there too, so a foreign or missing account is still 403 or 404.
 
-          A SWAP THAT LOSES A RACE RUNS AGAIN, bounded and jittered by ConcurrencyRetry exactly as the
-          money paths are, and past the bound the conflict surfaces as it does on them. The race is
-          another swap or a deposit or transfer moving the same account's RowVersion; both are pinned
-          by SetPrimarySqlServerTests. A per-user application lock was written first and measured
-          unnecessary: with it disabled and this retry kept, the concurrent-swap test passed five runs
-          in five, so it is not here.
+          SWAPS FOR ONE USER TAKE TURNS; A SWAP THAT LOSES A RACE TO A DEPOSIT RUNS AGAIN. Every
+          swap by a user clears that user's one primary, so concurrent swaps are not racing
+          occasionally: they all update the same row, and each round only one of them can win. The
+          retry alone, bounded at ConcurrencyRetry.MaxAttempts (8), was enough on an idle machine --
+          five runs in five on 2026-09-15, which is why the lock was taken out then -- and not under
+          load. Measured 2026-09-16 with eight CPU-bound processes running beside the SQL Server
+          proofs: ConcurrentSwapsForOneUser failed five runs in five, each on a 500, and an
+          instrumented run caught 26 conflicts that were not retried, every one at attempt 8. So the
+          swap takes PrimaryLockSql first, before it reads anything: the next swap for that user
+          waits, then reads the primary the last one committed. Under the same load, ten runs in ten
+          passed. Deposits and transfers do not take this lock and still move the RowVersion, so the
+          bounded, jittered retry stays for them, exactly as the money paths use it.
+
+          The lock adds no deadlock. It shares no resource with the daily limit's, a swap writes no
+          audit row (so its saves never take the chain's tail lock), and nothing that holds an
+          account row lock ever waits for it. Owner = Transaction, so the commit or rollback
+          releases it, and the execution strategy's re-run takes it again. InMemory has no locks:
+          the statement is skipped there, and the property is proven only by
+          SetPrimarySqlServerTests.
         */
         var strategy = _context.Database.CreateExecutionStrategy();
         for (var attempt = 1; ; attempt++)
@@ -136,6 +170,14 @@ public class AccountService : IAccountService
                 await strategy.ExecuteAsync(async () =>
                 {
                     await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+
+                    if (_context.Database.IsRelational())
+                    {
+                        await _context.Database.ExecuteSqlRawAsync(
+                            PrimaryLockSql,
+                            PrimaryLockResource(userId),
+                            PrimaryLockTimeoutMilliseconds);
+                    }
 
                     foreach (var entry in _context.ChangeTracker.Entries<Account>().ToList())
                     {

@@ -407,9 +407,11 @@ public class TransferService : ITransferService
                           victim (1205 is in the shipped detector), but a design that deadlocks by
                           construction and relies on the retry is not the design to record.
 
-                          An application lock participates in no table-lock order. Nothing else in
-                          backend/src takes one (grep sp_getapplock: this file only), so the only
-                          order added is applock → tail, and no cycle can form. It holds under READ
+                          An application lock participates in no table-lock order. The only other
+                          one in backend/src is AccountService's per-user primary-swap lock
+                          (2026-09-16), on a different resource and held by a path that takes no
+                          tail lock, so the only order this adds is applock → tail, and no cycle
+                          can form. It holds under READ
                           COMMITTED and under RCSI (measured ON for AzureBankDev and AzureBankTests,
                           2026-09-07); it would not hold under transaction-level SNAPSHOT, which
                           nothing sets. Owner = Transaction, so a rollback or commit releases it

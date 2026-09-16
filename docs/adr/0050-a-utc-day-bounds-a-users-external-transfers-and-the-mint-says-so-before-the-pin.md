@@ -269,7 +269,9 @@ paragraph is the second proposal's deposit-deadlock analysis, credited here beca
 showed the lock order had to be thought through rather than asserted.
 
 *Why `sp_getapplock` has neither defect.* An application lock participates in no table-lock order,
-nothing else in `backend/src` takes one (grep: none), so the only order this ADR adds is applock →
+~~nothing else in `backend/src` takes one (grep: none)~~ *(corrected 2026-09-16:
+`AccountService.SetPrimaryAccountAsync` now takes a per-user one on its own resource and takes no
+tail lock, so the order below is unchanged)*, so the only order this ADR adds is applock →
 tail and no cycle can form; it does not depend on the chain, so partitioning the chain later changes
 nothing here; and "sum before rows are built" keeps the loser from writing. Its cost is one raw
 statement with no repo precedent beyond `AuditChain.TailSql`, accepted and stated. It holds under

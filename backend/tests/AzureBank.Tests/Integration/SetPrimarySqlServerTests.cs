@@ -69,6 +69,13 @@ public sealed class SetPrimarySqlServerTests : IDisposable
     /// 1 row(s), but actually affected 0") and answered 500, because the execution strategy retries
     /// transient faults only. Each round fires every account at once, twice over, so every request
     /// races at least one other swap.
+    /// <para>
+    /// And the retry alone was not the fix it looked like. Green five runs in five on an idle
+    /// machine, it failed five in five on 2026-09-16 with eight CPU-bound processes running beside
+    /// it: twelve swaps all clear the same primary row, one wins each round, and the rest run out
+    /// of ConcurrencyRetry's eight attempts and answer 500. The per-user lock in
+    /// <c>SetPrimaryAccountAsync</c> makes them take turns.
+    /// </para>
     /// </remarks>
     [SqlServerFact]
     public async Task ConcurrentSwapsForOneUser_AllSucceed_AndExactlyOneAccountEndsPrimary()
