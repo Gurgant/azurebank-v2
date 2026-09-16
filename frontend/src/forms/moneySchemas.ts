@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { makeAmountSchema, MIN_MONEY_AMOUNT } from '../utils/amountSchema';
-import { formatCurrency } from '../utils/format';
+import { CURRENCY, formatCurrency, LOCALE } from '../utils/format';
 
 /**
  * RHF+Zod backbone for the money forms (deposit / withdraw / transfer / internal transfer).
@@ -41,9 +41,9 @@ export const MONEY_MAX = 100_000;
  * drift apart the way "€1,000,000." and a 100,000 contract did.
  */
 export function describeMoneyBound(amount: number): string {
-  return new Intl.NumberFormat('en-IE', {
+  return new Intl.NumberFormat(LOCALE, {
     style: 'currency',
-    currency: 'EUR',
+    currency: CURRENCY,
     maximumFractionDigits: 0,
   }).format(amount);
 }

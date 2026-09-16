@@ -91,10 +91,12 @@ public static class ValidationRules
       currency was, so nothing could be wrong about it in a way a compiler or a test would notice.
 
       This constant is the answer to "which currency", not a licence to render one. The server
-      states amounts as bare numbers and lets the client format them in the USER's locale, which is
-      the only place that knows it. Where a message genuinely has to name a figure — a validation
-      bound the user must be told — format with InvariantCulture and append this code, never a
-      symbol and never CurrentCulture.
+      states amounts as bare numbers and lets the client format them, in the fixed en-IE locale of
+      frontend/src/utils/format.ts, whose CURRENCY a real-stack test ties to this constant through
+      the balance's `currency` (until 2026-09-11 this said "the USER's locale", which the client
+      never reads). Where a message genuinely has to name a figure — a validation bound the user
+      must be told, or the evidence pack's movement line — state it through DescribeAmount
+      (InvariantCulture and this code), never a symbol and never CurrentCulture.
 
       A currency COLUMN on Account is a different and bigger decision, and is deliberately not made
       here: this records what the product is denominated in today, nothing more.
@@ -139,9 +141,10 @@ public static class ValidationRules
     /// the ISO code, never a symbol and never the process culture.
     /// </summary>
     /// <remarks>
-    /// Reach for this only where a message must state a BOUND the user has to know — a validation
-    /// limit. Never for an amount the user already has: the client holds those and formats them in
-    /// the user's own locale.
+    /// Reach for this only where the SERVER composes the sentence that states the figure — a
+    /// validation limit, or the movement line of the PSD2 evidence pack (EvidenceCommand), which is
+    /// read outside the system. Never for an amount the client already holds: it formats those
+    /// itself, in a fixed en-IE locale.
     ///
     /// <para>
     /// Invariant rather than a fixed locale on purpose. `:C` renders against whatever culture the
