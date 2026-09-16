@@ -163,7 +163,9 @@ the daily-limit aggregate is serialised by a per-user application lock (`sp_geta
 the first statement of the transfer's transaction, before any row is built) and does NOT depend on
 the tail — a re-sum under the tail lock was the alternative that ADR declined precisely because of
 this open question — so partitioning the chain does not touch the limit. The only lock order it
-adds is applock → tail; nothing else in `backend/src` takes an application lock._
+adds is applock → tail; ~~nothing else in `backend/src` takes an application lock~~ (corrected
+2026-09-16: `AccountService.SetPrimaryAccountAsync` now takes one too, per user, on its own
+resource; a swap writes no audit row, so it never takes the tail lock and adds no order here)._
 
 **And there is still no way for an operator to VERIFY the chain.** `AuditChain.VerifyAsync` exists
 and the suite calls it, but nothing exposes it — no endpoint, no CLI, no job. So the runbook can tell
