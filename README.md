@@ -129,12 +129,12 @@ end-to-end against the running stack, not only against mocks.
 
 **Known gaps**, tracked rather than hidden: the accessibility sweep is measured, not yet fixed —
 axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs report-only in the e2e job over nine pages and the
-deposit dialog, and on 2026-09-15 found two rules failing: colour contrast on theme tokens (muted
-secondary text, the sidebar avatar, a button group and the danger-zone button; 28 nodes, 17 distinct
+deposit dialog, and on 2026-09-16 found two rules failing: colour contrast on theme tokens (muted
+secondary text, the sidebar avatar, a button group and the danger-zone button; 25 nodes, 16 distinct
 elements, on seven pages and the deposit dialog, a count that moves with the data a page shows) and
 Fluent's own focus sentinels flagged as `aria-hidden-focus` (two per page on all nine pages, a
-framework artefact rather than this app's markup); the per-page JSON report is a CI
-artifact, and fixing the contrast findings is a later phase. A UI/UX overhaul is the final planned
+framework artefact rather than this app's markup); the per-scan JSON reports are a CI artifact, and
+fixing the contrast findings is a later phase. A UI/UX overhaul is the final planned
 phase. (The production CSP used to be listed here as unverifiable; the BFF now serves the built SPA
 under it, and CI's e2e run walks that build with no violations — ADR-0054.)
 

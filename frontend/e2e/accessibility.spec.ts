@@ -8,8 +8,9 @@ import { expect, test, type Page } from '@playwright/test';
  * axe-core runs over the five navigation places, the Transfer wizard and the internal-transfer
  * page it links to (not the transaction detail or PIN setup), the login and register pages without
  * a session (/about is public too, but is scanned here only inside the signed-in shell), and the
- * deposit dialog: ten scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. Each scan
- * writes its violations to `test-results/axe/<page>.json` (a CI artifact) and attaches them to
+ * deposit dialog: ten scans, with the WCAG 2.0 A/AA, 2.1 AA and 2.2 AA tags. The dialog scan is
+ * scoped to the dialog, so what the dashboard behind it fails is not reported as the dialog's. Each
+ * scan writes its violations to `test-results/axe/<scan>.json` (a CI artifact) and attaches them to
  * the Playwright report; nothing here fails on a violation. That is deliberate: this is the
  * measurement the README used to list as "a dedicated phase not yet run", and a gate over
  * findings nobody has read yet would be a gate nobody could pass. Fixing them, and turning the
@@ -18,9 +19,11 @@ import { expect, test, type Page } from '@playwright/test';
  * What DOES fail, so an empty or misdirected report cannot read as a clean one:
  * - a page that never became ready (each scan first waits for the page's h1 or form field);
  * - a scan that landed somewhere else. An expired session is redirected to /login, which has an h1
- *   and passing rules of its own, so neither of the other two checks would notice; the path is
- *   asserted before axe runs;
+ *   and passing rules of its own, so neither the ready wait nor the zero-passes check would notice;
+ *   the path is asserted before axe runs;
+ * - a scoped scan whose selector does not name exactly one element;
  * - a scan axe reports with zero passed rules, which inspected nothing.
+ * Each scan also waits for the page's animations to finish first, so a fade is not measured.
  */
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
 const REPORT_DIR = 'test-results/axe';
@@ -54,11 +57,34 @@ function labelled(label: string) {
   };
 }
 
-async function scan(page: Page, name: string, path: string) {
+async function scan(page: Page, name: string, path: string, scope?: string) {
   // A redirect is not a scan of this page: /login would pass every other check here.
   expect(new URL(page.url()).pathname, `${name}: the scan landed on another page`).toBe(path);
 
-  const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
+  /*
+    A SETTLED PAGE, NOT A FADING ONE. axe reads computed colours, and mid-animation an element's
+    opacity blends it toward what is behind it. Measured 2026-09-16: the deposit dialog's open
+    animation was 36-52% through when this scan started, and across fourteen runs the dialog
+    reported one contrast failure twelve times, two once and three once. Waiting for every finite
+    animation to finish, it reported one in eight runs of eight. An animation that is cancelled
+    (its element removed) counts as finished; an infinite one, a spinner, is not waited for.
+  */
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
+
+  const builder = new AxeBuilder({ page }).withTags(TAGS);
+  if (scope) {
+    // One element, or the scope is not the thing named: none scans nothing, two scan a stranger.
+    await expect(page.locator(scope), `${name}: the scope must name one element`).toHaveCount(1);
+    builder.include(scope);
+  }
+  const results = await builder.analyze();
 
   // The control, before anything is written: a scan with no passes scanned nothing.
   expect(results.passes.length, `${name}: axe inspected no element at all`).toBeGreaterThan(0);
@@ -66,6 +92,7 @@ async function scan(page: Page, name: string, path: string) {
   const report = {
     page: name,
     url: page.url(),
+    scope: scope ?? null,
     tags: TAGS,
     axe: results.testEngine.version,
     passes: results.passes.length,
@@ -108,7 +135,7 @@ test.describe('accessibility, signed in', () => {
     await heading(1)(page);
     await page.getByRole('button', { name: 'Deposit', exact: true }).click();
     await expect(page.getByRole('dialog', { name: /deposit money/i })).toBeVisible();
-    await scan(page, 'dashboard-deposit-dialog', '/dashboard');
+    await scan(page, 'dashboard-deposit-dialog', '/dashboard', '[role="dialog"]');
   });
 });
 
