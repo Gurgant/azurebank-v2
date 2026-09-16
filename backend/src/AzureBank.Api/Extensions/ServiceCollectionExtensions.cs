@@ -550,6 +550,10 @@ public static class ServiceCollectionExtensions
             // with path parameters — except those marked [AlwaysFound], which cannot miss
             options.AddOperationTransformer<NotFoundResponseTransformer>();
 
+            // 415 on every operation with a body: the framework's refusal of a non-JSON body,
+            // undocumented until the Schemathesis gate's first run (2026-09-15).
+            options.AddOperationTransformer<UnsupportedMediaTypeResponseTransformer>();
+
             // Operation transformer: Mark [AllowAnonymous] endpoints as not requiring auth
             // This fixes Schemathesis "Missing header not rejected" false positives
             options.AddOperationTransformer<AnonymousEndpointTransformer>();

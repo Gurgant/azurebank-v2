@@ -110,4 +110,7 @@ job is a process that did not start, and the readiness step alone would only say
   suites were designed for — but it means a future suite that mutates the seed destructively would
   need its own job rather than another step.
 - **`contract-tests.yml` is untouched.** Schemathesis and Bruno stay manual and non-gating; folding
-  them in is a separate decision about what should block a merge.
+  them in is a separate decision about what should block a merge. *(Half taken 2026-09-15:
+  Schemathesis is the `conformance` job in `ci.yml` now — its own SQL Server rather than a fourth
+  step in this job, since it mints users and accounts the three suites here reason about — and it
+  blocks a merge; ADR-0053 D6 carries the record. Bruno stays manual in `contract-tests.yml`.)*

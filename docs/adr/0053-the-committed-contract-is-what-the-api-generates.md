@@ -122,6 +122,21 @@ described. Truth about runtime behaviour is Schemathesis's job and the real-stac
 Schemathesis is doubly not a gate: it ends its step with `|| true  # report, don't gate`, in a
 workflow that only runs when somebody starts it by hand. Neither is changed here.
 
+_Moved 2026-09-15, as the bullet under "What would change this" said it would. Schemathesis is a
+gate: the `conformance` job in `ci.yml` runs its four response-conformance checks — status code,
+media type, headers, body schema — against the running API on every PR, with its own SQL Server, a
+bearer token from the real login, the version pinned at 4.27.1, no `|| true`, and a floor of 27
+operations in the JUnit report so a run that tested nothing cannot pass. Claim 3 has its guard.
+What its first run found, against a document every gate here had passed: `415` on all fifteen
+operations that take a body (the framework's refusal of a non-JSON body, never declared), a second
+`404` on the eight operations of the six GUID-constrained routes (a segment that is not a GUID
+matches no route and comes back as `application/problem+json`, which the
+`NotFoundResponseTransformer` note had described and deliberately left undocumented), and one real
+defect: `PATCH /api/accounts/{id}/set-primary` answered 500 on SQL Server, whose
+one-primary-per-user index refused a single SaveChanges that updated the new row before the old —
+`SetPrimarySqlServerTests` pins it, red before the fix. The manual workflow's Schemathesis job and
+the `schemathesis/` hooks folder are gone; Bruno stays manual there._
+
 ## Consequences
 
 **Falsified before it was trusted, and every case re-run on the final code**, each read for the
@@ -197,8 +212,8 @@ matter.
   so.
 - **A second document.** `v1` is resolved by name. A `v2` would need its own committed file and its
   own case, and the operations floor would stop meaning what it says.
-- **Gating Schemathesis.** If runtime conformance were ever made a gate, D6's paragraph would move,
-  and claim 3 would stop being the open one.
+- ~~**Gating Schemathesis.** If runtime conformance were ever made a gate, D6's paragraph would move,
+  and claim 3 would stop being the open one.~~ *(done 2026-09-15; the note under D6 records it.)*
 - ~~**Either defect above being fixed.** The XML-generator fix would remove D3's in-string newlines
   from the contract altogether and make that normalisation dead code; the culture fix in the product
   would make D4's pin redundant but not wrong.~~ ~~**The XML-generator defect above being fixed.**
