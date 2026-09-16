@@ -523,6 +523,17 @@ jobs:
       - name: Assert every e2e spec ran
         working-directory: frontend
         run: node scripts/assert-e2e-ran.mjs
+      # The accessibility sweep's findings (accessibility.spec.ts, axe-core, WCAG 2.0 A/AA, 2.1 AA
+      # and 2.2 AA), one JSON per scan. Report-only: the spec fails on a scan that inspected
+      # nothing, never on a finding, so this is uploaded on every run and read by hand.
+      - name: Upload the accessibility report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: axe-report
+          path: frontend/test-results/axe/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
