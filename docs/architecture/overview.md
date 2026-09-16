@@ -196,14 +196,14 @@ trace, because the trace context propagates through the proxy hop.
 
 ## Three claims about the contract, and which are proven
 
-The frontend's types, Zod validators and contract tests are generated from the OpenAPI document the
-API generates, so three claims hang on it: the client matches the document, the document is what the
-code generates, and the code does what the document says (ADR-0053). CI's regeneration steps prove
-the first; a backend test proves the second, comparing the committed document with what the real
-composition generates. The third stays the open one: one set of contract assertions runs against the
-MSW mock and against the real backend in `real-stack`, which ends with Playwright against the built
-SPA under its CSP (ADR-0029, ADR-0032, ADR-0054), a floor rather than full coverage; and
-Schemathesis drives the API from the document without gating (ADR-0053 D6).
+The frontend's types and Zod validators are generated from the OpenAPI document the API generates,
+so three claims hang on it: the client matches the document, the document is what the code
+generates, and the code does what the document says (ADR-0053). CI's regeneration steps prove the
+first; a backend test proves the second, comparing the committed document with what the real
+composition generates. The third is checked, not proven: on every pull request Schemathesis drives
+the running API from the document and fails on a response it does not declare (ADR-0053 D6), and
+one set of contract assertions runs against the MSW mock and the real backend in `real-stack`, which
+ends with Playwright against the built SPA under its CSP (ADR-0029, ADR-0032, ADR-0054).
 
 ## What proves it
 
@@ -215,8 +215,8 @@ Schemathesis drives the API from the document without gating (ADR-0053 D6).
 - *No counts here, on purpose: this listed 618 and 188, which were long out of date, and any number
   written into prose goes stale within days. CI's jobs are the source.*
 - **Architecture tests** that fail the build on a layer-dependency violation.
-- ~~**Schemathesis** contract tests driving the API from its own spec.~~ *(Struck 2026-09-15: on
-  `main` it runs only by hand and its step ends `|| true`, so it gates nothing — ADR-0053 D6.)*
+- **Schemathesis** on every pull request, driving the running API from the committed document and
+  failing on a response the document does not declare (ADR-0053 D6).
 - Every pull request runs the full suite, CodeQL on three languages, and an AI review, and a
   human merges.
 

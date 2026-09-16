@@ -1,8 +1,6 @@
 # ADR-0023: Runtime response validation — spec-generated Zod, fail-closed on money
 
-**Status**: Accepted · _Noted 2026-09-15:
-[ADR-0043](0043-the-document-declares-the-error-body.md) (2026-08-18) corrects the generation
-pipeline this validation consumes — the document now declares the error body the API sends._
+**Status**: Accepted
 
 **Date**: 2026-07-25
 
@@ -50,6 +48,11 @@ missing guard.
    `--runtime zod --schemas-only`, output **committed** to `src/api/generated/`, behind
    `npm run generate:zod` sitting next to `generate:api`. Hand-writing validators for a surface that
    already has a machine-readable contract duplicates the contract and guarantees eventual drift.
+   _(Noted 2026-09-15: generated faithfully from a document that was wrong about errors.
+   [ADR-0043](0043-the-document-declares-the-error-body.md) (2026-08-18) found 58 declared refusals
+   promising no body and a `ProblemDetails` without `errorCode`, and corrected the document; the
+   generated `ProblemDetails` in `apiSchemas.ts` now carries `errorCode`. The generation is
+   unchanged.)_
 
 3. **The generators that were rejected, and why.** This is the part that is expensive to re-derive,
    so all four are recorded. **`openapi-zod-client` is a dead end** — stale for roughly 17 months,

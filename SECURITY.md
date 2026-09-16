@@ -85,16 +85,17 @@ the code reads as.
 | PIN on a transfer | API | `POST /api/transfers` without an authorisation: 401 on both origins, the same problem body | 0041, 0042 |
 | **PIN on the account-number reveal** | **BFF only** | `GET /api/accounts/{id}/full-number` with no PIN ever entered: **API 200 with the full number**; BFF 403 with `X-Auth-Level-Required: 2` | 0008, 0020, 0041 |
 
-The last row is the one to read twice. The browser path cannot reach that surface — the JWT never
-reaches the SPA and the BFF clears any inbound `Authorization` before proxying (ADR-0001, ADR-0038,
-ADR-0041) — but a bearer token is a credential the API hands to whoever logs in, and a holder of
-one, a leaked access token inside its fifteen minutes or an operator with `curl`, reads the
-unmasked number with no PIN. That is the shape ADR-0041 closed for transfers by moving the check
-into the API; the reveal is the route it left on the session model on purpose, and it now carries
-this measurement as a residual. Withdrawals, closures, idempotency and the PIN lockout were not
-sent in this pass: their checks run inside the API's own services (ADR-0042, ADR-0049, ADR-0009,
-ADR-0010), so the origin does not change them, but that is a reading of the code, not a row of this
-table.
+The last row is the one to read twice. A browser has no bearer token to present to the API's own
+origin — the JWT never reaches the SPA and the BFF clears any inbound `Authorization` before
+proxying (ADR-0001, ADR-0038, ADR-0041) — so every reveal it can ask for goes through the BFF and
+its level-2 gate. But a bearer token is a credential the API hands to whoever logs in, and a holder
+of one, a leaked access token inside its fifteen minutes or an operator with `curl`, calls the API
+directly and reads the unmasked number with no PIN. That is the shape ADR-0041 closed for transfers
+by moving the check into the API; the reveal is the route it left on the session model on purpose,
+and it now carries this measurement as a residual. Withdrawals, closures, idempotency and the PIN
+lockout were not sent in this pass: their checks run inside the API's own services (ADR-0042,
+ADR-0049, ADR-0009, ADR-0010), so the origin does not change them, but that is a reading of the
+code, not a row of this table.
 
 ### Browser-side invariants
 

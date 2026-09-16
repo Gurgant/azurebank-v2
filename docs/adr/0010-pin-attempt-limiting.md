@@ -1,9 +1,6 @@
 # ADR-0010: API-side PIN attempt-limiting (lockout)
 
-**Status**: Accepted · _Noted 2026-09-15:
-[ADR-0040](0040-changing-a-credential-requires-the-current-one.md) (2026-08-12) found a PIN could be
-replaced with no proof of the current one, so nothing was guessed and this limiting never engaged
-there; it closes that by requiring the current credential. The counting here is unchanged._
+**Status**: Accepted
 
 **Date**: 2026-07-14
 
@@ -53,6 +50,11 @@ intent already declared (but unused) in the BFF `SecurityOptions`
   **`PinService`**. `AuthService.VerifyPinAsync` delegates to it, and
   `TransactionService.WithdrawAsync` depends on it — so both PIN gates share the
   same limiter and neither can be bypassed.
+  _(Noted 2026-09-15: neither gate could be bypassed, but the PIN behind both could be replaced.
+  [ADR-0040](0040-changing-a-credential-requires-the-current-one.md) (2026-08-12) found a session
+  could set a new PIN with no proof of the current one, so nothing was guessed and this limiting
+  never engaged; it closed that by requiring the current credential. The counting here is
+  unchanged.)_
 - **Isolation from the caller's transaction (crucial for ADR-0009)**: the lockout
   counter is security bookkeeping that must persist even when the caller fails
   or rolls back, and must **not** finalize the caller's pending idempotency
