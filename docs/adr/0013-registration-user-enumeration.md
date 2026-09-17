@@ -157,7 +157,12 @@ knowingly accepted, time-boxed residual with a concrete deferral trigger.
   fast-path. Proven by a SQL-Server parallel-burst test (`RegistrationEmailRaceSqlServerTests`:
   N concurrent same-email registrations → exactly one `201`, the rest `409`, exactly one row).
   Making the multi-step registration fully atomic (user + role + default account committed under
-  one transaction, wrapped in the retry execution strategy) remains a tracked follow-up.
+  one transaction, wrapped in the retry execution strategy) ~~remains a tracked follow-up.~~
+  *(struck 2026-09-17: delivered 2026-08-09 by [ADR-0037](0037-atomic-registration.md), PR #94.
+  The user, its role and the starter account commit in one `ExecuteInTransactionAsync` run through
+  the execution strategy, and `RegistrationAtomicitySqlServerTests` proves on real SQL Server that
+  a failed account write leaves no user behind while a real duplicate still gets the neutral `409`
+  described above.)*
 
 ## Known limits of the rate limiter (accepted for this scope)
 

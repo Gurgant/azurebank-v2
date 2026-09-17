@@ -74,7 +74,15 @@ only address that exists.
 - Something in the deployment runs between sessions, or an account with a provider exists whose
   credential can be stored as the seventh secret — the same condition `anchoring-the-audit-trail.md`
   states for third-party time.
-- The store holds addresses the project may write to.
+- The store holds addresses the project may write to, each one proved by its holder before a notice
+  is sent to it — until 2026-09-17 this bullet ended at "may write to". This page calls the address
+  never-validated; what it did not say is that a column claims the opposite. Both paths that create
+  a user write `EmailConfirmed = true` (registration beside "Skip email verification for MVP" in
+  `AuthService.RegisterAsync`, the seeder for every user it creates), sign-in does not require it,
+  and `NoticeDeliveryRun`, which every runner shares, reads `Email` without consulting it. A sending
+  transport that trusted the column would find every address verified, so it must not: the proof is
+  the email-confirmation flow ADR-0013's deferral trigger names, and no notice goes to an address
+  until it has completed that flow.
 - A second notification address, and a path to change either, exist in the data model — or the ADR
   is amended to say that one address is the whole design.
 - The repudiation path has a remedy: a PIN reset or revocation flow behind the contact.

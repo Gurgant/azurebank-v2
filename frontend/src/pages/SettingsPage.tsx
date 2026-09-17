@@ -27,8 +27,10 @@ import { useLogoutMutation } from '../features/api/apiSlice';
 import { ChangePinDialog, RenameAzureTagDialog } from '../components';
 
 // Features with a designed home here but no backend yet — shown as disabled "Coming soon" rows so
-// the page is honest about the roadmap instead of pretending dead controls work. The UI/UX overhaul
-// turns these real.
+// the page is honest about the roadmap instead of pretending dead controls work. This used to end
+// "The UI/UX overhaul turns these real", written over five rows. One has become real since: dark
+// mode, at U7 (2026-07-30), and it shipped without a backend change, because the theme preference
+// lives in localStorage. The four below still have no endpoint in the API contract.
 const COMING_SOON = [
   {
     id: 'security',

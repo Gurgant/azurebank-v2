@@ -7,22 +7,18 @@ using Konscious.Security.Cryptography;
 namespace AzureBank.Shared.Services.Implementations;
 
 /// <summary>
-/// Argon2id hasher with two security profiles:
-///
-/// 1. PASSWORD Profile (High Security):
-///    - Memory: 64 MB (65536 KB)
-///    - Iterations: 3
-///    - Use for: General password hashing, sensitive data
-///
-/// 2. PIN Profile (Optimized):
+/// Argon2id hasher for 6-digit PINs, with one profile:
 ///    - Memory: 19 MB (19456 KB) - OWASP Tier 2
 ///    - Iterations: 2
-///    - Use for: 6-digit PINs with limited entropy
-///
-/// Both profiles use:
 ///    - Parallelism: 4 threads
 ///    - Salt: 16 bytes (128 bits)
 ///    - Hash: 32 bytes (256 bits)
+///
+/// Until 2026-09-17 this summary described a second, "PASSWORD" profile (64 MB, 3 iterations,
+/// "Use for: General password hashing, sensitive data") behind <c>HashPassword</c> and
+/// <c>VerifyPassword</c>. Nothing but the unit tests called it: account passwords are hashed
+/// by ASP.NET Core Identity's PBKDF2 (ADR-0003's correction), so the profile was deleted with its
+/// tests.
 ///
 /// PIN PEPPER (ADR-0011): when a pepper is configured, PIN hashing/verification
 /// additionally mixes in a server-side secret — Argon2id's RFC 9106 secret value
@@ -31,9 +27,8 @@ namespace AzureBank.Shared.Services.Implementations;
 /// hashes are stamped with a <c>keyid=N</c> parameter so verification is
 /// self-describing: a hash carrying a keyid is verified WITH the matching pepper;
 /// a hash without one is a legacy (un-peppered) hash verified WITHOUT a pepper and
-/// upgraded on next use (see <see cref="PinNeedsRehash"/>). Account passwords are
-/// handled by ASP.NET Core Identity and are intentionally out of scope here, so the
-/// password profile is never peppered.
+/// upgraded on next use (see <see cref="PinNeedsRehash"/>). Account passwords never
+/// reach this hasher.
 ///
 /// References:
 /// - OWASP Password Storage Cheat Sheet (2024)
@@ -41,19 +36,13 @@ namespace AzureBank.Shared.Services.Implementations;
 /// </summary>
 public class PasswordHasher : IPasswordHasher
 {
-    #region Password Profile (64 MB - High Security)
-
-    private const int PasswordMemorySize = 65536;   // 64 MB
-    private const int PasswordIterations = 3;        // Time cost
-
-    #endregion
-
     #region PIN Profile (19 MB - Optimized for Limited Entropy)
 
     // OWASP Tier 2: Lower memory is acceptable for PINs because:
     // - 6 digits = only 1,000,000 possible combinations
     // - Memory-hardness provides less benefit for small search spaces
-    // - Faster verification (~50ms vs ~300ms) without significant security loss
+    // - Faster verification without significant security loss (until 2026-09-17 this said
+    //   "~50ms vs ~300ms", comparing against the 64 MB password profile deleted that day)
     private const int PinMemorySize = 19456;         // 19 MB (OWASP Tier 2)
     private const int PinIterations = 2;             // Time cost
 
@@ -108,23 +97,6 @@ public class PasswordHasher : IPasswordHasher
             _peppered = true;
         }
         _pinPepperRing = ring;
-    }
-
-    #endregion
-
-    #region Password Methods (64 MB)
-
-    /// <inheritdoc />
-    public string HashPassword(string password)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(password);
-        return Hash(password, PasswordMemorySize, PasswordIterations, pepper: null, keyId: null);
-    }
-
-    /// <inheritdoc />
-    public bool VerifyPassword(string hash, string password)
-    {
-        return Verify(hash, password);
     }
 
     #endregion
@@ -237,8 +209,9 @@ public class PasswordHasher : IPasswordHasher
             // Sanity-bound the cost parameters read from the stored hash. They come from
             // a trusted store, but a tampered PinHash with an absurd m would otherwise
             // drive a huge allocation/CPU cost — reject rather than act on it. The cap
-            // is well above our profiles (password 64 MiB, PIN 19 MiB) yet tight enough
-            // to bound a memory-exhaustion attempt if the column is ever tampered.
+            // is well above the PIN profile (19 MiB) yet tight enough to bound a
+            // memory-exhaustion attempt if the column is ever tampered. (Until 2026-09-17
+            // this also named a 64 MiB password profile, deleted as uncalled.)
             if (memory is < 8 or > 262_144           // 8 KiB .. 256 MiB
                 || iterations is < 1 or > 64
                 || parallelism is < 1 or > 64)
