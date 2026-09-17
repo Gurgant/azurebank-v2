@@ -34,6 +34,10 @@ which nothing exercises.
 
 **1. One assertion suite, run twice — against MSW and against the real API+BFF.** Same files, same
 expectations. A divergence becomes a failing build instead of a discovery three PRs later.
+_(Noted 2026-09-15: [ADR-0043](0043-the-document-declares-the-error-body.md) (2026-08-18) added a
+third party. `errorContract.contract.test.ts` checks the committed `docs/api/openapiv1.json`, which
+the frontend's types and Zod validators are generated from, against the same answers on both
+targets, after 58 declared refusals were found promising no body.)_
 
 **2. The URLs are identical for both targets, and that is what makes it cheap.** The mock registers
 every handler with a wildcard origin, so a request aimed at the BFF's address is intercepted when

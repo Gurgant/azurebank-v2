@@ -100,6 +100,7 @@ schemas. It does; only its REPORT is limited to prose.)*
 **Neither the test nor the script proves the document tells the TRUTH.** Both compare the committed
 file with what the API generates. If a transformer generates a response the server can never send,
 both agree with it, because both read the same generator. That is a claim about runtime behaviour,
-and only a call to the running API can disagree with it — Schemathesis, which still reports without
-gating and runs only when somebody starts it by hand (`docs/engineering-traps.md` has a case where
-that is exactly what happened).
+and only a call to the running API can disagree with it — Schemathesis, which since 2026-09-15 does
+so on every pull request as the `conformance` job in `ci.yml` (ADR-0053 D6). *(Until 2026-09-17
+this said Schemathesis "still reports without gating and runs only when somebody starts it by hand",
+pointing at a case in `docs/engineering-traps.md` where that is exactly what happened.)*

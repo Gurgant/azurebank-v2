@@ -13,9 +13,10 @@
 Everything on `/api/*` is guarded by three layers already: `openapi-typescript` types, the
 `schema.d.ts` drift gate in CI, and Schemathesis contract tests. *(Corrected 2026-09-10,
 ADR-0053: "guarded" said more than two of those did. The drift gate proves the generated types
-match the COMMITTED document, not that the document matches the API; Schemathesis runs only when
-started by hand and ends `|| true  # report, don't gate`. The document-versus-code half is now a
-backend test.)* The BFF surface is different —
+match the COMMITTED document, not that the document matches the API; ~~Schemathesis runs only when
+started by hand and ends `|| true  # report, don't gate`~~ (struck 2026-09-17: since 2026-09-15 it
+gates every pull request as the `conformance` job in `ci.yml`, ADR-0053 D6). The
+document-versus-code half is now a backend test.)* The BFF surface is different —
 `/bff/auth/*` is **not in the OpenAPI spec at all**, so its response types were hand-written
 mirrors of `BffResponses.cs`. That made the auth boundary the weakest one in the system: a silent
 FE/BFF drift would flow into the auth slice with nothing to catch it.
@@ -48,6 +49,11 @@ missing guard.
    `--runtime zod --schemas-only`, output **committed** to `src/api/generated/`, behind
    `npm run generate:zod` sitting next to `generate:api`. Hand-writing validators for a surface that
    already has a machine-readable contract duplicates the contract and guarantees eventual drift.
+   _(Noted 2026-09-15: generated faithfully from a document that was wrong about errors.
+   [ADR-0043](0043-the-document-declares-the-error-body.md) (2026-08-18) found 58 declared refusals
+   promising no body and a `ProblemDetails` without `errorCode`, and corrected the document; the
+   generated `ProblemDetails` in `apiSchemas.ts` now carries `errorCode`. The generation is
+   unchanged.)_
 
 3. **The generators that were rejected, and why.** This is the part that is expensive to re-derive,
    so all four are recorded. **`openapi-zod-client` is a dead end** — stale for roughly 17 months,

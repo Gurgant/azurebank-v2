@@ -177,6 +177,20 @@ id — so the reveal's "nothing to bind" exemption does not reach it; it is auth
 API-minted, account-bound, one-shot authorisation on ADR-0042's rail, and the session gate above
 still asks for level 2 on the reveal alone._
 
+_Residual, measured 2026-09-15 on `main` (f1b3509), both hosts running: the session gate on the
+reveal is the BFF's, and the API has none. `GET /api/accounts/{id}/full-number` with a bearer token
+and no PIN ever entered answered **200 with the unmasked number** on :7215, and 403 with
+`X-Auth-Level-Required: 2` through the BFF on :5000; `POST /api/transfers` without an authorisation
+answered 401 on both. That is the shape the Context above calls the serious one — the PIN check for
+a route living in a different process from the code that answers it — and D3a keeps the reveal there
+on purpose, so this is a residual of the decision rather than a hole in it. A browser has no bearer
+token to present to the API's own origin (the JWT never reaches the SPA, and the transform clears
+inbound `Authorization`: ADR-0001, ADR-0038), so every reveal it can ask for passes the BFF's
+session gate; a holder of a bearer token calls the API directly and reads the number with nothing
+more. Closing it means the API asking for the PIN on the reveal — an account-bound mint on
+ADR-0042's rail, as ADR-0049 did for closures, or the PIN in a header — which is a decision, not a
+note. `SECURITY.md` tabulates it with the other controls that stop at the BFF._
+
 > **Correction (review of this PR).** An earlier draft of this paragraph justified that with
 > "PSD2 does not treat it as an SCA trigger at all: Art. 97(1)'s list is exhaustive, and Art. 4(32)
 > says an account number is not sensitive payment data." Both halves were overstated. Art. 4(32)

@@ -289,8 +289,9 @@ which was true for the hour between the two commits that gave the epoch its two 
 
 **⚠️ CORRECTED 2026-08-27. The struck sentence named one control where there are two, and the
 correction sits against it rather than in a section further down, which is the whole of the rule
-`docs/adr/README.md` now states.** SQL Server's ledger and an RFC 3161 timestamp are COMPLEMENTARY
-rather than alternatives, because they close different layers.
+~~`docs/adr/README.md`~~ `docs/engineering-practices.md` *(moved there 2026-09-15)* now states.**
+SQL Server's ledger and an RFC 3161 timestamp are COMPLEMENTARY rather than alternatives, because
+they close different layers.
 
 The ledger closes the WRITE. Once a row is committed, `APPEND_ONLY` refuses an UPDATE or a DELETE at
 the engine, and does it uncatchably — a `BEGIN TRY … BEGIN CATCH` around the attempt never reaches

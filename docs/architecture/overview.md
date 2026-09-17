@@ -92,20 +92,25 @@ The guarantee is proven, not asserted: 24 byte-identical parallel requests with 
 exactly one execution, with mathematically exact balances, on both EF InMemory and real SQL
 Server, three deterministic rounds per run, in CI.
 
+**A cap per move, and a cap per day.** Every money move is bounded at 100,000, one server constant
+the contract publishes as `maximum` and the forms promise back, with a test on each side (ADR-0046).
+A user's outgoing external transfers in a UTC day may not exceed 5,000 by default: refused at the
+mint as 422 `DAILY_LIMIT_EXCEEDED` with `resetsAt`, before the PIN is consulted, and decided again
+inside the transfer's transaction under a per-user application lock (ADR-0050).
+
 *Depth: ADR-0009 (server protocol), ADR-0022 (client protocol), ADR-0024 (why not ETag).*
 
 ## A second factor that is actually a second factor
 
 Four operations need a PIN — a withdrawal, a transfer, closing an account, and the account-number
-reveal — and it is verified by the API, never by the BFF alone. *(This said three, and called
-closing an account "the gap" that ADR-0008 records as an open hole. ADR-0049 closed it on
-2026-09-06: a closure now mints a one-shot authorisation from the PIN, exactly as a transfer does.)*
-Money
-moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is part of
-what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** — bound to
-payer, payee and amount, valid two minutes, spent once — presented in a `Step-Up-Authorization`
-header (ADR-0041, ADR-0042). Nothing in the session authorises a payment; one PIN entry authorises
-one payment.
+reveal. The API verifies it for the first three; the reveal is gated by the BFF session alone, so a
+bearer token sent to the API directly reads the full number without one (measured, `SECURITY.md`).
+*(Until 2026-09-06 this said three; until 2026-09-17, that the API verifies all four.)*
+Money moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is
+part of what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** —
+bound to payer, payee and amount, valid two minutes, spent once — presented in a
+`Step-Up-Authorization` header (ADR-0041, ADR-0042). Nothing in the session authorises a payment;
+one PIN entry authorises one payment.
 
 The account-number reveal is the one route that still uses the **session** level, and the elevation
 lives there rather than in the token: hit at level 1 it returns `403` with `X-Auth-Level-Required`;
@@ -121,6 +126,17 @@ Three wrong attempts lock the PIN; the failure counter is incremented atomically
 parallel guesses cannot race past the limit.
 
 *Depth: ADR-0008 (step-up), ADR-0011 (pepper), ADR-0010 (lockout).*
+
+## A tamper-evident record of what happened
+
+Fifteen security events — nine successes and six on the refusal path — each write a row to one
+`AuditEvents` table, each carrying a keyed HMAC over its own fields and the previous row's hash
+(ADR-0044). A success rides the act's own transaction, so a row that cannot be written stops the
+act; a refusal commits on its own connection at once, or its rollback would take the record with it,
+and a reused refresh token is contained before its row is written. Rows hold ids and no amounts; the
+table is never purged, and `backend/tools/AzureBank.AuditVerifier` verifies it. The claim is narrow:
+a rewrite by whoever holds the database but not that epoch's key is caught; truncating the tail past
+the last anchor needs no key and is not, and nothing verifies the chain on a schedule.
 
 ## Not telling attackers who exists
 
@@ -146,6 +162,17 @@ sentence still holds.)*
 
 *Depth: ADR-0013, ADR-0014, ADR-0020, ADR-0012.*
 
+## A notice the session cannot suppress
+
+Enrolling or changing the transfer PIN writes a `SubscriberNotice` in the same save as its audit
+row, which it names by id, so an enrolment whose notice cannot be recorded does not happen
+(ADR-0045, ADR-0047, ADR-0052). Delivery is a separate act: a runner claims owed rows under a lease
+and writes each as an RFC 5322 message into a pickup directory, at-least-once (ADR-0048).
+`Notices:Runner` says which runner is live — the API's own hosted loop, or the same sweep as an
+Azure Function on a timer, rehearsed locally against Azurite (ADR-0051) — and defaults to `None`: as
+shipped nothing delivers, and an owed notice waits for the operator's `notify` verb. Nothing is
+deployed and nothing sends: it stops at a file nobody has seen.
+
 ## Keeping the two halves honest
 
 The frontend and backend agree because agreement is **mechanically enforced**, not because someone
@@ -167,6 +194,17 @@ trace, because the trace context propagates through the proxy hop.
 
 *Depth: ADR-0023 (validation), ADR-0016 (observability), ADR-0017 (PII-safe logs).*
 
+## Three claims about the contract, and which are proven
+
+The frontend's types and Zod validators are generated from the OpenAPI document the API generates,
+so three claims hang on it: the client matches the document, the document is what the code
+generates, and the code does what the document says (ADR-0053). CI's regeneration steps prove the
+first; a backend test proves the second, comparing the committed document with what the real
+composition generates. The third is checked, not proven: on every pull request Schemathesis drives
+the running API from the document and fails on a response it does not declare (ADR-0053 D6), and
+one set of contract assertions runs against the MSW mock and the real backend in `real-stack`, which
+ends with Playwright against the built SPA under its CSP (ADR-0029, ADR-0032, ADR-0054).
+
 ## What proves it
 
 - **The backend suite**, plus the proofs held behind a SQL Server flag that run in CI against a real
@@ -177,7 +215,8 @@ trace, because the trace context propagates through the proxy hop.
 - *No counts here, on purpose: this listed 618 and 188, which were long out of date, and any number
   written into prose goes stale within days. CI's jobs are the source.*
 - **Architecture tests** that fail the build on a layer-dependency violation.
-- **Schemathesis** contract tests driving the API from its own spec.
+- **Schemathesis** on every pull request, driving the running API from the committed document and
+  failing on a response the document does not declare (ADR-0053 D6).
 - Every pull request runs the full suite, CodeQL on three languages, and an AI review, and a
   human merges.
 
