@@ -39,7 +39,6 @@ public class ApplicationUser : IdentityUser<Guid>
 
     [NotMapped]
     public string FullName => $"{FirstName} {LastName}";
-    // TODO: ProfilePictureUrl?
 
     /// <summary>
     /// Timestamp when the user was created. Set automatically by DbContext.UpdateTimestamps().

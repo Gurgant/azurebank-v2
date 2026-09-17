@@ -263,15 +263,4 @@ public class PasswordHasherPepperTests
             sut.VerifyPin(hash, "000000").Should().BeFalse();
         });
     }
-
-    [Fact]
-    public void Password_IsNeverPeppered_EvenOnAPepperedHasher()
-    {
-        var sut = Peppered();
-
-        // Account passwords stay with Identity; the password profile is not peppered.
-        var hash = sut.HashPassword("SecurePass123!");
-        hash.Should().NotContain("keyid");
-        sut.VerifyPassword(hash, "SecurePass123!").Should().BeTrue();
-    }
 }

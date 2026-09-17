@@ -21,11 +21,17 @@ import { FIXTURES } from './target';
  * QUERY KEYS ARE PASCALCASE HERE ON PURPOSE — `PageSize`, not `pageSize` — because that is what
  * `apiSlice` actually sends and what the OpenAPI spec declares. The first draft used camelCase and
  * exposed a different divergence by accident: ASP.NET's model binder is case-INSENSITIVE, so the
- * real stack validated `pageSize=999` and answered 400, while the mock reads the key with a
+ * real stack validated `pageSize=999` and answered 400, while the mock read the key with a
  * case-SENSITIVE `params.get('PageSize')`, missed it, fell back to the default page size and
- * answered 200. Real, but on a path no consumer takes; making the mock case-insensitive is recorded
- * as a follow-up rather than smuggled in here, and asserting the app's own casing keeps this test
- * about the envelope instead of about the binder.
+ * answered 200. Real, but on a path no consumer takes. The transaction list and summary handlers
+ * now read every query key through `queryParam` in `mocks/handlers.ts`, which ignores case.
+ * Asserting the app's own casing still keeps this test
+ * about the envelope instead of about the binder, and leaves the insensitivity itself unasserted,
+ * as ADR-0029 records.
+ *
+ * This comment used to say the mock still read the key case-sensitively and that making it
+ * case-insensitive was "recorded as a follow-up rather than smuggled in here". It never was a
+ * follow-up: `queryParam` landed in 906a9be together with this file. Corrected 2026-09-17.
  */
 
 beforeAll(async () => {

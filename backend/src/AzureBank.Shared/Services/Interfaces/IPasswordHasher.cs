@@ -1,38 +1,18 @@
 namespace AzureBank.Shared.Services.Interfaces;
 
 /// <summary>
-/// Interface for password/PIN hashing using Argon2id.
+/// Interface for PIN hashing using Argon2id, with one profile: 19 MB memory, optimized for
+/// 6-digit PINs with limited entropy.
 ///
-/// Two hashing profiles are available:
-/// - Password: High security (64 MB memory) for general password hashing
-/// - PIN: Optimized (19 MB memory) for 6-digit PINs with limited entropy
+/// Until 2026-09-17 this interface also declared <c>HashPassword</c>/<c>VerifyPassword</c> on a
+/// 64 MB "password" profile and said it served "any other custom hashing needs"; nothing but the
+/// unit tests called either method, and both were deleted with their tests.
 ///
-/// Note: User account passwords are handled by ASP.NET Core Identity.
-/// This service is used for PIN hashing and any other custom hashing needs.
+/// Note: User account passwords are handled by ASP.NET Core Identity (PBKDF2, ADR-0003's
+/// correction) and never reach this service.
 /// </summary>
 public interface IPasswordHasher
 {
-    #region Password Hashing (64 MB - High Security)
-
-    /// <summary>
-    /// Hashes a password using Argon2id with high security parameters.
-    /// Memory: 64 MB, Iterations: 3, Parallelism: 4
-    /// </summary>
-    /// <param name="password">The plain text password to hash</param>
-    /// <returns>Argon2id hash in PHC string format</returns>
-    string HashPassword(string password);
-
-    /// <summary>
-    /// Verifies a password against a stored Argon2id hash.
-    /// Uses constant-time comparison to prevent timing attacks.
-    /// </summary>
-    /// <param name="hash">The stored Argon2id hash</param>
-    /// <param name="password">The plain text password to verify</param>
-    /// <returns>True if the password matches the hash</returns>
-    bool VerifyPassword(string hash, string password);
-
-    #endregion
-
     #region PIN Hashing (19 MB - Optimized for Limited Entropy)
 
     /// <summary>
@@ -41,7 +21,8 @@ public interface IPasswordHasher
     ///
     /// Rationale: PINs have limited entropy (6 digits = 1,000,000 combinations).
     /// Memory-hardness provides less benefit for small search spaces.
-    /// Lower memory = faster verification (~50ms vs ~300ms) with acceptable security.
+    /// Lower memory = faster verification with acceptable security. (Until 2026-09-17 this said
+    /// "~50ms vs ~300ms", comparing against the 64 MB password profile deleted that day.)
     /// </summary>
     /// <param name="pin">The plain text PIN to hash</param>
     /// <returns>Argon2id hash in PHC string format</returns>

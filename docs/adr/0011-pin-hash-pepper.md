@@ -28,7 +28,9 @@ pepper precisely for low-entropy secrets like PINs.
 
 Account **passwords are out of scope**: they are handled by ASP.NET Core Identity
 with its own key-derivation, have higher entropy, and are not verified through
-this hasher (the password profile has no non-test call site).
+this hasher ~~(the password profile has no non-test call site)~~ *(struck 2026-09-17:
+the password profile no longer exists — its methods and their tests were deleted as
+uncalled)*.
 
 ## Decision Drivers
 
@@ -137,8 +139,10 @@ this hasher (the password profile has no non-test call site).
   full legacy → peppered upgrade re-verifies. **Rotation**: a hash minted under
   pepper A / keyid 1 still verifies under a rotated hasher whose active is B / keyid
   2 and whose ring retains A, then rehash-on-use drains it to keyid 2; dropping A
-  before draining **fails closed** (documenting retire-after-drain). Password hashes
-  are never peppered; an absurd cost parameter is rejected.
+  before draining **fails closed** (documenting retire-after-drain). ~~Password hashes
+  are never peppered;~~ *(struck 2026-09-17: that test,
+  `Password_IsNeverPeppered_EvenOnAPepperedHasher`, was deleted with the password methods it
+  called)* an absurd cost parameter is rejected.
 - **Unit** (`PinHashingOptionsValidatorTests`): the keyring rules — length,
   key-id, active-not-in-retained, distinct values — accept valid rings and reject
   each violation.

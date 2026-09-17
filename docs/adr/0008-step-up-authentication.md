@@ -131,7 +131,9 @@ stateDiagram-v2
 
 ### Security Considerations
 
-1. **PIN Hashing**: PINs are hashed using Argon2id (same as passwords)
+1. **PIN Hashing**: PINs are hashed using Argon2id ~~(same as passwords)~~ *(struck 2026-09-17:
+   passwords never were; every password hash is Identity's PBKDF2, as ADR-0003's 2026-09-11
+   correction records)*
 2. **Brute Force Protection**: Rate limiting on PIN attempts
 3. **Session Binding**: Elevated auth expires after 5 minutes
 4. **Audit Trail**: All step-up attempts logged

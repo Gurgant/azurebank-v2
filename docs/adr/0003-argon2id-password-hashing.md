@@ -12,8 +12,10 @@
 > store starts `AQAAAAIAAYag`, whose header decodes to format `0x01` (V3), PRF `2` (HMACSHA512) and
 > `100000` iterations; every `PinHash` starts `$argon2id$v=19$`. The cause is structural — the API
 > calls `AddIdentity` and registers no custom `IPasswordHasher<ApplicationUser>`, so Identity's own
-> hasher is the one every password goes through, and the Argon2id `HashPassword`/`VerifyPassword`
-> in `PasswordHasher.cs` are called only from tests. ADR-0012 already described the shipped path
+> hasher is the one every password goes through, ~~and the Argon2id `HashPassword`/`VerifyPassword`
+> in `PasswordHasher.cs` are called only from tests~~ *(struck 2026-09-17: true when written; those
+> two methods, the 64 MB password profile behind them and their tests are now deleted, so
+> `PasswordHasher` hashes PINs and nothing else)*. ADR-0012 already described the shipped path
 > correctly ("the same dominant PBKDF2 cost"); this record did not.
 >
 > **What stays true below:** everything said for Argon2id is true of the PIN hash, which is where
@@ -55,8 +57,10 @@ User passwords must be securely hashed before storage. The hashing algorithm mus
 ## Decision
 
 Use **Argon2id** with the following parameters:
-- Memory: 64 MB
-- Iterations: 3
+- Memory: ~~64 MB~~ *(struck 2026-09-17: 64 MB was the password profile of `PasswordHasher.cs`,
+  called only from tests and now deleted with them; the PIN profile, the only one left, uses 19 MB,
+  `m=19456`)*
+- Iterations: ~~3~~ *(struck 2026-09-17: likewise; the PIN profile uses 2)*
 - Parallelism: 4
 
 Implemented via the `Konscious.Security.Cryptography.Argon2` NuGet package (v1.3.1).

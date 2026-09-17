@@ -99,10 +99,12 @@ handles what it can, the transaction undoes what it cannot.
   that ships. Suppressed, they run the real path with a no-op transaction. They therefore prove the
   neutral-409 logic and say **nothing** about rollback; atomicity is proved only by
   `RegistrationAtomicitySqlServerTests` on real SQL Server.
-- **Registration now holds a transaction for the duration of password hashing.** Argon2id
-  ([ADR-0003](0003-argon2id-password-hashing.md)) is deliberately expensive, so this widens the
-  window a connection and its locks are held. Acceptable at this scale — registration is rare and
-  the rows are new, so nothing contends on them — but it is the cost, and if registration ever
-  becomes hot the hash should move outside the transaction.
+- **Registration now holds a transaction for the duration of password hashing.** ~~Argon2id
+  ([ADR-0003](0003-argon2id-password-hashing.md))~~ *(struck 2026-09-17: the password hash is
+  Identity's PBKDF2 at 100,000 iterations, which `UserManager.CreateAsync` runs inside the
+  transaction, not Argon2id; ADR-0003's 2026-09-11 correction records it)* is deliberately
+  expensive, so this widens the window a connection and its locks are held. Acceptable at this scale
+  — registration is rare and the rows are new, so nothing contends on them — but it is the cost, and
+  if registration ever becomes hot the hash should move outside the transaction.
 - **The refresh token stays outside**, unchanged and still best-effort: it is issued after the commit
   precisely so its failure cannot roll back a registration that otherwise succeeded.
