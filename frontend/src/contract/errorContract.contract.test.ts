@@ -11,7 +11,9 @@ import { asProblem, call, login } from './client';
  * Zod validators are generated. Nothing gated it against reality — the drift job regenerates those
  * artefacts FROM the document and compares them, which proves the generated code matches the
  * document and never that the document matches the server. Schemathesis could have, and its step
- * ends with `|| true  # report, don't gate`.
+ * then ended with `|| true  # report, don't gate`; since 2026-09-15 it gates every pull request as
+ * the `conformance` job in ci.yml (ADR-0053 D6). (Until 2026-09-17 this said the step "ends" that
+ * way.)
  *
  * What that gap allowed, measured on 2026-08-18 before this existed: 58 declared responses said the
  * body was empty, while all 53 that could actually occur answered `application/json` with seven

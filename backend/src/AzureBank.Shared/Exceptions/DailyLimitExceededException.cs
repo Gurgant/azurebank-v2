@@ -10,12 +10,13 @@ public class DailyLimitExceededException : BusinessRuleException
 {
     /*
       NO FIGURES IN THE SENTENCE, for the reason InsufficientFundsException gives: the numbers
-      travel as numeric extension members, which the client formats itself (fixed en-IE). The
-      member names follow the available/requested precedent — undeclared in the published component
-      and, like `available`/`requested`, not yet typed on the client (the SPA's hand-written
-      ApiProblem carries neither today; the frontend mirror PR adds these four to it) — and
-      `remaining` is deliberately not sent, so the client (once it types the members) derives it as
-      limit − used and a fourth number cannot become a second source of truth.
+      travel as numeric extension members, which the client formats itself (fixed en-IE; until
+      2026-09-11 this said "in the user's own locale", which the client never reads). The member
+      names follow the available/requested precedent — undeclared in the published component and,
+      like `available`/`requested`, not yet typed on the client (the SPA's hand-written ApiProblem
+      carries neither today; the frontend mirror PR adds these four to it) — and `remaining` is
+      deliberately not sent, so the client (once it types the members) derives it as limit − used
+      and a fourth number cannot become a second source of truth.
 
       ⚠️ Noted 2026-09-07 (review round 1): THE FOUR ARE NOW DECLARED IN THE DOCUMENT, on the
       INLINE 422 schemas of POST /api/transfers and POST /api/transfers/authorizations

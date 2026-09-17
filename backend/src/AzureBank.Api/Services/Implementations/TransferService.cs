@@ -410,12 +410,13 @@ public class TransferService : ITransferService
                           An application lock participates in no table-lock order. The only other
                           one in backend/src is AccountService's per-user primary-swap lock
                           (2026-09-16), on a different resource and held by a path that takes no
-                          tail lock, so the only order this adds is applock → tail, and no cycle
-                          can form. It holds under READ
-                          COMMITTED and under RCSI (measured ON for AzureBankDev and AzureBankTests,
-                          2026-09-07); it would not hold under transaction-level SNAPSHOT, which
-                          nothing sets. Owner = Transaction, so a rollback or commit releases it
-                          without a matching sp_releaseapplock.
+                          tail lock, so the only order this adds is applock → tail, and no cycle can
+                          form. (Until 2026-09-16 this said "Nothing else in backend/src takes one
+                          (grep sp_getapplock: this file only)".) It holds under READ COMMITTED and
+                          under RCSI (measured ON for AzureBankDev and AzureBankTests, 2026-09-07);
+                          it would not hold under transaction-level SNAPSHOT, which nothing sets.
+                          Owner = Transaction, so a rollback or commit releases it without a
+                          matching sp_releaseapplock.
 
                           BEFORE ANY ROW IS BUILT, so the sum is over committed rows plus nothing of
                           this request's own — `used + amount > limit`, the same comparison as the
