@@ -119,8 +119,8 @@ nothing about claim 3. ADR-0043's own defects were of that third kind — a tran
 on routes the router answers with 404, empty 401/403/404 bodies where the server writes JSON — and
 this gate would have passed on every one of them, because the code generated the same error it
 described. Truth about runtime behaviour is Schemathesis's job and the real-stack suites', and
-Schemathesis is doubly not a gate: it ends its step with `|| true  # report, don't gate`, in a
-workflow that only runs when somebody starts it by hand. Neither is changed here.
+~~Schemathesis is doubly not a gate: it ends its step with `|| true  # report, don't gate`, in a
+workflow that only runs when somebody starts it by hand. Neither is changed here.~~
 
 _Moved 2026-09-15, as the bullet under "What would change this" said it would. Schemathesis is a
 gate: the `conformance` job in `ci.yml` runs its four response-conformance checks — status code,

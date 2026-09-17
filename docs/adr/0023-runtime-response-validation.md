@@ -13,9 +13,10 @@
 Everything on `/api/*` is guarded by three layers already: `openapi-typescript` types, the
 `schema.d.ts` drift gate in CI, and Schemathesis contract tests. *(Corrected 2026-09-10,
 ADR-0053: "guarded" said more than two of those did. The drift gate proves the generated types
-match the COMMITTED document, not that the document matches the API; Schemathesis runs only when
-started by hand and ends `|| true  # report, don't gate`. The document-versus-code half is now a
-backend test.)* The BFF surface is different —
+match the COMMITTED document, not that the document matches the API; ~~Schemathesis runs only when
+started by hand and ends `|| true  # report, don't gate`~~ (struck 2026-09-17: since 2026-09-15 it
+gates every pull request as the `conformance` job in `ci.yml`, ADR-0053 D6). The
+document-versus-code half is now a backend test.)* The BFF surface is different —
 `/bff/auth/*` is **not in the OpenAPI spec at all**, so its response types were hand-written
 mirrors of `BffResponses.cs`. That made the auth boundary the weakest one in the system: a silent
 FE/BFF drift would flow into the auth slice with nothing to catch it.

@@ -50,8 +50,8 @@ Three causes, none of them a typo:
 
 Nothing could catch any of it. The drift gate regenerates the frontend artefacts *from* the document
 and compares them, which proves generated code matches the document and never that the document
-matches the server. Schemathesis, the one tool that could, ends its step with
-`|| true  # report, don't gate`. *(No longer, since 2026-09-15: it gates, per PR — ADR-0053 D6's
+matches the server. Schemathesis, the one tool that could, ~~ends its step with
+`|| true  # report, don't gate`~~. *(No longer, since 2026-09-15: it gates, per PR — ADR-0053 D6's
 note — and its first run found the two shapes this document had never declared, `415` on every
 body-taking operation and the route-miss `404` as `application/problem+json`.)*
 
@@ -64,7 +64,7 @@ generated NO body where the server writes `application/json` (the table's left c
 document said), so the document faithfully described a wrong generator. ADR-0053's gate would have
 passed on every one of them. **What catches that kind is content-specific, not a comparison**: this
 ADR's own guards under Consequences, which assert what the document must declare, and Schemathesis,
-which still reports without gating and runs only when somebody starts it by hand._ *(Struck by
+~~which still reports without gating and runs only when somebody starts it by hand~~._ *(Struck by
 events on 2026-09-15: it gates now, see above.)*
 
 _(Corrected in the same pull request, before it merged: this note first said "that
