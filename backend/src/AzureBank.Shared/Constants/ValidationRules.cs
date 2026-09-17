@@ -144,7 +144,8 @@ public static class ValidationRules
     /// Reach for this only where the SERVER composes the sentence that states the figure — a
     /// validation limit, or the movement line of the PSD2 evidence pack (EvidenceCommand), which is
     /// read outside the system. Never for an amount the client already holds: it formats those
-    /// itself, in a fixed en-IE locale.
+    /// itself, in a fixed en-IE locale (until 2026-09-11 this said the client formats them "in the
+    /// user's own locale", which it never reads).
     ///
     /// <para>
     /// Invariant rather than a fixed locale on purpose. `:C` renders against whatever culture the

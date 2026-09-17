@@ -692,7 +692,8 @@ describe('the mock quotes the server, it does not paraphrase it', () => {
       balance 6, amount 10:
         422 {"title":"Unprocessable Entity","detail":"Insufficient funds.",
              "errorCode":"INSUFFICIENT_FUNDS","available":6.0000,"requested":10}
-      The amounts are NUMERIC extensions; the client formats them (fixed en-IE, utils/format.ts).
+      The amounts are NUMERIC extensions; the client formats them (fixed en-IE, utils/format.ts;
+      until 2026-09-11 this said "in the user's locale", which the client never reads).
       `money.contract.test.ts` pins the same shape on the real stack from a fresh account.
     */
     const account = mockState.accounts.find((a) => a.id === MAIN_ACCOUNT_ID);

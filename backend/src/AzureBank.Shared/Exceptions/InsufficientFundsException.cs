@@ -7,10 +7,11 @@ public class InsufficientFundsException : BusinessRuleException
 {
     /*
       NO FIGURES IN THE SENTENCE, deliberately. Both numbers already travel as the numeric
-      extensions below, so the client has them and formats them itself, in one fixed locale
-      (en-IE) whatever the server's. The old message rendered them with `:C` against the server
-      process culture, so the amounts a user was shown depended on how the container happened to
-      start.
+      extensions below, so the client has them and formats them itself, in one fixed locale (en-IE)
+      whatever the server's. (Until 2026-09-11 this said it formats them "in the user's own locale —
+      which is the only place that knows it"; the client never reads that locale.) The old message
+      rendered them with `:C` against the server process culture, so the amounts a user was shown
+      depended on how the container happened to start.
     */
     public InsufficientFundsException(decimal available, decimal requested)
         : base("Insufficient funds.", ErrorCodes.InsufficientFunds)
