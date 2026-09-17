@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.RegularExpressions;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Microsoft.Data.SqlClient;
@@ -68,9 +67,14 @@ public sealed class RunbookSqlParsesSqlServerTests
         { "docs/runbooks/pin-enrolment-repudiated.md", 6, [] },
     };
 
-    /// <summary>A <c>SET PARSEONLY</c> in any case or spacing, ON or OFF.</summary>
-    private static readonly Regex ParseOnlySwitch = new(
-        @"\bSET\s+PARSEONLY\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    /// <summary>
+    /// True for a block that names PARSEONLY at all, in any case. Not a pattern for <c>SET
+    /// PARSEONLY</c>: T-SQL lets a comment stand between the two words, and <c>SET/* … */PARSEONLY
+    /// OFF</c> walked past <c>\bSET\s+PARSEONLY\b</c>. A runbook block has no reason to name the
+    /// option, so naming it is enough to be refused.
+    /// </summary>
+    internal static bool TouchesParseOnly(string block) =>
+        block.Contains("PARSEONLY", StringComparison.OrdinalIgnoreCase);
 
     private readonly ITestOutputHelper _output;
 
@@ -84,8 +88,10 @@ public sealed class RunbookSqlParsesSqlServerTests
         var path = Path.Combine(RepositoryRoot().FullName, runbook);
         File.Exists(path).Should().BeTrue($"the guard needs {runbook}; one that cannot read it must fail loudly");
 
-        var blocks = Regex.Matches(await File.ReadAllTextAsync(path), "```sql\r?\n(.*?)```", RegexOptions.Singleline)
-            .Select(match => match.Groups[1].Value)
+        // RunbookSqlIsFencedTests scans with this reader too, so both agree on what a SQL fence is.
+        var blocks = RunbookMarkdown.Read(await File.ReadAllLinesAsync(path)).Fences
+            .Where(fence => fence.IsSql)
+            .Select(fence => fence.Text)
             .ToList();
 
         blocks.Should().HaveCountGreaterThanOrEqualTo(
@@ -142,8 +148,15 @@ public sealed class RunbookSqlParsesSqlServerTests
               -- the block RAN. It failed only because 1/0 throws; an UPDATE in its place would
               have run and passed. With sqlcmd the same day, the block AFTER such a one ran too,
               and the control without the OFF printed nothing.
+
+              AND A COMMENT BETWEEN THE TWO WORDS GOT PAST THE FIRST VERSION OF THIS CHECK, which
+              matched SET, whitespace, PARSEONLY. Measured 2026-09-17: SQL Server accepts SET and
+              PARSEONLY OFF with a block comment between them and nothing else (with sqlcmd that
+              batch ran, and so did the batch after it), and that block appended to the PIN runbook
+              went past the pattern and ran here the same way -- "probe ran", Msg 8134. The check
+              is now the word itself; TheParseCheckRefusesEverySpellingOfParseOnly holds the forms.
             */
-            ParseOnlySwitch.IsMatch(block).Should().BeFalse(
+            TouchesParseOnly(block).Should().BeFalse(
                 "a block that sets PARSEONLY would be executed by this guard rather than parsed, "
                 + $"and so would every block after it:\n{block.Trim()}");
 

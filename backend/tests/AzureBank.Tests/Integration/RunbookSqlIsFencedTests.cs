@@ -6,7 +6,8 @@ namespace AzureBank.Tests.Integration;
 
 /// <summary>
 /// Keeps runbook SQL where the parse check can see it: every runbook is in that check's table, and
-/// no runbook holds SQL outside a fence. Neither needs SQL Server, so both run on every build.
+/// no runbook holds SQL the check cannot read — outside a fence, or in a fence whose language is
+/// not <c>sql</c>. None of these needs SQL Server, so all of them run on every build.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -34,6 +35,22 @@ namespace AzureBank.Tests.Integration;
 /// <see cref="TheScanReadsLowercaseAndFlushLeftSql_AndLeavesProseAlone"/> is the control: it holds
 /// the lines this pattern must catch and the prose it must not, so a later tightening that blinds
 /// it fails here rather than in a runbook nobody parsed.
+/// </para>
+/// <para>
+/// ⚠️ <b>AND UNTIL 2026-09-17 IT READ ONE LINE AT A TIME, AND TRUSTED EVERY FENCE.</b> Measured
+/// that day by appending one probe at a time to the PIN runbook, with both guards run after each:
+/// <c>UPDATE Users</c> / <c>SET PinHash = NULL</c> / <c>WHERE Email = …</c> and a lowercase
+/// <c>select top 10 *</c> / <c>from AuditEvents</c> / <c>order by …</c> passed, because no single
+/// line carried its verb and the clause the verb needs; invalid SQL in a <c>~~~sql</c> fence, a
+/// bare fence and a <c>```text</c> fence passed too, because this scan counted any fence as safe
+/// while the parse check read only <c>```sql</c>. A statement is now followed across the lines of
+/// its paragraph, up to its first sentence end, and SQL counts as parsed only inside a fence <see
+/// cref="RunbookMarkdown"/> reads as SQL — the same reader the parse check uses. The same probes
+/// after the change: the three wrapped statements and a recognisable statement in a bare fence fail
+/// this scan, the <c>```text</c> one fails it too, and the <c>~~~sql</c> one fails the parse check.
+/// One residual, stated rather than left to be found: a statement whose verb is itself misspelt
+/// (<c>UPDAT Users …</c>) is not recognisable as SQL, so in a fence of another language it still
+/// passes; in a fence marked <c>sql</c> the parse check refuses it.
 /// </para>
 /// </remarks>
 public sealed class RunbookSqlIsFencedTests
@@ -73,8 +90,16 @@ public sealed class RunbookSqlIsFencedTests
     /// <summary>Blockquote marks, bullets and numbered steps a statement can sit behind.</summary>
     private static readonly Regex MarkdownLead = new(@"^\s*(?:(?:>\s?)+|[-*+]\s+|\d+[.)]\s+)*");
 
-    /// <summary>A fence opening or closing: three or more backticks or tildes.</summary>
-    private static readonly Regex FenceMarker = new(@"^(?:`{3,}|~{3,})");
+    /// <summary>A line that ends a paragraph for the scan: blank, heading, list item, table
+    /// row.</summary>
+    private static readonly Regex ParagraphBreak = new(@"^\s*$|^\s*(?:\#|[-*+]\s|\d+[.)]\s|\|)");
+
+    /// <summary>A full stop before whitespace or the end: a sentence ends there, not a
+    /// statement.</summary>
+    private static readonly Regex SentenceEnd = new(@"\.(?:\s|$)");
+
+    /// <summary>How many lines a statement is followed across before the scan stops.</summary>
+    private const int StatementLines = 8;
 
     private static string Root => RunbookSqlParsesSqlServerTests.RepositoryRoot().FullName;
 
@@ -84,39 +109,55 @@ public sealed class RunbookSqlIsFencedTests
             .ToList();
 
     /// <summary>
-    /// The lines of a Markdown document that open a SQL statement outside every fence, as
-    /// "<c>line number: text</c>". A fence closes only on its own marker, so a ``` inside a ~~~
-    /// block does not end it.
+    /// The SQL statements in a Markdown document that the parse check never reads — outside every
+    /// fence, or inside a fence that is not SQL — as "<c>line number: text</c>", the line being
+    /// where the statement opens.
     /// </summary>
-    private static List<string> SqlOutsideFences(IEnumerable<string> lines)
+    private static List<string> SqlNobodyParses(IEnumerable<string> lines)
+    {
+        var (fences, outside) = RunbookMarkdown.Read(lines);
+        var found = Statements(outside);
+        foreach (var fence in fences.Where(fence => !fence.IsSql))
+        {
+            found.AddRange(Statements(fence.Body));
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// Every line a statement opens on, read together with the following lines of its paragraph, so
+    /// <c>UPDATE Users</c> is joined to the <c>SET</c> on the line after it. The joined text stops
+    /// at the first sentence end: prose that opens with a verb must not borrow a <c>FROM</c> from a
+    /// later sentence.
+    /// </summary>
+    private static List<string> Statements(IReadOnlyList<(int Line, string Text)> lines)
     {
         var found = new List<string>();
-        string? fence = null;
-        var number = 0;
-
-        foreach (var line in lines)
+        for (var i = 0; i < lines.Count; i++)
         {
-            number++;
-            var trimmed = line.TrimStart();
-            var marker = FenceMarker.Match(trimmed);
-            if (marker.Success)
+            var (number, text) = lines[i];
+            if (string.IsNullOrWhiteSpace(text))
             {
-                if (fence is null)
-                {
-                    fence = marker.Value;
-                }
-                else if (trimmed.StartsWith(fence, StringComparison.Ordinal)
-                    && trimmed[fence.Length..].Trim().Length == 0)
-                {
-                    fence = null;
-                }
-
                 continue;
             }
 
-            if (fence is null && SqlStatement.IsMatch(MarkdownLead.Replace(line, string.Empty, 1)))
+            var parts = new List<string> { MarkdownLead.Replace(text, string.Empty, 1).Trim() };
+            for (var next = i + 1;
+                 next < lines.Count
+                 && parts.Count < StatementLines
+                 && lines[next].Line == lines[next - 1].Line + 1
+                 && !ParagraphBreak.IsMatch(lines[next].Text);
+                 next++)
             {
-                found.Add($"{number}: {line.Trim()}");
+                parts.Add(lines[next].Text.Trim());
+            }
+
+            var joined = string.Join(" ", parts);
+            var end = SentenceEnd.Match(joined);
+            if (SqlStatement.IsMatch(end.Success ? joined[..(end.Index + 1)] : joined))
+            {
+                found.Add($"{number}: {text.Trim()}");
             }
         }
 
@@ -133,27 +174,27 @@ public sealed class RunbookSqlIsFencedTests
     }
 
     [Fact]
-    public void NoRunbookHoldsSqlOutsideAFence()
+    public void NoRunbookHoldsSqlOutsideASqlFence()
     {
         var offenders = new List<string>();
         foreach (var runbook in RunbooksOnDisk())
         {
             offenders.AddRange(
-                SqlOutsideFences(File.ReadLines(Path.Combine(Root, runbook)))
+                SqlNobodyParses(File.ReadLines(Path.Combine(Root, runbook)))
                     .Select(line => $"{runbook}:{line}"));
         }
 
         offenders.Should().BeEmpty(
-            "SQL an operator is told to run belongs in a ```sql fence, where "
-            + "RunbookSqlParsesSqlServerTests parses it; outside one, indented or flush left, "
-            + "nothing checks it");
+            "SQL an operator is told to run belongs in a fence marked sql, where "
+            + "RunbookSqlParsesSqlServerTests parses it; outside one, or in a fence of another "
+            + "language, nothing checks it");
     }
 
     /// <summary>
     /// The control for the scan itself. Measured 2026-09-16 with the pattern this file replaced
     /// swapped back in: it found none of the twenty statements below — lowercase, flush left,
     /// behind a bullet or a quote mark — and a flush-left <c>update Users set PinHash = null where
-    /// ...;</c> appended to the PIN runbook left <see cref="NoRunbookHoldsSqlOutsideAFence"/>
+    /// ...;</c> appended to the PIN runbook left <see cref="NoRunbookHoldsSqlOutsideASqlFence"/>
     /// green. With the pattern above, that same line fails it by line number. The prose is the
     /// runbooks' own: a looser pattern starts reporting those sentences as SQL.
     /// </summary>
@@ -206,19 +247,85 @@ public sealed class RunbookSqlIsFencedTests
             "Create a throwaway user for this, never the seeded one.",
         ];
 
-        SqlOutsideFences(sql).Should().HaveCount(
+        SqlNobodyParses(sql).Should().HaveCount(
             sql.Length,
             "each of these is a statement an operator would paste, and the scan is what stands "
             + "between one of them and a runbook nobody parses");
 
-        SqlOutsideFences(prose).Should().BeEmpty(
+        SqlNobodyParses(prose).Should().BeEmpty(
             "these are sentences out of the runbooks themselves; a scan that reports prose is one "
             + "somebody switches off");
 
-        SqlOutsideFences(["```sql", .. sql, "```"]).Should().BeEmpty(
-            "fenced is where this SQL belongs, and the parse check reads it there");
+        SqlNobodyParses(["```sql", .. sql, "```"]).Should().BeEmpty(
+            "fenced as sql is where this SQL belongs, and the parse check reads it there");
 
-        SqlOutsideFences(["~~~", "```", .. sql, "```", "~~~"]).Should().BeEmpty(
-            "a fence ends on its own marker; a ``` inside a ~~~ block does not open a gap");
+        SqlNobodyParses(["~~~sql", .. sql, "~~~"]).Should().BeEmpty(
+            "a tilde fence marked sql is read by the parse check too");
+
+        SqlNobodyParses(["```", .. sql, "```"]).Should().HaveCount(
+            sql.Length, "a fence with no language is not one the parse check reads");
+
+        SqlNobodyParses(["```text", .. sql, "```"]).Should().HaveCount(
+            sql.Length, "nor is a fence marked with another language");
+
+        SqlNobodyParses(["~~~text", "```sql", .. sql, "```", "~~~"]).Should().HaveCount(
+            sql.Length,
+            "a fence ends only on its own marker, so a ```sql line inside a ~~~text block opens "
+            + "nothing, and the SQL after it is still not parsed");
+    }
+
+    /// <summary>
+    /// A statement wrapped across lines, with the clause its verb needs on a later one, as the
+    /// review on 2026-09-16 put it — and the prose next to it, which must not be joined into SQL.
+    /// </summary>
+    [Fact]
+    public void TheScanFollowsAStatementAcrossLines_ButNotAcrossSentences()
+    {
+        SqlNobodyParses(
+                ["UPDATE Users", "SET PinHash = NULL", "WHERE Email = N'someone@example.com'"])
+            .Should().ContainSingle(
+                "the UPDATE's SET is on the next line, and the statement starts on the first");
+
+        SqlNobodyParses(["select top 10 *", "from AuditEvents", "order by Sequence desc"])
+            .Should().ContainSingle("the SELECT's FROM is on the next line");
+
+        SqlNobodyParses(
+                [
+                    "Select the alert in the portal and note its identifier. Then pick one",
+                    "from the list.",
+                ])
+            .Should().BeEmpty(
+                "the FROM belongs to a later sentence, not to the verb that opens the first");
+
+        SqlNobodyParses(["UPDATE Users", "", "SET PinHash = NULL"])
+            .Should().BeEmpty(
+                "a blank line ends the paragraph, and neither half is a statement on its own");
+    }
+
+    /// <summary>
+    /// The control for the parse check's PARSEONLY refusal, which needs no SQL Server to test.
+    /// Every spelling here turns the option off on a real server or names it where it could; the
+    /// first version of the refusal, a pattern for SET, whitespace, PARSEONLY, missed the comment
+    /// forms.
+    /// </summary>
+    [Fact]
+    public void TheParseCheckRefusesEverySpellingOfParseOnly()
+    {
+        string[] refused =
+        [
+            "SET PARSEONLY OFF;",
+            "set parseonly off;",
+            "SET/* the comment a keyword pattern did not expect */PARSEONLY OFF;",
+            "SET -- a line comment\nPARSEONLY OFF;",
+            "SET /* a /* nested */ comment */ PARSEONLY OFF;",
+            "EXEC (N'SET PARSEONLY OFF');",
+        ];
+
+        refused.Should().OnlyContain(
+            block => RunbookSqlParsesSqlServerTests.TouchesParseOnly(block),
+            "any of these would leave the parse check executing what it claims only to parse");
+
+        RunbookSqlParsesSqlServerTests.TouchesParseOnly("SELECT TOP 1 Sequence FROM AuditEvents;")
+            .Should().BeFalse("a block that does not name the option is sent to be parsed");
     }
 }
