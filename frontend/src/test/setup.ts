@@ -5,6 +5,7 @@ import { resetServerActivity } from '../features/auth/sessionActivity';
 import { __resetStepUpController } from '../features/auth/stepUpController';
 import { server } from '../mocks/server';
 import { resetMockState, seedMockSession } from '../mocks/state';
+import { installKeyborgBeforeUserEvent } from './keyborg';
 import { installLayoutStubs } from './layout';
 import {
   TEST_VIEWPORT_HEIGHT,
@@ -38,6 +39,13 @@ window.matchMedia ??= matchMediaStub;
 // later. `test/layout.ts` has the full chain, the measurements, and why a looser query would have
 // been a lie rather than a fix.
 installLayoutStubs();
+
+// And tabster must be able to tell a programmatic focus from a user's, which it learns from
+// keyborg's wrapper around `HTMLElement.prototype.focus`. user-event's own patch, installed by
+// every `userEvent.setup()` before a render, silently stops keyborg from installing that wrapper,
+// and an open dialog then loses focus to the page 100ms later. `test/keyborg.ts` has the chain and
+// the measurements; installing keyborg here, first, keeps its wrapper under user-event's.
+installKeyborgBeforeUserEvent();
 
 /*
   The OTHER half of the timing budget (the vitest half lives in vitest.config.ts).

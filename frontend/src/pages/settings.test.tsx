@@ -68,6 +68,12 @@ describe('settings page', () => {
       Measured 2026-09-11, full suite under eight spinning cores: without the click this test failed
       5 of 6 runs, four of them at the Save query below; with it, 0 of 6. The fifth failure was at
       the textbox query above, before any click, which this cannot reach.
+
+      "Nothing focused inside" was half of it. The input IS focused when the dialog opens, and
+      tabster moves focus to "Log out" 100ms later because keyborg cannot mark that focus as
+      programmatic (test/keyborg.ts). With this click in place, eight busy cores on main 9dc371d
+      still failed this file 2 of 10 runs. (Until 2026-09-17 this comment ended at the paragraph
+      above.)
     */
     await user.click(input);
     fireEvent.change(input, { target: { value: 'newtag' } });

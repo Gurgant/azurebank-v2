@@ -30,12 +30,17 @@
  * dialog leaves the accessibility tree permanently, so `getByRole` stops finding it while
  * `getByText` — which never consults that tree — still does.
  *
- * That is the whole flake. Four tests across three files (`account-reveal`, `stepup-interceptor`,
+ * The first of two causes. Four tests across three files (`account-reveal`, `stepup-interceptor`,
  * `settings` twice) failed intermittently with `Unable to find role="button" and name "…"`, always
  * on a `findByRole(role, { name })` issued while a Fluent dialog was open. It was a race against a
  * 250ms timer: a query that landed inside the window passed, one that landed after it could never
  * pass, and CPU contention pushed almost everything past it. Measured on main 8c1c521 — 4 of 6 full
  * `vitest run` passes red, and 2 of 2 with eight busy cores.
+ *
+ * The second cause kept `settings.test.tsx` failing under load after this module landed: tabster
+ * moved focus out of an open dialog whose contents it could see, because keyborg could not tell a
+ * programmatic focus from a user's. `test/keyborg.ts` has that chain. (Until 2026-09-17 the
+ * paragraph above opened "That is the whole flake.")
  *
  * ─── WHY THIS RATHER THAN A LOOSER QUERY ───────────────────────────────────────────────────────
  *
@@ -48,7 +53,8 @@
  * The check is falsifiable rather than assumed: with this module, focus lands on the PIN input
  * (`aria-label="Digit 1 of 6"`) exactly as a real browser puts it, and the surface's `aria-hidden`
  * stays absent. Without it, focus lands on the surface and `aria-hidden="true"` appears.
- * `tabster-modalizer.test.tsx` pins both halves.
+ * `layout.test.tsx` pins both halves. (Until 2026-09-17 this named `tabster-modalizer.test.tsx`,
+ * a file that has never existed.)
  *
  * ─── SCOPE, deliberately the minimum that works ────────────────────────────────────────────────
  *
