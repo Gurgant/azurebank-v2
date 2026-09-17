@@ -103,9 +103,9 @@ inside the transfer's transaction under a per-user application lock (ADR-0050).
 ## A second factor that is actually a second factor
 
 Four operations need a PIN — a withdrawal, a transfer, closing an account, and the account-number
-reveal — and it is verified by the API, never by the BFF alone. *(This said three, and called
-closing an account "the gap" that ADR-0008 records as an open hole. ADR-0049 closed it on
-2026-09-06: a closure now mints a one-shot authorisation from the PIN, exactly as a transfer does.)*
+reveal. The API verifies it for the first three; the reveal is gated by the BFF session alone, so a
+bearer token sent to the API directly reads the full number without one (measured, `SECURITY.md`).
+*(Until 2026-09-06 this said three; until 2026-09-17, that the API verifies all four.)*
 Money moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is
 part of what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** —
 bound to payer, payee and amount, valid two minutes, spent once — presented in a

@@ -76,7 +76,7 @@ the code reads as.
 | Control | Enforced in | What a bearer caller on the API gets | ADR |
 |---|---|---|---|
 | Anti-harvest limit on the handle lookup (`lookup` policy, 20 per 60 s per user) | BFF | 21 × `GET /api/users/{handle}`: BFF 200 ×20 then 429; API 200 ×21 | 0014 |
-| Login attempt limiter (`auth` policy, 10 per 60 s per IP) | BFF | 11 wrong passwords: BFF 401 ×9 then 429 ×2; API 401 ×11 — the API's own control is the silent lockout, which answered the next correct password with 429 `ACCOUNT_LOCKED` | 0012, 0013 |
+| Login attempt limiter (`auth` policy, 10 per 60 s per IP) | BFF | 11 wrong passwords: BFF 401 ×9 then 429 ×2, because the probe's own BFF sign-in just before them had taken the first of the ten permits the IP shares; API 401 ×11 — the API's own control is the silent lockout, which answered the next correct password with 429 `ACCOUNT_LOCKED` | 0012, 0013 |
 | Cross-site state changes refused on Fetch-Metadata | BFF | `POST /api/accounts` with `Sec-Fetch-Site: cross-site`: BFF 403; API 201, account created — moot there: a bearer is presented, not ambient, so there is no cross-site request to refuse | 0018 |
 | Raw auth entries closed (`/api/auth/login`, `/register` and `/refresh` answer 404 through the proxy) | BFF | login 200 with a bearer for anyone with the password; refresh is live (401 on a bogus token) | 0038 |
 | Security headers: CSP, `nosniff`, `X-Frame-Options: DENY`, Referrer-Policy, Permissions-Policy, `X-XSS-Protection: 0` | BFF | none of them; neither host sends HSTS or COOP on the http development profile | 0018, 0054 |
