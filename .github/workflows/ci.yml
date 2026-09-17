@@ -524,8 +524,9 @@ jobs:
         working-directory: frontend
         run: node scripts/assert-e2e-ran.mjs
       # The accessibility sweep's findings (accessibility.spec.ts, axe-core, WCAG 2.0 A/AA, 2.1 AA
-      # and 2.2 AA), one JSON per scan. Report-only: the spec fails on a scan that inspected
-      # nothing, never on a finding, so this is uploaded on every run and read by hand.
+      # and 2.2 AA), one JSON per scan. The spec fails on a serious or critical finding outside
+      # colour contrast, which is reported only, so this is uploaded on every run, green or red.
+      # (Until 2026-09-17 the spec failed on no finding at all, and this said so.)
       - name: Upload the accessibility report
         uses: actions/upload-artifact@v4
         if: always()

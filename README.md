@@ -127,15 +127,16 @@ history, the four money flows with idempotency keys and step-up PIN, and the das
 aggregates. A test that writes to `console.error` fails. Verified
 end-to-end against the running stack, not only against mocks.
 
-**Known gaps**, tracked rather than hidden: the accessibility sweep is measured, not yet fixed —
-axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs report-only in the e2e job over nine pages and the
-deposit dialog, and on 2026-09-16 found two rules failing: colour contrast on theme tokens (muted
-secondary text, the sidebar avatar, a button group and the danger-zone button; 25 nodes, 16 distinct
-elements, on seven pages and the deposit dialog, a count that moves with the data a page shows) and
-Fluent's own focus sentinels flagged as `aria-hidden-focus` (two per page on all nine pages, a
-framework artefact rather than this app's markup); the per-scan JSON reports are a CI artifact, and
-fixing the contrast findings is a later phase. A UI/UX overhaul is the final planned
-phase. (The production CSP used to be listed here as unverifiable; the BFF now serves the built SPA
+**Known gaps**, tracked rather than hidden: colour contrast. axe-core (WCAG 2.0 A/AA, 2.1 AA and
+2.2 AA) runs in the e2e job over nine pages, the deposit dialog and the Change PIN dialog, and fails
+the job on any serious or critical finding except colour contrast, which it reports and leaves to
+the UI/UX phase: on 2026-09-17 that was 25 nodes on theme tokens (muted secondary text, the sidebar
+avatar, a button group and the danger-zone button) on seven pages and the deposit dialog, a count
+that moves with the data a page shows. Fluent's own focus sentinels, which axe flags as
+`aria-hidden-focus` two per page, are excluded by a selector the spec proves matches nothing else.
+Every page carries its own title, and a route change is announced and moves focus to the new page.
+The per-scan JSON reports are a CI artifact. (Until 2026-09-17 this said the sweep ran report-only,
+"measured, not yet fixed".) A UI/UX overhaul is the final planned phase. (The production CSP used to be listed here as unverifiable; the BFF now serves the built SPA
 under it, and CI's e2e run walks that build with no violations — ADR-0054.)
 
 *(This section used to give test counts — 674, 36, 710, 596 — that disagreed with each other and

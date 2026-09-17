@@ -577,8 +577,8 @@ export function DashboardPage() {
               className={styles.eyeButton}
               appearance="transparent"
               icon={hidden ? <EyeOff20Regular /> : <Eye20Regular />}
+              // The name says the state; aria-pressed as well read "Show balances, pressed".
               aria-label={hidden ? 'Show balances' : 'Hide balances'}
-              aria-pressed={hidden}
               onClick={() => setHidden((v) => !v)}
             />
           </div>

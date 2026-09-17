@@ -261,3 +261,14 @@ img {
   height: auto;
   display: block;
 }
+
+/*
+  The page container RouteAnnouncer focuses after a route change (a <main>, or a wizard's <h1>).
+  The focus is for a screen reader and the keyboard's next Tab; nothing on the page should change
+  when it lands, so the container draws no outline. Whether it should is a visual question for U8.
+  Measured 2026-09-17 on the served build: without this rule Chrome matches :focus-visible on the
+  main after a keyboard navigation and draws its focus ring (outline-style auto).
+*/
+[data-route-focus]:focus {
+  outline: none;
+}

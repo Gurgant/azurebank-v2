@@ -1,6 +1,8 @@
+import { useEffect } from 'react';
 import { useRouteError } from 'react-router-dom';
 import { Button, Text, makeStyles } from '@fluentui/react-components';
 import { colors, surfaces } from '../../theme/tokens';
+import { pageTitle } from './pageTitle';
 
 /**
  * What a data router shows when a route throws.
@@ -44,6 +46,11 @@ export function RouteError() {
   // Logged, not rendered: the message can carry request detail, and this screen is reachable by
   // anyone. The user gets a sentence they can act on instead.
   console.error('Route error', error);
+
+  // This replaces the whole route tree, RouteAnnouncer included, so the title is set here.
+  useEffect(() => {
+    document.title = pageTitle('Something went wrong');
+  }, []);
 
   return (
     <div className={styles.root} role="alert">

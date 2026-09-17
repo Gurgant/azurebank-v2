@@ -89,7 +89,54 @@ describe('PinInput (PR-10)', () => {
   it('masks digits by default and reveals them on the toggle', async () => {
     renderWithProviders(<Harness />);
     expect(screen.getByLabelText('Digit 1 of 6')).toHaveAttribute('type', 'password');
-    await userEvent.click(screen.getByRole('button', { name: 'Show PIN' }));
+    /*
+      The name says the state, so nothing else may. With aria-pressed as well, the button was
+      announced "Hide PIN, pressed" once revealed: a toggle that is pressed to hide, which reads as
+      the PIN being hidden when it is the opposite.
+    */
+    const show = screen.getByRole('button', { name: 'Show PIN' });
+    expect(show).not.toHaveAttribute('aria-pressed');
+    await userEvent.click(show);
     expect(screen.getByLabelText('Digit 1 of 6')).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide PIN' })).not.toHaveAttribute('aria-pressed');
+  });
+
+  /*
+    A whole PIN arriving at once is a whole PIN, whichever box has focus and whatever is already
+    there. Spliced in at the box, a paste after a mistyped start kept the start: on main, "12" then
+    "123456" pasted at box 3 read 121234, and a PIN manager's autofill into box 2 of a full value
+    read 198765. A shorter paste still goes in where the caret is.
+  */
+  it('replaces a partial entry with a whole pasted PIN', async () => {
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('12');
+
+    await userEvent.click(screen.getByLabelText('Digit 3 of 6'));
+    await userEvent.paste('123456');
+
+    expect(screen.getByTestId('value')).toHaveTextContent('123456');
+    expect(screen.getByTestId('completed')).toHaveTextContent('123456');
+  });
+
+  it('replaces a complete entry with a whole PIN pasted into any box', async () => {
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('123456');
+
+    await userEvent.click(screen.getByLabelText('Digit 4 of 6'));
+    await userEvent.paste('654321');
+
+    expect(screen.getByTestId('value')).toHaveTextContent('654321');
+  });
+
+  it('replaces what is there with a whole autofilled PIN', async () => {
+    renderWithProviders(<Harness />);
+    await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
+    await userEvent.paste('123456');
+
+    fireEvent.change(screen.getByLabelText('Digit 2 of 6'), { target: { value: '987654' } });
+
+    expect(screen.getByTestId('value')).toHaveTextContent('987654');
   });
 });

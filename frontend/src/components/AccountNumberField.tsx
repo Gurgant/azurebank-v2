@@ -118,7 +118,7 @@ export function AccountNumberField({ account }: { account: AccountResponse }) {
           appearance="subtle"
           size="small"
           icon={revealed ? <EyeOff16Regular /> : <Eye16Regular />}
-          aria-pressed={revealed}
+          // The name says the state; aria-pressed as well read "Hide account number …, pressed".
           aria-label={
             revealed
               ? `Hide account number for ${account.name}`

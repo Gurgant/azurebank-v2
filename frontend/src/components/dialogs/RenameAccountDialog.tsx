@@ -87,7 +87,9 @@ export function RenameAccountDialog({ account, onClose }: RenameAccountDialogPro
             <DialogTitle>Rename Account</DialogTitle>
             <DialogContent>
               {showProblemBar && (
-                <MessageBar intent="error">
+                /* role="alert": a MessageBar's root is a group, not a live region, and the app
+                   mounts no Fluent announcer, so without it the failure appeared in silence. */
+                <MessageBar intent="error" role="alert">
                   <MessageBarBody>
                     {problem.detail || 'Could not rename the account. Please try again.'}
                   </MessageBarBody>

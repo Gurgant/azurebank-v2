@@ -379,7 +379,9 @@ export function RegisterPage() {
               className={styles.passwordToggle}
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
               type="button"
-              aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+              // Its own name: two toggles both called "Show password" could not be told apart in a
+              // screen reader's list of buttons.
+              aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
             >
               {showConfirmPassword ? <EyeOff24Regular /> : <Eye24Regular />}
             </Button>

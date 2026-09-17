@@ -48,7 +48,8 @@ function Boom(): never {
 }
 
 function mountWithErrorElement() {
-  // The same shape as App.tsx: a pathless parent whose only job is to own `errorElement`.
+  // App.tsx's shape without the announcer: a pathless parent that owns `errorElement`. (Until
+  // 2026-09-17 App's parent had no element either, and this said it was the same shape.)
   const router = createMemoryRouter(
     createRoutesFromElements(
       <Route errorElement={<RouteError />}>
@@ -76,6 +77,7 @@ describe('RouteError', () => {
 
     expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+    expect(document.title).toBe('Something went wrong · AzureBank');
     // The reassurance is the point of the copy: money already moved is not in doubt.
     expect(
       screen.getByText(/Your accounts and any completed transfers are unaffected/),

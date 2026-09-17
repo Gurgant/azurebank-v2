@@ -10,6 +10,7 @@ export { AuthLayout, AuthDivider, AuthCrossLink, type AuthLayoutProps } from './
 export { ProtectedRoute } from './ProtectedRoute';
 export { ProtectedShell } from './ProtectedShell';
 export { AppErrorBoundary } from './AppErrorBoundary';
+export { RouteAnnouncer } from './RouteAnnouncer';
 
 // The information architecture. Both nav surfaces read it, and PageHeader will read it too — which
 // is the point: a page header that derives its title from the same table as the nav cannot drift

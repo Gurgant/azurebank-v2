@@ -51,8 +51,27 @@ async function reachPinStep() {
   await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
   await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
   await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  // The step asks for a PIN, so it puts the caret where the PIN goes, as the withdraw dialog does.
+  expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus();
   await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
   await userEvent.paste('123456');
+}
+
+/**
+ * After a refused PIN: the group is named for what it asks, it is described by the instruction
+ * and by the refusal, and the caret is back in the first box for the retry. On main the group was
+ * named "PIN", described by nothing, and focus was left on a box that had just been emptied.
+ */
+async function expectAReadyRetry() {
+  const alert = await screen.findByRole('alert');
+  const group = screen.getByRole('group', { name: 'Enter your PIN' });
+  expect(group).toHaveAccessibleDescription(
+    expect.stringContaining('sends as soon as the last digit is in'),
+  );
+  expect(group).toHaveAccessibleDescription(expect.stringContaining(alert.textContent!.trim()));
+  await waitFor(() => {
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus();
+  });
 }
 
 beforeEach(() => {
@@ -83,6 +102,7 @@ describe('the PIN step recovers from what the server refuses', () => {
       intent — a cleared PIN must not leave the transfer one stray click from going out.
     */
     expect(screen.queryByRole('button', { name: /^Send/ })).not.toBeInTheDocument();
+    await expectAReadyRetry();
   });
 
   it('PIN_LOCKED shows the server lock horizon, not a client-invented one', async () => {
@@ -187,6 +207,7 @@ describe('the internal transfer recovers the same way', () => {
     await userEvent.type(screen.getByLabelText('Transfer amount'), '50');
     await userEvent.click(screen.getByRole('button', { name: 'Review Transfer' }));
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByLabelText('Digit 1 of 6')).toHaveFocus();
     await userEvent.click(screen.getByLabelText('Digit 1 of 6'));
     await userEvent.paste('123456');
   }
@@ -203,6 +224,7 @@ describe('the internal transfer recovers the same way', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
     });
+    await expectAReadyRetry();
   });
 
   it('PIN_REQUIRED routes to PIN setup here too', async () => {
