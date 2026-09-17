@@ -12,6 +12,16 @@ namespace AzureBank.Tests.Integration;
 /// fence, or in a <c>```text</c> block passed both guards — measured that day on the PIN runbook,
 /// all three green. A fence is SQL here only when the first word of its info string is <c>sql</c>,
 /// whichever marker opens it, and the parse check reads exactly those fences.
+/// <para>
+/// A marker counts only when it is indented three columns or fewer, as CommonMark reads it: four
+/// or more (a tab is four) make it text in an indented code block. Until the same day this reader
+/// trimmed every line first, and measured on the PIN runbook that let two things through. SQL
+/// inside an indented <c>```sql</c> pseudo-fence, which renders as indented code, counted as
+/// fenced, so the scan never asked for a real fence; and a four-space <c>```</c> inside a real SQL
+/// fence closed it early, leaving the lines after it, up to the true close, parsed by nobody. Both
+/// probes fail a guard now: the first the scan, which also reports the indented <c>```sql</c>
+/// marker itself, the second the parse check, which reads the whole block to its real close.
+/// </para>
 /// </remarks>
 internal static class RunbookMarkdown
 {
@@ -50,7 +60,7 @@ internal static class RunbookMarkdown
         {
             number++;
             var trimmed = line.Trim();
-            var marker = FenceMarker(trimmed);
+            var marker = LeadingColumns(line) <= 3 ? FenceMarker(trimmed) : string.Empty;
 
             if (open is not { } fence)
             {
@@ -86,8 +96,33 @@ internal static class RunbookMarkdown
         return (fences, outside);
     }
 
-    /// <summary>The run of backticks or tildes a trimmed line opens with, if three or
-    /// more.</summary>
+    /// <summary>
+    /// How far a line is indented, in columns: a space is one, a tab moves to the next multiple of
+    /// four.
+    /// </summary>
+    private static int LeadingColumns(string line)
+    {
+        var columns = 0;
+        foreach (var character in line)
+        {
+            if (character == ' ')
+            {
+                columns++;
+            }
+            else if (character == '\t')
+            {
+                columns += 4 - (columns % 4);
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return columns;
+    }
+
+    /// <summary>The backtick or tilde run a trimmed line opens with, at least three long.</summary>
     private static string FenceMarker(string trimmed)
     {
         if (trimmed.Length < 3 || (trimmed[0] != '`' && trimmed[0] != '~'))

@@ -94,6 +94,17 @@ public sealed class RunbookSqlIsFencedTests
     /// row.</summary>
     private static readonly Regex ParagraphBreak = new(@"^\s*$|^\s*(?:\#|[-*+]\s|\d+[.)]\s|\|)");
 
+    /// <summary>
+    /// A <c>```sql</c> or <c>~~~sql</c> marker. Found among the lines outside every fence, it
+    /// opened nothing: <see cref="RunbookMarkdown"/> only reads a marker indented three columns or
+    /// fewer.
+    /// </summary>
+    private static readonly Regex SqlFenceMarker = new(
+        @"^\s*(?:`{3,}|~{3,})\s*sql\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>The blockquote marks on a continuation line, not part of its text.</summary>
+    private static readonly Regex QuoteLead = new(@"^\s*(?:>\s?)+");
+
     /// <summary>A full stop before whitespace or the end: a sentence ends there, not a
     /// statement.</summary>
     private static readonly Regex SentenceEnd = new(@"\.(?:\s|$)");
@@ -117,6 +128,13 @@ public sealed class RunbookSqlIsFencedTests
     {
         var (fences, outside) = RunbookMarkdown.Read(lines);
         var found = Statements(outside);
+
+        // Reported whatever follows it: a statement too misspelt to recognise would otherwise sit
+        // under an indented ```sql that looks like a fence and is parsed by nobody.
+        found.AddRange(outside
+            .Where(line => SqlFenceMarker.IsMatch(line.Text))
+            .Select(line => $"{line.Line}: {line.Text.Trim()} "
+                + "(indented four columns or more, it opens no fence)"));
         foreach (var fence in fences.Where(fence => !fence.IsSql))
         {
             found.AddRange(Statements(fence.Body));
@@ -146,11 +164,18 @@ public sealed class RunbookSqlIsFencedTests
             for (var next = i + 1;
                  next < lines.Count
                  && parts.Count < StatementLines
-                 && lines[next].Line == lines[next - 1].Line + 1
-                 && !ParagraphBreak.IsMatch(lines[next].Text);
+                 && lines[next].Line == lines[next - 1].Line + 1;
                  next++)
             {
-                parts.Add(lines[next].Text.Trim());
+                // A quoted statement goes on quoted: "> UPDATE Users" then "> SET …". The marks are
+                // taken off before the line is judged, so "> " on its own still ends the paragraph.
+                var continued = QuoteLead.Replace(lines[next].Text, string.Empty, 1);
+                if (ParagraphBreak.IsMatch(continued))
+                {
+                    break;
+                }
+
+                parts.Add(continued.Trim());
             }
 
             var joined = string.Join(" ", parts);
@@ -268,6 +293,23 @@ public sealed class RunbookSqlIsFencedTests
         SqlNobodyParses(["```text", .. sql, "```"]).Should().HaveCount(
             sql.Length, "nor is a fence marked with another language");
 
+        SqlNobodyParses(["   ```sql", .. sql, "   ```"]).Should().BeEmpty(
+            "a marker indented three spaces still opens and closes a fence");
+
+        SqlNobodyParses(["    ```sql", .. sql, "    ```"]).Should().HaveCount(
+            sql.Length + 1,
+            "four spaces make the marker text in an indented code block, not a fence, so the SQL "
+            + "after it is not in a sql fence and the parse check never reads it — and the marker "
+            + "itself is reported, so a statement too misspelt to recognise cannot hide under it");
+
+        SqlNobodyParses(["    ```sql", "    UPDAT Users SET PinHash = NULL;", "    ```"])
+            .Should().ContainSingle(
+                "the indented marker is reported even when nothing after it reads as SQL");
+
+        SqlNobodyParses(["```sql", "SELECT 1;", "    ```", .. sql, "```"]).Should().BeEmpty(
+            "a four-space ``` inside a sql fence is part of its body, not its close: everything up "
+            + "to the real close is sql, and is parsed");
+
         SqlNobodyParses(["~~~text", "```sql", .. sql, "```", "~~~"]).Should().HaveCount(
             sql.Length,
             "a fence ends only on its own marker, so a ```sql line inside a ~~~text block opens "
@@ -300,6 +342,25 @@ public sealed class RunbookSqlIsFencedTests
         SqlNobodyParses(["UPDATE Users", "", "SET PinHash = NULL"])
             .Should().BeEmpty(
                 "a blank line ends the paragraph, and neither half is a statement on its own");
+
+        SqlNobodyParses(
+                [
+                    "> UPDATE Users",
+                    "> SET PinHash = NULL",
+                    "> WHERE Email = N'someone@example.com'",
+                ])
+            .Should().ContainSingle(
+                "a quoted statement continues on quoted lines; the marks are not part of the SQL");
+
+        SqlNobodyParses(["> UPDATE Users", ">", "> SET PinHash = NULL"])
+            .Should().BeEmpty("a quote line with nothing after its mark ends the paragraph");
+
+        SqlNobodyParses(
+                [
+                    "> Select the alert in the portal and note its identifier. Then pick one",
+                    "> from the list.",
+                ])
+            .Should().BeEmpty("a quoted sentence is still a sentence, and ends where it ends");
     }
 
     /// <summary>
