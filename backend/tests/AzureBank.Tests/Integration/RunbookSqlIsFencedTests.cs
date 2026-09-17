@@ -52,6 +52,17 @@ namespace AzureBank.Tests.Integration;
 /// (<c>UPDAT Users …</c>) is not recognisable as SQL, so in a fence of another language it still
 /// passes; in a fence marked <c>sql</c> the parse check refuses it.
 /// </para>
+/// <para>
+/// ⚠️ <b>AND UNTIL LATER THAT DAY NINE STATEMENTS A DATABASE RUNBOOK MIGHT HOLD WENT UNSEEN.</b>
+/// <c>DBCC CHECKDB;</c> matched no branch, and neither did <c>DBCC CHECKIDENT (…)</c>,
+/// <c>WAITFOR DELAY</c>, <c>RAISERROR(…)</c>, <c>THROW</c>, <c>PRINT</c>, <c>DENY</c>,
+/// <c>CHECKPOINT</c> or <c>RECONFIGURE</c>: appended one at a time to the PIN runbook outside any
+/// fence, each of the nine left both guards green. Each verb now has a shape of its own and is in
+/// the semicolon branch, and each of the same nine probes fails this scan. The shape is needed even
+/// with the semicolon branch: a statement is joined to the lines after it, so one followed by
+/// another statement no longer ends in its own semicolon. The control's four-space case showed
+/// that, reporting <c>DENY</c>, <c>CHECKPOINT</c> and <c>RECONFIGURE</c> only once they had a shape.
+/// </para>
 /// </remarks>
 public sealed class RunbookSqlIsFencedTests
 {
@@ -81,8 +92,18 @@ public sealed class RunbookSqlIsFencedTests
             | GRANT\s+.*\bTO\b
             | REVOKE\s+.*\b(?:FROM|TO)\b
             | IF\s+(?:EXISTS\s*\(|NOT\s+EXISTS\s*\(|OBJECT_ID\s*\(|@)
+            | DBCC\s+\w+
+            | WAITFOR\s+(?:DELAY|TIME)\b
+            | RAISERROR\s*\(
+            | THROW\s+\d
+            | PRINT\s+(?:N?'|@)
+            | DENY\s+(?:SELECT|INSERT|UPDATE|DELETE|EXEC|EXECUTE|ALTER|CONTROL|REFERENCES|VIEW
+               |CONNECT|IMPERSONATE)\b
+            | CHECKPOINT\s*(?:;|\d|$)
+            | RECONFIGURE\s*(?:;|WITH\s+OVERRIDE\b|$)
             | (?:SELECT|UPDATE|INSERT|DELETE|DECLARE|EXEC|EXECUTE|MERGE|ALTER|CREATE|DROP|TRUNCATE
-               |WITH|BEGIN|COMMIT|ROLLBACK|SET|USE|KILL|GRANT|REVOKE)\b.*;\s*$
+               |WITH|BEGIN|COMMIT|ROLLBACK|SET|USE|KILL|GRANT|REVOKE|DENY|DBCC|WAITFOR|RAISERROR
+               |THROW|PRINT|CHECKPOINT|RECONFIGURE)\b.*;\s*$
           )",
         RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace
             | RegexOptions.CultureInvariant);
@@ -217,7 +238,7 @@ public sealed class RunbookSqlIsFencedTests
 
     /// <summary>
     /// The control for the scan itself. Measured 2026-09-16 with the pattern this file replaced
-    /// swapped back in: it found none of the twenty statements below — lowercase, flush left,
+    /// swapped back in: it found none of the first twenty statements below — lowercase, flush left,
     /// behind a bullet or a quote mark — and a flush-left <c>update Users set PinHash = null where
     /// ...;</c> appended to the PIN runbook left <see cref="NoRunbookHoldsSqlOutsideASqlFence"/>
     /// green. With the pattern above, that same line fails it by line number. The prose is the
@@ -248,6 +269,15 @@ public sealed class RunbookSqlIsFencedTests
             "    update Users set PinHash = null where Id = 1;",
             "merge Accounts using Staging on Accounts.Id = Staging.Id",
             "if exists (select 1 from AuditEvents) print 'yes';",
+            "dbcc checkdb;",
+            "DBCC CHECKIDENT ('Users', NORESEED)",
+            "waitfor delay '00:00:05';",
+            "raiserror('stop here', 16, 1)",
+            "throw 50000, 'stop here', 1;",
+            "print 'done'",
+            "deny select on Users to public;",
+            "checkpoint;",
+            "reconfigure;",
         ];
 
         string[] prose =
@@ -270,6 +300,14 @@ public sealed class RunbookSqlIsFencedTests
             "Select the alert in the portal and note its identifier.",
             "Set the environment variable before running the tool.",
             "Create a throwaway user for this, never the seeded one.",
+
+            // And six that open with the verbs added on 2026-09-17, the way prose would.
+            "Print the verification output and attach it to the incident.",
+            "Deny the request if the user cannot be reached by a second channel.",
+            "Deny access to the export share until the investigation is closed.",
+            "Checkpoint the investigation notes before handing over the shift.",
+            "Throw away any export taken before the boundary was raised.",
+            "Wait for the second approver before running the UPDATE below.",
         ];
 
         SqlNobodyParses(sql).Should().HaveCount(
