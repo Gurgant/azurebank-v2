@@ -25,16 +25,15 @@ namespace AzureBank.Tests.Integration;
 /// statement can sit behind: blockquote marks, bullets, numbered steps.
 /// </para>
 /// <para>
-/// <b>Each verb carries the rest of its own grammar, because a bare verb is usually prose.</b>
-/// Measured over the two runbooks on 2026-09-16: eleven lines outside fences open with one of these
-/// words — <i>"Delete the pickup directory after the notices in it have been dealt with"</i>,
-/// <i>"Use the notice's own `Event` in that WHERE clause"</i>, <i>"If the dev or test database is
-/// simply behind on migrations"</i> — and none of them is SQL. So <c>DELETE</c> must reach its
-/// <c>FROM</c>, <c>UPDATE</c> its <c>SET</c>, <c>USE</c> its semicolon; a statement short enough to
-/// carry no grammar at all, <c>select 1;</c>, is caught by that semicolon.
-/// <see cref="TheScanReadsLowercaseAndFlushLeftSql_AndLeavesProseAlone"/> is the control: it holds
-/// the lines this pattern must catch and the prose it must not, so a later tightening that blinds
-/// it fails here rather than in a runbook nobody parsed.
+/// <b>What a statement looks like is <see cref="RunbookSqlGrammar"/>'s business; the reading is this
+/// class's.</b> A bare verb is usually prose. Measured over the two runbooks on 2026-09-16: eleven
+/// lines outside fences open with a T-SQL verb — <i>"Delete the pickup directory after the notices
+/// in it have been dealt with"</i>, <i>"Use the notice's own `Event` in that WHERE clause"</i>,
+/// <i>"If the dev or test database is simply behind on migrations"</i> — and none of them is SQL.
+/// <see cref="TheScanReadsLowercaseAndFlushLeftSql_AndLeavesProseAlone"/> holds those lines beside
+/// the statements they resemble, and <see cref="TheScanReportsEveryCorpusStatement_AndNoneOfItsProse"/>
+/// holds the measured corpus, so a change to the grammar that blinds it, or that starts reporting
+/// prose, fails here rather than in a runbook nobody parsed.
 /// </para>
 /// <para>
 /// ⚠️ <b>AND UNTIL 2026-09-17 IT READ ONE LINE AT A TIME, AND TRUSTED EVERY FENCE.</b> Measured
@@ -53,67 +52,35 @@ namespace AzureBank.Tests.Integration;
 /// passes; in a fence marked <c>sql</c> the parse check refuses it.
 /// </para>
 /// <para>
-/// ⚠️ <b>AND UNTIL LATER THAT DAY NINE STATEMENTS A DATABASE RUNBOOK MIGHT HOLD WENT UNSEEN.</b>
-/// <c>DBCC CHECKDB;</c> matched no branch, and neither did <c>DBCC CHECKIDENT (…)</c>,
-/// <c>WAITFOR DELAY</c>, <c>RAISERROR(…)</c>, <c>THROW</c>, <c>PRINT</c>, <c>DENY</c>,
-/// <c>CHECKPOINT</c> or <c>RECONFIGURE</c>: appended one at a time to the PIN runbook outside any
-/// fence, each of the nine left both guards green. Each verb now has a shape of its own and is in
-/// the semicolon branch, and each of the same nine probes fails this scan. The shape is needed even
-/// with the semicolon branch: a statement is joined to the lines after it, so one followed by
-/// another statement no longer ends in its own semicolon. The control's four-space case showed
-/// that, reporting <c>DENY</c>, <c>CHECKPOINT</c> and <c>RECONFIGURE</c> only once they had a shape.
+/// ⚠️ <b>AND UNTIL 2026-09-18 THE PATTERN WAS A LIST OF VERBS THAT GREW ONE REVIEW AT A TIME.</b>
+/// Review found <c>DBCC CHECKDB;</c> unseen on 2026-09-17, and appended one at a time to the PIN
+/// runbook outside any fence so were <c>WAITFOR DELAY</c>, <c>RAISERROR(…)</c>, <c>THROW</c>,
+/// <c>PRINT</c>, <c>DENY</c>, <c>CHECKPOINT</c> and <c>RECONFIGURE</c>: each left both guards green.
+/// They got a branch each, and the next review found an unterminated <c>DENY TAKE OWNERSHIP</c>.
+/// Rather than add a tenth verb the pattern was measured, against 3,012 statements SQL Server's
+/// parser accepts and 376 sentences a runbook could hold: it missed 819 of the statements and
+/// reported 133 of the sentences. It is <see cref="RunbookSqlGrammar"/> now, which on the same
+/// corpus reports 2,852 of the statements and 40 of the sentences, and the corpus publishes both
+/// remainders (<c>notReported</c>, <c>reportedProse</c>) instead of leaving them to be found. The
+/// reading learned three things in the same pass. A fence marker left outside every fence ends a
+/// paragraph, because <c>reconfigure;</c> above a four-space <c>```</c> was joined to it and
+/// stopped looking like a statement that had ended. T-SQL comments are taken out before the
+/// sentence end is looked for, because <c>-- the columns we need.</c> ended the "sentence" before
+/// the <c>FROM</c> under it. And a statement is followed for 40 lines, not 8, which is what an
+/// SSMS-scripted column list needs.
 /// </para>
 /// </remarks>
 public sealed class RunbookSqlIsFencedTests
 {
-    /// <summary>
-    /// A line that OPENS a SQL statement, in any case, at any indentation. Every branch but the
-    /// last names the statement's own shape; the last accepts any of these verbs on a line that
-    /// ends in a semicolon, which is what a one-line statement looks like when it has no shape.
-    /// </summary>
-    private static readonly Regex SqlStatement = new(
-        @"^(?:
-              SELECT\s+.*\bFROM\b
-            | UPDATE\s+[\w.\[\]\#@]+\s+SET\b
-            | INSERT\s+INTO\b
-            | DELETE\s+FROM\b
-            | DECLARE\s+@
-            | EXEC(?:UTE)?\s+(?:AS\b|[\w.\[\]\#@])
-            | MERGE\s+[\w.\[\]\#]+\s+USING\b
-            | (?:ALTER|CREATE|DROP|TRUNCATE)\s+(?:TABLE|INDEX|VIEW|PROC|PROCEDURE|FUNCTION
-               |DATABASE|LOGIN|USER|ROLE|SCHEMA|TRIGGER|SEQUENCE|TYPE)\b
-            | WITH\s+[\w\[\]]+\s+AS\s*\(
-            | BEGIN\s+(?:TRAN|TRANSACTION|TRY|CATCH)\b
-            | SET\s+(?:@\w+\s*=|PARSEONLY|NOEXEC|NOCOUNT|XACT_ABORT|ANSI_NULLS|QUOTED_IDENTIFIER
-               |TRANSACTION\s+ISOLATION)\b
-            | USE\s+\[?\w+\]?\s*;
-            | KILL\s+\d
-            | (?:BACKUP|RESTORE)\s+(?:DATABASE|LOG|HEADERONLY|FILELISTONLY)\b
-            | GRANT\s+.*\bTO\b
-            | REVOKE\s+.*\b(?:FROM|TO)\b
-            | IF\s+(?:EXISTS\s*\(|NOT\s+EXISTS\s*\(|OBJECT_ID\s*\(|@)
-            | DBCC\s+\w+
-            | WAITFOR\s+(?:DELAY|TIME)\b
-            | RAISERROR\s*\(
-            | THROW\s+\d
-            | PRINT\s+(?:N?'|@)
-            | DENY\s+(?:SELECT|INSERT|UPDATE|DELETE|EXEC|EXECUTE|ALTER|CONTROL|REFERENCES|VIEW
-               |CONNECT|IMPERSONATE)\b
-            | CHECKPOINT\s*(?:;|\d|$)
-            | RECONFIGURE\s*(?:;|WITH\s+OVERRIDE\b|$)
-            | (?:SELECT|UPDATE|INSERT|DELETE|DECLARE|EXEC|EXECUTE|MERGE|ALTER|CREATE|DROP|TRUNCATE
-               |WITH|BEGIN|COMMIT|ROLLBACK|SET|USE|KILL|GRANT|REVOKE|DENY|DBCC|WAITFOR|RAISERROR
-               |THROW|PRINT|CHECKPOINT|RECONFIGURE)\b.*;\s*$
-          )",
-        RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace
-            | RegexOptions.CultureInvariant);
-
     /// <summary>Blockquote marks, bullets and numbered steps a statement can sit behind.</summary>
     private static readonly Regex MarkdownLead = new(@"^\s*(?:(?:>\s?)+|[-*+]\s+|\d+[.)]\s+)*");
 
-    /// <summary>A line that ends a paragraph for the scan: blank, heading, list item, table
-    /// row.</summary>
-    private static readonly Regex ParagraphBreak = new(@"^\s*$|^\s*(?:\#|[-*+]\s|\d+[.)]\s|\|)");
+    /// <summary>A line that ends a paragraph for the scan: blank, heading, list item, table row,
+    /// or a fence marker. A marker left outside every fence is one indented four columns or more,
+    /// and it is no part of the statement above it: <c>reconfigure;</c> followed by such a
+    /// <c>```</c> was joined to it and no longer ran to a statement boundary.</summary>
+    private static readonly Regex ParagraphBreak = new(
+        @"^\s*$|^\s*(?:\#|[-*+]\s|\d+[.)]\s|\||`{3,}|~{3,})");
 
     /// <summary>
     /// A <c>```sql</c> or <c>~~~sql</c> marker. Found among the lines outside every fence, it
@@ -130,8 +97,22 @@ public sealed class RunbookSqlIsFencedTests
     /// statement.</summary>
     private static readonly Regex SentenceEnd = new(@"\.(?:\s|$)");
 
-    /// <summary>How many lines a statement is followed across before the scan stops.</summary>
-    private const int StatementLines = 8;
+    /// <summary>A T-SQL comment to the end of its line. Taken out before the sentence end is
+    /// looked for: <c>SELECT Id, Email -- the columns we need.</c> above its <c>FROM</c> was cut at
+    /// the comment's full stop and never reached the clause.</summary>
+    private static readonly Regex LineComment = new(@"--.*$");
+
+    /// <summary>A T-SQL block comment, once the lines are joined.</summary>
+    private static readonly Regex BlockComment = new(@"/\*.*?\*/");
+
+    /// <summary>
+    /// How many lines a statement is followed across before the scan stops. It was 8, and a
+    /// <c>SELECT</c> scripted by SSMS with one column to a line and nine columns never reached its
+    /// <c>FROM</c>. Measured at 8 and at 40 over 507,700 lines of prose in 3,648 Markdown files:
+    /// the same lines reported, not one more, because a paragraph of prose stops at its first
+    /// full stop long before it stops at a line count.
+    /// </summary>
+    private const int StatementLines = 40;
 
     private static string Root => RunbookSqlParsesSqlServerTests.RepositoryRoot().FullName;
 
@@ -168,7 +149,7 @@ public sealed class RunbookSqlIsFencedTests
     /// Every line a statement opens on, read together with the following lines of its paragraph, so
     /// <c>UPDATE Users</c> is joined to the <c>SET</c> on the line after it. The joined text stops
     /// at the first sentence end: prose that opens with a verb must not borrow a <c>FROM</c> from a
-    /// later sentence.
+    /// later sentence. T-SQL comments are taken out first, so a full stop inside one ends nothing.
     /// </summary>
     private static List<string> Statements(IReadOnlyList<(int Line, string Text)> lines)
     {
@@ -181,7 +162,15 @@ public sealed class RunbookSqlIsFencedTests
                 continue;
             }
 
-            var parts = new List<string> { MarkdownLead.Replace(text, string.Empty, 1).Trim() };
+            var opening = LineComment.Replace(MarkdownLead.Replace(text, string.Empty, 1), string.Empty).Trim();
+            if (opening.Length == 0)
+            {
+                // A line that is only a comment opens nothing; the statement under it is judged
+                // on its own line.
+                continue;
+            }
+
+            var parts = new List<string> { opening };
             for (var next = i + 1;
                  next < lines.Count
                  && parts.Count < StatementLines
@@ -196,12 +185,13 @@ public sealed class RunbookSqlIsFencedTests
                     break;
                 }
 
-                parts.Add(continued.Trim());
+                parts.Add(LineComment.Replace(continued, string.Empty).Trim());
             }
 
-            var joined = string.Join(" ", parts);
+            var joined = BlockComment.Replace(
+                string.Join(" ", parts.Where(part => part.Length > 0)), " ");
             var end = SentenceEnd.Match(joined);
-            if (SqlStatement.IsMatch(end.Success ? joined[..(end.Index + 1)] : joined))
+            if (RunbookSqlGrammar.Statement.IsMatch(end.Success ? joined[..(end.Index + 1)] : joined))
             {
                 found.Add($"{number}: {text.Trim()}");
             }
@@ -233,7 +223,8 @@ public sealed class RunbookSqlIsFencedTests
         offenders.Should().BeEmpty(
             "SQL an operator is told to run belongs in a fence marked sql, where "
             + "RunbookSqlParsesSqlServerTests parses it; outside one, or in a fence of another "
-            + "language, nothing checks it");
+            + "language, nothing checks it. A reported line that is prose is prose that is also "
+            + "valid T-SQL (\"Open SSMS\" is OPEN cursor): end the sentence with a full stop");
     }
 
     /// <summary>
@@ -276,6 +267,7 @@ public sealed class RunbookSqlIsFencedTests
             "throw 50000, 'stop here', 1;",
             "print 'done'",
             "deny select on Users to public;",
+            "DENY TAKE OWNERSHIP ON dbo.Users TO auditor",
             "checkpoint;",
             "reconfigure;",
         ];
@@ -353,6 +345,76 @@ public sealed class RunbookSqlIsFencedTests
             "a fence ends only on its own marker, so a ```sql line inside a ~~~text block opens "
             + "nothing, and the SQL after it is still not parsed");
     }
+
+    /// <summary>
+    /// The measured corpus: every statement in it is reported when it stands alone and when another
+    /// statement follows it unterminated, and none of its prose is. The statements are ones SQL
+    /// Server's parser accepts (<see cref="RunbookSqlCorpusSqlServerTests"/> asks it again), so a
+    /// miss here is T-SQL the scan cannot see, not a disagreement about what T-SQL is.
+    /// </summary>
+    [Fact]
+    public void TheScanReportsEveryCorpusStatement_AndNoneOfItsProse()
+    {
+        var corpus = RunbookSqlCorpus.Load();
+        var statements = corpus.AllStatements.ToList();
+
+        statements.Where(statement => !ReportsItsFirstLine(statement.Split('\n')))
+            .Should().BeEmpty(
+                "each of these parses on SQL Server, and standing alone outside a fence it is "
+                + "exactly what this scan exists to report");
+
+        // The last statement of an unfenced paragraph always stands alone, so the case above is
+        // what keeps a paragraph from passing. This one keeps the line number honest too: joined
+        // to a follower, a statement no longer ends where its text does.
+        statements.Where(statement => !ReportsItsFirstLine([.. statement.Split('\n'), "PRINT 'next'"]))
+            .Should().BeEmpty("a statement is still one when another follows it with no semicolon");
+
+        corpus.Prose.Where(sentence => SqlNobodyParses(sentence.Split('\n')).Count > 0)
+            .Should().BeEmpty(
+                "these are sentences a runbook could hold, many opening with a T-SQL verb; a scan "
+                + "that reports prose is one somebody switches off");
+
+        corpus.KnownMisses.Where(known => ReportsItsFirstLine(known.Text.Split('\n')))
+            .Select(known => $"{known.Text.ReplaceLineEndings(" / ")} ({known.Why})")
+            .Should().BeEmpty(
+                "RunbookSqlGrammar's remarks say the scan does not see these; one it reports now "
+                + "means the remark is out of date, so move it into the statements");
+    }
+
+    /// <summary>
+    /// The two remainders <see cref="RunbookSqlGrammar"/>'s remarks count: valid statements the
+    /// scan does not report, and prose it does. Pinned in this direction too, so the published
+    /// lists stay the truth — a grammar change that reaches one of these fails here and the entry
+    /// moves to the list it now belongs in.
+    /// </summary>
+    [Fact]
+    public void TheCorpusPublishesWhatTheScanDoesNotReach_AndThePublishedListsAreTrue()
+    {
+        var corpus = RunbookSqlCorpus.Load();
+
+        corpus.NotReported
+            .Where(statement =>
+                ReportsItsFirstLine(statement.Split('\n'))
+                && ReportsItsFirstLine([.. statement.Split('\n'), "PRINT 'next'"]))
+            .Should().BeEmpty(
+                "the scan reports these now, alone and followed, so they belong in statements and "
+                + "the count in RunbookSqlGrammar's remarks comes down");
+
+        corpus.ReportedProse.Where(sentence => SqlNobodyParses(sentence.Split('\n')).Count == 0)
+            .Should().BeEmpty(
+                "the scan leaves these alone now, so they belong in prose and the count in "
+                + "RunbookSqlGrammar's remarks comes down");
+
+        // The remarks quote these four numbers. A corpus edit that moves one fails here, next to
+        // the sentence that has to change with it.
+        (corpus.AllStatements.Count() + corpus.NotReported.Length, corpus.NotReported.Length)
+            .Should().Be((3012, 160), "RunbookSqlGrammar's remarks say so");
+        (corpus.Prose.Length + corpus.ReportedProse.Length, corpus.ReportedProse.Length)
+            .Should().Be((376, 40), "RunbookSqlGrammar's remarks say so");
+    }
+
+    private static bool ReportsItsFirstLine(IEnumerable<string> lines) =>
+        SqlNobodyParses(lines).Any(found => found.StartsWith("1: ", StringComparison.Ordinal));
 
     /// <summary>
     /// A statement wrapped across lines, with the clause its verb needs on a later one, as the
