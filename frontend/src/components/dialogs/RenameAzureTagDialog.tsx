@@ -95,7 +95,8 @@ export function RenameAzureTagDialog({ currentTag, onClose }: RenameAzureTagDial
             <DialogTitle>Change your handle</DialogTitle>
             <DialogContent>
               {showProblemBar && (
-                <MessageBar intent="error">
+                // role="alert", as RenameAccountDialog's bar: a MessageBar alone is announced by nothing.
+                <MessageBar intent="error" role="alert">
                   <MessageBarBody>
                     {problem.detail || 'Could not change your handle. Please try again.'}
                   </MessageBarBody>

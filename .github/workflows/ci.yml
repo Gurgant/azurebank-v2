@@ -452,11 +452,21 @@ jobs:
         # other and go red for a
         # reason unrelated to the code under test. The limiter itself is proven by
         # AzureBank.Bff.Tests' own rate-limiter test; nothing in these three suites asserts it.
+        #
+        # RateLimiting:GlobalPermitLimit is environmental in the same way. The global limiter is
+        # 300 requests per fixed 60s window per IP, the three suites run from one IP, and the job
+        # is quick enough to put all three in ONE window. Measured 2026-09-18, back to back on the
+        # local stack: contract 149 + integration 41 + e2e 111 = 301 requests through the limiter.
+        # The 301st was the last e2e test's reveal, which answered 429 and failed; CI failed on the
+        # same test, 56 seconds after the contract suite's first request. Before the accessibility
+        # tests were added the e2e suite sent 103 and the total was 293: seven requests of headroom,
+        # and nothing to say so when they ran out.
         run: |
           nohup dotnet run --urls "${{ env.BFF_URL }}" -- \
             --BackendApi:BaseUrl="${{ env.API_URL }}" \
             --ReverseProxy:Clusters:backend-api:Destinations:primary:Address="${{ env.API_URL }}" \
             --RateLimiting:AuthPermitLimit=1000 \
+            --RateLimiting:GlobalPermitLimit=10000 \
             --Spa:RootPath="$GITHUB_WORKSPACE/frontend/dist" \
             > "$RUNNER_TEMP/bff.log" 2>&1 &
           echo "BFF starting, log at $RUNNER_TEMP/bff.log"
@@ -524,8 +534,9 @@ jobs:
         working-directory: frontend
         run: node scripts/assert-e2e-ran.mjs
       # The accessibility sweep's findings (accessibility.spec.ts, axe-core, WCAG 2.0 A/AA, 2.1 AA
-      # and 2.2 AA), one JSON per scan. Report-only: the spec fails on a scan that inspected
-      # nothing, never on a finding, so this is uploaded on every run and read by hand.
+      # and 2.2 AA), one JSON per scan. The spec fails on a serious or critical finding outside
+      # colour contrast, which is reported only, so this is uploaded on every run, green or red.
+      # (Until 2026-09-17 the spec failed on no finding at all, and this said so.)
       - name: Upload the accessibility report
         uses: actions/upload-artifact@v4
         if: always()

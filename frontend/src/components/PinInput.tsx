@@ -102,7 +102,8 @@ export interface PinInputProps {
  * COMPACT digit string (no internal gaps), so the owning flow can submit it as-is once it
  * reaches `length`. Typing auto-advances (and never drops a keystroke, even when the parent
  * has just reset `value` on a wrong-PIN retry); Backspace clears/splices and steps back;
- * arrows navigate; a paste of "123456" distributes across the boxes. Masked by default
+ * arrows navigate; a paste of "123456" distributes across the boxes, and a paste or autofill of a
+ * whole PIN replaces whatever was there, from whichever box has focus. Masked by default
  * (dots) with a reveal toggle. The PIN never lives in component state beyond the boxes: the
  * owning flow holds it and clears it on a wrong-PIN error, so nothing here outlives the
  * surface.
@@ -143,8 +144,12 @@ export function PinInput({
     if (digits.length > 1) {
       // A multi-digit value in a single input event is an OTP / password-manager AUTOFILL
       // (browsers do NOT fire a paste event for it) — distribute from this box instead of
-      // dropping all but the last digit.
-      const next = (value.slice(0, index) + digits).slice(0, length);
+      // dropping all but the last digit. A whole PIN replaces the value outright: spliced in at
+      // box 2 of "123456", "987654" used to read "198765".
+      const next =
+        digits.length >= length
+          ? digits.slice(0, length)
+          : (value.slice(0, index) + digits).slice(0, length);
       emit(next);
       focusBox(next.length);
       return;
@@ -206,7 +211,12 @@ export function PinInput({
     if (disabled) return;
     const pasted = e.clipboardData.getData('text').replace(/\D/g, '');
     if (!pasted) return;
-    const next = (value.slice(0, index) + pasted + value.slice(index)).slice(0, length);
+    // A whole PIN replaces what is there, wherever the caret is; a shorter paste goes in at the box.
+    // Spliced, "123456" pasted at box 3 after "12" used to read "121234".
+    const next =
+      pasted.length >= length
+        ? pasted.slice(0, length)
+        : (value.slice(0, index) + pasted + value.slice(index)).slice(0, length);
     emit(next);
     focusBox(next.length);
   };
@@ -250,7 +260,8 @@ export function PinInput({
           type="button"
           className={styles.reveal}
           onClick={() => setRevealed((r) => !r)}
-          aria-pressed={revealed}
+          // The name says the state. aria-pressed as well announced "Hide PIN, pressed" once the
+          // PIN was showing, which reads as hidden. (Until 2026-09-17 it carried both.)
           aria-label={revealed ? 'Hide PIN' : 'Show PIN'}
         >
           {revealed ? <EyeOff16Regular /> : <Eye16Regular />}

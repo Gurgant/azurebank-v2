@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   makeStyles,
   Text,
@@ -226,8 +226,12 @@ export function TransferPage() {
   const canResend = keyLive && authorizationHeld && !isSubmitting && !isMinting;
 
   // `pinNonce` remounts PinInput so a cleared retry refocuses box 1 — the same device WithdrawDialog
-  // uses, for the same reason.
+  // uses, for the same reason. (Until 2026-09-17 the boxes here had no autoFocus, so the remount
+  // refocused nothing and this comment described WithdrawDialog only.)
   const [pin, setPin] = useState('');
+  const pinHintId = useId();
+  const pinErrorId = useId();
+  const pinLockId = useId();
   const [pinError, setPinError] = useState(false);
   const [pinNonce, setPinNonce] = useState(0);
   /*
@@ -690,7 +694,7 @@ export function TransferPage() {
           </MessageBar>
         )}
         {error && (
-          <MessageBar intent="error" role="alert">
+          <MessageBar id={pinErrorId} intent="error" role="alert">
             <MessageBarBody>{error}</MessageBarBody>
           </MessageBar>
         )}
@@ -930,7 +934,7 @@ export function TransferPage() {
             </div>
             {/* Says what the missing button used to: with no Send control, the behaviour has to be
                 discoverable BEFORE the last digit, not discovered by it. */}
-            <Text style={{ textAlign: 'center' }}>
+            <Text id={pinHintId} style={{ textAlign: 'center' }}>
               Enter your 6-digit PIN. The transfer sends as soon as the last digit is in.
             </Text>
             <PinInput
@@ -960,10 +964,22 @@ export function TransferPage() {
               // mint AND a second send.
               disabled={isMinting || isSubmitting || pinLockDeadline !== null}
               error={pinError}
+              // Named for what it asks and described by the instruction and by whatever refused
+              // the last attempt, as WithdrawDialog's boxes are; autoFocus is what lets the
+              // `pinNonce` remount put the caret back in box 1 for a retry.
+              autoFocus
+              ariaLabel="Enter your PIN"
+              ariaDescribedBy={[
+                pinHintId,
+                error ? pinErrorId : null,
+                pinLockDeadline !== null ? pinLockId : null,
+              ]
+                .filter(Boolean)
+                .join(' ')}
             />
             {pinLockDeadline !== null && (
               <>
-                <MessageBar intent="error" role="alert">
+                <MessageBar id={pinLockId} intent="error" role="alert">
                   <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
                 </MessageBar>
                 {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would

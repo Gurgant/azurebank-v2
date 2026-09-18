@@ -11,7 +11,13 @@ import { store } from './app/store';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { AppToaster } from './components/feedback';
 import { AuthBootstrap, SessionExpiryWarning, StepUpModal } from './features/auth';
-import { AppErrorBoundary, ProtectedRoute, ProtectedShell, ShellOrBare } from './components/layout';
+import {
+  AppErrorBoundary,
+  ProtectedRoute,
+  ProtectedShell,
+  RouteAnnouncer,
+  ShellOrBare,
+} from './components/layout';
 import {
   LoginPage,
   RegisterPage,
@@ -50,23 +56,29 @@ import {
 const router = createBrowserRouter(
   createRoutesFromElements(
     /*
-      A pathless parent that exists only to own `errorElement`.
+      A pathless parent that owns `errorElement` and the route announcer.
 
       A data router CATCHES render errors instead of letting them reach the nearest React error
       boundary, and with no `errorElement` it renders its own default page — React Router's, not
       this app's. That is a regression the migration would have introduced silently, since nothing
-      throws today. The route has no `element`, so it renders an `<Outlet />` and every child below
-      renders exactly as it did.
+      throws today.
+
+      `RouteAnnouncer` renders a status region and then an `<Outlet />`, so every child below renders
+      exactly as it did; it reads the `title` in each route's `handle` to title the document and to
+      announce and focus a route change. A route that renders a page names its title; a redirect
+      does not, and the page it lands on is the one announced. (Until 2026-09-17 this said the route
+      had no `element` and existed only to own `errorElement`.)
     */
-    <Route errorElement={<RouteError />}>
+    <Route element={<RouteAnnouncer />} errorElement={<RouteError />}>
       <>
         {/* Public Routes */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" handle={{ title: 'Sign in' }} element={<LoginPage />} />
+        <Route path="/register" handle={{ title: 'Create Account' }} element={<RegisterPage />} />
 
         {/* Protected routes inside the shared app shell */}
         <Route
           path="/"
+          handle={{ title: 'Home' }}
           element={
             <ProtectedShell>
               <DashboardPage />
@@ -75,6 +87,7 @@ const router = createBrowserRouter(
         />
         <Route
           path="/dashboard"
+          handle={{ title: 'Home' }}
           element={
             <ProtectedShell>
               <DashboardPage />
@@ -83,6 +96,7 @@ const router = createBrowserRouter(
         />
         <Route
           path="/accounts"
+          handle={{ title: 'Accounts' }}
           element={
             <ProtectedShell>
               <AccountsPage />
@@ -91,6 +105,7 @@ const router = createBrowserRouter(
         />
         <Route
           path="/history"
+          handle={{ title: 'History' }}
           element={
             <ProtectedShell>
               <HistoryPage />
@@ -99,6 +114,7 @@ const router = createBrowserRouter(
         />
         <Route
           path="/transactions/:id"
+          handle={{ title: 'Transaction Details' }}
           element={
             <ProtectedShell>
               <TransactionDetailPage />
@@ -107,6 +123,7 @@ const router = createBrowserRouter(
         />
         <Route
           path="/settings"
+          handle={{ title: 'Settings' }}
           element={
             <ProtectedShell>
               <SettingsPage />
@@ -122,6 +139,7 @@ const router = createBrowserRouter(
         {/* Public on purpose, and shell-wrapped only when signed in — see ShellOrBare. */}
         <Route
           path="/about"
+          handle={{ title: 'About this project' }}
           element={
             <ShellOrBare>
               <AboutPage />
@@ -132,6 +150,7 @@ const router = createBrowserRouter(
         {/* Full-screen wizards: deliberately NO app shell */}
         <Route
           path="/transfer"
+          handle={{ title: 'Send Money' }}
           element={
             <ProtectedRoute>
               <TransferPage />
@@ -140,6 +159,7 @@ const router = createBrowserRouter(
         />
         <Route
           path="/transfer/internal"
+          handle={{ title: 'Move Money' }}
           element={
             <ProtectedRoute>
               <InternalTransferPage />
@@ -148,6 +168,7 @@ const router = createBrowserRouter(
         />
         <Route
           path="/pin-setup"
+          handle={{ title: 'PIN Setup' }}
           element={
             <ProtectedRoute>
               <PinSetupPage />

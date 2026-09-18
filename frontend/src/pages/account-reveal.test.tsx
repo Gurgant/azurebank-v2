@@ -48,13 +48,14 @@ beforeEach(() => {
 });
 
 describe('account number reveal (ADR-0020)', () => {
-  it('reveals the full number after a PIN step-up, toggles aria-pressed, and re-masks on Hide', async () => {
+  it('reveals the full number after a PIN step-up, renames its toggle, and re-masks on Hide', async () => {
     const user = userEvent.setup();
     renderWithProviders(<AccountsWithStepUp />, { routerEntries: ['/accounts'] });
 
     expect(await screen.findByText(MASKED_MAIN)).toBeInTheDocument();
     const eye = screen.getByRole('button', { name: revealName });
-    expect(eye).toHaveAttribute('aria-pressed', 'false');
+    // The name carries the state; aria-pressed as well would announce "Hide …, pressed".
+    expect(eye).not.toHaveAttribute('aria-pressed');
 
     // Level 1 → the reveal 403s and the shared PIN modal opens.
     await user.click(eye);
@@ -85,7 +86,7 @@ describe('account number reveal (ADR-0020)', () => {
     const hideBtn = await screen.findByRole('button', {
       name: `Hide account number for ${MAIN}`,
     });
-    expect(hideBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(hideBtn).not.toHaveAttribute('aria-pressed');
     await user.click(hideBtn);
 
     expect(await screen.findByText(MASKED_MAIN)).toBeInTheDocument();

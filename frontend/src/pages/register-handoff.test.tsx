@@ -35,7 +35,7 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, email: st
   await user.type(screen.getByLabelText(/azuretag/i), 'test_user');
   await user.type(screen.getByLabelText(/^email$/i), email);
   await user.type(screen.getByLabelText(/^password$/i), 'Password1!');
-  await user.type(screen.getByLabelText(/confirm password/i), 'Password1!');
+  await user.type(screen.getByLabelText(/^confirm password$/i), 'Password1!');
   await user.click(screen.getByRole('button', { name: /create account/i }));
 }
 
@@ -84,5 +84,18 @@ describe('register → PIN setup handoff', () => {
 
     expect(await screen.findByText('DASHBOARD PAGE')).toBeInTheDocument();
     expect(screen.queryByText('PIN SETUP PAGE')).not.toBeInTheDocument();
+  });
+});
+
+describe('register: the two password fields', () => {
+  it('gives each reveal toggle a name of its own', async () => {
+    renderWithProviders(<RegisterHarness />, { routerEntries: ['/register'] });
+
+    // Both used to be "Show password", so a list of the page's buttons held two identical entries.
+    expect(await screen.findByRole('button', { name: 'Show password' })).toBeInTheDocument();
+    const confirm = screen.getByRole('button', { name: 'Show confirm password' });
+    await userEvent.click(confirm);
+    expect(screen.getByRole('button', { name: 'Hide confirm password' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show password' })).toBeInTheDocument();
   });
 });

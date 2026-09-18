@@ -297,7 +297,7 @@ describe('register flow (D15 dual-path + D13 rate limit)', () => {
     await user.type(screen.getByLabelText(/azuretag/i), 'test_user');
     await user.type(screen.getByLabelText(/^email$/i), email);
     await user.type(screen.getByLabelText(/^password$/i), 'Password1!');
-    await user.type(screen.getByLabelText(/confirm password/i), 'Password1!');
+    await user.type(screen.getByLabelText(/^confirm password$/i), 'Password1!');
     await user.click(screen.getByRole('button', { name: /create account/i }));
   }
 

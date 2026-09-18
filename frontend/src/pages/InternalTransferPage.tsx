@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   Text,
   Button,
@@ -147,6 +147,9 @@ export function InternalTransferPage() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
   const [pinNonce, setPinNonce] = useState(0);
+  const pinHintId = useId();
+  const pinErrorId = useId();
+  const pinLockId = useId();
   /*
     An ABSOLUTE deadline (D13), shared with the withdraw dialog and the step-up modal.
 
@@ -520,7 +523,7 @@ export function InternalTransferPage() {
           </MessageBar>
         )}
         {error && (
-          <MessageBar intent="error" role="alert">
+          <MessageBar id={pinErrorId} intent="error" role="alert">
             <MessageBarBody>{error}</MessageBarBody>
           </MessageBar>
         )}
@@ -720,7 +723,7 @@ export function InternalTransferPage() {
               </div>
             </div>
             {/* With no Send control the behaviour has to be discoverable BEFORE the last digit. */}
-            <Text style={{ textAlign: 'center' }}>
+            <Text id={pinHintId} style={{ textAlign: 'center' }}>
               Enter your 6-digit PIN. The transfer sends as soon as the last digit is in.
             </Text>
             <PinInput
@@ -743,10 +746,22 @@ export function InternalTransferPage() {
               // mint AND a second send.
               disabled={isMinting || isSubmitting || pinLockDeadline !== null}
               error={pinError}
+              // Named for what it asks and described by the instruction and by whatever refused
+              // the last attempt, as WithdrawDialog's boxes are; autoFocus is what lets the
+              // `pinNonce` remount put the caret back in box 1 for a retry.
+              autoFocus
+              ariaLabel="Enter your PIN"
+              ariaDescribedBy={[
+                pinHintId,
+                error ? pinErrorId : null,
+                pinLockDeadline !== null ? pinLockId : null,
+              ]
+                .filter(Boolean)
+                .join(' ')}
             />
             {pinLockDeadline !== null && (
               <>
-                <MessageBar intent="error" role="alert">
+                <MessageBar id={pinLockId} intent="error" role="alert">
                   <MessageBarBody>Too many incorrect PIN attempts.</MessageBarBody>
                 </MessageBar>
                 {/* Sibling, not child: role="alert" implies aria-atomic, so a nested timer would

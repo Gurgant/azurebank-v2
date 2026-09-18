@@ -217,9 +217,9 @@ describe('the rest of the page', () => {
     expect(await screen.findByRole('heading', { level: 1 })).not.toHaveTextContent('€2,080.50');
     // The chips must go too: hiding the total while printing its parts underneath hides nothing.
     expect(screen.getByRole('button', { name: /Main Account/ })).not.toHaveTextContent('1,250.50');
-    expect(screen.getByRole('button', { name: 'Show balances' })).toHaveAttribute(
+    // The name says which state it is in; aria-pressed as well read "Show balances, pressed".
+    expect(screen.getByRole('button', { name: 'Show balances' })).not.toHaveAttribute(
       'aria-pressed',
-      'true',
     );
   });
 

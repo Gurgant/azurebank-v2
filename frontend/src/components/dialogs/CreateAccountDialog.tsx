@@ -116,7 +116,8 @@ export function CreateAccountDialog({ open, onClose }: CreateAccountDialogProps)
             <DialogTitle>Add New Account</DialogTitle>
             <DialogContent>
               {showProblemBar && (
-                <MessageBar intent="error">
+                // role="alert", as RenameAccountDialog's bar: a MessageBar alone is announced by nothing.
+                <MessageBar intent="error" role="alert">
                   <MessageBarBody>
                     {problem.detail || 'Could not create the account. Please try again.'}
                   </MessageBarBody>
