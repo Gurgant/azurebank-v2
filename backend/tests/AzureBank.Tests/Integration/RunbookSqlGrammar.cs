@@ -10,9 +10,9 @@ namespace AzureBank.Tests.Integration;
 /// <para>
 /// <b>Why this is a grammar and not a list of verbs.</b> Until 2026-09-18 the pattern was a list of
 /// verbs that grew one review at a time: <c>DBCC</c> in one round, <c>DENY TAKE OWNERSHIP</c> in the
-/// next. Measured against <c>RunbookSqlCorpus.json</c> — 3,012 statements, every one accepted
+/// next. Measured against <c>RunbookSqlCorpus.json</c> — 3,011 statements, every one accepted
 /// by SQL Server's own parser, and 376 sentences an operator runbook could hold — that pattern
-/// missed 819 of the statements standing alone and reported 133 of the sentences: <i>"Grant the
+/// missed 818 of the statements standing alone and reported 133 of the sentences: <i>"Grant the
 /// on-call engineer read access to the dashboard"</i>, <i>"Deny update requests from the vendor
 /// until the contract has been renewed."</i> A verb plus loose evidence is wrong in both directions
 /// at once, because half of T-SQL's verbs are English ones.
@@ -34,7 +34,7 @@ namespace AzureBank.Tests.Integration;
 /// ones.
 /// </para>
 /// <para>
-/// <b>What it reaches, as numbers.</b> Of the corpus's 3,012 statements the scan reports 2,852,
+/// <b>What it reaches, as numbers.</b> Of the corpus's 3,011 statements the scan reports 2,851,
 /// alone and followed by another statement. The other 160 are published in the corpus as
 /// <c>notReported</c> and pinned by the same test, so the list is what a reviewer reads instead of
 /// finding its entries one round at a time: a literal or an expression with no table

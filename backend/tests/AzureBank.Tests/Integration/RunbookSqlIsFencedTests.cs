@@ -57,10 +57,10 @@ namespace AzureBank.Tests.Integration;
 /// runbook outside any fence so were <c>WAITFOR DELAY</c>, <c>RAISERROR(…)</c>, <c>THROW</c>,
 /// <c>PRINT</c>, <c>DENY</c>, <c>CHECKPOINT</c> and <c>RECONFIGURE</c>: each left both guards green.
 /// They got a branch each, and the next review found an unterminated <c>DENY TAKE OWNERSHIP</c>.
-/// Rather than add a tenth verb the pattern was measured, against 3,012 statements SQL Server's
-/// parser accepts and 376 sentences a runbook could hold: it missed 819 of the statements and
+/// Rather than add a tenth verb the pattern was measured, against 3,011 statements SQL Server's
+/// parser accepts and 376 sentences a runbook could hold: it missed 818 of the statements and
 /// reported 133 of the sentences. It is <see cref="RunbookSqlGrammar"/> now, which on the same
-/// corpus reports 2,852 of the statements and 40 of the sentences, and the corpus publishes both
+/// corpus reports 2,851 of the statements and 40 of the sentences, and the corpus publishes both
 /// remainders (<c>notReported</c>, <c>reportedProse</c>) instead of leaving them to be found. The
 /// reading learned three things in the same pass. A fence marker left outside every fence ends a
 /// paragraph, because <c>reconfigure;</c> above a four-space <c>```</c> was joined to it and
@@ -408,7 +408,7 @@ public sealed class RunbookSqlIsFencedTests
         // The remarks quote these four numbers. A corpus edit that moves one fails here, next to
         // the sentence that has to change with it.
         (corpus.AllStatements.Count() + corpus.NotReported.Length, corpus.NotReported.Length)
-            .Should().Be((3012, 160), "RunbookSqlGrammar's remarks say so");
+            .Should().Be((3011, 160), "RunbookSqlGrammar's remarks say so");
         (corpus.Prose.Length + corpus.ReportedProse.Length, corpus.ReportedProse.Length)
             .Should().Be((376, 40), "RunbookSqlGrammar's remarks say so");
     }

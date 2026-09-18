@@ -10,8 +10,12 @@ namespace AzureBank.Tests.Integration;
 /// <remarks>
 /// Every statement was accepted by SQL Server's parser when it was collected, and
 /// <see cref="RunbookSqlCorpusSqlServerTests"/> asks the server under test again, so the file cannot
-/// drift into holding text that is not T-SQL. <see cref="Statements2025"/> are the ones only SQL
-/// Server 2025 parses. <see cref="NotReported"/> is the published list of valid statements the
+/// drift into holding text that is not T-SQL. <see cref="Statements2025"/> are the ones CI's SQL
+/// Server 2022 (16.0.4295) refused and SQL Server 2025 (17.0.4025) parses — <c>CREATE EXTERNAL
+/// MODEL</c>, <c>CREATE JSON INDEX</c>, <c>SET OPTIMIZED_LOCKING</c>, two permissions 2025 added —
+/// and a server older than 2025 is not asked about them. A statement CI refused for its PLATFORM
+/// (<c>CODEPAGE</c> "is not supported on the 'Linux' platform") is not in the corpus at all: whether
+/// it parses depends on where the test runs. <see cref="NotReported"/> is the published list of valid statements the
 /// grammar does not reach, and <see cref="ReportedProse"/> the sentences it reports because they
 /// are also the opening of valid T-SQL; both are pinned, so the numbers
 /// <see cref="RunbookSqlGrammar"/>'s remarks quote cannot go stale quietly. A finding that the scan
