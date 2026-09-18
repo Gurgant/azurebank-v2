@@ -264,11 +264,16 @@ img {
 
 /*
   The page container RouteAnnouncer focuses after a route change (a <main>, or a wizard's <h1>).
-  The focus is for a screen reader and the keyboard's next Tab; nothing on the page should change
-  when it lands, so the container draws no outline. Whether it should is a visual question for U8.
-  Measured 2026-09-17 on the served build: without this rule Chrome matches :focus-visible on the
-  main after a keyboard navigation and draws its focus ring (outline-style auto).
+  A keyboard user has just left a nav link that showed a focus ring, so the container shows one
+  too (WCAG 2.4.7): Fluent's focus stroke where its tokens are in scope, the text colour otherwise.
+  Measured on the served build: Chrome matches :focus-visible on the container after a keyboard
+  navigation and not after a mouse click, so a mouse user sees nothing. Drawn INSIDE a <main>,
+  whose edges are the viewport's and would clip a ring drawn outside it.
 */
-[data-route-focus]:focus {
-  outline: none;
+[data-route-focus]:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2, currentColor);
+  outline-offset: 2px;
+}
+main[data-route-focus]:focus-visible {
+  outline-offset: -2px;
 }

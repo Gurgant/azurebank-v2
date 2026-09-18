@@ -50,6 +50,16 @@ const REPORT_ONLY_RULES = ['color-contrast'];
  */
 const TABSTER_SENTINEL = '[data-tabster-dummy]';
 
+/**
+ * The two shapes a sentinel takes, measured 2026-09-18 over seven pages and both dialogs (26
+ * sentinels): `tabindex="0"` on a page, and `tabindex="-1"` on the page's two while a dialog is
+ * open over it, when Tabster takes them out of the tab order. Anything else carrying the attribute
+ * is not a sentinel, and hiding it from axe would hide a finding.
+ */
+const SENTINEL_SHAPES = ['0', '-1']
+  .map((tabindex) => `i[tabindex="${tabindex}"][role="none"][aria-hidden="true"]`)
+  .join(', ');
+
 type Scan = { name: string; path: string; title: string; ready: (page: Page) => Promise<void> };
 
 const SIGNED_IN: Scan[] = [
@@ -83,6 +93,12 @@ function heading(level: 1 | 2 | 3) {
   };
 }
 
+/** The outline the browser computes for an element, as the three values the ring is made of. */
+function focusRing(el: Element) {
+  const style = getComputedStyle(el);
+  return { style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset };
+}
+
 function labelled(label: string) {
   return async (page: Page) => {
     await expect(page.getByLabel(label, { exact: true })).toBeVisible();
@@ -112,7 +128,7 @@ async function scan(page: Page, name: string, path: string, scope?: string) {
 
   // The exclusion hides sentinels and nothing else: anything else carrying the attribute fails.
   await expect(
-    page.locator(`${TABSTER_SENTINEL}:not(i[role="none"][aria-hidden="true"])`),
+    page.locator(`${TABSTER_SENTINEL}:not(${SENTINEL_SHAPES})`),
     `${name}: the sentinel selector matches something that is not a sentinel`,
   ).toHaveCount(0);
   const excludedElements = await page.locator(TABSTER_SENTINEL).count();
@@ -232,14 +248,32 @@ test.describe('accessibility, signed in', () => {
     await expect(announcer).toHaveText('Accounts page loaded');
     const main = page.getByRole('main');
     await expect(main).toBeFocused();
-    // Focus moves for the screen reader and the keyboard; it draws nothing on the page.
-    expect(await main.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('none');
+    // The keyboard got here, so the ring is this app's, not the browser's default (`auto`).
+    expect(await main.evaluate(focusRing)).toEqual({
+      style: 'solid',
+      width: '2px',
+      offset: '-2px',
+    });
 
     // The wizard has no shell and no <main>: its heading takes focus instead.
     await nav.getByRole('button', { name: 'Transfer' }).press('Enter');
     await expect(page).toHaveTitle('Send Money · AzureBank');
     await expect(announcer).toHaveText('Send Money page loaded');
-    await expect(page.getByRole('heading', { level: 1, name: 'Send Money' })).toBeFocused();
+    const wizardHeading = page.getByRole('heading', { level: 1, name: 'Send Money' });
+    await expect(wizardHeading).toBeFocused();
+    expect(await wizardHeading.evaluate(focusRing)).toEqual({
+      style: 'solid',
+      width: '2px',
+      offset: '2px',
+    });
+
+    // A mouse user sees no ring: the browser does not match :focus-visible after a click.
+    await page.goto('/dashboard');
+    await heading(1)(page);
+    await nav.getByRole('link', { name: 'Accounts' }).click();
+    await expect(page).toHaveTitle('Accounts · AzureBank');
+    await expect(main).toBeFocused();
+    expect((await main.evaluate(focusRing)).style).toBe('none');
   });
 });
 

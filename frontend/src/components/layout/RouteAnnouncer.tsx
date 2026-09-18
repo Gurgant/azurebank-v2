@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, useLocation, useMatches } from 'react-router-dom';
 import { makeStyles } from '@fluentui/react-components';
-import { pageTitle } from './pageTitle';
+import { pageTitle, ROUTE_ANNOUNCE_DELAY_MS } from './pageTitle';
 
 /**
  * What a route change tells someone who cannot see it happen.
@@ -11,14 +11,18 @@ import { pageTitle } from './pageTitle';
  * This sits at the top of the route tree and, for every route that names a title in its `handle`:
  * - sets `document.title` (WCAG 2.4.2), on a load as well as on a change;
  * - on a CHANGE only, writes "<title> page loaded" into a polite status region, the announcement
- *   `docs/design/frontend-design/04a-ux-user-flows.md` specifies;
+ *   `docs/design/frontend-design/04a-ux-user-flows.md` specifies. The region is emptied at the
+ *   change and written `ROUTE_ANNOUNCE_DELAY_MS` later: / and /dashboard are both "Home", and text
+ *   the region already holds is no change for a screen reader to announce. A change that is left
+ *   again inside that delay is never announced;
  * - on a change only, moves focus to the page's `<main>`, or to its `<h1>` where there is no main
  *   (the full-screen wizards), unless focus is already somewhere the new page put it.
  *
  * Focus goes to `<main>` rather than to the heading the UX doc asks for, because the dashboard's
  * `<h1>` is the balance figure. A container that is not focusable gets `tabindex="-1"` for the one
- * focus and loses it on blur, and `index.css` draws no outline for it: the focus is for the reader
- * and the keyboard, and the page looks exactly as it did.
+ * focus and loses it on blur, and `index.css` gives it a focus ring under `:focus-visible`, so a
+ * keyboard user who just left a ringed nav link can see where focus went; after a mouse click the
+ * browser does not match `:focus-visible` and nothing is drawn.
  *
  * Deliberate, and each pinned in `route-announcer.test.tsx`:
  * - A load announces nothing and moves nothing: the browser and the screen reader already treat a
@@ -78,10 +82,18 @@ export function RouteAnnouncer() {
     const el = region.current;
     if (isLoad || !el) return;
 
-    return whenExposed(el, () => {
-      el.textContent = `${title} page loaded`;
+    el.textContent = '';
+    let announcement: number | undefined;
+    const stopWaiting = whenExposed(el, () => {
       focusTheNewPage();
+      announcement = window.setTimeout(() => {
+        el.textContent = `${title} page loaded`;
+      }, ROUTE_ANNOUNCE_DELAY_MS);
     });
+    return () => {
+      stopWaiting();
+      window.clearTimeout(announcement);
+    };
   }, [pathname, title]);
 
   return (
