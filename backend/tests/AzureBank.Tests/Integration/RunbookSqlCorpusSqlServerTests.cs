@@ -87,12 +87,21 @@ public sealed class RunbookSqlCorpusSqlServerTests
             }
         }
 
+        foreach (var refusal in rejected)
+        {
+            _output.WriteLine(refusal);
+        }
+
         _output.WriteLine(
             $"SQL Server {serverVersion}: {toParse.Count - rejected.Count} of {toParse.Count} "
             + $"corpus statements parsed; {unsafeToSend.Count} name PARSEONLY and were not sent; "
             + $"{corpus.AllStatements.Count() + corpus.NotReported.Length - statements.Count} need "
             + "SQL Server 2025 and were not asked");
-        rejected.Should().BeEmpty(
+
+        // As ONE string: BeEmpty on a collection names "at least one item", the first, and the point
+        // of collecting was that a server three versions older names all of its refusals in one run.
+        // Measured on CI's SQL Server 2022: 13 refused, and the collection form showed one.
+        string.Join(Environment.NewLine, rejected).Should().BeEmpty(
             "the corpus is what the scan is measured against, and a line in it that is not T-SQL "
             + "measures nothing; one that only a newer server parses belongs in statements2025");
     }
