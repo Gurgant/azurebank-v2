@@ -281,6 +281,32 @@ describe('RouteAnnouncer', () => {
     await announced('Beta page loaded');
   });
 
+  /*
+    StepUpModal and SessionExpiryWarning live above the router and can stay open across a Back
+    navigation, for as long as the user takes. The wait used to give up after a second and write
+    into the hidden region; when the modal then closed nothing changed, so nothing was announced.
+  */
+  it('waits as long as the page stays hidden, not for a second', async () => {
+    const { go } = mount('/a');
+    const root = screen.getByTestId('app-root');
+    root.setAttribute('aria-hidden', 'true');
+
+    await go('/b');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    });
+
+    expect(region()).toHaveTextContent('');
+    expect(document.activeElement).toBe(document.body);
+
+    await act(async () => {
+      root.removeAttribute('aria-hidden');
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+    await announced('Beta page loaded');
+  });
+
   it('drops a route left while the page was still hidden, wait and all', async () => {
     const { go } = mount('/a');
     const root = screen.getByTestId('app-root');

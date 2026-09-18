@@ -37,11 +37,11 @@ import { pageTitle, ROUTE_ANNOUNCE_DELAY_MS } from './pageTitle';
  * - While a Fluent modal is open, Tabster sets `aria-hidden` on everything outside it, and lifts it
  *   on a 250ms timer after the modal closes. A dialog that navigates (deposit, withdraw, closing
  *   an account) would otherwise announce into a hidden region and focus a hidden `<main>`, so both
- *   wait until the region is exposed again, for at most `EXPOSE_WAIT_MS`.
+ *   wait until the region is exposed again, however long that takes: the two modals above the
+ *   router can stay open across a Back navigation for as long as the user leaves them, and text
+ *   written into a hidden region is never announced, not even when the region is exposed later.
+ *   Leaving the route, or unmounting, ends the wait.
  */
-
-/** Tabster's hidden-update timer is 250ms; this is the most the announcement waits past it. */
-const EXPOSE_WAIT_MS = 1000;
 
 const useStyles = makeStyles({
   // Visually hidden, still read: the region takes no space and draws nothing.
@@ -104,32 +104,24 @@ export function RouteAnnouncer() {
   );
 }
 
-/** Runs `then` once no ancestor of `el` is aria-hidden, or after `EXPOSE_WAIT_MS` regardless. */
+/** Runs `then` once no ancestor of `el` is aria-hidden. The returned function ends the wait. */
 function whenExposed(el: HTMLElement, then: () => void): () => void {
   if (!el.closest('[aria-hidden="true"]')) {
     then();
     return () => {};
   }
-  const stop = () => {
-    observer.disconnect();
-    window.clearTimeout(timer);
-  };
   const observer = new MutationObserver(() => {
     if (!el.closest('[aria-hidden="true"]')) {
-      stop();
+      observer.disconnect();
       then();
     }
   });
-  const timer = window.setTimeout(() => {
-    stop();
-    then();
-  }, EXPOSE_WAIT_MS);
   observer.observe(document.body, {
     attributes: true,
     attributeFilter: ['aria-hidden'],
     subtree: true,
   });
-  return stop;
+  return () => observer.disconnect();
 }
 
 function focusTheNewPage() {
