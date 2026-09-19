@@ -138,8 +138,12 @@ Three states, three remedies, none of them a `GRANT`:
   restore sequence**, so no further log backup can ever be applied to it. If this is the DR copy,
   that command spends the DR copy to end a short outage — and if the API is pointed at a DR copy at
   all, the connection string is the fault. Confirm what it is first:
-  `SELECT TOP 5 restore_date, restore_type FROM msdb.dbo.restorehistory
-  WHERE destination_database_name = DB_NAME() ORDER BY restore_date DESC;`
+
+  ```sql
+  SELECT TOP 5 restore_date, restore_type FROM msdb.dbo.restorehistory
+  WHERE destination_database_name = DB_NAME() ORDER BY restore_date DESC;
+  ```
+
 - **`replica_id` NOT NULL** — an availability-group replica. Ask which role it holds:
 
 ```sql
@@ -775,8 +779,13 @@ assumed not to have.
 **Capture, in this order, before anyone touches the database.** The verifier's full output including
 the exit code **and the UNCOVERED WINDOW block under it**; `export <path>` run to a file OUTSIDE this
 machine, which is the only step here that survives the machine; the sequence it names and the rows on
-either side of it (`SELECT * FROM AuditEvents WHERE Sequence BETWEEN <n>-2 AND <n>+2`); the total row
-count; and the SQL Server default trace or audit for recent writes to `AuditEvents` if it is enabled.
+either side of it (the query below); the total row count; and the SQL Server default trace or audit
+for recent writes to `AuditEvents` if it is enabled.
+
+```sql
+DECLARE @n bigint = 0; -- the sequence the verifier names
+SELECT * FROM AuditEvents WHERE Sequence BETWEEN @n - 2 AND @n + 2;
+```
 
 `export` is safe to run here — it READS the anchor table and writes a file, it refuses to overwrite an
 existing one, and it touches nothing in the database. `anchor` is the verb to leave alone; the section
@@ -1013,7 +1022,12 @@ The headlines, and what each means from THIS verb:
   ⚠️ **The count is complete; the NAMES are not.** A holder whose name begins with none of those
   three is counted and NOT echoed back at you — the verb says it recognises no name, which means
   somebody wrote that row by hand. Read the column yourself:
-  `SELECT LeasedBy, LeasedUntil FROM SubscriberNotices WHERE DeliveredAt IS NULL AND LeasedUntil > SYSUTCDATETIME()`.
+
+  ```sql
+  SELECT LeasedBy, LeasedUntil FROM SubscriberNotices
+  WHERE DeliveredAt IS NULL AND LeasedUntil > SYSUTCDATETIME();
+  ```
+
   ⚠️ **A live lease is not a live process.** Nothing here probes the holder: a runner that claimed
   and then died keeps its rows until the lease lapses, and looks identical to one mid-delivery. So
   the remedy is the lapse, which is what the verb's own next line tells you to wait for.
