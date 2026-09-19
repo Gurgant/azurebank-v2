@@ -51,15 +51,28 @@ instead.** The named `BackendApi` client carries it as a default header; the YAR
 removes whatever the caller sent under that name and sets the BFF's own, next to where it does the
 same for `Authorization`.
 
-**D5 — The key travels over TLS, or to this machine, and follows no redirect.** It is a bearer
-secret, so `http://api.internal` would put it on the network in clear. The BFF refuses to start
-when `BackendApi:BaseUrl` or any YARP destination is neither `https` nor `http` on loopback —
-loopback because that is the development and CI topology, and it crosses no network. YARP reloads
-its configuration while the host runs, so the proxy asks the same question per request and
-withholds the key from a destination that fails it; the API's 401 is then the loud part. Observed
-while testing that: a live reload re-runs the options' validation too, and throws the startup
-message. The BFF's own client follows no redirect, because .NET drops `Authorization` when a
-redirect leaves the authority and keeps every other header; YARP never follows one.
+**D5 — The key travels over TLS, or to this machine, and nothing is forwarded anywhere else.** It
+is a bearer secret, so `http://api.internal` would put it on the network in clear. The BFF refuses
+to start when `BackendApi:BaseUrl` or any YARP destination is neither `https` nor `http` on
+loopback — loopback because that is the development and CI topology, and it crosses no network.
+YARP reloads its configuration while the host runs, so the proxy asks the same question per
+request, and a destination that fails it gets NO request: the transform throws and YARP answers
+502. Observed while testing that: a live reload re-runs the options' validation too, and throws the
+startup message.
+
+> ⚠️ The first version of that per-request guard withheld the credential, logged, and let the
+> request go. Review asked what else was on it, and the measurement answered: with the cluster
+> reloaded to `http://api.internal:5068`, 50 of 50 requests reached that destination, every one
+> carrying `Bearer fake-jwt` — the session's own access token, which the lines below the guard put
+> there. **Withholding one secret while handing over another is not a guard**, and "send less" is
+> not a transport boundary. Hence the throw.
+
+The BFF's own client follows no redirect, because .NET drops `Authorization` when a redirect leaves
+the authority and keeps every other header; YARP never follows one. It trusts an unverifiable
+certificate on loopback alone: that exception exists for ASP.NET's development certificate on
+`https://localhost:7215`, and granted to the whole Development environment it would also cover a
+remote `https://` destination, which this same decision allows — so whoever answered that address
+would be handed the key, certificate or not.
 
 **D6 — What is exempt.** `/health/*`, which an orchestrator calls with no credential and which
 says nothing about a customer. In Development only, `/openapi` and `/scalar`, which a developer

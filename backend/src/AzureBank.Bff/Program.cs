@@ -190,12 +190,13 @@ try
     })
     .ConfigurePrimaryHttpMessageHandler(() =>
     {
-        // NO REDIRECTS. .NET drops Authorization when a redirect leaves the authority and keeps
-        // every other header, so a 302 from the API's address to anywhere else would carry
-        // X-AzureBank-Service-Key with it (ADR-0055). Nothing the BFF calls redirects; a 3xx is
-        // handed back as the answer it is. YARP, the other road, never follows one.
+        // No redirects, and the dev certificate trusted on loopback only (ADR-0055 D5): see
+        // ServiceCredentialTransport.CreateHandler for why each of those is not optional.
         return ServiceCredentialTransport.CreateHandler(
-            acceptAnyServerCertificate: builder.Environment.IsDevelopment());
+            builder.Environment.IsDevelopment(),
+            Uri.TryCreate(builder.Configuration["BackendApi:BaseUrl"], UriKind.Absolute, out var api)
+                ? api
+                : null);
     });
 
     // YARP Reverse Proxy with Bearer token transform

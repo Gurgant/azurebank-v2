@@ -30,10 +30,14 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
 
     public ServiceCredentialTests(WebApplicationFactory<Program> factory) => _factory = factory;
 
-    /// <summary>What the API would receive under the credential's header name, per request.</summary>
+    /// <summary>What the API would receive, per request that reaches it.</summary>
     private sealed class Recorder : IForwarderHttpClientFactory
     {
         public List<string[]> Credentials { get; } = [];
+
+        /// <summary>The session's bearer, as the destination would see it. Recorded because the
+        /// credential is not the only secret a wrong destination would be handed.</summary>
+        public List<string?> Authorization { get; } = [];
 
         public HttpResponseMessage Respond(HttpRequestMessage request)
         {
@@ -41,6 +45,7 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
                 request.Headers.TryGetValues(ServiceCredentialOptions.HeaderName, out var values)
                     ? [.. values]
                     : []);
+            Authorization.Add(request.Headers.Authorization?.ToString());
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
@@ -188,7 +193,7 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
     }
 
     [Fact]
-    public async Task TheProxy_WithholdsTheKey_WhenAReloadPointsItAtACleartextDestination()
+    public async Task TheProxy_ForwardsNothing_WhenAReloadPointsItAtACleartextDestination()
     {
         // Startup refuses such a destination, but YARP reloads its configuration while the host
         // runs. An in-memory layer added last outranks appsettings.json and survives Reload().
@@ -205,7 +210,10 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
             await client.SendAsync(before);
         }
 
+        // The control: while the destination is the configured https one, the request goes through
+        // carrying both secrets. What changes below is the destination, and nothing else.
         recorder.Credentials.Should().ContainSingle().Which.Should().Equal(TestServiceCredential.Key);
+        recorder.Authorization.Should().ContainSingle().Which.Should().Be("Bearer fake-jwt");
 
         var configuration = (IConfigurationRoot)host.Services.GetRequiredService<IConfiguration>();
         configuration["ReverseProxy:Clusters:backend-api:Destinations:primary:Address"] = "http://api.internal:5068";
@@ -217,29 +225,53 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
         reload.Should().Throw<Exception>().WithMessage("*The service credential would travel in clear*");
 
         // The reload reaches YARP through a change token, so ask until it has.
-        string[] sent = [TestServiceCredential.Key];
-        for (var attempt = 0; attempt < 50 && sent.Length > 0; attempt++)
+        var reached = recorder.Credentials.Count;
+        HttpResponseMessage? answer = null;
+        for (var attempt = 0; attempt < 50; attempt++)
         {
             await Task.Delay(100);
             using var after = ProxiedRead(host);
-            await client.SendAsync(after);
-            sent = recorder.Credentials[^1];
+            answer?.Dispose();
+            answer = await client.SendAsync(after);
+            if (answer.StatusCode != HttpStatusCode.OK)
+            {
+                break;
+            }
         }
 
-        sent.Should().BeEmpty("a cleartext destination gets the request without the key, and the API's 401 says so");
+        using (answer)
+        {
+            // FAIL CLOSED, not "send less". The first version of this guard withheld the
+            // credential, logged, and fell through to the session block: measured on it, 50 of 50
+            // requests reached http://api.internal:5068 and every one carried "Bearer fake-jwt".
+            // So the assertion is on the REQUESTS, not on what they carried.
+            recorder.Credentials.Should().HaveCount(reached, "no request may reach an unsafe destination");
+            recorder.Authorization.Should().HaveCount(reached, "the session's bearer goes nowhere either");
+            answer!.StatusCode.Should().Be(HttpStatusCode.BadGateway,
+                "the caller is told the proxy could not forward, which is what YARP's 502 says");
+        }
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void TheBffsOwnClient_FollowsNoRedirect(bool development)
+    // Development, loopback: the one place the development certificate lives.
+    [InlineData(true, "https://localhost:7215", true)]
+    [InlineData(true, "https://127.0.0.1:7215", true)]
+    // Development, but NOT this machine: an unverifiable certificate there is whoever answered.
+    [InlineData(true, "https://api.internal", false)]
+    [InlineData(true, null, false)]
+    // Outside Development the certificate is validated wherever the API is.
+    [InlineData(false, "https://localhost:7215", false)]
+    [InlineData(false, "https://api.internal", false)]
+    public void TheBffsOwnClient_FollowsNoRedirect_AndTrustsNoCertificateOffThisMachine(
+        bool development, string? destination, bool trustsAnyCertificate)
     {
         // .NET drops Authorization on a redirect that leaves the authority and keeps every other
         // header, so a followed redirect would carry the key wherever the 302 pointed.
-        using var handler = ServiceCredentialTransport.CreateHandler(acceptAnyServerCertificate: development);
+        using var handler = ServiceCredentialTransport.CreateHandler(
+            development, destination is null ? null : new Uri(destination));
 
         handler.AllowAutoRedirect.Should().BeFalse();
-        (handler.ServerCertificateCustomValidationCallback is not null).Should().Be(development);
+        (handler.ServerCertificateCustomValidationCallback is not null).Should().Be(trustsAnyCertificate);
     }
 
     [Theory]
