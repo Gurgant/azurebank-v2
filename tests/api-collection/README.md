@@ -105,6 +105,7 @@ The collection uses these variables (set automatically by tests):
 
 | Variable | Set By | Description |
 |----------|--------|-------------|
+| `serviceKey` | the environment file | The API's service credential (ADR-0055), sent by `collection.bru` as `X-AzureBank-Service-Key` on every request. `local.bru` holds CI's throwaway value; against your own API, set it to your `ServiceCredential:BffKey` |
 | `authToken` | Register/Login | JWT authentication token |
 | `accountId` | Register/List Accounts | Primary account ID |
 | `transactionId` | Deposit/Withdraw | Transaction ID |

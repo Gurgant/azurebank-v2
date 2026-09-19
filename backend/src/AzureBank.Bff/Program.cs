@@ -16,6 +16,7 @@ using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Bff.Transforms;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -83,6 +84,17 @@ try
         .Bind(builder.Configuration.GetSection(ProxyOptions.SectionName))
         .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<ProxyOptions>, ProxyOptionsValidator>();
+
+    // The credential the API knows this host by (ADR-0055). Fail fast: without it every call to
+    // the API answers 401 SERVICE_CREDENTIAL_REQUIRED, and a BFF that starts and then cannot log
+    // anyone in is harder to read than one that refuses to start and says why.
+    builder.Services.AddOptions<ServiceCredentialOptions>()
+        .Bind(builder.Configuration.GetSection(ServiceCredentialOptions.SectionName))
+        .Validate(
+            o => ServiceCredentialOptions.IsUsable(o.BffKey),
+            "ServiceCredential:BffKey must be configured with at least 32 characters, the same " +
+            "value the API holds (dotnet user-secrets in development; see README)")
+        .ValidateOnStart();
 
     // Where the built SPA lives, when this host serves it (ADR-0054). Unset in the dev loop.
     builder.Services.AddOptions<SpaOptions>()
@@ -159,10 +171,15 @@ try
     builder.Services.AddHostedService<SessionCleanupService>();
 
     // HTTP client for backend API
-    builder.Services.AddHttpClient("BackendApi", client =>
+    builder.Services.AddHttpClient("BackendApi", (services, client) =>
     {
         client.BaseAddress = new Uri(builder.Configuration["BackendApi:BaseUrl"]!);
         client.DefaultRequestHeaders.Add("Accept", "application/json");
+
+        // One of the BFF's two roads to the API; the proxy's transform is the other (ADR-0055).
+        client.DefaultRequestHeaders.Add(
+            ServiceCredentialOptions.HeaderName,
+            services.GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
     })
     .ConfigurePrimaryHttpMessageHandler(() =>
     {

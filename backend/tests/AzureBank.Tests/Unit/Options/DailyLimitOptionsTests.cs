@@ -132,6 +132,7 @@ public class DailyLimitOptionsTests
         {
             ["Idempotency:HashKey"] = CustomWebApplicationFactory.IdempotencyHashKey,
             ["StepUp:BindingKey"] = CustomWebApplicationFactory.StepUpBindingKey,
+            ["ServiceCredential:BffKey"] = CustomWebApplicationFactory.ServiceCredentialKey,
             ["Security:PinPepper"] = CustomWebApplicationFactory.PinPepper,
             ["Audit:ChainKey"] = CustomWebApplicationFactory.AuditChainKey,
             ["Audit:AnchorKey"] = CustomWebApplicationFactory.AuditAnchorKey,

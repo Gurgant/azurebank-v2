@@ -374,6 +374,9 @@ jobs:
       # StepUp:BindingKey is ValidateOnStart, so an unset value is a startup crash, not a
       # degraded run.
       STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
+      # ADR-0055: the key the API knows the BFF by. ValidateOnStart in BOTH hosts, and the same
+      # value in both, or every call the BFF makes answers 401 SERVICE_CREDENTIAL_REQUIRED.
+      SERVICE_CREDENTIAL_KEY: "ci-only-throwaway-service-credential-0123456789abcdef"
       # ADR-0044, and separate again for the same reason: CHAIN_KEY keys the audit hash chain,
       # ANCHOR_KEY authenticates the anchor records, and neither may forge the other's answer.
       # Both ValidateOnStart, so leaving either unset does not degrade the audit trail — it
@@ -423,6 +426,7 @@ jobs:
           Jwt__Secret: ${{ env.JWT_SECRET }}
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
           StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
+          ServiceCredential__BffKey: ${{ env.SERVICE_CREDENTIAL_KEY }}
           Audit__ChainKey: ${{ env.AUDIT_CHAIN_KEY }}
           Audit__AnchorKey: ${{ env.AUDIT_ANCHOR_KEY }}
           Security__PinPepper: ${{ env.PIN_PEPPER }}
@@ -445,6 +449,7 @@ jobs:
         working-directory: backend/src/AzureBank.Bff
         env:
           Jwt__Secret: ${{ env.JWT_SECRET }}
+          ServiceCredential__BffKey: ${{ env.SERVICE_CREDENTIAL_KEY }}
           ASPNETCORE_ENVIRONMENT: Development
         # The BFF reaches the API two ways and BOTH must be redirected off the dev HTTPS default
         # (https://localhost:7215): the YARP cluster for proxied /api/* traffic, and the named
@@ -601,6 +606,9 @@ jobs:
       JWT_SECRET: "ci-only-throwaway-signing-key-0123456789abcdef0123456789abcdef"
       IDEMPOTENCY_HASH_KEY: "ci-only-throwaway-idempotency-hmac-key-0123456789abcdef"
       STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
+      # ADR-0055: the key the API knows the BFF by. ValidateOnStart in BOTH hosts, and the same
+      # value in both, or every call the BFF makes answers 401 SERVICE_CREDENTIAL_REQUIRED.
+      SERVICE_CREDENTIAL_KEY: "ci-only-throwaway-service-credential-0123456789abcdef"
       AUDIT_CHAIN_KEY: "ci-only-throwaway-audit-chain-key-0123456789abcdef"
       AUDIT_ANCHOR_KEY: "ci-only-throwaway-audit-anchor-key-fedcba9876543210"
       PIN_PEPPER: "ci-only-throwaway-pin-pepper-0123456789abcdef0123456789"
@@ -645,6 +653,7 @@ jobs:
           Jwt__Secret: ${{ env.JWT_SECRET }}
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
           StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
+          ServiceCredential__BffKey: ${{ env.SERVICE_CREDENTIAL_KEY }}
           Audit__ChainKey: ${{ env.AUDIT_CHAIN_KEY }}
           Audit__AnchorKey: ${{ env.AUDIT_ANCHOR_KEY }}
           Security__PinPepper: ${{ env.PIN_PEPPER }}
@@ -673,6 +682,7 @@ jobs:
       - name: Bearer token from the real login
         run: |
           TOKEN=$(curl -fsS -H 'Content-Type: application/json' \
+            -H "X-AzureBank-Service-Key: $SERVICE_CREDENTIAL_KEY" \
             -d '{"email":"john@example.com","password":"Test123!"}' \
             "${{ env.API_URL }}/api/auth/login" \
             | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["token"])')
@@ -688,6 +698,7 @@ jobs:
           schemathesis run docs/api/openapiv1.json \
             --url "${{ env.API_URL }}" \
             -H "Authorization: Bearer $API_TOKEN" \
+            -H "X-AzureBank-Service-Key: $SERVICE_CREDENTIAL_KEY" \
             --checks status_code_conformance,content_type_conformance,response_headers_conformance,response_schema_conformance \
             --max-examples 50 \
             --workers 1 \
