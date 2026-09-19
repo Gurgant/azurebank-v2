@@ -127,6 +127,17 @@ public static class ServiceCollectionExtensions
                 "StepUp:Window must be positive")
             .ValidateOnStart();
 
+        // The BFF's service credential (ADR-0055). A secret like the keys above, with the same
+        // fail-fast treatment, and for a sharper reason: an API that started without it and let
+        // every caller in would be the hole the credential closes.
+        services.AddOptions<ServiceCredentialOptions>()
+            .Bind(configuration.GetSection(ServiceCredentialOptions.SectionName))
+            .Validate(
+                o => ServiceCredentialOptions.IsUsable(o.BffKey),
+                "ServiceCredential:BffKey must be configured with at least 32 characters, the same " +
+                "value the BFF holds (dotnet user-secrets in development; see README)")
+            .ValidateOnStart();
+
         services.AddDailyLimit(configuration);
 
         // Audit trail chain key (ADR-0044). A secret, with the same fail-fast treatment as

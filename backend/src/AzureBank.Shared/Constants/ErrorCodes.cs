@@ -56,6 +56,12 @@ public static class ErrorCodes
     // WHY a refresh was rejected (the specific reason is logged server-side; ADR-0021).
     public const string RefreshTokenInvalid = "REFRESH_TOKEN_INVALID";
 
+    /// <summary>
+    /// The request did not come through the BFF (ADR-0055). One code for a missing service
+    /// credential and a wrong one, so the answer says nothing about how close a guess came.
+    /// </summary>
+    public const string ServiceCredentialRequired = "SERVICE_CREDENTIAL_REQUIRED";
+
     // Authorization
     public const string AccessDenied = "ACCESS_DENIED";
     public const string InsufficientPermissions = "INSUFFICIENT_PERMISSIONS";

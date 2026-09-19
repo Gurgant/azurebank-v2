@@ -39,7 +39,8 @@ detail hanging off them.
 [0019](0019-spa-bff-integration.md) SPA/BFF integration ·
 [0039](0039-bff-session-cache-is-a-fallback.md) the BFF session cache is a fallback, never the answer ·
 [0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) the BFF serves the
-built SPA under a CSP measured against it
+built SPA under a CSP measured against it ·
+[0055](0055-the-api-serves-one-client-the-bff.md) the API serves one client, the BFF
 
 **Money** — [0009](0009-idempotency-monetary-operations.md) idempotent monetary operations (server) ·
 [0022](0022-client-money-mutation-protocol.md) client money-mutation protocol ·
@@ -215,6 +216,7 @@ The next free number is **0055**.
 | [ADR-0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | A notice names the audit row it belongs to | Accepted | 2026-09-09 |
 | [ADR-0053](0053-the-committed-contract-is-what-the-api-generates.md) | The committed contract is what the API generates | Accepted | 2026-09-10 |
 | [ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) | The BFF serves the built SPA under a CSP measured against it | Accepted | 2026-09-11 |
+| [ADR-0055](0055-the-api-serves-one-client-the-bff.md) | The API serves one client, the BFF | Accepted | 2026-09-19 |
 
 </details>
 ## Creating a New ADR

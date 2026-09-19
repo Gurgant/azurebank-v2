@@ -1,5 +1,6 @@
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
+using AzureBank.Shared.Options;
 using Microsoft.Extensions.Options;
 using Yarp.ReverseProxy.Transforms;
 using Yarp.ReverseProxy.Transforms.Builder;
@@ -55,6 +56,19 @@ public class BearerTokenTransformProvider : ITransformProvider
               them, and neither is load-bearing alone.
             */
             transformContext.ProxyRequest.Headers.Authorization = null;
+
+            /*
+              THE SERVICE CREDENTIAL, THE SAME WAY (ADR-0055): whatever the caller sent under that
+              name is dropped, then this host's key is set. YARP would otherwise copy a browser's
+              own X-AzureBank-Service-Key to the API beside ours, and the API refuses a request
+              that carries two. A browser cannot know the key; it must not be able to break the
+              request by guessing at it either.
+            */
+            transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.HeaderName);
+            transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
+                ServiceCredentialOptions.HeaderName,
+                httpContext.RequestServices
+                    .GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
 
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))
