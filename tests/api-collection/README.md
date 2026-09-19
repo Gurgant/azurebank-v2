@@ -27,8 +27,31 @@ brew install bruno
 
 | Environment | File | Purpose |
 |-------------|------|---------|
-| `local` | `environments/local.bru` | Local development |
-| `ci` | `environments/ci.bru` | CI/CD pipeline |
+| `local` | `environments/local.bru` | Local development. `serviceKey` ships EMPTY and **stays** empty: this file is tracked and nothing in `.gitignore` covers it, so a key written here is a key committed. Pass it per run instead (below). |
+| `ci` | `environments/ci.bru` | The manual `Contract tests` workflow, which runs `--env ci`. Self-contained: the throwaway key and the `http://localhost:5068` that workflow starts the API on. Nothing in it is a real secret. |
+
+The API serves only the BFF (ADR-0055), so every request here carries
+`X-AzureBank-Service-Key`, which `collection.bru` reads from `serviceKey`. Supply your own
+`ServiceCredential:BffKey` — the root README's recipe generates it — on the command line:
+
+```bash
+bru run . --env local --env-var serviceKey="$YOUR_KEY"
+```
+
+`BrunoEnvironmentSecretTests` fails the build if that value stops being empty in `local.bru`, or if
+this file starts telling you to write it there.
+
+**Measured on 2026-09-19** with Bruno CLI 4.1.0 against the running API, because the wiring above
+had been written and not run: with `--env-var serviceKey=` set, `register` answered **201**; with
+`local.bru`'s empty value, every request answered **401**. Two pre-existing defects in the
+collection surfaced in the same run, both older than the service credential and neither fixed here:
+
+- `baseUrl` is `http://localhost:5068`, which fits CI's HTTP-only API. The local dev profile also
+  listens on HTTPS, so `UseHttpsRedirection` answers **307** to every request on that port. Locally,
+  add `--env-var baseUrl=https://localhost:7215 --insecure`.
+- `login` posts `{{testEmail}}` (`test@example.com`), but `register` creates
+  `test.{{$timestamp}}@example.com` and never writes it back, so every request after `register`
+  answers 401 `INVALID_CREDENTIALS` — the collection's own credentials, not the service key.
 
 ## Collection Structure
 
@@ -105,6 +128,7 @@ The collection uses these variables (set automatically by tests):
 
 | Variable | Set By | Description |
 |----------|--------|-------------|
+| `serviceKey` | the environment file, by hand | The API's service credential (ADR-0055), sent by `collection.bru` as `X-AzureBank-Service-Key` on every request. Empty in `local.bru` by design — a committed key would be both a wrong value and a bad habit |
 | `authToken` | Register/Login | JWT authentication token |
 | `accountId` | Register/List Accounts | Primary account ID |
 | `transactionId` | Deposit/Withdraw | Transaction ID |

@@ -52,6 +52,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         "integration-tests-only-stepup-binding-key-0123456789abcdef";
 
     /// <summary>
+    /// Test-only service credential (ADR-0055): the key the API knows the BFF by. Public so a test
+    /// can build a client WITHOUT it, or with a wrong one. NOT a real secret.
+    /// </summary>
+    public const string ServiceCredentialKey =
+        "integration-tests-only-service-credential-0123456789abcdef";
+
+    /// <summary>
     /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
     /// PasswordHasher when recomputing hashes directly. NOT a real secret.
     /// </summary>
@@ -254,6 +261,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _interceptors.Add(interceptor);
     }
 
+    /// <summary>
+    /// Every client this factory hands out speaks as the BFF does, service credential included
+    /// (ADR-0055): these tests are about what the API answers its one client. The tests about what
+    /// it answers anyone else are <c>ServiceCredentialTests</c>, which take the header off again.
+    /// </summary>
+    protected override void ConfigureClient(HttpClient client)
+    {
+        base.ConfigureClient(client);
+        client.DefaultRequestHeaders.Add(
+            AzureBank.Shared.Options.ServiceCredentialOptions.HeaderName, ServiceCredentialKey);
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // The Testing environment has no appsettings.Testing.json, so the required
@@ -264,6 +283,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
         builder.UseSetting("Idempotency:HashKey", IdempotencyHashKey);
         builder.UseSetting("StepUp:BindingKey", StepUpBindingKey);
+        builder.UseSetting("ServiceCredential:BffKey", ServiceCredentialKey);
 
         // PIN-hash pepper (ADR-0011). Test-only value.
         builder.UseSetting("Security:PinPepper", PinPepper);

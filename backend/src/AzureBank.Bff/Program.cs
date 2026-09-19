@@ -16,6 +16,7 @@ using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Bff.Transforms;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -83,6 +84,24 @@ try
         .Bind(builder.Configuration.GetSection(ProxyOptions.SectionName))
         .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<ProxyOptions>, ProxyOptionsValidator>();
+
+    // The credential the API knows this host by (ADR-0055). Fail fast: without it every call to
+    // the API answers 401 SERVICE_CREDENTIAL_REQUIRED, and a BFF that starts and then cannot log
+    // anyone in is harder to read than one that refuses to start and says why.
+    builder.Services.AddOptions<ServiceCredentialOptions>()
+        .Bind(builder.Configuration.GetSection(ServiceCredentialOptions.SectionName))
+        .Validate(
+            o => ServiceCredentialOptions.IsUsable(o.BffKey),
+            "ServiceCredential:BffKey must be configured with at least 32 characters, the same " +
+            "value the API holds (dotnet user-secrets in development; see README)")
+        // The key is a bearer secret: it goes over TLS or to this machine, never in clear across
+        // a network. Checked here for both roads, and again per request on the proxy's, whose
+        // configuration can reload.
+        .Validate(
+            _ => ServiceCredentialTransport.UnsafeDestinations(builder.Configuration).Count == 0,
+            "The service credential would travel in clear: every API destination must be https, or " +
+            "http on loopback. Check BackendApi:BaseUrl and ReverseProxy:Clusters:*:Destinations:*:Address")
+        .ValidateOnStart();
 
     // Where the built SPA lives, when this host serves it (ADR-0054). Unset in the dev loop.
     builder.Services.AddOptions<SpaOptions>()
@@ -159,21 +178,25 @@ try
     builder.Services.AddHostedService<SessionCleanupService>();
 
     // HTTP client for backend API
-    builder.Services.AddHttpClient("BackendApi", client =>
+    builder.Services.AddHttpClient("BackendApi", (services, client) =>
     {
         client.BaseAddress = new Uri(builder.Configuration["BackendApi:BaseUrl"]!);
         client.DefaultRequestHeaders.Add("Accept", "application/json");
+
+        // One of the BFF's two roads to the API; the proxy's transform is the other (ADR-0055).
+        client.DefaultRequestHeaders.Add(
+            ServiceCredentialOptions.HeaderName,
+            services.GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
     })
     .ConfigurePrimaryHttpMessageHandler(() =>
     {
-        // Accept self-signed certs in development
-        var handler = new HttpClientHandler();
-        if (builder.Environment.IsDevelopment())
-        {
-            handler.ServerCertificateCustomValidationCallback =
-                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-        }
-        return handler;
+        // No redirects, and the dev certificate trusted on loopback only (ADR-0055 D5): see
+        // ServiceCredentialTransport.CreateHandler for why each of those is not optional.
+        return ServiceCredentialTransport.CreateHandler(
+            builder.Environment.IsDevelopment(),
+            Uri.TryCreate(builder.Configuration["BackendApi:BaseUrl"], UriKind.Absolute, out var api)
+                ? api
+                : null);
     });
 
     // YARP Reverse Proxy with Bearer token transform

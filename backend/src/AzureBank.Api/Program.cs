@@ -156,7 +156,13 @@ try
     app.UseHttpsRedirection();
 
     // No CORS, by design (ADR-0018): the browser only ever reaches the API through the
-    // BFF's same-origin proxy; direct API access is server-to-server or Swagger/dev.
+    // BFF's same-origin proxy. (Until 2026-09-19 this went on "direct API access is
+    // server-to-server or Swagger/dev", which was true, and was the hole: see below.)
+
+    // Only the BFF (ADR-0055). Before authentication, so a caller that is not the BFF learns
+    // nothing about its token; after the handlers above, so its refusal is logged with a
+    // correlation id like any other request. Health probes pass without the credential.
+    app.UseServiceCredential();
 
     // Authentication & Authorization (order matters!)
     app.UseAuthentication();

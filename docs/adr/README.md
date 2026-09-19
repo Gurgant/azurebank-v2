@@ -39,7 +39,8 @@ detail hanging off them.
 [0019](0019-spa-bff-integration.md) SPA/BFF integration ·
 [0039](0039-bff-session-cache-is-a-fallback.md) the BFF session cache is a fallback, never the answer ·
 [0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) the BFF serves the
-built SPA under a CSP measured against it
+built SPA under a CSP measured against it ·
+[0055](0055-the-api-serves-one-client-the-bff.md) the API serves one client, the BFF
 
 **Money** — [0009](0009-idempotency-monetary-operations.md) idempotent monetary operations (server) ·
 [0022](0022-client-money-mutation-protocol.md) client money-mutation protocol ·
@@ -153,7 +154,7 @@ the end of this page are the template's; only Accepted has ever been used.
 | [0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | 2026-09-11 (residual, measured; no ADR or PR named) | A nulled `AuditEventId` is asked the old question, so for a repeatable kind another row of the same user answers for it. |
 | [0053](0053-the-committed-contract-is-what-the-api-generates.md) | 2026-09-11, twice (no PR named) · 2026-09-14, twice (the XML-generator fix; no PR named) · 2026-09-15, twice (Schemathesis made a gate; no PR named) | The comma-decimal-locale defect withdrawn as false, measured through the real route; the "either defect fixed" trigger narrowed to the XML generator; the XML-generator defect fixed and "it is why D3's newlines are in the contract" struck, the trigger's prediction wrong: the newlines moved, so D3's normalisation stays; D6 moved: Schemathesis gates runtime conformance on every PR in `ci.yml`'s `conformance` job, and the "Gating Schemathesis" trigger struck as done. |
 
-The next free number is **0055**.
+The next free number is **0056**.
 
 <details>
 <summary>Full list in numeric order</summary>
@@ -215,6 +216,7 @@ The next free number is **0055**.
 | [ADR-0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | A notice names the audit row it belongs to | Accepted | 2026-09-09 |
 | [ADR-0053](0053-the-committed-contract-is-what-the-api-generates.md) | The committed contract is what the API generates | Accepted | 2026-09-10 |
 | [ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) | The BFF serves the built SPA under a CSP measured against it | Accepted | 2026-09-11 |
+| [ADR-0055](0055-the-api-serves-one-client-the-bff.md) | The API serves one client, the BFF | Accepted | 2026-09-19 |
 
 </details>
 ## Creating a New ADR

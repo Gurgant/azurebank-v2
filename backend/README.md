@@ -612,9 +612,12 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | `Audit__ChainKey`                      | Audit chain HMAC key (32+, ADR-0044)     | -           |
 | `Audit__AnchorKey`                     | Audit anchor HMAC key (32+, ADR-0044)    | -           |
 | `Security__PinPepper`                  | PIN pepper (32+, ADR-0011) — also Seeder | -           |
+| `ServiceCredential__BffKey`            | The BFF's key (32+, ADR-0055) — also BFF | -           |
 
-The six secrets are the root README's recipe spelled with `__` instead of `:`; in development they
-come from `dotnet user-secrets`. The Seeder needs only the connection string and the pepper.
+The seven secrets are the root README's recipe spelled with `__` instead of `:` (six until
+2026-09-19, when the service credential joined them); in development they come from
+`dotnet user-secrets`. The Seeder needs only the connection string and the pepper, and the BFF
+only `ServiceCredential__BffKey`, the same value the API holds.
 
 ---
 

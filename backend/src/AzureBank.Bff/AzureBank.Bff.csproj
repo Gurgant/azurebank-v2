@@ -7,6 +7,12 @@
     Note: Package versions managed centrally in Directory.Packages.props
   -->
 
+  <PropertyGroup Label="Local secrets">
+    <!-- Enables `dotnet user-secrets` for ServiceCredential:BffKey in Development (ADR-0055).
+         See the root README "Running it". Nothing secret is committed. -->
+    <UserSecretsId>azurebank-bff</UserSecretsId>
+  </PropertyGroup>
+
   <ItemGroup Label="BFF Gateway">
     <!-- YARP Reverse Proxy -->
     <PackageReference Include="Yarp.ReverseProxy" />

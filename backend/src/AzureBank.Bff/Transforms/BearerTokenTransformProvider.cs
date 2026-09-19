@@ -1,5 +1,6 @@
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
+using AzureBank.Shared.Options;
 using Microsoft.Extensions.Options;
 using Yarp.ReverseProxy.Transforms;
 using Yarp.ReverseProxy.Transforms.Builder;
@@ -55,6 +56,45 @@ public class BearerTokenTransformProvider : ITransformProvider
               them, and neither is load-bearing alone.
             */
             transformContext.ProxyRequest.Headers.Authorization = null;
+
+            /*
+              THE SERVICE CREDENTIAL, THE SAME WAY (ADR-0055): whatever the caller sent under that
+              name is dropped, then this host's key is set. YARP would otherwise copy a browser's
+              own X-AzureBank-Service-Key to the API beside ours, and the API refuses a request
+              that carries two. A browser cannot know the key; it must not be able to break the
+              request by guessing at it either.
+            */
+            transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.HeaderName);
+
+            /*
+              OVER TLS OR TO THIS MACHINE ONLY, AND NOTHING IS FORWARDED OTHERWISE. Startup refuses
+              such a destination, but YARP reloads its configuration while the host runs, so the
+              rule is asked again per request.
+
+              THIS THROWS RATHER THAN SENDING LESS, and the first version did send less: it withheld
+              the credential, logged, and fell through to the session block below. Measured on that
+              version with a reload pointing the cluster at http://api.internal:5068 — 50 of 50
+              requests reached that destination, every one of them carrying `Bearer fake-jwt`, the
+              session's own access token. Withholding one secret while handing over another is not
+              a guard. YARP answers 502 when a request transform throws (ForwarderError
+              .RequestCreation), which is the truth: it could not forward this.
+            */
+            if (!ServiceCredentialTransport.IsSafe(
+                    Uri.TryCreate(transformContext.DestinationPrefix, UriKind.Absolute, out var destination)
+                        ? destination
+                        : null))
+            {
+                httpContext.RequestServices
+                    .GetRequiredService<ILogger<BearerTokenTransformProvider>>()
+                    .LogError("Not forwarded: the API destination is neither https nor loopback");
+                throw new InvalidOperationException(
+                    "The API destination is neither https nor loopback, so nothing is forwarded to it.");
+            }
+
+            transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
+                ServiceCredentialOptions.HeaderName,
+                httpContext.RequestServices
+                    .GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
 
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))

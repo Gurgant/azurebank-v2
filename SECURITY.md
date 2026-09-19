@@ -66,6 +66,18 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
 
 ### Where each guarantee stops without the BFF
 
+⚠️ **Since 2026-09-19 there is no "without the BFF" (ADR-0055).** The API refuses, before it looks
+at a token, any request that does not carry the BFF's service credential — every request but two
+exemptions, which carry nothing about a customer: `/health/*` in all environments, and `/openapi`
+and `/scalar` in Development, where a developer opens the documentation in a browser. The
+operations that documentation describes are not exempt. Measured that day with
+the requests below sent straight to the API: `401 SERVICE_CREDENTIAL_REQUIRED` from the first one,
+register and login included, so no bearer token is issued to begin with. What follows is kept as
+measured on 2026-09-15 because it says what each control would be worth to a caller who ALSO held
+that key, which is the BFF's host and nobody else; in production the API has no public address
+either. The last row's residual is closed by this and not by a PIN check inside the API, which
+ADR-0055 records as decided against.
+
 Two origins answer `/api/*`: the BFF on :5000, which the browser uses, and the API on :7215,
 which accepts a bearer token from anyone holding one — its own login answers with the JWT. Several
 of the controls on this page live in the BFF process, and a caller who presents a token to the API
