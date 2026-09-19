@@ -66,25 +66,35 @@ public class BearerTokenTransformProvider : ITransformProvider
             */
             transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.HeaderName);
 
-            // Over TLS or to this machine only. Startup refuses any other destination, but YARP
-            // reloads its configuration while the host runs, so the rule is asked again here:
-            // without the key the API answers 401, which is loud, and the key stays off the wire.
-            if (ServiceCredentialTransport.IsSafe(
+            /*
+              OVER TLS OR TO THIS MACHINE ONLY, AND NOTHING IS FORWARDED OTHERWISE. Startup refuses
+              such a destination, but YARP reloads its configuration while the host runs, so the
+              rule is asked again per request.
+
+              THIS THROWS RATHER THAN SENDING LESS, and the first version did send less: it withheld
+              the credential, logged, and fell through to the session block below. Measured on that
+              version with a reload pointing the cluster at http://api.internal:5068 — 50 of 50
+              requests reached that destination, every one of them carrying `Bearer fake-jwt`, the
+              session's own access token. Withholding one secret while handing over another is not
+              a guard. YARP answers 502 when a request transform throws (ForwarderError
+              .RequestCreation), which is the truth: it could not forward this.
+            */
+            if (!ServiceCredentialTransport.IsSafe(
                     Uri.TryCreate(transformContext.DestinationPrefix, UriKind.Absolute, out var destination)
                         ? destination
                         : null))
             {
-                transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
-                    ServiceCredentialOptions.HeaderName,
-                    httpContext.RequestServices
-                        .GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
-            }
-            else
-            {
                 httpContext.RequestServices
                     .GetRequiredService<ILogger<BearerTokenTransformProvider>>()
-                    .LogError("The service credential was withheld: the API destination is neither https nor loopback");
+                    .LogError("Not forwarded: the API destination is neither https nor loopback");
+                throw new InvalidOperationException(
+                    "The API destination is neither https nor loopback, so nothing is forwarded to it.");
             }
+
+            transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
+                ServiceCredentialOptions.HeaderName,
+                httpContext.RequestServices
+                    .GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
 
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))

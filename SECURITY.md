@@ -67,7 +67,10 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
 ### Where each guarantee stops without the BFF
 
 ⚠️ **Since 2026-09-19 there is no "without the BFF" (ADR-0055).** The API refuses, before it looks
-at a token, any request that does not carry the BFF's service credential. Measured that day with
+at a token, any request that does not carry the BFF's service credential — every request but two
+exemptions, which carry nothing about a customer: `/health/*` in all environments, and `/openapi`
+and `/scalar` in Development, where a developer opens the documentation in a browser. The
+operations that documentation describes are not exempt. Measured that day with
 the requests below sent straight to the API: `401 SERVICE_CREDENTIAL_REQUIRED` from the first one,
 register and login included, so no bearer token is issued to begin with. What follows is kept as
 measured on 2026-09-15 because it says what each control would be worth to a caller who ALSO held

@@ -30,7 +30,8 @@ Configuration comes from user-secrets, never a committed file — the API refuse
 them. **The API and the seeder have separate secret stores**, so the pepper has to be set twice and
 must match, or seeded PINs fail verification at login rather than at seeding. **So do the API and
 the BFF**, and they share one value too: the service credential, without which the BFF does not
-start and the API answers every caller 401 (ADR-0055).
+start and the API answers 401 to every request but its health probes and, in Development, its own
+API documentation (ADR-0055).
 
 ```bash
 API=backend/src/AzureBank.Api
@@ -59,8 +60,10 @@ the six-digit PIN space offline. It supports zero-downtime rotation through a ke
 
 `ServiceCredential:BffKey` is how the API knows a request comes from the BFF: the BFF sends it in
 `X-AzureBank-Service-Key` on every call, and the API refuses anything without it before it looks at
-a token, so the API serves one client (ADR-0055). Calling the API by hand — curl, Bruno, the Scalar
-page's "Try it" — needs that header. In production the API also has no public address; the key is
+a token, so the API serves one client (ADR-0055). Exempt: `/health/*` in every environment, and
+`/openapi` and `/scalar` in Development, so a browser can still open the documentation. Calling an
+API OPERATION by hand — curl, Bruno, the Scalar page's "Try it" — needs that header, and Bruno
+reads it from `serviceKey` in `tests/api-collection/environments/local.bru`, which ships empty. In production the API also has no public address; the key is
 the second line behind that.
 
 `Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor

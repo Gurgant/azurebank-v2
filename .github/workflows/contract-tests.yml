@@ -105,7 +105,7 @@ jobs:
       - name: Run Bruno tests
         working-directory: tests/api-collection
         run: |
-          bru run . --env local \
+          bru run . --env ci \
             --reporter-junit ../../bruno-results.xml \
             || true  # report, don't gate
 

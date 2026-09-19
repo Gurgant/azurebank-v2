@@ -27,8 +27,13 @@ brew install bruno
 
 | Environment | File | Purpose |
 |-------------|------|---------|
-| `local` | `environments/local.bru` | Local development |
-| `ci` | `environments/ci.bru` | CI/CD pipeline |
+| `local` | `environments/local.bru` | Local development. `serviceKey` ships EMPTY: put your own `ServiceCredential:BffKey` in it (the root README's recipe generates one), or pass `--env-var serviceKey=...`. Without it every request answers 401 `SERVICE_CREDENTIAL_REQUIRED`. |
+| `ci` | `environments/ci.bru` | The manual `Contract tests` workflow, which runs `--env ci`. Self-contained: the throwaway key and the `http://localhost:5068` that workflow starts the API on. Nothing in it is a real secret. |
+
+⚠️ **Neither file has been exercised since the service credential was added (2026-09-19).** `bru` is
+not installed on the machine where that change was made, and the workflow that would run this
+collection is `workflow_dispatch` only and has never run. The `serviceKey` wiring is therefore
+read, not measured.
 
 ## Collection Structure
 
@@ -105,7 +110,7 @@ The collection uses these variables (set automatically by tests):
 
 | Variable | Set By | Description |
 |----------|--------|-------------|
-| `serviceKey` | the environment file | The API's service credential (ADR-0055), sent by `collection.bru` as `X-AzureBank-Service-Key` on every request. `local.bru` holds CI's throwaway value; against your own API, set it to your `ServiceCredential:BffKey` |
+| `serviceKey` | the environment file, by hand | The API's service credential (ADR-0055), sent by `collection.bru` as `X-AzureBank-Service-Key` on every request. Empty in `local.bru` by design — a committed key would be both a wrong value and a bad habit |
 | `authToken` | Register/Login | JWT authentication token |
 | `accountId` | Register/List Accounts | Primary account ID |
 | `transactionId` | Deposit/Withdraw | Transaction ID |

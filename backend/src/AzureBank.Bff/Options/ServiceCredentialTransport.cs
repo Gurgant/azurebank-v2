@@ -18,13 +18,28 @@ public static class ServiceCredentialTransport
             || (destination.Scheme == Uri.UriSchemeHttp && destination.IsLoopback));
 
     /// <summary>
-    /// The primary handler of the BFF's own client to the API. It follows no redirect, and
-    /// accepts a self-signed certificate only where asked to (development).
+    /// The primary handler of the BFF's own client to the API: it follows no redirect, and it
+    /// trusts an unverifiable certificate only on the LOCAL development one.
     /// </summary>
-    public static HttpClientHandler CreateHandler(bool acceptAnyServerCertificate)
+    /// <remarks>
+    /// <para>
+    /// <b>No redirects</b>, because .NET drops <c>Authorization</c> when a redirect leaves the
+    /// authority and keeps every other header: a 302 from the API's address would carry
+    /// <c>X-AzureBank-Service-Key</c> wherever it pointed. Nothing the BFF calls redirects; a 3xx
+    /// is handed back as the answer it is.
+    /// </para>
+    /// <para>
+    /// <b>The certificate exception is loopback's alone.</b> It exists for ASP.NET's development
+    /// certificate on <c>https://localhost:7215</c>, which no chain validates. Granted to the whole
+    /// Development environment it would also cover a remote <c>https://</c> destination — which
+    /// <see cref="IsSafe"/> allows — and then whoever answered that address, certificate or not,
+    /// would be handed the key. Outside loopback the certificate is validated in every environment.
+    /// </para>
+    /// </remarks>
+    public static HttpClientHandler CreateHandler(bool isDevelopment, Uri? destination)
     {
         var handler = new HttpClientHandler { AllowAutoRedirect = false };
-        if (acceptAnyServerCertificate)
+        if (isDevelopment && destination is { IsLoopback: true })
         {
             handler.ServerCertificateCustomValidationCallback =
                 HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
