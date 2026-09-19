@@ -283,10 +283,13 @@ way. It does NOT hold under transaction-level `SNAPSHOT`, which nothing in the r
 *Isolation, both databases.* LocalDB measured 2026-09-07 (`is_read_committed_snapshot_on` /
 `snapshot_isolation_state`): `AzureBankDev` 1/0, `AzureBankTests` 1/0. CI's `AzureBankProofs`
 container is NOT measured here, and this record does not promise a paste that cannot be kept: the
-applock sanity test writes that row through `ITestOutputHelper`, and `ci.yml:126-130` runs the SQL
-job with `--logger "trx;LogFileName=sql-test-results.trx"` alone, so a PASSING test's output
-reaches no console — the Actions log will never carry it. It lands in the trx, uploaded by
-`ci.yml:150-155` as the `backend-sql-test-results` artifact: open the `<UnitTestResult>` for
+applock sanity test writes that row through `ITestOutputHelper`, and ~~`ci.yml:126-130`~~ the
+"Concurrency proofs on SQL Server" step *(corrected 2026-09-16: cited by line number until the
+whitespace-format step added above it moved it ten lines down; named now, so the next insertion
+cannot)* runs the SQL job with `--logger "trx;LogFileName=sql-test-results.trx"` alone, so a PASSING
+test's output reaches no console — the Actions log will never carry it. It lands in the trx,
+uploaded by ~~`ci.yml:150-155`~~ the SQL job's "Upload test results" step as the
+`backend-sql-test-results` artifact: open the `<UnitTestResult>` for
 `TheApplock_ParsesUnderTheRetryingStrategy_BlocksASecondConnection_AndReleasesOnCommitAndRollback`
 and read the `sys.databases [AzureBankProofs]: …` line inside its `<Output><StdOut>`. Nothing
 asserts that row — it is recorded, not gated — and the applock holds under READ COMMITTED and

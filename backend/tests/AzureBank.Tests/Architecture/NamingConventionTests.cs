@@ -1,4 +1,6 @@
+using System.Reflection;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using NetArchTest.Rules;
 
 namespace AzureBank.Tests.Architecture;
@@ -29,6 +31,9 @@ public class NamingConventionTests
             .GetTypes()
             .ToList();
 
+        allTypes.Should().NotBeEmpty(
+            "a scan that finds no service passes while checking nothing; see ArchitectureRuleExtensions");
+
         // All types should either end with "Service" or be recognized utility classes (e.g., Hasher)
         var invalidTypes = allTypes
             .Where(t => !t.Name.EndsWith("Service") && !t.Name.EndsWith("Hasher"))
@@ -47,7 +52,8 @@ public class NamingConventionTests
             .ResideInNamespace("AzureBank.Api.Services.Interfaces")
             .Should()
             .HaveNameStartingWith("I")
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all service interfaces should start with 'I'");
@@ -61,7 +67,8 @@ public class NamingConventionTests
             .ResideInNamespaceContaining("Validators")
             .Should()
             .HaveNameEndingWith("Validator")
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all validators should end with 'Validator'");
@@ -75,7 +82,8 @@ public class NamingConventionTests
             .ResideInNamespace("AzureBank.Api.Controllers")
             .Should()
             .HaveNameEndingWith("Controller")
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all controllers should end with 'Controller'");
@@ -89,7 +97,8 @@ public class NamingConventionTests
             .ResideInNamespace("AzureBank.Api.Mappers")
             .Should()
             .HaveNameEndingWith("Mapper")
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all mappers should end with 'Mapper'");
@@ -103,7 +112,8 @@ public class NamingConventionTests
             .ResideInNamespace("AzureBank.Api.Handlers")
             .Should()
             .HaveNameEndingWith("Handler")
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all exception handlers should end with 'Handler'");
@@ -117,7 +127,8 @@ public class NamingConventionTests
             .ResideInNamespace("AzureBank.Shared.Exceptions")
             .Should()
             .HaveNameEndingWith("Exception")
-            .GetResult();
+            .GetResult()
+            .OverAtLeastOneType();
 
         result.IsSuccessful.Should().BeTrue(
             because: "all custom exceptions should end with 'Exception'");
@@ -126,32 +137,54 @@ public class NamingConventionTests
     [Fact]
     public void RequestDTOs_ShouldHaveNameEndingWithRequest()
     {
-        var result = Types.InAssembly(SharedAssembly)
-            .That()
-            .ResideInNamespaceContaining("DTOs")
-            .And()
-            .HaveNameEndingWith("Request")
-            .Should()
-            .HaveNameEndingWith("Request")
-            .GetResult();
+        /*
+          A REQUEST DTO IS WHAT AN ACTION BINDS FROM THE BODY. Until 2026-09-11 this selected the DTO
+          types whose names end with "Request" and asserted that their names end with "Request",
+          which no type can fail: a renamed request DTO simply left the selection. Measured that
+          day, the controllers bind 15 [FromBody] types and every one ends with "Request".
+        */
+        var bodies = ControllerActions()
+            .SelectMany(action => action.GetParameters())
+            .Where(parameter => parameter.GetCustomAttribute<FromBodyAttribute>() is not null)
+            .Select(parameter => parameter.ParameterType)
+            .Distinct()
+            .ToList();
 
-        result.IsSuccessful.Should().BeTrue(
-            because: "all request DTOs should end with 'Request'");
+        bodies.Should().NotBeEmpty("the API binds request bodies, so an empty scan is a broken scan");
+        bodies.Where(type => !type.Name.EndsWith("Request", StringComparison.Ordinal))
+            .Select(type => type.Name)
+            .Should().BeEmpty(because: "all request DTOs should end with 'Request'");
     }
 
     [Fact]
     public void ResponseDTOs_ShouldHaveNameEndingWithResponse()
     {
-        var result = Types.InAssembly(SharedAssembly)
-            .That()
-            .ResideInNamespaceContaining("DTOs")
-            .And()
-            .HaveNameEndingWith("Response")
-            .Should()
-            .HaveNameEndingWith("Response")
-            .GetResult();
+        /*
+          A RESPONSE DTO IS WHAT AN ACTION DECLARES IT RETURNS, inside the ApiResponse<T> or
+          PaginatedResponse<T> envelope, and the same tautology stood here until 2026-09-11. The
+          envelopes are generic and are skipped; what they carry is unwrapped, List<T> included,
+          and kept when it is one of this project's DTOs.
+        */
+        var declared = ControllerActions()
+            .SelectMany(action => action.GetCustomAttributes<ProducesResponseTypeAttribute>())
+            .SelectMany(attribute => WithTypeArguments(attribute.Type))
+            .Where(type => !type.IsGenericType
+                && type.Namespace?.StartsWith("AzureBank.Shared.DTOs", StringComparison.Ordinal) == true)
+            .Distinct()
+            .ToList();
 
-        result.IsSuccessful.Should().BeTrue(
-            because: "all response DTOs should end with 'Response'");
+        declared.Should().NotBeEmpty("the API declares its response bodies, so an empty scan is a broken scan");
+        declared.Where(type => !type.Name.EndsWith("Response", StringComparison.Ordinal))
+            .Select(type => type.Name)
+            .Should().BeEmpty(because: "all response DTOs should end with 'Response'");
     }
+
+    private static IEnumerable<MethodInfo> ControllerActions() =>
+        ApiAssembly.GetTypes()
+            .Where(type => typeof(ControllerBase).IsAssignableFrom(type))
+            .SelectMany(type => type.GetMethods(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly));
+
+    private static IEnumerable<Type> WithTypeArguments(Type? type) =>
+        type is null ? [] : [type, .. type.GetGenericArguments().SelectMany(WithTypeArguments)];
 }

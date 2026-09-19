@@ -935,7 +935,7 @@ public class AccountServiceTests : IDisposable
     }
 
 
-[Fact]
+    [Fact]
     public async Task GetBalanceAsync_WithNoTransactions_ReturnsZeroHistoricalBalance()
     {
         // Arrange
