@@ -62,8 +62,9 @@ the six-digit PIN space offline. It supports zero-downtime rotation through a ke
 `X-AzureBank-Service-Key` on every call, and the API refuses anything without it before it looks at
 a token, so the API serves one client (ADR-0055). Exempt: `/health/*` in every environment, and
 `/openapi` and `/scalar` in Development, so a browser can still open the documentation. Calling an
-API OPERATION by hand — curl, Bruno, the Scalar page's "Try it" — needs that header, and Bruno
-reads it from `serviceKey` in `tests/api-collection/environments/local.bru`, which ships empty. In production the API also has no public address; the key is
+API OPERATION by hand — curl, Bruno, the Scalar page's "Try it" — needs that header. Bruno reads
+it from `serviceKey`, which ships empty in the tracked `local.bru` and is passed per run instead:
+`bru run . --env local --env-var serviceKey="$SERVICE_KEY"`. In production the API also has no public address; the key is
 the second line behind that.
 
 `Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
