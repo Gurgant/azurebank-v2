@@ -133,6 +133,116 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
     }
 
     [Theory]
+    [InlineData("https://api.internal", true)]
+    [InlineData("https://localhost:7215", true)]
+    [InlineData("http://localhost:5068", true)]
+    [InlineData("http://127.0.0.1:5068", true)]
+    [InlineData("http://[::1]:5068", true)]
+    [InlineData("http://api.internal:5068", false)]
+    [InlineData("http://10.0.0.7", false)]
+    [InlineData("http://localhost.example.com", false)]
+    [InlineData("ftp://localhost", false)]
+    [InlineData("/relative", false)]
+    [InlineData("", false)]
+    public void TheKeyTravelsOverTlsOrToThisMachine(string destination, bool safe)
+    {
+        ServiceCredentialTransport
+            .IsSafe(Uri.TryCreate(destination, UriKind.Absolute, out var uri) ? uri : null)
+            .Should().Be(safe);
+    }
+
+    [Theory]
+    [InlineData("BackendApi:BaseUrl")]
+    [InlineData("ReverseProxy:Clusters:backend-api:Destinations:primary:Address")]
+    public void TheHostValidatesBothRoadsAtStart(string road)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BackendApi:BaseUrl"] = "https://localhost:7215",
+            ["ReverseProxy:Clusters:backend-api:Destinations:primary:Address"] = "https://localhost:7215",
+        }).Build();
+        ServiceCredentialTransport.UnsafeDestinations(configuration).Should().BeEmpty("the control: both roads are https");
+
+        configuration[road] = "http://api.internal:5068";
+
+        ServiceCredentialTransport.UnsafeDestinations(configuration)
+            .Should().ContainSingle().Which.Should().Be($"{road} = http://api.internal:5068");
+
+        // And the HOST carries the rule, not only the helper. Through the host a refusal to start
+        // arrives as a disposed provider, so the wiring is read off a host that did start: its
+        // configuration is pointed at the cleartext road afterwards, and the validators it ran at
+        // start are asked again. The message is the one such a deployment would die with.
+        using var host = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, layers) => layers.AddInMemoryCollection()));
+        var validators = host.Services.GetServices<IValidateOptions<ServiceCredentialOptions>>().ToList();
+        var usable = new ServiceCredentialOptions { BffKey = TestServiceCredential.Key };
+        validators.Should().OnlyContain(
+            validator => !validator.Validate(Microsoft.Extensions.Options.Options.DefaultName, usable).Failed,
+            "the control: as configured, the host's own roads are safe");
+
+        host.Services.GetRequiredService<IConfiguration>()[road] = "http://api.internal:5068";
+
+        validators.Select(validator => validator.Validate(Microsoft.Extensions.Options.Options.DefaultName, usable))
+            .Should().Contain(verdict => verdict.Failed
+                && verdict.FailureMessage.Contains("The service credential would travel in clear"));
+    }
+
+    [Fact]
+    public async Task TheProxy_WithholdsTheKey_WhenAReloadPointsItAtACleartextDestination()
+    {
+        // Startup refuses such a destination, but YARP reloads its configuration while the host
+        // runs. An in-memory layer added last outranks appsettings.json and survives Reload().
+        var recorder = new Recorder();
+        var host = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection());
+            builder.ConfigureTestServices(services =>
+                services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(recorder)));
+        });
+        using var client = host.CreateClient();
+        using (var before = ProxiedRead(host))
+        {
+            await client.SendAsync(before);
+        }
+
+        recorder.Credentials.Should().ContainSingle().Which.Should().Equal(TestServiceCredential.Key);
+
+        var configuration = (IConfigurationRoot)host.Services.GetRequiredService<IConfiguration>();
+        configuration["ReverseProxy:Clusters:backend-api:Destinations:primary:Address"] = "http://api.internal:5068";
+
+        // Observed: the reload itself re-runs the options' validation and throws the startup
+        // message out of the change callback. Every callback still runs, YARP's among them, so
+        // the new destination is live all the same, and that is what the guard below is for.
+        var reload = () => configuration.Reload();
+        reload.Should().Throw<Exception>().WithMessage("*The service credential would travel in clear*");
+
+        // The reload reaches YARP through a change token, so ask until it has.
+        string[] sent = [TestServiceCredential.Key];
+        for (var attempt = 0; attempt < 50 && sent.Length > 0; attempt++)
+        {
+            await Task.Delay(100);
+            using var after = ProxiedRead(host);
+            await client.SendAsync(after);
+            sent = recorder.Credentials[^1];
+        }
+
+        sent.Should().BeEmpty("a cleartext destination gets the request without the key, and the API's 401 says so");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheBffsOwnClient_FollowsNoRedirect(bool development)
+    {
+        // .NET drops Authorization on a redirect that leaves the authority and keeps every other
+        // header, so a followed redirect would carry the key wherever the 302 pointed.
+        using var handler = ServiceCredentialTransport.CreateHandler(acceptAnyServerCertificate: development);
+
+        handler.AllowAutoRedirect.Should().BeFalse();
+        (handler.ServerCertificateCustomValidationCallback is not null).Should().Be(development);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("thirty-one-characters-long-key!")]
     public void TheHostValidatesTheKeyAtStart(string unusable)

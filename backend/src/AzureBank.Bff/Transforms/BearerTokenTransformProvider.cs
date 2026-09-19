@@ -65,10 +65,26 @@ public class BearerTokenTransformProvider : ITransformProvider
               request by guessing at it either.
             */
             transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.HeaderName);
-            transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
-                ServiceCredentialOptions.HeaderName,
+
+            // Over TLS or to this machine only. Startup refuses any other destination, but YARP
+            // reloads its configuration while the host runs, so the rule is asked again here:
+            // without the key the API answers 401, which is loud, and the key stays off the wire.
+            if (ServiceCredentialTransport.IsSafe(
+                    Uri.TryCreate(transformContext.DestinationPrefix, UriKind.Absolute, out var destination)
+                        ? destination
+                        : null))
+            {
+                transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
+                    ServiceCredentialOptions.HeaderName,
+                    httpContext.RequestServices
+                        .GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
+            }
+            else
+            {
                 httpContext.RequestServices
-                    .GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
+                    .GetRequiredService<ILogger<BearerTokenTransformProvider>>()
+                    .LogError("The service credential was withheld: the API destination is neither https nor loopback");
+            }
 
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))

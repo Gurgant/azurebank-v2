@@ -51,12 +51,22 @@ instead.** The named `BackendApi` client carries it as a default header; the YAR
 removes whatever the caller sent under that name and sets the BFF's own, next to where it does the
 same for `Authorization`.
 
-**D5 — What is exempt.** `/health/*`, which an orchestrator calls with no credential and which
+**D5 — The key travels over TLS, or to this machine, and follows no redirect.** It is a bearer
+secret, so `http://api.internal` would put it on the network in clear. The BFF refuses to start
+when `BackendApi:BaseUrl` or any YARP destination is neither `https` nor `http` on loopback —
+loopback because that is the development and CI topology, and it crosses no network. YARP reloads
+its configuration while the host runs, so the proxy asks the same question per request and
+withholds the key from a destination that fails it; the API's 401 is then the loud part. Observed
+while testing that: a live reload re-runs the options' validation too, and throws the startup
+message. The BFF's own client follows no redirect, because .NET drops `Authorization` when a
+redirect leaves the authority and keeps every other header; YARP never follows one.
+
+**D6 — What is exempt.** `/health/*`, which an orchestrator calls with no credential and which
 says nothing about a customer. In Development only, `/openapi` and `/scalar`, which a developer
 opens in a browser; the operations they describe are not exempt, so Scalar's "Try it" needs the
 header like any other caller.
 
-**D6 — In production the API also has no public address.** A private network, with the
+**D7 — In production the API also has no public address.** A private network, with the
 platform's identity between the two hosts (managed identity on Azure) or mutual TLS from a service
 mesh. That is a hosting decision and this repository has no hosting configuration, so it is
 written here and not in code. The key stays as the second line behind it.
@@ -66,13 +76,15 @@ written here and not in code. The key stays as the second line behind it.
 - **Mutual TLS in the repository.** Stronger, and it costs a certificate authority, two
   certificates to issue and rotate, and Kestrel configured to require them in development, in
   `WebApplicationFactory` and in the three CI jobs that start the stack — for two processes on one
-  machine. It belongs to D6, where the platform supplies it.
+  machine. It belongs to D7, where the platform supplies it.
 - **Leaving it to the network alone.** Correct in production and invisible in the repository: a
   reader who runs `curl` against the API gets a token, and the BFF looks like decoration.
-- **A PIN check inside the API on `/full-number` only.** It closes one path and leaves the
-  question open for every rule the BFF will ever add. It is still worth doing, as the API not
-  trusting even the BFF with a sensitive read (the posture of ADR-0042), and it is a separate
-  change.
+- **A PIN check inside the API on `/full-number`.** That read is the one sensitive operation
+  whose PIN only the BFF checks, and it was the measurement that started this. Decided NOT to do,
+  2026-09-19: D1 closes the road that made it matter, since no caller reaches the API without the
+  BFF and the BFF checks the PIN. Doing it anyway means a new step-up operation, a regenerated
+  contract and a changed frontend flow, for a read that moves no money. It is worth reopening on
+  the day "What would change this" below comes true, and not before.
 - **An allow-list of caller addresses.** The BFF and the API share a host in development and CI,
   so the list would be `127.0.0.1`, which is every caller.
 
@@ -83,7 +95,7 @@ written here and not in code. The key stays as the second line behind it.
   Schemathesis run, and the Bruno collection (`collection.bru`).
 - A seventh secret, and the first one two hosts share. The BFF gains a user-secrets store for it.
 - The key authenticates the BFF, not a user, and it is a bearer secret: whoever reads it off the
-  BFF's host can call the API. D6 is what makes that host hard to reach.
+  BFF's host can call the API. D7 is what makes that host hard to reach.
 - The OpenAPI document does not describe the header. It is not part of any operation's contract;
   it is a condition of reaching the API at all.
 

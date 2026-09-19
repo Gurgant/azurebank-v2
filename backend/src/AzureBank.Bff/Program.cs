@@ -94,6 +94,13 @@ try
             o => ServiceCredentialOptions.IsUsable(o.BffKey),
             "ServiceCredential:BffKey must be configured with at least 32 characters, the same " +
             "value the API holds (dotnet user-secrets in development; see README)")
+        // The key is a bearer secret: it goes over TLS or to this machine, never in clear across
+        // a network. Checked here for both roads, and again per request on the proxy's, whose
+        // configuration can reload.
+        .Validate(
+            _ => ServiceCredentialTransport.UnsafeDestinations(builder.Configuration).Count == 0,
+            "The service credential would travel in clear: every API destination must be https, or " +
+            "http on loopback. Check BackendApi:BaseUrl and ReverseProxy:Clusters:*:Destinations:*:Address")
         .ValidateOnStart();
 
     // Where the built SPA lives, when this host serves it (ADR-0054). Unset in the dev loop.
@@ -183,14 +190,12 @@ try
     })
     .ConfigurePrimaryHttpMessageHandler(() =>
     {
-        // Accept self-signed certs in development
-        var handler = new HttpClientHandler();
-        if (builder.Environment.IsDevelopment())
-        {
-            handler.ServerCertificateCustomValidationCallback =
-                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-        }
-        return handler;
+        // NO REDIRECTS. .NET drops Authorization when a redirect leaves the authority and keeps
+        // every other header, so a 302 from the API's address to anywhere else would carry
+        // X-AzureBank-Service-Key with it (ADR-0055). Nothing the BFF calls redirects; a 3xx is
+        // handed back as the answer it is. YARP, the other road, never follows one.
+        return ServiceCredentialTransport.CreateHandler(
+            acceptAnyServerCertificate: builder.Environment.IsDevelopment());
     });
 
     // YARP Reverse Proxy with Bearer token transform
