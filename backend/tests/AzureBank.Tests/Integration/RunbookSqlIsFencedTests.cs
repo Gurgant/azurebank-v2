@@ -58,10 +58,10 @@ namespace AzureBank.Tests.Integration;
 /// runbook outside any fence so were <c>WAITFOR DELAY</c>, <c>RAISERROR(…)</c>, <c>THROW</c>,
 /// <c>PRINT</c>, <c>DENY</c>, <c>CHECKPOINT</c> and <c>RECONFIGURE</c>: each left both guards green.
 /// They got a branch each, and the next review found an unterminated <c>DENY TAKE OWNERSHIP</c>.
-/// Rather than add a tenth verb the pattern was measured, against 3,014 statements SQL Server's
-/// parser accepts and 377 sentences a runbook could hold: it missed 819 of the statements and
+/// Rather than add a tenth verb the pattern was measured, against 3,017 statements SQL Server's
+/// parser accepts and 377 sentences a runbook could hold: it missed 822 of the statements and
 /// reported 133 of the sentences. It is <see cref="RunbookSqlGrammar"/> now, which on the same
-/// corpus reports 2,857 of the statements and 40 of the sentences, and the corpus publishes both
+/// corpus reports 2,860 of the statements and 40 of the sentences, and the corpus publishes both
 /// remainders (<c>notReported</c>, <c>reportedProse</c>) instead of leaving them to be found. The
 /// reading learned three things in the same pass. A fence marker left outside every fence ends a
 /// paragraph, because <c>reconfigure;</c> above a four-space <c>```</c> was joined to it and
@@ -77,7 +77,11 @@ namespace AzureBank.Tests.Integration;
 /// outside any fence, each left both guards green. <see cref="ReadAsSql"/> reads the paragraph
 /// one character at a time now, and both fail the scan. Over the same 3,648 Markdown files the
 /// lines it reports are the same ones as before, because an apostrophe after a letter opens
-/// nothing.
+/// nothing. The same day a line opening with <c>#</c> stopped ending every paragraph:
+/// <c>#Temp</c> is a temporary table, and a heading is one to six <c>#</c> followed by whitespace.
+/// <see cref="RunbookSqlGrammar"/> had carried a branch for <c>SELECT * INTO</c> above a
+/// <c>#pin_before</c> line, "cut short because the scan reads its next line as a heading"; with the
+/// heading read properly that branch changed none of the corpus's entries, and it is gone.
 /// </para>
 /// </remarks>
 public sealed class RunbookSqlIsFencedTests
@@ -88,9 +92,13 @@ public sealed class RunbookSqlIsFencedTests
     /// <summary>A line that ends a paragraph for the scan: blank, heading, list item, table row,
     /// or a fence marker. A marker left outside every fence is one indented four columns or more,
     /// and it is no part of the statement above it: <c>reconfigure;</c> followed by such a
-    /// <c>```</c> was joined to it and no longer ran to a statement boundary.</summary>
+    /// <c>```</c> was joined to it and no longer ran to a statement boundary. A heading is one to
+    /// six <c>#</c> and then whitespace or the end of the line, as CommonMark has it: until
+    /// 2026-09-19 any line opening with <c>#</c> ended the paragraph, so <c>DELETE</c> /
+    /// <c>#Temp</c> / <c>WHERE Id = 1;</c> was cut before its temporary table and no line held the
+    /// whole statement.</summary>
     private static readonly Regex ParagraphBreak = new(
-        @"^\s*$|^\s*(?:\#|[-*+]\s|\d+[.)]\s|\||`{3,}|~{3,})");
+        @"^\s*$|^\s*(?:\#{1,6}(?:\s|$)|[-*+]\s|\d+[.)]\s|\||`{3,}|~{3,})");
 
     /// <summary>
     /// A <c>```sql</c> or <c>~~~sql</c> marker. Found among the lines outside every fence, it
@@ -533,7 +541,7 @@ public sealed class RunbookSqlIsFencedTests
         // The remarks quote these four numbers. A corpus edit that moves one fails here, next to
         // the sentence that has to change with it.
         (corpus.AllStatements.Count() + corpus.NotReported.Length, corpus.NotReported.Length)
-            .Should().Be((3014, 157), "RunbookSqlGrammar's remarks say so");
+            .Should().Be((3017, 157), "RunbookSqlGrammar's remarks say so");
         (corpus.Prose.Length + corpus.ReportedProse.Length, corpus.ReportedProse.Length)
             .Should().Be((377, 40), "RunbookSqlGrammar's remarks say so");
     }
@@ -567,6 +575,18 @@ public sealed class RunbookSqlIsFencedTests
         SqlNobodyParses(["UPDATE Users", "", "SET PinHash = NULL"])
             .Should().BeEmpty(
                 "a blank line ends the paragraph, and neither half is a statement on its own");
+
+        SqlNobodyParses(["DELETE", "#Temp", "WHERE Id = 1;"]).Should().ContainSingle(
+            "#Temp is a temporary table, not a heading: a heading's # is followed by whitespace");
+
+        SqlNobodyParses(["UPDATE", "##pin_before", "SET PinHash = NULL", "WHERE Id = 1"])
+            .Should().ContainSingle("nor is a global temporary table one");
+
+        SqlNobodyParses(["UPDATE Users", "# Rollback", "SET PinHash = NULL"])
+            .Should().BeEmpty("a heading still ends the paragraph");
+
+        SqlNobodyParses(["UPDATE Users", "#", "SET PinHash = NULL"])
+            .Should().BeEmpty("and so does a # with nothing after it, which is an empty heading");
 
         SqlNobodyParses(
                 [
