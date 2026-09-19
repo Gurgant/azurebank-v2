@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Options;
+using AzureBank.Shared.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -68,8 +69,10 @@ public sealed class ServiceCredentialMiddleware
         // Neither the header's value, which is a guess at a secret, nor the path, which carries
         // route parameters and so a customer's handle (ADR-0017). The request line Serilog writes
         // for this same request has the 401 and the correlation id.
+        // The method is the caller's text too, so it goes through the sanitizer like any other.
         _logger.LogWarning(
-            "Refused a {Method} request: no valid service credential", context.Request.Method);
+            "Refused a {Method} request: no valid service credential",
+            LogSanitizer.Sanitize(context.Request.Method));
 
         var problemDetails = new ProblemDetails
         {
