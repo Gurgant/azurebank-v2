@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using Xunit;
@@ -57,10 +58,10 @@ namespace AzureBank.Tests.Integration;
 /// runbook outside any fence so were <c>WAITFOR DELAY</c>, <c>RAISERROR(…)</c>, <c>THROW</c>,
 /// <c>PRINT</c>, <c>DENY</c>, <c>CHECKPOINT</c> and <c>RECONFIGURE</c>: each left both guards green.
 /// They got a branch each, and the next review found an unterminated <c>DENY TAKE OWNERSHIP</c>.
-/// Rather than add a tenth verb the pattern was measured, against 3,011 statements SQL Server's
-/// parser accepts and 376 sentences a runbook could hold: it missed 818 of the statements and
+/// Rather than add a tenth verb the pattern was measured, against 3,014 statements SQL Server's
+/// parser accepts and 377 sentences a runbook could hold: it missed 819 of the statements and
 /// reported 133 of the sentences. It is <see cref="RunbookSqlGrammar"/> now, which on the same
-/// corpus reports 2,851 of the statements and 40 of the sentences, and the corpus publishes both
+/// corpus reports 2,857 of the statements and 40 of the sentences, and the corpus publishes both
 /// remainders (<c>notReported</c>, <c>reportedProse</c>) instead of leaving them to be found. The
 /// reading learned three things in the same pass. A fence marker left outside every fence ends a
 /// paragraph, because <c>reconfigure;</c> above a four-space <c>```</c> was joined to it and
@@ -68,6 +69,15 @@ namespace AzureBank.Tests.Integration;
 /// sentence end is looked for, because <c>-- the columns we need.</c> ended the "sentence" before
 /// the <c>FROM</c> under it. And a statement is followed for 40 lines, not 8, which is what an
 /// SSMS-scripted column list needs.
+/// </para>
+/// <para>
+/// ⚠️ <b>AND UNTIL 2026-09-19 THE READING DID NOT KNOW A STRING LITERAL.</b> Taking comments out by
+/// pattern, one round old, cut <c>SELECT N'-- keep';</c> at the dashes, and the sentence end,
+/// four rounds old, cut <c>SELECT N'stop. now';</c> at the full stop; appended to the PIN runbook
+/// outside any fence, each left both guards green. <see cref="ReadAsSql"/> reads the paragraph
+/// one character at a time now, and both fail the scan. Over the same 3,648 Markdown files the
+/// lines it reports are the same ones as before, because an apostrophe after a letter opens
+/// nothing.
 /// </para>
 /// </remarks>
 public sealed class RunbookSqlIsFencedTests
@@ -85,25 +95,13 @@ public sealed class RunbookSqlIsFencedTests
     /// <summary>
     /// A <c>```sql</c> or <c>~~~sql</c> marker. Found among the lines outside every fence, it
     /// opened nothing: <see cref="RunbookMarkdown"/> only reads a marker indented three columns or
-    /// fewer.
+    /// fewer, and a backtick marker only when no backtick follows it.
     /// </summary>
     private static readonly Regex SqlFenceMarker = new(
         @"^\s*(?:`{3,}|~{3,})\s*sql\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     /// <summary>The blockquote marks on a continuation line, not part of its text.</summary>
     private static readonly Regex QuoteLead = new(@"^\s*(?:>\s?)+");
-
-    /// <summary>A full stop before whitespace or the end: a sentence ends there, not a
-    /// statement.</summary>
-    private static readonly Regex SentenceEnd = new(@"\.(?:\s|$)");
-
-    /// <summary>A T-SQL comment to the end of its line. Taken out before the sentence end is
-    /// looked for: <c>SELECT Id, Email -- the columns we need.</c> above its <c>FROM</c> was cut at
-    /// the comment's full stop and never reached the clause.</summary>
-    private static readonly Regex LineComment = new(@"--.*$");
-
-    /// <summary>A T-SQL block comment, once the lines are joined.</summary>
-    private static readonly Regex BlockComment = new(@"/\*.*?\*/");
 
     /// <summary>
     /// How many lines a statement is followed across before the scan stops. It was 8, and a
@@ -136,7 +134,7 @@ public sealed class RunbookSqlIsFencedTests
         found.AddRange(outside
             .Where(line => SqlFenceMarker.IsMatch(line.Text))
             .Select(line => $"{line.Line}: {line.Text.Trim()} "
-                + "(indented four columns or more, it opens no fence)"));
+                + "(it opens no fence: indented four columns or more, or a backtick in its info string)"));
         foreach (var fence in fences.Where(fence => !fence.IsSql))
         {
             found.AddRange(Statements(fence.Body));
@@ -149,7 +147,8 @@ public sealed class RunbookSqlIsFencedTests
     /// Every line a statement opens on, read together with the following lines of its paragraph, so
     /// <c>UPDATE Users</c> is joined to the <c>SET</c> on the line after it. The joined text stops
     /// at the first sentence end: prose that opens with a verb must not borrow a <c>FROM</c> from a
-    /// later sentence. T-SQL comments are taken out first, so a full stop inside one ends nothing.
+    /// later sentence. <see cref="ReadAsSql"/> does the joining, so a full stop inside a comment or
+    /// a string literal ends nothing.
     /// </summary>
     private static List<string> Statements(IReadOnlyList<(int Line, string Text)> lines)
     {
@@ -162,15 +161,7 @@ public sealed class RunbookSqlIsFencedTests
                 continue;
             }
 
-            var opening = LineComment.Replace(MarkdownLead.Replace(text, string.Empty, 1), string.Empty).Trim();
-            if (opening.Length == 0)
-            {
-                // A line that is only a comment opens nothing; the statement under it is judged
-                // on its own line.
-                continue;
-            }
-
-            var parts = new List<string> { opening };
+            var parts = new List<string> { MarkdownLead.Replace(text, string.Empty, 1).Trim() };
             for (var next = i + 1;
                  next < lines.Count
                  && parts.Count < StatementLines
@@ -185,19 +176,131 @@ public sealed class RunbookSqlIsFencedTests
                     break;
                 }
 
-                parts.Add(LineComment.Replace(continued, string.Empty).Trim());
+                parts.Add(continued.Trim());
             }
 
-            var joined = BlockComment.Replace(
-                string.Join(" ", parts.Where(part => part.Length > 0)), " ");
-            var end = SentenceEnd.Match(joined);
-            if (RunbookSqlGrammar.Statement.IsMatch(end.Success ? joined[..(end.Index + 1)] : joined))
+            var (joined, openingLength, sentenceEnd) = ReadAsSql(parts);
+            if (openingLength == 0)
+            {
+                // A line that is only a comment opens nothing; the statement under it is judged
+                // on its own line.
+                continue;
+            }
+
+            var read = (sentenceEnd >= 0 ? joined[..(sentenceEnd + 1)] : joined).TrimEnd();
+            if (RunbookSqlGrammar.Statement.IsMatch(read))
             {
                 found.Add($"{number}: {text.Trim()}");
             }
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// A paragraph's lines joined the way T-SQL reads them: string literals kept whole, comments
+    /// dropped, and the first sentence end that is OUTSIDE a literal — a full stop before
+    /// whitespace or the end of a line.
+    /// </summary>
+    /// <remarks>
+    /// Until 2026-09-19 this was three regular expressions, and review found what they could not
+    /// know: <c>SELECT N'-- keep';</c> lost everything after the dashes, and <c>SELECT N'stop.
+    /// now';</c> ended at the full stop, so both went unreported. Three statements already sat in
+    /// the corpus's <c>notReported</c> list for the same reason (<c>SELECT 'Dr. Who' AS n …</c>).
+    /// A quote opens a literal only where T-SQL could put one — not after a letter or a digit,
+    /// unless that letter is the <c>N</c> of <c>N'…'</c> — so the apostrophe in <i>"the user's
+    /// row"</i> opens nothing, and prose still ends at its full stop.
+    /// </remarks>
+    private static (string Text, int OpeningLength, int SentenceEnd) ReadAsSql(IReadOnlyList<string> lines)
+    {
+        var text = new StringBuilder();
+        var (openingLength, sentenceEnd, inLiteral, commentDepth) = (0, -1, false, 0);
+
+        for (var number = 0; number < lines.Count; number++)
+        {
+            var line = lines[number];
+            if (number > 0 && text.Length > 0 && text[^1] != ' ')
+            {
+                text.Append(' ');
+            }
+
+            for (var i = 0; i < line.Length; i++)
+            {
+                var (here, next) = (line[i], i + 1 < line.Length ? line[i + 1] : '\0');
+                if (commentDepth > 0)
+                {
+                    // T-SQL block comments nest.
+                    if (here == '*' && next == '/')
+                    {
+                        i++;
+                        if (--commentDepth == 0)
+                        {
+                            text.Append(' ');
+                        }
+                    }
+                    else if (here == '/' && next == '*')
+                    {
+                        commentDepth++;
+                        i++;
+                    }
+
+                    continue;
+                }
+
+                if (inLiteral)
+                {
+                    // '' inside a literal closes it and opens it again, which comes to the same.
+                    text.Append(here);
+                    inLiteral = here != '\'';
+                    continue;
+                }
+
+                if (here == '-' && next == '-')
+                {
+                    break;
+                }
+
+                if (here == '/' && next == '*')
+                {
+                    commentDepth = 1;
+                    i++;
+                    continue;
+                }
+
+                if (here == '\'')
+                {
+                    inLiteral = OpensLiteral(text);
+                }
+                else if (here == '.' && sentenceEnd < 0 && (next == '\0' || char.IsWhiteSpace(next)))
+                {
+                    sentenceEnd = text.Length;
+                }
+
+                text.Append(here);
+            }
+
+            if (number == 0)
+            {
+                openingLength = text.ToString().Trim().Length;
+            }
+        }
+
+        return (text.ToString(), openingLength, sentenceEnd);
+    }
+
+    /// <summary>True when a quote at the end of <paramref name="text"/> could open a T-SQL
+    /// literal: at the start, after anything that is not part of a word, or after the <c>N</c> of
+    /// a Unicode literal.</summary>
+    private static bool OpensLiteral(StringBuilder text)
+    {
+        static bool InWord(char character) => char.IsLetterOrDigit(character) || character == '_';
+
+        if (text.Length == 0 || !InWord(text[^1]))
+        {
+            return true;
+        }
+
+        return text[^1] is 'N' or 'n' && (text.Length == 1 || !InWord(text[^2]));
     }
 
     [Fact]
@@ -270,6 +373,12 @@ public sealed class RunbookSqlIsFencedTests
             "DENY TAKE OWNERSHIP ON dbo.Users TO auditor",
             "checkpoint;",
             "reconfigure;",
+
+            // A comment marker and a full stop inside a string literal, as review put them on
+            // 2026-09-18: read by pattern, the first was cut at its dashes and the second at its stop.
+            "SELECT N'-- keep';",
+            "SELECT N'stop. now';",
+            "update Users set Note = N'see sec. 4 -- later' where Id = 1;",
         ];
 
         string[] prose =
@@ -300,6 +409,10 @@ public sealed class RunbookSqlIsFencedTests
             "Checkpoint the investigation notes before handing over the shift.",
             "Throw away any export taken before the boundary was raised.",
             "Wait for the second approver before running the UPDATE below.",
+
+            // An apostrophe after a letter opens no literal, so this still ends at its first full
+            // stop. Read as one, it runs on to "from Staging where" and is reported.
+            "Select users' rows. Then copy them from Staging where needed.",
         ];
 
         SqlNobodyParses(sql).Should().HaveCount(
@@ -335,6 +448,18 @@ public sealed class RunbookSqlIsFencedTests
         SqlNobodyParses(["    ```sql", "    UPDAT Users SET PinHash = NULL;", "    ```"])
             .Should().ContainSingle(
                 "the indented marker is reported even when nothing after it reads as SQL");
+
+        SqlNobodyParses(["```sql `pin`", .. sql, "```"]).Should().HaveCount(
+            sql.Length + 1,
+            "a backtick fence's info string holds no backtick, so this line opens nothing and "
+            + "Markdown renders the SQL under it as a paragraph: it is outside every fence, and the "
+            + "marker is reported with it");
+
+        SqlNobodyParses(["```sql`", .. sql, "```"]).Should().HaveCount(
+            sql.Length + 1, "the same with the backtick hard against the language");
+
+        SqlNobodyParses(["~~~sql `pin`", .. sql, "~~~"]).Should().BeEmpty(
+            "a tilde fence may hold backticks in its info string, and this one is sql");
 
         SqlNobodyParses(["```sql", "SELECT 1;", "    ```", .. sql, "```"]).Should().BeEmpty(
             "a four-space ``` inside a sql fence is part of its body, not its close: everything up "
@@ -408,9 +533,9 @@ public sealed class RunbookSqlIsFencedTests
         // The remarks quote these four numbers. A corpus edit that moves one fails here, next to
         // the sentence that has to change with it.
         (corpus.AllStatements.Count() + corpus.NotReported.Length, corpus.NotReported.Length)
-            .Should().Be((3011, 160), "RunbookSqlGrammar's remarks say so");
+            .Should().Be((3014, 157), "RunbookSqlGrammar's remarks say so");
         (corpus.Prose.Length + corpus.ReportedProse.Length, corpus.ReportedProse.Length)
-            .Should().Be((376, 40), "RunbookSqlGrammar's remarks say so");
+            .Should().Be((377, 40), "RunbookSqlGrammar's remarks say so");
     }
 
     private static bool ReportsItsFirstLine(IEnumerable<string> lines) =>

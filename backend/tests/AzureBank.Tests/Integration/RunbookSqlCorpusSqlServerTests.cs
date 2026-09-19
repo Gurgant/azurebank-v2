@@ -63,23 +63,11 @@ public sealed class RunbookSqlCorpusSqlServerTests
         var rejected = new List<string>();
         foreach (var statement in toParse)
         {
-            /*
-              A CONNECTION EACH, which is how the corpus was measured. Several SET options take
-              effect while a batch is PARSED (QUOTED_IDENTIFIER is one), so on a shared connection
-              one corpus statement would change how the ones after it parse.
-            */
-            await using var connection = await OpenMasterAsync();
-            await using (var parseOnly = connection.CreateCommand())
-            {
-                parseOnly.CommandText = "SET PARSEONLY ON;";
-                await parseOnly.ExecuteNonQueryAsync();
-            }
-
+            // A connection each, which is how the corpus was measured and how the runbook blocks are
+            // sent: see RunbookSqlParsesSqlServerTests.ParseOnlyAsync for why.
             try
             {
-                await using var command = connection.CreateCommand();
-                command.CommandText = statement;
-                await command.ExecuteNonQueryAsync();
+                await RunbookSqlParsesSqlServerTests.ParseOnlyAsync(statement);
             }
             catch (SqlException e)
             {

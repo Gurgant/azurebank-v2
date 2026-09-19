@@ -20,9 +20,10 @@ namespace AzureBank.Tests.Integration;
 /// execute them.
 /// </para>
 /// <para>
-/// <b>PARSEONLY, in a batch of its own.</b> The point is to check the SQL is well-formed, not to
-/// run it: with <c>SET PARSEONLY ON</c> SQL Server parses what follows and executes none of it.
-/// Blocks carrying a placeholder an operator must fill in are skipped by name, and the count of what
+/// <b>PARSEONLY, in a batch of its own, on a connection of its own.</b> The point is to check the
+/// SQL is well-formed, not to run it: with <c>SET PARSEONLY ON</c> SQL Server parses what follows
+/// and executes none of it. Each block gets a fresh session, so no <c>SET</c> in one block decides
+/// how the next one parses. Blocks carrying a placeholder an operator must fill in are skipped by name, and the count of what
 /// was checked is asserted so a regex that silently matched nothing cannot pass as agreement.
 /// </para>
 /// <para>
@@ -98,22 +99,6 @@ public sealed class RunbookSqlParsesSqlServerTests
             minimumBlocks,
             $"{runbook} holds that many; a regex that matched nothing would otherwise pass");
 
-        // Unpooled, because the session is left in PARSEONLY: a pooled connection would carry the
-        // option into whichever test drew it next, and that test's statements would do nothing.
-        var master = new SqlConnectionStringBuilder(SqlServerFactAttribute.ConnectionString!)
-        {
-            InitialCatalog = "master",
-            Pooling = false,
-        };
-        await using var connection = new SqlConnection(master.ConnectionString);
-        await connection.OpenAsync();
-
-        await using (var parseOnly = connection.CreateCommand())
-        {
-            parseOnly.CommandText = "SET PARSEONLY ON;";
-            await parseOnly.ExecuteNonQueryAsync();
-        }
-
         /*
           PLACEHOLDERS ARE LISTED, NOT PATTERN-MATCHED, so a block cannot excuse itself from this
           guard by accident -- `<` is also a comparison operator, and a regex over angle brackets
@@ -160,10 +145,7 @@ public sealed class RunbookSqlParsesSqlServerTests
                 "a block that sets PARSEONLY would be executed by this guard rather than parsed, "
                 + $"and so would every block after it:\n{block.Trim()}");
 
-            await using var command = connection.CreateCommand();
-            command.CommandText = block;
-
-            var parse = async () => await command.ExecuteNonQueryAsync();
+            var parse = async () => await ParseOnlyAsync(block);
 
             await parse.Should().NotThrowAsync(
                 $"this block is printed for an operator to paste:\n{block.Trim()}");
@@ -183,6 +165,86 @@ public sealed class RunbookSqlParsesSqlServerTests
             token => skipped.Contains(token),
             "a token nobody uses any more is a hole left open -- take it out of the list when the "
             + "block that needed it goes");
+    }
+
+    /// <summary>
+    /// Parses one block and runs none of it: <c>SET PARSEONLY ON</c> in a batch of its own, then the
+    /// block, on a connection of its own to <c>master</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>A CONNECTION EACH</b>, because several SET options take effect while a batch is PARSED, and
+    /// on one session they outlive their block. Measured 2026-09-19 with two blocks appended to the
+    /// PIN runbook, <c>SET QUOTED_IDENTIFIER OFF;</c> and then <c>SELECT Id FROM "dbo"."Users";</c>:
+    /// the second, valid on its own, failed with <c>Incorrect syntax near 'dbo'</c>, so the verdict
+    /// on a block depended on the blocks above it. <see
+    /// cref="ABlockIsParsedUnderAFreshSession_WhateverTheBlockBeforeItSet"/> holds that pair.
+    /// Unpooled, because the session is left in PARSEONLY: a pooled connection would carry the
+    /// option into whichever test drew it next, and that test's statements would do nothing.
+    /// </remarks>
+    internal static async Task ParseOnlyAsync(string block)
+    {
+        await using var connection = await OpenParseOnlySessionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = block;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<SqlConnection> OpenParseOnlySessionAsync()
+    {
+        var master = new SqlConnectionStringBuilder(SqlServerFactAttribute.ConnectionString!)
+        {
+            InitialCatalog = "master",
+            Pooling = false,
+        };
+        var connection = new SqlConnection(master.ConnectionString);
+        try
+        {
+            await connection.OpenAsync();
+            await using var parseOnly = connection.CreateCommand();
+            parseOnly.CommandText = "SET PARSEONLY ON;";
+            await parseOnly.ExecuteNonQueryAsync();
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The pair that showed one session is not enough, and the control that it still is not: sent
+    /// apart both blocks parse; sent down ONE session, as this guard sent them until 2026-09-19,
+    /// the second is refused. If a server ever stops refusing it, the control says so here rather
+    /// than leaving a comment to go stale.
+    /// </summary>
+    [SqlServerFact]
+    public async Task ABlockIsParsedUnderAFreshSession_WhateverTheBlockBeforeItSet()
+    {
+        const string first = "SET QUOTED_IDENTIFIER OFF;";
+        const string second = "SELECT Id FROM \"dbo\".\"Users\";";
+
+        var apart = async () =>
+        {
+            await ParseOnlyAsync(first);
+            await ParseOnlyAsync(second);
+        };
+        await apart.Should().NotThrowAsync("each block is judged as it stands, under a fresh session");
+
+        var together = async () =>
+        {
+            await using var connection = await OpenParseOnlySessionAsync();
+            foreach (var block in new[] { first, second })
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = block;
+                await command.ExecuteNonQueryAsync();
+            }
+        };
+        (await together.Should().ThrowAsync<SqlException>(
+                "QUOTED_IDENTIFIER is applied while the batch is parsed and outlives it, so on one "
+                + "session the second block's quoted names are string literals"))
+            .Which.Message.Should().Contain("Incorrect syntax near 'dbo'");
     }
 
     /// <summary>Walks up from the test assembly to the repository root.</summary>

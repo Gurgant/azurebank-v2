@@ -22,6 +22,14 @@ namespace AzureBank.Tests.Integration;
 /// probes fail a guard now: the first the scan, which also reports the indented <c>```sql</c>
 /// marker itself, the second the parse check, which reads the whole block to its real close.
 /// </para>
+/// <para>
+/// And a backtick fence's info string holds no backtick, as CommonMark has it. Until 2026-09-19
+/// <c>```sql `x`</c> opened a SQL fence here while Markdown renders it, and the statement under
+/// it, as a paragraph: measured on the PIN runbook with a valid <c>UPDATE</c> below it, both
+/// guards stayed green over SQL that no reader sees as code. Such a line opens nothing now, so
+/// what follows it is outside every fence and the scan reports it, marker included. A tilde fence
+/// may hold backticks in its info string, and still does.
+/// </para>
 /// </remarks>
 internal static class RunbookMarkdown
 {
@@ -64,7 +72,7 @@ internal static class RunbookMarkdown
 
             if (open is not { } fence)
             {
-                if (marker.Length > 0)
+                if (marker.Length > 0 && !(marker[0] == '`' && trimmed[marker.Length..].Contains('`')))
                 {
                     open = (number, marker, trimmed[marker.Length..].Trim(), []);
                 }
