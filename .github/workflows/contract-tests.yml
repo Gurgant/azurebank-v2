@@ -30,6 +30,9 @@ env:
   # ADR-0042, and deliberately NOT the same value as IDEMPOTENCY_HASH_KEY. Required:
   # StepUp:BindingKey is ValidateOnStart, so an unset value crashes the API at startup.
   STEPUP_BINDING_KEY: "ci-only-throwaway-stepup-binding-key-0123456789abcdef"
+  # ADR-0055: the API serves only a caller that presents this key. Bruno presents it from
+  # tests/api-collection/collection.bru, which reads serviceKey from the environment file.
+  SERVICE_CREDENTIAL_KEY: "ci-only-throwaway-service-credential-0123456789abcdef"
   # ADR-0044. ValidateOnStart like the three above, so an unset value is a startup crash.
   AUDIT_CHAIN_KEY: "ci-only-throwaway-audit-chain-key-0123456789abcdef"
   AUDIT_ANCHOR_KEY: "ci-only-throwaway-audit-anchor-key-fedcba9876543210"
@@ -90,6 +93,7 @@ jobs:
           Jwt__Secret: ${{ env.JWT_SECRET }}
           Idempotency__HashKey: ${{ env.IDEMPOTENCY_HASH_KEY }}
           StepUp__BindingKey: ${{ env.STEPUP_BINDING_KEY }}
+          ServiceCredential__BffKey: ${{ env.SERVICE_CREDENTIAL_KEY }}
           Audit__ChainKey: ${{ env.AUDIT_CHAIN_KEY }}
           Audit__AnchorKey: ${{ env.AUDIT_ANCHOR_KEY }}
           Security__PinPepper: ${{ env.PIN_PEPPER }}
@@ -101,7 +105,7 @@ jobs:
       - name: Run Bruno tests
         working-directory: tests/api-collection
         run: |
-          bru run . --env local \
+          bru run . --env ci \
             --reporter-junit ../../bruno-results.xml \
             || true  # report, don't gate
 

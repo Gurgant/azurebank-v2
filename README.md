@@ -28,13 +28,18 @@ If you want more after that:
 
 Configuration comes from user-secrets, never a committed file — the API refuses to start without
 them. **The API and the seeder have separate secret stores**, so the pepper has to be set twice and
-must match, or seeded PINs fail verification at login rather than at seeding.
+must match, or seeded PINs fail verification at login rather than at seeding. **So do the API and
+the BFF**, and they share one value too: the service credential, without which the BFF does not
+start and the API answers 401 to every request but its health probes and, in Development, its own
+API documentation (ADR-0055).
 
 ```bash
 API=backend/src/AzureBank.Api
+BFF=backend/src/AzureBank.Bff
 SEEDER=backend/tools/AzureBank.Seeder
 CONN='Server=(localdb)\MSSQLLocalDB;Database=AzureBankDev;Trusted_Connection=True;TrustServerCertificate=True'
 PEPPER="$(openssl rand -base64 48)"
+SERVICE_KEY="$(openssl rand -base64 48)"
 
 dotnet user-secrets --project $API    set "Jwt:Secret" "$(openssl rand -base64 64)"
 dotnet user-secrets --project $API    set "Idempotency:HashKey" "$(openssl rand -base64 32)"
@@ -43,6 +48,8 @@ dotnet user-secrets --project $API    set "Audit:ChainKey" "$(openssl rand -base
 dotnet user-secrets --project $API    set "Audit:AnchorKey" "$(openssl rand -base64 32)"
 dotnet user-secrets --project $API    set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $API    set "ConnectionStrings:DefaultConnection" "$CONN"
+dotnet user-secrets --project $API    set "ServiceCredential:BffKey" "$SERVICE_KEY"
+dotnet user-secrets --project $BFF    set "ServiceCredential:BffKey" "$SERVICE_KEY"
 dotnet user-secrets --project $SEEDER set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $SEEDER set "ConnectionStrings:DefaultConnection" "$CONN"
 ```
@@ -50,6 +57,15 @@ dotnet user-secrets --project $SEEDER set "ConnectionStrings:DefaultConnection" 
 `Security:PinPepper` is mixed into the Argon2id PIN hash so a stolen database cannot brute-force
 the six-digit PIN space offline. It supports zero-downtime rotation through a keyring
 (`Security:PreviousPinPeppers`) — when rotating, keep the whole ring in one secret provider.
+
+`ServiceCredential:BffKey` is how the API knows a request comes from the BFF: the BFF sends it in
+`X-AzureBank-Service-Key` on every call, and the API refuses anything without it before it looks at
+a token, so the API serves one client (ADR-0055). Exempt: `/health/*` in every environment, and
+`/openapi` and `/scalar` in Development, so a browser can still open the documentation. Calling an
+API OPERATION by hand — curl, Bruno, the Scalar page's "Try it" — needs that header. Bruno reads
+it from `serviceKey`, which ships empty in the tracked `local.bru` and is passed per run instead:
+`bru run . --env local --env-var serviceKey="$SERVICE_KEY"`. In production the API also has no public address; the key is
+the second line behind that.
 
 `Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
 records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and

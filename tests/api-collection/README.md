@@ -27,8 +27,40 @@ brew install bruno
 
 | Environment | File | Purpose |
 |-------------|------|---------|
-| `local` | `environments/local.bru` | Local development |
-| `ci` | `environments/ci.bru` | CI/CD pipeline |
+| `local` | `environments/local.bru` | Local development, against `https://localhost:7215`. `serviceKey` ships EMPTY and **stays** empty: this file is tracked and nothing in `.gitignore` covers it, so a key written here is a key committed. Pass it per run instead (below). |
+| `ci` | `environments/ci.bru` | The manual `Contract tests` workflow, which runs `--env ci`. Self-contained: the throwaway key and the `http://localhost:5068` that workflow starts the API on. Nothing in it is a real secret. |
+
+The API serves only the BFF (ADR-0055), so every request here carries
+`X-AzureBank-Service-Key`, which `collection.bru` reads from `serviceKey`. Supply your own
+`ServiceCredential:BffKey` — the root README's recipe generates it — on the command line:
+
+```bash
+bru run . --env local --env-var serviceKey="$YOUR_KEY" --insecure
+```
+
+`--insecure` is for ASP.NET's development certificate on `https://localhost:7215`. Node does not
+read the Windows certificate store, so trusting that certificate with `dotnet dev-certs https
+--trust` is not enough. Measured without the flag: `self-signed certificate; if the root CA is
+installed locally, try running Node.js with --use-system-ca` — which is the other way out, if you
+would rather not turn verification off.
+
+`BrunoEnvironmentSecretTests` fails the build if that value stops being empty in `local.bru`, or if
+this file starts telling you to write it there.
+
+**Measured on 2026-09-19 and again on 2026-09-20** with Bruno CLI 4.1.0 against the running API,
+because the wiring above had been written and not run: with the command above, `register` answered
+**201**; with `local.bru`'s empty `serviceKey`, every request answered **401**.
+
+`baseUrl` was `http://localhost:5068` until 2026-09-20 — CI's address, from when CI ran `--env
+local`. The local dev profile also listens on HTTPS, so `UseHttpsRedirection` answered **307** to
+every request there, including the ones this README told you to make. CI has its own environment
+now, so this one names the address a developer actually has.
+
+One defect is left, older than all of this and not fixed here: `login` posts `{{testEmail}}`
+(`test@example.com`), but `register` creates `test.{{$timestamp}}@example.com` and never writes it
+back, so every request after `register` answers 401 `INVALID_CREDENTIALS` — the collection's own
+credentials, not the service key. Telling those two 401s apart is what `errorCode` is for:
+`SERVICE_CREDENTIAL_REQUIRED` is this API refusing the caller, `INVALID_CREDENTIALS` is not.
 
 ## Collection Structure
 
@@ -75,18 +107,22 @@ api-collection/
 
 ### Via CLI
 
+Every `--env local` command carries the same two arguments, for the two reasons above:
+`--env-var serviceKey` because `local.bru` ships that value empty, and `--insecure` for the
+development certificate.
+
 ```bash
 # Install CLI
 npm install -g @usebruno/cli
 
 # Run entire collection
-bru run tests/api-collection --env local
+bru run tests/api-collection --env local --env-var serviceKey="$YOUR_KEY" --insecure
 
 # Run specific folder
-bru run tests/api-collection/endpoints/auth --env local
+bru run tests/api-collection/endpoints/auth --env local --env-var serviceKey="$YOUR_KEY" --insecure
 
 # Run with JUnit output
-bru run tests/api-collection --env local --reporter junit --output results.xml
+bru run tests/api-collection --env local --env-var serviceKey="$YOUR_KEY" --reporter junit --output results.xml --insecure
 ```
 
 ## Test Workflow
@@ -105,6 +141,7 @@ The collection uses these variables (set automatically by tests):
 
 | Variable | Set By | Description |
 |----------|--------|-------------|
+| `serviceKey` | the environment file, by hand | The API's service credential (ADR-0055), sent by `collection.bru` as `X-AzureBank-Service-Key` on every request. Empty in `local.bru` by design — a committed key would be both a wrong value and a bad habit |
 | `authToken` | Register/Login | JWT authentication token |
 | `accountId` | Register/List Accounts | Primary account ID |
 | `transactionId` | Deposit/Withdraw | Transaction ID |
