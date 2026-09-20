@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Http.Json;
 using System.Text;
 using AzureBank.Bff.Options;
@@ -252,26 +253,71 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
         }
     }
 
+    [Fact]
+    public async Task TheBffsOwnClient_SendsNothing_WhenAReloadPointsItAtACleartextDestination()
+    {
+        // The proxy got this per-request check in an earlier round; the named client did not, and
+        // BffAuthController and TokenRefresher are its callers. The options validator complains on
+        // a reload but restores nothing, and the client reads BackendApi:BaseUrl live on every
+        // CreateClient, so the next login would carry the key to whatever that value now names.
+        var (host, api) = NewHost();
+        using var client = host.CreateClient();
+        using (await client.PostAsJsonAsync(
+            "/bff/auth/login", new { email = "someone@example.com", password = "Password123!" }))
+        {
+            api.Credentials.Should().NotBeEmpty("the control: the configured road works");
+            api.Credentials.Should().AllSatisfy(sent => sent.Should().Equal(TestServiceCredential.Key));
+        }
+
+        var reached = api.Credentials.Count;
+        var configuration = (IConfigurationRoot)host.Services.GetRequiredService<IConfiguration>();
+        configuration["BackendApi:BaseUrl"] = "http://api.internal:5068";
+
+        using (await client.PostAsJsonAsync(
+            "/bff/auth/login", new { email = "someone@example.com", password = "Password123!" }))
+        {
+            api.Credentials.Should().HaveCount(reached, "no request may reach a cleartext destination");
+        }
+    }
+
     [Theory]
     // Development, loopback: the one place the development certificate lives.
-    [InlineData(true, "https://localhost:7215", true)]
-    [InlineData(true, "https://127.0.0.1:7215", true)]
+    [InlineData("https://localhost:7215", true)]
+    [InlineData("https://127.0.0.1:7215", true)]
     // Development, but NOT this machine: an unverifiable certificate there is whoever answered.
-    [InlineData(true, "https://api.internal", false)]
-    [InlineData(true, null, false)]
-    // Outside Development the certificate is validated wherever the API is.
-    [InlineData(false, "https://localhost:7215", false)]
-    [InlineData(false, "https://api.internal", false)]
-    public void TheBffsOwnClient_FollowsNoRedirect_AndTrustsNoCertificateOffThisMachine(
-        bool development, string? destination, bool trustsAnyCertificate)
+    [InlineData("https://api.internal", false)]
+    [InlineData("https://10.0.0.7", false)]
+    public void TheBffsOwnClient_TrustsAnUnverifiableCertificate_OnThisMachineOnly(
+        string destination, bool trusted)
+    {
+        // The address the REQUEST is going to, not the one the handler was built with: the factory
+        // pools this handler while the client reads BackendApi:BaseUrl live, so the two can differ.
+        using var handler = ServiceCredentialTransport.CreateHandler(isDevelopment: true);
+        using var request = new HttpRequestMessage(HttpMethod.Get, destination);
+
+        handler.ServerCertificateCustomValidationCallback!
+            .Invoke(request, null, null, SslPolicyErrors.RemoteCertificateNameMismatch)
+            .Should().Be(trusted);
+
+        // And a certificate that passes normal validation is accepted wherever it is: the callback
+        // replaces .NET's own check, so it must not refuse what that check allows.
+        handler.ServerCertificateCustomValidationCallback!
+            .Invoke(request, null, null, SslPolicyErrors.None)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void TheBffsOwnClient_FollowsNoRedirect_AndValidatesCertificatesOutsideDevelopment()
     {
         // .NET drops Authorization on a redirect that leaves the authority and keeps every other
         // header, so a followed redirect would carry the key wherever the 302 pointed.
-        using var handler = ServiceCredentialTransport.CreateHandler(
-            development, destination is null ? null : new Uri(destination));
+        using var development = ServiceCredentialTransport.CreateHandler(isDevelopment: true);
+        using var deployed = ServiceCredentialTransport.CreateHandler(isDevelopment: false);
 
-        handler.AllowAutoRedirect.Should().BeFalse();
-        (handler.ServerCertificateCustomValidationCallback is not null).Should().Be(trustsAnyCertificate);
+        development.AllowAutoRedirect.Should().BeFalse();
+        deployed.AllowAutoRedirect.Should().BeFalse();
+        deployed.ServerCertificateCustomValidationCallback.Should().BeNull(
+            "outside Development nothing replaces .NET's own validation");
     }
 
     [Theory]

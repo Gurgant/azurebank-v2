@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Threading.RateLimiting;
 using AzureBank.Bff;
 using AzureBank.Bff.Extensions;
+using AzureBank.Bff.Http;
 using AzureBank.Bff.Middleware;
 using AzureBank.Bff.Observability;
 using AzureBank.Bff.Options;
@@ -178,25 +179,22 @@ try
     builder.Services.AddHostedService<SessionCleanupService>();
 
     // HTTP client for backend API
+    builder.Services.AddTransient<ServiceCredentialHandler>();
     builder.Services.AddHttpClient("BackendApi", (services, client) =>
     {
         client.BaseAddress = new Uri(builder.Configuration["BackendApi:BaseUrl"]!);
         client.DefaultRequestHeaders.Add("Accept", "application/json");
 
-        // One of the BFF's two roads to the API; the proxy's transform is the other (ADR-0055).
-        client.DefaultRequestHeaders.Add(
-            ServiceCredentialOptions.HeaderName,
-            services.GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
+        // The service credential is NOT a default header here: ServiceCredentialHandler attaches
+        // it per request, because this BaseAddress is read live and can change under a pooled
+        // client (ADR-0055 D5).
     })
+    .AddHttpMessageHandler<ServiceCredentialHandler>()
     .ConfigurePrimaryHttpMessageHandler(() =>
     {
-        // No redirects, and the dev certificate trusted on loopback only (ADR-0055 D5): see
-        // ServiceCredentialTransport.CreateHandler for why each of those is not optional.
-        return ServiceCredentialTransport.CreateHandler(
-            builder.Environment.IsDevelopment(),
-            Uri.TryCreate(builder.Configuration["BackendApi:BaseUrl"], UriKind.Absolute, out var api)
-                ? api
-                : null);
+        // No redirects, and the dev certificate trusted on loopback only — decided per request:
+        // see ServiceCredentialTransport.CreateHandler for why each of those is not optional.
+        return ServiceCredentialTransport.CreateHandler(builder.Environment.IsDevelopment());
     });
 
     // YARP Reverse Proxy with Bearer token transform

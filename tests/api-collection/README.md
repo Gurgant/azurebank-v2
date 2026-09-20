@@ -107,18 +107,22 @@ api-collection/
 
 ### Via CLI
 
+Every `--env local` command carries the same two arguments, for the two reasons above:
+`--env-var serviceKey` because `local.bru` ships that value empty, and `--insecure` for the
+development certificate.
+
 ```bash
 # Install CLI
 npm install -g @usebruno/cli
 
 # Run entire collection
-bru run tests/api-collection --env local --insecure
+bru run tests/api-collection --env local --env-var serviceKey="$YOUR_KEY" --insecure
 
 # Run specific folder
-bru run tests/api-collection/endpoints/auth --env local --insecure
+bru run tests/api-collection/endpoints/auth --env local --env-var serviceKey="$YOUR_KEY" --insecure
 
 # Run with JUnit output
-bru run tests/api-collection --env local --reporter junit --output results.xml --insecure
+bru run tests/api-collection --env local --env-var serviceKey="$YOUR_KEY" --reporter junit --output results.xml --insecure
 ```
 
 ## Test Workflow

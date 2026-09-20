@@ -1,3 +1,5 @@
+using System.Net.Security;
+
 namespace AzureBank.Bff.Options;
 
 /// <summary>
@@ -29,20 +31,29 @@ public static class ServiceCredentialTransport
     /// is handed back as the answer it is.
     /// </para>
     /// <para>
-    /// <b>The certificate exception is loopback's alone.</b> It exists for ASP.NET's development
-    /// certificate on <c>https://localhost:7215</c>, which no chain validates. Granted to the whole
-    /// Development environment it would also cover a remote <c>https://</c> destination — which
-    /// <see cref="IsSafe"/> allows — and then whoever answered that address, certificate or not,
-    /// would be handed the key. Outside loopback the certificate is validated in every environment.
+    /// <b>The certificate exception is loopback's alone, and it is decided per REQUEST.</b> It
+    /// exists for ASP.NET's development certificate on <c>https://localhost:7215</c>, which no
+    /// chain validates. Granted to the whole Development environment it would also cover a remote
+    /// <c>https://</c> destination — which <see cref="IsSafe"/> allows — and then whoever answered
+    /// that address would be handed the key, certificate or not.
+    /// </para>
+    /// <para>
+    /// Deciding it from the address the handler was BUILT with was not enough, and review was
+    /// right about why: <c>IHttpClientFactory</c> pools this handler for its lifetime while the
+    /// named client reads <c>BackendApi:BaseUrl</c> live on every <c>CreateClient</c>, so a client
+    /// created after a reload can point somewhere remote and still reuse a handler built when the
+    /// address was loopback. The callback therefore reads <c>request.RequestUri</c>: anything that
+    /// passes normal validation passes, and an unverifiable certificate is accepted only on this
+    /// machine, in Development. Outside Development no callback is installed at all.
     /// </para>
     /// </remarks>
-    public static HttpClientHandler CreateHandler(bool isDevelopment, Uri? destination)
+    public static HttpClientHandler CreateHandler(bool isDevelopment)
     {
         var handler = new HttpClientHandler { AllowAutoRedirect = false };
-        if (isDevelopment && destination is { IsLoopback: true })
+        if (isDevelopment)
         {
-            handler.ServerCertificateCustomValidationCallback =
-                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+            handler.ServerCertificateCustomValidationCallback = (request, _, _, errors) =>
+                errors == SslPolicyErrors.None || request.RequestUri is { IsLoopback: true };
         }
 
         return handler;

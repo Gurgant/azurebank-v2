@@ -74,6 +74,17 @@ certificate on loopback alone: that exception exists for ASP.NET's development c
 remote `https://` destination, which this same decision allows — so whoever answered that address
 would be handed the key, certificate or not.
 
+> ⚠️ **Both of those are decided per REQUEST on that road too, and the first version of each was
+> decided once.** `IHttpClientFactory` pools the primary handler for its lifetime while the named
+> client reads `BackendApi:BaseUrl` live on every `CreateClient`, so the address a handler was
+> built for and the address a request goes to are not the same thing. The key was a default header
+> on that client, and the certificate exception came from the address read at construction.
+> Measured before the fix, with the configuration reloaded to `http://api.internal:5068`: the next
+> login reached that destination carrying the key. `ServiceCredentialHandler` attaches the key per
+> request and throws when the address is neither `https` nor loopback, and the certificate callback
+> reads `request.RequestUri`, accepting an unverifiable certificate only on this machine and only
+> in Development. Outside Development no callback is installed, so .NET's own validation stands.
+
 **D6 — What is exempt.** `/health/*`, which an orchestrator calls with no credential and which
 says nothing about a customer. In Development only, `/openapi` and `/scalar`, which a developer
 opens in a browser; the operations they describe are not exempt, so Scalar's "Try it" needs the
