@@ -280,6 +280,59 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
         }
     }
 
+    [Fact]
+    public async Task BothRoads_SendARotatedKey_AndNeverDifferentOnes()
+    {
+        // The API compares ONE value, so two roads holding different keys is one road broken.
+        // IOptions computes its value once for the life of the process and the BFF's own client
+        // reads IOptionsMonitor, so a proxy on IOptions would go on sending the old key after a
+        // rotation while the client sent the new one, and the API would refuse the proxy alone.
+        // An in-memory layer added last outranks the environment variable this suite sets, and
+        // survives Reload(); Reload() is what makes the monitor notice at all, because setting the
+        // indexer raises no change token.
+        var recorder = new Recorder();
+        var host = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection());
+            builder.ConfigureTestServices(services =>
+            {
+                services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(recorder));
+                services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(
+                    () => new FakeBackendApiHandler(recorder.Respond));
+            });
+        });
+        using var client = host.CreateClient();
+        using (var before = ProxiedRead(host))
+        {
+            await client.SendAsync(before);
+        }
+
+        // The control: before the rotation the proxy sends the configured key.
+        recorder.Credentials.Should().ContainSingle().Which.Should().Equal(TestServiceCredential.Key);
+
+        const string rotated = "a-rotated-service-credential-0123456789abcdef";
+        var configuration = (IConfigurationRoot)host.Services.GetRequiredService<IConfiguration>();
+        configuration["ServiceCredential:BffKey"] = rotated;
+        configuration.Reload();
+        var rotatedAt = recorder.Credentials.Count;
+
+        using (var proxied = ProxiedRead(host))
+        {
+            await client.SendAsync(proxied);
+        }
+
+        // And the other road, in the same test, because the point is that they AGREE.
+        using (await client.PostAsJsonAsync(
+            "/bff/auth/login", new { email = "someone@example.com", password = "Password123!" }))
+        {
+        }
+
+        recorder.Credentials.Skip(rotatedAt).Should().HaveCountGreaterThanOrEqualTo(
+            2, "both roads were asked again after the rotation");
+        recorder.Credentials.Skip(rotatedAt).Should()
+            .AllSatisfy(sent => sent.Should().Equal(rotated));
+    }
+
     [Theory]
     // Development, loopback: the one place the development certificate lives.
     [InlineData("https://localhost:7215", true)]

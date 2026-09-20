@@ -91,10 +91,18 @@ public class BearerTokenTransformProvider : ITransformProvider
                     "The API destination is neither https nor loopback, so nothing is forwarded to it.");
             }
 
+            /*
+              IOptionsMonitor, not IOptions, so the two roads to the API cannot present DIFFERENT
+              keys. IOptions computes its value once for the life of the process; the BFF's own
+              client reads the monitor, so after a rotation that client would have sent the new key
+              and this transform the old one — and the API refuses the old one. Same source, same
+              freshness, on both roads.
+            */
             transformContext.ProxyRequest.Headers.TryAddWithoutValidation(
                 ServiceCredentialOptions.HeaderName,
                 httpContext.RequestServices
-                    .GetRequiredService<IOptions<ServiceCredentialOptions>>().Value.BffKey);
+                    .GetRequiredService<IOptionsMonitor<ServiceCredentialOptions>>()
+                    .CurrentValue.BffKey);
 
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))

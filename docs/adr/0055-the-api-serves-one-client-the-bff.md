@@ -46,10 +46,16 @@ more, the same rule and the same treatment as the other secrets. An API that sta
 key and served every caller would be this hole reopened by a deployment mistake; a BFF that
 started without it would run and fail every login with a 401 nobody can read.
 
-**D4 — The BFF sends the key on both of its roads to the API, and no browser can send it
-instead.** The named `BackendApi` client carries it as a default header; the YARP transform
-removes whatever the caller sent under that name and sets the BFF's own, next to where it does the
-same for `Authorization`.
+**D4 — The BFF sends the key on both of its roads to the API, per request and from one source,
+and no browser can send it instead.** A `DelegatingHandler` sets it on each request the named
+`BackendApi` client makes; the YARP transform removes whatever the caller sent under that name and
+sets the BFF's own, next to where it does the same for `Authorization`. Both read the key from
+`IOptionsMonitor`, so neither road can hold a key the other has stopped using: `IOptions` computes
+its value once for the life of the process, and a road reading it would go on presenting the old
+key after a rotation while its sibling presented the new one — and the API compares one value.
+What that does NOT buy is a rotation across the two hosts: `ServiceCredentialMiddleware` hashes its
+copy once, in its constructor, so a rotation is a deployment event on both sides. While one is half
+applied the answer is the API's 401 — loud and closed, rather than quiet and open.
 
 **D5 — The key travels over TLS, or to this machine, and nothing is forwarded anywhere else.** It
 is a bearer secret, so `http://api.internal` would put it on the network in clear. The BFF refuses
