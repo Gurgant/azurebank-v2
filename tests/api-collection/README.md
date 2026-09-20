@@ -27,7 +27,7 @@ brew install bruno
 
 | Environment | File | Purpose |
 |-------------|------|---------|
-| `local` | `environments/local.bru` | Local development. `serviceKey` ships EMPTY and **stays** empty: this file is tracked and nothing in `.gitignore` covers it, so a key written here is a key committed. Pass it per run instead (below). |
+| `local` | `environments/local.bru` | Local development, against `https://localhost:7215`. `serviceKey` ships EMPTY and **stays** empty: this file is tracked and nothing in `.gitignore` covers it, so a key written here is a key committed. Pass it per run instead (below). |
 | `ci` | `environments/ci.bru` | The manual `Contract tests` workflow, which runs `--env ci`. Self-contained: the throwaway key and the `http://localhost:5068` that workflow starts the API on. Nothing in it is a real secret. |
 
 The API serves only the BFF (ADR-0055), so every request here carries
@@ -35,23 +35,32 @@ The API serves only the BFF (ADR-0055), so every request here carries
 `ServiceCredential:BffKey` — the root README's recipe generates it — on the command line:
 
 ```bash
-bru run . --env local --env-var serviceKey="$YOUR_KEY"
+bru run . --env local --env-var serviceKey="$YOUR_KEY" --insecure
 ```
+
+`--insecure` is for ASP.NET's development certificate on `https://localhost:7215`. Node does not
+read the Windows certificate store, so trusting that certificate with `dotnet dev-certs https
+--trust` is not enough. Measured without the flag: `self-signed certificate; if the root CA is
+installed locally, try running Node.js with --use-system-ca` — which is the other way out, if you
+would rather not turn verification off.
 
 `BrunoEnvironmentSecretTests` fails the build if that value stops being empty in `local.bru`, or if
 this file starts telling you to write it there.
 
-**Measured on 2026-09-19** with Bruno CLI 4.1.0 against the running API, because the wiring above
-had been written and not run: with `--env-var serviceKey=` set, `register` answered **201**; with
-`local.bru`'s empty value, every request answered **401**. Two pre-existing defects in the
-collection surfaced in the same run, both older than the service credential and neither fixed here:
+**Measured on 2026-09-19 and again on 2026-09-20** with Bruno CLI 4.1.0 against the running API,
+because the wiring above had been written and not run: with the command above, `register` answered
+**201**; with `local.bru`'s empty `serviceKey`, every request answered **401**.
 
-- `baseUrl` is `http://localhost:5068`, which fits CI's HTTP-only API. The local dev profile also
-  listens on HTTPS, so `UseHttpsRedirection` answers **307** to every request on that port. Locally,
-  add `--env-var baseUrl=https://localhost:7215 --insecure`.
-- `login` posts `{{testEmail}}` (`test@example.com`), but `register` creates
-  `test.{{$timestamp}}@example.com` and never writes it back, so every request after `register`
-  answers 401 `INVALID_CREDENTIALS` — the collection's own credentials, not the service key.
+`baseUrl` was `http://localhost:5068` until 2026-09-20 — CI's address, from when CI ran `--env
+local`. The local dev profile also listens on HTTPS, so `UseHttpsRedirection` answered **307** to
+every request there, including the ones this README told you to make. CI has its own environment
+now, so this one names the address a developer actually has.
+
+One defect is left, older than all of this and not fixed here: `login` posts `{{testEmail}}`
+(`test@example.com`), but `register` creates `test.{{$timestamp}}@example.com` and never writes it
+back, so every request after `register` answers 401 `INVALID_CREDENTIALS` — the collection's own
+credentials, not the service key. Telling those two 401s apart is what `errorCode` is for:
+`SERVICE_CREDENTIAL_REQUIRED` is this API refusing the caller, `INVALID_CREDENTIALS` is not.
 
 ## Collection Structure
 
@@ -103,13 +112,13 @@ api-collection/
 npm install -g @usebruno/cli
 
 # Run entire collection
-bru run tests/api-collection --env local
+bru run tests/api-collection --env local --insecure
 
 # Run specific folder
-bru run tests/api-collection/endpoints/auth --env local
+bru run tests/api-collection/endpoints/auth --env local --insecure
 
 # Run with JUnit output
-bru run tests/api-collection --env local --reporter junit --output results.xml
+bru run tests/api-collection --env local --reporter junit --output results.xml --insecure
 ```
 
 ## Test Workflow
