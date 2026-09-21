@@ -49,7 +49,8 @@ public class SecurityEventConstantTests
 
     /// <summary>
     /// Both projects, whole. Unlike the error-code rule this is not scoped to a Services folder:
-    /// eight of the twenty-seven sites live in the BFF's middleware and its Program, and scoping is what
+    /// seven of the twenty-seven sites live in the BFF's middleware and its Program and an eighth in its
+    /// Services folder — which is the point: scoping is what
     /// let a third of the vocabulary sit outside anybody's rule in the first place.
     /// </summary>
     private static readonly string[] ScannedFolders =
@@ -460,7 +461,7 @@ public class SecurityEventConstantTests
 
         perProject["Api"].Should().Be(
             apiSites,
-            "ADR-0044 says \"Seventeen security events are logged\" and \"Seven of the seventeen API "
+            "ADR-0044 says \"Seventeen security events are logged\" and \"Fifteen events write a row "
             + "events write a row today\". If the API's count moved, update that ADR's Context and its "
             + "\"What is wired\" section, and AuditOutcome's per-outcome tallies, in the same commit");
 
@@ -475,7 +476,7 @@ public class SecurityEventConstantTests
           log line — a deposit is worth durable evidence and not worth waking anyone, and the money
           paths already carry their own operational log lines. So the two numbers moved
           independently for the first time, and a guard that only counted templates would have let
-          ADR-0044's "Seven of the seventeen API events write a row today" go stale in silence,
+          ADR-0044's "Fifteen events write a row today" go stale in silence,
           exactly as "the six BFF events" did.
         */
         var sources = SourceFiles(RepoBackendRoot()).Select(File.ReadAllText).ToList();

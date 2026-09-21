@@ -6,8 +6,17 @@ namespace AzureBank.Shared.Constants;
 public static class StepUpConstants
 {
     /// <summary>
-    /// Request header carrying the authorisation reference (UUID) minted by
-    /// <c>POST /api/auth/step-up</c>.
+    /// Request header carrying the authorisation reference (UUID) minted by one of the three
+    /// mints: <c>POST /api/transfers/authorizations</c>,
+    /// <c>POST /api/transfers/internal/authorizations</c> and
+    /// <c>POST /api/accounts/{id}/deletion-authorizations</c>.
+    ///
+    /// <para>
+    /// This said <c>POST /api/auth/step-up</c> until 2026-09-21. There has never been such a
+    /// route: <c>AuthController</c> is <c>[Route("api/auth")]</c> with login, register, refresh,
+    /// me, logout, pin and pin/verify, and the committed contract publishes no path containing
+    /// <c>step-up</c>. Every other piece of prose in the repository named the real mints.
+    /// </para>
     ///
     /// <para>
     /// A HEADER, never a body field, and the reason is measured rather than stylistic:

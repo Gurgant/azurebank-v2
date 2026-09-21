@@ -355,8 +355,11 @@ finishes, and the operator still supplies the elsewhere. It is a verb somebody t
 a demonstration rather than a constraint. **It adds no exit code, and this record deliberately does
 not restate them.** An earlier draft of this paragraph listed five of the seven — leaving out 4 for a
 missing path and 5 for an interruption — which was a fifth copy of a list that already lives in four
-places and is already stale in one of them: `docs/runbooks/audit-chain-unavailable.md` enumerates
-them *"for scripting it"* and stops at 5, so exit 6 appears nowhere an operator scripts from. D5's
+places and was, when this was written, already stale in one of them: `docs/runbooks/audit-chain-unavailable.md`
+enumerated them *"for scripting it"* and stopped at 5, so exit 6 appeared nowhere an operator
+scripted from. *(Corrected 2026-09-21: that runbook was fixed the same evening this paragraph was
+written — it lists 0 to 6 at `:1324-1326` and says so itself at `:1332`. The reasoning below is
+unchanged; only the example had outlived its own fix.)* D5's
 own reasoning applies to the record as much as to the tool: the answer to a list that has outgrown
 its own description is fewer copies, not a more complete one. The list is in
 `AzureBank.AuditVerifier`'s `Program.cs` header, beside the constants it describes.
