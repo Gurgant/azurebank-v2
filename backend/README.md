@@ -499,7 +499,8 @@ The API is documented using **Scalar**, available at:
 |                  | `/api/accounts/{id}`         | DELETE | Close account       | Yes       |
 | **Transactions** | `/api/transactions`          | GET    | List transactions   | Yes       |
 |                  | `/api/transactions/deposit`  | POST   | Deposit funds       | Yes       |
-|                  | `/api/transactions/withdraw` | POST   | Withdraw funds      | Yes       |
+|                  | `/api/transactions/withdraw` | POST   | Withdraw funds      | Yes + auth |
+|                  | `/api/transactions/withdraw/authorizations` | POST | Authorise a withdrawal | Yes + PIN |
 | **Transfers**    | `/api/transfers`             | POST   | External transfer   | Yes + PIN |
 |                  | `/api/transfers/internal`    | POST   | Internal transfer   | Yes + PIN |
 | **Users**        | `/api/users/{azureTag}`      | GET    | Get user by tag     | Yes       |

@@ -1,8 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, closeAccount, firstAccountId, idempotencyKey, login } from './client';
-import { FIXTURES } from './target';
+import {
+  asProblem,
+  call,
+  closeAccount,
+  firstAccountId,
+  idempotencyKey,
+  login,
+  withdrawViaMint,
+} from './client';
 
 /** The committed contract, read as a third party would — the number the client promises. */
 const SPEC_URL = new URL('../../../docs/api/openapiv1.json', import.meta.url);
@@ -207,10 +214,14 @@ describe('contract: money', () => {
 
     try {
       emptyId = (created.body as { data: { id: string } }).data.id;
+      // NO AUTHORISATION, deliberately. Since ADR-0056 the funds guard runs ahead of the
+      // authorisation check, so an empty account answers 422 INSUFFICIENT_FUNDS without one --
+      // and this probe asserting that is what pins the ordering on the real stack. If the two
+      // ever swap, this answers 401 AUTHORIZATION_REQUIRED and says so.
       const { status, body } = await call('/api/transactions/withdraw', {
         method: 'POST',
         headers: { 'Idempotency-Key': idempotencyKey() },
-        body: JSON.stringify({ accountId: emptyId, amount: 1, pin: FIXTURES.pin }),
+        body: JSON.stringify({ accountId: emptyId, amount: 1 }),
       });
       const problem = asProblem(body) as ReturnType<typeof asProblem> & {
         available?: number;
@@ -275,11 +286,11 @@ describe('contract: money', () => {
       // 2026-09-06T10:44Z — and `call` resolves on it, so the old `.catch` hid a cleanup that
       // no longer cleaned anything and left a refusal row per run.
       if (fundedId) {
-        await call('/api/transactions/withdraw', {
-          method: 'POST',
-          headers: { 'Idempotency-Key': idempotencyKey() },
-          body: JSON.stringify({ accountId: fundedId, amount: 25, pin: FIXTURES.pin }),
-        }).catch(() => {});
+        // withdrawViaMint, not a bare call: since ADR-0056 a withdrawal without a minted
+        // authorisation is refused 401, and `call` resolves on it -- so a bare drain here would
+        // leave the account funded and append a MoneyWithdrawalRefused row every run, which is
+        // the exact failure the closure case above already had once.
+        await withdrawViaMint(fundedId, 25).catch(() => {});
         await closeAccount(fundedId);
       }
     }

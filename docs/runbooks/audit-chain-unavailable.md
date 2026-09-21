@@ -962,8 +962,10 @@ What the second section can say, and what it cannot:
   status other than `Consumed`, was minted by another user or for the other kind of transfer, or is
   marked spent with no instant; the lines under it say which. The chained name is the evidence; the
   table was written around the application. A finding.
-- `NO AUTHORISATION APPLIES` — a deposit, a withdrawal, or the INCOMING leg of a transfer. ADR-0042
-  binds an authorisation to the two transfer endpoints only; ask for the OUTGOING leg's number.
+- `NO AUTHORISATION APPLIES` — a deposit, or the INCOMING leg of a transfer. ADR-0042 binds an
+  authorisation to the two transfer endpoints and ADR-0056 to the withdrawal; ask for the OUTGOING
+  leg's number. ~~a withdrawal~~ *(struck 2026-09-21: a withdrawal now mints and spends one like a
+  transfer, so this verdict against a withdrawal is a FINDING rather than the expected answer.)*
 - `NO AUDIT ROW` — a ledger row with no audit row naming it. Every money movement writes one in the
   same transaction as the ledger row (D1), so this is a movement recorded without its record: a
   write around the application, or a purge. A finding whatever the chain verdict below it says.

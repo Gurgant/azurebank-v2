@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, closeAccount, idempotencyKey, login } from './client';
-import { FIXTURES } from './target';
+import { asProblem, call, closeAccount, idempotencyKey, login, withdrawViaMint } from './client';
 
 /**
  * The backend has TWO validation envelopes, and which one you get depends on the endpoint.
@@ -303,13 +302,10 @@ describe('contract: validation envelopes', () => {
         (control.body as Paged).pagination.totalItems,
       );
     } finally {
-      // Drain with the PIN, then close — the funded-account row's cleanup in money.contract.test.ts,
-      // so the probe does not stay listed on a seeded database.
-      await call('/api/transactions/withdraw', {
-        method: 'POST',
-        headers: { 'Idempotency-Key': idempotencyKey() },
-        body: JSON.stringify({ accountId, amount: 1, pin: FIXTURES.pin }),
-      }).catch(() => {});
+      // Drain, then close — the funded-account row's cleanup in money.contract.test.ts, so the
+      // probe does not stay listed on a seeded database. Mints first since ADR-0056: a bare
+      // withdrawal is refused 401 and `call` resolves on it, so this would silently stop draining.
+      await withdrawViaMint(accountId, 1).catch(() => {});
       await closeAccount(accountId);
     }
   });

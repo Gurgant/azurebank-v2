@@ -178,6 +178,12 @@ public class PublishedRefusalCodesTests
             withdrawal by a user with no PIN enrolled           -> 422 PIN_REQUIRED
           The first two were named as 422 examples until then ("same account transfer", "recipient
           not found"): refusals the server sends with another status.
+
+          THE LAST LINE MOVED ON 2026-09-21 (ADR-0056). A withdrawal no longer consults a PIN, so
+          PIN_REQUIRED is not among its 422s any more -- it is the withdrawal MINT's, and the
+          assertion moved with the behaviour rather than being deleted. The withdrawal keeps exactly
+          one 422, INSUFFICIENT_FUNDS, and the NotContain below is what stops the old code drifting
+          back into a description nothing would refuse.
         */
         var internalTransfer = Description422("/api/transfers/internal");
         internalTransfer.Should().Contain(ErrorCodes.InsufficientFunds);
@@ -198,8 +204,19 @@ public class PublishedRefusalCodesTests
             "not found", $"an unknown recipient is a 404, {ErrorCodes.AccountNotFound}");
 
         var withdraw = Description422("/api/transactions/withdraw");
-        withdraw.Should().Contain(ErrorCodes.PinRequired, "a user with no PIN enrolled got it");
         withdraw.Should().Contain(ErrorCodes.InsufficientFunds);
+        withdraw.Should().NotContain(
+            ErrorCodes.PinRequired,
+            "ADR-0056 moved the PIN to the mint; a withdrawal that named PIN_REQUIRED would publish "
+            + "a refusal it can no longer produce");
+
+        var withdrawalMint = Description422("/api/transactions/withdraw/authorizations");
+        withdrawalMint.Should().Contain(
+            ErrorCodes.PinRequired, "the mint is where a withdrawal's PIN is now proved");
+        withdrawalMint.Should().NotContain(
+            ErrorCodes.InsufficientFunds,
+            "a mint does not check funds (ADR-0050 D4): an authorisation can be minted for more "
+            + "than the account holds, and the withdrawal is what refuses it");
     }
 
     [Fact]

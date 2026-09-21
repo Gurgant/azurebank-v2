@@ -8,6 +8,11 @@ namespace AzureBank.Tests.Unit.Validators;
 /// <summary>
 /// Unit tests for WithdrawRequestValidator.
 /// </summary>
+/// <remarks>
+/// The PIN tests are NOT missing: they moved to
+/// <c>WithdrawalAuthorizationRequestValidatorTests</c> with the field itself
+/// (ADR-0056). A withdrawal no longer carries a PIN; the mint proves it.
+/// </remarks>
 public class WithdrawRequestValidatorTests
 {
     private readonly WithdrawRequestValidator _validator = new();
@@ -16,7 +21,6 @@ public class WithdrawRequestValidatorTests
     {
         AccountId = Guid.NewGuid(),
         Amount = 100m,
-        Pin = "123456",
         Description = "Test withdrawal"
     };
 
@@ -74,31 +78,6 @@ public class WithdrawRequestValidatorTests
         request.Amount = ValidationRules.TransactionMinAmount;
         var result = _validator.TestValidate(request);
         result.ShouldNotHaveValidationErrorFor(x => x.Amount);
-    }
-
-    #endregion
-
-    #region PIN Validation Tests
-
-    [Fact]
-    public void Validate_WithEmptyPin_ShouldHaveError()
-    {
-        var request = CreateValidRequest();
-        request.Pin = "";
-        var result = _validator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.Pin);
-    }
-
-    [Theory]
-    [InlineData("12345")]    // Too short
-    [InlineData("1234567")]  // Too long
-    [InlineData("12345a")]   // Contains letter
-    public void Validate_WithInvalidPin_ShouldHaveError(string pin)
-    {
-        var request = CreateValidRequest();
-        request.Pin = pin;
-        var result = _validator.TestValidate(request);
-        result.ShouldHaveValidationErrorFor(x => x.Pin);
     }
 
     #endregion

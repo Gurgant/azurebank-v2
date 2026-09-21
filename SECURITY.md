@@ -28,10 +28,12 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
 - **Refresh tokens rotate on every use, and a reuse revokes the whole family** — a replayed
   refresh token is the signature of theft, so the response is to end every session descended from
   it rather than to serve the request (ADR-0021).
-- **A PIN for every move of money and for closing an account, on three rails.** A withdrawal
-  carries the PIN in its request body. A transfer and an account closure first mint a one-shot
-  authorisation with the PIN, bound to exactly that operation and spent once (ADR-0042, ADR-0049).
-  Only the account-number reveal still uses an elevation held in the BFF session (ADR-0008). Through
+- **A PIN for every move of money and for closing an account, on two rails.** ~~on three rails. A
+  withdrawal carries the PIN in its request body.~~ *(Struck 2026-09-21: ADR-0056 moved the
+  withdrawal onto the mint rail, and the body-PIN rail it was the last user of no longer exists.)*
+  A transfer, an account closure and a withdrawal first mint a one-shot authorisation with the PIN,
+  bound to exactly that operation and spent once (ADR-0042, ADR-0049, ADR-0056). Only the
+  account-number reveal still uses an elevation held in the BFF session (ADR-0008). Through
   the BFF, none of them is granted by the bearer token alone; presented to the API directly, a
   bearer token reads the full number with no PIN — measured 2026-09-15, see "Where each guarantee
   stops without the BFF" below. _(This used to end "None of them is granted by the bearer token

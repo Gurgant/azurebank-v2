@@ -205,6 +205,49 @@ export async function closeAccount(id: string): Promise<void> {
   await call(`/api/accounts/${id}`, { method: 'DELETE', headers }).catch(() => {});
 }
 
+/**
+ * A withdrawal that mints its own authorisation first — the two-call shape every withdrawal has
+ * since ADR-0056.
+ *
+ * The same reason `closeAccount` above exists, one rail later. Before this helper the drains in
+ * `money.contract.test.ts` and `validation.contract.test.ts` sent a bare POST with a `pin` field,
+ * which after this change is refused twice over: the field is gone from the published schema, and
+ * a body without the `Step-Up-Authorization` header is answered 401 AUTHORIZATION_REQUIRED. And
+ * because `call` resolves on every status, a `.catch` would never have fired — each real-target
+ * run would have left the balance un-drained and appended a `MoneyWithdrawalRefused` row to the
+ * seeded database, silently, exactly as the closure case did.
+ *
+ * The mint is `.catch`-guarded for the same reason it is there: a refused mint (a locked PIN) must
+ * not throw out of a cleanup, and the withdrawal that follows is then refused by the server in its
+ * own words rather than by a transport error here.
+ *
+ * The AMOUNT must match the mint's to the cent — the binding is an HMAC over the account and the
+ * sum — so callers pass it once and it is used for both calls.
+ */
+export async function withdrawViaMint(
+  accountId: string,
+  amount: number,
+  description?: string,
+): Promise<{ status: number; body: unknown }> {
+  const mint = await call('/api/transactions/withdraw/authorizations', {
+    method: 'POST',
+    body: JSON.stringify({ accountId, amount, pin: FIXTURES.pin }),
+  }).catch(() => null);
+
+  const headers: Record<string, string> = { 'Idempotency-Key': idempotencyKey() };
+  if (mint?.status === 201) {
+    headers['Step-Up-Authorization'] = (
+      mint.body as { data: { authorizationId: string } }
+    ).data.authorizationId;
+  }
+
+  return call('/api/transactions/withdraw', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ accountId, amount, description }),
+  });
+}
+
 /** The caller's first account id. Both targets seed at least one. */
 export async function firstAccountId(): Promise<string> {
   const { status, body } = await call('/api/accounts');

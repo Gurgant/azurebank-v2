@@ -54,10 +54,20 @@ public class IdempotencyService : IIdempotencyService
     /// <inheritdoc />
     public async Task<string> ComputeRequestHashAsync(Stream body, CancellationToken cancellationToken)
     {
-        // Keyed digest (not plain SHA-256): the withdraw body contains a
-        // 6-digit PIN, so an unkeyed hash of a mostly-known payload would be
-        // an offline brute-force oracle for anyone with database read access.
-        // The key lives in configuration (user-secrets/env), never in the DB.
+        /*
+           KEYED DIGEST (not plain SHA-256), AND IT STAYS KEYED THOUGH ITS ORIGINAL INSTANCE IS GONE.
+
+           The reason written here was the withdraw body's 6-digit PIN: an unkeyed hash of a
+           mostly-known payload would be a 10^6-guess offline oracle for anyone with database read
+           access. ADR-0056 moved that PIN to the mint, and no monetary body carries one any more.
+
+           The digest is NOT downgraded, because the property was never "there is a PIN in there".
+           Every body here is low-entropy and mostly known -- an account id the holder can read, an
+           amount from a small range, a short description -- so an unkeyed hash still lets a reader
+           of the table confirm guesses about what somebody moved and to whom. Keying it is what
+           makes the stored fingerprint useless to anyone who cannot also read the configuration.
+           The key lives in configuration (user-secrets/env), never in the DB.
+        */
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.HashKey));
         var hash = await hmac.ComputeHashAsync(body, cancellationToken);
         return Convert.ToHexStringLower(hash);

@@ -105,8 +105,11 @@ public class CommittedOpenApiDocumentTests : IntegrationTestBase
           THE GUARD ON THE GUARD, in this suite's idiom. If the provider resolved a document for the
           wrong name, or the host composed without the controllers, the generated document would be
           nearly empty — and a nearly empty document compared against a nearly empty regenerated
-          file is agreement about nothing. The floor sits under the 27 operations measured on
-          2026-09-10 so that deleting an endpoint does not trip it; losing the controllers does.
+          file is agreement about nothing. The floor sits under the 28 operations measured on
+          2026-09-21 so that deleting an endpoint does not trip it; losing the controllers does.
+          THE FLOOR ITSELF STAYS AT 20 and must not be raised to track the count: raising it would
+          turn every honest endpoint deletion into a red here, which is the one thing its distance
+          from the real number is for.
         */
         JsonNode parsed;
         try
@@ -131,7 +134,7 @@ public class CommittedOpenApiDocumentTests : IntegrationTestBase
         var operations = CountOperations(parsed);
         operations.Should().BeGreaterThanOrEqualTo(
             20,
-            "the API publishes 27 operations; a generated document with almost none means the provider "
+            "the API publishes 28 operations; a generated document with almost none means the provider "
             + "or the composition is wrong, and comparing two empty documents would prove nothing");
 
         var path = CommittedPath();

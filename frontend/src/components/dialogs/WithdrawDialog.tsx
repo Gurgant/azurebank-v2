@@ -291,10 +291,23 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     setInFlight(false);
     setIsSubmitting(true);
     try {
+      /*
+        THE PIN NO LONGER TRAVELS IN THE BODY, and this dialog does not yet mint (ADR-0056).
+
+        The interim is stated rather than hidden: PR-C replaces the PIN step with one that mints at
+        POST /api/transactions/withdraw/authorizations and submits with the Step-Up-Authorization
+        header. Until then a submit here is answered 401 AUTHORIZATION_REQUIRED, which the catch
+        below renders as the problem's detail -- "This withdrawal has not been authorised."
+
+        It does NOT sign the user out, and that is measured rather than assumed:
+        sessionMiddleware's IN_FLOW_401_CODES contains AUTHORIZATION_REQUIRED and is routed on
+        errorCode, never on endpoint identity, so it covers this endpoint with no change.
+
+        The PIN is still collected: the step and its state stay, because PR-C needs exactly them.
+      */
       const result = await submit({
         accountId: data.accountId,
         amount: data.amount,
-        pin,
         description: data.description,
       });
       setSuccess({

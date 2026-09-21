@@ -130,8 +130,9 @@ workflow that only runs when somebody starts it by hand. Neither is changed here
 _Moved 2026-09-15, as the bullet under "What would change this" said it would. Schemathesis is a
 gate: the `conformance` job in `ci.yml` runs its four response-conformance checks — status code,
 media type, headers, body schema — against the running API on every PR, with its own SQL Server, a
-bearer token from the real login, the version pinned at 4.27.1, no `|| true`, and a floor of 27
-operations in the JUnit report so a run that tested nothing cannot pass. Claim 3 has its guard.
+bearer token from the real login, the version pinned at 4.27.1, no `|| true`, and a floor of
+~~27~~ 28 operations in the JUnit report so a run that tested nothing cannot pass *(raised
+2026-09-21 with the withdrawal mint, ADR-0056)*. Claim 3 has its guard.
 What its first run found, against a document every gate here had passed: `415` on all fifteen
 operations that take a body (the framework's refusal of a non-JSON body, never declared), a second
 `404` on the eight operations of the six GUID-constrained routes (a segment that is not a GUID
@@ -166,9 +167,11 @@ check saw a source older than its output and did not recompile, so the next two 
 the sentinel property, and the hand-edit falsification went red because of THAT. It was caught only
 because the failure message was read. Recorded in `docs/engineering-traps.md`.
 
-**A guard on the guard.** The test asserts the generated document carries at least 20 operations (27
-today), so a provider resolved for the wrong name, or a host composed without its controllers,
-cannot produce an empty document that agrees with an empty regeneration.
+**A guard on the guard.** The test asserts the generated document carries at least 20 operations
+(~~27~~ 28 today), so a provider resolved for the wrong name, or a host composed without its
+controllers, cannot produce an empty document that agrees with an empty regeneration. The 20 is
+deliberately BELOW the real count and stays there: tracking the count would make every honest
+endpoint deletion red here.
 
 **Two defects found on the way, recorded and deliberately NOT fixed here**, because each changes the
 product rather than the gate — ⚠️ *and the first of them is withdrawn, see the note under it:*

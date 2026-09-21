@@ -10,7 +10,7 @@ drifting from the contract again. Supersedes nothing; corrects one code comment.
 The server enforces one per-transaction bound on every money move — deposit, withdrawal, transfer,
 internal transfer and both step-up authorisations — from a single constant,
 `ValidationRules.TransactionMaxAmount` (100,000, in the product's currency), through `[MoneyRange]`
-and a FluentValidation rule, and publishes it as `maximum: 100000.00` on all six request schemas in
+and a FluentValidation rule, and publishes it as `maximum: 100000.00` on all ~~six~~ seven request schemas in
 `docs/api/openapiv1.json`. The generated frontend schemas carry it as `.max(100000)`. Nothing
 inflow-specific exists on the server, in the document, or in any decision record.
 
@@ -90,7 +90,7 @@ marked as such rather than guessed at~~ (struck 2026-09-04; correction below).
 
 **D5 — The committed document is guarded against a constant changed without a regen.** The regen
 step is manual and deliberately outside CI, so a backend architecture test now reads the committed
-`openapiv1.json` and asserts that all six money schemas publish `maximum` equal to
+`openapiv1.json` and asserts that all ~~six~~ seven money schemas publish `maximum` equal to
 `TransactionMaxAmount`, `minimum` equal to `TransactionMinAmount`, and the description
 `[MoneyRange]` writes. The drift gate proves generated == committed; this proves committed ==
 server, for the one number the client promises.
@@ -127,6 +127,10 @@ raising the server's bound for any operation.
   decided, cost a parameterised attribute, two transformers, six validator sites, six schema
   entries and two generated files, and give a demo bank an inflow ceiling ten times its outflow
   one, which no recognised practice supports.
+  - *The two "six" figures here are LEFT AT SIX on purpose (2026-09-21, ADR-0056 took the schemas
+    to seven). They price this option as it was priced when it was REJECTED; restating them at
+    today's count would make the record claim a cost that was never weighed. Every other "six" in
+    this document, which describes what the system DOES, moved.*
 - **Split the server's constant into inflow and outflow bounds at equal values, for the future.**
   Speculative surface for numbers that are the same today; the seam costs nothing to add on the
   day a second number exists.

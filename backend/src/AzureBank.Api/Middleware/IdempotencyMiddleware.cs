@@ -86,7 +86,9 @@ public class IdempotencyMiddleware
         // Fingerprint the raw body bytes (no JSON canonicalization: it is
         // deterministic, parser-free, and real client retries resend the
         // same bytes). bufferThreshold matches the cap so an accepted body
-        // (PIN included) stays in memory and is never spooled to disk.
+        // stays in memory and is never spooled to disk -- it said "(PIN
+        // included)" until ADR-0056 moved the PIN out of every monetary
+        // body; the reason to keep bodies off disk did not move with it.
         context.Request.EnableBuffering(bufferThreshold: MaxRequestBodyBytes);
         string requestHash;
         try

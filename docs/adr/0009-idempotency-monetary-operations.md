@@ -90,9 +90,15 @@ design — see Notes).
 - **`RequestHash` = HMAC-SHA256(server key, raw body bytes)**, lowercase
   hex. Raw bytes (no JSON canonicalization): deterministic, parser-free,
   and real retries resend identical bytes. **Keyed**, not plain SHA-256:
-  the withdraw body contains a 6-digit PIN, so an unkeyed hash of a
+  ~~the withdraw body contains a 6-digit PIN, so an unkeyed hash of a
   mostly-known payload would give anyone with DB read access a 10^6-guess
-  offline oracle — defeating the reason PINs are Argon2id-hashed. The key
+  offline oracle — defeating the reason PINs are Argon2id-hashed.~~
+  *(Struck 2026-09-21: ADR-0056 moved the PIN to the withdrawal mint, so no
+  monetary body carries one. The digest stays keyed on the surviving
+  reason: every body here is low-entropy and mostly known — an account id,
+  an amount from a small range, a short description — so an unkeyed hash
+  would still let a reader of the table confirm guesses about what somebody
+  moved and to whom.)* The key
   (`Idempotency:HashKey`) lives in configuration (user-secrets/env),
   never in the repo or the database; startup fails fast if absent.
 - **`ClaimId` (Guid, concurrency token) = fencing + owner token.** Every

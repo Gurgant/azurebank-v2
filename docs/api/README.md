@@ -74,8 +74,9 @@ so:
 The failure worth catching is a regeneration that silently drops something a human wrote, and a
 whole-file textual diff — over four thousand lines by 2026-09-10 — hides that perfectly. This is not
 hypothetical: every one of the
-spec's operations carries a summary — 27 of 27 on 2026-09-10 (this said "24" in the present tense
-and the count had moved).
+spec's operations carries a summary — 27 of 27 on 2026-09-10, 28 of 28 on 2026-09-21 after the
+withdrawal mint (this said "24" in the present tense and the count had moved; each figure carries
+its date for that reason, and a reader should trust the date over the number).
 
 **The REPORT does not describe schemas, parameters, examples, tags or security — the check still
 catches them.** `check` compares the whole document and fails on any difference; a change confined to

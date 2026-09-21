@@ -48,4 +48,20 @@ public readonly record struct StepUpBinding(
     /// for a shape the deletion then fails to recompute.
     /// </summary>
     public static StepUpBinding ForAccountDeletion(Guid accountId) => new(accountId, null, null, 0m);
+
+    /// <summary>
+    /// The binding of a withdrawal of <paramref name="amount"/> from <paramref name="accountId"/>:
+    /// the account and the sum, no counterparty (ADR-0056). One factory for the two call sites —
+    /// the mint at <c>TransactionService.AuthoriseWithdrawalAsync</c> and the validation at
+    /// <c>TransactionService.WithdrawAsync</c> — so a withdrawal authorisation can never be minted
+    /// for a shape the withdrawal then fails to recompute.
+    /// </summary>
+    /// <remarks>
+    /// The amount is bound, unlike a closure's rendered 0, because it is the one field a
+    /// re-presentation could profitably change: the same authorisation against a larger sum is
+    /// exactly the attack the binding exists to refuse. Cash leaves the system here, so there is no
+    /// payee — which is why both counterparty fields are null rather than pointing at the actor.
+    /// </remarks>
+    public static StepUpBinding ForWithdrawal(Guid accountId, decimal amount) =>
+        new(accountId, null, null, amount);
 }

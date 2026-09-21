@@ -1,6 +1,8 @@
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.Entities;
+using AzureBank.Shared.Enums;
+using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -289,5 +291,61 @@ internal static class ConcurrencyRetry
         {
             await context.Entry(account).ReloadAsync();
         }
+    }
+
+    /// <summary>
+    /// Prepares one more attempt of an idempotent money operation: resets the accounts to the store
+    /// and then decides, from the tracked <see cref="IdempotencyRecord"/>, whether re-executing is
+    /// safe at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the CASE B half of the retry story. Case A is a stale <c>RowVersion</c>: nothing
+    /// committed, reload and recompute. Case B is a transient fault AFTER the commit -- the
+    /// database applied the work and the acknowledgement was lost -- and there the same delegate
+    /// must NOT run again, because running it would move the money twice under one
+    /// <c>Idempotency-Key</c>. The two are indistinguishable from the exception, so the claim row
+    /// is what tells them apart.
+    /// </para>
+    /// <para>
+    /// ONE COPY, deliberately. This logic lived privately in <c>TransferService</c> and the
+    /// withdrawal needed it verbatim when it joined the step-up rail (ADR-0056). A second copy of a
+    /// rule this sharp is the drift this class was created to prevent -- the same reason
+    /// <see cref="IsTransactionNumberCollision"/> is here rather than inline at four call sites.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="IdempotencyException">
+    /// Result unknown: a prior attempt committed, or the claim row vanished under us, so this
+    /// operation must not be executed again. The middleware surfaces it as 409 RESULT_UNKNOWN.
+    /// </exception>
+    public static async Task PrepareIdempotentAttemptAsync(
+        AzureBankDbContext context, params Account[] accounts)
+    {
+        await ResetToStoreAsync(context, accounts);
+
+        var entry = context.ChangeTracker.Entries<IdempotencyRecord>().FirstOrDefault();
+        if (entry is null)
+        {
+            return;
+        }
+
+        // Fresh database truth for this claim. ReloadAsync also refreshes the tracked ORIGINAL
+        // values, so the flip re-applied below emits a fenced UPDATE (WHERE ClaimId = <db value>)
+        // that rides this attempt's commit.
+        await entry.ReloadAsync();
+
+        if (entry.State == EntityState.Detached
+            || entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
+        {
+            // Detached: the row was deleted under us (stale takeover/cleanup) -- we cannot prove
+            // nothing committed. Executed/Completed: a prior attempt already committed this
+            // operation. Either way, refuse to execute again.
+            throw IdempotencyException.ResultUnknown();
+        }
+
+        // Processing: nothing committed yet. Re-arm the pending Executed flip so it travels
+        // atomically with this attempt's business commit.
+        entry.Entity.Status = IdempotencyStatus.Executed;
+        entry.Entity.ClaimId = Guid.NewGuid();
     }
 }

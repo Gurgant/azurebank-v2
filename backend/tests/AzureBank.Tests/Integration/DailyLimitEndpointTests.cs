@@ -217,9 +217,11 @@ public class DailyLimitEndpointTests : IntegrationTestBase, IClassFixture<DailyL
                 stepUpAuthorizationId: internalAuth))
             .StatusCode.Should().Be(HttpStatusCode.Created, "an internal move is not counted");
 
+        var withdrawAuth = await AuthoriseWithdrawalAsync(accountId, 100m, Pin);
         (await PostMonetaryAsync(
                 "/api/transactions/withdraw",
-                new WithdrawRequest { AccountId = accountId, Amount = 100m, Pin = Pin, Description = "cash" }))
+                new WithdrawRequest { AccountId = accountId, Amount = 100m, Description = "cash" },
+                stepUpAuthorizationId: withdrawAuth))
             .StatusCode.Should().Be(HttpStatusCode.Created, "a withdrawal is a different rail");
 
         // ── 7. cross midnight on the host's one clock → a mint of 500 → 201: the day boundary

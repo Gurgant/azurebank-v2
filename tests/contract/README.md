@@ -185,7 +185,11 @@ run rather than an illustration:
 ```
 
 The operation count comes from the committed document, so it moves when the contract does; the
-step after the run fails the job if it drops below the floor.
+step after the run fails the job if it drops below the floor. **It has moved since that run**: the
+withdrawal mint took the document to 28 operations on 2026-09-21 (ADR-0056) and the floor was
+raised with it, so the 27 above is what THAT run tested and not what a run tests today. The
+transcript is left as it was recorded rather than edited to match, because a quoted run that is
+quietly updated stops being evidence.
 
 *(What stood here until 2026-09-21 was an invented transcript: it announced `Collected API
 operations: 20` against a document that declares 27, listed `GET /api/users/search` — a route

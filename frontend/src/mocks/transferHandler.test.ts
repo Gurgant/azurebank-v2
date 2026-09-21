@@ -1811,10 +1811,22 @@ describe('the daily transfer limit (ADR-0050)', () => {
     });
     expect(internalMove.status).toBe(201);
 
+    // The withdrawal rail is excluded from the daily limit, but since ADR-0056 it still needs its
+    // own authorisation — a bare call would be refused 401 and this assertion would report the
+    // wrong reason for the wrong rail.
+    const withdrawAuth = await fetch('/api/transactions/withdraw/authorizations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: acct(), amount: 10, pin: MOCK_PIN }),
+    }).then((r) => r.json());
     const withdrawn = await fetch('/api/transactions/withdraw', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({ accountId: acct(), amount: 10, pin: MOCK_PIN }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+        'Step-Up-Authorization': withdrawAuth.data.authorizationId,
+      },
+      body: JSON.stringify({ accountId: acct(), amount: 10 }),
     });
     expect(withdrawn.status).toBe(201);
 

@@ -60,11 +60,28 @@ function deposit(accountId: string, amount: number) {
   });
 }
 
-function withdraw(accountId: string, amount: number) {
+/** ADR-0056: a withdrawal spends an authorisation minted for exactly this account and amount. */
+async function mintWithdrawal(accountId: string, amount: number): Promise<string> {
+  const res = await fetch('/api/transactions/withdraw/authorizations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accountId, amount, pin: MOCK_PIN }),
+  });
+  return (await res.json()).data.authorizationId as string;
+}
+
+async function withdraw(accountId: string, amount: number) {
+  // Mints first: since ADR-0056 a bare withdrawal is refused 401 AUTHORIZATION_REQUIRED, and this
+  // helper's job is to actually DRAIN the account the closure test then closes.
+  const authorizationId = await mintWithdrawal(accountId, amount);
   return fetch('/api/transactions/withdraw', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify({ accountId, amount, pin: MOCK_PIN }),
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': crypto.randomUUID(),
+      'Step-Up-Authorization': authorizationId,
+    },
+    body: JSON.stringify({ accountId, amount }),
   });
 }
 

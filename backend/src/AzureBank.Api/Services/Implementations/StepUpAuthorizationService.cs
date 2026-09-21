@@ -128,8 +128,9 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
 
     /// <summary>
     /// A refused PIN at a mint, on its own connection: <c>MoneyTransferRefused</c> for the two
-    /// transfer mints, <c>AccountDeletionRefused</c> for the closure mint, <c>Detail</c> the
-    /// <c>ErrorCodes</c> constant the caller received.
+    /// transfer mints, <c>AccountDeletionRefused</c> for the closure mint,
+    /// <c>MoneyWithdrawalRefused</c> for the withdrawal mint, <c>Detail</c> the <c>ErrorCodes</c>
+    /// constant the caller received.
     /// </summary>
     /// <remarks>
     /// The subject is <c>binding.FromAccountId</c>, and it is safe to write because every caller
@@ -140,14 +141,44 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
     private Task RecordPinRefusalAsync(
         Guid userId, StepUpOperation operation, StepUpBinding binding, string errorCode) =>
         _audit.RecordRefusalAsync(
-            operation == StepUpOperation.AccountDeletion
-                ? SecurityEvents.AccountDeletionRefused
-                : SecurityEvents.MoneyTransferRefused,
+            RefusalEventFor(operation),
             AuditOutcome.Refused,
             actorUserId: userId,
             subjectType: "Account",
             subjectId: binding.FromAccountId,
             detail: errorCode);
+
+    /*
+      A SWITCH, WHERE THIS WAS A TWO-ARMED TERNARY OVER A THREE-MEMBER ENUM (ADR-0056).
+
+      It read `operation == AccountDeletion ? AccountDeletionRefused : MoneyTransferRefused`, so
+      the withdrawal added here would have fallen into the else and a refused PIN at a withdrawal
+      mint would have been filed, silently and durably, as a refused TRANSFER. Nothing would have
+      failed: the row writes, the caller still gets 401, and only an operator reading the trail
+      months later would find a transfer that never existed.
+
+      `_` THROWS RATHER THAN DEFAULTING. An unnamed value cast into this enum is a programming
+      error and must not be given a plausible event name; and because the compiler counts unnamed
+      values as reachable, an exhaustive switch cannot be made to fail the build here instead
+      (TreatWarningsAsErrors is on in Release, so CS8509 WOULD be an error -- it is the enum's open
+      domain, not the warning policy, that makes compile-time exhaustiveness unavailable).
+
+      What catches a FIFTH member is therefore a test, not the compiler:
+      SecurityEventConstantTests.EveryStepUpOperationMapsToItsOwnRefusalEvent walks
+      Enum.GetValues<StepUpOperation>() and asserts each one maps and that no two share an event.
+      Adding a member without a case here fails that test rather than mis-filing a row.
+    */
+    // INTERNAL rather than private so the guard named above can call it directly
+    // (InternalsVisibleTo AzureBank.Tests), instead of reaching in by reflection.
+    internal static string RefusalEventFor(StepUpOperation operation) => operation switch
+    {
+        StepUpOperation.Transfer => SecurityEvents.MoneyTransferRefused,
+        StepUpOperation.InternalTransfer => SecurityEvents.MoneyTransferRefused,
+        StepUpOperation.AccountDeletion => SecurityEvents.AccountDeletionRefused,
+        StepUpOperation.Withdrawal => SecurityEvents.MoneyWithdrawalRefused,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(operation), operation, "No refusal event is defined for this step-up operation.")
+    };
 
     /// <inheritdoc />
     public async Task ValidateAsync(

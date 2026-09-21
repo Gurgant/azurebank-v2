@@ -861,34 +861,12 @@ public class TransferService : ITransferService
     /// The idempotency step is a no-op when no record is tracked (e.g. a direct
     /// service-level call outside the middleware): there is nothing to guard.
     /// </summary>
-    private async Task PrepareTransferAttemptAsync(params Account[] accounts)
-    {
-        await ConcurrencyRetry.ResetToStoreAsync(_context, accounts);
-
-        var entry = _context.ChangeTracker.Entries<IdempotencyRecord>().FirstOrDefault();
-        if (entry is null)
-        {
-            return;
-        }
-
-        // Fresh database truth for this claim. ReloadAsync also refreshes the
-        // tracked ORIGINAL values, so the flip re-applied below emits a fenced
-        // UPDATE (WHERE ClaimId = <db value>) that rides this attempt's commit.
-        await entry.ReloadAsync();
-
-        if (entry.State == EntityState.Detached
-            || entry.Entity.Status is IdempotencyStatus.Executed or IdempotencyStatus.Completed)
-        {
-            // Detached: the row was deleted under us (stale takeover/cleanup) —
-            // we cannot prove nothing committed. Executed/Completed: a prior
-            // attempt already committed this transfer. Either way, refuse to
-            // execute again; the middleware surfaces this as 409 RESULT_UNKNOWN.
-            throw IdempotencyException.ResultUnknown();
-        }
-
-        // Processing: nothing committed yet. Re-arm the pending Executed flip so
-        // it travels atomically with this attempt's business commit.
-        entry.Entity.Status = IdempotencyStatus.Executed;
-        entry.Entity.ClaimId = Guid.NewGuid();
-    }
+    /// <summary>
+    /// Prepares one more transfer attempt. The logic moved to
+    /// <see cref="ConcurrencyRetry.PrepareIdempotentAttemptAsync"/> when the withdrawal joined the
+    /// step-up rail and needed it verbatim (ADR-0056); this stays as the name the two transfer call
+    /// sites read by, and as the place their Case-A/Case-B notes point at.
+    /// </summary>
+    private Task PrepareTransferAttemptAsync(params Account[] accounts) =>
+        ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, accounts);
 }

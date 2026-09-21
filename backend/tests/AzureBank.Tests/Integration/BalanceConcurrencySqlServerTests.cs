@@ -8,6 +8,7 @@ using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Auth;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
+using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Enums;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
@@ -95,6 +96,14 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         // Fund with EXACTLY enough for ONE withdrawal.
         await DepositAsync(client, token, accountId, amount);
 
+        // One authorisation per racer, minted BEFORE the race and sequentially -- see the remark on
+        // MintWithdrawalAsync for why sharing one would quietly change what this test proves.
+        var authorizations = new Guid[parallelism];
+        for (var i = 0; i < parallelism; i++)
+        {
+            authorizations[i] = await MintWithdrawalAsync(client, token, accountId, amount, pin);
+        }
+
         var responses = await Task.WhenAll(
             Enumerable.Range(0, parallelism).Select(async i =>
             {
@@ -104,12 +113,12 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
                     {
                         AccountId = accountId,
                         Amount = amount,
-                        Pin = pin,
                         Description = $"Parallel withdrawal {i}"
                     }, options: Json)
                 };
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
+                request.Headers.Add(StepUpConstants.HeaderName, authorizations[i].ToString());
                 var response = await client.SendAsync(request);
                 return (response.StatusCode, Body: await response.Content.ReadAsStringAsync());
             }));
@@ -139,6 +148,34 @@ public sealed class BalanceConcurrencySqlServerTests : IDisposable
         // Exactly ONE withdrawal transaction row was persisted.
         (await CountWithdrawalsAsync(client, token, accountId)).Should().Be(
             1, "only the single successful withdrawal may persist a transaction row");
+    }
+
+    /// <summary>
+    /// Mints ONE withdrawal authorisation, bound to this account and amount.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ ONE PER PARALLEL REQUEST, AND MINTED SEQUENTIALLY BEFORE THE RACE. An authorisation is
+    /// single-use by construction (ADR-0042), so if the twenty-four racers below shared one
+    /// reference, twenty-three would be refused AUTHORIZATION_INVALID and exactly one would
+    /// succeed -- and the balance assertion would still pass. The test would go on being green
+    /// while it had silently stopped being a BALANCE proof and become an authorisation proof.
+    /// Distinct authorisations are what keep the overdraft guard the only thing under test.
+    /// </remarks>
+    private static async Task<Guid> MintWithdrawalAsync(
+        HttpClient client, string token, Guid accountId, decimal amount, string pin)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "/api/transactions/withdraw/authorizations")
+        {
+            Content = JsonContent.Create(
+                new WithdrawalAuthorizationRequest { AccountId = accountId, Amount = amount, Pin = pin },
+                options: Json)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(Json);
+        return body!.Data!.AuthorizationId;
     }
 
     private static async Task SetPinAsync(HttpClient client, string token, string pin)

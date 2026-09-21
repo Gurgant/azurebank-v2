@@ -1839,35 +1839,37 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     reaches the PIN.
   */
   /*
-    ONE PIN PATH IN THIS FILE, not two.
+    THE PIN LADDER LEFT WITH THE PIN (ADR-0056), AND THE ORDER BELOW IS MEASURED, NOT REASONED.
 
-    Withdraw carried its own inline copy of the enrolment/lock/compare ladder, written before the
-    transfers needed one. When ADR-0041 added the model-binding gate + `checkPinInBand` for transfers,
-    wiring them into the transfer routes only would have left this endpoint with a DIFFERENT PIN
-    behaviour in the same file — and the shape hole the gate exists to close (a malformed pin
-    answering 401 and burning a lockout attempt) would have survived here. `WithdrawRequest` carries
-    the same `[Required] [Pin] required string Pin`, so it gets the same treatment.
+    Taken against the running API on 2026-09-21 (evidence-withdraw-after-2026-09-21.txt in the
+    working-state repo), one real request per row:
+
+      withdraw 5000 (over balance), NO authorisation   -> 422 INSUFFICIENT_FUNDS
+      withdraw 10,  NO authorisation                   -> 401 AUTHORIZATION_REQUIRED
+      withdraw 10,  EMPTY header                       -> 401 AUTHORIZATION_REQUIRED
+      withdraw 10,  header "not-a-guid"                -> 400 model-state "Step-Up-Authorization"
+      withdraw 20,  authorisation minted for 10        -> 401 AUTHORIZATION_INVALID
+      withdraw 10,  authorisation already spent        -> 401 AUTHORIZATION_INVALID
+      withdraw 10,  valid authorisation                -> 201
+      withdraw on a foreign account id                 -> 404 ACCOUNT_NOT_FOUND
+
+    So: ownership, THEN funds, THEN the header. The funds rung sits ABOVE the authorisation on
+    purpose (ADR-0056 D4) -- an unaffordable withdrawal is answered without the caller proving
+    anything, which is what stops a mistyped PIN on a withdrawal nobody could afford from spending
+    one of three attempts and locking the card.
+
+    A LEFTOVER `pin` IN THE BODY IS IGNORED, NOT REFUSED. Measured the same day against a fresh
+    mint: a withdrawal carrying a valid header AND a stale pin field answered 201. The binder
+    tolerates the extra property, so the mock must not reintroduce a gate the API does not have --
+    that is exactly the drift this file's own "the mock follows the backend" rule forbids.
   */
-  const pinBind = transferPinBindFailure(body, 'AzureBank.Shared.DTOs.Transaction.WithdrawRequest');
-  if (pinBind) return response.untyped(pinBind);
-  const pinAnnotations = pinAnnotationErrors((body.pin ?? null) as string | null);
-  if (pinAnnotations.length > 0) {
-    return response.untyped(modelStateProblem({ Pin: pinAnnotations }));
-  }
-
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
     return response.untyped(notFound('Account', body.accountId, request));
   }
 
-  const pinRefusal = checkPinInBand(
-    body.pin,
-    request,
-    'PIN must be set before making withdrawals.',
-  );
-  if (pinRefusal) return response.untyped(pinRefusal);
-
-  // INSUFFICIENT_FUNDS — last, after the PIN passes, like the backend orders it.
+  // INSUFFICIENT_FUNDS — FIRST among the refusals now, and this is the user-visible half of the
+  // change rather than a tidy-up.
   const available = account.balance;
   if (amount > available) {
     return response.untyped(
@@ -1885,7 +1887,29 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     );
   }
 
-  // Success — debit, record, store (once), reply.
+  // The header, read the way MVC binds it: a value that is present but not a UUID is a model-state
+  // 400 keyed on the header name, never a 401. See `readStepUpHeader`.
+  const stepUp = readStepUpHeader(request);
+  if (stepUp.errors.length > 0) {
+    return response.untyped(modelStateProblem({ [STEP_UP_HEADER]: stepUp.errors }));
+  }
+  if (stepUp.id === null) {
+    return response.untyped(
+      authorizationRequired(request, 'This withdrawal has not been authorised.'),
+    );
+  }
+
+  const authorization = validateAuthorization(stepUp.id, request, {
+    operation: 'Withdrawal',
+    fromAccountId: account.id,
+    amount,
+  });
+  if (authorization.refusal) return response.untyped(authorization.refusal);
+
+  // Success — spend, debit, record, store (once), reply. The spend goes first so a mock run can
+  // never leave a consumed withdrawal with a still-Pending authorisation, which is the disagreement
+  // the API's transaction exists to prevent.
+  spendAuthorization(authorization.held);
   const newBalance = available - amount;
   account.balance = newBalance;
   const index = mockState.transactions.length;
@@ -2725,6 +2749,84 @@ const authoriseTransfer = api.post(
 
     // MEASURED: 201 {"data":{authorizationId, expiresAt},"message":"Transfer authorised"}
     return response(201).json({ data: minted, message: 'Transfer authorised' });
+  },
+);
+
+/**
+ * POST /api/transactions/withdraw/authorizations — mint one for a WITHDRAWAL (ADR-0056).
+ *
+ * Refusal order mirrors `TransactionService.AuthoriseWithdrawalAsync`: binding, then OWNERSHIP of
+ * the account, then the PIN. Measured on the running API 2026-09-21
+ * (evidence-withdraw-after-2026-09-21.txt):
+ *
+ *   mint 10,   correct PIN                    -> 201 "Withdrawal authorised"
+ *   mint 5000  (OVER the balance), correct PIN -> 201  <- the mint does NOT check funds
+ *   mint 10,   WRONG PIN                      -> 401 INVALID_PIN
+ *   mint on a foreign account id, correct PIN -> 404 ACCOUNT_NOT_FOUND
+ *
+ * THE SECOND ROW IS THE ONE WORTH READING TWICE. A mint is an authentication event, not a decision
+ * about whether the money can move (ADR-0050 D4): balance is a racing value the withdrawal re-reads
+ * inside its own transaction, refusing here would teach a caller the balance at no cost, and it
+ * would add a second place for the two checks to disagree. A funds rung added to this handler would
+ * make the mock answer 422 where the API answers 201.
+ *
+ * THE FOURTH ROW IS WHY OWNERSHIP PRECEDES THE PIN: probing someone else's account must cost no PIN
+ * attempt, or this endpoint becomes a cheaper oracle than the withdrawal it authorises. The same
+ * precedent this file already records at the external transfer's ownership 404.
+ *
+ * `mintBindingErrors` is NOT reused, deliberately: it is keyed on `fromAccountId`, and this DTO's
+ * field is `accountId`. Reusing it would validate a member this endpoint does not have and skip the
+ * one it does — the exact shape of the drift the helper was written to prevent.
+ */
+const authoriseWithdrawal = api.post(
+  '/api/transactions/withdraw/authorizations',
+  async ({ request, response }) => {
+    const body = (await request.json()) as {
+      accountId?: string;
+      amount?: number;
+      pin?: string;
+    };
+
+    const idBind = bindAccountIds(body as Record<string, unknown>, ['accountId']);
+    if (idBind) return response.untyped(idBind);
+    const pinBind = mintPinBindFailure(
+      body,
+      'AzureBank.Shared.DTOs.Transaction.WithdrawalAuthorizationRequest',
+    );
+    if (pinBind) return response.untyped(pinBind);
+
+    const errors: Record<string, string[]> = {};
+    const badAccount = accountIdErrors(body.accountId);
+    if (badAccount.length > 0) errors.AccountId = badAccount;
+    const badAmount = amountErrors(body.amount);
+    if (badAmount.length > 0) errors.Amount = badAmount;
+    const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
+    if (badPin.length > 0) errors.Pin = badPin;
+    if (Object.keys(errors).length > 0) {
+      return response.untyped(modelStateProblem(errors));
+    }
+
+    // OWNERSHIP FIRST, and no funds check at all — see the note above.
+    const account = mockState.accounts.find((a) => a.id === body.accountId);
+    if (!account) {
+      return response.untyped(notFound('Account', body.accountId ?? '', request));
+    }
+
+    const pinRefusal = checkPinInBand(
+      body.pin,
+      request,
+      'PIN must be set before making withdrawals.',
+    );
+    if (pinRefusal) return response.untyped(pinRefusal);
+
+    const minted = mintAuthorization({
+      operation: 'Withdrawal',
+      fromAccountId: account.id,
+      amount: body.amount as number,
+    });
+
+    // MEASURED: 201 {"data":{authorizationId, expiresAt},"message":"Withdrawal authorised"}
+    return response(201).json({ data: minted, message: 'Withdrawal authorised' });
   },
 );
 
@@ -4210,6 +4312,7 @@ export const handlers = [
   getTransaction,
   deposit,
   withdraw,
+  authoriseWithdrawal,
   lookupRecipient,
   renameAzureTag,
   authoriseTransfer,

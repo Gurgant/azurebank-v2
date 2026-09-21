@@ -959,6 +959,15 @@ three mints and three more against the lock wrote no row. One call site serves a
 both outcomes, so the refusal inventory is three events at six sites, and the source holds nine
 `RecordRefusalAsync` calls with the three token paths.
 
+*(Moved 2026-09-21, ADR-0056: there are **FOUR** mints — the withdrawal joined the rail — and the
+one call site serves all four, now as `MoneyWithdrawalRefused` for a withdrawal. The two-armed
+ternary that chose the event became a switch, because a fourth member would otherwise have filed a
+refused withdrawal PIN as a refused TRANSFER, silently and durably. The refusal inventory is FOUR
+events at six sites, and the source holds **EIGHT** `RecordRefusalAsync` calls, not nine: the
+withdrawal's own locked-PIN and wrong-PIN sites left with the PIN itself, and the withdrawal's
+absent-authorisation site came in — two out, one in. Measured on the branch:
+`grep -c "_audit.RecordRefusalAsync(" backend/src` = 8.)*
+
 ⚠️ **The `Detail` rule INVERTS on these ~~two~~ three, and D5 is why it inverts rather than
 lapsing.** *(struck 2026-09-06: `AccountDeletionRefused` carries `AUTHORIZATION_REQUIRED` the same
 way, and for the same reason — a refused closure commits no row for a pointer to reach.)* The four

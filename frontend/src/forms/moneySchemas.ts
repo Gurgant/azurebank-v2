@@ -21,7 +21,7 @@ import { CURRENCY, formatCurrency, LOCALE } from '../utils/format';
  * ONE per-transaction cap for every money move, deposits included — the contract's bound, not a
  * product choice of this file's own.
  *
- * `docs/api/openapiv1.json` publishes `maximum: 100000.00` on all six money request schemas, from
+ * `docs/api/openapiv1.json` publishes `maximum: 100000.00` on all seven money request schemas (six until 2026-09-21), from
  * `ValidationRules.TransactionMaxAmount` through `[MoneyRange]`, and the generated
  * `api/generated/apiSchemas.ts` carries it as `.max(100000)`. Until 2026-09-03 the deposit form said
  * 1,000,000 under a comment calling the higher inflow cap deliberate; no decision record ever did,
