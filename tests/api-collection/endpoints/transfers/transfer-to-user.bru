@@ -1,7 +1,7 @@
 meta {
   name: Transfer to User
   type: http
-  seq: 1
+  seq: 3
 }
 
 post {
@@ -16,19 +16,14 @@ auth:bearer {
 
 headers {
   Content-Type: application/json
-  Idempotency-Key: {{idempotencyKey}}
-}
-
-script:pre-request {
-  // Monetary endpoints require a fresh Idempotency-Key per operation (ADR-0009)
-  const { randomUUID } = require('crypto');
-  bru.setVar('idempotencyKey', randomUUID());
+  Step-Up-Authorization: {{transferAuthorizationId}}
+  Idempotency-Key: {{$randomUUID}}
 }
 
 body:json {
   {
     "fromAccountId": "{{accountId}}",
-    "recipientAzureTag": "recipient.user",
+    "recipientAzureTag": "{{recipientAzureTag}}",
     "amount": 50.00,
     "description": "Test transfer"
   }

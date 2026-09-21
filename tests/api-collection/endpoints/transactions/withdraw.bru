@@ -16,13 +16,7 @@ auth:bearer {
 
 headers {
   Content-Type: application/json
-  Idempotency-Key: {{idempotencyKey}}
-}
-
-script:pre-request {
-  // Monetary endpoints require a fresh Idempotency-Key per operation (ADR-0009)
-  const { randomUUID } = require('crypto');
-  bru.setVar('idempotencyKey', randomUUID());
+  Idempotency-Key: {{$randomUUID}}
 }
 
 body:json {
@@ -36,7 +30,7 @@ body:json {
 
 assert {
   res.status: eq 201
-  res.body.data.transaction.type: eq 1
+  res.body.data.transaction.type: eq "Withdrawal"
   res.body.data.transaction.amount: eq 100
 }
 
@@ -45,8 +39,8 @@ tests {
     expect(res.status).to.equal(201);
   });
 
-  test("Transaction type is Withdrawal (1)", function() {
-    expect(res.body.data.transaction.type).to.equal(1);
+  test("Transaction type is the string Withdrawal", function() {
+    expect(res.body.data.transaction.type).to.equal('Withdrawal');
   });
 
   test("Amount matches request", function() {

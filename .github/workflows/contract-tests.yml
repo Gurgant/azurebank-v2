@@ -105,9 +105,30 @@ jobs:
       - name: Run Bruno tests
         working-directory: tests/api-collection
         run: |
-          bru run . --env ci \
-            --reporter-junit ../../bruno-results.xml \
-            || true  # report, don't gate
+          # -r, and it is not cosmetic. bru turns recursion on ONLY when no path is given, so
+          # `bru run .` listed the root folder, found no .bru there (every request is in a
+          # subfolder) and exited 0 having sent NOTHING. Measured 2026-09-21 with this exact
+          # command line: "Requests 0 / Tests 0/0 / Status PASS". This job is manual-only and
+          # has never run, so nothing had ever contradicted that green.
+          bru run . -r --env ci \
+            --reporter-junit ../../bruno-results.xml
+
+      - name: Fail if the run sent no requests
+        if: always()
+        run: |
+          # The guard on the guard: a junit report with zero testsuites is what a silent
+          # non-run looks like, and it would otherwise be indistinguishable from a clean pass.
+          python - <<'EOF'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse('bruno-results.xml').getroot()
+          suites = root.findall('.//testsuite') or ([root] if root.tag == 'testsuite' else [])
+          cases = sum(len(s.findall('testcase')) for s in suites)
+          print(f'bruno: {len(suites)} suite(s), {cases} test case(s)')
+          if cases < 100:
+              sys.exit(f'the Bruno run reported {cases} test cases; the junit reporter wrote 135 '
+                       'from 27 requests on 2026-09-21, so this is a run that did not happen '
+                       'rather than a collection that shrank')
+          EOF
 
       - name: Upload results
         uses: actions/upload-artifact@v4

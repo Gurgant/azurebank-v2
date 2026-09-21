@@ -21,8 +21,14 @@ body:json {
   }
 }
 
-vars:post-response {
-  authToken: res.body.data.token
+script:post-response {
+  // Publish nothing unless this request actually succeeded: a failed request that
+  // still writes its variables replaces a good value with an empty one, and every
+  // request after it then fails for the wrong reason. Measured 2026-09-21: a 200
+  // was assumed and a 401 overwrote the token, turning one broken request into fifteen.
+  if (res.getStatus() === 200) {
+    bru.setVar('authToken', res.body.data.token);
+  }
 }
 
 assert {

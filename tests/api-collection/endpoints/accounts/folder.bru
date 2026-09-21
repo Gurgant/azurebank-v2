@@ -1,0 +1,12 @@
+meta {
+  name: accounts
+  seq: 2
+}
+
+docs {
+  WHY THIS FILE EXISTS. With no folder.bru, Bruno orders folders ALPHABETICALLY, so
+  `accounts` ran before `auth` and every request in it went out unauthenticated.
+  Measured 2026-09-21 before this file existed: 1 of 24 requests passed.
+
+  This folder is 2 because it reads and writes the account register created, and republishes accountId.
+}

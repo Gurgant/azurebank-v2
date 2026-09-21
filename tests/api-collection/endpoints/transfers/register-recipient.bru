@@ -1,0 +1,52 @@
+meta {
+  name: Register a recipient
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/auth/register
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "azureTag": "recipient{{$timestamp}}",
+    "email": "recipient.{{$timestamp}}@example.com",
+    "password": "{{testPassword}}",
+    "firstName": "{{testFirstName}}",
+    "lastName": "{{testLastName}}"
+  }
+}
+
+script:post-response {
+  // A transfer needs somebody to transfer TO. This request exists because the next one
+  // sent "recipient.user", which no user has and which the contract refuses outright:
+  // measured 2026-09-21, 400 "AzureTag must start with a letter and contain only
+  // lowercase letters, numbers, and underscores" -- a dot is not allowed. So the payee is
+  // created here and named by the tag the API actually minted.
+  if (res.getStatus() === 201) {
+    bru.setVar('recipientAzureTag', res.body.data.user.azureTag);
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.user.azureTag: isString
+}
+
+tests {
+  test("Status is 201 Created", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("The payee exists and its tag is published for the next request", function() {
+    expect(res.body.data.user.azureTag).to.be.a('string');
+    expect(bru.getVar('recipientAzureTag')).to.equal(res.body.data.user.azureTag);
+  });
+}

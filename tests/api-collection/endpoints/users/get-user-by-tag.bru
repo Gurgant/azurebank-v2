@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/api/users/test.user
+  url: {{baseUrl}}/api/users/{{recipientAzureTag}}
   body: none
   auth: bearer
 }
@@ -14,9 +14,18 @@ auth:bearer {
   token: {{authToken}}
 }
 
+docs {
+  WHY THE PAYEE AND NOT OURSELVES. This lookup is what the transfer form calls to check a
+  payee, and the API answers about OTHER people: measured 2026-09-21, a user looking up its
+  OWN tag gets {exists: false, displayName: ""} while another user's tag gets
+  {exists: true, displayName: "Other U."}. Pointed at {{testAzureTag}} this request asserted
+  exists:true against the one tag that always answers false.
+}
+
 assert {
   res.status: eq 200
-  res.body.data: isDefined
+  res.body.data.exists: eq true
+  res.body.data.azureTag: eq {{recipientAzureTag}}
 }
 
 tests {

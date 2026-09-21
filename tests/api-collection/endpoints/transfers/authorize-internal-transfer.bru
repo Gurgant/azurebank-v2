@@ -1,0 +1,55 @@
+meta {
+  name: Authorize the internal transfer
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/transfers/internal/authorizations
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "fromAccountId": "{{accountId}}",
+    "toAccountId": "{{secondAccountId}}",
+    "amount": 100.00,
+    "pin": "123456"
+  }
+}
+
+script:post-response {
+  // A transfer is authorised BEFORE it is made (ADR-0042): the PIN is spent here, once, and
+  // the transfer presents what this returns in a Step-Up-Authorization header. This collection
+  // predated that rail and never caught up -- measured 2026-09-21, the transfer below answered
+  // 401 AUTHORIZATION_REQUIRED, "This transfer has not been authorised."
+  if (res.getStatus() === 201) {
+    bru.setVar('internalTransferAuthorizationId', res.body.data.authorizationId);
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.authorizationId: isString
+  res.body.data.expiresAt: isString
+}
+
+tests {
+  test("Status is 201 Created", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("The authorisation is published for the transfer that spends it", function() {
+    expect(res.body.data.authorizationId).to.be.a('string');
+    expect(bru.getVar('internalTransferAuthorizationId')).to.equal(res.body.data.authorizationId);
+  });
+}
