@@ -57,3 +57,9 @@ AzuriteConfig
 
 # Schemathesis keeps its example database here when the CLI runs from the repo root (the CI job does).
 .schemathesis/
+
+# Schemathesis writes its reports next to the working directory. Committed once by
+# accident on 2026-09-21 while verifying which flags 4.27.1 accepts; CI writes its own
+# to RUNNER_TEMP and never here.
+schemathesis-report/
+test-results.xml
