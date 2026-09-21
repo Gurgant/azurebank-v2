@@ -265,12 +265,83 @@ public class BrunoCollectionRunsTests
                 "login must sign in as whoever register made, and it is the EMAIL field that has "
                 + $"to carry it. Its body reads:{Environment.NewLine}{login}");
     }
-    /// <summary>The file without its docs block and its line comments — prose names variables
-    /// in order to explain them, which is not a dependency.</summary>
+    /// <summary>
+    /// The file without its docs block and without ANY comment — leading or trailing — while
+    /// leaving comment-like text inside quoted strings and URL schemes alone.
+    /// </summary>
+    /// <remarks>
+    /// Stripping only lines that BEGIN with <c>//</c> left a trailing comment as executable input
+    /// to every later check. Measured 2026-09-21, with all six guards green:
+    /// <c>const note = 0; // bru.setVar('testEmail', res.body.data.user.email)</c> satisfied the
+    /// registration-to-login guard while register published nothing at all.
+    /// </remarks>
     private static string WithoutProse(string text)
     {
-        var withoutDocs = Regex.Replace(text, @"(?ms)^docs \{.*?^\}", string.Empty);
-        return Regex.Replace(withoutDocs, @"(?m)^\s*//.*$", string.Empty);
+        var withoutDocs = RemoveBlock(text, "docs");
+        var kept = new System.Text.StringBuilder(withoutDocs.Length);
+        var quote = '\0';
+
+        for (var i = 0; i < withoutDocs.Length; i++)
+        {
+            var c = withoutDocs[i];
+
+            if (quote != '\0')
+            {
+                kept.Append(c);
+                if (c == '\\' && i + 1 < withoutDocs.Length)
+                {
+                    kept.Append(withoutDocs[++i]);
+                }
+                else if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (c is '\'' or '"' or '`')
+            {
+                quote = c;
+                kept.Append(c);
+                continue;
+            }
+
+            // `https://localhost:7215` is an address, not a comment: a `//` right after a colon
+            // opens a scheme. Everything else opens a comment that runs to the end of the line.
+            if (c == '/' && i + 1 < withoutDocs.Length && withoutDocs[i + 1] == '/'
+                && (i == 0 || withoutDocs[i - 1] != ':'))
+            {
+                while (i < withoutDocs.Length && withoutDocs[i] != '\n')
+                {
+                    i++;
+                }
+
+                if (i < withoutDocs.Length)
+                {
+                    kept.Append('\n');
+                }
+
+                continue;
+            }
+
+            kept.Append(c);
+        }
+
+        return kept.ToString();
+    }
+
+    /// <summary>The text with one named block, braces and all, taken out of it.</summary>
+    private static string RemoveBlock(string text, string name)
+    {
+        var header = Regex.Match(text, $@"(?m)^{Regex.Escape(name)}\s*\{{");
+        if (!header.Success)
+        {
+            return text;
+        }
+
+        var close = MatchingBrace(text, header.Index + header.Length - 1);
+        return close < 0 ? text : text[..header.Index] + text[(close + 1)..];
     }
 
     /// <summary>
@@ -319,10 +390,35 @@ public class BrunoCollectionRunsTests
             return -1;
         }
 
+        // Braces INSIDE a string are text, not structure: `{{testEmail}}` in a JSON body would
+        // otherwise unbalance every block that carries one.
         var depth = 0;
+        var quote = '\0';
         for (var i = open; i < text.Length; i++)
         {
-            depth += text[i] == '{' ? 1 : text[i] == '}' ? -1 : 0;
+            var c = text[i];
+
+            if (quote != '\0')
+            {
+                if (c == '\\')
+                {
+                    i++;
+                }
+                else if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (c is '\'' or '"' or '`')
+            {
+                quote = c;
+                continue;
+            }
+
+            depth += c == '{' ? 1 : c == '}' ? -1 : 0;
             if (depth == 0)
             {
                 return i;
@@ -337,9 +433,22 @@ public class BrunoCollectionRunsTests
         fragment.Length == 0 ? text : text.Replace(fragment, string.Empty, StringComparison.Ordinal);
 
     /// <summary>The body of one named block, or empty when the file has none.</summary>
+    /// <remarks>
+    /// Read to the BRACE THAT MATCHES the block's own, never to the first <c>}</c> at the start of
+    /// a line. A nested branch closing in column zero is legal in these scripts, and it used to cut
+    /// the block short: measured 2026-09-21, an unguarded <c>bru.setVar</c> sitting after such a
+    /// branch was invisible to <see cref="UnguardedPublishes"/> and all six guards stayed green.
+    /// </remarks>
     private static string BlockOf(string text, string name)
     {
-        var match = Regex.Match(text, $@"(?ms)^{Regex.Escape(name)} \{{(.*?)^\}}");
-        return match.Success ? match.Groups[1].Value : string.Empty;
+        var header = Regex.Match(text, $@"(?m)^{Regex.Escape(name)}\s*\{{");
+        if (!header.Success)
+        {
+            return string.Empty;
+        }
+
+        var open = header.Index + header.Length - 1;
+        var close = MatchingBrace(text, open);
+        return close > open ? text[(open + 1)..close] : string.Empty;
     }
 }
