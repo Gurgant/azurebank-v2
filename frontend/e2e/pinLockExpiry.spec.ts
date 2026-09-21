@@ -69,12 +69,22 @@ test.describe('the PIN lock counts down and expires', () => {
     await page.goto('/settings');
     // The PAGE's trigger. The dialog's submit carries the same name, so everything below is scoped
     // to the dialog.
-    await page.getByRole('button', { name: 'Change PIN' }).click();
+    await page.getByRole('button', { name: 'Change PIN', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Change your PIN' });
     await expect(dialog).toBeVisible();
 
-    const currentPin = dialog.getByRole('group', { name: 'Current PIN' });
-    const submit = dialog.getByRole('button', { name: 'Change PIN' });
+    /*
+      `exact: true` ON EVERY GROUP, and it is not belt-and-braces.
+
+      Playwright's `getByRole(..., { name })` matches the accessible name by SUBSTRING and
+      case-insensitively; testing-library's `getByRole` matches it whole. So the component test
+      drives these three groups with the same strings and cannot hit this, while here
+      `{ name: 'New PIN' }` resolved to TWO elements -- "New PIN" and "Confirm new PIN" -- and the
+      click failed on a strict-mode violation (CI run 35620923852). Copying selectors between the
+      two suites is safe only for names that are not prefixes of one another.
+    */
+    const currentPin = dialog.getByRole('group', { name: 'Current PIN', exact: true });
+    const submit = dialog.getByRole('button', { name: 'Change PIN', exact: true });
 
     const enter = async (group: typeof currentPin, pin: string) => {
       await group.getByLabel('Digit 1 of 6').click();
@@ -83,8 +93,8 @@ test.describe('the PIN lock counts down and expires', () => {
 
     // The new PIN and its confirmation are filled once: a wrong CURRENT pin clears only the current
     // boxes, so the loop below re-enters that field alone.
-    await enter(dialog.getByRole('group', { name: 'New PIN' }), NEW_PIN);
-    await enter(dialog.getByRole('group', { name: 'Confirm new PIN' }), NEW_PIN);
+    await enter(dialog.getByRole('group', { name: 'New PIN', exact: true }), NEW_PIN);
+    await enter(dialog.getByRole('group', { name: 'Confirm new PIN', exact: true }), NEW_PIN);
 
     /*
       Wrong PINs until the SERVER locks. ValidationRules.MaxPinAttempts is 3, so the third crosses
