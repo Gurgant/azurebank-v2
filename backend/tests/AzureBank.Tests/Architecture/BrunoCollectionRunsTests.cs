@@ -307,10 +307,12 @@ public class BrunoCollectionRunsTests
                 continue;
             }
 
-            // `https://localhost:7215` is an address, not a comment: a `//` right after a colon
-            // opens a scheme. Everything else opens a comment that runs to the end of the line.
+            // `https://localhost:7215` is an address, not a comment. But ANY colon was too
+            // generous: a ternary written `1 ? 0 :// …` kept its comment as executable text, and
+            // a fake publish hidden there satisfied the identity guard while the real one was
+            // gone — measured, with all six guards green. So a real SCHEME is required.
             if (c == '/' && i + 1 < withoutDocs.Length && withoutDocs[i + 1] == '/'
-                && (i == 0 || withoutDocs[i - 1] != ':'))
+                && !PrecededByUriScheme(withoutDocs, i))
             {
                 while (i < withoutDocs.Length && withoutDocs[i] != '\n')
                 {
@@ -329,6 +331,29 @@ public class BrunoCollectionRunsTests
         }
 
         return kept.ToString();
+    }
+
+    /// <summary>
+    /// True when the <c>//</c> at <paramref name="slash"/> closes a URI scheme — <c>http:</c>,
+    /// <c>https:</c>, anything matching RFC 3986's <c>ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )</c>
+    /// — rather than opening a comment after some other colon.
+    /// </summary>
+    private static bool PrecededByUriScheme(string text, int slash)
+    {
+        if (slash == 0 || text[slash - 1] != ':')
+        {
+            return false;
+        }
+
+        var i = slash - 1;
+        while (i > 0 && (char.IsLetterOrDigit(text[i - 1]) || text[i - 1] is '+' or '-' or '.'))
+        {
+            i--;
+        }
+
+        // A scheme is at least one character and must START with a letter, so `1 ? 0 ://` and
+        // `0://` are comments while `https://` is an address.
+        return i < slash - 1 && char.IsLetter(text[i]);
     }
 
     /// <summary>The text with one named block, braces and all, taken out of it.</summary>
