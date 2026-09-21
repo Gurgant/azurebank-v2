@@ -32,6 +32,33 @@ test.use({ storageState: { cookies: [], origins: [] } });
 test.describe('the PIN lock counts down and expires', () => {
   test.skip(!PROBE_EMAIL, 'needs E2E_LOCK_PROBE_EMAIL — a throwaway user this spec may lock');
 
+  /*
+    SKIPPED BETWEEN ADR-0056 AND THE FRONTEND FOLLOW-UP, and the reason is the whole premise rather
+    than a flake.
+
+    This spec proves a DIALOG behaviour: that a real 429 from the API disables the PIN boxes, ticks
+    the countdown down, and releases at zero. It earns that 429 by typing wrong PINs into the
+    withdraw dialog. Since ADR-0056 the withdrawal consults no PIN at all — it can no longer answer
+    429 — and the dialog does not mint yet, so what it actually receives is 401
+    AUTHORIZATION_REQUIRED. There is no arrangement of this spec that reaches the state it asserts
+    until the dialog mints, which is PR-C.
+
+    NOT DELETED, and not re-aimed at the mint through `page.request` either: the lock is only half
+    the subject, and the other half is what the dialog RENDERS when the lock arrives. Driving the
+    mint from outside the page would earn a real lock the dialog never sees, and the countdown —
+    the defect this spec was written for, a banner that used to say "about 15 minutes" forever —
+    would go unobserved while the spec reported green. A skip that says so is worth more than an
+    assertion that has quietly stopped asserting.
+
+    PR-C re-points the PIN step at POST /api/transactions/withdraw/authorizations and removes this
+    line in the same change that makes the 429 reachable again.
+
+    (Measured 2026-09-21, CI run 35618553090: with the withdrawal on the rail this spec waits out
+    its timeout on a 429 that never comes, and its failure cascades — the leftover funded probe
+    left two accounts on the page and took stepUp.spec.ts and deposit.spec.ts down with it.)
+  */
+  test.skip(true, 'ADR-0056: the dialog cannot reach a 429 until it mints (PR-C)');
+
   test('a real 429 from the API disables the PIN, ticks down, and releases at zero', async ({
     page,
   }) => {

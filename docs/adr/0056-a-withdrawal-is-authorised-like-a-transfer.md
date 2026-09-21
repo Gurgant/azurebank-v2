@@ -173,8 +173,17 @@ place that is what asserts the ordering on the real stack.
 
 - **The SPA still does not mint.** PR-C replaces the PIN step with one that mints and submits with
   the header. Until then the dialog is answered 401 as above.
-- **`pinLockExpiry.spec.ts` is not re-aimed here.** It drives the lock through the withdrawal, which
-  no longer spends attempts; re-pointing it at the mint belongs with the dialog change.
+- **`pinLockExpiry.spec.ts` is SKIPPED here, not merely left alone.** ~~It is not re-aimed; it drives
+  the lock through the withdrawal, which no longer spends attempts.~~ *(Corrected 2026-09-21, before
+  merge: that wording implied the spec still ran, and CI falsified it — run 35618553090. It proves a
+  DIALOG behaviour, that a real 429 disables the PIN boxes and ticks the countdown down, and it
+  earns the 429 by typing wrong PINs into the withdraw dialog. The withdrawal answers no 429 now and
+  the dialog does not mint yet, so the state it asserts is unreachable; it waited out its timeout
+  and its leftover funded probe cascaded into `stepUp.spec.ts` and `deposit.spec.ts`. It is skipped
+  with that premise written at the skip, and NOT re-aimed at the mint from outside the page: the
+  lock is half the subject and what the dialog RENDERS is the other half, so an external mint would
+  report green while the countdown went unobserved. PR-C removes the skip in the same change that
+  makes the 429 reachable.)*
 - **The transfers' four inline `new StepUpBinding(...)` sites are left alone.** Adding a fourth
   factory leaves four of eight construction sites inline; converting them is a refactor with its own
   blast radius and belongs in its own change.

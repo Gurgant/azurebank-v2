@@ -67,9 +67,22 @@ test.describe('an outflow cannot pass the balance behind it', () => {
     await expect(dialog.getByRole('button', { name: /^Continue/ })).toBeEnabled();
 
     // THE MOVE: the money leaves by another route while this form sits there believing otherwise.
+    // Two calls since ADR-0056: the PIN is spent at the mint, and the withdrawal presents what the
+    // mint returned. A bare POST here is refused 401 AUTHORIZATION_REQUIRED, and `page.request`
+    // resolves on it — so the drain would silently not drain and this spec would assert the
+    // balance guard against an account that still has the money.
+    const minted = await page.request.post('/api/transactions/withdraw/authorizations', {
+      data: { accountId, amount: funded, pin: PIN },
+    });
+    expect(minted.status()).toBe(201);
+    const authorizationId: string = (await minted.json()).data.authorizationId;
+
     const drain = await page.request.post('/api/transactions/withdraw', {
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      data: { accountId, amount: funded, pin: PIN, description: 'balance-guard drain' },
+      headers: {
+        'Idempotency-Key': crypto.randomUUID(),
+        'Step-Up-Authorization': authorizationId,
+      },
+      data: { accountId, amount: funded, description: 'balance-guard drain' },
     });
     expect(drain.status()).toBe(201);
     expect((await drain.json()).data.newBalance).toBe(0);
