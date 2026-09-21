@@ -166,6 +166,59 @@ public class BrunoCollectionRunsTests
             + string.Join(Environment.NewLine, offenders));
     }
 
+    [Fact]
+    public void TheRequestsThatPublishAVariable_DoSoOnlyWhenTheySucceeded()
+    {
+        // The other half of the first cause, and the damaging half. login answered 401 and its
+        // post-response STILL ran, overwriting the valid token register had just published with
+        // nothing -- so fifteen later requests failed as "unauthorised" when the real fault was
+        // one request earlier. A publisher that does not look at its own status turns one broken
+        // request into a broken suite, and hides which one broke.
+        var unguarded = new List<string>();
+        foreach (var (path, text) in InRunOrder())
+        {
+            var published = BlockOf(WithoutProse(text), "script:post-response");
+            if (published.Contains("bru.setVar(", StringComparison.Ordinal)
+                && !published.Contains("res.getStatus()", StringComparison.Ordinal))
+            {
+                unguarded.Add($"{path} publishes a variable without looking at its own status");
+            }
+
+            // vars:post-response is the declarative form and CANNOT be conditional, so a request
+            // using it publishes on failure by construction.
+            if (WithoutProse(text).Contains("vars:post-response", StringComparison.Ordinal))
+            {
+                unguarded.Add($"{path} uses vars:post-response, which publishes even on a failure");
+            }
+        }
+
+        unguarded.Should().BeEquivalentTo(
+            Array.Empty<string>(),
+            "a failed request must publish nothing, or it replaces a good value with an empty one. "
+            + $"Offenders:{Environment.NewLine}" + string.Join(Environment.NewLine, unguarded));
+    }
+
+    [Fact]
+    public void TheLogin_UsesTheIdentityThatRegisterCreated()
+    {
+        // The first cause itself, which the chain test above CANNOT see: testEmail is declared in
+        // the environments, so "every variable has a writer" was satisfied while the value was a
+        // stale default. Measured 2026-09-21: register created test.<timestamp>@example.com and
+        // never wrote it back, so login posted test@example.com -- a user nobody had made -- and
+        // answered 401 INVALID_CREDENTIALS. A mutant that removed the publish left the general
+        // test green, which is why this one is specific.
+        var root = Collection().FullName;
+        var register = File.ReadAllText(Path.Combine(root, "endpoints", "auth", "register.bru"));
+        var login = File.ReadAllText(Path.Combine(root, "endpoints", "auth", "login.bru"));
+
+        register.Should().Contain("bru.setVar('testEmail'",
+            "the address register CREATED is the only one login can sign in with, and it is read "
+            + "back from the answer rather than recomputed");
+        register.Should().Contain("res.body.data.user.email",
+            "taking it from the response keeps it right even if the request body's template changes");
+        login.Should().Contain("{{testEmail}}",
+            "login must sign in as whoever register made; a literal here is a user nobody created");
+    }
     /// <summary>The file without its docs block and its line comments — prose names variables
     /// in order to explain them, which is not a dependency.</summary>
     private static string WithoutProse(string text)
