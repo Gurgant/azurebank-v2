@@ -116,20 +116,21 @@ jobs:
       - name: Fail if the run sent no requests
         if: always()
         run: |
-          # The guard on the guard: a junit report with zero testsuites is what a silent
-          # non-run looks like, and it would otherwise be indistinguishable from a clean pass.
-          python - <<'EOF'
-          import sys, xml.etree.ElementTree as ET
-          root = ET.parse('bruno-results.xml').getroot()
-          suites = root.findall('.//testsuite') or ([root] if root.tag == 'testsuite' else [])
-          cases = sum(len(s.findall('testcase')) for s in suites)
-          print(f'bruno: {len(suites)} suite(s), {cases} test case(s)')
-          if cases < 100:
-              sys.exit(f'the Bruno run reported {cases} test cases; the junit reporter wrote 135 '
-                       'from 27 requests on 2026-09-21, so this is a run that did not happen '
-                       'rather than a collection that shrank')
-          EOF
-
+          # The guard on the guard. A report with no test cases is what a silent non-run looks
+          # like, and it is otherwise indistinguishable from a clean pass -- which is exactly the
+          # state this job was in before 2026-09-21.
+          if [ ! -f bruno-results.xml ]; then
+            echo 'no bruno-results.xml: the run produced no report at all'
+            exit 1
+          fi
+          cases=$(grep -o '<testcase' bruno-results.xml | wc -l)
+          echo "bruno: $cases test case(s) in the report"
+          if [ "$cases" -lt 100 ]; then
+            echo "the run reported $cases test cases; the junit reporter wrote 135 from 27"
+            echo 'requests on 2026-09-21, so this is a run that did not happen rather than a'
+            echo 'collection that shrank'
+            exit 1
+          fi
       - name: Upload results
         uses: actions/upload-artifact@v4
         if: always()
