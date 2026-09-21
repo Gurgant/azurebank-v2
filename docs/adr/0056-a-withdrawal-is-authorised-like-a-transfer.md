@@ -129,7 +129,9 @@ the guard that walks the enum; the evidence verb widened in three places; the re
 and architecture tests; the four SQL Server proofs of the withdrawal's half of the rail
 (`WithdrawalStepUpSqlServerTests`: single use under concurrency, a rolled-back consume, a zero-row
 consume, and a transient that must not withdraw twice); the MSW mock realigned to the measured
-order; this record and the corrections below.
+order, and — found in review, on the new mint — the money SCALE rule it had never enforced, wired
+into all seven money endpoints at once so no mint is stricter than the movement it authorises;
+this record and the corrections below.
 
 ### Before → After, measured
 

@@ -100,6 +100,43 @@ describe('the withdrawal mint (where the PIN now lives)', () => {
     const res = await mint(accountId(), 50_000);
     expect(res.status).toBe(201);
   });
+
+  /*
+    THE SCALE RULE, and WHICH envelope answers. The mint used to return 201 for 10.001 while the
+    API refused it -- a mock-backed test could mint an authorisation production would never issue.
+
+    MEASURED 2026-09-22 on the real pipeline (`CustomWebApplicationFactory`, i.e. `Program.cs`),
+    POST /api/transactions/withdraw/authorizations:
+
+      10.001 -> 400 "Validation Failed", {"amount":["Amount cannot have more than 2 decimal
+                    places."]}                                           lowercase, the VALIDATOR
+      0.001  -> 400 "One or more validation errors occurred.",
+                    {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}
+                                                                         PascalCase, the BINDER
+
+    Asserting the status alone would pass on either, which is exactly how this went unnoticed.
+  */
+  it('refuses a third decimal with the VALIDATOR envelope, lowercase amount', async () => {
+    const res = await mint(accountId(), 10.001);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { title: string; errors: Record<string, string[]> };
+    expect(body.title).toBe('Validation Failed');
+    expect(body.errors).toEqual({ amount: ['Amount cannot have more than 2 decimal places.'] });
+  });
+
+  it('answers the BINDER envelope when the amount breaks the range as well', async () => {
+    // 0.001 is under the minimum AND has three decimals. DataAnnotations bind-validate before the
+    // action runs, so FluentValidation never sees it and the key comes back PascalCase.
+    const res = await mint(accountId(), 0.001);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { title: string; errors: Record<string, string[]> };
+    expect(body.title).toBe('One or more validation errors occurred.');
+    expect(body.errors).toEqual({
+      Amount: ['Amount must be between 0.01 EUR and 100000.00 EUR'],
+    });
+  });
 });
 
 describe('withdraw handler (authorisation + idempotency contract)', () => {

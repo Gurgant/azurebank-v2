@@ -258,4 +258,20 @@ describe('money endpoints validate the amount before touching a balance', () => 
       expect(mockState.transactions.length).toBe(before);
     },
   );
+
+  /*
+    The scale rule reaches the OLDER endpoints too, and that is the point of fixing it in the
+    shared helper rather than on the endpoint a review happened to name: every money validator on
+    the API carries `.ValidMoneyScale()`, so a mock that enforces it on one door is a mock whose
+    doors disagree. `0.001` above is in the list and stays there -- it breaks the RANGE as well,
+    and the binder answers first.
+  */
+  it('refuses a third decimal on the deposit too, with the validator envelope', async () => {
+    const res = await deposit(10.001);
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { title: string; errors: Record<string, string[]> };
+    expect(body.title).toBe('Validation Failed');
+    expect(body.errors).toEqual({ amount: ['Amount cannot have more than 2 decimal places.'] });
+  });
 });

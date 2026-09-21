@@ -405,9 +405,23 @@ public static class EvidenceCommand
             }
             else if (hasSuccessRow)
             {
+                /*
+                  THE CUTOVER IS PER RAIL. Transfers began naming the authorisation they consumed
+                  on 2026-09-14; the withdrawal only with ADR-0056. EVERY withdrawal written
+                  before that change reaches this branch, so a fixed 2026-09-14 would send an
+                  operator to a cutover that has nothing to do with the movement in their hands --
+                  the same defect as calling a withdrawal a transfer, one line further down.
+                */
                 yield return "  Bound authorisation: none. The audit row for this movement is a pre-binding row,";
                 yield return "  written before success rows began naming the authorisation they consumed";
-                yield return "  (2026-09-14); the pointer above is all the binding this movement has.";
+
+                // BOTH SENTENCES WHOLE, rather than a `since` variable holding "ADR-0056".
+                // AuditProseGuardTests reads verdict headlines out of this file with a regex that
+                // takes an ALL-CAPS run straight after a quote, so a bare "ADR-0056" literal is
+                // extracted as a headline named ADR and reddens the guard that counts them.
+                yield return movement.Type == TransactionType.Withdrawal
+                    ? "  (ADR-0056); the pointer above is all the binding this movement has."
+                    : "  (2026-09-14); the pointer above is all the binding this movement has.";
             }
             else
             {

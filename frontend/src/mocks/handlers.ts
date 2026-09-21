@@ -174,6 +174,45 @@ function rejectBadAmount(amount: unknown): ReturnType<typeof modelStateProblem> 
 }
 
 /**
+ * The SCALE rule. `[MoneyRange]` checks the range and not the decimals, and every money validator
+ * on the API adds `.ValidMoneyScale()` -- deposit, withdraw, both transfers and all three mints.
+ * The note above has recorded this since #113 and nothing enforced it, because closing it on one
+ * endpoint would have left that endpoint stricter than its siblings. This closes it on all of
+ * them, which is the only shape in which the mock's mints and its movements still agree.
+ *
+ * MEASURED 2026-09-22 against the REAL pipeline (`CustomWebApplicationFactory`, which is
+ * `Program.cs` itself), on `/api/transactions/deposit` and `/api/transactions/withdraw/
+ * authorizations` -- identical but for `instance`:
+ *
+ *   amount 10.001 -> 400 {"type":"https://httpstatuses.com/400","title":"Validation Failed",
+ *                         "detail":"One or more validation errors occurred.","instance":"<route>",
+ *                         "errors":{"amount":["Amount cannot have more than 2 decimal places."]}}
+ *   amount 0.001  -> NOT that one. It breaks BOTH rules and the RANGE envelope wins:
+ *                    {"title":"One or more validation errors occurred.","errors":
+ *                     {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}}
+ *
+ * THE ORDER IS THE MEASUREMENT, NOT A PREFERENCE. DataAnnotations bind-validate before the action
+ * runs, so a value breaking both never reaches FluentValidation and comes back PascalCase in the
+ * other envelope. Checking scale first would answer the wrong shape for 0.001 -- which is why this
+ * sits AFTER the annotation stage at every call site and is never merged into that dictionary.
+ * Same field, two casings, decided by which layer rejected it.
+ *
+ * Counting decimals off `String(amount)` is safe HERE and only here: the annotation stage has
+ * already bounded the value to [0.01, 100000], and JavaScript reaches for exponential notation
+ * only below 1e-6 and above 1e21. `amount * 100` would NOT be safe -- 10.07 * 100 is
+ * 1007.0000000000001, and rounding that back is how a scale check quietly starts passing 10.001.
+ */
+function rejectBadAmountScale(amount: unknown, request: Request) {
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return null;
+  if ((String(amount).split('.')[1] ?? '').length <= 2) return null;
+  return problem({
+    instance: pathOf(request),
+    status: 400,
+    errors: { amount: ['Amount cannot have more than 2 decimal places.'] },
+  });
+}
+
+/**
  * A query-string date that will not parse, rejected the way MODEL BINDING rejects it.
  *
  * `Date.parse('garbage')` is `NaN`, and NaN poisons every comparison silently: `NaN > NaN` is
@@ -1683,6 +1722,11 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   if (badAmount) {
     return response.untyped(badAmount);
   }
+  // AFTER the annotation stage and never merged into it -- see `rejectBadAmountScale`.
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) {
+    return response.untyped(badScale);
+  }
   const amount = body.amount as number;
 
   // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay
@@ -1824,6 +1868,11 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
   const badAmount = rejectBadAmount(body.amount);
   if (badAmount) {
     return response.untyped(badAmount);
+  }
+  // AFTER the annotation stage and never merged into it -- see `rejectBadAmountScale`.
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) {
+    return response.untyped(badScale);
   }
   const amount = body.amount as number;
 
@@ -2577,10 +2626,14 @@ function spendAuthorization(held: StoredStepUpAuthorization | null): void {
  *   amount 10.00001 -> 400 "Validation Failed" {"amount":["Amount cannot have more than 2 decimal
  *                     places."]}                                                     (validator)
  *
- * Only the first is modelled here, and deliberately: neither transfer handler models the SCALE
+ * ~~Only the first is modelled here, and deliberately: neither transfer handler models the SCALE
  * rule either, so adding it to the mint alone would make the mock's mint stricter than its own
- * transfer — the opposite of the property ADR-0042 needs. It is a real, pre-existing gap rather
- * than a decision, and it is written down instead of quietly closed in a PR about something else.
+ * transfer — the opposite of the property ADR-0042 needs.~~ *(Closed 2026-09-22 on #198, where the
+ * review raised it again on the new withdrawal mint. The objection above was to closing it on ONE
+ * endpoint and it still stands, so `rejectBadAmountScale` is wired into all seven money endpoints
+ * at once — deposit, withdraw, both transfers, all three mints — and no mint is stricter than the
+ * movement it authorises. Both envelopes were re-measured on the real pipeline first; the
+ * transcript is on that helper.)*
  */
 function mintBindingErrors(
   body: { amount?: number; pin?: unknown; fromAccountId?: string; toAccountId?: string },
@@ -2659,6 +2712,8 @@ const authoriseTransfer = api.post(
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
+    const badScale = rejectBadAmountScale(body.amount, request);
+    if (badScale) return response.untyped(badScale);
 
     // OWNERSHIP FIRST — `AuthoriseTransferAsync` opens with GetAccountWithOwnershipCheckAsync.
     if (!mockState.accounts.some((a) => a.id === body.fromAccountId)) {
@@ -2834,6 +2889,8 @@ const authoriseWithdrawal = api.post(
     if (Object.keys(errors).length > 0) {
       return response.untyped(modelStateProblem(errors));
     }
+    const badScale = rejectBadAmountScale(body.amount, request);
+    if (badScale) return response.untyped(badScale);
 
     // OWNERSHIP FIRST, and no funds check at all — see the note above.
     const account = mockState.accounts.find((a) => a.id === body.accountId);
@@ -2898,6 +2955,8 @@ const authoriseInternalTransfer = api.post(
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
+    const badScale = rejectBadAmountScale(body.amount, request);
+    if (badScale) return response.untyped(badScale);
 
     // FluentValidation, so it precedes the service and both ownership checks below.
     if (body.fromAccountId === body.toAccountId) {
@@ -3165,6 +3224,8 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) return response.untyped(badScale);
 
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
@@ -3471,6 +3532,8 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) return response.untyped(badScale);
   const amount = body.amount as number;
 
   // The truthiness test is now redundant — `accountIdErrors` already refused an absent or all-zero

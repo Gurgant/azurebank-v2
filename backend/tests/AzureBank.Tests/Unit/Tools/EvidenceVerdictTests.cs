@@ -377,6 +377,17 @@ public class EvidenceVerdictTests
             $"STRONGLY AUTHENTICATED: authorisation {OtherId:D} paid for this withdrawal.",
             "the operator is reading this line to find out what happened; calling a withdrawal a "
             + "transfer is wrong in the one place that cannot afford it");
+
+        // AND THE CUTOVER DATE IS THE WITHDRAWAL'S. Every withdrawal written before ADR-0056
+        // carries a null Detail and lands here, so a fixed 2026-09-14 -- the date the TRANSFERS
+        // began naming -- would point the operator at the wrong change for all of them.
+        lines.Should().Contain(
+            "  (ADR-0056); the pointer above is all the binding this movement has.",
+            "the withdrawal's rows began naming with ADR-0056, not on the transfers' date");
+        // Narrow ON PURPOSE: the fixture's own PIN instants are 2026-09-14T10:00:00Z and
+        // `Instants` prints them two lines above, so a bare "2026-09-14" here fails on the
+        // authorisation's timestamps rather than on the cutover sentence under test.
+        lines.Should().NotContain(l => l.Contains("(2026-09-14);", StringComparison.Ordinal));
     }
 
     [Fact]
