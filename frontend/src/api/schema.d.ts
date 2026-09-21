@@ -1831,6 +1831,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description Authorisation reference minted by POST /api/transactions/withdraw/authorizations (ADR-0056). REQUIRED to make a withdrawal: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for another amount, for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The funds rule (422 INSUFFICIENT_FUNDS) is checked BEFORE the header is. */
                     "Step-Up-Authorization": string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
@@ -1838,7 +1839,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            /** @description The authorisation reference minted for this account and amount */
+            /** @description Withdrawal details */
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["WithdrawRequest"];

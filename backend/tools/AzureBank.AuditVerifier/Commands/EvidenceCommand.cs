@@ -360,15 +360,26 @@ public static class EvidenceCommand
             if (authorisation is null)
             {
                 yield return "NOT STRONGLY AUTHENTICATED: no consumed authorisation names this transaction.";
-                yield return "  A transfer cannot be accepted without one (ADR-0042 refuses it 401), so";
+                yield return "  A transfer or a withdrawal cannot be accepted without one (ADR-0042 and";
+                yield return "  ADR-0056 refuse it 401), so";
                 yield return "  either this movement predates that rule, or the row that paid for it is";
                 yield return "  gone -- and the table it lived in is NOT chained, so its absence leaves no";
                 yield return "  break to find.";
             }
             else
             {
+                /*
+                  THE READER'S WORD, NOT THE ENUM'S. A withdrawal reaches this branch since
+                  ADR-0056, and an evidence report that calls it a transfer is wrong in the one
+                  place an operator is reading to find out what happened.
+
+                  `movement.Type.ToString()` was the first attempt and it was worse than the bug:
+                  `TransferOut` renders "transferout", so every transfer's report changed too.
+                  EvidenceVerdictTests caught that, which is what it is for.
+                */
+                var noun = movement.Type == TransactionType.Withdrawal ? "withdrawal" : "transfer";
                 yield return $"STRONGLY AUTHENTICATED: authorisation {authorisation.Id:D} paid for this"
-                    + " transfer.";
+                    + $" {noun}.";
                 foreach (var line in Instants(authorisation))
                 {
                     yield return line;
@@ -396,7 +407,7 @@ public static class EvidenceCommand
             }
             else
             {
-                yield return "  Bound authorisation: none, because no Succeeded transfer row names this";
+                yield return "  Bound authorisation: none, because no Succeeded movement row names this";
                 yield return "  movement (the rows below say what does).";
             }
 

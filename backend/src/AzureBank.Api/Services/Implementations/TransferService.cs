@@ -837,6 +837,12 @@ public class TransferService : ITransferService
     }
 
     /// <summary>
+    /// Prepares one more transfer attempt. The logic moved to
+    /// <see cref="ConcurrencyRetry.PrepareIdempotentAttemptAsync"/> when the withdrawal joined the
+    /// step-up rail and needed it verbatim (ADR-0056); this stays as the name the two transfer call
+    /// sites read by, and as the place their Case-A/Case-B notes point at.
+    /// </summary>
+    /// <remarks>
     /// Idempotent reset run at the TOP of every transfer execution attempt.
     /// The EF execution strategy (EnableRetryOnFailure, production only) re-runs
     /// the delegate on a transient fault against the SAME shared DbContext, so
@@ -860,13 +866,7 @@ public class TransferService : ITransferService
     ///
     /// The idempotency step is a no-op when no record is tracked (e.g. a direct
     /// service-level call outside the middleware): there is nothing to guard.
-    /// </summary>
-    /// <summary>
-    /// Prepares one more transfer attempt. The logic moved to
-    /// <see cref="ConcurrencyRetry.PrepareIdempotentAttemptAsync"/> when the withdrawal joined the
-    /// step-up rail and needed it verbatim (ADR-0056); this stays as the name the two transfer call
-    /// sites read by, and as the place their Case-A/Case-B notes point at.
-    /// </summary>
+    /// </remarks>
     private Task PrepareTransferAttemptAsync(params Account[] accounts) =>
         ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, accounts);
 }

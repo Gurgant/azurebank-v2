@@ -118,6 +118,31 @@ describe('withdraw handler (authorisation + idempotency contract)', () => {
     expect(body.available).toBe(mockState.accounts[0].balance);
   });
 
+  it('400 on a malformed header BEFORE ownership and funds, because MVC binds first', async () => {
+    /*
+      THE BINDER RUNS BEFORE THE ACTION. `[FromHeader] Guid?` goes through Guid.TryParse, so a
+      value that is present but not a UUID is a model-state 400 keyed on the header name and the
+      action never executes -- it can answer neither 404 nor 422.
+
+      Both rungs below it are exercised at once on purpose: an UNKNOWN account AND an amount over
+      the balance. The first version of this handler read the header after the funds check, so
+      this request answered 404 in the mock and 400 on the API. Found in review on #198.
+    */
+    const res = await fetch(URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+        'Step-Up-Authorization': 'not-a-guid',
+      },
+      body: JSON.stringify({ accountId: FIXED, amount: 50_000 }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(Object.keys(body.errors ?? {})).toContain('Step-Up-Authorization');
+  });
+
   it('401 AUTHORIZATION_REQUIRED when an affordable withdrawal presents none', async () => {
     const res = await withdraw(crypto.randomUUID(), { accountId: accountId(), amount: 10 });
     expect(res.status).toBe(401);

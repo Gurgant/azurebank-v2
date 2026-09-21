@@ -42,11 +42,42 @@ public class EvidenceVerdictTests
         Account = new Account { UserId = OwnerId, AccountNumber = "AB-0000-0000-00", Name = "Checking", User = null! },
     };
 
-    private static StepUpAuthorization Consumed(Guid id, Guid? by) => new()
+    /// <summary>
+    /// A WITHDRAWAL: cash out, so no recipient handle and no destination — which is exactly why the
+    /// verdict cannot tell the rails apart by the handle alone (ADR-0056).
+    /// </summary>
+    private static Transaction Withdrawal() => new()
+    {
+        Id = MovementId,
+        TransactionNumber = "TXN-20260921-0000000002X",
+        Type = TransactionType.Withdrawal,
+        Amount = 25m,
+        RecipientAzureTag = null,
+        Account = new Account { UserId = OwnerId, AccountNumber = "AB-0000-0000-00", Name = "Checking", User = null! },
+    };
+
+    private static string[] WithdrawalVerdict(
+        StepUpAuthorization? pointer,
+        bool hasSuccessRow,
+        Guid? boundId,
+        StepUpAuthorization? bound,
+        bool detailUnreadable = false) =>
+        EvidenceCommand.StrongAuthentication(
+            Withdrawal(), pointer, hasSuccessRow, detailUnreadable, boundId, bound).ToArray();
+
+    /*
+      The OPERATION is a parameter because the verdict checks it against the movement's shape: a
+      withdrawal expects `StepUpOperation.Withdrawal`, and a Transfer-operation row against a
+      withdrawal is a MISMATCH -- correctly, since the operation name is inside the binding hash.
+      The first version of the withdrawal cases below left this at Transfer and was answered
+      "BOUND AUTHORISATION DOES NOT MATCH", which was the check working rather than a test bug.
+    */
+    private static StepUpAuthorization Consumed(
+        Guid id, Guid? by, StepUpOperation operation = StepUpOperation.Transfer) => new()
     {
         Id = id,
         UserId = OwnerId,
-        Operation = StepUpOperation.Transfer,
+        Operation = operation,
         BindingHash = "not read by the verdict",
         Status = by is null ? StepUpAuthorizationStatus.Pending : StepUpAuthorizationStatus.Consumed,
         CreatedAt = new DateTime(2026, 9, 14, 10, 0, 0, DateTimeKind.Utc),
@@ -265,7 +296,9 @@ public class EvidenceVerdictTests
 
         lines[0].Should().StartWith("NOT STRONGLY AUTHENTICATED:");
         lines.Should().Contain(
-            "  Bound authorisation: none, because no Succeeded transfer row names this");
+            // "movement", not "transfer", since ADR-0056: a withdrawal has a MoneyWithdrawn
+            // success row and this sentence is about whichever row names the movement.
+            "  Bound authorisation: none, because no Succeeded movement row names this");
         lines.Should().NotContain(l => l.Contains("pre-binding", StringComparison.Ordinal));
     }
 
@@ -307,5 +340,54 @@ public class EvidenceVerdictTests
         */
         AuditDetails.ConsumedAuthorisationOf("{\"authorizationId\":\"\uD800\"}").Should().BeNull(
             "a lone surrogate is not JSON this reader can use, and it is not an exception either");
+    }
+
+    /*
+      THE WITHDRAWAL CASES, added with ADR-0056. Before it, a withdrawal was answered
+      "NO AUTHORISATION APPLIES" and never reached any of this.
+
+      Both of the widenings it needed are asserted here because neither would have failed anything
+      on its own: `appliesToType` let the withdrawal in, and the NOUN had to stop being the word
+      "transfer". The first attempt at that noun used `movement.Type.ToString()`, which renders
+      "transferout" and silently changed every TRANSFER's report -- caught by the two cases above,
+      which is why they pin the sentence and not just its prefix.
+    */
+    [Fact]
+    public void AWithdrawalWithABoundRow_IsSTRONGLYAUTHENTICATEDBOUNDINTHECHAIN()
+    {
+        var bound = Consumed(BoundId, MovementId, StepUpOperation.Withdrawal);
+
+        var lines = WithdrawalVerdict(pointer: bound, hasSuccessRow: true, BoundId, bound);
+
+        lines[0].Should().StartWith("STRONGLY AUTHENTICATED, BOUND IN THE CHAIN:");
+        lines.Should().NotContain(
+            l => l.Contains("NO AUTHORISATION APPLIES", StringComparison.Ordinal),
+            "a withdrawal mints and spends an authorisation since ADR-0056, so that verdict "
+            + "against one is a FINDING rather than the expected answer");
+    }
+
+    [Fact]
+    public void AWithdrawalWithAPointerOnly_SaysWITHDRAWAL_NotTransfer()
+    {
+        var pointer = Consumed(OtherId, MovementId, StepUpOperation.Withdrawal);
+
+        var lines = WithdrawalVerdict(pointer, hasSuccessRow: true, boundId: null, bound: null);
+
+        lines[0].Should().Be(
+            $"STRONGLY AUTHENTICATED: authorisation {OtherId:D} paid for this withdrawal.",
+            "the operator is reading this line to find out what happened; calling a withdrawal a "
+            + "transfer is wrong in the one place that cannot afford it");
+    }
+
+    [Fact]
+    public void AWithdrawalWithNoSuccessRow_SaysSoWithoutNamingARail()
+    {
+        // The positive control: with no success row there is nothing to name the authorisation, and
+        // the sentence must not claim a TRANSFER row is the one missing.
+        var lines = WithdrawalVerdict(
+            pointer: Consumed(OtherId, MovementId, StepUpOperation.Withdrawal),
+            hasSuccessRow: false, boundId: null, bound: null);
+
+        lines.Should().Contain("  Bound authorisation: none, because no Succeeded movement row names this");
     }
 }

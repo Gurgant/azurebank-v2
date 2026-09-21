@@ -2044,6 +2044,7 @@
           {
             "name": "Step-Up-Authorization",
             "in": "header",
+            "description": "Authorisation reference minted by POST /api/transactions/withdraw/authorizations (ADR-0056). REQUIRED to make a withdrawal: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for another amount, for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The funds rule (422 INSUFFICIENT_FUNDS) is checked BEFORE the header is.",
             "required": true,
             "schema": {
               "type": "string",
@@ -2062,7 +2063,7 @@
           }
         ],
         "requestBody": {
-          "description": "The authorisation reference minted for this account and amount",
+          "description": "Withdrawal details",
           "content": {
             "application/json": {
               "schema": {

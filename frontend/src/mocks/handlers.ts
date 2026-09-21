@@ -1863,13 +1863,30 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     tolerates the extra property, so the mock must not reintroduce a gate the API does not have --
     that is exactly the drift this file's own "the mock follows the backend" rule forbids.
   */
+  /*
+    THE HEADER IS PARSED FIRST, ABOVE OWNERSHIP AND FUNDS, because MVC binds it before the action
+    runs at all: `[FromHeader] Guid?` goes through Guid.TryParse, and a value that is present but
+    not a UUID is refused with a model-state 400 keyed on the header name -- the action never
+    executes, so it can answer neither 404 nor 422. ADR-0042 and ADR-0049 both record that on their
+    own endpoints, and the first version of this handler read the header after the funds check, so
+    a malformed header on an unknown account answered 404 here and 400 on the API.
+
+    ONLY THE PARSE MOVES. The ABSENT-header refusal stays below the funds check, because that one
+    IS the action's own: an absent or empty header binds to null, reaches the service, and is
+    answered 401 AUTHORIZATION_REQUIRED after the balance has been consulted (ADR-0056 D4).
+  */
+  const stepUp = readStepUpHeader(request);
+  if (stepUp.errors.length > 0) {
+    return response.untyped(modelStateProblem({ [STEP_UP_HEADER]: stepUp.errors }));
+  }
+
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
     return response.untyped(notFound('Account', body.accountId, request));
   }
 
-  // INSUFFICIENT_FUNDS — FIRST among the refusals now, and this is the user-visible half of the
-  // change rather than a tidy-up.
+  // INSUFFICIENT_FUNDS — FIRST among the refusals the ACTION makes, and this is the user-visible
+  // half of the change rather than a tidy-up.
   const available = account.balance;
   if (amount > available) {
     return response.untyped(
@@ -1887,12 +1904,8 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     );
   }
 
-  // The header, read the way MVC binds it: a value that is present but not a UUID is a model-state
-  // 400 keyed on the header name, never a 401. See `readStepUpHeader`.
-  const stepUp = readStepUpHeader(request);
-  if (stepUp.errors.length > 0) {
-    return response.untyped(modelStateProblem({ [STEP_UP_HEADER]: stepUp.errors }));
-  }
+  // Absent or empty: the action's own refusal, after the funds rung. The malformed case was
+  // already answered above, where the binder would have answered it.
   if (stepUp.id === null) {
     return response.untyped(
       authorizationRequired(request, 'This withdrawal has not been authorised.'),
@@ -2781,7 +2794,23 @@ const authoriseTransfer = api.post(
 const authoriseWithdrawal = api.post(
   '/api/transactions/withdraw/authorizations',
   async ({ request, response }) => {
-    const body = (await request.json()) as {
+    /*
+      READ THE BODY THE WAY THE CLOSURE MINT DOES, and for the reason it records. `request.json()`
+      REJECTS on malformed JSON -- an MSW error rather than a response -- and a JSON `null` reaches
+      `bindAccountIds`, which reads a property off it and throws. The closure mint hit exactly this
+      on #156 and fixed it there; a handler added afterwards repeating the call is the drift its
+      note exists to prevent, and CodeRabbit raised it again here on #198.
+
+      `readJsonBody` folds every unreadable shape to null and `unreadableBodyProblem` answers the
+      framework's own envelope -- the `""` key for a body it treats as absent, the `$` key for
+      anything it could not parse or convert. None of them reaches ownership or the PIN, so none
+      costs an attempt.
+    */
+    const parsed = await readJsonBody(request);
+    if (!parsed) {
+      return response.untyped(unreadableBodyProblem(await request.clone().text()));
+    }
+    const body = parsed.body as {
       accountId?: string;
       amount?: number;
       pin?: string;

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.Claims;
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Services.Interfaces;
@@ -153,7 +154,7 @@ public class TransactionController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // PIN_LOCKED (ADR-0010)
     public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseWithdrawal(
-        [FromBody] WithdrawalAuthorizationRequest request)
+        [Description("The account, the amount, and the PIN")][FromBody] WithdrawalAuthorizationRequest request)
     {
         // Same two-layer guard as the transfer mints: DataAnnotations from [ApiController], then
         // FluentValidation, which is the only layer that checks the money SCALE.
@@ -171,9 +172,18 @@ public class TransactionController : ControllerBase
     /// <remarks>
     /// Withdraw money from an account, presenting the authorisation minted for it.
     /// </remarks>
-    /// <param name="request">Withdrawal details</param>
-    /// <param name="stepUpAuthorizationId">The authorisation reference minted for this account and amount</param>
     /// <returns>Transaction details and new balance</returns>
+    /*
+      THE HEADER IS DOCUMENTED BY [Description] ON THE PARAMETER, NOT BY AN XML <param>.
+
+      That is the convention all three existing step-up endpoints use, and it is not stylistic:
+      with an XML <param> for `stepUpAuthorizationId` the generator put ITS text on the REQUEST
+      BODY -- the committed contract described the withdraw body as "The authorisation reference
+      minted for this account and amount" -- and left the header with NO description at all. A
+      contract telling clients to put the authorisation in the body is the exact opposite of what
+      this endpoint accepts. Found in review on #198, and the body/header pair is asserted against
+      the committed document rather than re-read.
+    */
     [HttpPost("withdraw")]
     [RequireIdempotency]
     [RequireStepUpAuthorization]
@@ -189,7 +199,8 @@ public class TransactionController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<ApiResponse<WithdrawResponse>>> Withdraw(
-        [FromBody] WithdrawRequest request,
+        [Description("Withdrawal details")][FromBody] WithdrawRequest request,
+        [Description("Authorisation reference minted by POST /api/transactions/withdraw/authorizations (ADR-0056). REQUIRED to make a withdrawal: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for another amount, for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The funds rule (422 INSUFFICIENT_FUNDS) is checked BEFORE the header is.")]
         [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {
         await _withdrawValidator.ValidateAndThrowAsync(request);

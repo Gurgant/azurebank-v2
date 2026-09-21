@@ -156,7 +156,7 @@ the end of this page are the template's; only Accepted has ever been used.
 | [0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | 2026-09-11 (residual, measured; no ADR or PR named) | A nulled `AuditEventId` is asked the old question, so for a repeatable kind another row of the same user answers for it. |
 | [0053](0053-the-committed-contract-is-what-the-api-generates.md) | 2026-09-11, twice (no PR named) · 2026-09-14, twice (the XML-generator fix; no PR named) · 2026-09-15, twice (Schemathesis made a gate; no PR named) · 2026-09-21, ADR-0056 | The comma-decimal-locale defect withdrawn as false, measured through the real route; the "either defect fixed" trigger narrowed to the XML generator; the XML-generator defect fixed and "it is why D3's newlines are in the contract" struck, the trigger's prediction wrong: the newlines moved, so D3's normalisation stays; D6 moved: Schemathesis gates runtime conformance on every PR in `ci.yml`'s `conformance` job, and the "Gating Schemathesis" trigger struck as done. The conformance floor moved 27 → 28 with the withdrawal mint; `CommittedOpenApiDocumentTests`' own floor stays at 20, deliberately below the real count so deleting an endpoint does not trip it. |
 
-The next free number is **0056**.
+The next free number is **0057**.
 
 <details>
 <summary>Full list in numeric order</summary>
