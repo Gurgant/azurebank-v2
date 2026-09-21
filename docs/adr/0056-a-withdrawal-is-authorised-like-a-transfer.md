@@ -173,17 +173,24 @@ place that is what asserts the ordering on the real stack.
 
 - **The SPA still does not mint.** PR-C replaces the PIN step with one that mints and submits with
   the header. Until then the dialog is answered 401 as above.
-- **`pinLockExpiry.spec.ts` is SKIPPED here, not merely left alone.** ~~It is not re-aimed; it drives
-  the lock through the withdrawal, which no longer spends attempts.~~ *(Corrected 2026-09-21, before
-  merge: that wording implied the spec still ran, and CI falsified it — run 35618553090. It proves a
-  DIALOG behaviour, that a real 429 disables the PIN boxes and ticks the countdown down, and it
-  earns the 429 by typing wrong PINs into the withdraw dialog. The withdrawal answers no 429 now and
-  the dialog does not mint yet, so the state it asserts is unreachable; it waited out its timeout
-  and its leftover funded probe cascaded into `stepUp.spec.ts` and `deposit.spec.ts`. It is skipped
-  with that premise written at the skip, and NOT re-aimed at the mint from outside the page: the
-  lock is half the subject and what the dialog RENDERS is the other half, so an external mint would
-  report green while the countdown went unobserved. PR-C removes the skip in the same change that
-  makes the 429 reachable.)*
+- **`pinLockExpiry.spec.ts` is RE-AIMED at the change-PIN dialog, not skipped and not deleted.**
+  ~~It is not re-aimed; it drives the lock through the withdrawal, which no longer spends
+  attempts.~~ ~~It is SKIPPED, because the state it asserts is unreachable until PR-C.~~
+  *(Corrected twice before merge, both times by CI. First: "not re-aimed" implied it still ran, and
+  run 35618553090 showed it waiting out its timeout on a 429 that never comes — the withdrawal
+  earns no PIN attempts now, and the dialog does not mint yet. Then a `test.skip` with its reason
+  written at the skip was refused by `scripts/assert-e2e-ran.mjs`, whose message names the only two
+  remedies — make it run, or delete it — because two money-safety specs once skipped on every run
+  while the job read green.*
+
+  *The subject did not change with the endpoint. What is under test is `RetryCountdown` against a
+  lock the SERVER issued: that it disables the entry, that it MOVES, and that it releases at zero.
+  `ChangePinDialog`, `DeleteAccountDialog` and `WithdrawDialog` render that one component with the
+  same banner, so any of the three proves it. Change PIN was chosen because it needs no minted
+  authorisation and no throwaway ACCOUNT — a spare account created for the closure dialog could not
+  be closed afterwards, since the PIN this spec deliberately locks is the same PIN its closure would
+  need. PR-C may point it back at the withdrawal once that dialog mints; it does not have to.)*
+
 - **The transfers' four inline `new StepUpBinding(...)` sites are left alone.** Adding a fourth
   factory leaves four of eight construction sites inline; converting them is a refactor with its own
   blast radius and belongs in its own change.
