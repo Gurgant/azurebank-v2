@@ -502,8 +502,7 @@ The API is documented using **Scalar**, available at:
 |                  | `/api/transactions/withdraw` | POST   | Withdraw funds      | Yes       |
 | **Transfers**    | `/api/transfers`             | POST   | External transfer   | Yes + PIN |
 |                  | `/api/transfers/internal`    | POST   | Internal transfer   | Yes + PIN |
-| **Users**        | `/api/users/search`          | GET    | Search users        | Yes       |
-|                  | `/api/users/{azureTag}`      | GET    | Get user by tag     | Yes       |
+| **Users**        | `/api/users/{azureTag}`      | GET    | Get user by tag     | Yes       |
 
 ### BFF Gateway Endpoints
 

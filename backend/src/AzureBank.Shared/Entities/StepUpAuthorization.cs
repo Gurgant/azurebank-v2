@@ -56,8 +56,9 @@ public class StepUpAuthorization
 
     /// <summary>
     /// HMAC-SHA256 (server-side key, never stored in the database) over the fields that define the
-    /// operation, lowercase hex. See <c>IStepUpAuthorizationService.ComputeBindingHash</c> for the
-    /// exact composition.
+    /// operation, lowercase hex. See <c>StepUpAuthorizationService.ComputeBindingHash</c> for the
+    /// exact composition — it is private on the implementation and has never been on the
+    /// interface, which declares only MintAsync, ValidateAsync and ConsumeAsync.
     ///
     /// <para>
     /// A hash rather than a column per bound field, for the reason

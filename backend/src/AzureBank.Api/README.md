@@ -199,7 +199,6 @@ AzureBank.Api/
 
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
-| `/api/users/search` | GET | Search users by AzureTag | Yes |
 | `/api/users/{azureTag}` | GET | Get user by AzureTag | Yes |
 
 ---

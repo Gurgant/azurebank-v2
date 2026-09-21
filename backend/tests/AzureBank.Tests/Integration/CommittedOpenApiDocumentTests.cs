@@ -55,7 +55,8 @@ namespace AzureBank.Tests.Integration;
 /// <list type="bullet">
 /// <item><description>
 /// The FILE's line endings. Git stores it as LF (<c>git ls-files --eol</c> reads <c>i/lf w/crlf</c>)
-/// and a Windows checkout rewrites all 4,307 of them to CRLF.
+/// and a Windows checkout rewrites all 4,595 of them to CRLF. (4,595 measured 2026-09-21;
+/// it was 4,307 until the document grew on 2026-09-16, and nothing had updated this line.)
 /// </description></item>
 /// <item><description>
 /// Newlines INSIDE string values. Twenty-five strings in the document — eight operation

@@ -5,8 +5,24 @@ Schemathesis Hooks for AzureBank API Testing
 This module provides authentication hooks for Schemathesis tests.
 It automatically registers a test user and adds JWT tokens to requests.
 
-Usage:
-    schemathesis run ./openapiv1.json --url http://localhost:5068 --hooks tests/contract/hooks.py
+⚠⚠ THIS FILE DOES NOT LOAD under the schemathesis version CI pins (4.27.1, see
+SCHEMATHESIS_VERSION in .github/workflows/ci.yml). Measured 2026-09-21 by registering each
+hook with the library's own validator: `before_call` below takes 2 arguments and v4's spec
+takes 3 (it passes `kwargs` third), and `add_case` no longer exists -- "There is no hook
+with name 'add_case'". `before_generate_case` and `after_call` still register, but the
+module raises at import on `before_call`, so NONE of the four ever registers.
+
+Nothing runs this today: CI never sets SCHEMATHESIS_HOOKS and passes its bearer token and
+service-key header as -H arguments, so the conformance job is green on its own merits.
+Repairing the signatures is a code change, recorded in the backlog rather than smuggled
+into a documentation correction.
+
+Usage, once the signatures are fixed -- the mechanism is an environment variable, because
+4.27.1 has no --hooks flag (it is rejected outright):
+    SCHEMATHESIS_HOOKS=tests.contract.hooks schemathesis run docs/api/openapiv1.json --url http://localhost:5068
+
+The old line here said `--hooks tests/contract/hooks.py` against `./openapiv1.json`: a
+flag 4.27.1 rejects, and a document path that has never existed in this repository.
 """
 
 import schemathesis

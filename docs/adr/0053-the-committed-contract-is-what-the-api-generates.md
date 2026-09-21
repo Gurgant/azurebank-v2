@@ -76,9 +76,14 @@ Regeneration is deterministic; `NoServersDocumentTransformer` exists so that it 
 hand-edit that only reordered keys, which is still a document nobody generated. The two exceptions:
 
 - **The file's line endings.** Git stores it as LF (`git ls-files --eol` reads `i/lf w/crlf`) and a
-  Windows working tree rewrites all 4,307 of them to CRLF. That is why a local byte count of the
-  checked-out file comes out 4,307 bytes larger than what the API serves: the size difference IS the
-  line endings, and there is no other.
+  Windows working tree rewrites all ~~4,307~~ 4,595 of them to CRLF. That is why a local byte count
+  of the checked-out file comes out ~~4,307~~ 4,595 bytes larger than what the API serves: the size
+  difference IS the line endings, and there is no other.
+  *(Corrected 2026-09-21: the document has grown since this was written and the count had not
+  followed. Measured on `c51b266` — the committed blob is 154,859 bytes with 4,595 LF and no
+  CRLF, the checked-out file 159,454 bytes with 4,595 CRLF, a difference of exactly 4,595. A
+  reader following the old number would have measured 4,595, concluded the difference was NOT
+  only line endings, and drawn the one conclusion this sentence exists to prevent.)*
 - **Newlines inside string values.** Twenty-four strings in the document — seven operation summaries
   and seventeen descriptions, 47 line breaks between them — carry the generating machine's newline,
   `\r\n` in the committed file, which was generated on Windows. A Linux runner is expected to
