@@ -105,10 +105,32 @@ jobs:
       - name: Run Bruno tests
         working-directory: tests/api-collection
         run: |
-          bru run . --env ci \
-            --reporter-junit ../../bruno-results.xml \
-            || true  # report, don't gate
+          # -r, and it is not cosmetic. bru turns recursion on ONLY when no path is given, so
+          # `bru run .` listed the root folder, found no .bru there (every request is in a
+          # subfolder) and exited 0 having sent NOTHING. Measured 2026-09-21 with this exact
+          # command line: "Requests 0 / Tests 0/0 / Status PASS". This job is manual-only and
+          # has never run, so nothing had ever contradicted that green.
+          bru run . -r --env ci \
+            --reporter-junit ../../bruno-results.xml
 
+      - name: Fail if the run sent no requests
+        if: always()
+        run: |
+          # The guard on the guard. A report with no test cases is what a silent non-run looks
+          # like, and it is otherwise indistinguishable from a clean pass -- which is exactly the
+          # state this job was in before 2026-09-21.
+          if [ ! -f bruno-results.xml ]; then
+            echo 'no bruno-results.xml: the run produced no report at all'
+            exit 1
+          fi
+          cases=$(grep -o '<testcase' bruno-results.xml | wc -l)
+          echo "bruno: $cases test case(s) in the report"
+          if [ "$cases" -lt 100 ]; then
+            echo "the run reported $cases test cases; the junit reporter wrote 135 from 27"
+            echo 'requests on 2026-09-21, so this is a run that did not happen rather than a'
+            echo 'collection that shrank'
+            exit 1
+          fi
       - name: Upload results
         uses: actions/upload-artifact@v4
         if: always()

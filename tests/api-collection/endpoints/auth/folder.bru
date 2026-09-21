@@ -1,0 +1,12 @@
+meta {
+  name: auth
+  seq: 1
+}
+
+docs {
+  WHY THIS FILE EXISTS. With no folder.bru, Bruno orders folders ALPHABETICALLY, so
+  `accounts` ran before `auth` and every request in it went out unauthenticated.
+  Measured 2026-09-21 before this file existed: 1 of 24 requests passed.
+
+  This folder is 1 because register publishes authToken, accountId and testEmail, and set-pin enrols the PIN the money folders need. Everything downstream is unauthenticated without it.
+}

@@ -1,0 +1,12 @@
+meta {
+  name: idempotency
+  seq: 5
+}
+
+docs {
+  WHY THIS FILE EXISTS. With no folder.bru, Bruno orders folders ALPHABETICALLY, so
+  `accounts` ran before `auth` and every request in it went out unauthenticated.
+  Measured 2026-09-21 before this file existed: 1 of 24 requests passed.
+
+  This folder is 5 because it replays deposits, so it runs after a balance exists.
+}

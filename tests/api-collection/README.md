@@ -35,8 +35,19 @@ The API serves only the BFF (ADR-0055), so every request here carries
 `ServiceCredential:BffKey` — the root README's recipe generates it — on the command line:
 
 ```bash
-bru run . --env local --env-var serviceKey="$YOUR_KEY" --insecure
+cd tests/api-collection
+bru run . -r --env local --env-var serviceKey="$YOUR_KEY" --insecure
 ```
+
+Three things in that line are not optional, and each was measured on 2026-09-21:
+
+- **`cd` first.** `bru run` works only from the collection root: run it from the repository root
+  and it answers `You can run only at the root of a collection`, having sent nothing.
+- **`-r`.** Recursion is enabled only when NO path argument is given, so `bru run .` lists the root
+  folder, finds no `.bru` there — every request lives in a subfolder — and reports
+  `Requests 0 / Tests 0/0 / Status PASS`. A green run that executed nothing.
+- **`--env-var serviceKey`.** `local.bru` ships it empty on purpose (above), so without it every
+  request answers `401 SERVICE_CREDENTIAL_REQUIRED`.
 
 `--insecure` is for ASP.NET's development certificate on `https://localhost:7215`. Node does not
 read the Windows certificate store, so trusting that certificate with `dotnet dev-certs https
@@ -115,15 +126,22 @@ development certificate.
 # Install CLI
 npm install -g @usebruno/cli
 
-# Run entire collection
-bru run tests/api-collection --env local --env-var serviceKey="$YOUR_KEY" --insecure
+# Everything below runs from the collection root, which is where bru insists on being.
+cd tests/api-collection
 
-# Run specific folder
-bru run tests/api-collection/endpoints/auth --env local --env-var serviceKey="$YOUR_KEY" --insecure
+# The whole collection. -r or it sends nothing; see above.
+bru run . -r --env local --env-var serviceKey="$YOUR_KEY" --insecure
 
-# Run with JUnit output
-bru run tests/api-collection --env local --env-var serviceKey="$YOUR_KEY" --reporter junit --output results.xml --insecure
+# One folder. No -r here: its requests are that folder's direct children.
+bru run endpoints/auth --env local --env-var serviceKey="$YOUR_KEY" --insecure
+
+# The whole collection, with a JUnit report.
+bru run . -r --env local --env-var serviceKey="$YOUR_KEY" --insecure --reporter-junit results.xml
 ```
+
+Measured with these exact lines on 2026-09-21 against the running API: the whole collection is
+**27 requests, 76 tests, 59 assertions, all green**; `endpoints/auth` alone is 6 requests,
+16 tests, 13 assertions.
 
 ## Test Workflow
 
@@ -183,13 +201,24 @@ tests {
 
 ### GitHub Actions
 
+What the repository actually runs is `.github/workflows/contract-tests.yml`. Its shape, and the
+reason for each part:
+
 ```yaml
 - name: Install Bruno CLI
   run: npm install -g @usebruno/cli
 
-- name: Run API Tests
-  run: bru run tests/api-collection --env ci --reporter junit --output test-results.xml
+- name: Run Bruno tests
+  working-directory: tests/api-collection     # bru runs only from the collection root
+  run: |
+    bru run . -r --env ci \                   # -r, or it sends nothing and still passes
+      --reporter-junit ../../bruno-results.xml
 ```
+
+That step used to end in `|| true`, and its command line had no `-r`. Both are gone: a job that
+runs the collection and cannot fail is the same silence one layer down, and the step that follows
+it now refuses a report with too few test cases, so a run that did not happen cannot look like a
+run that found nothing.
 
 ## Why Bruno?
 

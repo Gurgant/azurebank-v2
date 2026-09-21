@@ -16,13 +16,7 @@ auth:bearer {
 
 headers {
   Content-Type: application/json
-  Idempotency-Key: {{idempotencyKey}}
-}
-
-script:pre-request {
-  // Monetary endpoints require a fresh Idempotency-Key per operation (ADR-0009)
-  const { randomUUID } = require('crypto');
-  bru.setVar('idempotencyKey', randomUUID());
+  Idempotency-Key: {{$randomUUID}}
 }
 
 body:json {
@@ -33,13 +27,19 @@ body:json {
   }
 }
 
-vars:post-response {
-  transactionId: res.body.data.transaction.id
+script:post-response {
+  // Publish nothing unless this request actually succeeded: a failed request that
+  // still writes its variables replaces a good value with an empty one, and every
+  // request after it then fails for the wrong reason. Measured 2026-09-21: a 201
+  // was assumed and a 401 overwrote the token, turning one broken request into fifteen.
+  if (res.getStatus() === 201) {
+    bru.setVar('transactionId', res.body.data.transaction.id);
+  }
 }
 
 assert {
   res.status: eq 201
-  res.body.data.transaction.type: eq 0
+  res.body.data.transaction.type: eq "Deposit"
   res.body.data.transaction.amount: eq 1000
 }
 
@@ -48,8 +48,8 @@ tests {
     expect(res.status).to.equal(201);
   });
 
-  test("Transaction type is Deposit (0)", function() {
-    expect(res.body.data.transaction.type).to.equal(0);
+  test("Transaction type is the string Deposit", function() {
+    expect(res.body.data.transaction.type).to.equal('Deposit');
   });
 
   test("Amount matches request", function() {

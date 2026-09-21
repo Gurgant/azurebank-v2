@@ -21,8 +21,7 @@ headers {
 
 script:pre-request {
   // One key for the whole replay scenario (requests 1-3 in this folder)
-  const { randomUUID } = require('crypto');
-  bru.setVar('idemScenarioKey', randomUUID());
+  bru.setVar('idemScenarioKey', bru.interpolate('{{$randomUUID}}'));
 }
 
 body:json {

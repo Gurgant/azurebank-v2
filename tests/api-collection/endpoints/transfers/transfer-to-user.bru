@@ -1,7 +1,7 @@
 meta {
   name: Transfer to User
   type: http
-  seq: 1
+  seq: 3
 }
 
 post {
@@ -16,40 +16,37 @@ auth:bearer {
 
 headers {
   Content-Type: application/json
-  Idempotency-Key: {{idempotencyKey}}
-}
-
-script:pre-request {
-  // Monetary endpoints require a fresh Idempotency-Key per operation (ADR-0009)
-  const { randomUUID } = require('crypto');
-  bru.setVar('idempotencyKey', randomUUID());
+  Step-Up-Authorization: {{transferAuthorizationId}}
+  Idempotency-Key: {{$randomUUID}}
 }
 
 body:json {
   {
     "fromAccountId": "{{accountId}}",
-    "recipientAzureTag": "recipient.user",
+    "recipientAzureTag": "{{recipientAzureTag}}",
     "amount": 50.00,
     "description": "Test transfer"
   }
 }
 
 assert {
-  res.status: in [201, 400, 404]
+  res.status: eq 201
 }
 
 tests {
-  test("Status is valid response", function() {
-    // 201 = success, 400 = validation error, 404 = recipient not found
-    expect([201, 400, 404]).to.include(res.status);
+  test("Status is 201 Created", function() {
+    // Everything this needs exists by the time it runs, so 201 is the only right answer.
+    // The old assertion also accepted 400 and 404, and the payload checks below sat behind
+    // `if (res.status === 201)` -- so a transfer that FAILED passed this request in
+    // silence. That is the same "green for the wrong reason" this collection was full of.
+    expect(res.status).to.equal(201);
   });
 
-  test("Response contains expected properties on success", function() {
-    if (res.status === 201) {
-      expect(res.body.data).to.have.property('transactionNumber');
-      expect(res.body.data).to.have.property('amount');
-      expect(res.body.data).to.have.property('newBalance');
-      expect(res.body.data).to.have.property('recipientAzureTag');
-    }
+  test("The receipt names the movement, the amount, the new balance and the payee", function() {
+    const data = res.body.data;
+    expect(data).to.have.property('transactionNumber');
+    expect(data).to.have.property('amount');
+    expect(data).to.have.property('newBalance');
+    expect(data).to.have.property('recipientAzureTag');
   });
 }

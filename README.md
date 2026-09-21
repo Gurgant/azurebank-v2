@@ -64,8 +64,9 @@ a token, so the API serves one client (ADR-0055). Exempt: `/health/*` in every e
 `/openapi` and `/scalar` in Development, so a browser can still open the documentation. Calling an
 API OPERATION by hand — curl, Bruno, the Scalar page's "Try it" — needs that header. Bruno reads
 it from `serviceKey`, which ships empty in the tracked `local.bru` and is passed per run instead:
-`bru run . --env local --env-var serviceKey="$SERVICE_KEY"`. In production the API also has no public address; the key is
-the second line behind that.
+`cd tests/api-collection && bru run . -r --env local --env-var serviceKey="$SERVICE_KEY"
+--insecure`. The `-r` is not optional — without it bru sends no requests at all and still reports
+PASS. In production the API also has no public address; the key is the second line behind that.
 
 `Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
 records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and
