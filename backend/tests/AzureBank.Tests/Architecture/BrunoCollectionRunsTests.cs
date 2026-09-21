@@ -36,14 +36,23 @@ public class BrunoCollectionRunsTests
 
     // {{baseUrl}}, {{$randomUUID}} — the $-prefixed ones are Bruno's own, supplied by the runtime.
     private static readonly Regex Interpolation = new(@"\{\{(\$?[A-Za-z_][A-Za-z0-9_]*)\}\}", RegexOptions.Compiled);
-    private static readonly Regex SetVar = new(@"bru\.setVar\(\s*'([A-Za-z_][A-Za-z0-9_]*)'", RegexOptions.Compiled);
+    // BOTH quote styles, because `bru.setVar("authToken", v)` is the same publisher as the
+    // single-quoted one. Matching only `'` meant the order check never recorded it AND
+    // UnguardedPublishes never inspected it, so an unconditional double-quoted publish passed —
+    // measured, and review found it.
+    private static readonly Regex SetVar = new(
+        @"bru\.setVar\(\s*(?<q>['""])(?<name>[A-Za-z_][A-Za-z0-9_]*)\k<q>", RegexOptions.Compiled);
     private static readonly Regex VarsBlockEntry = new(@"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", RegexOptions.Compiled);
     private static readonly Regex Seq = new(@"^\s*seq:\s*(\d+)\s*$", RegexOptions.Multiline | RegexOptions.Compiled);
 
     // `require ('crypto')` is the same call as `require('crypto')`, and the sandbox refuses both.
     private static readonly Regex ExecutableRequire = new(@"\brequire\s*\(", RegexOptions.Compiled);
+    // The brace is PART of the match, so the span belongs to THIS `if` and not to whatever
+    // block happens to come next. Searching for the next `{` let a braceless success guard
+    // adopt an unrelated block's brace, and a publisher that runs on ANY status looked
+    // guarded — measured, and review found it.
     private static readonly Regex SuccessGuard = new(
-        @"if\s*\(\s*res\.getStatus\(\)\s*===\s*(\d{3})\s*\)", RegexOptions.Compiled);
+        @"if\s*\(\s*res\.getStatus\(\)\s*===\s*(\d{3})\s*\)\s*\{", RegexOptions.Compiled);
 
     /// <summary>Folder seq, then request seq — the order Bruno actually sends them in.</summary>
     private static List<(string Path, string Text)> InRunOrder()
@@ -142,7 +151,7 @@ public class BrunoCollectionRunsTests
                 Check(statement);
                 foreach (Match early in SetVar.Matches(statement))
                 {
-                    known.Add(early.Groups[1].Value);
+                    known.Add(early.Groups["name"].Value);
                 }
             }
 
@@ -153,7 +162,7 @@ public class BrunoCollectionRunsTests
             // requests that FOLLOW, not to this one.
             foreach (Match late in SetVar.Matches(post))
             {
-                known.Add(late.Groups[1].Value);
+                known.Add(late.Groups["name"].Value);
             }
         }
 
@@ -239,13 +248,22 @@ public class BrunoCollectionRunsTests
             WithoutProse(File.ReadAllText(Path.Combine(root, "endpoints", "auth", "login.bru"))),
             "body:json");
 
-        register.Should().Contain("bru.setVar('testEmail'",
-            "the address register CREATED is the only one login can sign in with, and it is read "
-            + "back from the answer rather than recomputed");
-        register.Should().Contain("res.body.data.user.email",
-            "taking it from the response keeps it right even if the request body's template changes");
-        login.Should().Contain("{{testEmail}}",
-            "login must sign in as whoever register made; a literal here is a user nobody created");
+        // The WHOLE call, not its parts. Asserting the NAME and the EXPRESSION separately let a
+        // request publish testEmail from something else entirely while an unrelated line kept the
+        // second assertion satisfied — measured, and it passed. The same for login: {{testEmail}}
+        // appearing SOMEWHERE in the body is not the same as it being the address signed in with.
+        Regex.IsMatch(
+                register,
+                @"bru\.setVar\(\s*(['""])testEmail\1\s*,\s*res\.body\.data\.user\.email\s*\)")
+            .Should().BeTrue(
+                "the address register CREATED is the only one login can sign in with, and it is "
+                + "read back from the answer rather than recomputed. Its post-response block "
+                + $"reads:{Environment.NewLine}{register}");
+
+        Regex.IsMatch(login, @"""email""\s*:\s*""\{\{testEmail\}\}""")
+            .Should().BeTrue(
+                "login must sign in as whoever register made, and it is the EMAIL field that has "
+                + $"to carry it. Its body reads:{Environment.NewLine}{login}");
     }
     /// <summary>The file without its docs block and its line comments — prose names variables
     /// in order to explain them, which is not a dependency.</summary>
@@ -273,7 +291,7 @@ public class BrunoCollectionRunsTests
                 continue;
             }
 
-            var open = published.IndexOf('{', guard.Index + guard.Length - 1);
+            var open = guard.Index + guard.Length - 1;   // the brace the match consumed
             var close = MatchingBrace(published, open);
             if (close > open)
             {
@@ -285,7 +303,8 @@ public class BrunoCollectionRunsTests
         {
             if (!guarded.Any(span => publish.Index > span.Open && publish.Index < span.Close))
             {
-                offenders.Add($"{path} publishes {publish.Groups[1].Value} outside any success guard");
+                var name = publish.Groups["name"].Value;
+                offenders.Add($"{path} publishes {name} outside a success guard");
             }
         }
 
