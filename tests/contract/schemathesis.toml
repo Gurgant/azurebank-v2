@@ -1,5 +1,7 @@
 # Schemathesis v4 Configuration for AzureBank API
-# Run from backend folder: schemathesis run ./openapiv1.json
+# Run from the repository ROOT, and pass this file as a GLOBAL option, before `run`:
+#   schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
+# (The document has never lived in backend/, and --config-file after `run` is rejected.)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # GLOBAL SETTINGS

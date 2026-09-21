@@ -461,8 +461,8 @@ public class SecurityEventConstantTests
 
         perProject["Api"].Should().Be(
             apiSites,
-            "ADR-0044 says \"Seventeen security events are logged\" and \"Fifteen events write a row "
-            + "events write a row today\". If the API's count moved, update that ADR's Context and its "
+            "ADR-0044 says \"Seventeen security events are logged\" and \"Fifteen events write a "
+            + "row today\". If the API's count moved, update that ADR's Context and its "
             + "\"What is wired\" section, and AuditOutcome's per-outcome tallies, in the same commit");
 
         perProject["Bff"].Should().Be(

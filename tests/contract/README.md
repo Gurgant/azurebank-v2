@@ -27,16 +27,19 @@ dotnet run
 
 ```bash
 # From the repository root. The document lives at docs/api/openapiv1.json and never
-# lived in backend/ -- `git log --all -- backend/openapiv1.json` is empty. This is the
-# command CI runs (.github/workflows/ci.yml, the conformance job).
+# lived in backend/ -- `git log --all -- backend/openapiv1.json` is empty. CI reads the
+# same path; it also passes a bearer token, the service-credential header, a check list,
+# a report path and a coverage step, so this is the document location CI uses and not the
+# whole command it runs (.github/workflows/ci.yml, the conformance job).
 schemathesis run docs/api/openapiv1.json --url http://localhost:5068
 ```
 
 ### 3. Run with Configuration File (v4 TOML format)
 
 ```bash
-# The configuration lives beside this file, at tests/contract/schemathesis.toml.
-schemathesis run docs/api/openapiv1.json --config-file tests/contract/schemathesis.toml
+# The configuration lives beside this file. --config-file is a GLOBAL option, so it goes
+# BEFORE `run`: after it, 4.27.1 answers "Usage: schemathesis run [OPTIONS] LOCATION".
+schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
 ```
 
 ## Test Options
@@ -48,37 +51,42 @@ schemathesis run docs/api/openapiv1.json --url http://localhost:5068
 
 ### With Authentication
 ```bash
+# Hooks load from an environment variable, not a flag: 4.27.1 has no --hooks, and the
+# name is HOOKS_MODULE_ENV_VAR in schemathesis/core/hooks.py.
+SCHEMATHESIS_HOOKS=tests.contract.hooks \
 schemathesis run docs/api/openapiv1.json \
-  --url http://localhost:5068 \
-  --hooks tests/contract/hooks.py
+  --url http://localhost:5068
 ```
 
 ### Verbose Output
 ```bash
 schemathesis run docs/api/openapiv1.json \
   --url http://localhost:5068 \
-  --verbosity 2
+  --checks all
 ```
 
 ### Specific Endpoint
 ```bash
 schemathesis run docs/api/openapiv1.json \
   --url http://localhost:5068 \
-  --endpoint "/api/auth/.*"
+  --include-path-regex "/api/auth/.*"
 ```
 
 ### Generate Report
 ```bash
 schemathesis run docs/api/openapiv1.json \
   --url http://localhost:5068 \
-  --report
+  --report junit
 ```
+
+`--report` takes a FORMAT in 4.27.1 (`junit`, `vcr`, `har`); bare, it is rejected.
 
 ### CI/CD Mode (JUnit output)
 ```bash
 schemathesis run docs/api/openapiv1.json \
   --url http://localhost:5068 \
-  --junit-xml=test-results.xml
+  --report junit \
+  --report-junit-path test-results.xml
 ```
 
 ## What Gets Tested
@@ -137,5 +145,5 @@ schemathesis run docs/api/openapiv1.json --workers=1
 ### Timeout Issues
 ```bash
 # Increase timeout
-schemathesis run docs/api/openapiv1.json --request-timeout=30000
+schemathesis run docs/api/openapiv1.json --request-timeout=30
 ```
