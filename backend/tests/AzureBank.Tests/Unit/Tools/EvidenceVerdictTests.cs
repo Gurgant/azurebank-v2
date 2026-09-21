@@ -74,17 +74,17 @@ public class EvidenceVerdictTests
     */
     private static StepUpAuthorization Consumed(
         Guid id, Guid? by, StepUpOperation operation = StepUpOperation.Transfer) => new()
-    {
-        Id = id,
-        UserId = OwnerId,
-        Operation = operation,
-        BindingHash = "not read by the verdict",
-        Status = by is null ? StepUpAuthorizationStatus.Pending : StepUpAuthorizationStatus.Consumed,
-        CreatedAt = new DateTime(2026, 9, 14, 10, 0, 0, DateTimeKind.Utc),
-        ExpiresAt = new DateTime(2026, 9, 14, 10, 5, 0, DateTimeKind.Utc),
-        ConsumedAt = by is null ? null : new DateTime(2026, 9, 14, 10, 0, 30, DateTimeKind.Utc),
-        ConsumedByTransactionId = by,
-    };
+        {
+            Id = id,
+            UserId = OwnerId,
+            Operation = operation,
+            BindingHash = "not read by the verdict",
+            Status = by is null ? StepUpAuthorizationStatus.Pending : StepUpAuthorizationStatus.Consumed,
+            CreatedAt = new DateTime(2026, 9, 14, 10, 0, 0, DateTimeKind.Utc),
+            ExpiresAt = new DateTime(2026, 9, 14, 10, 5, 0, DateTimeKind.Utc),
+            ConsumedAt = by is null ? null : new DateTime(2026, 9, 14, 10, 0, 30, DateTimeKind.Utc),
+            ConsumedByTransactionId = by,
+        };
 
     private static string[] Verdict(
         StepUpAuthorization? pointer,
