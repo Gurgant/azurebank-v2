@@ -911,12 +911,13 @@ know the anchor table was there, now leaves a number that does not add up.
 dotnet run --project backend/tools/AzureBank.AuditVerifier -- evidence TXN-20260902-0000000101X
 ```
 
-The argument is the `TXN-…` number the transfer response returned — the thing a customer, an
-operator or a regulator actually holds; the tool never asks for a GUID. It prints one pack, top to
-bottom: the ledger row, the step-up authorisation that paid for it, the audit rows that name it, and
-then the chain verdict `verify` would print, rendered by the same code. **The exit code is the
-chain's** — a pack over a broken chain prints the pack and exits **1**, because the break is the
-incident and the pack is a reading of a table that has stopped verifying.
+The argument is the `TXN-…` number the movement response returned — a transfer or, since ADR-0056,
+a withdrawal — the thing a customer, an operator or a regulator actually holds; the tool never asks
+for a GUID. It prints one pack, top to bottom: the ledger row, the step-up authorisation that paid
+for it, the audit rows that name it, and then the chain verdict `verify` would print, rendered by
+the same code. **The exit code is the chain's** — a pack over a broken chain prints the pack and
+exits **1**, because the break is the incident and the pack is a reading of a table that has stopped
+verifying.
 
 What the second section can say, and what it cannot:
 

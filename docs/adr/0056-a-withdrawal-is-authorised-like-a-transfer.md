@@ -57,7 +57,9 @@ ever be spent, and the endpoint's job is to be easy to call again after a wrong 
 ownership (404/403) → funds (422) → header absent (401 `AUTHORIZATION_REQUIRED`) → binding
 (401 `AUTHORIZATION_INVALID`) → the transaction. This is what closes the before-table's third row:
 the affordability answer now arrives without the caller proving anything, and the PIN is only ever
-consulted at the mint, for a withdrawal that could actually happen.
+consulted at the mint, for the requested withdrawal. ~~for a withdrawal that could actually
+happen.~~ *(Struck before merge, found in review: that wording implies the mint checks the balance,
+which D5 says it deliberately does not — a mint over the balance answers 201.)*
 
 **D5 — The mint does NOT check the balance**, following ADR-0050 D4. A mint is an authentication
 event, not a decision about whether the money can move. Balance is a racing value the withdrawal
@@ -72,6 +74,16 @@ transaction it would autocommit beside that save, and a withdrawal could commit 
 authorisation still Pending — spendable twice — or burn one on a withdrawal that never committed.
 The transaction is opened through the execution strategy, and the consume happens **after** the
 save, so a zero-row consume rolls the withdrawal back.
+
+*(That last clause was a CLAIM with nothing behind it until the review on #198 asked for the proof;
+`WithdrawalStepUpSqlServerTests` is it. Measured with the transaction DELETED, two of its four fail
+— and the interesting part is not that they fail. The eight-way race still answers **one 201 and
+seven 401 `AUTHORIZATION_INVALID`**, a perfectly healthy-looking set of status codes, while **60**
+leaves an account that should have lost 10: a racer commits its balance decrement and its ledger
+row, then fails the consume and reports a refusal it has already carried out. The status codes are
+the half that lies; the balance and the ledger-row count are the half that does not, which is why
+the test asserts those as well. A second run of the same mutant moved 50 — the amount follows the
+interleaving, and only "exactly one" is the invariant.)*
 
 **D7 — `consumedByTransactionId` is the ledger row, not null.** Unlike a closure, a withdrawal
 produces a movement, and the evidence verb joins the authorisation to it on exactly that id. The
@@ -114,8 +126,10 @@ DTO and its validator; `AuthoriseWithdrawalAsync` and the restructured, transact
 transformer publishes the header as required; the switch that replaced the two-armed ternary and
 the guard that walks the enum; the evidence verb widened in three places; the regenerated
 `docs/api/openapiv1.json` (27 → 28 operations) and the regenerated frontend types; unit, integration
-and architecture tests; the MSW mock realigned to the measured order; this record and the
-corrections below.
+and architecture tests; the four SQL Server proofs of the withdrawal's half of the rail
+(`WithdrawalStepUpSqlServerTests`: single use under concurrency, a rolled-back consume, a zero-row
+consume, and a transient that must not withdraw twice); the MSW mock realigned to the measured
+order; this record and the corrections below.
 
 ### Before → After, measured
 

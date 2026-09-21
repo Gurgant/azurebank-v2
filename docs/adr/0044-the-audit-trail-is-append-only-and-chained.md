@@ -879,6 +879,11 @@ on `SubjectId`. Every hop uses an index that already existed; **no migration**. 
 validated by shape, because `IsValidTransactionNumber` rejects the rows written before the check
 symbol widened them — exactly the rows an evidence request may name years later.
 
+*(Widened 2026-09-21, ADR-0056: "the transfer response" above named the only movement this verb
+served on the day it was written. A WITHDRAWAL response carries `TransactionNumber` the same way and
+carries no id either, so the argument, the runbook's text and the verb itself all say "the movement
+response" now. The decision is unchanged — it is the example that had narrowed.)*
+
 ⚠️ **THE AUTHORISATION ROW IS NOT INSIDE THE CHAIN, AND THE PACK SAYS SO ON EVERY POSITIVE ANSWER.**
 Measured before this was designed: `StepUpAuthorizationService` calls `IAuditService` zero times and
 the mint endpoints audit nothing, so the PIN proof lives only in a table anybody holding the database
@@ -962,8 +967,26 @@ both outcomes, so the refusal inventory is three events at six sites, and the so
 *(Moved 2026-09-21, ADR-0056: there are **FOUR** mints — the withdrawal joined the rail — and the
 one call site serves all four, now as `MoneyWithdrawalRefused` for a withdrawal. The two-armed
 ternary that chose the event became a switch, because a fourth member would otherwise have filed a
-refused withdrawal PIN as a refused TRANSFER, silently and durably. The refusal inventory is FOUR
-events at six sites, and the source holds **EIGHT** `RecordRefusalAsync` calls, not nine: the
+refused withdrawal PIN as a refused TRANSFER, silently and durably.
+
+⚠️ **The inventory line below was wrong when first written and is corrected here** (found in
+review on #198): it said "FOUR events at six sites", incrementing the event count and COPYING the
+site count instead of re-measuring it. Six was right BEFORE this change — the withdrawal then held
+two in-band sites of its own — and those two left with the PIN. Measured on the branch,
+`grep -rn "_audit.RecordRefusalAsync(" backend/src`:
+
+| where | sites | |
+|---|---|---|
+| `TransferService` | 2 | absent step-up, both transfer kinds |
+| `AccountService` | 1 | absent step-up, the closure |
+| `TransactionService` | 1 | absent step-up, the withdrawal |
+| `StepUpAuthorizationService` | 1 | a wrong or locked PIN, serving all FOUR mints |
+| `RefreshTokenService` | 3 | token paths, NOT step-up |
+
+So the step-up refusal inventory is **THREE distinct events at FIVE sites** — three, because
+`Transfer` and `InternalTransfer` share `MoneyTransferRefused`; four OPERATIONS, three events. The
+source holds **EIGHT** `RecordRefusalAsync` calls in total, not nine, of which three are the token
+paths: the
 withdrawal's own locked-PIN and wrong-PIN sites left with the PIN itself, and the withdrawal's
 absent-authorisation site came in — two out, one in. Measured on the branch:
 `grep -c "_audit.RecordRefusalAsync(" backend/src` = 8.)*
@@ -973,7 +996,9 @@ lapsing.** *(struck 2026-09-06: `AccountDeletionRefused` carries `AUTHORIZATION_
 way, and for the same reason — a refused closure commits no row for a pointer to reach.)* The four
 successes below carry ~~a null `Detail`~~ no amount, counterparty or account in `Detail` *(narrowed
 2026-09-14: deposit and withdrawal still carry a null one, and the two transfers carry only the id
-of the authorisation they consumed, `AuditDetails`; see the struck sentence below)* because the
+of the authorisation they consumed, `AuditDetails`; see the struck sentence below — and narrowed
+again 2026-09-21, ADR-0056: the WITHDRAWAL consumes one now, so it carries the id too and the
+DEPOSIT is the only success left with a null `Detail`)* because the
 facts live on the ledger row `SubjectId` reaches. A
 refusal commits no ledger row, so a pointer-shaped row would point at nothing and "a withdrawal was
 refused" without a reason is indistinguishable from noise. So these carry a `Detail` — **the
@@ -1000,14 +1025,19 @@ independently for the first time, which is why
 `_audit.Record` and `_audit.RecordRefusalAsync` sites as well as log templates. A guard that only
 counted templates would have let this very paragraph go stale in silence, exactly as D4 did.
 
-**~~`Detail` is null on all four.~~ `Detail` is null on the two that consume no authorisation, and
-on the two transfers it names the authorisation consumed — nothing else** *(struck 2026-09-14:
-`AuditDetails` writes `{"authorizationId":"<id>"}` on `MoneyTransferred`, `MoneyTransferredInternally`
-and ADR-0049's `AccountDeleted`; the note under the second-factor paragraph above says what that
-buys)*. The amount, the counterparty, the description and the account are
-already on the ledger row that `SubjectId` reaches, and copying them here would break D5 — an amount
-tied to an actor id is financial data about an identifiable person, in a table designed never to be
-purged. The audit row answers *who did what to which movement*; the ledger row answers *what moved*.
+**~~`Detail` is null on all four.~~ ~~`Detail` is null on the two that consume no authorisation, and
+on the two transfers it names the authorisation consumed — nothing else.~~ `Detail` is null on the
+DEPOSIT alone, and the three movements that consume an authorisation name it — nothing else**
+*(struck 2026-09-14: `AuditDetails` writes `{"authorizationId":"<id>"}` on `MoneyTransferred`,
+`MoneyTransferredInternally` and ADR-0049's `AccountDeleted`; the note under the second-factor
+paragraph above says what that buys. Struck again 2026-09-21, ADR-0056: `MoneyWithdrawn` joins them,
+so "the two that consume no authorisation" became one and "the two transfers" became three. Found in
+review on #198 — the D7 clause that ADDED the withdrawal's `Detail` was written in the new ADR while
+this paragraph, which this repository treats as the current-state answer, still said it was null.)*.
+The amount, the counterparty, the description and the account are already on the ledger row that
+`SubjectId` reaches, and copying them here would break D5 — an amount tied to an actor id is
+financial data about an identifiable person, in a table designed never to be purged. The audit row
+answers *who did what to which movement*; the ledger row answers *what moved*.
 An authorisation id is none of those: an opaque identifier of the SAME actor's own act, on no ledger
 row, so it passes this paragraph's own test — and what it buys is the one link the chain could not
 vouch for before.

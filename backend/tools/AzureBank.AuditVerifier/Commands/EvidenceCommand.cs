@@ -77,7 +77,10 @@ public static class EvidenceCommand
 
         var numberArgument = new Argument<string>(
             "transactionNumber",
-            "The TXN-... number the transfer response returned.");
+            // "the movement response", not "the transfer response": this verb has served
+            // withdrawals since ADR-0056, and an operator holding a withdrawal's number should
+            // not read the argument description and conclude it is the wrong tool.
+            "The TXN-... number the movement response returned (a transfer or a withdrawal).");
         command.AddArgument(numberArgument);
 
         command.SetHandler(async (InvocationContext invocation) =>
@@ -117,7 +120,8 @@ public static class EvidenceCommand
             return (VerifyCommand.UsageError, new[]
             {
                 "NOT ASSEMBLED: that is not a transaction number.",
-                "  `evidence` needs the TXN-... number the transfer response returned. A blank",
+                "  `evidence` needs the TXN-... number the movement response returned — a transfer",
+                "  or a withdrawal. A blank",
                 "  argument or one carrying a NUL character cannot name a row, so nothing was read.",
                 "    evidence TXN-20260902-0000000101X",
             });
@@ -171,7 +175,7 @@ public static class EvidenceCommand
                 {
                     $"NOT ASSEMBLED: no transaction is numbered {trimmed}.",
                     "  Nothing in this store carries that number, so there is no movement to build",
-                    "  evidence for. Check the number against the transfer response or the ledger;",
+                    "  evidence for. Check the number against the movement response or the ledger;",
                     "  this says nothing about the chain, which was not walked.",
                 });
             }
