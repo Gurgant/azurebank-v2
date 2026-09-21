@@ -40,6 +40,11 @@ public class BrunoCollectionRunsTests
     private static readonly Regex VarsBlockEntry = new(@"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", RegexOptions.Compiled);
     private static readonly Regex Seq = new(@"^\s*seq:\s*(\d+)\s*$", RegexOptions.Multiline | RegexOptions.Compiled);
 
+    // `require ('crypto')` is the same call as `require('crypto')`, and the sandbox refuses both.
+    private static readonly Regex ExecutableRequire = new(@"\brequire\s*\(", RegexOptions.Compiled);
+    private static readonly Regex SuccessGuard = new(
+        @"if\s*\(\s*res\.getStatus\(\)\s*===\s*(\d{3})\s*\)", RegexOptions.Compiled);
+
     /// <summary>Folder seq, then request seq — the order Bruno actually sends them in.</summary>
     private static List<(string Path, string Text)> InRunOrder()
     {
@@ -111,27 +116,42 @@ public class BrunoCollectionRunsTests
             // requests that were correct.
             var code = WithoutProse(text);
 
-            // A pre-request script runs BEFORE this request is sent, so what it sets is
-            // available to this request's own url, headers and body.
-            foreach (Match early in SetVar.Matches(BlockOf(code, "script:pre-request")))
-            {
-                known.Add(early.Groups[1].Value);
-            }
+            var pre = BlockOf(code, "script:pre-request");
+            var post = BlockOf(code, "script:post-response");
 
-            foreach (Match read in Interpolation.Matches(code))
+            void Check(string fragment)
             {
-                var name = read.Groups[1].Value;
-                if (name.StartsWith('$') || known.Contains(name))
+                foreach (Match read in Interpolation.Matches(fragment))
                 {
-                    continue;
-                }
+                    var name = read.Groups[1].Value;
+                    if (name.StartsWith('$') || known.Contains(name))
+                    {
+                        continue;
+                    }
 
-                unwritten.Add($"{path} reads {{{{{name}}}}}, which nothing before it writes");
+                    unwritten.Add($"{path} reads {{{{{name}}}}}, which nothing before it writes");
+                }
             }
+
+            // A pre-request script runs STATEMENT BY STATEMENT, so a line may only read what an
+            // EARLIER line set. Adding all of its names up front was coarse in the permissive
+            // direction -- a script reading a variable one line before setting it passed, which
+            // review caught and a probe confirmed. So it is walked in order.
+            foreach (var statement in pre.Split('\n'))
+            {
+                Check(statement);
+                foreach (Match early in SetVar.Matches(statement))
+                {
+                    known.Add(early.Groups[1].Value);
+                }
+            }
+
+            // Then the request itself, which goes out once that whole script has run.
+            Check(Without(Without(code, pre), post));
 
             // A post-response script runs after the answer, so its variables belong to the
             // requests that FOLLOW, not to this one.
-            foreach (Match late in SetVar.Matches(BlockOf(code, "script:post-response")))
+            foreach (Match late in SetVar.Matches(post))
             {
                 known.Add(late.Groups[1].Value);
             }
@@ -151,7 +171,10 @@ public class BrunoCollectionRunsTests
     {
         var offenders = Collection()
             .GetFiles("*.bru", SearchOption.AllDirectories)
-            .Where(file => File.ReadAllText(file.FullName).Contains("require(", StringComparison.Ordinal))
+            // After the prose, and allowing the whitespace JavaScript allows: `require ('crypto')`
+            // is the same refused call, and Contains("require(") missed it while also reading docs
+            // blocks that only MENTION the trap. Review caught both halves.
+            .Where(file => ExecutableRequire.IsMatch(WithoutProse(File.ReadAllText(file.FullName))))
             .Select(file => Path.GetRelativePath(Collection().FullName, file.FullName).Replace('\\', '/'))
             .ToList();
 
@@ -177,12 +200,11 @@ public class BrunoCollectionRunsTests
         var unguarded = new List<string>();
         foreach (var (path, text) in InRunOrder())
         {
-            var published = BlockOf(WithoutProse(text), "script:post-response");
-            if (published.Contains("bru.setVar(", StringComparison.Ordinal)
-                && !published.Contains("res.getStatus()", StringComparison.Ordinal))
-            {
-                unguarded.Add($"{path} publishes a variable without looking at its own status");
-            }
+            // Both strings appearing SOMEWHERE proves nothing: an unconditional bru.setVar beside
+            // an unrelated res.getStatus() read satisfied it, and a publish inside a FAILURE branch
+            // would have too. Each publish must sit inside a brace-matched success guard.
+            unguarded.AddRange(
+                UnguardedPublishes(BlockOf(WithoutProse(text), "script:post-response"), path));
 
             // vars:post-response is the declarative form and CANNOT be conditional, so a request
             // using it publishes on failure by construction.
@@ -207,9 +229,15 @@ public class BrunoCollectionRunsTests
         // never wrote it back, so login posted test@example.com -- a user nobody had made -- and
         // answered 401 INVALID_CREDENTIALS. A mutant that removed the publish left the general
         // test green, which is why this one is specific.
+        // The EXECUTABLE blocks, not whole files: a mention in a comment kept this green after
+        // the chain was broken. Review said so and a probe confirmed it.
         var root = Collection().FullName;
-        var register = File.ReadAllText(Path.Combine(root, "endpoints", "auth", "register.bru"));
-        var login = File.ReadAllText(Path.Combine(root, "endpoints", "auth", "login.bru"));
+        var register = BlockOf(
+            WithoutProse(File.ReadAllText(Path.Combine(root, "endpoints", "auth", "register.bru"))),
+            "script:post-response");
+        var login = BlockOf(
+            WithoutProse(File.ReadAllText(Path.Combine(root, "endpoints", "auth", "login.bru"))),
+            "body:json");
 
         register.Should().Contain("bru.setVar('testEmail'",
             "the address register CREATED is the only one login can sign in with, and it is read "
@@ -226,6 +254,68 @@ public class BrunoCollectionRunsTests
         var withoutDocs = Regex.Replace(text, @"(?ms)^docs \{.*?^\}", string.Empty);
         return Regex.Replace(withoutDocs, @"(?m)^\s*//.*$", string.Empty);
     }
+
+    /// <summary>
+    /// Every <c>bru.setVar</c> in a post-response block that is NOT inside a brace-matched
+    /// <c>if (res.getStatus() === 2xx)</c>, plus any guard written on a non-success status.
+    /// </summary>
+    private static IEnumerable<string> UnguardedPublishes(string published, string path)
+    {
+        var offenders = new List<string>();
+        var guarded = new List<(int Open, int Close)>();
+
+        foreach (Match guard in SuccessGuard.Matches(published))
+        {
+            var status = int.Parse(guard.Groups[1].Value);
+            if (status is < 200 or > 299)
+            {
+                offenders.Add($"{path} publishes under a guard on {status}, which is not a success");
+                continue;
+            }
+
+            var open = published.IndexOf('{', guard.Index + guard.Length - 1);
+            var close = MatchingBrace(published, open);
+            if (close > open)
+            {
+                guarded.Add((open, close));
+            }
+        }
+
+        foreach (Match publish in SetVar.Matches(published))
+        {
+            if (!guarded.Any(span => publish.Index > span.Open && publish.Index < span.Close))
+            {
+                offenders.Add($"{path} publishes {publish.Groups[1].Value} outside any success guard");
+            }
+        }
+
+        return offenders;
+    }
+
+    /// <summary>The index of the brace closing the one at <paramref name="open"/>, or -1.</summary>
+    private static int MatchingBrace(string text, int open)
+    {
+        if (open < 0 || open >= text.Length || text[open] != '{')
+        {
+            return -1;
+        }
+
+        var depth = 0;
+        for (var i = open; i < text.Length; i++)
+        {
+            depth += text[i] == '{' ? 1 : text[i] == '}' ? -1 : 0;
+            if (depth == 0)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>Removes one fragment, tolerating the empty one a missing block returns.</summary>
+    private static string Without(string text, string fragment) =>
+        fragment.Length == 0 ? text : text.Replace(fragment, string.Empty, StringComparison.Ordinal);
 
     /// <summary>The body of one named block, or empty when the file has none.</summary>
     private static string BlockOf(string text, string name)
