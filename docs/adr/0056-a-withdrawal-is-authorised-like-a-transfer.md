@@ -92,6 +92,16 @@ success row ALSO names the authorisation in its hashed `Detail`
 checked against each other — agreement is what makes a withdrawal strongly authenticated, and
 disagreement is a finding.
 
+*(Also proven after the fact, found in review on #198. The only assertion on this row was that its
+`Detail` is not null, which passes on an unrelated authorisation, on a malformed payload, and on a
+row naming a mint it never consumed — it would have missed precisely the broken binding it was
+there to catch. `AuditTrailPersistenceTests` now compares
+`AuditDetails.ConsumedAuthorisationOf(row.Detail)` with the identifier the CALLER presented, and
+reads the authorisation row to assert `ConsumedByTransactionId` names that same ledger row: the
+pair written AGREEING, which is what this clause claims and nothing checked. Measured with the
+success row made to name a different authorisation — `Expected … to be {01a0c901-…} … but found
+{23721875-…}`, one test red where the old `NotBeNull` stayed green.)*
+
 **D8 — A refused PIN at this mint writes `MoneyWithdrawalRefused`.** The mapping from operation to
 refusal event was a **two-armed ternary over a three-member enum**
 (`operation == AccountDeletion ? AccountDeletionRefused : MoneyTransferRefused`), so adding a

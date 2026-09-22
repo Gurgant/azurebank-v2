@@ -1865,11 +1865,39 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     pin?: string;
     description?: string;
   };
-  const badAmount = rejectBadAmount(body.amount);
-  if (badAmount) {
-    return response.untyped(badAmount);
+  /*
+    ONE MODEL-STATE PASS, HEADER AND BODY TOGETHER — and the header is read FIRST, above ownership
+    and funds. MVC binds `[FromHeader] Guid?` and the DTO's annotations in the SAME pass, before the
+    action runs at all: a header that is present but not a UUID is a model-state 400 keyed on the
+    header name and the action never executes, so it can answer neither 404 nor 422. ADR-0042 and
+    ADR-0049 record that on their own endpoints. The first version of this handler read the header
+    after the funds check, so a malformed header on an unknown account answered 404 here and 400 on
+    the API; the second read it after the amount, so a request wrong in BOTH ways came back with the
+    Amount key alone. Raised in review on #198 and MEASURED on the real pipeline
+    (`CustomWebApplicationFactory`, which is `Program.cs`), POST /api/transactions/withdraw:
+
+      amount 0.001  + header 'not-a-guid' -> 400 {"Amount":["Amount must be between 0.01 EUR and
+                                                 100000.00 EUR"],"Step-Up-Authorization":["The
+                                                 value 'not-a-guid' is not valid."]}   BOTH keys
+      amount 10.001 + header 'not-a-guid' -> 400 {"Step-Up-Authorization":[…]}  THE HEADER ALONE
+      amount 10.001, no header            -> 400 "Validation Failed" {"amount":[…]}
+
+    THE SECOND LINE IS WHY THE SCALE CHECK STAYS BELOW THIS AGGREGATE rather than joining it. Scale
+    is FluentValidation, INSIDE the action, and a malformed header stops the action running at all
+    — so folding it in here would invent an `Amount` key on a response the API sends without one.
+
+    ONLY THE PARSE IS UP HERE. The ABSENT-header refusal stays below the funds check, because that
+    one IS the action's own: an absent or empty header binds to null, reaches the service, and is
+    answered 401 AUTHORIZATION_REQUIRED after the balance has been consulted (ADR-0056 D4).
+  */
+  const stepUp = readStepUpHeader(request);
+  const bindingErrors: Record<string, string[]> = {};
+  const badAmount = amountErrors(body.amount);
+  if (badAmount.length > 0) bindingErrors.Amount = badAmount;
+  if (stepUp.errors.length > 0) bindingErrors[STEP_UP_HEADER] = stepUp.errors;
+  if (Object.keys(bindingErrors).length > 0) {
+    return response.untyped(modelStateProblem(bindingErrors));
   }
-  // AFTER the annotation stage and never merged into it -- see `rejectBadAmountScale`.
   const badScale = rejectBadAmountScale(body.amount, request);
   if (badScale) {
     return response.untyped(badScale);
@@ -1912,23 +1940,7 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     tolerates the extra property, so the mock must not reintroduce a gate the API does not have --
     that is exactly the drift this file's own "the mock follows the backend" rule forbids.
   */
-  /*
-    THE HEADER IS PARSED FIRST, ABOVE OWNERSHIP AND FUNDS, because MVC binds it before the action
-    runs at all: `[FromHeader] Guid?` goes through Guid.TryParse, and a value that is present but
-    not a UUID is refused with a model-state 400 keyed on the header name -- the action never
-    executes, so it can answer neither 404 nor 422. ADR-0042 and ADR-0049 both record that on their
-    own endpoints, and the first version of this handler read the header after the funds check, so
-    a malformed header on an unknown account answered 404 here and 400 on the API.
-
-    ONLY THE PARSE MOVES. The ABSENT-header refusal stays below the funds check, because that one
-    IS the action's own: an absent or empty header binds to null, reaches the service, and is
-    answered 401 AUTHORIZATION_REQUIRED after the balance has been consulted (ADR-0056 D4).
-  */
-  const stepUp = readStepUpHeader(request);
-  if (stepUp.errors.length > 0) {
-    return response.untyped(modelStateProblem({ [STEP_UP_HEADER]: stepUp.errors }));
-  }
-
+  // `stepUp` was parsed with the body's annotations, in one model-state pass; see the note above.
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
     return response.untyped(notFound('Account', body.accountId, request));

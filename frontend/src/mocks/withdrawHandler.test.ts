@@ -180,6 +180,40 @@ describe('withdraw handler (authorisation + idempotency contract)', () => {
     expect(Object.keys(body.errors ?? {})).toContain('Step-Up-Authorization');
   });
 
+  /*
+    ONE MODEL-STATE PASS. MVC binds the DTO's annotations and `[FromHeader] Guid?` together, so a
+    request wrong in both ways reports BOTH keys. MEASURED on the real pipeline
+    (`CustomWebApplicationFactory`, i.e. `Program.cs`), POST /api/transactions/withdraw, 2026-09-22.
+    The mock answered `Amount` alone until #198 round 5, because it checked the amount, returned,
+    and read the header afterwards.
+  */
+  it('reports the header AND the amount in one pass, the way the binder does', async () => {
+    const res = await withdraw(FIXED, { accountId: accountId(), amount: 0.001 }, 'not-a-guid');
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { errors: Record<string, string[]> };
+    expect(body.errors).toEqual({
+      Amount: ['Amount must be between 0.01 EUR and 100000.00 EUR'],
+      'Step-Up-Authorization': ["The value 'not-a-guid' is not valid."],
+    });
+  });
+
+  it('answers the header ALONE when the amount only breaks the SCALE rule', async () => {
+    /*
+      Measured: 400 {"Step-Up-Authorization":["The value 'not-a-guid' is not valid."]} and no
+      Amount key at all. Scale is FluentValidation, inside the action, and a malformed header stops
+      the action running -- so this is the case that keeps `rejectBadAmountScale` BELOW the
+      aggregate instead of inside it. Folding it in would invent a key the API never sends.
+    */
+    const res = await withdraw(FIXED, { accountId: accountId(), amount: 10.001 }, 'not-a-guid');
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { errors: Record<string, string[]> };
+    expect(body.errors).toEqual({
+      'Step-Up-Authorization': ["The value 'not-a-guid' is not valid."],
+    });
+  });
+
   it('401 AUTHORIZATION_REQUIRED when an affordable withdrawal presents none', async () => {
     const res = await withdraw(crypto.randomUUID(), { accountId: accountId(), amount: 10 });
     expect(res.status).toBe(401);

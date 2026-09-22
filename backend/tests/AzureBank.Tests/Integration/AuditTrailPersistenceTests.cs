@@ -220,7 +220,16 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
 
         await SetPinAsync(token); // the PIN is spent at the mint (ADR-0010, ADR-0056)
         await DepositAsync(token, accountId, 400m);
-        var response = await WithdrawAsync(accountId, 150m, "rent");
+
+        // The mint is EXPLICIT here rather than folded into WithdrawAsync, because the assertion
+        // below needs the identifier the caller actually presented -- not one read back out of the
+        // same row it is meant to be checking.
+        var authorizationId = await AuthoriseWithdrawalAsync(accountId, 150m);
+        var response = await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new WithdrawRequest { AccountId = accountId, Amount = 150m, Description = "rent" },
+            idempotencyKey: null,
+            authorizationId);
         response.IsSuccessStatusCode.Should().BeTrue(await response.Content.ReadAsStringAsync());
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyWithdrawn);
@@ -233,8 +242,14 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
           the way a transfer's does -- it is the tamper-evident half of the link, checked by the
           evidence verb against the pointer in the unchained authorisation table.
         */
-        row.Detail.Should().NotBeNull(
-            "the success row names its authorisation (AuditDetails.ConsumedAuthorisation)");
+        /*
+          THE IDENTIFIER, NOT MERELY A NON-NULL. Raised in review on #198: `NotBeNull` passes on any
+          `Detail` at all -- an unrelated authorisation, a malformed payload, a row that names the
+          MINT it never consumed -- so it would miss exactly the broken binding it exists to catch.
+          `ConsumedAuthorisationOf` returns null for a shape it cannot read, so this covers both.
+        */
+        AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(authorizationId,
+            "the success row names the authorisation the CALLER presented, under the row's hash");
 
         /*
           RESOLVE THE SUBJECT, because SubjectType is a hard-coded literal and proves nothing on its
@@ -257,6 +272,19 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             + "Guid with no foreign key, so nothing else would catch it naming an account");
         ledger!.Type.Should().Be(TransactionType.Withdrawal);
         ledger.AccountId.Should().Be(accountId, "the subject must reach the movement, not its account");
+
+        /*
+          AND THE TWO HALVES AGREE, which is the whole of ADR-0056 D7. The name above is inside the
+          row's hash; the pointer below lives in the UNCHAINED authorisation table, where a database
+          writer can rewrite it. Agreement is what makes a withdrawal strongly authenticated and
+          disagreement is a finding -- the evidence verb checks exactly this pair, and until now
+          nothing asserted that the pair is written agreeing in the first place.
+        */
+        var authorisation = await db.StepUpAuthorizations.AsNoTracking()
+            .SingleAsync(a => a.Id == authorizationId);
+        authorisation.ConsumedByTransactionId.Should().Be(row.SubjectId,
+            "the unchained pointer names the same ledger row the chained Detail does");
+        authorisation.Status.Should().Be(StepUpAuthorizationStatus.Consumed);
     }
 
     [Fact]
