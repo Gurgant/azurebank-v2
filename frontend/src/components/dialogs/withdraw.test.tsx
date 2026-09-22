@@ -150,7 +150,10 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
 
     expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
-    expect(mintBody).toEqual({ accountId: expect.any(String), amount: 100, pin: '123456' });
+    // MAIN.id, not expect.any(String): this dialog has an account SELECTOR, so "some account"
+    // is the one shape that passes while the money leaves the wrong one. The mint binds the
+    // authorisation to an account and an amount, and both are named here for that reason.
+    expect(mintBody).toEqual({ accountId: MAIN.id, amount: 100, pin: '123456' });
     expect(sentHeader).toBe(MINTED);
     // And the PIN is NOT in the withdrawal's body: it left with ADR-0056, and a body that still
     // carried it would be a different fingerprint from the one the retry path replays.
