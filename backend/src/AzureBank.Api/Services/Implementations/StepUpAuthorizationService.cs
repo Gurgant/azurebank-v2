@@ -59,8 +59,15 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
           were written as its deliberate mirror — same order, same exceptions — so that the two
           endpoints answered a bad PIN identically; the mirror now has one side and these are simply
           the checks. Since ADR-0049 an account closure's PIN is proved here too, through the same
-          three checks. TransactionService.WithdrawAsync still carries its own copy, and withdraw is
-          the task that should converge here next.
+          three checks.
+
+          ~~TransactionService.WithdrawAsync still carries its own copy, and withdraw is the task
+          that should converge here next.~~ (Struck 2026-09-22, ADR-0056: withdraw CONVERGED. The
+          PIN left WithdrawRequest together with WithdrawAsync's IPinVerifier, and a withdrawal's
+          PIN is proved here now, through TransactionService.AuthoriseWithdrawalAsync -> MintAsync.
+          No copy survives anywhere: this is the only path on which any operation's PIN is proved.
+          Found in review on #198 -- the PR that did the converging left the sentence asking for
+          it, which is what a comment naming future work does when the future arrives.)
         */
         var user = await _context.Users.FindAsync([userId], cancellationToken);
         if (user == null)
@@ -133,10 +140,21 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
     /// constant the caller received.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The subject is <c>binding.FromAccountId</c>, and it is safe to write because every caller
-    /// has proved ownership of that account before minting (TransferService's two mints and
-    /// AccountService.AuthoriseDeletionAsync each call GetAccountWithOwnershipCheckAsync first), so
-    /// the row names an account the actor owns, never one they merely named.
+    /// has proved ownership of that account before minting: TransferService's two mints,
+    /// AccountService.AuthoriseDeletionAsync and, since ADR-0056,
+    /// TransactionService.AuthoriseWithdrawalAsync each call
+    /// <c>GetAccountWithOwnershipCheckAsync</c> first, so the row names an account the actor owns
+    /// and never one they merely named.
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>THE LIST IS THE ARGUMENT.</b> A mint missing from it is a mint nobody has checked,
+    /// and the sentence above quietly stops being true — which is how it read between ADR-0056
+    /// landing and the review on #198 that caught it. Prose cannot enforce that, so
+    /// <c>EveryMintProvesOwnershipBeforeIt</c> in <c>SecurityEventConstantTests</c> reads the
+    /// sources and fails on a fifth caller, or on one that mints before it checks.
+    /// </para>
     /// </remarks>
     private Task RecordPinRefusalAsync(
         Guid userId, StepUpOperation operation, StepUpBinding binding, string errorCode) =>

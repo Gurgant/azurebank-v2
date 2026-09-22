@@ -664,4 +664,101 @@ public class SecurityEventConstantTests
         mapped.Values.Distinct().Should().HaveCount(
             3, "three distinct refusal events across four operations: the two transfer rails share one");
     }
+
+    /// <summary>
+    /// Every caller of <c>MintAsync</c> proves ownership of the account before minting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>RecordPinRefusalAsync</c> writes an audit row whose subject is
+    /// <c>binding.FromAccountId</c>, and its remark argues that this is safe BECAUSE every caller
+    /// has already proved the actor owns that account. That is an assertion about four call sites
+    /// in three files, and until this test it was held by a sentence — one that was already stale:
+    /// it listed three callers while ADR-0056 had added a fourth, and a review on #198 found it
+    /// rather than any check here.
+    /// </para>
+    /// <para>
+    /// A refusal row naming an account the actor merely TYPED would be a small, durable privacy
+    /// leak in the one table designed never to be purged: it would record, against a real user id,
+    /// that somebody probed a stranger's account. The guard is therefore on the ORDER, not only on
+    /// the presence: a mint that checks ownership afterwards has already written the row.
+    /// </para>
+    /// <para>
+    /// The count is pinned too. A fifth mint is not a failure of this rule — it is a call site
+    /// nobody has read, so the test names it and asks for the remark to be updated with it.
+    /// </para>
+    /// </remarks>
+    /// <summary>
+    /// A PREFIX test, and its limits are stated rather than assumed: it skips <c>//</c>, <c>///</c>
+    /// and a <c>*</c> continuation, and it does NOT strip the unprefixed interior of a
+    /// <c>/* ... */</c> block. That blindness is in the safe direction — an uncounted comment
+    /// mentioning the call inflates the count and the test fails LOUDLY, naming every site it
+    /// found, rather than passing while a real mint hides.
+    /// </summary>
+    private static bool IsCommentLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.StartsWith("//", StringComparison.Ordinal)
+            || trimmed.StartsWith("*", StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryMintProvesOwnershipBeforeIt()
+    {
+        const string mint = ".MintAsync(";
+        const string ownership = "GetAccountWithOwnershipCheckAsync(";
+
+        var sites = new List<(string File, int Line, bool OwnershipFirst)>();
+        foreach (var file in SourceFiles(RepoBackendRoot()))
+        {
+            var text = File.ReadAllText(file);
+            // The interface's own declaration is not a call site.
+            if (text.Contains("interface IStepUpAuthorizationService", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var lines = text.Split('\n');
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (!lines[i].Contains(mint, StringComparison.Ordinal) || IsCommentLine(lines[i]))
+                {
+                    continue;
+                }
+
+                // Look BACKWARDS from the mint for the ownership check, bounded by the enclosing
+                // method: the first line at method indentation that opens one. Four spaces plus
+                // `public`/`private` is this codebase's shape and is asserted by NamingConvention.
+                var ownershipFirst = false;
+                for (var j = i - 1; j >= 0; j--)
+                {
+                    if (lines[j].Contains(ownership, StringComparison.Ordinal))
+                    {
+                        ownershipFirst = true;
+                        break;
+                    }
+
+                    if (lines[j].StartsWith("    public ", StringComparison.Ordinal)
+                        || lines[j].StartsWith("    private ", StringComparison.Ordinal))
+                    {
+                        break;
+                    }
+                }
+
+                sites.Add((Path.GetFileName(file), i + 1, ownershipFirst));
+            }
+        }
+
+        var described = string.Join(", ",
+            sites.Select(s => $"{s.File}:{s.Line} ownershipFirst={s.OwnershipFirst}"));
+
+        sites.Should().HaveCount(4,
+            "the remark on RecordPinRefusalAsync names FOUR mints -- two transfers, the closure "
+            + "and the withdrawal. A fifth is a call site nobody has read: add it there, with its "
+            + $"ownership check, before changing this number. Found: {described}");
+
+        sites.Where(s => !s.OwnershipFirst).Should().BeEmpty(
+            "a mint that proves ownership AFTER minting has already written a refusal row naming "
+            + $"an account the actor may not own. Found: {described}");
+    }
 }
