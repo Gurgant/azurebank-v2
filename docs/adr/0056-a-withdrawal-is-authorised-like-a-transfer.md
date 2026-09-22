@@ -199,9 +199,10 @@ place that is what asserts the ordering on the real stack.
 
 - ~~**The SPA still does not mint.** PR-C replaces the PIN step with one that mints and submits
   with the header. Until then the dialog is answered 401 as above.~~ *(Done 2026-09-22: the
-  withdraw dialog mints at the sixth digit and sends the reference in `Step-Up-Authorization`,
-  through `useAuthoriseWithdrawalMutation` and the `extras` channel `useIdempotentMutation`
-  already carried for the transfers. Two things fell out of it that the interim had hidden. The
+  withdraw dialog mints when WITHDRAW is pressed — the sixth digit only ENABLES that button — and
+  sends the reference in `Step-Up-Authorization`, through `useAuthoriseWithdrawalMutation` and the
+  `extras` channel `useIdempotentMutation` already carried for the transfers. Two things fell
+  out of it that the interim had hidden. The
   PIN no longer rotates the idempotency key — it is not in the body, and rotating on it destroyed
   a RETAINED key in the one state where that key is the only way forward, since the PIN input is
   live again after a network failure. And a retry on a retained key RE-PRESENTS the authorisation

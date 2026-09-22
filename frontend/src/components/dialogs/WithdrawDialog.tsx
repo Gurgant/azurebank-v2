@@ -117,9 +117,11 @@ type Step = 'form' | 'pin';
  * any body edit). ~~The PIN is part of the body, so editing it re-keys too. The PIN is NOT
  * step-up: it travels in the withdraw request and is verified server-side.~~
  *
- * Struck 2026-09-22, ADR-0056: the PIN is STEP-UP now and it is not in the body. The sixth
- * digit mints at POST /api/transactions/withdraw/authorizations and the withdrawal presents
- * the reference in Step-Up-Authorization, exactly as the two transfers and the closure do.
+ * Struck 2026-09-22, ADR-0056: the PIN is STEP-UP now and it is not in the body. Pressing
+ * WITHDRAW mints at POST /api/transactions/withdraw/authorizations and sends the reference in
+ * Step-Up-Authorization, exactly as the two transfers and the closure do. The sixth digit only
+ * ENABLES that button — which is the same fact the note on `lastAuthorization` leans on, since a
+ * submit that starts from a button click reads settled state and needs no ref for the PIN.
  * A wrong PIN is still a 401 INVALID_PIN that stays in this dialog (sessionMiddleware
  * exempts it from the global logout), but it is now the MINT that answers it, and the
  * withdrawal is never sent. A user with no PIN is sent to /pin-setup first. The dialog cannot be
