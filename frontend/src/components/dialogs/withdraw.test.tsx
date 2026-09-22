@@ -440,21 +440,84 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
   });
 
   /*
-    THE SIBLING THAT STILL ROTATES, kept as the control: without it "the key is kept" could be read
-    as "the key is never rotated", which is a different and much worse dialog.
+    ~~THE SIBLING THAT STILL ROTATES, kept as the control.~~ Rewritten in review on #199, and the
+    finding is a money one: editing the amount on a RETAINED key minted a new key for a NEW intent
+    while the first attempt's outcome was still unknown, so if the balance covered both, both could
+    debit. That is the double-spend the whole protocol exists to prevent, and a sibling test had it
+    written down as the escape hatch.
+
+    It is answered rather than blocked. Blocking the edit would be a hard trap, with Close already
+    disabled on `keyLive`; latching verify-first tells the user what is actually true -- the request
+    may or may not have gone through -- and drops the key, so dismissal works again.
   */
-  it('still ROTATES the key when the AMOUNT is edited, which IS in the body', async () => {
+  /*
+    A REFUSED AUTHORISATION MUST NOT BE RE-PRESENTED, and this test exists because the fix for it
+    had none: a mutant that kept the dead reference left all twenty tests green.
+
+    `shouldKeepKey` retains the idempotency key on AUTHORIZATION_INVALID and AUTHORIZATION_EXPIRED,
+    with the measurement written beside the rule -- `key K + FRESH authorisation -> 201`. So the
+    sanctioned recovery is the SAME key with a NEW authorisation, and holding the refused one made
+    it unreachable: the retry re-presented the dead id, the server refused again, and the retained
+    key kept Close disabled.
+  */
+  it('mints AFRESH on a retry after AUTHORIZATION_EXPIRED, on the same key', async () => {
+    let mints = 0;
+    const keys: (string | null)[] = [];
+    const headers: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', () => {
+        mints += 1;
+        return HttpResponse.json(
+          {
+            data: {
+              authorizationId: mints === 1 ? MINTED : MINTED_SECOND,
+              expiresAt: '2026-07-22T11:02:00.0000000Z',
+            },
+            message: 'Withdrawal authorised',
+          },
+          { status: 201 },
+        );
+      }),
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        headers.push(request.headers.get('Step-Up-Authorization'));
+        return keys.length === 1
+          ? problem({
+              status: 401,
+              errorCode: 'AUTHORIZATION_EXPIRED',
+              detail: 'That authorisation has expired.',
+            })
+          : withdrawSuccessBody(1150.5);
+      }),
+    );
+
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText(/no longer valid|expired/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+
+    // A SECOND mint, and the SECOND reference presented -- not the refused one again.
+    expect(mints).toBe(2);
+    expect(headers).toEqual([MINTED, MINTED_SECOND]);
+    // And the SAME key throughout: the body never changed, so the intent never did.
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it('an amount edit on a RETAINED intent asks for verification, and sends nothing', async () => {
     const keys: (string | null)[] = [];
     server.use(
       http.post('*/api/transactions/withdraw', ({ request }) => {
         keys.push(request.headers.get('Idempotency-Key'));
-        return keys.length === 1
-          ? problem({
-              status: 409,
-              errorCode: 'IDEMPOTENCY_IN_FLIGHT',
-              detail: 'Still processing.',
-            })
-          : withdrawSuccessBody(1150.5);
+        return problem({
+          status: 409,
+          errorCode: 'IDEMPOTENCY_IN_FLIGHT',
+          detail: 'Still processing.',
+        });
       }),
     );
     renderWithdraw();
@@ -465,11 +528,14 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
 
     await userEvent.click(screen.getByRole('button', { name: /^Back/ }));
     await userEvent.click(screen.getByRole('button', { name: '€50' }));
-    await userEvent.click(screen.getByRole('button', { name: /^Continue/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €50.00' }));
-    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).not.toBe(keys[1]);
+
+    // The protocol's own answer to "the outcome is unknown", not a silent re-key.
+    expect(await screen.findByText(/couldn.t confirm your withdrawal/i)).toBeInTheDocument();
+    expect(screen.getByText(/may or may not have gone through/i)).toBeInTheDocument();
+    // NOT a trap: latching drops the key, so the dialog can be left.
+    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+    // And the second intent was never sent. One request, one key.
+    expect(keys).toHaveLength(1);
   });
 
   it('RESULT_UNKNOWN latches a verify-first flow, not a blind retry (§2.3)', async () => {
@@ -546,7 +612,10 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     // intent can't be abandoned then re-minted (double-spend). isSubmitting is already false.
     expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
 
-    // Escape hatch, not a hard trap: editing the body rotates (releases) the key.
+    // Escape hatch, not a hard trap -- and INFORMED since #199. Editing the body no longer
+    // rotates the key silently: it latches verify-first, which drops the key (so Close re-enables)
+    // and says the request may or may not have gone through. The escape survives; what went is the
+    // silent part, which was a second intent over an unresolved one.
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     await userEvent.click(screen.getByRole('button', { name: '€200' }));
     expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();

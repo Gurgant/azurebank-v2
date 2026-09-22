@@ -138,7 +138,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
 
   const [authoriseWithdrawal, { isLoading: isMinting }] = useAuthoriseWithdrawalMutation();
   const [withdrawTrigger] = useWithdrawMutation();
-  const { submit, resetIntent, verifyRequired, keyRetained } =
+  const { submit, resetIntent, verifyRequired, keyRetained, requireVerify } =
     useIdempotentMutation(withdrawTrigger);
 
   /*
@@ -229,7 +229,42 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // again (it is disabled only while submitting), so a user retyping it would destroy their own
   // re-send. `handlePinChange` therefore no longer calls this.
   const onBodyEdit = () => {
+    /*
+      ⚠️ `keyRetained`, NOT just `isSubmitting`. Raised in review on #199, and it is a money
+      defect rather than a tidy-up.
+
+      After `IDEMPOTENCY_IN_FLIGHT` the key is KEPT and `isSubmitting` goes false, so the form was
+      reachable again: Back, edit the amount, and `resetIntent()` minted a NEW key for a NEW intent
+      while the first one's outcome was still unknown. If the balance covered both, both could
+      debit. The hook says exactly this about dismissal — "abandoning it then reopening would mint a
+      fresh key = a new intent = a double-spend" — and this dialog held that line on the X button
+      and not on Back.
+
+      Sharper than it first looks: outside a submit, `keyRetained` is true ONLY after a KEEP
+      outcome, and a key exists only then. So `resetIntent()` here was reachable in exactly the
+      states where calling it is the double-spend, and in no others. Guarding it does not narrow a
+      useful path; it closes the only one it ever had.
+    */
     if (isSubmitting) return;
+    /*
+      A RETAINED key is not released by an edit — it is answered by verify-first.
+
+      `keyRetained` outside a submit means the last attempt's outcome is unknown or its
+      authorisation was refused, and `resetIntent()` there mints a NEW key for a NEW intent while
+      the first may still land: if the balance covers both, both can debit. A test had this written
+      down as the feature — "escape hatch, not a hard trap: editing the body rotates (releases) the
+      key" — and it is an escape that runs through the money.
+
+      Blocking the edit outright would make it a hard trap instead, with Close already disabled on
+      `keyLive`. So the edit latches the state the protocol already has for exactly this knowledge:
+      the verify view says the request may or may not have gone through and to check the
+      transactions first, and latching DROPS the key, so dismissal works again. Informed instead of
+      incidental, and no new screen to design.
+    */
+    if (keyRetained) {
+      requireVerify();
+      return;
+    }
     resetIntent();
     setInFlight(false);
     setError(null);
@@ -403,6 +438,26 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       // hook latched verifyRequired; the verify view renders below.
     } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
       setInFlight(true);
+    } else if (
+      problem.errorCode === 'AUTHORIZATION_INVALID' ||
+      problem.errorCode === 'AUTHORIZATION_EXPIRED'
+    ) {
+      /*
+        DROP THE HELD AUTHORISATION, and the hook is why. It KEEPS the key on both of these
+        (`shouldKeepKey`), with a measurement written beside the rule:
+
+          key K + EXPIRED authorisation -> 401 AUTHORIZATION_EXPIRED
+          key K + FRESH  authorisation -> 201
+
+        So the sanctioned recovery is the SAME key with a NEW authorisation. Holding the refused one
+        made that impossible: the retry re-presented the dead reference, the server refused it
+        again, and the retained key kept Close disabled — a dialog with no way out of a state the
+        hook had already solved. Raised in review on #199.
+      */
+      lastAuthorization.current = null;
+      setError(
+        problem.detail || 'That authorisation is no longer valid. Press Withdraw to try again.',
+      );
     } else if (problem.errorCode === 'INVALID_PIN') {
       // Wrong PIN — clear the boxes and remount (refocus box 1) so the retry is usable.
       // Safe (401 exempted from global logout); the hook already dropped the key, so the
