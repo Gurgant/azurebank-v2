@@ -110,36 +110,132 @@ async function goToPinStep(amountLabel = '€100') {
 }
 
 describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056)', () => {
+  const MINTED = '019f7b3f-0000-7000-8000-0000000a0001';
+  const MINTED_SECOND = '019f7b3f-0000-7000-8000-0000000a0002';
+
   /*
-    THE INTERIM, TESTED RATHER THAN SKIPPED (ADR-0056).
+    THE MINT, restored against the mint — which is what the interim block that stood here asked
+    PR-C to do. Between the two PRs this dialog sent a withdrawal with no authorisation and was
+    answered 401, and the test here pinned THAT, because it was what a user actually met.
 
-    This dialog does not mint yet — PR-C replaces the PIN step with one that calls
-    POST /api/transactions/withdraw/authorizations and submits with the Step-Up-Authorization
-    header. Until then the withdrawal it sends carries no authorisation and is answered 401
-    AUTHORIZATION_REQUIRED, measured on the running API 2026-09-21 alongside the proof that a
-    leftover `pin` in the body is ignored rather than refused.
-
-    The two tests that stood here — the happy receipt, and the wrong-PIN-stays-in-the-dialog case —
-    described behaviour this dialog no longer has, and they are not skipped with a TODO: the state
-    below is what a user actually meets between the two PRs, and its dangerous failure mode (a 401
-    that signs them out mid-withdrawal) is exactly what deserves a test while it is reachable.
-    PR-C restores them, against the mint.
+    Both halves are asserted from the REQUESTS, not from the rendered outcome: a dialog that minted
+    and then sent the authorisation in the BODY would show the same success screen, and the server
+    fingerprints the body — so where the reference travels is the assertion, not a detail.
   */
-  it('INTERIM: with no authorisation the withdrawal is refused, IN the dialog and with no logout', async () => {
+  it('mints with the PIN, then sends the withdrawal with that reference in the header', async () => {
+    let mintBody: Record<string, unknown> | null = null;
+    let sentHeader: string | null = null;
+    let sentBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', async ({ request }) => {
+        mintBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          {
+            data: { authorizationId: MINTED, expiresAt: '2026-07-22T11:02:00.0000000Z' },
+            message: 'Withdrawal authorised',
+          },
+          { status: 201 },
+        );
+      }),
+      http.post('*/api/transactions/withdraw', async ({ request }) => {
+        sentHeader = request.headers.get('Step-Up-Authorization');
+        sentBody = (await request.json()) as Record<string, unknown>;
+        return withdrawSuccessBody(900);
+      }),
+    );
+
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+    expect(mintBody).toEqual({ accountId: expect.any(String), amount: 100, pin: '123456' });
+    expect(sentHeader).toBe(MINTED);
+    // And the PIN is NOT in the withdrawal's body: it left with ADR-0056, and a body that still
+    // carried it would be a different fingerprint from the one the retry path replays.
+    expect(sentBody).not.toHaveProperty('pin');
+  });
+
+  it('a wrong PIN is refused by the MINT, stays in the dialog, and sends no withdrawal', async () => {
     // AUTHENTICATED store: only then does sessionMiddleware's 401 logout branch run, so the
-    // AUTHORIZATION_REQUIRED exemption is genuinely load-bearing (a plain-401 negative control
-    // follows below, and it still logs out).
+    // INVALID_PIN exemption is genuinely load-bearing (the negative control below still logs out).
+    let withdrawals = 0;
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', () =>
+        problem({ status: 401, errorCode: 'INVALID_PIN', detail: 'Invalid PIN.' }),
+      ),
+      http.post('*/api/transactions/withdraw', () => {
+        withdrawals += 1;
+        return withdrawSuccessBody(900);
+      }),
+    );
     const store = storeWithUser(true);
     renderWithdraw(store);
     await goToPinStep();
     await enterPin('123456');
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
 
-    // The problem's detail, through the dialog's fallback branch — not a crash, not a blank.
-    expect(await screen.findByText(/has not been authorised/i)).toBeInTheDocument();
-    // Still on the PIN step — never torn down, never a session reset.
+    expect(await screen.findByText('Invalid PIN. Please try again.')).toBeInTheDocument();
     expect(screen.getByText('Verify Withdrawal')).toBeInTheDocument();
     expect(store.getState().auth.status).toBe('authenticated');
+    // THE WITHDRAWAL NEVER LEFT. Asserting only the message would pass on a dialog that minted,
+    // failed, and sent anyway -- which is the money-moving version of this bug.
+    expect(withdrawals).toBe(0);
+  });
+
+  it('re-presents the SAME authorisation on a retained key, it does not mint twice', async () => {
+    /*
+      A retry of a RETAINED key is the same intent: the first authorisation may already have been
+      consumed by the attempt whose answer never arrived, and if it was not, it is still the
+      authorisation for these exact fields. Minting again leaves an orphan row and tells the server
+      a different story than the first attempt did.
+    */
+    let mints = 0;
+    const headers: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', () => {
+        mints += 1;
+        /*
+          TWO REAL UUIDs, because the STRICT unwrap validates `authorizationId` and refused a
+          fabricated `${MINTED}${mints}` outright. Distinct on purpose: if the dialog minted a
+          second time, the second request would carry the SECOND id and the equality below would
+          name it.
+        */
+        return HttpResponse.json(
+          {
+            data: {
+              authorizationId: mints === 1 ? MINTED : MINTED_SECOND,
+              expiresAt: '2026-07-22T11:02:00.0000000Z',
+            },
+            message: 'Withdrawal authorised',
+          },
+          { status: 201 },
+        );
+      }),
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        headers.push(request.headers.get('Step-Up-Authorization'));
+        return headers.length === 1
+          ? problem({
+              status: 409,
+              errorCode: 'IDEMPOTENCY_IN_FLIGHT',
+              detail: 'A request with this key is in flight.',
+            })
+          : withdrawSuccessBody(900);
+      }),
+    );
+
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText(/Still processing/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+
+    expect(mints).toBe(1);
+    expect(headers).toEqual([MINTED, MINTED]);
   });
 
   it('negative control: a NON-INVALID_PIN 401 while authenticated DOES expire the session', async () => {
@@ -158,9 +254,15 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     await waitFor(() => expect(store.getState().auth.status).toBe('expired'));
   });
 
+  /*
+    AIMED AT THE MINT, and that is the whole correction (ADR-0056). These two stubbed
+    `/api/transactions/withdraw` and kept passing after the PIN moved -- the mint answered 201, the
+    stub then answered 429, and the dialog rendered the countdown. Green, and pinning a response
+    that endpoint can no longer produce: the withdrawal checks no PIN, so it cannot lock one.
+  */
   it('surfaces the lock countdown and disables Withdraw on a 429 PIN_LOCKED', async () => {
     server.use(
-      http.post('*/api/transactions/withdraw', () =>
+      http.post('*/api/transactions/withdraw/authorizations', () =>
         problem({
           status: 429,
           errorCode: 'PIN_LOCKED',
@@ -201,7 +303,7 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
       `advanceTimersByTime`. `shouldAdvanceTime` keeps userEvent's own zero-delay waits resolving.
     */
     server.use(
-      http.post('*/api/transactions/withdraw', () =>
+      http.post('*/api/transactions/withdraw/authorizations', () =>
         problem({
           status: 429,
           errorCode: 'PIN_LOCKED',
@@ -293,7 +395,18 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     expect(keys[0]).toBe(keys[1]);
   });
 
-  it('ROTATES the key when the PIN is edited between attempts (the PIN is part of the body)', async () => {
+  /*
+    ~~ROTATES the key when the PIN is edited between attempts (the PIN is part of the body).~~
+    INVERTED 2026-09-22, ADR-0056: the PIN LEFT the body, so editing it cannot change the
+    fingerprint and must NOT rotate the key.
+
+    This is not a formality. `keyRetained` is exactly the state where the key is the only way
+    forward -- an attempt whose outcome is unknown -- and the PIN input is live again there,
+    because it is disabled only while submitting. Under the old rule a user who retyped a digit
+    while holding a retained key destroyed their own re-send, and the withdrawal whose answer never
+    arrived became unresettable from the dialog.
+  */
+  it('KEEPS the key when the PIN is edited between attempts (the PIN is no longer in the body)', async () => {
     const keys: (string | null)[] = [];
     server.use(
       http.post('*/api/transactions/withdraw', ({ request }) => {
@@ -313,11 +426,44 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
     await screen.findByText(/Still processing/);
 
-    // Edit the PIN (backspace + retype the last digit) — a body edit must rotate the key.
+    // Edit the PIN (backspace + retype the last digit). It is not body-affecting any more.
     await userEvent.type(screen.getByLabelText('Digit 6 of 6'), '{backspace}');
     await userEvent.click(screen.getByLabelText('Digit 6 of 6'));
     await userEvent.paste('6');
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  /*
+    THE SIBLING THAT STILL ROTATES, kept as the control: without it "the key is kept" could be read
+    as "the key is never rotated", which is a different and much worse dialog.
+  */
+  it('still ROTATES the key when the AMOUNT is edited, which IS in the body', async () => {
+    const keys: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        return keys.length === 1
+          ? problem({
+              status: 409,
+              errorCode: 'IDEMPOTENCY_IN_FLIGHT',
+              detail: 'Still processing.',
+            })
+          : withdrawSuccessBody(1150.5);
+      }),
+    );
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    await screen.findByText(/Still processing/);
+
+    await userEvent.click(screen.getByRole('button', { name: /^Back/ }));
+    await userEvent.click(screen.getByRole('button', { name: '€50' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Continue/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €50.00' }));
     expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);

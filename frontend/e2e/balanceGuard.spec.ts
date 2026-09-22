@@ -9,10 +9,16 @@ import { expect, test } from '@playwright/test';
  *
  * What it demonstrates, in the user's own terms: you open Withdraw for everything you have, the
  * money leaves the account by another route, you press Continue — and the app stops you there,
- * naming the balance as it is NOW, without ever asking for your PIN. Which matters beyond tidiness:
- * measured against this same API, an over-balance withdrawal with a mistyped PIN answers
- * `401 INVALID_PIN` (the funds check runs AFTER the PIN), so reaching that step on a stale balance
- * spends one of three attempts, and three lock the PIN for fifteen minutes.
+ * naming the balance as it is NOW, without ever asking for your PIN.
+ *
+ * ~~Which matters beyond tidiness: measured against this same API, an over-balance withdrawal with
+ * a mistyped PIN answers `401 INVALID_PIN` (the funds check runs AFTER the PIN), so reaching that
+ * step on a stale balance spends one of three attempts, and three lock the PIN for fifteen
+ * minutes.~~ Struck 2026-09-22, ADR-0056: that measurement was true and D4 is what made it false.
+ * The funds check runs ABOVE the authorisation now, so the same request answers
+ * `422 INSUFFICIENT_FUNDS` and costs no attempt. What this spec proves did not change — the
+ * ceremony is not reached and nothing is sent — but it is now about a wasted round trip and an
+ * honest hint, not about a stolen PIN attempt.
  *
  * Uses a THROWAWAY user, never the seeded admin — the rest of the suite shares that account and
  * this spec deliberately empties the one it signs in as.
@@ -28,12 +34,26 @@ test.describe('an outflow cannot pass the balance behind it', () => {
   test.skip(!PROBE_EMAIL, 'needs E2E_PROBE_EMAIL — a throwaway user this spec may drain');
 
   test('the PIN is never requested once the server says the money is gone', async ({ page }) => {
-    // Every request the PAGE makes, so "no withdrawal was attempted" is observed rather than
-    // inferred from the absence of a receipt.
+    /*
+      Every request the PAGE makes, so "no withdrawal was attempted" is observed rather than
+      inferred from the absence of a receipt.
+
+      ⚠️ THE MINT'S PATH IS A PREFIX OF THE WITHDRAWAL'S. Since the dialog started minting
+      (ADR-0056) a bare `includes('/api/transactions/withdraw')` also matches
+      `/api/transactions/withdraw/authorizations`, so a mint would be counted as a withdrawal and
+      this assertion would name the wrong thing in whichever direction it went. Both are collected,
+      separately, and both are asserted: the guard's promise is that NEITHER call is made — the PIN
+      is never asked for, so there is nothing to mint with either.
+    */
     const withdrawPosts: string[] = [];
+    const mintPosts: string[] = [];
     page.on('request', (request) => {
-      if (request.method() === 'POST' && request.url().includes('/api/transactions/withdraw')) {
-        withdrawPosts.push(request.url());
+      if (request.method() !== 'POST') return;
+      const url = request.url();
+      if (url.includes('/api/transactions/withdraw/authorizations')) {
+        mintPosts.push(url);
+      } else if (url.includes('/api/transactions/withdraw')) {
+        withdrawPosts.push(url);
       }
     });
 
@@ -94,8 +114,9 @@ test.describe('an outflow cannot pass the balance behind it', () => {
     // The requirement, stated as an assertion: the ceremony is never reached.
     await expect(dialog.getByText('Verify Withdrawal')).toBeHidden();
     await expect(dialog.getByLabel('Digit 1 of 6')).toHaveCount(0);
-    // And the page itself never asked the server to do the impossible thing.
+    // And the page itself never asked the server to do the impossible thing -- neither half of it.
     expect(withdrawPosts).toEqual([]);
+    expect(mintPosts).toEqual([]);
 
     /*
       The other half of the promise, and the reason a clamp on keystrokes was rejected: the user is

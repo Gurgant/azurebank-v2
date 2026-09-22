@@ -384,12 +384,25 @@ export const apiSlice = createApi({
     }),
 
     withdraw: builder.mutation<WithReplay<WithdrawResponse>, IdempotentArg<WithdrawRequest>>({
-      // PIN travels in the BODY (D1) — this endpoint never triggers the step-up interceptor.
-      query: ({ idempotencyKey, body }) => ({
+      /*
+        ~~PIN travels in the BODY (D1) — this endpoint never triggers the step-up interceptor.~~
+        Struck 2026-09-22: ADR-0056 took the PIN off this endpoint entirely. It carries a minted
+        authorisation in `Step-Up-Authorization` exactly as the two transfers do, and an absent one
+        is 401 AUTHORIZATION_REQUIRED.
+
+        The SPREAD rather than a `?? undefined` value, for the reason measured on the transfer
+        below: an explicit `undefined` still serialises as a header with an empty VALUE on some
+        transports, `[FromHeader] Guid?` binds that to NULL, and the request is then refused as
+        though none had been sent — a client bug wearing the server's refusal.
+      */
+      query: ({ idempotencyKey, body, stepUpAuthorizationId }) => ({
         url: '/api/transactions/withdraw',
         method: 'POST',
         body,
-        headers: { 'Idempotency-Key': idempotencyKey },
+        headers: {
+          'Idempotency-Key': idempotencyKey,
+          ...(stepUpAuthorizationId ? { 'Step-Up-Authorization': stepUpAuthorizationId } : {}),
+        },
       }),
       // STRICT (A): a money receipt.
       transformResponse: (response: Schemas['ApiResponseOfWithdrawResponse'], meta) =>
@@ -464,6 +477,28 @@ export const apiSlice = createApi({
         url: `/api/accounts/${id}/deletion-authorizations`,
         method: 'POST',
         body: { pin },
+      }),
+      transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
+        unwrap(response, stepUpAuthorizationResponseSchema),
+    }),
+
+    /*
+      The WITHDRAWAL mint (ADR-0056). Ownership is proved before the PIN is consulted, so probing
+      somebody else's account costs no attempt: measured on the running API, an unknown account is
+      404 and a foreign one 403 ACCESS_DENIED, both ahead of the PIN. It checks no balance either —
+      a mint over the balance answers 201, because a mint is an authentication event and the 422
+      belongs at the withdrawal, inside the transaction that reads the balance.
+
+      Same StepUpAuthorizationResponse as the other three mints, so the STRICT unwrap is one schema.
+    */
+    authoriseWithdrawal: builder.mutation<
+      StepUpAuthorizationResponse,
+      { accountId: string; amount: number; pin: string }
+    >({
+      query: ({ accountId, amount, pin }) => ({
+        url: '/api/transactions/withdraw/authorizations',
+        method: 'POST',
+        body: { accountId, amount, pin },
       }),
       transformResponse: (response: Schemas['ApiResponseOfStepUpAuthorizationResponse']) =>
         unwrap(response, stepUpAuthorizationResponseSchema),
@@ -646,6 +681,7 @@ export const {
   useGetTransactionQuery,
   useGetTransactionSummaryQuery,
   useDepositMutation,
+  useAuthoriseWithdrawalMutation,
   useWithdrawMutation,
   // Transfers
   useLazyLookupRecipientQuery,

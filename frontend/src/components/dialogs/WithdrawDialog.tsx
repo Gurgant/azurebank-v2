@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
@@ -19,7 +19,7 @@ import { Controller, useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { colors } from '../../theme/tokens';
 import type { ApiProblem } from '../../api/problemBaseQuery';
-import { useWithdrawMutation } from '../../features/api/apiSlice';
+import { useAuthoriseWithdrawalMutation, useWithdrawMutation } from '../../features/api/apiSlice';
 import { useIdempotentMutation } from '../../hooks/useIdempotentMutation';
 import { selectCurrentUser } from '../../features/auth/authSlice';
 import { formatCurrency } from '../../utils/format';
@@ -114,10 +114,15 @@ type Step = 'form' | 'pin';
  * react-hook-form with the balance-capped `withdrawFormSchema` as resolver, while the PIN
  * step machine is deliberately untouched (plan D5 — money-critical path, minimal churn).
  * Same idempotency spine (useIdempotentMutation: KEEP on IN_FLIGHT/network/5xx, rotate on
- * any body edit — the PIN is part of the body, so editing it re-keys too). The PIN is NOT
- * step-up: it travels in the withdraw request and is verified server-side, so a wrong PIN
- * is a 401 INVALID_PIN that stays in this dialog (sessionMiddleware exempts it from the
- * global logout). A user with no PIN is sent to /pin-setup first. The dialog cannot be
+ * any body edit). ~~The PIN is part of the body, so editing it re-keys too. The PIN is NOT
+ * step-up: it travels in the withdraw request and is verified server-side.~~
+ *
+ * Struck 2026-09-22, ADR-0056: the PIN is STEP-UP now and it is not in the body. The sixth
+ * digit mints at POST /api/transactions/withdraw/authorizations and the withdrawal presents
+ * the reference in Step-Up-Authorization, exactly as the two transfers and the closure do.
+ * A wrong PIN is still a 401 INVALID_PIN that stays in this dialog (sessionMiddleware
+ * exempts it from the global logout), but it is now the MINT that answers it, and the
+ * withdrawal is never sent. A user with no PIN is sent to /pin-setup first. The dialog cannot be
  * dismissed while an idempotency key is still live — the Fluent shell's Esc/backdrop
  * dismissal funnels through the SAME keyLive guard as the X button.
  */
@@ -131,9 +136,28 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // (PIN_REQUIRED is handled in the catch as a fallback).
   const needsPinSetup = user ? user.hasPin === false : false;
 
+  const [authoriseWithdrawal, { isLoading: isMinting }] = useAuthoriseWithdrawalMutation();
   const [withdrawTrigger] = useWithdrawMutation();
   const { submit, resetIntent, verifyRequired, keyRetained } =
     useIdempotentMutation(withdrawTrigger);
+
+  /*
+    The authorisation minted for the intent currently in flight.
+
+    A retry of a RETAINED key is the SAME intent, so it must not mint a second authorisation: the
+    first may already have been consumed by the attempt whose answer never arrived, and if it was
+    not, it is still the authorisation for these exact fields. Minting again would leave an orphan
+    row and tell the server a different story than the first attempt did. `TransferPage` holds the
+    same ref for the same reason.
+
+    A REF rather than state because `onValid` reads it synchronously between the mint and the send.
+    Unlike TransferPage this dialog needs no ref for the PIN itself: its submit is driven by the
+    Withdraw BUTTON, which is disabled until `pin.length === PIN_LENGTH`, so by the time `onValid`
+    runs the state has re-rendered. TransferPage submits from the sixth digit's `onComplete`, which
+    fires inside `onChange` and is one render stale — a hazard this dialog does not have, so it does
+    not carry the cure.
+  */
+  const lastAuthorization = useRef<string | null>(null);
 
   const [step, setStep] = useState<Step>('form');
   const [pin, setPin] = useState('');
@@ -195,11 +219,15 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const amountNumber = parseAmountInput(watch('amount'));
   const selectedAccount = selectedForBalance;
 
-  // Any body-affecting edit (amount/account/description/PIN) rotates the key: the old key
-  // + a new body is a raw-byte fingerprint mismatch → 422 KEY_REUSE. Never while a request
-  // is in flight — nulling the key out from under a pending submit would defeat the
-  // retained-key dismissal guard. (Structurally the body isn't reachable mid-submit here —
-  // the PIN step's input is disabled — but the invariant is stated uniformly.)
+  // Any body-affecting edit (amount/account/description) rotates the key: the old key + a new
+  // body is a raw-byte fingerprint mismatch → 422 KEY_REUSE. Never while a request is in flight —
+  // nulling the key out from under a pending submit would defeat the retained-key dismissal guard.
+  //
+  // THE PIN IS NO LONGER ONE OF THEM (ADR-0056). It left the body with the step-up move, so it
+  // cannot change the fingerprint, and rotating on it would throw away a RETAINED key in the one
+  // state where that key is the only way forward: after a network failure the PIN input is live
+  // again (it is disabled only while submitting), so a user retyping it would destroy their own
+  // re-send. `handlePinChange` therefore no longer calls this.
   const onBodyEdit = () => {
     if (isSubmitting) return;
     resetIntent();
@@ -215,7 +243,7 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const handlePinChange = (next: string) => {
     setPin(next);
     setPinError(false);
-    onBodyEdit();
+    // No `onBodyEdit()`: the PIN is not in the body any more — see the note on that function.
   };
 
   // Move between steps and drop the transient banners so a stale 'Invalid PIN' never lingers
@@ -299,27 +327,56 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
     setError(null);
     setPinError(false);
     setInFlight(false);
+
+    /*
+      MINT, then SEND (ADR-0056). Two calls, one user action — the Withdraw button starts both, so
+      the authorisation's two-minute window is normally milliseconds wide and the user never learns
+      it exists.
+
+      The mint carries no idempotency key by design, so it cannot go through `submit`. Its refusals
+      are nevertheless the SAME ones the send already handles — 401 INVALID_PIN, 429 PIN_LOCKED,
+      422 PIN_REQUIRED — so both funnel into the one catch below rather than growing a second copy
+      free to drift.
+
+      `keyRetained` means the idempotency hook is holding a key from an attempt whose outcome is
+      unknown: IN_FLIGHT, a network failure, a 5xx. The only sanctioned action there is to re-send
+      the SAME intent, so the SAME authorisation is re-presented rather than a new one minted.
+    */
+    let authorizationId: string;
+    if (keyRetained && lastAuthorization.current) {
+      authorizationId = lastAuthorization.current;
+    } else {
+      setIsSubmitting(true);
+      try {
+        const minted = await authoriseWithdrawal({
+          accountId: data.accountId,
+          amount: data.amount,
+          pin,
+        }).unwrap();
+        authorizationId = minted.authorizationId;
+        lastAuthorization.current = authorizationId;
+      } catch (caught) {
+        setIsSubmitting(false);
+        handleRefusal(caught as ApiProblem);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       /*
-        THE PIN NO LONGER TRAVELS IN THE BODY, and this dialog does not yet mint (ADR-0056).
-
-        The interim is stated rather than hidden: PR-C replaces the PIN step with one that mints at
-        POST /api/transactions/withdraw/authorizations and submits with the Step-Up-Authorization
-        header. Until then a submit here is answered 401 AUTHORIZATION_REQUIRED, which the catch
-        below renders as the problem's detail -- "This withdrawal has not been authorised."
-
-        It does NOT sign the user out, and that is measured rather than assumed:
-        sessionMiddleware's IN_FLOW_401_CODES contains AUTHORIZATION_REQUIRED and is routed on
-        errorCode, never on endpoint identity, so it covers this endpoint with no change.
-
-        The PIN is still collected: the step and its state stay, because PR-C needs exactly them.
+        A HEADER at the wire, never a body field: the server fingerprints the body alone, so the
+        authorisation is exactly the thing that may legitimately differ between attempts of one
+        intent. `useIdempotentMutation` takes it as `extras` for that reason.
       */
-      const result = await submit({
-        accountId: data.accountId,
-        amount: data.amount,
-        description: data.description,
-      });
+      const result = await submit(
+        {
+          accountId: data.accountId,
+          amount: data.amount,
+          description: data.description,
+        },
+        { stepUpAuthorizationId: authorizationId },
+      );
       setSuccess({
         amount: data.amount,
         accountName: account.name,
@@ -329,46 +386,55 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
       });
       onSuccess?.();
     } catch (caught) {
-      const problem = caught as ApiProblem;
-      if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
-        // hook latched verifyRequired; the verify view renders below.
-      } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
-        setInFlight(true);
-      } else if (problem.errorCode === 'INVALID_PIN') {
-        // Wrong PIN — clear the boxes and remount (refocus box 1) so the retry is usable.
-        // Safe (401 exempted from global logout); the hook already dropped the key, so the
-        // corrected-PIN retry mints a fresh one.
-        setPin('');
-        setPinError(true);
-        setPinNonce((n) => n + 1);
-        setError('Invalid PIN. Please try again.');
-      } else if (problem.errorCode === 'PIN_LOCKED') {
-        setPin('');
-        setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
-      } else if (problem.errorCode === 'PIN_REQUIRED') {
-        // Defensive: the hasPin gate should have caught this. Send them to set a PIN.
-        navigate('/pin-setup?returnTo=/accounts');
-      } else if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
-        // Balance shifted under us — back to the amount step to adjust (message survives:
-        // setStep directly, NOT goToStep, so the error set right after is kept).
-        setStep('form');
-        setError('Insufficient funds — your balance changed. Please check the amount.');
-      } else if (problem.errorCode === 'VALIDATION_ERROR') {
-        const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
-        setError(firstFieldError ?? 'Please check the details and try again.');
-      } else if (
-        problem.errorCode === 'IDEMPOTENCY_KEY_REUSE' ||
-        problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
-        problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
-      ) {
-        setError('Something went wrong. Please try again.');
-      } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
-        setError(CONNECTION_FAILED);
-      } else {
-        setError(problem.detail || 'Withdrawal failed. Please try again.');
-      }
+      handleRefusal(caught as ApiProblem);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  /*
+    ONE refusal ladder for BOTH calls. The mint and the send answer overlapping codes — INVALID_PIN,
+    PIN_LOCKED and PIN_REQUIRED come from the mint now, INSUFFICIENT_FUNDS and the idempotency
+    family from the send — and a second copy would be free to drift from this one, which is the
+    drift ADR-0056's own corrections spent two rounds undoing elsewhere.
+  */
+  const handleRefusal = (problem: ApiProblem) => {
+    if (problem.errorCode === 'IDEMPOTENCY_RESULT_UNKNOWN') {
+      // hook latched verifyRequired; the verify view renders below.
+    } else if (problem.errorCode === 'IDEMPOTENCY_IN_FLIGHT') {
+      setInFlight(true);
+    } else if (problem.errorCode === 'INVALID_PIN') {
+      // Wrong PIN — clear the boxes and remount (refocus box 1) so the retry is usable.
+      // Safe (401 exempted from global logout); the hook already dropped the key, so the
+      // corrected-PIN retry mints a fresh one.
+      setPin('');
+      setPinError(true);
+      setPinNonce((n) => n + 1);
+      setError('Invalid PIN. Please try again.');
+    } else if (problem.errorCode === 'PIN_LOCKED') {
+      setPin('');
+      setLockDeadline(retryDeadline(problem.retryAfterSeconds ?? DEFAULT_PIN_LOCK_SECONDS));
+    } else if (problem.errorCode === 'PIN_REQUIRED') {
+      // Defensive: the hasPin gate should have caught this. Send them to set a PIN.
+      navigate('/pin-setup?returnTo=/accounts');
+    } else if (problem.errorCode === 'INSUFFICIENT_FUNDS') {
+      // Balance shifted under us — back to the amount step to adjust (message survives:
+      // setStep directly, NOT goToStep, so the error set right after is kept).
+      setStep('form');
+      setError('Insufficient funds — your balance changed. Please check the amount.');
+    } else if (problem.errorCode === 'VALIDATION_ERROR') {
+      const firstFieldError = Object.values(problem.errors ?? {})[0]?.[0];
+      setError(firstFieldError ?? 'Please check the details and try again.');
+    } else if (
+      problem.errorCode === 'IDEMPOTENCY_KEY_REUSE' ||
+      problem.errorCode === 'IDEMPOTENCY_KEY_MISSING' ||
+      problem.errorCode === 'IDEMPOTENCY_KEY_INVALID'
+    ) {
+      setError('Something went wrong. Please try again.');
+    } else if (problem.status === 'NETWORK' || problem.status === 'PARSE') {
+      setError(CONNECTION_FAILED);
+    } else {
+      setError(problem.detail || 'Withdrawal failed. Please try again.');
     }
   };
 
@@ -383,7 +449,16 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // unmounting with a retained key loses it; reopening mints a fresh one and the same amount
   // becomes a NEW intent = a double-spend. Editing the body (onBodyEdit → resetIntent) or a
   // terminal outcome releases the key and re-enables dismissal.
-  const keyLive = isSubmitting || keyRetained;
+  /*
+    Every exit, held for BOTH phases of the submit.
+
+    `isMinting` is RTK Query's own flag for the mint round trip, and it is separate from
+    `isSubmitting`: the mint runs before `submit` is ever called, so without it a user could press
+    Esc or the X mid-mint, watch the dialog close, and have the withdrawal complete underneath them.
+    TransferPage holds `exitLocked = keyLive || isMinting` for the same reason, found there when the
+    mint landed and the exits had not been told about it.
+  */
+  const keyLive = isSubmitting || isMinting || keyRetained;
   const requestClose = () => {
     if (!keyLive) {
       onClose();
