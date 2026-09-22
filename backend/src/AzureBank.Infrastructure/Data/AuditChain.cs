@@ -733,13 +733,6 @@ public sealed class AuditChain : IAuditChain
         }
     }
 
-    /// <summary>
-    /// The audit rows added in this unit of work. Ordered by <c>OccurredAt</c> and NOT by <c>Id</c>:
-    /// Guid ordering in .NET is not creation order even for a UUIDv7, and SQL Server collates
-    /// <c>uniqueidentifier</c> on a different byte order again — a trap this repository already
-    /// records. Ties are resolved by the number this method's caller then assigns, so the order is
-    /// recorded in the row rather than inferred from it.
-    /// </summary>
     /// <summary>True when the failure is about the STORE rather than about a stored value.</summary>
     private static bool IsInfrastructureFailure(Exception failure)
     {
@@ -754,6 +747,13 @@ public sealed class AuditChain : IAuditChain
         return false;
     }
 
+    /// <summary>
+    /// The audit rows added in this unit of work. Ordered by <c>OccurredAt</c> and NOT by <c>Id</c>:
+    /// Guid ordering in .NET is not creation order even for a UUIDv7, and SQL Server collates
+    /// <c>uniqueidentifier</c> on a different byte order again — a trap this repository already
+    /// records. Ties are resolved by the number this method's caller then assigns, so the order is
+    /// recorded in the row rather than inferred from it.
+    /// </summary>
     private static List<AuditEvent> Pending(DbContext context) =>
         context.ChangeTracker.Entries<AuditEvent>()
             .Where(e => e.State == EntityState.Added)

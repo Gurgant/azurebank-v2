@@ -42,13 +42,13 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
         Client = factory.CreateClient();
     }
 
+    /// <summary>The password every helper-created user gets — one place, so proofs can reuse it.</summary>
+    protected const string TestUserPassword = "TestPass123!";
+
     /// <summary>
     /// Registers a new test user and returns the authentication token.
     /// Each call creates a unique user to ensure test isolation.
     /// </summary>
-    /// <summary>The password every helper-created user gets — one place, so proofs can reuse it.</summary>
-    protected const string TestUserPassword = "TestPass123!";
-
     protected async Task<(string Token, Guid UserId, Guid AccountId)> RegisterTestUserAsync()
     {
         var uniqueId = Guid.NewGuid().ToString("N")[..8];

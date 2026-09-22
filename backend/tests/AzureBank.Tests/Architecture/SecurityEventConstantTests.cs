@@ -666,6 +666,20 @@ public class SecurityEventConstantTests
     }
 
     /// <summary>
+    /// A PREFIX test, and its limits are stated rather than assumed: it skips <c>//</c>, <c>///</c>
+    /// and a <c>*</c> continuation, and it does NOT strip the unprefixed interior of a
+    /// <c>/* ... */</c> block. That blindness is in the safe direction — an uncounted comment
+    /// mentioning the call inflates the count and the test fails LOUDLY, naming every site it
+    /// found, rather than passing while a real mint hides.
+    /// </summary>
+    private static bool IsCommentLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.StartsWith("//", StringComparison.Ordinal)
+            || trimmed.StartsWith("*", StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Every caller of <c>MintAsync</c> proves ownership of the account before minting.
     /// </summary>
     /// <remarks>
@@ -688,20 +702,6 @@ public class SecurityEventConstantTests
     /// nobody has read, so the test names it and asks for the remark to be updated with it.
     /// </para>
     /// </remarks>
-    /// <summary>
-    /// A PREFIX test, and its limits are stated rather than assumed: it skips <c>//</c>, <c>///</c>
-    /// and a <c>*</c> continuation, and it does NOT strip the unprefixed interior of a
-    /// <c>/* ... */</c> block. That blindness is in the safe direction — an uncounted comment
-    /// mentioning the call inflates the count and the test fails LOUDLY, naming every site it
-    /// found, rather than passing while a real mint hides.
-    /// </summary>
-    private static bool IsCommentLine(string line)
-    {
-        var trimmed = line.TrimStart();
-        return trimmed.StartsWith("//", StringComparison.Ordinal)
-            || trimmed.StartsWith("*", StringComparison.Ordinal);
-    }
-
     [Fact]
     public void EveryMintProvesOwnershipBeforeIt()
     {
