@@ -1895,14 +1895,162 @@
         }
       }
     },
+    "/api/transactions/withdraw/authorizations": {
+      "post": {
+        "tags": [
+          "Transaction"
+        ],
+        "summary": "Authorise withdrawal",
+        "description": "Prove the PIN for one withdrawal and receive the authorisation to present on it.\r\nThe authorisation is valid only for this account and this amount, is accepted once,\r\nand expires.",
+        "requestBody": {
+          "description": "The account, the amount, and the PIN",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalAuthorizationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalAuthorizationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalAuthorizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponseOfStepUpAuthorizationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED). The balance is NOT checked here: an authorisation can be minted for more than the account holds, and the withdrawal refuses it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "A URI reference identifying the problem type"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short, human-readable summary (e.g., 'Business Rule Violation')"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "description": "The HTTP status code (422)"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A human-readable explanation of the business rule violation"
+                    },
+                    "errorCode": {
+                      "type": "string",
+                      "description": "Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS')"
+                    },
+                    "traceId": {
+                      "type": "string",
+                      "description": "Request trace identifier for debugging"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/transactions/withdraw": {
       "post": {
         "tags": [
           "Transaction"
         ],
         "summary": "Withdraw",
-        "description": "Withdraw money from an account.\r\nRequires PIN verification.",
+        "description": "Withdraw money from an account, presenting the authorisation minted for it.",
         "parameters": [
+          {
+            "name": "Step-Up-Authorization",
+            "in": "header",
+            "description": "Authorisation reference minted by POST /api/transactions/withdraw/authorizations (ADR-0056). REQUIRED to make a withdrawal: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for another amount, for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The funds rule (422 INSUFFICIENT_FUNDS) is checked BEFORE the header is.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
           {
             "name": "Idempotency-Key",
             "in": "header",
@@ -1915,7 +2063,7 @@
           }
         ],
         "requestBody": {
-          "description": "Withdrawal details including PIN",
+          "description": "Withdrawal details",
           "content": {
             "application/json": {
               "schema": {
@@ -1964,6 +2112,16 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not Found",
             "content": {
@@ -1976,26 +2134,6 @@
           },
           "403": {
             "description": "Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2051,7 +2189,7 @@
             }
           },
           "422": {
-            "description": "Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED, checked before the balance), or the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
+            "description": "Business Rule Violation - the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4505,7 +4643,7 @@
           }
         }
       },
-      "WithdrawRequest": {
+      "WithdrawalAuthorizationRequest": {
         "required": [
           "accountId",
           "amount",
@@ -4532,6 +4670,29 @@
             "pattern": "^[0-9]{6}$",
             "type": "string",
             "description": "PIN must be exactly 6 digits."
+          }
+        },
+        "description": "Authorises one withdrawal: proves the PIN and returns a reference valid only for this account\r\nand this amount."
+      },
+      "WithdrawRequest": {
+        "required": [
+          "accountId",
+          "amount"
+        ],
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string",
+            "description": "A valid non-empty UUID is required.",
+            "format": "uuid"
+          },
+          "amount": {
+            "multipleOf": 0.01,
+            "maximum": 100000.00,
+            "minimum": 0.01,
+            "type": "number",
+            "description": "Amount must be between 0.01 EUR and 100000.00 EUR.",
+            "format": "double"
           },
           "description": {
             "maxLength": 500,

@@ -42,13 +42,13 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
         Client = factory.CreateClient();
     }
 
+    /// <summary>The password every helper-created user gets — one place, so proofs can reuse it.</summary>
+    protected const string TestUserPassword = "TestPass123!";
+
     /// <summary>
     /// Registers a new test user and returns the authentication token.
     /// Each call creates a unique user to ensure test isolation.
     /// </summary>
-    /// <summary>The password every helper-created user gets — one place, so proofs can reuse it.</summary>
-    protected const string TestUserPassword = "TestPass123!";
-
     protected async Task<(string Token, Guid UserId, Guid AccountId)> RegisterTestUserAsync()
     {
         var uniqueId = Guid.NewGuid().ToString("N")[..8];
@@ -203,6 +203,55 @@ public abstract class IntegrationTestBase : IClassFixture<CustomWebApplicationFa
         var body = await response.Content
             .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(JsonOptions);
         return body!.Data!.AuthorizationId;
+    }
+
+    /// <summary>
+    /// Spends the PIN at the withdrawal mint and returns the authorisation bound to exactly this
+    /// account and amount — the only thing <c>POST /api/transactions/withdraw</c> accepts as a
+    /// second factor since ADR-0056.
+    /// </summary>
+    /// <remarks>
+    /// Goes through the real endpoint rather than the service, so a test that withdraws is also
+    /// exercising the mint it depends on. The amount must match the withdrawal's to the cent: the
+    /// binding is an HMAC over (operation, actor, account, amount), with no counterparty, and a
+    /// mismatch is refused <c>401 AUTHORIZATION_INVALID</c>.
+    /// </remarks>
+    protected async Task<Guid> AuthoriseWithdrawalAsync(
+        Guid accountId, decimal amount, string pin = "123456")
+    {
+        var response = await Client.PostAsJsonAsync(
+            "/api/transactions/withdraw/authorizations",
+            new WithdrawalAuthorizationRequest
+            {
+                AccountId = accountId,
+                Amount = amount,
+                Pin = pin
+            },
+            JsonOptions);
+
+        response.StatusCode.Should().Be(
+            HttpStatusCode.Created,
+            "a withdrawal cannot be made without a minted authorisation, so a failure here would "
+            + "surface as an unrelated 401 on the withdrawal under test");
+
+        var body = await response.Content
+            .ReadFromJsonAsync<ApiResponse<StepUpAuthorizationResponse>>(JsonOptions);
+        return body!.Data!.AuthorizationId;
+    }
+
+    /// <summary>
+    /// A withdrawal that mints its own authorisation first — the two-call shape every honest
+    /// withdrawal now has. For tests whose subject is the WITHDRAWAL rather than the rail.
+    /// </summary>
+    protected async Task<HttpResponseMessage> WithdrawAsync(
+        Guid accountId, decimal amount, string? description = null, Guid? idempotencyKey = null)
+    {
+        var authorizationId = await AuthoriseWithdrawalAsync(accountId, amount);
+        return await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new WithdrawRequest { AccountId = accountId, Amount = amount, Description = description },
+            idempotencyKey,
+            authorizationId);
     }
 
     /// <summary>The same, for a move between the caller's own accounts.</summary>

@@ -391,11 +391,17 @@ export const VerifyPinRequest = z.object({
   pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
 });
 
+export type WithdrawalAuthorizationRequest = z.infer<typeof WithdrawalAuthorizationRequest>;
+export const WithdrawalAuthorizationRequest = z.object({
+  accountId: z.uuid(),
+  amount: z.number().min(0.01).max(100000).multipleOf(0.01),
+  pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
+});
+
 export type WithdrawRequest = z.infer<typeof WithdrawRequest>;
 export const WithdrawRequest = z.object({
   accountId: z.uuid(),
   amount: z.number().min(0.01).max(100000).multipleOf(0.01),
-  pin: z.string().min(6).max(6).regex(new RegExp('^[0-9]{6}$')),
   description: z.string().max(500).nullable().optional(),
 });
 

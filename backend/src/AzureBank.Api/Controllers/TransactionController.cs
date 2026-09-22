@@ -1,8 +1,11 @@
+using System.ComponentModel;
 using System.Security.Claims;
 using AzureBank.Api.Attributes;
 using AzureBank.Api.Services.Interfaces;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
+using AzureBank.Shared.DTOs.Transfer;
+using AzureBank.Shared.Constants;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,15 +24,18 @@ public class TransactionController : ControllerBase
     private readonly ITransactionService _transactionService;
     private readonly IValidator<DepositRequest> _depositValidator;
     private readonly IValidator<WithdrawRequest> _withdrawValidator;
+    private readonly IValidator<WithdrawalAuthorizationRequest> _withdrawalAuthValidator;
 
     public TransactionController(
         ITransactionService transactionService,
         IValidator<DepositRequest> depositValidator,
-        IValidator<WithdrawRequest> withdrawValidator)
+        IValidator<WithdrawRequest> withdrawValidator,
+        IValidator<WithdrawalAuthorizationRequest> withdrawalAuthValidator)
     {
         _transactionService = transactionService;
         _depositValidator = depositValidator;
         _withdrawValidator = withdrawValidator;
+        _withdrawalAuthValidator = withdrawalAuthValidator;
     }
 
     /// <summary>
@@ -115,28 +121,92 @@ public class TransactionController : ControllerBase
     }
 
     /// <summary>
+    /// Authorise withdrawal
+    /// </summary>
+    /// <remarks>
+    /// Prove the PIN for one withdrawal and receive the authorisation to present on it.
+    /// The authorisation is valid only for this account and this amount, is accepted once,
+    /// and expires.
+    /// </remarks>
+    /// <param name="request">The account, the amount, and the PIN</param>
+    /// <returns>The authorisation reference to send in the Step-Up-Authorization header, and when it expires</returns>
+    /*
+      NO [RequireIdempotency], for the reasons on the transfer and closure mints: minting creates
+      nothing the caller can be charged for, only one of two mints can ever be spent, and the
+      endpoint's job is to be easy to call again after a wrong PIN. What a repeat costs is the
+      attempt, which is the point.
+
+      THE OPERATION IS IN THE ROUTE, under `withdraw/`, the same shape the transfer mints use
+      (`transfers/authorizations`, `transfers/internal/authorizations`) rather than a bare
+      `authorizations` hanging off the controller: this controller also serves deposits and history,
+      and a second transaction-scoped authorisation added later must not collide with this one.
+
+      422 IS NOT DECLARED HERE. It is declared by BusinessRulesDocumentTransformer, for the reason
+      on the closure mint: an attribute OUTRANKS the transformer's entry and would publish the bare
+      reason phrase in place of the sentence naming the code (PIN_REQUIRED).
+    */
+    [HttpPost("withdraw/authorizations")]
+    [RequestSizeLimit(32_768)]
+    [ProducesResponseType(typeof(ApiResponse<StepUpAuthorizationResponse>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // PIN_LOCKED (ADR-0010)
+    public async Task<ActionResult<ApiResponse<StepUpAuthorizationResponse>>> AuthoriseWithdrawal(
+        [Description("The account, the amount, and the PIN")][FromBody] WithdrawalAuthorizationRequest request)
+    {
+        // Same two-layer guard as the transfer mints: DataAnnotations from [ApiController], then
+        // FluentValidation, which is the only layer that checks the money SCALE.
+        await _withdrawalAuthValidator.ValidateAndThrowAsync(request);
+
+        var result = await _transactionService.AuthoriseWithdrawalAsync(GetCurrentUserId(), request);
+
+        return StatusCode(StatusCodes.Status201Created,
+            ApiResponse<StepUpAuthorizationResponse>.Success(result, "Withdrawal authorised"));
+    }
+
+    /// <summary>
     /// Withdraw
     /// </summary>
     /// <remarks>
-    /// Withdraw money from an account.
-    /// Requires PIN verification.
+    /// Withdraw money from an account, presenting the authorisation minted for it.
     /// </remarks>
-    /// <param name="request">Withdrawal details including PIN</param>
     /// <returns>Transaction details and new balance</returns>
+    /*
+      THE HEADER IS DOCUMENTED BY [Description] ON THE PARAMETER, NOT BY AN XML <param>.
+
+      That is the convention all three existing step-up endpoints use, and it is not stylistic:
+      with an XML <param> for `stepUpAuthorizationId` the generator put ITS text on the REQUEST
+      BODY -- the committed contract described the withdraw body as "The authorisation reference
+      minted for this account and amount" -- and left the header with NO description at all. A
+      contract telling clients to put the authorisation in the body is the exact opposite of what
+      this endpoint accepts. Found in review on #198, and the body/header pair is asserted against
+      the committed document rather than re-read.
+    */
     [HttpPost("withdraw")]
     [RequireIdempotency]
+    [RequireStepUpAuthorization]
     [RequestSizeLimit(32_768)] // monetary bodies are <2KB; caps hash/buffer work (ADR-0009)
     [ProducesResponseType(typeof(ApiResponse<WithdrawResponse>), StatusCodes.Status201Created)]
+    // 400 is reachable two ways: a body that fails validation, and a Step-Up-Authorization header
+    // that is present but not a UUID, which MVC model binding refuses before this action runs,
+    // keyed on the header name and with no errorCode.
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    // 401 AUTHORIZATION_REQUIRED: the header is absent or empty. Declared here because, unlike the
+    // 422, no transformer entry supplies it for this endpoint.
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)] // PIN_LOCKED (ADR-0010)
-    public async Task<ActionResult<ApiResponse<WithdrawResponse>>> Withdraw([FromBody] WithdrawRequest request)
+    public async Task<ActionResult<ApiResponse<WithdrawResponse>>> Withdraw(
+        [Description("Withdrawal details")][FromBody] WithdrawRequest request,
+        [Description("Authorisation reference minted by POST /api/transactions/withdraw/authorizations (ADR-0056). REQUIRED to make a withdrawal: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for another amount, for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The funds rule (422 INSUFFICIENT_FUNDS) is checked BEFORE the header is.")]
+        [FromHeader(Name = StepUpConstants.HeaderName)] Guid? stepUpAuthorizationId = null)
     {
         await _withdrawValidator.ValidateAndThrowAsync(request);
 
         var userId = GetCurrentUserId();
-        var result = await _transactionService.WithdrawAsync(userId, request);
+        var result = await _transactionService.WithdrawAsync(userId, request, stepUpAuthorizationId);
 
         return StatusCode(StatusCodes.Status201Created,
             ApiResponse<WithdrawResponse>.Success(result, "Withdrawal successful"));

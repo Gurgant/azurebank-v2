@@ -109,36 +109,37 @@ async function goToPinStep(amountLabel = '€100') {
   expect(await screen.findByText('Verify Withdrawal')).toBeInTheDocument();
 }
 
-describe('withdraw (PR-10 — PIN-in-body idempotent mutation)', () => {
-  it('withdraws with a PIN and shows the receipt with the real new balance, then navigates', async () => {
-    renderWithdraw();
+describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056)', () => {
+  /*
+    THE INTERIM, TESTED RATHER THAN SKIPPED (ADR-0056).
+
+    This dialog does not mint yet — PR-C replaces the PIN step with one that calls
+    POST /api/transactions/withdraw/authorizations and submits with the Step-Up-Authorization
+    header. Until then the withdrawal it sends carries no authorisation and is answered 401
+    AUTHORIZATION_REQUIRED, measured on the running API 2026-09-21 alongside the proof that a
+    leftover `pin` in the body is ignored rather than refused.
+
+    The two tests that stood here — the happy receipt, and the wrong-PIN-stays-in-the-dialog case —
+    described behaviour this dialog no longer has, and they are not skipped with a TODO: the state
+    below is what a user actually meets between the two PRs, and its dangerous failure mode (a 401
+    that signs them out mid-withdrawal) is exactly what deserves a test while it is reachable.
+    PR-C restores them, against the mint.
+  */
+  it('INTERIM: with no authorisation the withdrawal is refused, IN the dialog and with no logout', async () => {
+    // AUTHENTICATED store: only then does sessionMiddleware's 401 logout branch run, so the
+    // AUTHORIZATION_REQUIRED exemption is genuinely load-bearing (a plain-401 negative control
+    // follows below, and it still logs out).
+    const store = storeWithUser(true);
+    renderWithdraw(store);
     await goToPinStep();
     await enterPin('123456');
     await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
 
-    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
-    expect(screen.getByText('-€100.00')).toBeInTheDocument();
-    expect(screen.getByText('€1,150.50')).toBeInTheDocument(); // 1250.50 - 100
-
-    await userEvent.click(screen.getByRole('button', { name: 'View Transaction' }));
-    expect(await screen.findByText('TX DETAIL PAGE')).toBeInTheDocument();
-  });
-
-  it('a wrong PIN is a 401 INVALID_PIN that STAYS in the dialog (no logout) and clears the boxes', async () => {
-    // AUTHENTICATED store: only then does sessionMiddleware's 401 logout branch run, so the
-    // INVALID_PIN exemption is genuinely load-bearing (a plain-401 negative control follows).
-    const store = storeWithUser(true);
-    renderWithdraw(store);
-    await goToPinStep();
-    await enterPin('000000');
-    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
-
-    expect(await screen.findByText('Invalid PIN. Please try again.')).toBeInTheDocument();
-    // Still on the PIN step — never torn down, never a session reset (D3 exemption).
+    // The problem's detail, through the dialog's fallback branch — not a crash, not a blank.
+    expect(await screen.findByText(/has not been authorised/i)).toBeInTheDocument();
+    // Still on the PIN step — never torn down, never a session reset.
     expect(screen.getByText('Verify Withdrawal')).toBeInTheDocument();
     expect(store.getState().auth.status).toBe('authenticated');
-    // Boxes cleared for the retry.
-    expect(screen.getByLabelText('Digit 1 of 6')).toHaveValue('');
   });
 
   it('negative control: a NON-INVALID_PIN 401 while authenticated DOES expire the session', async () => {

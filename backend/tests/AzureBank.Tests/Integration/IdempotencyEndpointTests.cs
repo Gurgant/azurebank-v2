@@ -334,13 +334,13 @@ public class IdempotencyEndpointTests : IntegrationTestBase
 
         // Same key, different logical endpoint -> independent record (keys
         // are per-operation, documented in ADR-0009)
+        var withdrawAuth = await AuthoriseWithdrawalAsync(accountId, 50m);
         var withdraw = await PostMonetaryAsync("/api/transactions/withdraw", new WithdrawRequest
         {
             AccountId = accountId,
             Amount = 50m,
-            Pin = "123456",
             Description = "test"
-        }, key);
+        }, key, withdrawAuth);
 
         withdraw.StatusCode.Should().Be(HttpStatusCode.Created);
         (await GetBalanceAsync(accountId)).Should().Be(550m); // 500 + 100 - 50
@@ -361,18 +361,27 @@ public class IdempotencyEndpointTests : IntegrationTestBase
         {
             AccountId = accountId,
             Amount = 100m,
-            Pin = "123456",
             Description = "retry me"
         };
 
-        // Balance is 0 -> 422 INSUFFICIENT_FUNDS. Nothing committed, so the
-        // claim must be released and the key stays usable.
+        /*
+          Balance is 0 -> 422 INSUFFICIENT_FUNDS. Nothing committed, so the claim must be released
+          and the key stays usable.
+
+          NO AUTHORISATION IS MINTED, and that is now part of what this test says. Since ADR-0056
+          the funds guard runs AHEAD of the authorisation check, so an unaffordable withdrawal is
+          refused 422 without one -- and the key must survive that refusal exactly as before.
+        */
         var failed = await PostMonetaryAsync("/api/transactions/withdraw", body, key);
         failed.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
 
         await DepositAsync(token, accountId, 500m);
 
-        var retry = await PostMonetaryAsync("/api/transactions/withdraw", body, key);
+        // The retry CAN now afford it, so it reaches the authorisation check and needs one. Same
+        // key, same body: the authorisation rides the header and is deliberately outside the
+        // fingerprint (ADR-0009), which is exactly what lets this retry reuse the key.
+        var retryAuth = await AuthoriseWithdrawalAsync(accountId, 100m);
+        var retry = await PostMonetaryAsync("/api/transactions/withdraw", body, key, retryAuth);
         retry.StatusCode.Should().Be(HttpStatusCode.Created,
             "an error response must not burn the idempotency key");
         retry.Headers.Contains(IdempotencyConstants.ReplayedHeaderName).Should().BeFalse();

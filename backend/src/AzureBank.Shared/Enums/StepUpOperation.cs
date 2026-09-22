@@ -21,5 +21,14 @@ public enum StepUpOperation
     /// subject to bind — the account — where a reveal (a GET) has none, which is why the reveal
     /// stays on the BFF's session model and this does not.
     /// </summary>
-    AccountDeletion = 2
+    AccountDeletion = 2,
+
+    /// <summary>
+    /// POST /api/transactions/withdraw — cash out of one of the caller's own accounts; bound to
+    /// the account and the amount, with no counterparty (ADR-0056). The first operation on the
+    /// rail whose binding names a sum but no second party: a withdrawal has no payee to rename or
+    /// resolve, so <c>ToAccountId</c> and <c>RecipientUserId</c> are both null and the amount is
+    /// the only thing besides the account that a re-presentation could try to change.
+    /// </summary>
+    Withdrawal = 3
 }

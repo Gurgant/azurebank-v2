@@ -174,6 +174,45 @@ function rejectBadAmount(amount: unknown): ReturnType<typeof modelStateProblem> 
 }
 
 /**
+ * The SCALE rule. `[MoneyRange]` checks the range and not the decimals, and every money validator
+ * on the API adds `.ValidMoneyScale()` -- deposit, withdraw, both transfers and all three mints.
+ * The note above has recorded this since #113 and nothing enforced it, because closing it on one
+ * endpoint would have left that endpoint stricter than its siblings. This closes it on all of
+ * them, which is the only shape in which the mock's mints and its movements still agree.
+ *
+ * MEASURED 2026-09-22 against the REAL pipeline (`CustomWebApplicationFactory`, which is
+ * `Program.cs` itself), on `/api/transactions/deposit` and `/api/transactions/withdraw/
+ * authorizations` -- identical but for `instance`:
+ *
+ *   amount 10.001 -> 400 {"type":"https://httpstatuses.com/400","title":"Validation Failed",
+ *                         "detail":"One or more validation errors occurred.","instance":"<route>",
+ *                         "errors":{"amount":["Amount cannot have more than 2 decimal places."]}}
+ *   amount 0.001  -> NOT that one. It breaks BOTH rules and the RANGE envelope wins:
+ *                    {"title":"One or more validation errors occurred.","errors":
+ *                     {"Amount":["Amount must be between 0.01 EUR and 100000.00 EUR"]}}
+ *
+ * THE ORDER IS THE MEASUREMENT, NOT A PREFERENCE. DataAnnotations bind-validate before the action
+ * runs, so a value breaking both never reaches FluentValidation and comes back PascalCase in the
+ * other envelope. Checking scale first would answer the wrong shape for 0.001 -- which is why this
+ * sits AFTER the annotation stage at every call site and is never merged into that dictionary.
+ * Same field, two casings, decided by which layer rejected it.
+ *
+ * Counting decimals off `String(amount)` is safe HERE and only here: the annotation stage has
+ * already bounded the value to [0.01, 100000], and JavaScript reaches for exponential notation
+ * only below 1e-6 and above 1e21. `amount * 100` would NOT be safe -- 10.07 * 100 is
+ * 1007.0000000000001, and rounding that back is how a scale check quietly starts passing 10.001.
+ */
+function rejectBadAmountScale(amount: unknown, request: Request) {
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return null;
+  if ((String(amount).split('.')[1] ?? '').length <= 2) return null;
+  return problem({
+    instance: pathOf(request),
+    status: 400,
+    errors: { amount: ['Amount cannot have more than 2 decimal places.'] },
+  });
+}
+
+/**
  * A query-string date that will not parse, rejected the way MODEL BINDING rejects it.
  *
  * `Date.parse('garbage')` is `NaN`, and NaN poisons every comparison silently: `NaN > NaN` is
@@ -1683,6 +1722,11 @@ const deposit = api.post('/api/transactions/deposit', async ({ request, response
   if (badAmount) {
     return response.untyped(badAmount);
   }
+  // AFTER the annotation stage and never merged into it -- see `rejectBadAmountScale`.
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) {
+    return response.untyped(badScale);
+  }
   const amount = body.amount as number;
 
   // Stateful side effects run ONCE, here on the fresh (non-replayed) path — the replay
@@ -1821,9 +1865,42 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     pin?: string;
     description?: string;
   };
-  const badAmount = rejectBadAmount(body.amount);
-  if (badAmount) {
-    return response.untyped(badAmount);
+  /*
+    ONE MODEL-STATE PASS, HEADER AND BODY TOGETHER — and the header is read FIRST, above ownership
+    and funds. MVC binds `[FromHeader] Guid?` and the DTO's annotations in the SAME pass, before the
+    action runs at all: a header that is present but not a UUID is a model-state 400 keyed on the
+    header name and the action never executes, so it can answer neither 404 nor 422. ADR-0042 and
+    ADR-0049 record that on their own endpoints. The first version of this handler read the header
+    after the funds check, so a malformed header on an unknown account answered 404 here and 400 on
+    the API; the second read it after the amount, so a request wrong in BOTH ways came back with the
+    Amount key alone. Raised in review on #198 and MEASURED on the real pipeline
+    (`CustomWebApplicationFactory`, which is `Program.cs`), POST /api/transactions/withdraw:
+
+      amount 0.001  + header 'not-a-guid' -> 400 {"Amount":["Amount must be between 0.01 EUR and
+                                                 100000.00 EUR"],"Step-Up-Authorization":["The
+                                                 value 'not-a-guid' is not valid."]}   BOTH keys
+      amount 10.001 + header 'not-a-guid' -> 400 {"Step-Up-Authorization":[…]}  THE HEADER ALONE
+      amount 10.001, no header            -> 400 "Validation Failed" {"amount":[…]}
+
+    THE SECOND LINE IS WHY THE SCALE CHECK STAYS BELOW THIS AGGREGATE rather than joining it. Scale
+    is FluentValidation, INSIDE the action, and a malformed header stops the action running at all
+    — so folding it in here would invent an `Amount` key on a response the API sends without one.
+
+    ONLY THE PARSE IS UP HERE. The ABSENT-header refusal stays below the funds check, because that
+    one IS the action's own: an absent or empty header binds to null, reaches the service, and is
+    answered 401 AUTHORIZATION_REQUIRED after the balance has been consulted (ADR-0056 D4).
+  */
+  const stepUp = readStepUpHeader(request);
+  const bindingErrors: Record<string, string[]> = {};
+  const badAmount = amountErrors(body.amount);
+  if (badAmount.length > 0) bindingErrors.Amount = badAmount;
+  if (stepUp.errors.length > 0) bindingErrors[STEP_UP_HEADER] = stepUp.errors;
+  if (Object.keys(bindingErrors).length > 0) {
+    return response.untyped(modelStateProblem(bindingErrors));
+  }
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) {
+    return response.untyped(badScale);
   }
   const amount = body.amount as number;
 
@@ -1839,35 +1916,38 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     reaches the PIN.
   */
   /*
-    ONE PIN PATH IN THIS FILE, not two.
+    THE PIN LADDER LEFT WITH THE PIN (ADR-0056), AND THE ORDER BELOW IS MEASURED, NOT REASONED.
 
-    Withdraw carried its own inline copy of the enrolment/lock/compare ladder, written before the
-    transfers needed one. When ADR-0041 added the model-binding gate + `checkPinInBand` for transfers,
-    wiring them into the transfer routes only would have left this endpoint with a DIFFERENT PIN
-    behaviour in the same file — and the shape hole the gate exists to close (a malformed pin
-    answering 401 and burning a lockout attempt) would have survived here. `WithdrawRequest` carries
-    the same `[Required] [Pin] required string Pin`, so it gets the same treatment.
+    Taken against the running API on 2026-09-21 (evidence-withdraw-after-2026-09-21.txt in the
+    working-state repo), one real request per row:
+
+      withdraw 5000 (over balance), NO authorisation   -> 422 INSUFFICIENT_FUNDS
+      withdraw 10,  NO authorisation                   -> 401 AUTHORIZATION_REQUIRED
+      withdraw 10,  EMPTY header                       -> 401 AUTHORIZATION_REQUIRED
+      withdraw 10,  header "not-a-guid"                -> 400 model-state "Step-Up-Authorization"
+      withdraw 20,  authorisation minted for 10        -> 401 AUTHORIZATION_INVALID
+      withdraw 10,  authorisation already spent        -> 401 AUTHORIZATION_INVALID
+      withdraw 10,  valid authorisation                -> 201
+      withdraw on a foreign account id                 -> 404 ACCOUNT_NOT_FOUND
+
+    So: ownership, THEN funds, THEN the header. The funds rung sits ABOVE the authorisation on
+    purpose (ADR-0056 D4) -- an unaffordable withdrawal is answered without the caller proving
+    anything, which is what stops a mistyped PIN on a withdrawal nobody could afford from spending
+    one of three attempts and locking the card.
+
+    A LEFTOVER `pin` IN THE BODY IS IGNORED, NOT REFUSED. Measured the same day against a fresh
+    mint: a withdrawal carrying a valid header AND a stale pin field answered 201. The binder
+    tolerates the extra property, so the mock must not reintroduce a gate the API does not have --
+    that is exactly the drift this file's own "the mock follows the backend" rule forbids.
   */
-  const pinBind = transferPinBindFailure(body, 'AzureBank.Shared.DTOs.Transaction.WithdrawRequest');
-  if (pinBind) return response.untyped(pinBind);
-  const pinAnnotations = pinAnnotationErrors((body.pin ?? null) as string | null);
-  if (pinAnnotations.length > 0) {
-    return response.untyped(modelStateProblem({ Pin: pinAnnotations }));
-  }
-
+  // `stepUp` was parsed with the body's annotations, in one model-state pass; see the note above.
   const account = mockState.accounts.find((a) => a.id === body.accountId);
   if (!account) {
     return response.untyped(notFound('Account', body.accountId, request));
   }
 
-  const pinRefusal = checkPinInBand(
-    body.pin,
-    request,
-    'PIN must be set before making withdrawals.',
-  );
-  if (pinRefusal) return response.untyped(pinRefusal);
-
-  // INSUFFICIENT_FUNDS — last, after the PIN passes, like the backend orders it.
+  // INSUFFICIENT_FUNDS — FIRST among the refusals the ACTION makes, and this is the user-visible
+  // half of the change rather than a tidy-up.
   const available = account.balance;
   if (amount > available) {
     return response.untyped(
@@ -1885,7 +1965,25 @@ const withdraw = api.post('/api/transactions/withdraw', async ({ request, respon
     );
   }
 
-  // Success — debit, record, store (once), reply.
+  // Absent or empty: the action's own refusal, after the funds rung. The malformed case was
+  // already answered above, where the binder would have answered it.
+  if (stepUp.id === null) {
+    return response.untyped(
+      authorizationRequired(request, 'This withdrawal has not been authorised.'),
+    );
+  }
+
+  const authorization = validateAuthorization(stepUp.id, request, {
+    operation: 'Withdrawal',
+    fromAccountId: account.id,
+    amount,
+  });
+  if (authorization.refusal) return response.untyped(authorization.refusal);
+
+  // Success — spend, debit, record, store (once), reply. The spend goes first so a mock run can
+  // never leave a consumed withdrawal with a still-Pending authorisation, which is the disagreement
+  // the API's transaction exists to prevent.
+  spendAuthorization(authorization.held);
   const newBalance = available - amount;
   account.balance = newBalance;
   const index = mockState.transactions.length;
@@ -2540,10 +2638,14 @@ function spendAuthorization(held: StoredStepUpAuthorization | null): void {
  *   amount 10.00001 -> 400 "Validation Failed" {"amount":["Amount cannot have more than 2 decimal
  *                     places."]}                                                     (validator)
  *
- * Only the first is modelled here, and deliberately: neither transfer handler models the SCALE
+ * ~~Only the first is modelled here, and deliberately: neither transfer handler models the SCALE
  * rule either, so adding it to the mint alone would make the mock's mint stricter than its own
- * transfer — the opposite of the property ADR-0042 needs. It is a real, pre-existing gap rather
- * than a decision, and it is written down instead of quietly closed in a PR about something else.
+ * transfer — the opposite of the property ADR-0042 needs.~~ *(Closed 2026-09-22 on #198, where the
+ * review raised it again on the new withdrawal mint. The objection above was to closing it on ONE
+ * endpoint and it still stands, so `rejectBadAmountScale` is wired into all seven money endpoints
+ * at once — deposit, withdraw, both transfers, all three mints — and no mint is stricter than the
+ * movement it authorises. Both envelopes were re-measured on the real pipeline first; the
+ * transcript is on that helper.)*
  */
 function mintBindingErrors(
   body: { amount?: number; pin?: unknown; fromAccountId?: string; toAccountId?: string },
@@ -2622,6 +2724,8 @@ const authoriseTransfer = api.post(
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
+    const badScale = rejectBadAmountScale(body.amount, request);
+    if (badScale) return response.untyped(badScale);
 
     // OWNERSHIP FIRST — `AuthoriseTransferAsync` opens with GetAccountWithOwnershipCheckAsync.
     if (!mockState.accounts.some((a) => a.id === body.fromAccountId)) {
@@ -2729,6 +2833,117 @@ const authoriseTransfer = api.post(
 );
 
 /**
+ * POST /api/transactions/withdraw/authorizations — mint one for a WITHDRAWAL (ADR-0056).
+ *
+ * Refusal order mirrors `TransactionService.AuthoriseWithdrawalAsync`: binding, then OWNERSHIP of
+ * the account, then the PIN. Measured on the running API 2026-09-21
+ * (evidence-withdraw-after-2026-09-21.txt):
+ *
+ *   mint 10,   correct PIN                    -> 201 "Withdrawal authorised"
+ *   mint 5000  (OVER the balance), correct PIN -> 201  <- the mint does NOT check funds
+ *   mint 10,   WRONG PIN                      -> 401 INVALID_PIN
+ *   mint on a foreign account id, correct PIN -> 404 ACCOUNT_NOT_FOUND
+ *
+ * THE SECOND ROW IS THE ONE WORTH READING TWICE. A mint is an authentication event, not a decision
+ * about whether the money can move (ADR-0050 D4): balance is a racing value the withdrawal re-reads
+ * inside its own transaction, refusing here would teach a caller the balance at no cost, and it
+ * would add a second place for the two checks to disagree. A funds rung added to this handler would
+ * make the mock answer 422 where the API answers 201.
+ *
+ * THE FOURTH ROW IS WHY OWNERSHIP PRECEDES THE PIN: probing someone else's account must cost no PIN
+ * attempt, or this endpoint becomes a cheaper oracle than the withdrawal it authorises. The same
+ * precedent this file already records at the external transfer's ownership 404.
+ *
+ * `mintBindingErrors` is NOT reused, deliberately: it is keyed on `fromAccountId`, and this DTO's
+ * field is `accountId`. Reusing it would validate a member this endpoint does not have and skip the
+ * one it does — the exact shape of the drift the helper was written to prevent.
+ */
+const authoriseWithdrawal = api.post(
+  '/api/transactions/withdraw/authorizations',
+  async ({ request, response }) => {
+    /*
+      READ THE BODY THE WAY THE CLOSURE MINT DOES, and for the reason it records. `request.json()`
+      REJECTS on malformed JSON -- an MSW error rather than a response -- and a JSON `null` reaches
+      `bindAccountIds`, which reads a property off it and throws. The closure mint hit exactly this
+      on #156 and fixed it there; a handler added afterwards repeating the call is the drift its
+      note exists to prevent, and CodeRabbit raised it again here on #198.
+
+      `readJsonBody` folds every unreadable shape to null and `unreadableBodyProblem` answers the
+      framework's own envelope -- the `""` key for a body it treats as absent, the `$` key for
+      anything it could not parse or convert. None of them reaches ownership or the PIN, so none
+      costs an attempt.
+    */
+    const parsed = await readJsonBody(request);
+    if (!parsed) {
+      return response.untyped(unreadableBodyProblem(await request.clone().text()));
+    }
+    const body = parsed.body as {
+      accountId?: string;
+      amount?: number;
+      pin?: string;
+    };
+
+    const idBind = bindAccountIds(body as Record<string, unknown>, ['accountId']);
+    if (idBind) return response.untyped(idBind);
+    const pinBind = mintPinBindFailure(
+      body,
+      'AzureBank.Shared.DTOs.Transaction.WithdrawalAuthorizationRequest',
+    );
+    if (pinBind) return response.untyped(pinBind);
+
+    const errors: Record<string, string[]> = {};
+    const badAccount = accountIdErrors(body.accountId);
+    if (badAccount.length > 0) errors.AccountId = badAccount;
+    const badAmount = amountErrors(body.amount);
+    if (badAmount.length > 0) errors.Amount = badAmount;
+    const badPin = pinAnnotationErrors((body.pin ?? null) as string | null);
+    if (badPin.length > 0) errors.Pin = badPin;
+    if (Object.keys(errors).length > 0) {
+      return response.untyped(modelStateProblem(errors));
+    }
+    const badScale = rejectBadAmountScale(body.amount, request);
+    if (badScale) return response.untyped(badScale);
+
+    // OWNERSHIP FIRST, and no funds check at all — see the note above.
+    const account = mockState.accounts.find((a) => a.id === body.accountId);
+    if (!account) {
+      return response.untyped(notFound('Account', body.accountId ?? '', request));
+    }
+
+    /*
+      THE SHARED SENTENCE, not a withdrawal-flavoured one. Every mint proves its PIN through the
+      single `StepUpAuthorizationService.MintAsync`, which throws one string for all four.
+      'PIN must be set before making withdrawals.' was the OLD in-body check's, and commit 388c342
+      -- the first of this very PR -- deleted it from the backend; this handler then copied it into
+      the mock. It exists nowhere in `backend/src` now.
+
+      MEASURED 2026-09-22 on the real pipeline (`CustomWebApplicationFactory`, i.e. `Program.cs`),
+      a registered user with no PIN enrolled:
+
+        POST /api/transactions/withdraw/authorizations
+          -> 422 {"title":"Unprocessable Entity","detail":"PIN must be set before authorising this
+                  operation.","instance":"/api/transactions/withdraw/authorizations",
+                  "errorCode":"PIN_REQUIRED"}
+    */
+    const pinRefusal = checkPinInBand(
+      body.pin,
+      request,
+      'PIN must be set before authorising this operation.',
+    );
+    if (pinRefusal) return response.untyped(pinRefusal);
+
+    const minted = mintAuthorization({
+      operation: 'Withdrawal',
+      fromAccountId: account.id,
+      amount: body.amount as number,
+    });
+
+    // MEASURED: 201 {"data":{authorizationId, expiresAt},"message":"Withdrawal authorised"}
+    return response(201).json({ data: minted, message: 'Withdrawal authorised' });
+  },
+);
+
+/**
  * POST /api/transfers/internal/authorizations — the same, for a move between own accounts.
  *
  * MEASURED: from == to with a CORRECT pin is refused by the validator, not by the service —
@@ -2767,6 +2982,8 @@ const authoriseInternalTransfer = api.post(
     if (Object.keys(bindingErrors).length > 0) {
       return response.untyped(modelStateProblem(bindingErrors));
     }
+    const badScale = rejectBadAmountScale(body.amount, request);
+    if (badScale) return response.untyped(badScale);
 
     // FluentValidation, so it precedes the service and both ownership checks below.
     if (body.fromAccountId === body.toAccountId) {
@@ -3034,6 +3251,8 @@ const transfer = api.post('/api/transfers', async ({ request, response }) => {
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) return response.untyped(badScale);
 
   const account = mockState.accounts.find((a) => a.id === body.fromAccountId);
   if (!account) {
@@ -3340,6 +3559,8 @@ const transferInternal = api.post('/api/transfers/internal', async ({ request, r
   if (Object.keys(bindingErrors).length > 0) {
     return response.untyped(modelStateProblem(bindingErrors));
   }
+  const badScale = rejectBadAmountScale(body.amount, request);
+  if (badScale) return response.untyped(badScale);
   const amount = body.amount as number;
 
   // The truthiness test is now redundant — `accountIdErrors` already refused an absent or all-zero
@@ -4210,6 +4431,7 @@ export const handlers = [
   getTransaction,
   deposit,
   withdraw,
+  authoriseWithdrawal,
   lookupRecipient,
   renameAzureTag,
   authoriseTransfer,

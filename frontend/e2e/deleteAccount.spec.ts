@@ -140,12 +140,25 @@ test.describe('closing an account (ADR-0049)', () => {
       await dialog.getByRole('button', { name: 'Cancel' }).click();
       await expect(dialog).toBeHidden();
     } finally {
-      // Drain with the PIN (in the body, as the API takes it), then mint + DELETE. The drain MUST
-      // answer 201 before the mint is attempted: a funded leftover is exactly the account the
-      // mint refuses (422), and it would sit on the seeded admin until someone drained it by hand.
+      // Drain, then mint + DELETE. The drain MUST answer 201 before the closure mint is attempted:
+      // a funded leftover is exactly the account that mint refuses (422), and it would sit on the
+      // seeded admin until someone drained it by hand.
+      //
+      // THE DRAIN ITSELF NOW MINTS (ADR-0056) — this said "with the PIN (in the body, as the API
+      // takes it)", which stopped being true when the withdrawal joined the rail. A bare POST is
+      // refused 401 and `page.request` resolves on it, so the leftover this `finally` exists to
+      // prevent would have come back silently, one per run.
+      const withdrawalMint = await page.request.post('/api/transactions/withdraw/authorizations', {
+        data: { accountId: id, amount: 1, pin: USER.pin },
+      });
       const drain = await page.request.post('/api/transactions/withdraw', {
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-        data: { accountId: id, amount: 1, pin: USER.pin, description: 'e2e: drain the probe' },
+        headers: {
+          'Idempotency-Key': crypto.randomUUID(),
+          ...(withdrawalMint.status() === 201
+            ? { 'Step-Up-Authorization': (await withdrawalMint.json()).data.authorizationId }
+            : {}),
+        },
+        data: { accountId: id, amount: 1, description: 'e2e: drain the probe' },
       });
       // `soft`, so a failed drain is recorded WITHOUT replacing the primary failure; closeViaApi
       // then throws on the 422 the funded leftover earns, with the status in the message.

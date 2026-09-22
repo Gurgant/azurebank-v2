@@ -189,23 +189,15 @@ public class TransactionEndpointTests : IntegrationTestBase
     #region Withdraw Tests
 
     [Fact]
-    public async Task Withdraw_WithValidDataAndPin_ReturnsCreated()
+    public async Task Withdraw_WithValidDataAndAuthorisation_ReturnsCreated()
     {
         // Arrange
         var (token, _, accountId) = await RegisterTestUserAsync();
         await SetPinAsync(token, "123456");
         await DepositAsync(token, accountId, 1000m);
 
-        var request = new WithdrawRequest
-        {
-            AccountId = accountId,
-            Amount = 200.00m,
-            Pin = "123456",
-            Description = "Test withdrawal"
-        };
-
-        // Act
-        var response = await PostMonetaryAsync("/api/transactions/withdraw", request);
+        // Act -- the two-call shape every withdrawal has since ADR-0056: mint, then present.
+        var response = await WithdrawAsync(accountId, 200.00m, "Test withdrawal");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -217,72 +209,146 @@ public class TransactionEndpointTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task Withdraw_WithIncorrectPin_ReturnsUnauthorized()
+    public async Task Withdraw_WithoutAnAuthorisation_ReturnsUnauthorized()
     {
         // Arrange
         var (token, _, accountId) = await RegisterTestUserAsync();
         await SetPinAsync(token, "123456");
         await DepositAsync(token, accountId, 1000m);
 
-        var request = new WithdrawRequest
-        {
-            AccountId = accountId,
-            Amount = 200.00m,
-            Pin = "654321", // Wrong PIN
-            Description = "Test withdrawal"
-        };
+        // Act -- no Step-Up-Authorization header at all.
+        var response = await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new WithdrawRequest { AccountId = accountId, Amount = 200.00m, Description = "unauthorised" });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain(
+            ErrorCodes.AuthorizationRequired,
+            "an absent header is AUTHORIZATION_REQUIRED, not a model-state 400");
+
+        // And no money moved.
+        var after = await Client.GetFromJsonAsync<ApiResponse<BalanceResponse>>(
+            $"/api/accounts/{accountId}/balance", JsonOptions);
+        after!.Data!.Balance.Should().Be(1000m, "a refused withdrawal moves nothing");
+    }
+
+    [Fact]
+    public async Task Withdraw_WithAnAuthorisationMintedForADifferentAmount_ReturnsUnauthorized()
+    {
+        // Arrange
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token, "123456");
+        await DepositAsync(token, accountId, 1000m);
+
+        // Minted for 100, spent against 200: the amount is inside the binding hash.
+        var authorizationId = await AuthoriseWithdrawalAsync(accountId, 100.00m);
 
         // Act
-        var response = await PostMonetaryAsync("/api/transactions/withdraw", request);
+        var response = await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new WithdrawRequest { AccountId = accountId, Amount = 200.00m },
+            idempotencyKey: null,
+            stepUpAuthorizationId: authorizationId);
+
+        /*
+          Assert -- THIS IS THE ATTACK THE BINDING EXISTS TO REFUSE. Without the amount in the
+          hash, one cheap authorisation would pay for an arbitrarily large withdrawal. A
+          wrong-amount reference is turned away exactly as a forged one is, and the balance is
+          untouched.
+        */
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var after = await Client.GetFromJsonAsync<ApiResponse<BalanceResponse>>(
+            $"/api/accounts/{accountId}/balance", JsonOptions);
+        after!.Data!.Balance.Should().Be(1000m, "a wrong-amount authorisation moves nothing");
+    }
+
+    [Fact]
+    public async Task AuthoriseWithdrawal_WithIncorrectPin_ReturnsUnauthorized()
+    {
+        // Arrange
+        var (token, _, accountId) = await RegisterTestUserAsync();
+        await SetPinAsync(token, "123456");
+        await DepositAsync(token, accountId, 1000m);
+
+        // Act -- the wrong PIN is refused at the MINT now; the withdrawal never sees a PIN.
+        var response = await Client.PostAsJsonAsync(
+            "/api/transactions/withdraw/authorizations",
+            new WithdrawalAuthorizationRequest
+            {
+                AccountId = accountId,
+                Amount = 200.00m,
+                Pin = "654321"
+            },
+            JsonOptions);
 
         // Assert - wrong PIN is a step-up authentication failure (401 per contract)
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
-    public async Task Withdraw_InsufficientFunds_ReturnsUnprocessableEntity()
+    public async Task Withdraw_InsufficientFunds_ReturnsUnprocessableEntity_BeforeAnyAuthorisation()
     {
         // Arrange
         var (token, _, accountId) = await RegisterTestUserAsync();
         await SetPinAsync(token, "123456");
         // No deposit - balance is 0
 
-        var request = new WithdrawRequest
-        {
-            AccountId = accountId,
-            Amount = 100.00m,
-            Pin = "123456",
-            Description = "Overdraft attempt"
-        };
+        /*
+          Act -- DELIBERATELY WITHOUT A HEADER, and that is the assertion rather than a shortcut.
+          ADR-0056 D4 puts the funds guard AHEAD of the authorisation check, so a withdrawal nobody
+          could afford is refused 422 without the caller ever proving a PIN. Before the rail the
+          order was inverted, and a customer who mistyped their PIN on an unaffordable withdrawal
+          spent one of three attempts on it -- three of which locked the PIN (ADR-0010).
 
-        // Act
-        var response = await PostMonetaryAsync("/api/transactions/withdraw", request);
+          If that ordering is ever reversed, this test answers 401 instead of 422 and says so.
+        */
+        var response = await PostMonetaryAsync(
+            "/api/transactions/withdraw",
+            new WithdrawRequest { AccountId = accountId, Amount = 100.00m, Description = "Overdraft attempt" });
 
         // Assert - business-rule violations are 422 per contract (BusinessRuleException)
         response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
 
+    /// <summary>
+    /// A raw mint, without the 201 assertion <c>AuthoriseWithdrawalAsync</c> carries: these two
+    /// tests are about the mint REFUSING, so asserting success inside the helper would fail them
+    /// before they could observe what they exist to observe.
+    /// </summary>
+    private Task<HttpResponseMessage> MintWithdrawalAsync(Guid accountId, decimal amount, string pin) =>
+        Client.PostAsJsonAsync(
+            "/api/transactions/withdraw/authorizations",
+            new WithdrawalAuthorizationRequest { AccountId = accountId, Amount = amount, Pin = pin },
+            JsonOptions);
+
     [Fact]
-    public async Task Withdraw_WhenPinLocked_Returns429_AndMovesNoMoney()
+    public async Task AuthoriseWithdrawal_WhenPinLocked_Returns429_AndMovesNoMoney()
     {
         var (token, _, accountId) = await RegisterTestUserAsync();
         await SetPinAsync(token, "123456");
         await DepositAsync(token, accountId, 1000m);
 
-        var wrong = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "654321", Description = "x" };
-
-        // Wrong PIN is 401 up to the threshold; the crossing attempt locks the PIN (429).
+        /*
+          THE LOCK IS EARNED AT THE MINT NOW, not at the withdrawal (ADR-0056). The behaviour
+          ADR-0010 specifies is unchanged -- wrong PIN is 401 up to the threshold, the crossing
+          attempt is 429 with Retry-After -- but the endpoint that can spend an attempt moved, and
+          this test moved with it rather than being deleted. What it still proves is the part that
+          matters: no money moves, and a CORRECT PIN is refused too once the lock is on.
+        */
         for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
         {
-            (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+            (await MintWithdrawalAsync(accountId, 200m, "654321")).StatusCode
                 .Should().Be(HttpStatusCode.Unauthorized);
         }
-        (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+        (await MintWithdrawalAsync(accountId, 200m, "654321")).StatusCode
             .Should().Be(HttpStatusCode.TooManyRequests);
 
-        // A CORRECT-PIN withdrawal is now blocked (429) - before any money moves.
-        var correct = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "123456", Description = "x" };
-        var blocked = await PostMonetaryAsync("/api/transactions/withdraw", correct);
+        // A CORRECT PIN is now blocked (429) - and no authorisation exists to withdraw with.
+        var blocked = await MintWithdrawalAsync(accountId, 200m, "123456");
         blocked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
         blocked.Headers.RetryAfter.Should().NotBeNull("a lockout must advertise Retry-After");
         blocked.Headers.RetryAfter!.Delta.Should().NotBeNull();
@@ -307,7 +373,7 @@ public class TransactionEndpointTests : IntegrationTestBase
     /// fifteen minutes out, so no browser test can reach the far side of the window. That property
     /// belongs here, where the lock can be aged directly.
     ///
-    /// The lock is NOT fabricated: it is earned with real wrong PINs through the real endpoint, and
+    /// The lock is NOT fabricated: it is earned with real wrong PINs through the real mint, and
     /// only its `PinLockoutEnd` is then moved into the past — the same shape as
     /// `PinServiceTests.VerifyPinAsync_ExpiredLock_AllowsFreshAttempt`, one layer up.
     /// </summary>
@@ -318,14 +384,13 @@ public class TransactionEndpointTests : IntegrationTestBase
         await SetPinAsync(token, "123456");
         await DepositAsync(token, accountId, 1000m);
 
-        // Earn a genuine lock through the endpoint, exactly as a user would.
-        var wrong = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "654321", Description = "x" };
+        // Earn a genuine lock through the mint, exactly as a user would.
         for (var i = 0; i < ValidationRules.MaxPinAttempts - 1; i++)
         {
-            (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+            (await MintWithdrawalAsync(accountId, 200m, "654321")).StatusCode
                 .Should().Be(HttpStatusCode.Unauthorized);
         }
-        (await PostMonetaryAsync("/api/transactions/withdraw", wrong)).StatusCode
+        (await MintWithdrawalAsync(accountId, 200m, "654321")).StatusCode
             .Should().Be(HttpStatusCode.TooManyRequests);
 
         // Age the lock past its end. This is the ONLY thing simulated: the lock itself, the
@@ -335,14 +400,14 @@ public class TransactionEndpointTests : IntegrationTestBase
             var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
             var locked = await db.Users.FindAsync(userId);
             locked.Should().NotBeNull("the lock must exist before it can be aged");
-            locked!.PinLockoutEnd.Should().NotBeNull("the endpoint must have written a lockout end");
+            locked!.PinLockoutEnd.Should().NotBeNull("the mint must have written a lockout end");
             locked.PinLockoutEnd = DateTimeOffset.UtcNow.AddSeconds(-1);
             await db.SaveChangesAsync();
         }
 
-        // The withdrawal that was refused now goes through.
-        var correct = new WithdrawRequest { AccountId = accountId, Amount = 200m, Pin = "123456", Description = "after lockout" };
-        var response = await PostMonetaryAsync("/api/transactions/withdraw", correct);
+        // The withdrawal that was refused now goes through: the mint accepts the PIN again, and
+        // the authorisation it returns spends normally.
+        var response = await WithdrawAsync(accountId, 200m, "after lockout");
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var body = await response.Content.ReadFromJsonAsync<ApiResponse<WithdrawResponse>>(JsonOptions);
@@ -485,14 +550,7 @@ public class TransactionEndpointTests : IntegrationTestBase
         await DepositAsync(token, accountId, 1000m);
         await DepositAsync(token, accountId, 500m);
 
-        var withdraw = new WithdrawRequest
-        {
-            AccountId = accountId,
-            Amount = 200m,
-            Pin = "123456",
-            Description = "Summary test withdrawal"
-        };
-        (await PostMonetaryAsync("/api/transactions/withdraw", withdraw))
+        (await WithdrawAsync(accountId, 200m, "Summary test withdrawal"))
             .StatusCode.Should().Be(HttpStatusCode.Created);
 
         var fromDate = Uri.EscapeDataString(DateTime.UtcNow.AddDays(-1).ToString("O"));

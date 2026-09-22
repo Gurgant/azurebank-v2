@@ -4,6 +4,7 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Common;
 using AzureBank.Shared.DTOs.Transaction;
+using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.Entities;
 using AzureBank.Shared.Enums;
 using AzureBank.Shared.Exceptions;
@@ -19,7 +20,7 @@ public class TransactionService : ITransactionService
 {
     private readonly AzureBankDbContext _context;
     private readonly IAccountAccessService _accountAccess;
-    private readonly IPinVerifier _pinVerifier;
+    private readonly IStepUpAuthorizationService _stepUp;
     private readonly TransactionMapper _mapper;
     private readonly ILogger<TransactionService> _logger;
     private readonly IAuditService _audit;
@@ -27,7 +28,7 @@ public class TransactionService : ITransactionService
     public TransactionService(
         AzureBankDbContext context,
         IAccountAccessService accountAccess,
-        IPinVerifier pinVerifier,
+        IStepUpAuthorizationService stepUp,
         TransactionMapper mapper,
         ILogger<TransactionService> logger,
         IAuditService audit)
@@ -35,7 +36,7 @@ public class TransactionService : ITransactionService
         _audit = audit;
         _context = context;
         _accountAccess = accountAccess;
-        _pinVerifier = pinVerifier;
+        _stepUp = stepUp;
         _mapper = mapper;
         _logger = logger;
     }
@@ -133,110 +134,241 @@ public class TransactionService : ITransactionService
     }
 
     /// <inheritdoc />
-    public async Task<WithdrawResponse> WithdrawAsync(Guid userId, WithdrawRequest request)
+    public async Task<StepUpAuthorizationResponse> AuthoriseWithdrawalAsync(
+        Guid userId, WithdrawalAuthorizationRequest request)
+    {
+        /*
+          OWNERSHIP FIRST, exactly as the transfer mints and the closure mint do: an unknown or
+          foreign account is a 404/403 BEFORE the PIN is consulted, so probing someone else's
+          account costs no PIN attempt. Getting this order wrong would make this endpoint a
+          cheaper oracle than the withdrawal itself, which is the whole thing the rail prevents.
+        */
+        var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.AccountId, userId);
+
+        /*
+          AND NO FUNDS CHECK HERE, deliberately (ADR-0050 D4, followed by ADR-0056).
+
+          The transfer mints do not lift the balance guard to mint time either, and the reason is
+          that a mint is an AUTHENTICATION event, not a decision about whether the money can move.
+          Balance is a racing value: one checked here would be re-checked at the withdrawal anyway,
+          and refusing at the mint would only teach a caller -- at the cost of nothing -- what the
+          balance is, while adding a second place for the two checks to disagree.
+
+          Consequence, stated because it is a behaviour change and not an oversight: asking to
+          withdraw more than the account holds still mints a 201. The 422 arrives at the withdrawal,
+          where the balance is read inside the transaction that spends it.
+        */
+        var authorization = await _stepUp.MintAsync(
+            userId,
+            StepUpOperation.Withdrawal,
+            StepUpBinding.ForWithdrawal(account.Id, request.Amount),
+            request.Pin);
+
+        return new StepUpAuthorizationResponse
+        {
+            AuthorizationId = authorization.Id,
+            ExpiresAt = authorization.ExpiresAt
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<WithdrawResponse> WithdrawAsync(
+        Guid userId, WithdrawRequest request, Guid? stepUpAuthorizationId)
     {
         var account = await _accountAccess.GetAccountWithOwnershipCheckAsync(request.AccountId, userId);
 
-        // Verify PIN for withdrawal (step-up authentication)
-        var user = await _context.Users.FindAsync(userId);
-        if (user == null || string.IsNullOrEmpty(user.PinHash))
+        /*
+          THE FUNDS GUARD RUNS BEFORE THE AUTHORISATION IS EVEN LOOKED AT, and that ordering is the
+          user-visible half of ADR-0056 (D4).
+
+          Before the rail, the PIN was proved first and the balance second, so a customer who
+          mistyped their PIN on a withdrawal they could never afford spent one of their three
+          attempts on it -- and three of those locked the PIN (ADR-0010). The refusal they deserved
+          was "you do not have that much", and the one they got was "wrong PIN", followed by a lock.
+          Now the affordability answer comes first and costs nothing, and the PIN is only ever
+          consulted at the mint, for a withdrawal that could actually happen.
+
+          NO AUDIT ROW HERE, and it is the decision ADR-0044 already reasoned, kept verbatim through
+          the restructure. Insufficient funds is a routine user outcome whose row-per-attempt is an
+          unbounded write into a never-purged table. The contention angle is sharper still: a wrong
+          PIN is BOUNDED -- three attempts and the PIN locks -- while this is not. A caller can ask
+          to withdraw more than they hold forever, at no cost, and every attempt would take the
+          chain tail lock that every real money movement queues behind. An unaudited routine refusal
+          is a gap; an audited one here is a contention amplifier anybody can drive.
+        */
+        if (account.Balance < request.Amount)
         {
-            throw new BusinessRuleException("PIN must be set before making withdrawals.", ErrorCodes.PinRequired);
+            throw new InsufficientFundsException(account.Balance, request.Amount);
         }
 
         /*
-          RECORD-AND-RETHROW, and the try exists for a refusal that never returns. VerifyPinAsync
-          THROWS PinLockedException rather than returning false when the attempt limit has been
-          reached, so the lockout -- the control standing between a guessed PIN and a balance --
-          cannot be observed by inspecting the return value. Measured: PinService throws at two
-          places and audits at neither, so before this change a tripped lockout left the trail
-          completely silent.
+          RECORDED AT THE CALL SITE, after ownership and after the funds guard, so the refusal names
+          an account the actor owns and an amount they could have withdrawn. On its OWN connection
+          (RecordRefusalAsync, never Record), because this request writes nothing else: there is no
+          transaction for the row to ride, and the throw below is the whole outcome -- a row
+          enlisted in a unit of work would be rolled back by the very refusal it documents.
 
-          RecordRefusalAsync, never Record: every branch here throws, so a row enlisted in the
-          caller's unit of work would be rolled back by the very refusal it documents.
+          An EMPTY Step-Up-Authorization header binds to null exactly like an absent one, so both
+          land here and both get 401 AUTHORIZATION_REQUIRED. A header that is present but not a UUID
+          never reaches this method: MVC model binding refuses it upstream with a 400 keyed on the
+          header name, with no errorCode -- measured on the transfer endpoints (ADR-0042) and on the
+          closure (ADR-0049), and the same binder serves this one.
         */
-        bool pinOk;
-        try
-        {
-            // Verify the PIN with attempt-limiting: throws 429 PIN_LOCKED if the PIN
-            // is locked (before any money moves), otherwise 401 on a wrong PIN.
-            pinOk = await _pinVerifier.VerifyPinAsync(userId, request.Pin);
-        }
-        catch (PinLockedException)
+        if (stepUpAuthorizationId is not { } authorizationId)
         {
             await _audit.RecordRefusalAsync(
                 SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
                 actorUserId: userId, subjectType: "Account", subjectId: account.Id,
-                detail: ErrorCodes.PinLocked);
-            throw;
+                detail: ErrorCodes.AuthorizationRequired);
+            throw new AuthenticationException(
+                "This withdrawal has not been authorised.", ErrorCodes.AuthorizationRequired);
         }
 
-        if (!pinOk)
-        {
-            await _audit.RecordRefusalAsync(
-                SecurityEvents.MoneyWithdrawalRefused, AuditOutcome.Refused,
-                actorUserId: userId, subjectType: "Account", subjectId: account.Id,
-                detail: ErrorCodes.InvalidPin);
-            throw new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin);
-        }
+        // Before any write, so an expired or mismatched authorisation costs nothing. The binding is
+        // the same factory the mint used: a TRANSFER authorisation minted from this very account for
+        // this very amount hashes differently -- the operation name is in the payload -- and is
+        // refused as INVALID rather than quietly accepted.
+        await _stepUp.ValidateAsync(
+            userId, authorizationId, StepUpOperation.Withdrawal,
+            StepUpBinding.ForWithdrawal(account.Id, request.Amount));
 
-        // Optimistic-concurrency retry: see DepositAsync. The funds check
-        // runs INSIDE the loop — a reloaded balance may no longer cover the
-        // withdrawal.
+        /*
+          AN EXPLICIT TRANSACTION, WHERE THIS METHOD USED TO HAVE NONE (ADR-0050 reserved the
+          restructure for this change, and this is it).
+
+          The ledger row and its MoneyWithdrawn audit row already committed as one unit -- the row
+          rides the same SaveChanges (ADR-0044 D1). But ConsumeAsync is a separate ExecuteUpdate,
+          and with no caller transaction it would AUTOCOMMIT beside that save: on SQL Server the
+          DbContext opens its own transaction for the chain row, and a consume placed next to it
+          lands outside. A withdrawal could then commit with its authorisation still Pending --
+          spendable a second time -- or the authorisation could burn on a withdrawal that never
+          committed. So the transaction is opened here, through the execution strategy
+          (EnableRetryOnFailure refuses a user-initiated transaction outside one), and with it
+          present the DbContext funnel applies the audit chain INSIDE it rather than opening its own.
+
+          CONSUME AFTER THE SAVE, NOT BEFORE. ConsumeAsync throws when its UPDATE matches zero rows
+          -- an authorisation spent by a concurrent request, or one that expired between Validate
+          and here -- and that throw is what rolls the withdrawal back. Consuming first would spend
+          the authorisation and then let the save fail on its own, which is the disagreement the
+          transaction exists to prevent.
+        */
+        var strategy = _context.Database.CreateExecutionStrategy();
+        WithdrawResponse? response = null;
+
+        /*
+          TWO RETRY LOOPS, ONE INSIDE THE OTHER, as in TransferService and AccountService. The
+          execution strategy re-runs the delegate on a TRANSIENT fault; the loop around it re-runs
+          the attempt when the account's RowVersion refuses a stale write -- a deposit that landed
+          between the guard and the save, or a second withdrawal presenting this same authorisation
+          that committed first. Bounded by ConcurrencyRetry.MaxAttempts, jittered between attempts,
+          and the last failure propagates.
+        */
         for (var attempt = 1; ; attempt++)
         {
-            // Check sufficient funds
-            if (account.Balance < request.Amount)
-            {
-                /*
-                  NO AUDIT ROW HERE, and it is a correction to the first version of this change.
-                  ADR-0044 had already classified insufficient funds as a routine user outcome whose
-                  row-per-attempt is an unbounded write into a never-purged table, and that decision
-                  was reasoned before this branch existed. Wiring it anyway would have contradicted
-                  the ADR without arguing with it.
-
-                  ⚠️ AND THE CONTENTION ANGLE IS SHARPER THAN THE ADR STATED. A wrong PIN is BOUNDED
-                  -- three attempts and ADR-0010 locks the PIN. This is not: a caller can ask to
-                  withdraw more than they hold forever, at no cost, and every attempt would take the
-                  chain tail lock that every real money movement queues behind. An unaudited routine
-                  refusal is a gap; an audited one here is a contention amplifier anybody can drive.
-                */
-                throw new InsufficientFundsException(account.Balance, request.Amount);
-            }
-
-            var balanceBefore = account.Balance;
-            var balanceAfter = balanceBefore - request.Amount;
-
-            var transaction = new Transaction
-            {
-                Id = Guid.CreateVersion7(),
-                TransactionNumber = IdGenerator.GenerateTransactionNumber(),
-                AccountId = account.Id,
-                Account = account,
-                Type = TransactionType.Withdrawal,
-                Amount = request.Amount,
-                BalanceBefore = balanceBefore,
-                BalanceAfter = balanceAfter,
-                Description = request.Description,
-                Status = TransactionStatus.Completed,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            // Update account balance
-            account.Balance = balanceAfter;
-            account.UpdatedAt = DateTime.UtcNow;
-
-            _context.Transactions.Add(transaction);
-
-            // Same placement and the same reasoning as the deposit above: inside the loop because
-            // the id is minted there, detached with the attempt if the attempt fails.
-            _audit.Record(
-                SecurityEvents.MoneyWithdrawn, AuditOutcome.Succeeded,
-                actorUserId: userId, subjectType: "Transaction", subjectId: transaction.Id);
-
             try
             {
-                await _context.SaveChangesAsync();
+                await strategy.ExecuteAsync(async () =>
+                {
+                    /*
+                      RE-ENTRANCY DISCIPLINE, at the top of the delegate, because EnableRetryOnFailure
+                      re-runs the WHOLE delegate against this SAME DbContext and the outer loop
+                      re-enters it too. Each attempt rebuilds its state from the store, or it would
+                      find the balance already decremented in memory and a second Added AuditEvent
+                      still tracked from the attempt that failed -- one withdrawal, two rows.
+
+                      AND IT IS THE CASE-B GUARD. A transient fault AFTER the commit is
+                      indistinguishable from one before it, so the idempotency claim row is what
+                      tells them apart: if a prior attempt already committed this withdrawal,
+                      PrepareIdempotentAttemptAsync refuses to execute it again and the middleware
+                      surfaces 409 RESULT_UNKNOWN. Without it, a lost acknowledgement would move the
+                      money twice under one Idempotency-Key.
+                    */
+                    await ConcurrencyRetry.PrepareIdempotentAttemptAsync(_context, account);
+
+                    /*
+                      AND THE GUARD AGAIN, against the balance this attempt actually reloaded. The
+                      check above ran on the pre-retry read; a withdrawal that raced this one may
+                      have taken the money in between, and committing on the strength of the old
+                      balance is exactly the overdraft the RowVersion exists to prevent.
+                    */
+                    if (account.Balance < request.Amount)
+                    {
+                        throw new InsufficientFundsException(account.Balance, request.Amount);
+                    }
+
+                    var balanceBefore = account.Balance;
+                    var balanceAfter = balanceBefore - request.Amount;
+
+                    var transaction = new Transaction
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TransactionNumber = IdGenerator.GenerateTransactionNumber(),
+                        AccountId = account.Id,
+                        Account = account,
+                        Type = TransactionType.Withdrawal,
+                        Amount = request.Amount,
+                        BalanceBefore = balanceBefore,
+                        BalanceAfter = balanceAfter,
+                        Description = request.Description,
+                        Status = TransactionStatus.Completed,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    account.Balance = balanceAfter;
+                    account.UpdatedAt = DateTime.UtcNow;
+
+                    _context.Transactions.Add(transaction);
+
+                    await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+
+                    try
+                    {
+                        /*
+                          Enlisted BEFORE the save, so the audit row and the movement are one unit:
+                          if the audit insert fails, the money does not move either (ADR-0044 D1).
+
+                          DETAIL NAMES THE AUTHORISATION THAT PAID FOR IT, and unlike a closure this
+                          row ALSO has a ledger id for ConsumedByTransactionId to point at. Both
+                          links are written on purpose: the pointer lives in the unchained
+                          authorisation table, where a database writer can rewrite it, while this
+                          name is under the row's hash. The evidence verb checks one against the
+                          other, so agreement is what makes a withdrawal strongly authenticated and
+                          disagreement is a finding rather than a shrug.
+                        */
+                        _audit.Record(
+                            SecurityEvents.MoneyWithdrawn, AuditOutcome.Succeeded,
+                            actorUserId: userId, subjectType: "Transaction", subjectId: transaction.Id,
+                            detail: AuditDetails.ConsumedAuthorisation(authorizationId));
+
+                        await _context.SaveChangesAsync();
+
+                        // Spent inside this transaction and after the rows exist. consumedByTransactionId
+                        // is the ledger row, NOT null as a closure passes: a withdrawal produces a
+                        // movement, and the evidence verb joins the authorisation to it on this id.
+                        await _stepUp.ConsumeAsync(
+                            userId, authorizationId, consumedByTransactionId: transaction.Id);
+
+                        await dbTransaction.CommitAsync();
+                    }
+                    catch
+                    {
+                        // Preserve the ORIGINAL fault (e.g. the transient the execution strategy must
+                        // see to retry): rolling back a transaction whose connection or commit already
+                        // failed can itself throw and would otherwise mask it.
+                        try { await dbTransaction.RollbackAsync(); }
+                        catch { /* best effort: the transaction may already be gone */ }
+                        throw;
+                    }
+
+                    // No amount and no balance on the log line, for the reason on the deposit's.
+                    _logger.LogInformation(
+                        "Withdrawal from account {AccountId}. Transaction: {TransactionNumber}",
+                        account.Id, transaction.TransactionNumber);
+
+                    response = _mapper.ToWithdrawResponse(transaction, balanceAfter);
+                });
+
+                break;
             }
             catch (DbUpdateConcurrencyException ex) when (ConcurrencyRetry.ShouldRetry(ex, attempt))
             {
@@ -244,32 +376,26 @@ public class TransactionService : ITransactionService
                     "Concurrency conflict on withdrawal from account {AccountId} (attempt {Attempt}); retrying",
                     account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
-                continue;
             }
             catch (DbUpdateException ex) when (ConcurrencyRetry.IsTransactionNumberCollision(ex, attempt))
             {
-                // A regenerable clash on the transaction number: the next attempt mints a fresh
-                // one. Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by
-                // error number, lives on ConcurrencyRetry.IsTransactionNumberCollision — one
-                // authoritative copy instead of four that drift. Warning, not Information: it
-                // should never happen, so an occurrence means the entropy assumption deserves
-                // re-checking, which needs to know WHICH account.
+                // A regenerable clash on the transaction number: the next attempt mints a fresh one.
+                // Why it is safe to retry, and why it is narrowed by INDEX NAME rather than by error
+                // number, lives on ConcurrencyRetry.IsTransactionNumberCollision. Warning, not
+                // Information: it should never happen, so an occurrence means the entropy assumption
+                // deserves re-checking, which needs to know WHICH account.
                 _logger.LogWarning(
                     ex,
                     "SecurityEvent {SecurityEvent}: transaction-number collision on withdrawal "
                         + "from account {AccountId} (attempt {Attempt}); regenerating",
                     SecurityEvents.TransactionNumberCollision, account.Id, attempt);
                 await ConcurrencyRetry.PrepareNextAttemptAsync(_context, account);
-                continue;
             }
-
-            // No amount and no balance, for the reason on the deposit's line above.
-            _logger.LogInformation(
-                "Withdrawal from account {AccountId}. Transaction: {TransactionNumber}",
-                account.Id, transaction.TransactionNumber);
-
-            return _mapper.ToWithdrawResponse(transaction, balanceAfter);
         }
+
+        // Non-null on every path that reaches here: the loop only breaks after the delegate ran to
+        // completion, and every other exit throws.
+        return response!;
     }
 
     /// <inheritdoc />

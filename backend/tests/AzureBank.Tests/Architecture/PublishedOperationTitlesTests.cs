@@ -76,7 +76,7 @@ public class PublishedOperationTitlesTests
         }
 
         // The floor guards the scan itself: a document with no operations would pass every check.
-        operations.Should().BeGreaterThanOrEqualTo(27, "the scan must have seen the operations the API publishes (27 on 2026-09-14)");
+        operations.Should().BeGreaterThanOrEqualTo(28, "the scan must have seen the operations the API publishes (28 on 2026-09-21, after the withdrawal mint)");
         offenders.Should().BeEmpty(
             "a summary is the title Scalar and the generated client show; the prose belongs in the description. "
             + "Offenders ({0} of {1}): {2}", offenders.Count, operations, string.Join("; ", offenders));

@@ -59,8 +59,15 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
           were written as its deliberate mirror — same order, same exceptions — so that the two
           endpoints answered a bad PIN identically; the mirror now has one side and these are simply
           the checks. Since ADR-0049 an account closure's PIN is proved here too, through the same
-          three checks. TransactionService.WithdrawAsync still carries its own copy, and withdraw is
-          the task that should converge here next.
+          three checks.
+
+          ~~TransactionService.WithdrawAsync still carries its own copy, and withdraw is the task
+          that should converge here next.~~ (Struck 2026-09-22, ADR-0056: withdraw CONVERGED. The
+          PIN left WithdrawRequest together with WithdrawAsync's IPinVerifier, and a withdrawal's
+          PIN is proved here now, through TransactionService.AuthoriseWithdrawalAsync -> MintAsync.
+          No copy survives anywhere: this is the only path on which any operation's PIN is proved.
+          Found in review on #198 -- the PR that did the converging left the sentence asking for
+          it, which is what a comment naming future work does when the future arrives.)
         */
         var user = await _context.Users.FindAsync([userId], cancellationToken);
         if (user == null)
@@ -128,26 +135,68 @@ public class StepUpAuthorizationService : IStepUpAuthorizationService
 
     /// <summary>
     /// A refused PIN at a mint, on its own connection: <c>MoneyTransferRefused</c> for the two
-    /// transfer mints, <c>AccountDeletionRefused</c> for the closure mint, <c>Detail</c> the
-    /// <c>ErrorCodes</c> constant the caller received.
+    /// transfer mints, <c>AccountDeletionRefused</c> for the closure mint,
+    /// <c>MoneyWithdrawalRefused</c> for the withdrawal mint, <c>Detail</c> the <c>ErrorCodes</c>
+    /// constant the caller received.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The subject is <c>binding.FromAccountId</c>, and it is safe to write because every caller
-    /// has proved ownership of that account before minting (TransferService's two mints and
-    /// AccountService.AuthoriseDeletionAsync each call GetAccountWithOwnershipCheckAsync first), so
-    /// the row names an account the actor owns, never one they merely named.
+    /// has proved ownership of that account before minting: TransferService's two mints,
+    /// AccountService.AuthoriseDeletionAsync and, since ADR-0056,
+    /// TransactionService.AuthoriseWithdrawalAsync each call
+    /// <c>GetAccountWithOwnershipCheckAsync</c> first, so the row names an account the actor owns
+    /// and never one they merely named.
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>THE LIST IS THE ARGUMENT.</b> A mint missing from it is a mint nobody has checked,
+    /// and the sentence above quietly stops being true — which is how it read between ADR-0056
+    /// landing and the review on #198 that caught it. Prose cannot enforce that, so
+    /// <c>EveryMintProvesOwnershipBeforeIt</c> in <c>SecurityEventConstantTests</c> reads the
+    /// sources and fails on a fifth caller, or on one that mints before it checks.
+    /// </para>
     /// </remarks>
     private Task RecordPinRefusalAsync(
         Guid userId, StepUpOperation operation, StepUpBinding binding, string errorCode) =>
         _audit.RecordRefusalAsync(
-            operation == StepUpOperation.AccountDeletion
-                ? SecurityEvents.AccountDeletionRefused
-                : SecurityEvents.MoneyTransferRefused,
+            RefusalEventFor(operation),
             AuditOutcome.Refused,
             actorUserId: userId,
             subjectType: "Account",
             subjectId: binding.FromAccountId,
             detail: errorCode);
+
+    /*
+      A SWITCH, WHERE THIS WAS A TWO-ARMED TERNARY OVER A THREE-MEMBER ENUM (ADR-0056).
+
+      It read `operation == AccountDeletion ? AccountDeletionRefused : MoneyTransferRefused`, so
+      the withdrawal added here would have fallen into the else and a refused PIN at a withdrawal
+      mint would have been filed, silently and durably, as a refused TRANSFER. Nothing would have
+      failed: the row writes, the caller still gets 401, and only an operator reading the trail
+      months later would find a transfer that never existed.
+
+      `_` THROWS RATHER THAN DEFAULTING. An unnamed value cast into this enum is a programming
+      error and must not be given a plausible event name; and because the compiler counts unnamed
+      values as reachable, an exhaustive switch cannot be made to fail the build here instead
+      (TreatWarningsAsErrors is on in Release, so CS8509 WOULD be an error -- it is the enum's open
+      domain, not the warning policy, that makes compile-time exhaustiveness unavailable).
+
+      What catches a FIFTH member is therefore a test, not the compiler:
+      SecurityEventConstantTests.EveryStepUpOperationMapsToItsOwnRefusalEvent walks
+      Enum.GetValues<StepUpOperation>() and asserts each one maps and that no two share an event.
+      Adding a member without a case here fails that test rather than mis-filing a row.
+    */
+    // INTERNAL rather than private so the guard named above can call it directly
+    // (InternalsVisibleTo AzureBank.Tests), instead of reaching in by reflection.
+    internal static string RefusalEventFor(StepUpOperation operation) => operation switch
+    {
+        StepUpOperation.Transfer => SecurityEvents.MoneyTransferRefused,
+        StepUpOperation.InternalTransfer => SecurityEvents.MoneyTransferRefused,
+        StepUpOperation.AccountDeletion => SecurityEvents.AccountDeletionRefused,
+        StepUpOperation.Withdrawal => SecurityEvents.MoneyWithdrawalRefused,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(operation), operation, "No refusal event is defined for this step-up operation.")
+    };
 
     /// <inheritdoc />
     public async Task ValidateAsync(

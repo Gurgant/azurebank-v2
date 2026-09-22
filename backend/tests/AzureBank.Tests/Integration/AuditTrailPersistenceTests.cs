@@ -4,6 +4,7 @@ using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.Constants;
 using AzureBank.Shared.DTOs.Account;
 using AzureBank.Shared.DTOs.Common;
+using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.DTOs.Transfer;
 using AzureBank.Shared.DTOs.User;
 using AzureBank.Shared.Entities;
@@ -217,17 +218,38 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         var (token, userId, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
 
-        await SetPinAsync(token); // withdraw is PIN-gated (ADR-0010)
+        await SetPinAsync(token); // the PIN is spent at the mint (ADR-0010, ADR-0056)
         await DepositAsync(token, accountId, 400m);
+
+        // The mint is EXPLICIT here rather than folded into WithdrawAsync, because the assertion
+        // below needs the identifier the caller actually presented -- not one read back out of the
+        // same row it is meant to be checking.
+        var authorizationId = await AuthoriseWithdrawalAsync(accountId, 150m);
         var response = await PostMonetaryAsync(
             "/api/transactions/withdraw",
-            new { accountId, amount = 150m, description = "rent", pin = "123456" });
+            new WithdrawRequest { AccountId = accountId, Amount = 150m, Description = "rent" },
+            idempotencyKey: null,
+            authorizationId);
         response.IsSuccessStatusCode.Should().BeTrue(await response.Content.ReadAsStringAsync());
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyWithdrawn);
         row.Outcome.Should().Be(AuditOutcome.Succeeded);
         row.SubjectType.Should().Be("Transaction");
-        row.Detail.Should().BeNull();
+
+        /*
+          DETAIL IS NO LONGER NULL, and that is the ADR-0056 change rather than a regression. A
+          withdrawal's success row now names the authorisation that paid for it, inside the hash,
+          the way a transfer's does -- it is the tamper-evident half of the link, checked by the
+          evidence verb against the pointer in the unchained authorisation table.
+        */
+        /*
+          THE IDENTIFIER, NOT MERELY A NON-NULL. Raised in review on #198: `NotBeNull` passes on any
+          `Detail` at all -- an unrelated authorisation, a malformed payload, a row that names the
+          MINT it never consumed -- so it would miss exactly the broken binding it exists to catch.
+          `ConsumedAuthorisationOf` returns null for a shape it cannot read, so this covers both.
+        */
+        AuditDetails.ConsumedAuthorisationOf(row.Detail).Should().Be(authorizationId,
+            "the success row names the authorisation the CALLER presented, under the row's hash");
 
         /*
           RESOLVE THE SUBJECT, because SubjectType is a hard-coded literal and proves nothing on its
@@ -250,6 +272,19 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             + "Guid with no foreign key, so nothing else would catch it naming an account");
         ledger!.Type.Should().Be(TransactionType.Withdrawal);
         ledger.AccountId.Should().Be(accountId, "the subject must reach the movement, not its account");
+
+        /*
+          AND THE TWO HALVES AGREE, which is the whole of ADR-0056 D7. The name above is inside the
+          row's hash; the pointer below lives in the UNCHAINED authorisation table, where a database
+          writer can rewrite it. Agreement is what makes a withdrawal strongly authenticated and
+          disagreement is a finding -- the evidence verb checks exactly this pair, and until now
+          nothing asserted that the pair is written agreeing in the first place.
+        */
+        var authorisation = await db.StepUpAuthorizations.AsNoTracking()
+            .SingleAsync(a => a.Id == authorizationId);
+        authorisation.ConsumedByTransactionId.Should().Be(row.SubjectId,
+            "the unchained pointer names the same ledger row the chained Detail does");
+        authorisation.Status.Should().Be(StepUpAuthorizationStatus.Consumed);
     }
 
     [Fact]
@@ -405,10 +440,14 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
         await SetPinAsync(token);
         await DepositAsync(token, accountId, 50m);
 
+        // No authorisation is minted: since ADR-0056 the funds guard runs first, so an unaffordable
+        // withdrawal is refused before one is even looked for -- which is also why this path still
+        // writes nothing.
         var response = await PostMonetaryAsync(
             "/api/transactions/withdraw",
-            new { accountId, amount = 5000m, description = "more than there is", pin = "123456" });
-        response.IsSuccessStatusCode.Should().BeFalse("50 does not cover 5000");
+            new WithdrawRequest { AccountId = accountId, Amount = 5000m, Description = "more than there is" });
+        response.StatusCode.Should().Be(
+            HttpStatusCode.UnprocessableEntity, "50 does not cover 5000, and that answer precedes the rail");
 
         var rows = await RowsForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
         rows.Should().BeEmpty(
@@ -499,18 +538,21 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task AWrongPinOnAWithdrawal_WritesItsRow_BecauseThatIsTheAttemptWorthSeeing()
+    public async Task NoDetailAnywhereCarriesAFigure_SweptAcrossTheWholeTable()
     {
         // A guessed PIN against somebody's balance is the event this table exists for, and until
-        // 2026-08-29 it left nothing at all.
+        // 2026-08-29 it left nothing at all. Since ADR-0056 the attempt is spent at the MINT, so
+        // that is where this drives it -- the row assertions themselves now live in
+        // AWrongPinAtAMint_WritesItsRow, which covers all four mints instead of this one.
         var (token, userId, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
         await SetPinAsync(token);
         await DepositAsync(token, accountId, 500m);
 
-        var response = await PostMonetaryAsync(
-            "/api/transactions/withdraw",
-            new { accountId, amount = 10m, description = "guessing", pin = "999999" });
+        var response = await Client.PostAsJsonAsync(
+            "/api/transactions/withdraw/authorizations",
+            new WithdrawalAuthorizationRequest { AccountId = accountId, Amount = 10m, Pin = "999999" },
+            JsonOptions);
         response.IsSuccessStatusCode.Should().BeFalse("999999 is not the PIN");
 
         var row = await SingleRowForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
@@ -533,60 +575,12 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             "ADR-0044 D5: no figure may reach a table designed never to be purged");
     }
 
-    [Fact]
-    public async Task TheLockoutItself_LeavesARow_AndItIsNotTheWrongPinOne()
-    {
-        /*
-          THE BRANCH THAT RETURNS NOTHING. VerifyPinAsync THROWS PinLockedException once the attempt
-          limit is crossed rather than returning false, so the lockout cannot be observed by reading
-          the return value -- it needs its own catch, and a catch with no test is a branch nobody has
-          entered. Measured: PinService throws its lockout at two places and audits at neither, so
-          before this the control that stops a PIN brute-force was completely silent.
-        */
-        var (token, userId, accountId) = await RegisterTestUserAsync();
-        SetAuthHeader(token);
-        await SetPinAsync(token);
-        await DepositAsync(token, accountId, 500m);
-
-        for (var i = 0; i < ValidationRules.MaxPinAttempts; i++)
-        {
-            await PostMonetaryAsync(
-                "/api/transactions/withdraw",
-                new { accountId, amount = 10m, description = "guessing", pin = "999999" });
-        }
-
-        // The attempt AFTER the limit: refused by the lockout rather than by the PIN, and it uses
-        // the CORRECT PIN on purpose -- that is what makes it the lockout and not another miss.
-        var locked = await PostMonetaryAsync(
-            "/api/transactions/withdraw",
-            new { accountId, amount = 10m, description = "still guessing", pin = "123456" });
-        locked.StatusCode.Should().Be(
-            HttpStatusCode.TooManyRequests,
-            "the correct PIN is refused too once the card is locked -- that is the control working");
-
-        var rows = await RowsForActorAsync(userId, SecurityEvents.MoneyWithdrawalRefused);
-        /*
-          THE OFF-BY-ONE IS THE SYSTEM, NOT THE TEST -- and the first version of this assertion had
-          it wrong. The attempt that CROSSES the threshold never returns false: PinService increments
-          and locks in one atomic statement and then throws, so that attempt is recorded as the
-          LOCKOUT and not as a wrong PIN. Measured here: three wrong attempts leave TWO InvalidPin
-          rows, not three.
-
-          Worth asserting rather than tidying away, because anyone counting InvalidPin rows to answer
-          "how many times was the PIN guessed" is short by exactly one, every time.
-        */
-        rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
-            ValidationRules.MaxPinAttempts - 1,
-            "the attempt that trips the lock is recorded as the lockout instead");
-        rows.Count(r => r.Detail == ErrorCodes.PinLocked).Should().Be(
-            2, "the attempt that trips it, and the one refused afterwards by the lock itself");
-    }
-
     [Theory]
     [InlineData("external")]
     [InlineData("internal")]
     [InlineData("deletion")]
-    public async Task AWrongPinAtAMint_WritesItsRow_TheWayAWithdrawalDoes(string mint)
+    [InlineData("withdrawal")]
+    public async Task AWrongPinAtAMint_WritesItsRow(string mint)
     {
         /*
           THE MINT IS WHERE A TRANSFER OR A CLOSURE SPENDS ITS PIN (ADR-0042, ADR-0049), and until
@@ -614,12 +608,21 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
     [InlineData("external")]
     [InlineData("internal")]
     [InlineData("deletion")]
-    public async Task TheLockoutAtAMint_LeavesItsRows_WithTheWithdrawalsOffByOne(string mint)
+    [InlineData("withdrawal")]
+    public async Task TheLockoutAtAMint_LeavesItsRows(string mint)
     {
-        // The same shape TheLockoutItself_LeavesARow_AndItIsNotTheWrongPinOne pins for a
-        // withdrawal, and for the same reason: the attempt that trips the lock is recorded as the
-        // lockout, not as a wrong PIN. Measured at the deletion mint: the third wrong PIN answered
-        // 429 PIN_LOCKED, not 401.
+        /*
+          THE BRANCH THAT RETURNS NOTHING. VerifyPinAsync THROWS PinLockedException once the attempt
+          limit is crossed rather than returning false, so the lockout cannot be observed by reading
+          the return value -- it needs its own catch, and a catch with no test is a branch nobody has
+          entered. Measured: PinService throws its lockout at two places and audits at neither, so
+          before this the control that stops a PIN brute-force was completely silent.
+
+          This absorbed the withdrawal-only version of this test when the withdrawal joined the rail
+          (ADR-0056): the behaviour is identical at every mint, and one theory over four beats two
+          tests that must be kept in step by hand. Measured at the deletion mint: the third wrong PIN
+          answered 429 PIN_LOCKED, not 401.
+        */
         var (token, userId, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
         await SetPinAsync(token);
@@ -635,6 +638,16 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
             HttpStatusCode.TooManyRequests, "the correct PIN is refused too once the PIN is locked");
 
         var rows = await RowsForActorAsync(userId, securityEvent);
+        /*
+          THE OFF-BY-ONE IS THE SYSTEM, NOT THE TEST -- and the first version of this assertion had
+          it wrong. The attempt that CROSSES the threshold never returns false: PinService increments
+          and locks in one atomic statement and then throws, so that attempt is recorded as the
+          LOCKOUT and not as a wrong PIN. Measured: three wrong attempts leave TWO InvalidPin rows,
+          not three.
+
+          Worth asserting rather than tidying away, because anyone counting InvalidPin rows to answer
+          "how many times was the PIN guessed" is short by exactly one, every time.
+        */
         rows.Count(r => r.Detail == ErrorCodes.InvalidPin).Should().Be(
             ValidationRules.MaxPinAttempts - 1,
             "the attempt that trips the lock is recorded as the lockout instead");
@@ -691,8 +704,22 @@ public class AuditTrailPersistenceTests : IntegrationTestBase
                         pin => new AccountDeletionAuthorizationRequest { Pin = pin },
                         SecurityEvents.AccountDeletionRefused, spare);
                 }
+            case "withdrawal":
+                {
+                    // ADR-0056. The account is the caller's own and the amount is bound, so this
+                    // mint is the only one whose binding names a sum with no counterparty.
+                    return ("/api/transactions/withdraw/authorizations",
+                        pin => new WithdrawalAuthorizationRequest
+                        {
+                            AccountId = accountId,
+                            Amount = 10m,
+                            Pin = pin,
+                        },
+                        SecurityEvents.MoneyWithdrawalRefused, accountId);
+                }
             default:
-                throw new ArgumentOutOfRangeException(nameof(mint), mint, "external, internal or deletion");
+                throw new ArgumentOutOfRangeException(
+                    nameof(mint), mint, "external, internal, deletion or withdrawal");
         }
     }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DepositRequest,
   InternalTransferAuthorizationRequest,
+  WithdrawalAuthorizationRequest,
   InternalTransferRequest,
   TransferAuthorizationRequest,
   TransferRequest,
@@ -38,6 +39,7 @@ describe('the money bound is the contract’s, on every form', () => {
     InternalTransferRequest,
     TransferAuthorizationRequest,
     InternalTransferAuthorizationRequest,
+    WithdrawalAuthorizationRequest,
   };
 
   it.each(Object.entries(generated))(

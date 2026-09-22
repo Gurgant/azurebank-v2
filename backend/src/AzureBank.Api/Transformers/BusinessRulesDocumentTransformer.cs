@@ -47,8 +47,18 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
             "Business Rule Violation - the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
         ["POST /api/transfers"] =
             "Business Rule Violation - the payee cannot be paid (errorCode SELF_TRANSFER_NOT_ALLOWED or RECIPIENT_NO_ACCOUNT), the day's external transfer limit would be exceeded (errorCode DAILY_LIMIT_EXCEEDED, checked before the balance), or the source account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
+        // ADR-0056 moved the PIN to the mint and the balance guard ahead of everything, so this
+        // endpoint has exactly ONE 422 left. Its old text named PIN_REQUIRED "checked before the
+        // balance", which was true until the rail and is now false in BOTH halves: there is no PIN
+        // here to enrol, and the balance is what is checked first.
         ["POST /api/transactions/withdraw"] =
-            "Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED, checked before the balance), or the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
+            "Business Rule Violation - the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS).",
+        // The withdrawal mint, on the closure mint's pattern: declared here rather than by an
+        // attribute on TransactionController.AuthoriseWithdrawal, which would outrank this entry
+        // and publish the bare reason phrase. Its ONLY 422 is the PIN verifier's -- deliberately
+        // no balance rule, because a mint does not check funds (ADR-0050 D4).
+        ["POST /api/transactions/withdraw/authorizations"] =
+            "Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED). The balance is NOT checked here: an authorisation can be minted for more than the account holds, and the withdrawal refuses it.",
         // ADR-0050: the external mint answers 422 four ways, named here in wire order — the payee
         // resolution's two codes (TransferService.ResolveExternalPayeeAsync, before the daily check),
         // the day's ceiling BEFORE the PIN is consulted (the ADR-0049 D4 rung), and the PIN
@@ -121,6 +131,12 @@ public sealed class BusinessRulesDocumentTransformer : IOpenApiDocumentTransform
             ["POST /api/transfers/authorizations"] = [ErrorCodes.DailyLimitExceeded],
             ["POST /api/transfers/internal"] = [ErrorCodes.InsufficientFunds],
             ["POST /api/transactions/withdraw"] = [ErrorCodes.InsufficientFunds],
+            // AND DELIBERATELY NO ENTRY for POST /api/transactions/withdraw/authorizations, which
+            // IS declared in the dictionary above. The two are keyed the same way and it is worth
+            // saying why only one carries it: this dictionary enumerates errorCode MEMBERS on a 422
+            // schema, and the mint's only 422 is PIN_REQUIRED, which no endpoint enumerates -- the
+            // closure mint, in the same position, has no entry here either. A member set added for
+            // symmetry would publish a one-member enum nothing else in the document has.
         };
 
     public Task TransformAsync(

@@ -121,7 +121,7 @@ function signedDelta(entry: { type: TransactionType; amount: number }): number {
  * does not need one, it needs to answer AUTHORIZATION_INVALID on exactly the inputs the server does.
  */
 export interface StoredStepUpAuthorization {
-  operation: 'Transfer' | 'InternalTransfer' | 'AccountDeletion';
+  operation: 'Transfer' | 'InternalTransfer' | 'AccountDeletion' | 'Withdrawal';
   /**
    * The source account of a transfer. A deletion binds the account it is ABOUT here, amount 0,
    * nothing else (ADR-0049 D3: `ForAccountDeletion(accountId)` = `(accountId, null, null, 0)`).
@@ -131,7 +131,13 @@ export interface StoredStepUpAuthorization {
   recipientAzureTag?: string;
   /** Internal transfers bind the destination account here; external ones leave it undefined. */
   toAccountId?: string;
-  /** Bound on every operation — 0 for a deletion, so both sides must carry the 0 (validate). */
+  /**
+   * Bound on every operation — 0 for a deletion, so both sides must carry the 0 (validate). A
+   * WITHDRAWAL binds a real amount with no counterparty (ADR-0056): `ForWithdrawal(accountId,
+   * amount)` = `(accountId, null, null, amount)`, so it is the only operation whose binding names
+   * a sum and nothing else. Measured on the running API 2026-09-21: an authorisation minted for 10
+   * and presented against 20 is refused 401 AUTHORIZATION_INVALID.
+   */
   amount: number;
   /** Epoch ms. Past this the mock answers AUTHORIZATION_EXPIRED, not AUTHORIZATION_INVALID. */
   expiresAtMs: number;

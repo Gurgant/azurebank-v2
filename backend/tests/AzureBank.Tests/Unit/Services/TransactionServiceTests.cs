@@ -1,6 +1,8 @@
 using AzureBank.Api.Mappers;
 using AzureBank.Api.Services.Implementations;
 using AzureBank.Api.Services.Interfaces;
+using AzureBank.Shared.Constants;
+using AzureBank.Api.Services;
 using AzureBank.Infrastructure.Data;
 using AzureBank.Shared.DTOs.Transaction;
 using AzureBank.Shared.Entities;
@@ -9,6 +11,7 @@ using AzureBank.Shared.Exceptions;
 using AzureBank.Shared.Utilities;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -23,7 +26,7 @@ public class TransactionServiceTests : IDisposable
 {
     private readonly AzureBankDbContext _context;
     private readonly Mock<IAccountAccessService> _accountAccessMock;
-    private readonly Mock<IPinVerifier> _pinVerifierMock;
+    private readonly Mock<IStepUpAuthorizationService> _stepUpMock;
     private readonly TransactionMapper _mapper;
     private readonly Mock<ILogger<TransactionService>> _loggerMock;
     private readonly Mock<IAuditService> _auditMock;
@@ -34,6 +37,15 @@ public class TransactionServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            /*
+              WithdrawAsync opens an explicit transaction since ADR-0056, and InMemory escalates
+              TransactionIgnoredWarning to an exception -- the same suppression AccountServiceTests
+              and AuthServiceTests carry, for the same reason: these tests run the path that ships,
+              and BeginTransactionAsync is simply a no-op here. So they pin the ORDER of the writes
+              and the arguments each collaborator receives; they say nothing about ROLLBACK, which
+              the SQL Server proofs are for.
+            */
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         // A fake clock, because UpdateTimestamps owns CreatedAt: a test cannot set it directly, and
@@ -43,7 +55,7 @@ public class TransactionServiceTests : IDisposable
         _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         _context = new AzureBankDbContext(options, _clock);
         _accountAccessMock = new Mock<IAccountAccessService>();
-        _pinVerifierMock = new Mock<IPinVerifier>();
+        _stepUpMock = new Mock<IStepUpAuthorizationService>();
         _mapper = new TransactionMapper();
         _loggerMock = new Mock<ILogger<TransactionService>>();
 
@@ -51,7 +63,7 @@ public class TransactionServiceTests : IDisposable
         _sut = new TransactionService(
             _context,
             _accountAccessMock.Object,
-            _pinVerifierMock.Object,
+            _stepUpMock.Object,
             _mapper,
             _loggerMock.Object,
             _auditMock.Object);
@@ -304,13 +316,33 @@ public class TransactionServiceTests : IDisposable
 
     #region WithdrawAsync Tests
 
+    /*
+      THE PIN TESTS DID NOT DISAPPEAR, THEY MOVED (ADR-0056). A wrong PIN, a missing PIN and a
+      locked PIN are still refused with the same codes -- at the MINT, which is now the only place
+      a PIN is consulted. They are re-aimed at AuthoriseWithdrawalAsync below rather than deleted,
+      because deleting them would have quietly dropped the only unit-level statement that a
+      withdrawal costs a PIN attempt at all.
+    */
+
+    private static StepUpAuthorization MintedFor(Guid userId) => new()
+    {
+        Id = Guid.NewGuid(),
+        UserId = userId,
+        Operation = StepUpOperation.Withdrawal,
+        BindingHash = new string('a', 64),
+        Status = StepUpAuthorizationStatus.Pending,
+        CreatedAt = DateTime.UtcNow,
+        ExpiresAt = DateTime.UtcNow.AddMinutes(2)
+    };
+
     [Fact]
-    public async Task WithdrawAsync_WithValidRequestAndPin_CreatesTransaction()
+    public async Task WithdrawAsync_WithValidRequestAndAuthorisation_CreatesTransaction()
     {
         // Arrange
         var userId = Guid.NewGuid();
         var account = CreateTestAccount(userId, balance: 1000m);
         var user = CreateTestUser(userId, pinHash: "hashedPin");
+        var authorizationId = Guid.NewGuid();
 
         _context.Accounts.Add(account);
         _context.Users.Add(user);
@@ -320,20 +352,15 @@ public class TransactionServiceTests : IDisposable
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _pinVerifierMock
-            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "123456"))
-            .ReturnsAsync(true);
-
         var request = new WithdrawRequest
         {
             AccountId = account.Id,
             Amount = 200m,
-            Pin = "123456",
             Description = "ATM withdrawal"
         };
 
         // Act
-        var result = await _sut.WithdrawAsync(userId, request);
+        var result = await _sut.WithdrawAsync(userId, request, authorizationId);
 
         // Assert
         result.Should().NotBeNull();
@@ -343,38 +370,144 @@ public class TransactionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task WithdrawAsync_WithInsufficientFunds_ThrowsInsufficientFundsException()
+    public async Task WithdrawAsync_ValidatesTheAuthorisationAgainstTheAccountAndTheAmount()
     {
         // Arrange
         var userId = Guid.NewGuid();
-        var account = CreateTestAccount(userId, balance: 50m);
-        var user = CreateTestUser(userId, pinHash: "hashedPin");
+        var account = CreateTestAccount(userId, balance: 1000m);
+        var authorizationId = Guid.NewGuid();
 
         _context.Accounts.Add(account);
-        _context.Users.Add(user);
+        _context.Users.Add(CreateTestUser(userId, pinHash: "hashedPin"));
         await _context.SaveChangesAsync();
 
         _accountAccessMock
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _pinVerifierMock
-            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "123456"))
-            .ReturnsAsync(true);
-
-        var request = new WithdrawRequest
-        {
-            AccountId = account.Id,
-            Amount = 100m,
-            Pin = "123456"
-        };
+        var request = new WithdrawRequest { AccountId = account.Id, Amount = 250m };
 
         // Act
-        var act = () => _sut.WithdrawAsync(userId, request);
+        await _sut.WithdrawAsync(userId, request, authorizationId);
+
+        // Assert -- the binding is the amount and the account, and nothing else. A binding that
+        // dropped the amount would let one authorisation pay for a larger withdrawal, which is the
+        // single attack StepUpBinding.ForWithdrawal exists to refuse.
+        _stepUpMock.Verify(
+            x => x.ValidateAsync(
+                userId,
+                authorizationId,
+                StepUpOperation.Withdrawal,
+                StepUpBinding.ForWithdrawal(account.Id, 250m),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task WithdrawAsync_SpendsTheAuthorisationAgainstTheLedgerRow()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, balance: 1000m);
+        var authorizationId = Guid.NewGuid();
+
+        _context.Accounts.Add(account);
+        _context.Users.Add(CreateTestUser(userId, pinHash: "hashedPin"));
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        var request = new WithdrawRequest { AccountId = account.Id, Amount = 100m };
+
+        // Act
+        var result = await _sut.WithdrawAsync(userId, request, authorizationId);
+
+        // Assert -- consumed-by is the MOVEMENT id, unlike a closure which passes null. The
+        // evidence verb joins the authorisation to the ledger row on exactly this value, so a null
+        // here would leave every withdrawal unprovable while every test still passed.
+        _stepUpMock.Verify(
+            x => x.ConsumeAsync(
+                userId,
+                authorizationId,
+                result.Transaction.Id,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task WithdrawAsync_WithoutAuthorisation_ThrowsAuthenticationException()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, balance: 1000m);
+
+        _context.Accounts.Add(account);
+        _context.Users.Add(CreateTestUser(userId, pinHash: "hashedPin"));
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        var request = new WithdrawRequest { AccountId = account.Id, Amount = 100m };
+
+        // Act -- an absent header and an empty one both bind to null and both land here.
+        var act = () => _sut.WithdrawAsync(userId, request, null);
 
         // Assert
-        await act.Should()
-            .ThrowAsync<InsufficientFundsException>();
+        (await act.Should().ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.AuthorizationRequired);
+
+        // And it is audited on its own connection, because nothing else in this request writes.
+        _auditMock.Verify(
+            x => x.RecordRefusalAsync(
+                SecurityEvents.MoneyWithdrawalRefused,
+                AuditOutcome.Refused,
+                userId,
+                "Account",
+                account.Id,
+                ErrorCodes.AuthorizationRequired,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task WithdrawAsync_WithInsufficientFunds_RefusesBeforeTheAuthorisationIsLookedAt()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, balance: 50m);
+
+        _context.Accounts.Add(account);
+        _context.Users.Add(CreateTestUser(userId, pinHash: "hashedPin"));
+        await _context.SaveChangesAsync();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        var request = new WithdrawRequest { AccountId = account.Id, Amount = 100m };
+
+        // Act
+        var act = () => _sut.WithdrawAsync(userId, request, Guid.NewGuid());
+
+        // Assert
+        await act.Should().ThrowAsync<InsufficientFundsException>();
+
+        /*
+          THIS IS THE USER-VISIBLE HALF OF ADR-0056 D4, and it is why the assertion below is a
+          Times.Never rather than a comment. Before the rail the PIN was proved first, so a
+          customer who mistyped their PIN on a withdrawal they could never afford spent one of
+          three attempts on it -- and three locked the PIN. The affordability answer now comes
+          first and costs nothing. If the order is ever reversed, this is the test that says so.
+        */
+        _stepUpMock.Verify(
+            x => x.ValidateAsync(
+                It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<StepUpOperation>(),
+                It.IsAny<StepUpBinding>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -383,100 +516,22 @@ public class TransactionServiceTests : IDisposable
         // Arrange
         var userId = Guid.NewGuid();
         var account = CreateTestAccount(userId, balance: 100m);
-        var user = CreateTestUser(userId, pinHash: "hashedPin");
 
         _context.Accounts.Add(account);
-        _context.Users.Add(user);
+        _context.Users.Add(CreateTestUser(userId, pinHash: "hashedPin"));
         await _context.SaveChangesAsync();
 
         _accountAccessMock
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _pinVerifierMock
-            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "123456"))
-            .ReturnsAsync(true);
-
-        var request = new WithdrawRequest
-        {
-            AccountId = account.Id,
-            Amount = 100m,
-            Pin = "123456"
-        };
+        var request = new WithdrawRequest { AccountId = account.Id, Amount = 100m };
 
         // Act
-        var result = await _sut.WithdrawAsync(userId, request);
+        var result = await _sut.WithdrawAsync(userId, request, Guid.NewGuid());
 
         // Assert
         result.NewBalance.Should().Be(0m);
-    }
-
-    [Fact]
-    public async Task WithdrawAsync_WithInvalidPin_ThrowsAuthenticationException()
-    {
-        // Arrange
-        var userId = Guid.NewGuid();
-        var account = CreateTestAccount(userId, balance: 1000m);
-        var user = CreateTestUser(userId, pinHash: "hashedPin");
-
-        _context.Accounts.Add(account);
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-
-        _accountAccessMock
-            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
-            .ReturnsAsync(account);
-
-        _pinVerifierMock
-            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), "wrongpin"))
-            .ReturnsAsync(false);
-
-        var request = new WithdrawRequest
-        {
-            AccountId = account.Id,
-            Amount = 100m,
-            Pin = "wrongpin"
-        };
-
-        // Act
-        var act = () => _sut.WithdrawAsync(userId, request);
-
-        // Assert
-        await act.Should()
-            .ThrowAsync<AuthenticationException>()
-            .WithMessage("*Invalid PIN*");
-    }
-
-    [Fact]
-    public async Task WithdrawAsync_WithNoPinSet_ThrowsBusinessRuleException()
-    {
-        // Arrange
-        var userId = Guid.NewGuid();
-        var account = CreateTestAccount(userId, balance: 1000m);
-        var user = CreateTestUser(userId, pinHash: null); // No PIN set
-
-        _context.Accounts.Add(account);
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-
-        _accountAccessMock
-            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
-            .ReturnsAsync(account);
-
-        var request = new WithdrawRequest
-        {
-            AccountId = account.Id,
-            Amount = 100m,
-            Pin = "123456"
-        };
-
-        // Act
-        var act = () => _sut.WithdrawAsync(userId, request);
-
-        // Assert
-        await act.Should()
-            .ThrowAsync<BusinessRuleException>()
-            .WithMessage("*PIN must be set*");
     }
 
     [Fact]
@@ -485,21 +540,107 @@ public class TransactionServiceTests : IDisposable
         // Arrange
         var userId = Guid.NewGuid();
         var account = CreateTestAccount(userId, balance: 1000m);
-        var user = CreateTestUser(userId, pinHash: "hashedPin");
 
         _context.Accounts.Add(account);
-        _context.Users.Add(user);
+        _context.Users.Add(CreateTestUser(userId, pinHash: "hashedPin"));
         await _context.SaveChangesAsync();
 
         _accountAccessMock
             .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
             .ReturnsAsync(account);
 
-        _pinVerifierMock
-            .Setup(x => x.VerifyPinAsync(It.IsAny<Guid>(), It.IsAny<string>()))
-            .ReturnsAsync(true);
+        var request = new WithdrawRequest { AccountId = account.Id, Amount = 100m };
 
-        var request = new WithdrawRequest
+        // Act
+        var result = await _sut.WithdrawAsync(userId, request, Guid.NewGuid());
+
+        // Assert
+        result.Transaction.Type.Should().Be(TransactionType.Withdrawal);
+    }
+
+    [Fact]
+    public async Task AuthoriseWithdrawalAsync_ProvesOwnershipBeforeThePinIsConsulted()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(accountId, userId))
+            .ThrowsAsync(new NotFoundException("Account", accountId));
+
+        var request = new WithdrawalAuthorizationRequest
+        {
+            AccountId = accountId,
+            Amount = 100m,
+            Pin = "123456"
+        };
+
+        // Act
+        var act = () => _sut.AuthoriseWithdrawalAsync(userId, request);
+
+        // Assert -- a probe of an unknown or foreign account must cost no PIN attempt, or this
+        // endpoint becomes a cheaper oracle than the withdrawal it authorises.
+        await act.Should().ThrowAsync<NotFoundException>();
+
+        _stepUpMock.Verify(
+            x => x.MintAsync(
+                It.IsAny<Guid>(), It.IsAny<StepUpOperation>(), It.IsAny<StepUpBinding>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task AuthoriseWithdrawalAsync_PropagatesWhatTheMintThrowsForAWrongPin()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, balance: 1000m);
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        _stepUpMock
+            .Setup(x => x.MintAsync(
+                userId, StepUpOperation.Withdrawal, It.IsAny<StepUpBinding>(), "wrongpin",
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AuthenticationException("Invalid PIN.", ErrorCodes.InvalidPin));
+
+        var request = new WithdrawalAuthorizationRequest
+        {
+            AccountId = account.Id,
+            Amount = 100m,
+            Pin = "wrongpin"
+        };
+
+        // Act
+        var act = () => _sut.AuthoriseWithdrawalAsync(userId, request);
+
+        // Assert -- the wrong-PIN refusal a withdrawal used to give is now given here, unchanged.
+        (await act.Should().ThrowAsync<AuthenticationException>())
+            .Which.ErrorCode.Should().Be(ErrorCodes.InvalidPin);
+    }
+
+    [Fact]
+    public async Task AuthoriseWithdrawalAsync_MintsWithoutCheckingTheBalance()
+    {
+        // Arrange -- the account holds 50 and the caller asks to authorise 100.
+        var userId = Guid.NewGuid();
+        var account = CreateTestAccount(userId, balance: 50m);
+
+        _accountAccessMock
+            .Setup(x => x.GetAccountWithOwnershipCheckAsync(account.Id, userId))
+            .ReturnsAsync(account);
+
+        _stepUpMock
+            .Setup(x => x.MintAsync(
+                userId, StepUpOperation.Withdrawal,
+                StepUpBinding.ForWithdrawal(account.Id, 100m), "123456",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MintedFor(userId));
+
+        var request = new WithdrawalAuthorizationRequest
         {
             AccountId = account.Id,
             Amount = 100m,
@@ -507,10 +648,16 @@ public class TransactionServiceTests : IDisposable
         };
 
         // Act
-        var result = await _sut.WithdrawAsync(userId, request);
+        var result = await _sut.AuthoriseWithdrawalAsync(userId, request);
 
-        // Assert
-        result.Transaction.Type.Should().Be(TransactionType.Withdrawal);
+        /*
+          Assert -- IT MINTS. This pins a DECISION, not an accident (ADR-0050 D4, ADR-0056): a mint
+          is an authentication event, and balance is a racing value that the withdrawal re-reads
+          inside its own transaction anyway. Refusing here would only teach a caller the balance at
+          no cost, and add a second place for the two checks to disagree. The 422 arrives at the
+          withdrawal.
+        */
+        result.AuthorizationId.Should().NotBeEmpty();
     }
 
     #endregion

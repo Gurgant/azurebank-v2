@@ -184,7 +184,8 @@ AzureBank.Api/
 | `/api/transactions` | GET | List transactions with filters | Yes |
 | `/api/transactions/{id}` | GET | Get transaction details | Yes |
 | `/api/transactions/deposit` | POST | Deposit funds | Yes |
-| `/api/transactions/withdraw` | POST | Withdraw funds | Yes |
+| `/api/transactions/withdraw` | POST | Withdraw funds | Yes + Step-Up-Authorization |
+| `/api/transactions/withdraw/authorizations` | POST | Authorise a withdrawal (proves the PIN) | Yes + PIN |
 
 ### Transfers (`/api/transfers`)
 

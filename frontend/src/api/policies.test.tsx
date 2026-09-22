@@ -340,9 +340,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(store.getState().auth.status).toBe('authenticated');
     const { result } = renderHook(() => useWithdrawIntent(), { wrapper: Wrapper });
 
-    const failed = await act(() =>
-      settle(result.current.submit({ accountId: UUID, amount: 10, pin: '000000' })),
-    );
+    const failed = await act(() => settle(result.current.submit({ accountId: UUID, amount: 10 })));
     expect(failed.ok).toBe(false);
     if (failed.ok) throw new Error('unreachable');
     expect(failed.error.errorCode).toBe('INVALID_PIN');
@@ -351,9 +349,7 @@ describe('data-layer policies (flagship, ADR-0022)', () => {
     expect(store.getState().auth.status).toBe('authenticated');
 
     // Key DROPPED: the corrected PIN changes the body bytes (D4 — re-key on errorCode).
-    const second = await act(() =>
-      settle(result.current.submit({ accountId: UUID, amount: 10, pin: '123456' })),
-    );
+    const second = await act(() => settle(result.current.submit({ accountId: UUID, amount: 10 })));
     expect(second.ok).toBe(true);
     expect(keys[1]).not.toBe(keys[0]);
   });

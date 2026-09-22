@@ -77,7 +77,10 @@ public static class EvidenceCommand
 
         var numberArgument = new Argument<string>(
             "transactionNumber",
-            "The TXN-... number the transfer response returned.");
+            // "the movement response", not "the transfer response": this verb has served
+            // withdrawals since ADR-0056, and an operator holding a withdrawal's number should
+            // not read the argument description and conclude it is the wrong tool.
+            "The TXN-... number the movement response returned (a transfer or a withdrawal).");
         command.AddArgument(numberArgument);
 
         command.SetHandler(async (InvocationContext invocation) =>
@@ -117,7 +120,8 @@ public static class EvidenceCommand
             return (VerifyCommand.UsageError, new[]
             {
                 "NOT ASSEMBLED: that is not a transaction number.",
-                "  `evidence` needs the TXN-... number the transfer response returned. A blank",
+                "  `evidence` needs the TXN-... number the movement response returned — a transfer",
+                "  or a withdrawal. A blank",
                 "  argument or one carrying a NUL character cannot name a row, so nothing was read.",
                 "    evidence TXN-20260902-0000000101X",
             });
@@ -171,7 +175,7 @@ public static class EvidenceCommand
                 {
                     $"NOT ASSEMBLED: no transaction is numbered {trimmed}.",
                     "  Nothing in this store carries that number, so there is no movement to build",
-                    "  evidence for. Check the number against the transfer response or the ledger;",
+                    "  evidence for. Check the number against the movement response or the ledger;",
                     "  this says nothing about the chain, which was not walked.",
                 });
             }
@@ -208,10 +212,17 @@ public static class EvidenceCommand
               row written before that date names none, and is reported as a pre-binding row,
               never as a finding.
             */
+            // MoneyWithdrawn joins the two transfer events (ADR-0056): a withdrawal's success row
+            // now carries ConsumedAuthorisation in its hashed Detail, so it is the row that names
+            // the authorisation for a withdrawal exactly as MoneyTransferred does for a transfer.
+            // Left out, the lookup below would find no success row for an honest withdrawal and
+            // report a pre-binding row -- a verdict that reads as "written before we recorded
+            // this" when the truth is "we forgot to look".
             var successRow = auditRows.FirstOrDefault(e =>
                 e.Outcome == AuditOutcome.Succeeded
                 && (e.Event == SecurityEvents.MoneyTransferred
-                    || e.Event == SecurityEvents.MoneyTransferredInternally));
+                    || e.Event == SecurityEvents.MoneyTransferredInternally
+                    || e.Event == SecurityEvents.MoneyWithdrawn));
             var boundId = AuditDetails.ConsumedAuthorisationOf(successRow?.Detail);
             var bound = boundId is { } named
                 ? await context.StepUpAuthorizations
@@ -330,16 +341,20 @@ public static class EvidenceCommand
         Guid? boundId,
         StepUpAuthorization? bound)
     {
-        var appliesToType = movement.Type is TransactionType.TransferOut;
+        // WIDENED FOR THE WITHDRAWAL (ADR-0056). This read `is TransactionType.TransferOut`, so
+        // a withdrawal -- which now mints and spends an authorisation exactly as a transfer does --
+        // would have been answered "NO AUTHORISATION APPLIES" and its PIN proof declared absent by
+        // the very verb an operator runs to find it.
+        var appliesToType = movement.Type is TransactionType.TransferOut or TransactionType.Withdrawal;
 
         if (!appliesToType)
         {
             yield return $"NO AUTHORISATION APPLIES: a {movement.Type} carries no step-up"
                 + " authorisation.";
-            yield return "  ADR-0042 binds an authorisation to the two TRANSFER endpoints only; a";
-            yield return "  deposit, a withdrawal and the incoming leg of a transfer are not minted";
-            yield return "  against. Ask for the OUTGOING leg's number to see the authorisation that";
-            yield return "  paid for a transfer.";
+            yield return "  ADR-0042 binds an authorisation to the two TRANSFER endpoints and";
+            yield return "  ADR-0056 to the withdrawal; a deposit and the incoming leg of a transfer";
+            yield return "  are not minted against. Ask for the OUTGOING leg's number to see the";
+            yield return "  authorisation that paid for a transfer.";
             yield break;
         }
 
@@ -349,15 +364,26 @@ public static class EvidenceCommand
             if (authorisation is null)
             {
                 yield return "NOT STRONGLY AUTHENTICATED: no consumed authorisation names this transaction.";
-                yield return "  A transfer cannot be accepted without one (ADR-0042 refuses it 401), so";
+                yield return "  A transfer or a withdrawal cannot be accepted without one (ADR-0042 and";
+                yield return "  ADR-0056 refuse it 401), so";
                 yield return "  either this movement predates that rule, or the row that paid for it is";
                 yield return "  gone -- and the table it lived in is NOT chained, so its absence leaves no";
                 yield return "  break to find.";
             }
             else
             {
+                /*
+                  THE READER'S WORD, NOT THE ENUM'S. A withdrawal reaches this branch since
+                  ADR-0056, and an evidence report that calls it a transfer is wrong in the one
+                  place an operator is reading to find out what happened.
+
+                  `movement.Type.ToString()` was the first attempt and it was worse than the bug:
+                  `TransferOut` renders "transferout", so every transfer's report changed too.
+                  EvidenceVerdictTests caught that, which is what it is for.
+                */
+                var noun = movement.Type == TransactionType.Withdrawal ? "withdrawal" : "transfer";
                 yield return $"STRONGLY AUTHENTICATED: authorisation {authorisation.Id:D} paid for this"
-                    + " transfer.";
+                    + $" {noun}.";
                 foreach (var line in Instants(authorisation))
                 {
                     yield return line;
@@ -379,13 +405,27 @@ public static class EvidenceCommand
             }
             else if (hasSuccessRow)
             {
+                /*
+                  THE CUTOVER IS PER RAIL. Transfers began naming the authorisation they consumed
+                  on 2026-09-14; the withdrawal only with ADR-0056. EVERY withdrawal written
+                  before that change reaches this branch, so a fixed 2026-09-14 would send an
+                  operator to a cutover that has nothing to do with the movement in their hands --
+                  the same defect as calling a withdrawal a transfer, one line further down.
+                */
                 yield return "  Bound authorisation: none. The audit row for this movement is a pre-binding row,";
                 yield return "  written before success rows began naming the authorisation they consumed";
-                yield return "  (2026-09-14); the pointer above is all the binding this movement has.";
+
+                // BOTH SENTENCES WHOLE, rather than a `since` variable holding "ADR-0056".
+                // AuditProseGuardTests reads verdict headlines out of this file with a regex that
+                // takes an ALL-CAPS run straight after a quote, so a bare "ADR-0056" literal is
+                // extracted as a headline named ADR and reddens the guard that counts them.
+                yield return movement.Type == TransactionType.Withdrawal
+                    ? "  (ADR-0056); the pointer above is all the binding this movement has."
+                    : "  (2026-09-14); the pointer above is all the binding this movement has.";
             }
             else
             {
-                yield return "  Bound authorisation: none, because no Succeeded transfer row names this";
+                yield return "  Bound authorisation: none, because no Succeeded movement row names this";
                 yield return "  movement (the rows below say what does).";
             }
 
@@ -419,9 +459,20 @@ public static class EvidenceCommand
           shape, a recipient handle marking the external rail; a consumed row always records its
           instant.
         */
-        var expectedOperation = movement.RecipientAzureTag is null
-            ? StepUpOperation.InternalTransfer
-            : StepUpOperation.Transfer;
+        /*
+          THE MOVEMENT'S TYPE IS ASKED FIRST, and that ordering is the whole correction (ADR-0056).
+          This was a two-armed ternary over the recipient handle alone, and a withdrawal carries no
+          handle -- so it would have fallen into the InternalTransfer arm and every honest
+          withdrawal would have been reported as bound to the wrong operation. The handle still
+          decides between the two transfer rails, where it is the thing that tells them apart.
+        */
+        var expectedOperation = movement.Type switch
+        {
+            TransactionType.Withdrawal => StepUpOperation.Withdrawal,
+            _ => movement.RecipientAzureTag is null
+                ? StepUpOperation.InternalTransfer
+                : StepUpOperation.Transfer,
+        };
         var reasons = new List<string>();
         if (bound.ConsumedByTransactionId != movement.Id)
         {

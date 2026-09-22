@@ -197,7 +197,10 @@ expired/invalid) → the transaction (D8).
 owns; the refusal survives the 401's own rollback). Nothing else on the path writes a row, for
 ADR-0044's reasons: the two 422s are business validation the owner can trigger at will from a list
 they already hold; ~~a wrong or locked PIN at the mint is unaudited exactly as it is for the transfer
-mints (the mint has no `IAuditService`)~~ *(audited at all three mints since 2026-09-11, ADR-0044)*;
+mints (the mint has no `IAuditService`)~~ *(audited at all three mints since 2026-09-11, ADR-0044;
+at all FOUR since 2026-09-21, ADR-0056 — and the ternary this ADR's `RecordPinRefusalAsync` used to
+choose the event became a switch, because a fourth operation would have fallen into its else and
+been filed as a refused transfer)*;
 EXPIRED and INVALID on the DELETE are unaudited as they are
 on a transfer. The ADR-0044 inventory moves by one event and one `RecordRefusalAsync` site and no
 log template: the refusal emits no `SecurityEvent {SecurityEvent}` line, following the money-refusal

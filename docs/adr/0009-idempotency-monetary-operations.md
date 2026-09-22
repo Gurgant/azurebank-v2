@@ -90,9 +90,15 @@ design — see Notes).
 - **`RequestHash` = HMAC-SHA256(server key, raw body bytes)**, lowercase
   hex. Raw bytes (no JSON canonicalization): deterministic, parser-free,
   and real retries resend identical bytes. **Keyed**, not plain SHA-256:
-  the withdraw body contains a 6-digit PIN, so an unkeyed hash of a
+  ~~the withdraw body contains a 6-digit PIN, so an unkeyed hash of a
   mostly-known payload would give anyone with DB read access a 10^6-guess
-  offline oracle — defeating the reason PINs are Argon2id-hashed. The key
+  offline oracle — defeating the reason PINs are Argon2id-hashed.~~
+  *(Struck 2026-09-21: ADR-0056 moved the PIN to the withdrawal mint, so no
+  monetary body carries one. The digest stays keyed on the surviving
+  reason: every body here is low-entropy and mostly known — an account id,
+  an amount from a small range, a short description — so an unkeyed hash
+  would still let a reader of the table confirm guesses about what somebody
+  moved and to whom.)* The key
   (`Idempotency:HashKey`) lives in configuration (user-secrets/env),
   never in the repo or the database; startup fails fast if absent.
 - **`ClaimId` (Guid, concurrency token) = fencing + owner token.** Every
@@ -139,7 +145,11 @@ design — see Notes).
   `IDEMPOTENCY_PAYLOAD_TOO_LARGE`** *before* buffering/hashing/claiming (closing an
   authenticated hash-amplification DoS), caps chunked reads at the same limit via
   `IHttpMaxRequestBodySizeFeature`, and raises `EnableBuffering`'s threshold to 32 KB
-  so an accepted body (PIN included) is never spooled to disk.
+  so an accepted body ~~(PIN included)~~ is never spooled to disk. *(Struck
+  2026-09-21, ADR-0056: no monetary body carries a PIN any more — the
+  withdrawal's moved to its own mint, which is not an idempotent endpoint. The
+  threshold is unchanged; what is gone is the secret that made spooling one to
+  disk the sharpest reason for it.)*
 - The BFF needs no changes: YARP forwards `Idempotency-Key` and
   `Idempotency-Replayed` by default (verified; its transform only adds
   `Authorization`).
@@ -254,7 +264,11 @@ tracing. It surfaced a set of bounded issues, resolved as follows.
 
 ## Related
 
-- ADR-0003 (Argon2id) — the reason `RequestHash` must be keyed.
+- ADR-0003 (Argon2id) — ~~the reason `RequestHash` must be keyed~~ *(struck
+  2026-09-21, ADR-0056: it was the reason while a monetary body carried a PIN.
+  The key stays, on the reason stated above — every body here is low-entropy and
+  mostly known, so an unkeyed digest would still let a reader of the table
+  confirm guesses about what somebody moved and to whom.)*
 - docs/api/openapiv1.json — regenerated with the header + 409/422.
 - Review follow-ups filed separately (pre-existing, out of scope here):
   no API-side PIN attempt limiting; BFF rate limiter defined but never

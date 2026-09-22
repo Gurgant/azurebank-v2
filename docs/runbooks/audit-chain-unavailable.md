@@ -911,12 +911,13 @@ know the anchor table was there, now leaves a number that does not add up.
 dotnet run --project backend/tools/AzureBank.AuditVerifier -- evidence TXN-20260902-0000000101X
 ```
 
-The argument is the `TXN-…` number the transfer response returned — the thing a customer, an
-operator or a regulator actually holds; the tool never asks for a GUID. It prints one pack, top to
-bottom: the ledger row, the step-up authorisation that paid for it, the audit rows that name it, and
-then the chain verdict `verify` would print, rendered by the same code. **The exit code is the
-chain's** — a pack over a broken chain prints the pack and exits **1**, because the break is the
-incident and the pack is a reading of a table that has stopped verifying.
+The argument is the `TXN-…` number the movement response returned — a transfer or, since ADR-0056,
+a withdrawal — the thing a customer, an operator or a regulator actually holds; the tool never asks
+for a GUID. It prints one pack, top to bottom: the ledger row, the step-up authorisation that paid
+for it, the audit rows that name it, and then the chain verdict `verify` would print, rendered by
+the same code. **The exit code is the chain's** — a pack over a broken chain prints the pack and
+exits **1**, because the break is the incident and the pack is a reading of a table that has stopped
+verifying.
 
 What the second section can say, and what it cannot:
 
@@ -924,33 +925,37 @@ What the second section can say, and what it cannot:
   PIN was proved and the instant it was spent. ⚠️ **That row is NOT inside the chain.** A successful
   mint writes no audit row (the step-up service writes one only for a wrong or locked PIN), so the
   second factor is vouched for by a mutable table, not by a hash. The chain covers the
-  `MoneyTransferred` or `MoneyTransferredInternally` row naming the movement; it does not cover the
-  authorisation. The pack says so under the line.
-  _Since 2026-09-14 this shape is printed only when the movement's Succeeded transfer row carries no
-  name the tool can read: a **pre-binding row** (a `MoneyTransferred` or
-  `MoneyTransferredInternally` row written before success rows began naming the authorisation they
-  consumed, `AuditDetails`), a `Detail` the tool cannot read, or a movement none of whose audit rows
-  is a Succeeded transfer row; the pack says which under the line. An untouched row written after
-  prints one of the BOUND verdicts below._
-- `NOT STRONGLY AUTHENTICATED` — a transfer with no consumed authorisation naming it. A transfer
-  cannot be accepted without one since ADR-0042, so either the movement predates that rule or the
-  row that paid for it is gone — and because that table is unchained, its absence leaves no break
-  for `verify` to find. Treat it as a finding.
-  _Since 2026-09-14 only for a pre-binding row, a `Detail` the tool cannot read, or a movement that
-  no Succeeded transfer row names (none at all, or only rows with another outcome); the row-gone
+  `MoneyTransferred`, `MoneyTransferredInternally` or `MoneyWithdrawn` row naming the movement; it
+  does not cover the authorisation. The pack says so under the line.
+  _This shape is printed only when the movement's Succeeded row carries no name the tool can read:
+  a **pre-binding row** (one written before success rows on that rail began naming the authorisation
+  they consumed, `AuditDetails`), a `Detail` the tool cannot read, or a movement none of whose audit
+  rows is a Succeeded movement row; the pack says which under the line. An untouched row written
+  after prints one of the BOUND verdicts below._ ⚠️ **THE CUTOVER IS PER RAIL AND THE PACK PRINTS
+  THE RIGHT ONE**: transfers began naming on **2026-09-14**, the withdrawal only with **ADR-0056**,
+  so every withdrawal written before that change is a pre-binding row and the pack names ADR-0056
+  rather than the transfers' date.
+- `NOT STRONGLY AUTHENTICATED` — a movement with no consumed authorisation naming it. Neither a
+  transfer (ADR-0042) nor a withdrawal (ADR-0056) can be accepted without one, so either the
+  movement predates the rule for its rail or the row that paid for it is gone — and because that
+  table is unchained, its absence leaves no break for `verify` to find. Treat it as a finding.
+  _Only for a pre-binding row, a `Detail` the tool cannot read, or a movement that
+  no Succeeded movement row names (none at all, or only rows with another outcome); the row-gone
   case on a bound row is `BOUND AUTHORISATION MISSING` below, which is the sharper answer.
   A non-null `Detail` the tool cannot read prints `Bound authorisation: UNREADABLE` under the line
   instead of calling the row pre-binding; `Detail` is hashed, so the chain verdict below says
   whether that row is to be believed at all._
-- `STRONGLY AUTHENTICATED, BOUND IN THE CHAIN` — _(since 2026-09-14)_ the chained `MoneyTransferred`
-  or `MoneyTransferredInternally` row itself names the authorisation it consumed — `Detail` is
+- `STRONGLY AUTHENTICATED, BOUND IN THE CHAIN` — _(transfers since 2026-09-14, withdrawals since
+  ADR-0056)_ the chained `MoneyTransferred`, `MoneyTransferredInternally` or `MoneyWithdrawn` row
+  itself names the authorisation it consumed — `Detail` is
   `{"authorizationId":"<id>"}`, under
   the hash — and the authorisation row agrees: it exists, it is `Consumed` with an instant of
-  spending, it points back at this movement, and it was minted by this account's owner for this
-  kind of transfer. The NAME is inside the chain; the instants under the line are still read from the
+  spending, it points back at this movement, and it was minted by this account's owner for THIS
+  operation — a withdrawal's authorisation does not pay for a transfer, and the operation name is
+  inside the binding hash. The NAME is inside the chain; the instants under the line are read from the
   unchained table, so a row that goes missing or is re-pointed is reported as one of the two
-  findings below rather than silently downgrading this verdict. This is what a transfer written
-  after 2026-09-14 prints when nothing is wrong.
+  findings below rather than silently downgrading this verdict. This is what a movement written
+  after its rail's cutover prints when nothing is wrong.
 - `BOUND AUTHORISATION MISSING` — the chained row names an authorisation and no such row exists.
   The chain vouches for the name, so this is not "nothing paid": something paid, and the record of
   when the PIN was proved and spent is gone — a write around the application, or a purge. The chain
@@ -959,11 +964,13 @@ What the second section can say, and what it cannot:
   is the one to believe.
 - `BOUND AUTHORISATION DOES NOT MATCH` — the chained row names an authorisation whose row exists
   but says it paid for another movement, records no movement at all, points at this movement with a
-  status other than `Consumed`, was minted by another user or for the other kind of transfer, or is
+  status other than `Consumed`, was minted by another user or for another operation, or is
   marked spent with no instant; the lines under it say which. The chained name is the evidence; the
   table was written around the application. A finding.
-- `NO AUTHORISATION APPLIES` — a deposit, a withdrawal, or the INCOMING leg of a transfer. ADR-0042
-  binds an authorisation to the two transfer endpoints only; ask for the OUTGOING leg's number.
+- `NO AUTHORISATION APPLIES` — a deposit, or the INCOMING leg of a transfer. ADR-0042 binds an
+  authorisation to the two transfer endpoints and ADR-0056 to the withdrawal; ask for the OUTGOING
+  leg's number. ~~a withdrawal~~ *(struck 2026-09-21: a withdrawal now mints and spends one like a
+  transfer, so this verdict against a withdrawal is a FINDING rather than the expected answer.)*
 - `NO AUDIT ROW` — a ledger row with no audit row naming it. Every money movement writes one in the
   same transaction as the ledger row (D1), so this is a movement recorded without its record: a
   write around the application, or a purge. A finding whatever the chain verdict below it says.
@@ -1052,7 +1059,7 @@ The headlines, and what each means from THIS verb:
   (it selects `AuditEventId`), then asks by id, then by the pair. ⚠️ Run `verify` when the named
   row is GONE — that is the trail's problem. A row that is THERE and does not match the notice is
   the notice's problem, and `verify` comes back clean, which is why reading the row comes first.
-  `evidence` does not apply here — it reads by a transfer's `TXN-…` number, and a PIN event has
+  `evidence` does not apply here — it reads by a movement's `TXN-…` number, and a PIN event has
   none. (From `evidence` the same words mean a
   LEDGER row with no audit row naming it; see above.)
 - `NOT NOTIFIED` — before the store is touched, exit **4**: no contact, not a directory, a directory

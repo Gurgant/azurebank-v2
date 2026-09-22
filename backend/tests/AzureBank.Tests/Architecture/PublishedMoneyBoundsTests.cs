@@ -35,7 +35,8 @@ public class PublishedMoneyBoundsTests
     /// <summary>
     /// Every request schema that carries a money amount. Listed rather than discovered, so that a
     /// seventh money DTO added without <c>[MoneyRange]</c> is a review conversation, not a silent
-    /// pass — and measured: six on the day this was written.
+    /// pass — and measured: six on the day this was written, seven since 2026-09-21 when the
+    /// withdrawal mint joined the rail (ADR-0056).
     /// </summary>
     private static readonly string[] MoneyRequestSchemas =
     [
@@ -45,6 +46,7 @@ public class PublishedMoneyBoundsTests
         "InternalTransferRequest",
         "TransferAuthorizationRequest",
         "InternalTransferAuthorizationRequest",
+        "WithdrawalAuthorizationRequest",
     ];
 
     private static JsonElement Document()

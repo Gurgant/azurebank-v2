@@ -1690,6 +1690,130 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/transactions/withdraw/authorizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authorise withdrawal
+         * @description Prove the PIN for one withdrawal and receive the authorisation to present on it.
+         *     The authorisation is valid only for this account and this amount, is accepted once,
+         *     and expires.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description The account, the amount, and the PIN */
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WithdrawalAuthorizationRequest"];
+                    "text/json": components["schemas"]["WithdrawalAuthorizationRequest"];
+                    "application/*+json": components["schemas"]["WithdrawalAuthorizationRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiResponseOfStepUpAuthorizationResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unauthorized - authentication failed or is missing. The body is a ProblemDetails whose errorCode names the reason (e.g. AUTH_TOKEN_MISSING, AUTH_TOKEN_INVALID). */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Forbidden - authenticated, but not permitted to reach this resource (errorCode: ACCESS_DENIED). */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Unsupported Media Type - the request's Content-Type is not application/json, text/json or application/*+json. Refused by the framework before model binding, as a ProblemDetails with no errorCode. */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED). The balance is NOT checked here: an authorisation can be minted for more than the account holds, and the withdrawal refuses it. */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description A URI reference identifying the problem type */
+                            type?: string;
+                            /** @description A short, human-readable summary (e.g., 'Business Rule Violation') */
+                            title?: string;
+                            /** @description The HTTP status code (422) */
+                            status?: number;
+                            /** @description A human-readable explanation of the business rule violation */
+                            detail?: string;
+                            /** @description Machine-readable error code (e.g., 'INSUFFICIENT_FUNDS') */
+                            errorCode?: string;
+                            /** @description Request trace identifier for debugging */
+                            traceId?: string;
+                        };
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/transactions/withdraw": {
         parameters: {
             query?: never;
@@ -1701,20 +1825,21 @@ export interface paths {
         put?: never;
         /**
          * Withdraw
-         * @description Withdraw money from an account.
-         *     Requires PIN verification.
+         * @description Withdraw money from an account, presenting the authorisation minted for it.
          */
         post: {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description Authorisation reference minted by POST /api/transactions/withdraw/authorizations (ADR-0056). REQUIRED to make a withdrawal: presenting none is refused 401 AUTHORIZATION_REQUIRED and recorded; one minted for another amount, for a transfer, already spent, or not the caller's own is refused 401 AUTHORIZATION_INVALID; one past its window is refused 401 AUTHORIZATION_EXPIRED. The funds rule (422 INSUFFICIENT_FUNDS) is checked BEFORE the header is. */
+                    "Step-Up-Authorization": string;
                     /** @description Client-generated UUID that makes this monetary operation idempotent: retries with the same key and payload replay the original response (header Idempotency-Replayed: true) instead of executing twice. Missing => 400 IDEMPOTENCY_KEY_MISSING; malformed => 400 IDEMPOTENCY_KEY_INVALID. */
                     "Idempotency-Key": string;
                 };
                 path?: never;
                 cookie?: never;
             };
-            /** @description Withdrawal details including PIN */
+            /** @description Withdrawal details */
             requestBody: {
                 content: {
                     "application/json": components["schemas"]["WithdrawRequest"];
@@ -1823,7 +1948,7 @@ export interface paths {
                         "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
-                /** @description Business Rule Violation - no PIN is enrolled (errorCode PIN_REQUIRED, checked before the balance), or the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
+                /** @description Business Rule Violation - the account cannot cover the amount (errorCode INSUFFICIENT_FUNDS). Also refused when this idempotency key was already used with a different payload (IDEMPOTENCY_KEY_REUSE). */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1847,15 +1972,6 @@ export interface paths {
                             /** @description INSUFFICIENT_FUNDS only: the amount this request asked to move. It was not moved: it is more than available. */
                             requested?: number;
                         };
-                    };
-                };
-                /** @description Too Many Requests */
-                429: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ProblemDetails"];
                     };
                 };
             };
@@ -3215,7 +3331,11 @@ export interface components {
             /** @description PIN must be exactly 6 digits. */
             pin: string;
         };
-        WithdrawRequest: {
+        /**
+         * @description Authorises one withdrawal: proves the PIN and returns a reference valid only for this account
+         *     and this amount.
+         */
+        WithdrawalAuthorizationRequest: {
             /**
              * Format: uuid
              * @description A valid non-empty UUID is required.
@@ -3228,6 +3348,18 @@ export interface components {
             amount: number;
             /** @description PIN must be exactly 6 digits. */
             pin: string;
+        };
+        WithdrawRequest: {
+            /**
+             * Format: uuid
+             * @description A valid non-empty UUID is required.
+             */
+            accountId: string;
+            /**
+             * Format: double
+             * @description Amount must be between 0.01 EUR and 100000.00 EUR.
+             */
+            amount: number;
             description?: null | string;
         };
         /**

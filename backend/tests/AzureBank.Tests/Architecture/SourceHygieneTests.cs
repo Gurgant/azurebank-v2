@@ -119,6 +119,82 @@ public class SourceHygieneTests
             + "and it silently changed the meaning of a regex once already");
     }
 
+    /// <summary>
+    /// One <c>&lt;summary&gt;</c> per documentation comment.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Twice on PR #198, a member ended up carrying two consecutive <c>&lt;summary&gt;</c> blocks:
+    /// once on <c>TransferService.PrepareTransferAttemptAsync</c>, when a body became a delegation
+    /// and picked up a second block, and once here in <c>SecurityEventConstantTests</c>, when a
+    /// helper was inserted BETWEEN a doc comment and the method it described — which left the
+    /// helper holding both and the test holding none. Only one reaches the generated XML, so the
+    /// explanation that is dropped is the one a reader was sent to find.
+    /// </para>
+    /// <para>
+    /// The compiler does not say so here. <c>CS1710</c> fires only when documentation generation
+    /// is on, and it is off in this solution: both instances built with zero warnings and were
+    /// caught by a reviewer reading the diff. That is the same shape as the control-character rule
+    /// above — a defect every normal instrument is blind to — which is why it lives in this file.
+    /// </para>
+    /// <para>
+    /// A documentation comment is a contiguous run of <c>///</c> lines; two <c>&lt;summary&gt;</c>
+    /// openings inside one run is the defect. <c>&lt;/summary&gt;</c> is not counted, so a
+    /// single-line <c>/// &lt;summary&gt;text&lt;/summary&gt;</c> is fine.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NoDocumentationCommentCarriesTwoSummaries()
+    {
+        var root = RepoRoot();
+        var offenders = new List<string>();
+        var runs = 0;
+
+        foreach (var relative in ScannedFolders)
+        {
+            var folder = Path.Combine(root.FullName, relative);
+            foreach (var file in Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories))
+            {
+                if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                    || file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+                {
+                    continue;
+                }
+
+                var lines = File.ReadAllLines(file);
+                var runStart = -1;
+                var summaries = 0;
+
+                for (var i = 0; i <= lines.Length; i++)
+                {
+                    var isDoc = i < lines.Length && lines[i].TrimStart().StartsWith("///", StringComparison.Ordinal);
+                    if (isDoc)
+                    {
+                        if (runStart < 0) { runStart = i; summaries = 0; runs++; }
+                        if (lines[i].Contains("<summary>", StringComparison.Ordinal)) { summaries++; }
+                        continue;
+                    }
+
+                    if (runStart >= 0 && summaries > 1)
+                    {
+                        offenders.Add(
+                            $"{Path.GetRelativePath(root.FullName, file)}:{runStart + 1} carries {summaries}");
+                    }
+
+                    runStart = -1;
+                }
+            }
+        }
+
+        runs.Should().BeGreaterThan(200,
+            "a scan that reads nothing reports clean forever; this repository documents far more "
+            + "than two hundred members");
+
+        offenders.Should().BeEmpty(
+            "two <summary> blocks on one member drop one of them from the generated XML, and the "
+            + "compiler is silent about it while documentation generation is off");
+    }
+
     [Theory]
     [InlineData((char)0x08, true)]   // BACKSPACE - the one that actually happened
     [InlineData((char)0x00, true)]   // NUL

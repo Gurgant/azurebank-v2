@@ -141,17 +141,31 @@ describe('failure ordering matches the service, not the handler that was easiest
     seedMockSession();
   });
 
-  it('withdraw resolves the account BEFORE the PIN, and spends no attempt on a bad id', async () => {
-    // `WithdrawAsync` opens with GetAccountWithOwnershipCheckAsync — above the PIN-set check, the
-    // lockout window and the compare. With the account check last, a fumbled id burned a PIN
-    // attempt and could lock you out of a mock the real API would never have let you reach.
-    const res = await fetch('/api/transactions/withdraw', {
+  it('the withdrawal MINT resolves the account BEFORE the PIN, and spends no attempt on a bad id', async () => {
+    // `AuthoriseWithdrawalAsync` opens with GetAccountWithOwnershipCheckAsync — above the PIN-set
+    // check, the lockout window and the compare. With the account check last, a fumbled id burned a
+    // PIN attempt and could lock you out of a mock the real API would never have let you reach.
+    //
+    // THE ENDPOINT MOVED, NOT THE PROPERTY (ADR-0056): the withdrawal itself no longer consults a
+    // PIN, so the only place this ordering can still be observed is the mint. Measured on the
+    // running API 2026-09-21: `mint on a foreign account (costs no attempt?) -> 404
+    // ACCOUNT_NOT_FOUND`.
+    const res = await fetch('/api/transactions/withdraw/authorizations', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': '3f2504e0-4f89-41d3-9a0c-0305e82c3390',
-      },
-      body: JSON.stringify({ accountId: 'no-such-account', amount: 10, pin: '000000' }),
+      headers: { 'Content-Type': 'application/json' },
+      /*
+        A WELL-FORMED GUID THAT DOES NOT EXIST, not the string 'no-such-account' this used to send.
+        The old value exercised a LENIENCY, not the ordering: a non-GUID is refused by model binding
+        with a 400 keyed on the field, above the ownership lookup, on the real API and now in the
+        mock too — so it could never have reached the rung this test is about. Measured on the
+        running API 2026-09-21: a valid-but-foreign id answers 404 ACCOUNT_NOT_FOUND and spends no
+        PIN attempt.
+      */
+      body: JSON.stringify({
+        accountId: '3f2504e0-4f89-41d3-9a0c-0305e82c3399',
+        amount: 10,
+        pin: '000000',
+      }),
     });
 
     expect(res.status).toBe(404);
@@ -702,7 +716,9 @@ describe('the mock quotes the server, it does not paraphrase it', () => {
     const withdrawn = await fetch('/api/transactions/withdraw', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
-      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: available + 1000, pin: '123456' }),
+      // NO authorisation: since ADR-0056 the funds guard runs ahead of the authorisation check,
+      // so an unaffordable withdrawal answers 422 without one.
+      body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: available + 1000 }),
     });
     expect(withdrawn.status).toBe(422);
     const body = await withdrawn.json();
@@ -893,10 +909,19 @@ describe('a deleted account takes its transactions with it', () => {
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
       body: JSON.stringify({ accountId: id, amount: 25 }),
     }).then((r) => r.json());
+    const withdrawAuth = await fetch('/api/transactions/withdraw/authorizations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: id, amount: 25, pin: '123456' }),
+    }).then((r) => r.json());
     const withdrawn = await fetch('/api/transactions/withdraw', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key() },
-      body: JSON.stringify({ accountId: id, amount: 25, pin: '123456' }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': key(),
+        'Step-Up-Authorization': withdrawAuth.data.authorizationId,
+      },
+      body: JSON.stringify({ accountId: id, amount: 25 }),
     }).then((r) => r.json());
     const doomedIds = [deposited.data.transaction.id, withdrawn.data.transaction.id];
 
@@ -1148,9 +1173,12 @@ describe('the PIN lockout, and the header only one path keeps', () => {
     await wrongPin();
     await wrongPin();
 
-    const withdrawal = await fetch('/api/transactions/withdraw', {
+    // THE LOCK IS HIT AT THE MINT NOW (ADR-0056) — the withdrawal consults no PIN, so it can no
+    // longer answer 429. The transport property under test is unchanged: YARP forwards the header
+    // verbatim on the proxied path, which is what the BFF action loses.
+    const withdrawal = await fetch('/api/transactions/withdraw/authorizations', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ accountId: MAIN_ACCOUNT_ID, amount: 1, pin: '123456' }),
     });
 
@@ -1162,7 +1190,7 @@ describe('the PIN lockout, and the header only one path keeps', () => {
     const body = await withdrawal.json();
     expect(body.errorCode).toBe('PIN_LOCKED');
     expect(Number(seconds)).toBe(body.retryAfterSeconds);
-    expect(body.instance).toBe('/api/transactions/withdraw');
+    expect(body.instance).toBe('/api/transactions/withdraw/authorizations');
   });
 });
 

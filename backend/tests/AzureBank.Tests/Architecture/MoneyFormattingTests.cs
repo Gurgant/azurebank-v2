@@ -113,12 +113,6 @@ public class MoneyFormattingTests
         new(@"ToString\(\s*""[cC]\d*""", RegexOptions.Compiled);
 
     /// <summary>
-    /// The ONE predicate. The scan below and the coverage theory further down must ask the same
-    /// question, or the theory pins the regexes while the scan quietly stops using one of them —
-    /// which is exactly what happened: dropping CurrencyToString from the scan left all sixteen
-    /// tests green, because the theory was calling the regexes directly instead of this.
-    /// </summary>
-    /// <summary>
     /// A member called Currency assigned a string literal. Built by concatenation rather than one
     /// verbatim literal on purpose: the first version of this line reached disk with a raw 0x08
     /// BACKSPACE (U+0008) where a literal backslash-b was meant, so the pattern demanded a control character no source line
@@ -134,6 +128,12 @@ public class MoneyFormattingTests
     private static readonly Regex CurrencyLiteral =
         new("Currency" + @"\s*(\{[^}]*\})?\s*(=>|=)\s*""", RegexOptions.Compiled);
 
+    /// <summary>
+    /// The ONE predicate. The scan below and the coverage theory further down must ask the same
+    /// question, or the theory pins the regexes while the scan quietly stops using one of them —
+    /// which is exactly what happened: dropping CurrencyToString from the scan left all sixteen
+    /// tests green, because the theory was calling the regexes directly instead of this.
+    /// </summary>
     private static bool RendersCurrency(string line) =>
         CurrencyFormat.IsMatch(line) || CurrencyToString.IsMatch(line);
 
@@ -347,7 +347,7 @@ public class MoneyFormattingTests
 
         ValidationRules.DescribeAmount(ValidationRules.TransactionMaxAmount)
             .Should().Be("100000.00 EUR",
-                "invariant digits and the ISO code — the exact text published on the six money schemas "
+                "invariant digits and the ISO code — the exact text published on the seven money schemas "
                 + "(PublishedMoneyBoundsTests pins each)");
 
         ValidationRules.DescribeAmount(ValidationRules.TransactionMinAmount)

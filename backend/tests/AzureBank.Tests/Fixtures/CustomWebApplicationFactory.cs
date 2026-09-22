@@ -58,10 +58,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string ServiceCredentialKey =
         "integration-tests-only-service-credential-0123456789abcdef";
 
-    /// <summary>
-    /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
-    /// PasswordHasher when recomputing hashes directly. NOT a real secret.
-    /// </summary>
     /// <summary>Test-only audit chain key. Never a production value; see AuditOptions.ChainKey.</summary>
     public const string AuditChainKey =
         "test-only-audit-chain-key-do-not-use-in-production-0123456789";
@@ -76,6 +72,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string AuditAnchorKey =
         "test-only-anchor-key-quite-unlike-the-chain-one-9876543210";
 
+    /// <summary>
+    /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
+    /// PasswordHasher when recomputing hashes directly. NOT a real secret.
+    /// </summary>
     public const string PinPepper =
         "integration-tests-only-pin-pepper-0123456789abcdef0123456789";
 

@@ -1,3 +1,5 @@
+using AzureBank.Api.Services.Implementations;
+using AzureBank.Shared.Enums;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using AzureBank.Shared.Constants;
@@ -494,15 +496,18 @@ public class SecurityEventConstantTests
             + "administrative, B1 added four money movements, and ADR-0047 added the PIN change. "
             + "Moving this means moving that section in the same commit");
         refusals.Should().Be(
-            9,
+            8,
             "the out-of-band half is counted separately because it answers a different question — "
-            + "which refusals survive their own rollback. Three were token paths; four were added "
-            + "on 2026-08-29 for money refusals — a locked PIN and a wrong PIN on the withdrawal, "
-            + "and an absent step-up at both transfer kinds; the eighth was added on 2026-09-06 "
+            + "which refusals survive their own rollback. Three were token paths; two were added "
+            + "on 2026-08-29 for an absent step-up at both transfer kinds; the sixth on 2026-09-06 "
             + "for an account closure presenting no step-up (AccountDeletionRefused, ADR-0049); the "
-            + "ninth on 2026-09-11, one site in StepUpAuthorizationService for a wrong or locked PIN "
-            + "at all three mints. Insufficient funds is NOT among them, on purpose, and neither are "
-            + "the closure's two 422 guards. Moving this means moving ADR-0044's \"What is wired\" "
+            + "seventh on 2026-09-11, one site in StepUpAuthorizationService for a wrong or locked "
+            + "PIN at every mint; the eighth on 2026-09-21 for a withdrawal presenting no step-up "
+            + "(ADR-0056). WENT DOWN FROM NINE, and that is the shape of ADR-0056 rather than a "
+            + "deletion: the withdrawal's own locked-PIN and wrong-PIN sites LEFT with the PIN "
+            + "itself, and the mint's single site already covers both for every operation — two "
+            + "out, one in. Insufficient funds is NOT among them, on purpose, and neither are the "
+            + "closure's two 422 guards. Moving this means moving ADR-0044's \"What is wired\" "
             + "section too");
 
         perProject["Infrastructure"].Should().Be(
@@ -609,5 +614,151 @@ public class SecurityEventConstantTests
         values.Should().OnlyContain(
             value => PascalCaseLiteral.IsMatch($"\"{value}\""),
             because: "an event name the scanner cannot match is an event name the scanner cannot guard");
+    }
+    /*
+      THE GUARD THE COMPILER CANNOT BE: a fifth StepUpOperation must not be able to reach
+      production without a refusal event of its own.
+
+      It cannot be a compile-time check. TreatWarningsAsErrors IS on in Release, so a non-exhaustive
+      switch WOULD fail the build -- but an enum's domain is every int, not only its named members,
+      so the switch needs a `_` arm and C# then considers it exhaustive whatever is added. The
+      compiler is therefore satisfied by the very arm that would swallow a new member.
+
+      This is not hypothetical. Until ADR-0056 the mapping was a two-armed TERNARY over a
+      three-member enum -- `operation == AccountDeletion ? AccountDeletionRefused :
+      MoneyTransferRefused` -- and adding Withdrawal to that enum silently filed every refused
+      withdrawal PIN as a refused TRANSFER. Nothing failed: the row wrote, the caller still got 401,
+      and only an operator reading the trail months later would have found a transfer that never
+      happened.
+    */
+    [Fact]
+    public void EveryStepUpOperationMapsToItsOwnRefusalEvent()
+    {
+        var operations = Enum.GetValues<StepUpOperation>();
+
+        operations.Should().HaveCountGreaterThan(
+            3, "the enum grew when the withdrawal joined the rail; if this drops, a member was removed");
+
+        var mapped = new Dictionary<StepUpOperation, string>();
+        foreach (var operation in operations)
+        {
+            var act = () => StepUpAuthorizationService.RefusalEventFor(operation);
+            mapped[operation] = act.Should().NotThrow(
+                    "every declared operation needs a refusal event; a new member falls into the "
+                    + "throwing arm until a case is written for it")
+                .Subject;
+        }
+
+        mapped[StepUpOperation.Transfer].Should().Be(SecurityEvents.MoneyTransferRefused);
+        mapped[StepUpOperation.InternalTransfer].Should().Be(SecurityEvents.MoneyTransferRefused);
+        mapped[StepUpOperation.AccountDeletion].Should().Be(SecurityEvents.AccountDeletionRefused);
+        mapped[StepUpOperation.Withdrawal].Should().Be(SecurityEvents.MoneyWithdrawalRefused);
+
+        /*
+          THE TWO TRANSFERS SHARE ONE EVENT ON PURPOSE, which is why this is not a bare
+          "all distinct" assertion: ADR-0044 files both rails under MoneyTransferRefused. What must
+          not happen is a MONEY operation and a NON-MONEY one collapsing into the same name, so the
+          check is that each event is reachable from the operations that should reach it -- and a
+          new member landing on an existing event by accident fails the explicit lines above.
+        */
+        mapped.Values.Distinct().Should().HaveCount(
+            3, "three distinct refusal events across four operations: the two transfer rails share one");
+    }
+
+    /// <summary>
+    /// A PREFIX test, and its limits are stated rather than assumed: it skips <c>//</c>, <c>///</c>
+    /// and a <c>*</c> continuation, and it does NOT strip the unprefixed interior of a
+    /// <c>/* ... */</c> block. That blindness is in the safe direction — an uncounted comment
+    /// mentioning the call inflates the count and the test fails LOUDLY, naming every site it
+    /// found, rather than passing while a real mint hides.
+    /// </summary>
+    private static bool IsCommentLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.StartsWith("//", StringComparison.Ordinal)
+            || trimmed.StartsWith("*", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Every caller of <c>MintAsync</c> proves ownership of the account before minting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>RecordPinRefusalAsync</c> writes an audit row whose subject is
+    /// <c>binding.FromAccountId</c>, and its remark argues that this is safe BECAUSE every caller
+    /// has already proved the actor owns that account. That is an assertion about four call sites
+    /// in three files, and until this test it was held by a sentence — one that was already stale:
+    /// it listed three callers while ADR-0056 had added a fourth, and a review on #198 found it
+    /// rather than any check here.
+    /// </para>
+    /// <para>
+    /// A refusal row naming an account the actor merely TYPED would be a small, durable privacy
+    /// leak in the one table designed never to be purged: it would record, against a real user id,
+    /// that somebody probed a stranger's account. The guard is therefore on the ORDER, not only on
+    /// the presence: a mint that checks ownership afterwards has already written the row.
+    /// </para>
+    /// <para>
+    /// The count is pinned too. A fifth mint is not a failure of this rule — it is a call site
+    /// nobody has read, so the test names it and asks for the remark to be updated with it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryMintProvesOwnershipBeforeIt()
+    {
+        const string mint = ".MintAsync(";
+        const string ownership = "GetAccountWithOwnershipCheckAsync(";
+
+        var sites = new List<(string File, int Line, bool OwnershipFirst)>();
+        foreach (var file in SourceFiles(RepoBackendRoot()))
+        {
+            var text = File.ReadAllText(file);
+            // The interface's own declaration is not a call site.
+            if (text.Contains("interface IStepUpAuthorizationService", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var lines = text.Split('\n');
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (!lines[i].Contains(mint, StringComparison.Ordinal) || IsCommentLine(lines[i]))
+                {
+                    continue;
+                }
+
+                // Look BACKWARDS from the mint for the ownership check, bounded by the enclosing
+                // method: the first line at method indentation that opens one. Four spaces plus
+                // `public`/`private` is this codebase's shape and is asserted by NamingConvention.
+                var ownershipFirst = false;
+                for (var j = i - 1; j >= 0; j--)
+                {
+                    if (lines[j].Contains(ownership, StringComparison.Ordinal))
+                    {
+                        ownershipFirst = true;
+                        break;
+                    }
+
+                    if (lines[j].StartsWith("    public ", StringComparison.Ordinal)
+                        || lines[j].StartsWith("    private ", StringComparison.Ordinal))
+                    {
+                        break;
+                    }
+                }
+
+                sites.Add((Path.GetFileName(file), i + 1, ownershipFirst));
+            }
+        }
+
+        var described = string.Join(", ",
+            sites.Select(s => $"{s.File}:{s.Line} ownershipFirst={s.OwnershipFirst}"));
+
+        sites.Should().HaveCount(4,
+            "the remark on RecordPinRefusalAsync names FOUR mints -- two transfers, the closure "
+            + "and the withdrawal. A fifth is a call site nobody has read: add it there, with its "
+            + $"ownership check, before changing this number. Found: {described}");
+
+        sites.Where(s => !s.OwnershipFirst).Should().BeEmpty(
+            "a mint that proves ownership AFTER minting has already written a refusal row naming "
+            + $"an account the actor may not own. Found: {described}");
     }
 }
