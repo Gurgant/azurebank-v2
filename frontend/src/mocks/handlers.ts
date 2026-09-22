@@ -2910,10 +2910,25 @@ const authoriseWithdrawal = api.post(
       return response.untyped(notFound('Account', body.accountId ?? '', request));
     }
 
+    /*
+      THE SHARED SENTENCE, not a withdrawal-flavoured one. Every mint proves its PIN through the
+      single `StepUpAuthorizationService.MintAsync`, which throws one string for all four.
+      'PIN must be set before making withdrawals.' was the OLD in-body check's, and commit 388c342
+      -- the first of this very PR -- deleted it from the backend; this handler then copied it into
+      the mock. It exists nowhere in `backend/src` now.
+
+      MEASURED 2026-09-22 on the real pipeline (`CustomWebApplicationFactory`, i.e. `Program.cs`),
+      a registered user with no PIN enrolled:
+
+        POST /api/transactions/withdraw/authorizations
+          -> 422 {"title":"Unprocessable Entity","detail":"PIN must be set before authorising this
+                  operation.","instance":"/api/transactions/withdraw/authorizations",
+                  "errorCode":"PIN_REQUIRED"}
+    */
     const pinRefusal = checkPinInBand(
       body.pin,
       request,
-      'PIN must be set before making withdrawals.',
+      'PIN must be set before authorising this operation.',
     );
     if (pinRefusal) return response.untyped(pinRefusal);
 

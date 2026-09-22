@@ -90,8 +90,17 @@ describe('the withdrawal mint (where the PIN now lives)', () => {
       hasPin: false,
     });
     const res = await mint(accountId(), 100);
+
     expect(res.status).toBe(422);
-    expect((await res.json()).errorCode).toBe('PIN_REQUIRED');
+    const body = (await res.json()) as { errorCode: string; detail: string };
+    expect(body.errorCode).toBe('PIN_REQUIRED');
+
+    // THE SENTENCE TOO, and that is the gap this closes. Status and errorCode alone passed while
+    // the handler sent 'PIN must be set before making withdrawals.' -- the OLD in-body check's
+    // string, which commit 388c342 had already deleted from the backend. Every mint shares one
+    // message, because every mint proves its PIN through the same MintAsync. Measured 2026-09-22
+    // on the real pipeline, a user with no PIN minting a withdrawal authorisation.
+    expect(body.detail).toBe('PIN must be set before authorising this operation.');
   });
 
   it('mints for MORE than the balance — a mint checks no funds (ADR-0050 D4)', async () => {
