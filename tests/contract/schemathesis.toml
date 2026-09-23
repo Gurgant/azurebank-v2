@@ -28,8 +28,9 @@ wait-for-schema = 30
 
 # Seconds.
 request-timeout = 30
-# For --url https://localhost:7215 and its development certificate; the base URL above is http.
-tls-verify = false
+# No tls-verify here, on purpose: certificate verification stays ON. The hooks send the service
+# key on every request, and a file that switched verification off would switch it off for any
+# --url given with it. For the local HTTPS profile's development certificate, see the README.
 
 # The service key and the throwaway user's bearer token. A dotted module, resolved from the
 # working directory -- hence the repository root.

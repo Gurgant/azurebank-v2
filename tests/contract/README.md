@@ -262,10 +262,27 @@ it. Measured: `--include-path-regex '/api/auth/me'` arrived as
 the variable above it matched one. The pattern in Specific Endpoint, `/api/auth/.*`, was not
 affected.
 
-### SSL certificate errors, rate limiting, timeouts
+### `CERTIFICATE_VERIFY_FAILED` against the local HTTPS profile
 
-`schemathesis.toml` already sets `tls-verify = false`, `workers = 1` and `request-timeout = 30`.
-On the command line, without the file or over it, they are `--tls-verify=false`, `--workers=1`
-and `--request-timeout=30` — appended to the Quick Start line, measured, exit 0. The timeout is
-in SECONDS: this page said 30000 until 2026-09-21, which is eight hours and twenty minutes per
-request, not a generous timeout.
+```bash
+schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json \
+  --url https://localhost:7215 --tls-verify=false
+```
+
+The API's HTTPS profile serves the ASP.NET development certificate, which is not in the
+certificate bundle Python checks against. Measured on 2026-09-23 against it: without the flag the
+run stops before its first request, at the hooks' registration —
+`[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate` — and with it
+all 28 operations were tested, exit 0.
+
+**The flag is for that run, and for localhost only.** `schemathesis.toml` deliberately keeps
+certificate verification on: the hooks send the service key on every request, and a file that
+switched verification off would switch it off for any `--url` given with it — handing the key to
+whoever answers. The Quick Start's `http://localhost:5068` involves no TLS at all.
+
+### Rate limiting, timeouts
+
+`schemathesis.toml` already sets `workers = 1` and `request-timeout = 30`. On the command line,
+without the file or over it, they are `--workers=1` and `--request-timeout=30` — appended to the
+Quick Start line, measured, exit 0. The timeout is in SECONDS: this page said 30000 until
+2026-09-21, which is eight hours and twenty minutes per request, not a generous timeout.
