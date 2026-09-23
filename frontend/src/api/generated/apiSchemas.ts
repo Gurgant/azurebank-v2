@@ -108,6 +108,15 @@ export const ApiResponseOfListOfAccountResponse = z
   .object({ data: z.array(AccountResponse).nullable(), message: z.string().nullable() })
   .partial();
 
+export type TokenResponse = z.infer<typeof TokenResponse>;
+export const TokenResponse = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string().nullable().optional(),
+  expiresIn: z.number().int(),
+  tokenType: z.string().optional(),
+  expiresAt: z.iso.datetime(),
+});
+
 export type UserLoginInfo = z.infer<typeof UserLoginInfo>;
 export const UserLoginInfo = z.object({
   id: z.uuid(),
@@ -119,12 +128,7 @@ export const UserLoginInfo = z.object({
 });
 
 export type LoginResponse = z.infer<typeof LoginResponse>;
-export const LoginResponse = z.object({
-  token: z.string(),
-  expiresAt: z.iso.datetime(),
-  refreshToken: z.string().nullable().optional(),
-  user: UserLoginInfo,
-});
+export const LoginResponse = z.object({ token: TokenResponse, user: UserLoginInfo });
 
 export type ApiResponseOfLoginResponse = z.infer<typeof ApiResponseOfLoginResponse>;
 export const ApiResponseOfLoginResponse = z
@@ -161,15 +165,6 @@ export type ApiResponseOfRefreshResponse = z.infer<typeof ApiResponseOfRefreshRe
 export const ApiResponseOfRefreshResponse = z
   .object({ data: RefreshResponse.nullable(), message: z.string().nullable() })
   .partial();
-
-export type TokenResponse = z.infer<typeof TokenResponse>;
-export const TokenResponse = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string().nullable().optional(),
-  expiresIn: z.number().int(),
-  tokenType: z.string().optional(),
-  expiresAt: z.iso.datetime(),
-});
 
 export type RegisterResponse = z.infer<typeof RegisterResponse>;
 export const RegisterResponse = z.object({

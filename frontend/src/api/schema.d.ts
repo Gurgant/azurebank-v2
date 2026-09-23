@@ -3031,20 +3031,12 @@ export interface components {
             /** @description Password must contain at least one uppercase, one lowercase, and one digit. */
             password: string;
         };
+        /**
+         * @description Result of a successful login: the same TokenResponse registration returns, so
+         *     the two sign-in endpoints answer one shape.
+         */
         LoginResponse: {
-            token: string;
-            /** Format: date-time */
-            expiresAt: string;
-            /**
-             * @description Refresh token (plaintext, shown once) for rotating the short-lived access token via
-             *     POST /api/auth/refresh. In the BFF deployment this is captured server-side and never
-             *     reaches the browser. Deliberately NOT `required`: a consumer deserializing this response
-             *     across the service boundary (the BFF) must degrade gracefully on its absence rather than
-             *     hard-fail. Login issues one on every success (an issuance failure fails the login), so it
-             *     is non-null in practice — the nullability is a boundary-robustness allowance, not a
-             *     signal that login may omit it.
-             */
-            refreshToken?: null | string;
+            token: components["schemas"]["TokenResponse"];
             user: components["schemas"]["UserLoginInfo"];
         };
         PaginatedResponseOfTransactionResponse: {
@@ -3171,7 +3163,8 @@ export interface components {
              *     NOT `required`: registration issues it BEST-EFFORT — the user + account are already
              *     committed, so a post-registration token-write failure must not fail the request. It is
              *     therefore genuinely optional here (null when that write failed); the user obtains a
-             *     refresh token on their next login.
+             *     refresh token on their next login. Login itself always carries one: an issuance failure
+             *     fails the login, so on that path the nullability is only a boundary-robustness allowance.
              */
             refreshToken?: null | string;
             /**

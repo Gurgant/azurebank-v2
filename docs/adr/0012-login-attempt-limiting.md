@@ -77,6 +77,10 @@ return the identical `401 Invalid email or password.` (guarded by a test).
 - **Token expiry**: `IJwtService.GenerateToken` returns the token together with its
   exact expiry (read back from the token's `exp`), so `LoginResponse`/`RegisterResponse`
   never recompute the lifetime — no config drift, no `UtcNow` skew.
+  *(Corrected 2026-09-23: true of `ExpiresAt`, not of `ExpiresIn`, which registration computed as
+  that expiry minus the moment the response is built — one `UtcNow` read, truncated to whole
+  seconds, measured at 899 on a login and 898 on a registration for a 900-second token. Login
+  answers the same `TokenResponse` now, built in one place for both.)*
 - **Enumeration-safe contract**:
   - unknown user **or** wrong password → **401** `INVALID_CREDENTIALS`
     (`Invalid email or password.`), identical in all cases;

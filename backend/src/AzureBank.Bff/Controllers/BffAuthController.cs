@@ -94,11 +94,11 @@ public class BffAuthController : ControllerBase
             var loginResponse = apiResponse!.Data!;
 
             // Create server-side session with the JWT, its refresh token (for silent re-mint),
-            // and user info.
+            // and user info. The same token object registration answers, read the same way.
             var sessionId = _sessionService.CreateSession(
-                loginResponse.Token,
-                loginResponse.ExpiresAt,
-                loginResponse.RefreshToken,
+                loginResponse.Token.AccessToken,
+                loginResponse.Token.ExpiresAt,
+                loginResponse.Token.RefreshToken,
                 loginResponse.User);
 
             // Set HTTP-only session cookie
@@ -120,7 +120,7 @@ public class BffAuthController : ControllerBase
                         AzureTag = loginResponse.User.AzureTag,
                         HasPin = loginResponse.User.HasPin
                     },
-                    ExpiresAt = loginResponse.ExpiresAt
+                    ExpiresAt = loginResponse.Token.ExpiresAt
                 },
                 Message = "Login successful"
             });
@@ -276,9 +276,9 @@ public class BffAuthController : ControllerBase
                 .Deserialize<ApiResponse<LoginResponse>>(content, JsonOptions)!.Data!;
 
             var newSessionId = _sessionService.CreateSession(
-                loginResponse.Token,
-                loginResponse.ExpiresAt,
-                loginResponse.RefreshToken,
+                loginResponse.Token.AccessToken,
+                loginResponse.Token.ExpiresAt,
+                loginResponse.Token.RefreshToken,
                 loginResponse.User);
 
             // Same cookie NAME, so the browser replaces the old value and cannot present the old id
@@ -304,7 +304,7 @@ public class BffAuthController : ControllerBase
                         AzureTag = loginResponse.User.AzureTag,
                         HasPin = loginResponse.User.HasPin
                     },
-                    ExpiresAt = loginResponse.ExpiresAt
+                    ExpiresAt = loginResponse.Token.ExpiresAt
                 },
                 Message = "Re-authenticated successfully"
             });

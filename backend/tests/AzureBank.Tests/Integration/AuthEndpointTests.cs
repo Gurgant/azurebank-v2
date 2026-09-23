@@ -274,13 +274,61 @@ public class AuthEndpointTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var result = await response.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions);
-        result!.Data!.Token.Should().NotBeNullOrEmpty();
+        result!.Data!.Token.AccessToken.Split('.').Should().HaveCount(3, "the access token is a JWT");
+        result.Data.Token.TokenType.Should().Be("Bearer");
         result.Data.User.Email.Should().Be(email);
         // ExpiresAt comes from the token's own exp (JwtOptions.ExpirationMinutes = 15),
         // not a hardcoded literal — so it tracks the real token lifetime.
-        result.Data.ExpiresAt.Should().BeCloseTo(
+        result.Data.Token.ExpiresAt.Should().BeCloseTo(
             DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
     }
+
+    /// <summary>
+    /// The two sign-in endpoints answer ONE token shape. Login used to send the access token as a
+    /// bare string with <c>expiresAt</c> and <c>refreshToken</c> beside it, while register nested
+    /// all three in <c>token</c> (measured 2026-09-23). Compared as JSON rather than as C# types,
+    /// because the JSON is what the BFF, the Bruno collection and CI read: a property added to one
+    /// side only is a second shape again, and both DTOs would still compile.
+    /// </summary>
+    [Fact]
+    public async Task Login_AndRegister_AnswerTheSameTokenShape()
+    {
+        var email = $"shape{Guid.NewGuid():N}@example.com";
+        const string password = "SecurePass123!";
+        var register = await Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            AzureTag = $"shape_{Guid.NewGuid().ToString("N")[..8]}",
+            Email = email,
+            Password = password,
+            FirstName = "Shape",
+            LastName = "Test"
+        }, JsonOptions);
+        register.StatusCode.Should().Be(HttpStatusCode.Created);
+        var login = await Client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest { Email = email, Password = password }, JsonOptions);
+        login.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var registered = JsonDocument.Parse(await register.Content.ReadAsStringAsync());
+        using var loggedIn = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
+        var registerToken = registered.RootElement.GetProperty("data").GetProperty("token");
+        var loginData = loggedIn.RootElement.GetProperty("data");
+
+        Shape(loginData.GetProperty("token")).Should().Equal(Shape(registerToken));
+        Shape(loginData.GetProperty("token")).Should().Equal(
+            ("accessToken", JsonValueKind.String),
+            ("expiresAt", JsonValueKind.String),
+            ("expiresIn", JsonValueKind.Number),
+            ("refreshToken", JsonValueKind.String),
+            ("tokenType", JsonValueKind.String));
+        loginData.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
+            ["token", "user"], "expiresAt and refreshToken live inside token now, and only there");
+    }
+
+    private static List<(string Name, JsonValueKind Kind)> Shape(JsonElement element) =>
+        element.EnumerateObject()
+            .Select(p => (p.Name, p.Value.ValueKind))
+            .OrderBy(p => p.Name, StringComparer.Ordinal)
+            .ToList();
 
     [Fact]
     public async Task Login_WithInvalidCredentials_ReturnsUnauthorized()
@@ -597,7 +645,7 @@ public class AuthEndpointTests : IntegrationTestBase
             new LoginRequest { Email = email, Password = "SecurePass123!" }, JsonOptions);
         login.StatusCode.Should().Be(HttpStatusCode.OK);
         var loginBody = await login.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(JsonOptions);
-        loginBody!.Data!.RefreshToken.Should().NotBeNullOrEmpty("login must issue a refresh token");
+        loginBody!.Data!.Token.RefreshToken.Should().NotBeNullOrEmpty("login must issue a refresh token");
     }
 
     [Fact]

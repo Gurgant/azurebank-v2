@@ -22,8 +22,12 @@ public class SessionCookieTests : IClassFixture<WebApplicationFactory<Program>>
     private const string LoginSuccessJson = """
         {
           "data": {
-            "token": "fake-jwt-token",
-            "expiresAt": "2030-01-01T00:00:00Z",
+            "token": {
+              "accessToken": "fake-jwt-token",
+              "expiresIn": 899,
+              "tokenType": "Bearer",
+              "expiresAt": "2030-01-01T00:00:00Z"
+            },
             "user": {
               "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
               "azureTag": "cookieuser",
