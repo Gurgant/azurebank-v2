@@ -165,8 +165,9 @@ bru run endpoints/auth --env local --env-var serviceKey="$YOUR_KEY" --insecure
 bru run . -r --env local --env-var serviceKey="$YOUR_KEY" --insecure --reporter-junit results.xml
 ```
 
-Measured by the `Contract tests` workflow under `--env ci` on 2026-09-23 (run 35873554844, Bruno
-CLI 4.1.0): the whole collection is **28 requests, 78 tests, 62 assertions, all green**.
+Measured by the `Contract tests` workflow under `--env ci` on 2026-09-23 (run 35926861629, Bruno
+CLI 4.1.0): the whole collection is **28 requests, 79 tests, 62 assertions, all green**. It was 78
+tests (run 35873554844) until login gained the test that its token is the object register answers.
 
 ~~Measured with these exact lines on 2026-09-21 against the running API: the whole collection is
 27 requests, 76 tests, 59 assertions, all green.~~ True under `--env local` - and `--env ci`, the
