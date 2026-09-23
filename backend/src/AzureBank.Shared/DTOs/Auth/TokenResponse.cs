@@ -16,7 +16,8 @@ public class TokenResponse
     /// NOT `required`: registration issues it BEST-EFFORT — the user + account are already
     /// committed, so a post-registration token-write failure must not fail the request. It is
     /// therefore genuinely optional here (null when that write failed); the user obtains a
-    /// refresh token on their next login.
+    /// refresh token on their next login. Login itself always carries one: an issuance failure
+    /// fails the login, so on that path the nullability is only a boundary-robustness allowance.
     /// </summary>
     public string? RefreshToken { get; set; }
 

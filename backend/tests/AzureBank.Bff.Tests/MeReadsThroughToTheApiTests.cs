@@ -42,9 +42,13 @@ public class MeReadsThroughToTheApiTests : IClassFixture<WebApplicationFactory<P
     private static string LoginSuccessJson() => $$"""
         {
           "data": {
-            "token": "jwt-1",
-            "expiresAt": "2030-01-01T00:00:00Z",
-            "refreshToken": "fake-refresh",
+            "token": {
+              "accessToken": "jwt-1",
+              "refreshToken": "fake-refresh",
+              "expiresIn": 899,
+              "tokenType": "Bearer",
+              "expiresAt": "2030-01-01T00:00:00Z"
+            },
             "user": {
               "id": "{{UserId}}",
               "azureTag": "{{CachedTag}}",

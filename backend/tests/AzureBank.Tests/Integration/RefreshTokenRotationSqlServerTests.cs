@@ -171,7 +171,7 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
         login.StatusCode.Should().Be(HttpStatusCode.OK,
             "issuing a refresh token after a lockout reset must not re-insert the detached user");
         var body = await login.Content.ReadFromJsonAsync<ApiResponse<LoginResponse>>(Json);
-        body!.Data!.RefreshToken.Should().NotBeNullOrEmpty();
+        body!.Data!.Token.RefreshToken.Should().NotBeNullOrEmpty();
     }
 
     private async Task<(DateTime? RevokedAt, Guid? ReplacedBy, int SuccessorCount)> ReadChainAsync(Guid userId)

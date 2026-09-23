@@ -679,13 +679,17 @@ jobs:
       # operations are exercised as themselves and not as 23 identical 401s (that is the run the
       # manual workflow would have produced, had it ever run). Masked, and handed on through the
       # job environment rather than a step output.
+      # data.token is an OBJECT, the same TokenResponse registration answers. Read the old way,
+      # ["data"]["token"], it prints a Python dict, exits 0, and hands Schemathesis a garbage
+      # bearer -- so the value is checked to be a JWT, and anything else fails this step instead
+      # of the run after it.
       - name: Bearer token from the real login
         run: |
           TOKEN=$(curl -fsS -H 'Content-Type: application/json' \
             -H "X-AzureBank-Service-Key: $SERVICE_CREDENTIAL_KEY" \
             -d '{"email":"john@example.com","password":"Test123!"}' \
             "${{ env.API_URL }}/api/auth/login" \
-            | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["token"])')
+            | python3 -c 'import json, sys; t = json.load(sys.stdin)["data"]["token"]["accessToken"]; assert isinstance(t, str) and t.count(".") == 2, "no JWT at data.token.accessToken"; print(t)')
           echo "::add-mask::$TOKEN"
           echo "API_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 

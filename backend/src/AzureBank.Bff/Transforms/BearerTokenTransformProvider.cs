@@ -48,7 +48,9 @@ public class BearerTokenTransformProvider : ITransformProvider
               `Authorization: Bearer …` with no cookie returned 200 and the unmasked account number
               from GET /api/accounts/{id}/full-number, with no PIN ever entered — while the same
               request WITHOUT the header returned 401. POST /api/transfers reached the endpoint the
-              same way.
+              same way. (Amended 2026-09-23: that was the login of the time, a bare JWT string in
+              data.token. Login answers the TokenResponse object now, the JWT at
+              data.token.accessToken, and the proxied route itself has answered 404 since ADR-0041.)
 
               Clearing unconditionally is what makes the session the ONLY route to an authenticated
               call, on every proxied path rather than only the PIN-gated ones. The step-up gate in

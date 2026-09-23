@@ -120,9 +120,7 @@ public class AuthService : IAuthService
             ApiMetrics.Logins.Add(1, new KeyValuePair<string, object?>("azurebank.outcome", "succeeded"));
             return new LoginResponse
             {
-                Token = tokenResult.AccessToken,
-                ExpiresAt = tokenResult.ExpiresAt, // single source of truth (the token's exp)
-                RefreshToken = refreshToken,
+                Token = ToTokenResponse(tokenResult, refreshToken),
                 User = _userMapper.ToLoginInfo(user)
             };
         }
@@ -477,16 +475,26 @@ public class AuthService : IAuthService
         {
             User = _userMapper.ToLoginInfo(user),
             Account = _accountMapper.ToResponse(account),
-            Token = new Shared.DTOs.Auth.TokenResponse
-            {
-                AccessToken = tokenResult.AccessToken,
-                RefreshToken = refreshToken,
-                ExpiresIn = Math.Max(0, (int)(tokenResult.ExpiresAt - DateTime.UtcNow).TotalSeconds),
-                TokenType = "Bearer",
-                ExpiresAt = tokenResult.ExpiresAt
-            }
+            Token = ToTokenResponse(tokenResult, refreshToken)
         };
     }
+
+    /// <summary>
+    /// The token object BOTH sign-in endpoints answer — one construction site, so login and
+    /// registration cannot drift apart again. <c>ExpiresAt</c> is the token's own <c>exp</c>
+    /// (ADR-0012); <c>ExpiresIn</c> is what is left of it when the response is built, truncated to
+    /// whole seconds, so it reads a second or two under the lifetime: 899 on a login and 898 on a
+    /// registration, which writes to the database in between, for the 900-second token (measured
+    /// 2026-09-23).
+    /// </summary>
+    private static TokenResponse ToTokenResponse(TokenResult tokenResult, string? refreshToken) => new()
+    {
+        AccessToken = tokenResult.AccessToken,
+        RefreshToken = refreshToken,
+        ExpiresIn = Math.Max(0, (int)(tokenResult.ExpiresAt - DateTime.UtcNow).TotalSeconds),
+        TokenType = "Bearer",
+        ExpiresAt = tokenResult.ExpiresAt
+    };
 
     /// <inheritdoc />
     public async Task<UserResponse> GetCurrentUserAsync(Guid userId)

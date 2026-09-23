@@ -27,13 +27,13 @@ script:post-response {
   // request after it then fails for the wrong reason. Measured 2026-09-21: a 200
   // was assumed and a 401 overwrote the token, turning one broken request into fifteen.
   if (res.getStatus() === 200) {
-    bru.setVar('authToken', res.body.data.token);
+    bru.setVar('authToken', res.body.data.token.accessToken);
   }
 }
 
 assert {
   res.status: eq 200
-  res.body.data.token: isString
+  res.body.data.token.accessToken: isString
   res.body.data.user.email: isString
 }
 
@@ -43,14 +43,23 @@ tests {
   });
 
   test("Response contains JWT token", function() {
-    expect(res.body.data.token).to.be.a('string');
-    expect(res.body.data.token.length).to.be.greaterThan(50);
+    expect(res.body.data.token.accessToken).to.be.a('string');
+    expect(res.body.data.token.accessToken.length).to.be.greaterThan(50);
   });
 
   test("Token appears to be JWT format", function() {
-    const token = res.body.data.token;
+    const token = res.body.data.token.accessToken;
     const parts = token.split('.');
     expect(parts.length).to.equal(3);
+  });
+
+  test("Token is the same object register answers", function() {
+    // Login used to answer a bare string with expiresAt and refreshToken beside it, while
+    // register nested all three in token (measured 2026-09-23). One shape now, and only one.
+    expect(res.body.data.token).to.have.all.keys(
+      'accessToken', 'refreshToken', 'expiresIn', 'tokenType', 'expiresAt');
+    expect(res.body.data.token.tokenType).to.equal('Bearer');
+    expect(res.body.data).to.not.have.any.keys('expiresAt', 'refreshToken');
   });
 
   test("Response contains user info", function() {

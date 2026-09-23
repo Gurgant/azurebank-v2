@@ -244,7 +244,7 @@ public class AuthServiceTests : IDisposable
 
         var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
 
-        result.Token.Should().Be("jwt");
+        result.Token.AccessToken.Should().Be("jwt");
         (await ReloadAsync(user.Id)).AccessFailedCount.Should().Be(0);
     }
 
@@ -272,7 +272,7 @@ public class AuthServiceTests : IDisposable
 
         var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
 
-        result.Token.Should().Be("jwt");
+        result.Token.AccessToken.Should().Be("jwt");
         var reloaded = await ReloadAsync(user.Id);
         reloaded.AccessFailedCount.Should().Be(0);
         reloaded.LockoutEnd.Should().BeNull();
@@ -292,7 +292,7 @@ public class AuthServiceTests : IDisposable
 
         var result = await _sut.LoginAsync(new LoginRequest { Email = user.Email!, Password = "correct" });
 
-        result.Token.Should().Be("jwt");
+        result.Token.AccessToken.Should().Be("jwt");
     }
 
     [Fact]
@@ -335,16 +335,21 @@ public class AuthServiceTests : IDisposable
             .Setup(x => x.CheckPasswordAsync(user, request.Password))
             .ReturnsAsync(true);
 
+        var expiresAt = DateTime.UtcNow.AddMinutes(15);
         _jwtServiceMock
             .Setup(x => x.GenerateToken(user))
-            .Returns(new TokenResult("test-jwt-token", DateTime.UtcNow.AddMinutes(15)));
+            .Returns(new TokenResult("test-jwt-token", expiresAt));
 
         // Act
         var result = await _sut.LoginAsync(request);
 
-        // Assert
+        // Assert — every field of the token object registration also answers, by value.
         result.Should().NotBeNull();
-        result.Token.Should().Be("test-jwt-token");
+        result.Token.AccessToken.Should().Be("test-jwt-token");
+        result.Token.RefreshToken.Should().Be("refresh-token-plaintext");
+        result.Token.ExpiresAt.Should().Be(expiresAt, "the token's own exp, never recomputed");
+        result.Token.TokenType.Should().Be("Bearer");
+        result.Token.ExpiresIn.Should().BeInRange(890, 900, "what is left of a 15-minute token");
         result.User.Should().NotBeNull();
         result.User.Email.Should().Be(user.Email);
         result.User.AzureTag.Should().Be(user.AzureTag);

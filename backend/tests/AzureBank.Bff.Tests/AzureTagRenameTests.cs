@@ -36,9 +36,13 @@ public class AzureTagRenameTests : IClassFixture<WebApplicationFactory<Program>>
     private static string LoginSuccessJson() => $$"""
         {
           "data": {
-            "token": "jwt-1",
-            "expiresAt": "2030-01-01T00:00:00Z",
-            "refreshToken": "fake-refresh",
+            "token": {
+              "accessToken": "jwt-1",
+              "refreshToken": "fake-refresh",
+              "expiresIn": 899,
+              "tokenType": "Bearer",
+              "expiresAt": "2030-01-01T00:00:00Z"
+            },
             "user": {
               "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
               "azureTag": "{{OriginalTag}}",
