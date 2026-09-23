@@ -25,125 +25,140 @@ cd backend/src/AzureBank.Api
 dotnet run
 ```
 
-### 2. Run Auto-Generated Tests
+### 2. Run the tests
 
 ```bash
-# From the repository root. The document lives at docs/api/openapiv1.json and never
-# lived in backend/ -- `git log --all -- backend/openapiv1.json` is empty. CI reads the
-# same path; it also passes a bearer token, the service-credential header, a check list,
-# a report path and a coverage step, so this is the document location CI uses and not the
-# whole command it runs (.github/workflows/ci.yml, the conformance job).
-schemathesis run docs/api/openapiv1.json --url http://localhost:5068
-```
-
-### 3. Run with Configuration File
-
-⚠️ **`schemathesis.toml` is NOT loadable by 4.27.1, and the heading here claimed it was
-"v4 TOML format" until 2026-09-21.** The flag placement below is correct; the file it
-points at is not. Running it answers `Failed to load configuration file`, and the errors
-arrive one at a time rather than all at once — measured by adding the first missing key and
-re-running, which surfaced a second, structural one:
-
-| section | what 4.27.1 says |
-|---|---|
-| `[project.0]` | `Missing required properties: - 'title'` |
-| `[phases]` | `'enabled' -> Must be a boolean, but got list: ['examples', 'coverage', 'fuzzing']` |
-
-The second is a shape change, not a missing key, so this is a v3-era file rather than a
-v4 one with a gap — which is why it is recorded rather than patched inside a documentation
-correction. CI is unaffected: it passes its settings as flags and never passes
-`--config-file`.
-
-⚠️ **But it is not inert.** Schemathesis auto-loads `schemathesis.toml` from the working
-directory and its PARENTS, so the one place this file IS read is the folder it sits in —
-which is where a reader of this page is most likely to run from. Measured both ways, with
-the same command and only the directory changed:
-
-| run from | what happens |
-|---|---|
-| the repository root | `Loaded specification from docs/api/openapiv1.json` — no configuration error |
-| `tests/contract/` | `Failed to load configuration file` — stops before any test runs |
-
-So **run these commands from the repository root**, as every example here does, until the
-file is repaired.
-
-```bash
-# The flag placement IS right: --config-file is a GLOBAL option, so it goes BEFORE `run`.
-# After it, 4.27.1 answers "Usage: schemathesis run [OPTIONS] LOCATION".
+# From the repository ROOT: the configuration names its hooks module from there.
+# AZUREBANK_SERVICE_KEY holds the value of the API's ServiceCredential:BffKey -- $SERVICE_KEY,
+# if you followed the root README's recipe. The hooks read it from the environment, so it is
+# never on a command line.
+export AZUREBANK_SERVICE_KEY="$SERVICE_KEY"
 schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
 ```
 
+`--config-file` is a GLOBAL option, so it goes BEFORE `run`: after it, 4.27.1 answers
+`Usage: schemathesis run [OPTIONS] LOCATION`.
+
+What the two files add to that line:
+
+- **`hooks.py`** sends `X-AzureBank-Service-Key` on every request (ADR-0055), and a bearer token
+  on every operation the contract does not declare anonymous — register, login and refresh go
+  without — for a throwaway user it registers itself.
+- **`schemathesis.toml`** sets the base URL and the shape of the run (one worker, 100 examples
+  per operation, positive and negative inputs, all four phases, seed 42), loads `hooks.py`, and
+  runs the four response checks CI's conformance job runs, and no others.
+
+**Measured on 2026-09-23**, against a local API on a freshly migrated LocalDB database, with the
+two lines above:
+
+```
+=================================== SUMMARY ====================================
+
+API Operations:
+  Selected: 28/28
+  Tested: 28
+
+Test Phases:
+  ⏭  Examples
+  ✅ Coverage
+  ✅ Fuzzing
+  ✅ Stateful
+
+Warnings:
+  ⚠️ Schema validation mismatch: 3 operations mostly rejected generated data
+
+Test cases:
+  5362 generated, 5362 passed, 174 skipped
+
+Seed: 42
+
+============================= 1 warning in 79.95s ==============================
+```
+
+All 28 operations tested, exit 0. The warning is about what Schemathesis generated, not about a
+response: the API rejected most of its inputs for login, refresh and register. It is not
+stable — a second run the same day named two operations instead of three.
+
+⚠️ **A run writes to the database it runs against.** That second run added 1 user, 97 accounts
+and 137 audit events. Point it at a database you can throw away.
+
+Until 2026-09-23 this Quick Start was
+`schemathesis run docs/api/openapiv1.json --url http://localhost:5068`, with no service key.
+Measured that day, it exited 1 after 33 failures, and every one of the 28 operations had
+answered only 401 `SERVICE_CREDENTIAL_REQUIRED` — in Schemathesis's words, "Missing
+authentication: 28 operations returned only 401/403 responses". Since ADR-0055 it had tested
+the API's front door, and nothing behind it.
+
 ## Test Options
 
-### Basic Run
-```bash
-schemathesis run docs/api/openapiv1.json --url http://localhost:5068
-```
+Each is the Quick Start line with something added, and each was run on 2026-09-23.
 
-### With Authentication
-
-⚠️ **`hooks.py` does not load under 4.27.1, so this section documents a mechanism that
-is right and a file that is broken.** Measured 2026-09-21, not read: the command below is
-how hooks are loaded, and running it prints `Unable to load Schemathesis extension hooks`.
+### Every check, not only CI's four
 
 ```bash
-# Hooks load from an environment variable, not a flag: 4.27.1 has no --hooks, and the
-# name is HOOKS_MODULE_ENV_VAR in schemathesis/core/hooks.py. BOTH accepted forms were
-# tried -- the dotted module below, and the file path `tests/contract/hooks.py` -- and
-# both fail identically, INSIDE the file rather than on the path.
-SCHEMATHESIS_HOOKS=tests.contract.hooks \
-schemathesis run docs/api/openapiv1.json \
-  --url http://localhost:5068
-```
-
-The file is v3-era. Registering each of its four hooks with the library's own validator
-rather than reading them:
-
-| `hooks.py` | hook | result under 4.27.1 |
-|---|---|---|
-| `:93` | `before_call` | `Hook 'before_call' takes 3 arguments but 2 is defined` — v4 passes `kwargs` third |
-| `:118` | `before_generate_case` | registers |
-| `:128` | `add_case` | `There is no hook with name 'add_case'` — removed in v4 |
-| `:139` | `after_call` | registers |
-
-Two of four. But the module raises at import on the FIRST one, so **none** of the four
-ever registers — this is not a partial failure that leaves authentication half-working.
-
-The conformance job is unaffected and its green is honest: CI never sets
-`SCHEMATHESIS_HOOKS`, and passes the bearer token and the service-key header as `-H`
-arguments instead. Repairing the file is a code change and is recorded rather than done
-here.
-
-### Verbose Output
-```bash
-schemathesis run docs/api/openapiv1.json \
-  --url http://localhost:5068 \
+schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json \
   --checks all
 ```
 
+Exit 1, with five failures, all from input-side checks that CI leaves out on purpose:
+
+- three `API accepted schema-violating request`: an EMPTY `at` on
+  `GET /api/accounts/{id}/balance`, and an empty `ToDate` on `GET /api/transactions` and
+  `GET /api/transactions/summary`, each answered 200 where the contract's `date-time` format says
+  reject. A real divergence, recorded for repair rather than changed here;
+- two `Missing header not rejected`: `POST /api/transactions/withdraw` and `POST /api/transfers`
+  without `Step-Up-Authorization` answered 404 for an account that does not exist, where the check
+  expects 400, 401, 403, 406, 415 or 422. That order is decided, not accidental: the account's
+  404 comes before the missing header's 401 by ADR-0056 (D4) on the withdrawal and ADR-0042 on
+  the transfer, where it keeps a caller without the second factor from asking which payees
+  exist. The check assumes the opposite order.
+
+This heading was "Verbose Output" until 2026-09-23; `--checks all` has nothing to do with
+verbosity.
+
 ### Specific Endpoint
+
 ```bash
-schemathesis run docs/api/openapiv1.json \
-  --url http://localhost:5068 \
+schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json \
   --include-path-regex "/api/auth/.*"
 ```
 
+7 operations tested, exit 0.
+
 ### Generate Report
+
 ```bash
-schemathesis run docs/api/openapiv1.json \
-  --url http://localhost:5068 \
+schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json \
   --report junit
 ```
 
-`--report` takes a FORMAT in 4.27.1 (`junit`, `vcr`, `har`); bare, it is rejected.
+`--report` takes a FORMAT in 4.27.1 — `junit`, `vcr`, `har`, `ndjson`, `json` or `allure`; bare,
+it is rejected. The report lands in `schemathesis-report/`, which `.gitignore` covers, under a
+name carrying the run's timestamp (`junit-20260923T170759Z.xml` in the run measured).
 
 ### CI/CD Mode (JUnit output)
+
 ```bash
-schemathesis run docs/api/openapiv1.json \
-  --url http://localhost:5068 \
+schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json \
   --report junit \
   --report-junit-path test-results.xml
 ```
+
+A fixed name instead of the timestamped one, which `.gitignore` also covers. The report held one
+test case per operation, 28, and one more for the stateful phase.
+
+### Without the configuration file
+
+```bash
+SCHEMATHESIS_HOOKS=tests.contract.hooks \
+schemathesis run docs/api/openapiv1.json \
+  --url http://localhost:5068 \
+  --checks status_code_conformance,content_type_conformance,response_headers_conformance,response_schema_conformance
+```
+
+The hooks load from an environment variable here — 4.27.1 has no `--hooks` flag — and `--url` is
+required whenever the schema is given as a file. 28 operations tested, exit 0. Leave `--checks`
+out and every check runs, with the five failures above.
 
 ## What Gets Tested
 
@@ -154,24 +169,34 @@ Schemathesis automatically:
 3. **Tests edge cases** - Boundary values, nulls, empty strings
 4. **Fuzz tests** - Malformed data, special characters
 5. **Validates responses** - Schema compliance, status codes
-6. **Finds bugs** - 500 errors, validation bypasses, crashes
+6. **Finds bugs** - 500 errors, crashes, and with `--checks all`, validation bypasses
 
 ## Files
 
-⚠️ **Nothing in this folder except this page is loaded by anything today**, and the labels
-below said otherwise until 2026-09-21. Each row now carries what was measured, not what the
-filename suggests.
-
 | File | Purpose | State under the pinned 4.27.1 |
 |------|---------|---|
-| `schemathesis.toml` | Intended main configuration | ❌ does not load — v3-shaped despite the extension; this row called it "(v4 format)" |
-| `schemathesis.yaml` | Superseded configuration | ❌ v3; its own header gives `--config`, a flag v4 renamed to `--config-file`. Correctly labelled legacy already |
-| `hooks.py` | Intended authentication hooks | ❌ does not import — 2 of its 4 hook signatures are v3, and the first aborts the module |
+| `schemathesis.toml` | The Quick Start's configuration: base URL, the shape of the run, the hooks, CI's four checks | ✅ loads — the runs above |
+| `hooks.py` | The service key on every request, and a throwaway user's bearer token on every operation that is not anonymous | ✅ imports — the runs above |
 | `README.md` | This documentation | — |
 
-CI depends on none of them: it passes the token, the header and the checks as flags. The two
-❌ rows that are not already labelled legacy are recorded for repair rather than fixed here,
-because their contents are code and this change corrects records.
+Both were v3-era until 2026-09-23, and 4.27.1 refused them (backlog rows 38 and 39). Measured
+again that day, before the repair, the configuration stopped at
+`Missing required properties: - 'title'` and `hooks.py` at
+`Hook 'before_call' takes 3 arguments but 2 is defined`.
+
+Two files were removed instead of repaired, each measured the same day first:
+
+- **`tests/contract/schemathesis.yaml`**, a v3 configuration. 4.27.1 reads TOML only — handed
+  this file it answers `The configuration file content is not valid TOML` — and the `--config`
+  flag in its own header is rejected: `No such option '--config'`.
+- **`run-contract-tests.ps1`**, at the repository root, which nothing referenced. Its login sent
+  no service key and fell back to "testing unauthenticated", it pointed `SCHEMATHESIS_HOOKS` at
+  the library's own `schemathesis.hooks`, and its run died on
+  `No such option '--hypothesis-seed'`, so it printed `CONTRACT TESTS FAILED (exit code: 2)`.
+  The Quick Start is what it was trying to be.
+
+CI depends on none of them: its conformance job logs the seeded demo user in and passes the
+token, the key and the checks as flags.
 
 ## Expected Output
 
@@ -198,22 +223,49 @@ was also the reason the Bruno collection called that same dead endpoint, found i
 
 ## Troubleshooting
 
-### SSL Certificate Errors
+### `AZUREBANK_SERVICE_KEY is not set`
+
+The hooks stop the run before its first request, exit 1. Export it as the Quick Start does.
+
+### `Registering the throwaway user answered 401`
+
+The key is set but is not the one the API holds, so register answered 401
+`SERVICE_CREDENTIAL_REQUIRED`. Measured with a wrong key: the first three operations that needed
+a token errored with this message, then the library stopped asking
+(`Token fetch failed 3 times in a row; retrying in 30s`), the anonymous operations failed on the
+401 itself, and the file's `max-failures = 10` ended the run — exit 1, after about 20 seconds.
+
+### `No module named 'tests'`
+
+The run started outside the repository root. From `tests/contract/`, Schemathesis finds
+`schemathesis.toml` by itself — it looks in the working directory and its parents — and the
+`hooks` module the file names does not resolve from there. Measured: exit 1, before any request.
+
+### `UnicodeEncodeError: 'charmap' codec can't encode characters` (Windows)
+
 ```bash
-# Add --tls-verify=false for localhost
-schemathesis run docs/api/openapiv1.json --url http://localhost:5068 --tls-verify=false
+export PYTHONIOENCODING=utf-8
 ```
 
-### Rate Limiting
+Measured with the output redirected to a file: 4.27.1 printed `Schemathesis v4.27.1` and died on
+the box-drawing line under it, which the Windows code page cannot encode.
+
+### `Unmatched filters` in Git Bash (Windows)
+
 ```bash
-# Reduce concurrency. --url is REQUIRED whenever the schema is given as a file -- without it
-# 4.27.1 answers "Error: The `--url` option is required when specifying a schema via a file."
-schemathesis run docs/api/openapiv1.json --url http://localhost:5068 --workers=1
+export MSYS_NO_PATHCONV=1
 ```
 
-### Timeout Issues
-```bash
-# Increase timeout. SECONDS, not milliseconds: this line said 30000 until 2026-09-21, which is
-# eight hours and twenty minutes per request, not a generous timeout.
-schemathesis run docs/api/openapiv1.json --url http://localhost:5068 --request-timeout=30
-```
+Git Bash rewrites an argument that starts with `/` into a Windows path before Schemathesis sees
+it. Measured: `--include-path-regex '/api/auth/me'` arrived as
+`'C:/Program Files/Git/api/auth/me'`, matched no operation, tested nothing — and exited 0. With
+the variable above it matched one. The pattern in Specific Endpoint, `/api/auth/.*`, was not
+affected.
+
+### SSL certificate errors, rate limiting, timeouts
+
+`schemathesis.toml` already sets `tls-verify = false`, `workers = 1` and `request-timeout = 30`.
+On the command line, without the file or over it, they are `--tls-verify=false`, `--workers=1`
+and `--request-timeout=30` — appended to the Quick Start line, measured, exit 0. The timeout is
+in SECONDS: this page said 30000 until 2026-09-21, which is eight hours and twenty minutes per
+request, not a generous timeout.
