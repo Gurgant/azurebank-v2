@@ -67,11 +67,14 @@ local`. The local dev profile also listens on HTTPS, so `UseHttpsRedirection` an
 every request there, including the ones this README told you to make. CI has its own environment
 now, so this one names the address a developer actually has.
 
-One defect is left, older than all of this and not fixed here: `login` posts `{{testEmail}}`
+~~One defect is left, older than all of this and not fixed here: `login` posts `{{testEmail}}`
 (`test@example.com`), but `register` creates `test.{{$timestamp}}@example.com` and never writes it
 back, so every request after `register` answers 401 `INVALID_CREDENTIALS` — the collection's own
-credentials, not the service key. Telling those two 401s apart is what `errorCode` is for:
-`SERVICE_CREDENTIAL_REQUIRED` is this API refusing the caller, `INVALID_CREDENTIALS` is not.
+credentials, not the service key.~~ *(Struck 2026-09-23: fixed on 2026-09-21 by `c51b266`, where
+`register` began publishing the address it registered as `testEmail` — and this paragraph was left
+behind. Every run of the collection measured on 2026-09-23 passed its login.)* Telling those two
+401s apart is still what `errorCode` is for: `SERVICE_CREDENTIAL_REQUIRED` is this API refusing
+the caller, `INVALID_CREDENTIALS` is the credentials.
 
 ## Collection Structure
 
