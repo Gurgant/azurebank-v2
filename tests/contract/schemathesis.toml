@@ -1,78 +1,56 @@
-# Schemathesis v4 Configuration for AzureBank API
-# Run from the repository ROOT, and pass this file as a GLOBAL option, before `run`:
+# Schemathesis 4.27.1 configuration for the AzureBank API -- the version CI pins
+# (SCHEMATHESIS_VERSION in .github/workflows/ci.yml). Run from the repository ROOT, and pass this
+# file as a GLOBAL option, before `run`:
+#
+#   export AZUREBANK_SERVICE_KEY="..."    # the value of the API's ServiceCredential:BffKey
 #   schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
-# (The document has never lived in backend/, and --config-file after `run` is rejected.)
+#
+# What it adds to that command: the service key and a bearer token on every request (hooks.py),
+# and the four response checks CI's conformance job runs, no others.
+#
+# Schemathesis also loads a file with this name BY ITSELF from the working directory and its
+# parents. From tests/contract/ it therefore applies without the flag -- and stops the run there,
+# because the `hooks` module below resolves only from the repository root.
+#
+# Until 2026-09-23 this was a v3-era file that 4.27.1 refused to load (backlog row 39): a
+# [[project]] without the `title` 4.27.1 requires, a list where [phases] takes a boolean, and a
+# [network] section 4.27.1 does not have. Everything now sits at the root, so no project title
+# has to match the document's.
 
-# ═══════════════════════════════════════════════════════════════════════════
-# GLOBAL SETTINGS
-# ═══════════════════════════════════════════════════════════════════════════
-
-# Colored output
 color = true
-
-# Seed for reproducible tests
 seed = 42
-
-# Maximum failures before stopping
 max-failures = 10
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PROJECT CONFIGURATION
-# ═══════════════════════════════════════════════════════════════════════════
-
-[[project]]
-# Base URL for the API under test
 base-url = "http://localhost:5068"
-
-# Number of concurrent workers
 workers = 1
-
-# Continue running after failures
 continue-on-failure = true
-
-# Wait for schema to become available (seconds)
 wait-for-schema = 30
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TEST PHASES
-# ═══════════════════════════════════════════════════════════════════════════
+# Seconds.
+request-timeout = 30
+# No tls-verify here, on purpose: certificate verification stays ON. The hooks send the service
+# key on every request, and a file that switched verification off would switch it off for any
+# --url given with it. For the local HTTPS profile's development certificate, see the README.
+
+# The service key and the throwaway user's bearer token. A dotted module, resolved from the
+# working directory -- hence the repository root.
+hooks = "tests.contract.hooks"
 
 [phases]
-# Enable all test phases
-enabled = ["examples", "coverage", "fuzzing"]
-
-# ═══════════════════════════════════════════════════════════════════════════
-# DATA GENERATION
-# ═══════════════════════════════════════════════════════════════════════════
+# All four -- examples, coverage, fuzzing and stateful -- as in CI.
+enabled = true
 
 [generation]
-# Maximum examples per operation
 max-examples = 100
-
-# Generation mode: positive, negative, or all
+# Positive and negative inputs.
 mode = "all"
 
-# ═══════════════════════════════════════════════════════════════════════════
-# NETWORK SETTINGS
-# ═══════════════════════════════════════════════════════════════════════════
-
-[network]
-# Request timeout in seconds
-timeout = 30
-
-# Disable TLS verification for localhost
-tls-verify = false
-
-# ═══════════════════════════════════════════════════════════════════════════
-# CHECKS
-# ═══════════════════════════════════════════════════════════════════════════
-
 [checks]
-# Enable response schema validation
-response_schema_conformance.enabled = true
-
-# Enable status code validation
+# CI's four (the Response conformance step in .github/workflows/ci.yml) and only those. CI leaves
+# the input-side checks out on purpose, and a local run that adds them reports failures CI never
+# will.
+enabled = false
 status_code_conformance.enabled = true
-
-# Enable content type validation
 content_type_conformance.enabled = true
+response_headers_conformance.enabled = true
+response_schema_conformance.enabled = true

@@ -1,226 +1,103 @@
 """
-Schemathesis Hooks for AzureBank API Testing
-=============================================
+Schemathesis hooks for the AzureBank API, written for schemathesis 4.27.1 -- the version CI pins
+(SCHEMATHESIS_VERSION in .github/workflows/ci.yml).
 
-This module provides authentication hooks for Schemathesis tests.
-It automatically registers a test user and adds JWT tokens to requests.
+They make a LOCAL run test the operations instead of the front door:
 
-⚠⚠ THIS FILE DOES NOT LOAD under the schemathesis version CI pins (4.27.1, see
-SCHEMATHESIS_VERSION in .github/workflows/ci.yml). Measured 2026-09-21 by registering each
-hook with the library's own validator: `before_call` below takes 2 arguments and v4's spec
-takes 3 (it passes `kwargs` third), and `add_case` no longer exists -- "There is no hook
-with name 'add_case'". `before_generate_case` and `after_call` still register, but the
-module raises at import on `before_call`, so NONE of the four ever registers.
+- Every request carries X-AzureBank-Service-Key (ADR-0055). Without it the API answers
+  401 SERVICE_CREDENTIAL_REQUIRED to everything; measured 2026-09-23, a run without it reported
+  all 28 operations as "returned only 401/403 responses".
+- Every operation the contract does not declare anonymous -- `security: [{}]`, which today is
+  register, login and refresh -- carries a bearer token for a throwaway user registered here.
 
-Nothing runs this today: CI never sets SCHEMATHESIS_HOOKS and passes its bearer token and
-service-key header as -H arguments, so the conformance job is green on its own merits.
-Repairing the signatures is a code change, recorded in the backlog rather than smuggled
-into a documentation correction.
+The key is read from the environment, AZUREBANK_SERVICE_KEY: never a command-line argument, and
+never this file. Run from the repository ROOT, where `tests.contract.hooks` resolves:
 
-Usage, once the signatures are fixed -- the mechanism is an environment variable, because
-4.27.1 has no --hooks flag (it is rejected outright):
+    export AZUREBANK_SERVICE_KEY="..."    # the value of the API's ServiceCredential:BffKey
+    schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
+
+The configuration file loads this module through its `hooks` key. Without the file, the same
+module loads from the environment -- 4.27.1 has no --hooks flag:
+
     SCHEMATHESIS_HOOKS=tests.contract.hooks schemathesis run docs/api/openapiv1.json --url http://localhost:5068
 
-The old line here said `--hooks tests/contract/hooks.py` against `./openapiv1.json`: a
-flag 4.27.1 rejects, and a document path that has never existed in this repository.
+CI loads neither. Its conformance job logs the seeded demo user in and passes the token and the
+key as -H arguments, so nothing here can change a CI result -- and nothing in CI proves this file
+works. tests/contract/README.md records the local runs that do.
+
+Until 2026-09-23 this was a v3-era file that 4.27.1 refused at import (backlog row 38).
 """
 
-import schemathesis
-import requests
-import uuid
 import os
-from typing import Optional
+import secrets
+import uuid
 
-# Global token storage
-_auth_token: Optional[str] = None
-_test_user_email: Optional[str] = None
-_test_user_id: Optional[str] = None
-_test_account_id: Optional[str] = None
+import requests
+import schemathesis
 
-
-def get_base_url() -> str:
-    """Get the base URL from environment or default."""
-    return os.environ.get("SCHEMATHESIS_BASE_URL", "http://localhost:5068")
+SERVICE_KEY_ENV = "AZUREBANK_SERVICE_KEY"
+SERVICE_KEY_HEADER = "X-AzureBank-Service-Key"
 
 
-def register_test_user() -> dict:
-    """Register a new test user and return the response data."""
-    global _test_user_email, _test_user_id
-
-    unique_id = uuid.uuid4().hex[:8]
-    _test_user_email = f"schemathesis.test.{unique_id}@example.com"
-
-    response = requests.post(
-        f"{get_base_url()}/api/auth/register",
-        json={
-            "azureTag": f"schemathesis.{unique_id}",
-            "email": _test_user_email,
-            "password": "TestPass123!",
-            "firstName": "Schemathesis",
-            "lastName": "Test"
-        },
-        verify=False  # Disable SSL verification for localhost
-    )
-
-    if response.status_code == 201:
-        data = response.json()
-        _test_user_id = data["data"]["user"]["id"]
-        return data
-    else:
-        raise Exception(f"Failed to register test user: {response.text}")
-
-
-def get_auth_token() -> str:
-    """Get or create an authentication token."""
-    global _auth_token
-
-    if _auth_token is None:
-        data = register_test_user()
-        _auth_token = data["data"]["token"]["accessToken"]
-
-    return _auth_token
-
-
-def get_test_account_id() -> str:
-    """Get the primary account ID for the test user."""
-    global _test_account_id
-
-    if _test_account_id is None:
-        token = get_auth_token()
-        response = requests.get(
-            f"{get_base_url()}/api/accounts",
-            headers={"Authorization": f"Bearer {token}"},
-            verify=False
+def _service_key() -> str:
+    key = os.environ.get(SERVICE_KEY_ENV, "")
+    if not key:
+        raise RuntimeError(
+            f"{SERVICE_KEY_ENV} is not set. Export the value of the API's "
+            "ServiceCredential:BffKey: without it every request answers 401 "
+            "SERVICE_CREDENTIAL_REQUIRED (ADR-0055)."
         )
-
-        if response.status_code == 200:
-            accounts = response.json()["data"]
-            if accounts:
-                _test_account_id = accounts[0]["id"]
-
-    return _test_account_id or str(uuid.uuid4())
+    return key
 
 
-# ============================================================================
-# Schemathesis Hooks
-# ============================================================================
-
-@schemathesis.hook("before_call")
-def add_auth_header(context, case):
-    """
-    Add JWT Bearer token to all requests except public endpoints.
-
-    Public endpoints:
-    - POST /api/auth/register
-    - POST /api/auth/login
-    """
-    public_paths = ["/api/auth/register", "/api/auth/login"]
-
-    # Skip auth for public endpoints
-    if case.path in public_paths and case.method.upper() == "POST":
-        return
-
-    # Add auth header for protected endpoints
-    try:
-        token = get_auth_token()
-        case.headers = case.headers or {}
-        case.headers["Authorization"] = f"Bearer {token}"
-    except Exception as e:
-        # Log but don't fail - some tests may intentionally test unauthorized access
-        print(f"Warning: Could not get auth token: {e}")
+# Read once, at import: a missing key stops the run before its first request, not after it.
+_SERVICE_KEY = _service_key()
 
 
-@schemathesis.hook("before_generate_case")
-def customize_case_generation(context, strategy):
-    """
-    Customize test case generation based on endpoint.
-
-    This hook allows us to provide realistic test data for specific fields.
-    """
-    return strategy
+@schemathesis.hook
+def before_call(context, case, kwargs):
+    """The service key on EVERY request -- the anonymous operations included."""
+    case.headers[SERVICE_KEY_HEADER] = _SERVICE_KEY
 
 
-@schemathesis.hook("add_case")
-def filter_cases(context, case):
-    """
-    Filter out invalid test cases that we know will fail.
-
-    This is useful for excluding edge cases that aren't meaningful tests.
-    """
-    # Always include the case for comprehensive testing
-    return case
+def _is_anonymous(ctx) -> bool:
+    return ctx.operation.definition.raw.get("security") == [{}]
 
 
-@schemathesis.hook("after_call")
-def log_response(context, case, response):
-    """
-    Log responses for debugging purposes.
+# retry_on=[] turns off the library's reactive re-authentication. Its default treats any 401 as an
+# expired token: it fetches a new one -- here, registers another user -- REPLAYS the request, and
+# the checks judge the replay instead of the answer the request got. On this API a 401 can be
+# exactly that answer: INVALID_PIN, AUTHORIZATION_REQUIRED, AUTHORIZATION_INVALID. Measured
+# 2026-09-23, the same command registered one user with it off and five with the default. The
+# token lives 15 minutes (Jwt:ExpirationMinutes) and the cache refetches it every 5
+# (refresh_interval's default), so it never expires mid-run anyway.
+@schemathesis.auth(retry_on=[]).skip_for(_is_anonymous)
+class ThrowawayUser:
+    """A new user per token fetch: no fixture to seed, and no state shared between runs."""
 
-    Can be extended to collect metrics or trigger alerts.
-    """
-    # Uncomment for verbose logging:
-    # print(f"{case.method} {case.path} -> {response.status_code}")
-    pass
+    def get(self, case, context):
+        schema = context.operation.schema
+        config = schema.config
+        tag = "st_" + uuid.uuid4().hex[:12]  # the contract's azureTag: ^[a-z][a-z0-9_]{2,19}$
+        response = requests.post(
+            schema.get_base_url().rstrip("/") + "/api/auth/register",
+            json={
+                "azureTag": tag,
+                "email": f"schemathesis.{tag}@example.com",
+                # Random, and never used again: nothing logs this user in.
+                "password": secrets.token_urlsafe(18) + "aA1!",
+                "firstName": "Schemathesis",
+                "lastName": "Contract",
+            },
+            headers={SERVICE_KEY_HEADER: _SERVICE_KEY},
+            timeout=config.request_timeout_for(operation=context.operation),
+            verify=config.tls_verify_for(operation=context.operation),
+        )
+        if response.status_code != 201:
+            raise RuntimeError(
+                f"Registering the throwaway user answered {response.status_code}: {response.text}"
+            )
+        return response.json()["data"]["token"]["accessToken"]
 
-
-# ============================================================================
-# Custom Checks
-# ============================================================================
-
-@schemathesis.check
-def response_time_check(response, case):
-    """Check that API responses are reasonably fast."""
-    max_response_time = 5.0  # seconds
-    elapsed = response.elapsed.total_seconds()
-
-    assert elapsed < max_response_time, (
-        f"Response time {elapsed:.2f}s exceeds maximum {max_response_time}s "
-        f"for {case.method} {case.path}"
-    )
-
-
-@schemathesis.check
-def no_server_errors(response, case):
-    """Check that no 5xx errors occur (except for intentional fuzzing)."""
-    # Allow 500 errors for malformed input (fuzzing purpose)
-    # But flag them for review
-    if response.status_code >= 500:
-        # Log but don't fail - fuzzing is meant to find these
-        print(f"Server error detected: {case.method} {case.path} -> {response.status_code}")
-
-
-# ============================================================================
-# Test Data Providers
-# ============================================================================
-
-def provide_account_id():
-    """Provide a valid account ID for tests requiring one."""
-    return get_test_account_id()
-
-
-def provide_valid_amount():
-    """Provide valid transaction amounts for testing."""
-    import random
-    return round(random.uniform(1.0, 1000.0), 2)
-
-
-# ============================================================================
-# Cleanup (Optional)
-# ============================================================================
-
-def cleanup():
-    """
-    Clean up test data after tests complete.
-
-    Note: In-memory database resets automatically, so this may not be needed.
-    """
-    global _auth_token, _test_user_email, _test_user_id, _test_account_id
-    _auth_token = None
-    _test_user_email = None
-    _test_user_id = None
-    _test_account_id = None
-
-
-# Disable SSL warnings for localhost testing
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    def set(self, case, data, context):
+        case.headers["Authorization"] = f"Bearer {data}"
