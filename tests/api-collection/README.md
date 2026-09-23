@@ -84,6 +84,7 @@ api-collection/
 │   └── ci.bru             # CI environment
 └── endpoints/             # in RUN order: folder seq, then request seq
     ├── auth/                         # 1
+    │   ├── folder.bru                # the folder's seq; without one, Bruno runs folders alphabetically
     │   ├── register.bru
     │   ├── login.bru
     │   ├── get-me.bru
@@ -91,39 +92,44 @@ api-collection/
     │   ├── verify-pin.bru
     │   └── logout.bru
     ├── accounts/                     # 2
+    │   ├── folder.bru
     │   ├── list-accounts.bru
     │   ├── create-account.bru
     │   ├── get-account.bru
     │   ├── get-balance.bru
     │   └── update-account.bru
     ├── transactions/                 # 3
+    │   ├── folder.bru
     │   ├── deposit.bru
     │   ├── authorize-withdraw.bru    # mints; the withdrawal presents it (ADR-0056)
     │   ├── withdraw.bru
     │   ├── list-transactions.bru
     │   └── get-transaction.bru
     ├── transfers/                    # 4
+    │   ├── folder.bru
     │   ├── register-recipient.bru
     │   ├── authorize-transfer.bru    # mints; the transfer presents it (ADR-0042)
     │   ├── transfer-to-user.bru
     │   ├── authorize-internal-transfer.bru
     │   └── internal-transfer.bru
     ├── idempotency/                  # 5
+    │   ├── folder.bru
     │   ├── deposit-first-execution.bru
     │   ├── deposit-replay.bru
     │   ├── deposit-key-reuse-422.bru
     │   ├── deposit-missing-key-400.bru
     │   └── deposit-invalid-key-400.bru
     └── users/                        # 6
+        ├── folder.bru
         ├── user-not-found.bru
         └── get-user-by-tag.bru
 ```
 
 Regenerated from the directory on 2026-09-23, in run order. The tree it replaced had been drawn
-by hand and had drifted four ways: it listed `users/search-users.bru` - a request for
+by hand and no longer matched the directory: it listed `users/search-users.bru` - a request for
 `/api/users/search`, the route ADR-0014 deleted, and a file that no longer exists - and it was
-missing the whole `idempotency/` folder, three of the five transfer requests, and the new
-withdrawal mint.
+missing `collection.bru`, every `folder.bru`, the whole `idempotency/` folder, three of the five
+transfer requests and `users/user-not-found.bru`.
 
 ## Running Tests
 
