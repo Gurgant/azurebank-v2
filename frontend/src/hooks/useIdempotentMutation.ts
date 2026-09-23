@@ -117,5 +117,30 @@ export function useIdempotentMutation<TBody, TResult>(trigger: IdempotentTrigger
     [trigger],
   );
 
-  return { submit, resetIntent, verifyRequired, keyRetained };
+  /*
+    The owning flow wants to change intent while a key is RETAINED.
+
+    That state means the last attempt's outcome is unknown or its authorisation was refused, and a
+    new intent there is the client-manufactured double-spend this whole protocol exists to prevent.
+    Releasing the key incidentally -- which is what a body edit used to do -- is the dangerous half:
+    it is silent, and the user is never told that the previous attempt may still land.
+
+    So the answer is the one the protocol already has for the identical epistemic state.
+    `IDEMPOTENCY_RESULT_UNKNOWN` latches verify-first; a network failure, an IN_FLIGHT and an
+    authorisation refusal leave the caller knowing exactly as much, and differ only in who noticed.
+    This latches the same thing: the key is dropped (so dismissal is no longer blocked) and `submit`
+    refuses until the flow's explicit "it didn't go through -- try again" calls `resetIntent`.
+
+    Raised in review on #199, where a test had encoded the incidental release as the escape hatch:
+    "editing the body rotates (releases) the key". It is an escape, and it was also the way out
+    through the money.
+  */
+  const requireVerify = useCallback(() => {
+    keyRef.current = null;
+    verifyRequiredRef.current = true;
+    setVerifyRequired(true);
+    setKeyRetained(false);
+  }, []);
+
+  return { submit, resetIntent, verifyRequired, keyRetained, requireVerify };
 }

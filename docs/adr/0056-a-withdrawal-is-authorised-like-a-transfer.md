@@ -197,8 +197,22 @@ place that is what asserts the ordering on the real stack.
 
 ### Not done, and not pretended otherwise
 
-- **The SPA still does not mint.** PR-C replaces the PIN step with one that mints and submits with
-  the header. Until then the dialog is answered 401 as above.
+- ~~**The SPA still does not mint.** PR-C replaces the PIN step with one that mints and submits
+  with the header. Until then the dialog is answered 401 as above.~~ *(Done 2026-09-22: the
+  withdraw dialog mints when WITHDRAW is pressed — the sixth digit only ENABLES that button — and
+  sends the reference in `Step-Up-Authorization`, through `useAuthoriseWithdrawalMutation` and the
+  `extras` channel `useIdempotentMutation` already carried for the transfers. Two things fell
+  out of it that the interim had hidden. The
+  PIN no longer rotates the idempotency key — it is not in the body, and rotating on it destroyed
+  a RETAINED key in the one state where that key is the only way forward, since the PIN input is
+  live again after a network failure. And a retry on a retained key RE-PRESENTS the authorisation
+  rather than minting a second one, because the first may already have been consumed by the
+  attempt whose answer never arrived.)*
+
+  ⚠️ **Two of this dialog's tests kept passing while pinning an impossible response**: they stubbed
+  `PIN_LOCKED` on `/api/transactions/withdraw`, the mint answered 201, the stub then answered 429,
+  and the countdown rendered. Green, on an endpoint that checks no PIN and therefore cannot lock
+  one. Both are aimed at the mint now.
 - **`pinLockExpiry.spec.ts` is RE-AIMED at the change-PIN dialog, not skipped and not deleted.**
   ~~It is not re-aimed; it drives the lock through the withdrawal, which no longer spends
   attempts.~~ ~~It is SKIPPED, because the state it asserts is unreachable until PR-C.~~
