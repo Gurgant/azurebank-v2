@@ -113,8 +113,9 @@ type Step = 'form' | 'pin';
  * RHF+Zod (the money-forms rewrite): the FORM step (account/amount/description) lives in
  * react-hook-form with the balance-capped `withdrawFormSchema` as resolver, while the PIN
  * step machine is deliberately untouched (plan D5 — money-critical path, minimal churn).
- * Same idempotency spine (useIdempotentMutation: KEEP on IN_FLIGHT/network/5xx, rotate on
- * any body edit). ~~The PIN is part of the body, so editing it re-keys too. The PIN is NOT
+ * Same idempotency spine (useIdempotentMutation: KEEP on IN_FLIGHT/network/5xx, rotate on a
+ * body edit while NO key is held — while one is RETAINED the edit latches verify-first
+ * instead, see `onBodyEdit`). ~~The PIN is part of the body, so editing it re-keys too. The PIN is NOT
  * step-up: it travels in the withdraw request and is verified server-side.~~
  *
  * Struck 2026-09-22, ADR-0056: the PIN is STEP-UP now and it is not in the body. Pressing
@@ -221,9 +222,11 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   const amountNumber = parseAmountInput(watch('amount'));
   const selectedAccount = selectedForBalance;
 
-  // Any body-affecting edit (amount/account/description) rotates the key: the old key + a new
-  // body is a raw-byte fingerprint mismatch → 422 KEY_REUSE. Never while a request is in flight —
-  // nulling the key out from under a pending submit would defeat the retained-key dismissal guard.
+  // A body-affecting edit (amount/account/description) rotates the key WHEN NO KEY IS HELD: the
+  // old key + a new body is a raw-byte fingerprint mismatch → 422 KEY_REUSE. Never while a request
+  // is in flight — nulling the key out from under a pending submit would defeat the retained-key
+  // dismissal guard — and never while one is RETAINED either, which is the case the function body
+  // below is mostly about.
   //
   // THE PIN IS NO LONGER ONE OF THEM (ADR-0056). It left the body with the step-up move, so it
   // cannot change the fingerprint, and rotating on it would throw away a RETAINED key in the one
@@ -519,8 +522,12 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
   // source of truth — the key is held while submitting AND after every KEEP outcome
   // (IN_FLIGHT, network, parse, 5xx), not just IN_FLIGHT. The dialog is mount-on-open, so
   // unmounting with a retained key loses it; reopening mints a fresh one and the same amount
-  // becomes a NEW intent = a double-spend. Editing the body (onBodyEdit → resetIntent) or a
-  // terminal outcome releases the key and re-enables dismissal.
+  // becomes a NEW intent = a double-spend. A terminal outcome releases the key and re-enables
+  // dismissal. ~~Editing the body (onBodyEdit → resetIntent) does too.~~ Struck 2026-09-23: it
+  // stopped being true in this PR. While a key is RETAINED, `onBodyEdit` latches verify-first
+  // (`requireVerify`) rather than rotating — which also drops the key, so dismissal does come
+  // back, but by way of a view that says the request may or may not have gone through. The only
+  // explicit release left is the verify branch's "It didn't go through — try again".
   /*
     Every exit, held for BOTH phases of the submit.
 
