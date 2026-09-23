@@ -55,8 +55,14 @@ tests {
   });
 
   test("Response contains user info", function() {
-    expect(res.body.data.user.email).to.be.a('string');
-    expect(res.body.data.user.firstName).to.equal("Test");
+    // The ECHO of what was sent, not a literal. `"Test"` held only under the `local` environment
+    // (testFirstName: Test); under `ci` it is "CI", so this failed there from the day it was
+    // written - "expected 'CI' to equal 'Test'" - unseen because contract-tests.yml had never run
+    // until 2026-09-23 (run 35872727972). And the email line accepted ANY string: it names the
+    // address that was actually registered now.
+    const sent = req.getBody();
+    expect(res.body.data.user.email).to.equal(sent.email);
+    expect(res.body.data.user.firstName).to.equal(sent.firstName);
   });
 
   test("Primary account was created", function() {
