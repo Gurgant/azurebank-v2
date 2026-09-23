@@ -508,6 +508,77 @@ describe('withdraw (the idempotent mutation; its PIN moved to the mint, ADR-0056
     expect(keys[0]).toBe(keys[1]);
   });
 
+  /*
+    A WRONG PIN ON A RETAINED INTENT MUST NOT RELEASE THE KEY, which is what the comment on the
+    INVALID_PIN branch now says and what nothing asserted. Raised in review on #199: that comment
+    used to claim the hook had dropped the key, true while the PIN was in the BODY and false since
+    the mint answers this refusal without passing through `submit`. A reader matching the code to
+    the old sentence would call `resetIntent()` there -- a NEW intent over an unresolved one, which
+    is the double-spend closed one round earlier, returning through a stale comment.
+
+    The whole chain in one test: an expired authorisation retains the key, a wrong PIN on the
+    re-mint leaves it retained, and the corrected PIN mints afresh and presents it on that SAME key.
+  */
+  it('a wrong PIN while the key is RETAINED keeps it, and the corrected PIN mints on it', async () => {
+    let mints = 0;
+    const keys: (string | null)[] = [];
+    const headers: (string | null)[] = [];
+    server.use(
+      http.post('*/api/transactions/withdraw/authorizations', () => {
+        mints += 1;
+        if (mints === 2) {
+          // The wrong PIN, answered by the MINT and never by the withdrawal.
+          return problem({ status: 401, errorCode: 'INVALID_PIN', detail: 'Invalid PIN.' });
+        }
+        return HttpResponse.json(
+          {
+            data: {
+              authorizationId: mints === 1 ? MINTED : MINTED_SECOND,
+              expiresAt: '2026-07-22T11:02:00.0000000Z',
+            },
+            message: 'Withdrawal authorised',
+          },
+          { status: 201 },
+        );
+      }),
+      http.post('*/api/transactions/withdraw', ({ request }) => {
+        keys.push(request.headers.get('Idempotency-Key'));
+        headers.push(request.headers.get('Step-Up-Authorization'));
+        return keys.length === 1
+          ? problem({
+              status: 401,
+              errorCode: 'AUTHORIZATION_EXPIRED',
+              detail: 'That authorisation has expired.',
+            })
+          : withdrawSuccessBody(1150.5);
+      }),
+    );
+
+    renderWithdraw();
+    await goToPinStep();
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText(/no longer valid|expired/i)).toBeInTheDocument();
+    // The key is RETAINED from here on: the dialog may not be abandoned.
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+
+    // Second attempt: the mint refuses the PIN. The key must survive that.
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText('Invalid PIN. Please try again.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+    expect(keys).toHaveLength(1);
+
+    // Third: the corrected PIN mints afresh and is presented on the SAME key.
+    await enterPin('123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw €100.00' }));
+    expect(await screen.findByText('Withdrawal Successful!')).toBeInTheDocument();
+
+    expect(mints).toBe(3);
+    expect(headers).toEqual([MINTED, MINTED_SECOND]);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
   it('an amount edit on a RETAINED intent asks for verification, and sends nothing', async () => {
     const keys: (string | null)[] = [];
     server.use(

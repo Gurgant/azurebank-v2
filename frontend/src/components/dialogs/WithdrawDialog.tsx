@@ -461,9 +461,24 @@ export function WithdrawDialog({ isOpen, onClose, accounts, onSuccess }: Withdra
         problem.detail || 'That authorisation is no longer valid. Press Withdraw to try again.',
       );
     } else if (problem.errorCode === 'INVALID_PIN') {
-      // Wrong PIN — clear the boxes and remount (refocus box 1) so the retry is usable.
-      // Safe (401 exempted from global logout); the hook already dropped the key, so the
-      // corrected-PIN retry mints a fresh one.
+      /*
+        Wrong PIN — clear the boxes and remount (refocus box 1) so the retry is usable. Safe: 401
+        is exempt from the global logout.
+
+        ~~The hook already dropped the key, so the corrected-PIN retry mints a fresh one.~~ Struck
+        2026-09-23, raised in review: true while the PIN was in the BODY, because the refusal then
+        came from the withdrawal through `submit`, and `INVALID_PIN` is not in `shouldKeepKey`'s
+        keep set. Since ADR-0056 only the MINT answers it, and the mint is a plain mutation that
+        never passes through `submit` — so `useIdempotentMutation` does not see this refusal at all
+        and the key state is untouched: none if none was held, and a RETAINED one stays retained.
+
+        ⚠️ That is the correct outcome and the comment mattered because it said the opposite. A
+        reader matching the code to it would add `resetIntent()` here, and after an
+        AUTHORIZATION_EXPIRED — key retained, `lastAuthorization` already cleared — that is a NEW
+        intent over an unresolved one. The double-spend closed one round ago, walking back in
+        through a stale sentence. What actually happens: the key stays, the corrected PIN mints a
+        new authorisation, and it is presented on the same key. Which is the documented recovery.
+      */
       setPin('');
       setPinError(true);
       setPinNonce((n) => n + 1);
