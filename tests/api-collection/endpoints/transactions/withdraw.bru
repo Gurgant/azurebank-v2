@@ -1,7 +1,7 @@
 meta {
   name: Withdraw
   type: http
-  seq: 2
+  seq: 3
 }
 
 post {
@@ -16,6 +16,7 @@ auth:bearer {
 
 headers {
   Content-Type: application/json
+  Step-Up-Authorization: {{withdrawAuthorizationId}}
   Idempotency-Key: {{$randomUUID}}
 }
 
@@ -23,7 +24,6 @@ body:json {
   {
     "accountId": "{{accountId}}",
     "amount": 100.00,
-    "pin": "123456",
     "description": "Test withdrawal"
   }
 }

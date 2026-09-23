@@ -78,35 +78,58 @@ credentials, not the service key. Telling those two 401s apart is what `errorCod
 ```
 api-collection/
 ├── bruno.json              # Collection config
+├── collection.bru          # The X-AzureBank-Service-Key header every request sends (ADR-0055)
 ├── environments/
 │   ├── local.bru          # Local environment
 │   └── ci.bru             # CI environment
-└── endpoints/
-    ├── auth/              # Authentication endpoints
+└── endpoints/             # in RUN order: folder seq, then request seq
+    ├── auth/                         # 1
+    │   ├── folder.bru                # the folder's seq; without one, Bruno runs folders alphabetically
     │   ├── register.bru
     │   ├── login.bru
     │   ├── get-me.bru
     │   ├── set-pin.bru
     │   ├── verify-pin.bru
     │   └── logout.bru
-    ├── accounts/          # Account management
+    ├── accounts/                     # 2
+    │   ├── folder.bru
     │   ├── list-accounts.bru
     │   ├── create-account.bru
     │   ├── get-account.bru
     │   ├── get-balance.bru
     │   └── update-account.bru
-    ├── transactions/      # Transactions
+    ├── transactions/                 # 3
+    │   ├── folder.bru
     │   ├── deposit.bru
+    │   ├── authorize-withdraw.bru    # mints; the withdrawal presents it (ADR-0056)
     │   ├── withdraw.bru
     │   ├── list-transactions.bru
     │   └── get-transaction.bru
-    ├── transfers/         # Money transfers
+    ├── transfers/                    # 4
+    │   ├── folder.bru
+    │   ├── register-recipient.bru
+    │   ├── authorize-transfer.bru    # mints; the transfer presents it (ADR-0042)
     │   ├── transfer-to-user.bru
+    │   ├── authorize-internal-transfer.bru
     │   └── internal-transfer.bru
-    └── users/             # User lookup
-        ├── search-users.bru
+    ├── idempotency/                  # 5
+    │   ├── folder.bru
+    │   ├── deposit-first-execution.bru
+    │   ├── deposit-replay.bru
+    │   ├── deposit-key-reuse-422.bru
+    │   ├── deposit-missing-key-400.bru
+    │   └── deposit-invalid-key-400.bru
+    └── users/                        # 6
+        ├── folder.bru
+        ├── user-not-found.bru
         └── get-user-by-tag.bru
 ```
+
+Regenerated from the directory on 2026-09-23, in run order. The tree it replaced had been drawn
+by hand and no longer matched the directory: it listed `users/search-users.bru` - a request for
+`/api/users/search`, the route ADR-0014 deleted, and a file that no longer exists - and it was
+missing `collection.bru`, every `folder.bru`, the whole `idempotency/` folder, three of the five
+transfer requests and `users/user-not-found.bru`.
 
 ## Running Tests
 
@@ -139,16 +162,23 @@ bru run endpoints/auth --env local --env-var serviceKey="$YOUR_KEY" --insecure
 bru run . -r --env local --env-var serviceKey="$YOUR_KEY" --insecure --reporter-junit results.xml
 ```
 
-Measured with these exact lines on 2026-09-21 against the running API: the whole collection is
-**27 requests, 76 tests, 59 assertions, all green**; `endpoints/auth` alone is 6 requests,
-16 tests, 13 assertions.
+Measured by the `Contract tests` workflow under `--env ci` on 2026-09-23 (run 35873554844, Bruno
+CLI 4.1.0): the whole collection is **28 requests, 78 tests, 62 assertions, all green**.
+
+~~Measured with these exact lines on 2026-09-21 against the running API: the whole collection is
+27 requests, 76 tests, 59 assertions, all green.~~ True under `--env local` - and `--env ci`, the
+environment the workflow runs, had never been run at all. Its first dispatch (run 35872727972,
+2026-09-23) found two requests red that `local` hid: the withdrawal, still sending its PIN in the
+body after ADR-0056 moved it to a mint, and register, asserting a literal first name that only
+`local` sends. `endpoints/auth` alone measured 6 requests, 16 tests, 13 assertions on 2026-09-21
+under `--env local`, and was not re-measured by folder since.
 
 ## Test Workflow
 
 The recommended order for running tests:
 
 1. **Register** - Creates new user and gets token
-2. **Set PIN** - Sets up PIN for withdrawals
+2. **Set PIN** - Sets up the PIN that every mint spends: the withdrawal's and both transfers'
 3. **List Accounts** - Gets primary account ID
 4. **Deposit** - Adds money to account
 5. Other tests...

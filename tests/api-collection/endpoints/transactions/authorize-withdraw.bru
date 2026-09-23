@@ -1,0 +1,58 @@
+meta {
+  name: Authorize the withdrawal
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/transactions/withdraw/authorizations
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{authToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "accountId": "{{accountId}}",
+    "amount": 100.00,
+    "pin": "123456"
+  }
+}
+
+script:post-response {
+  // A withdrawal is authorised BEFORE it is made (ADR-0056), exactly as a transfer is (ADR-0042):
+  // the PIN is spent here, once, and the withdrawal presents what this returns in a
+  // Step-Up-Authorization header. The collection was not updated when the endpoint moved -
+  // measured 2026-09-23 on the FIRST dispatch of contract-tests.yml ever (run 35872727972), the
+  // withdrawal below answered 401 Unauthorized, because it still sent its PIN in the body.
+  //
+  // The amount is BOUND: the withdrawal must present 100.00 too, or it is refused 401
+  // AUTHORIZATION_INVALID. Change one, change both.
+  if (res.getStatus() === 201) {
+    bru.setVar('withdrawAuthorizationId', res.body.data.authorizationId);
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.data.authorizationId: isString
+  res.body.data.expiresAt: isString
+}
+
+tests {
+  test("Status is 201 Created", function() {
+    expect(res.status).to.equal(201);
+  });
+
+  test("The authorisation is published for the withdrawal that spends it", function() {
+    expect(res.body.data.authorizationId).to.be.a('string');
+    expect(bru.getVar('withdrawAuthorizationId')).to.equal(res.body.data.authorizationId);
+  });
+}
