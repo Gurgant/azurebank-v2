@@ -222,6 +222,7 @@ The next free number is **0057**.
 | [ADR-0056](0056-a-withdrawal-is-authorised-like-a-transfer.md) | A withdrawal is authorised like a transfer | Accepted | 2026-09-21 |
 
 </details>
+
 ## Creating a New ADR
 
 1. Copy `0000-template.md` to a new file with the next sequence number

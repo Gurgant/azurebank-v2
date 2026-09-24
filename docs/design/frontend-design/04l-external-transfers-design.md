@@ -1,3 +1,8 @@
+> **History.** This document came into the repository with the design history on 2026-07-12 and
+> has not been kept in step with the code since. Where it disagrees with the code or with the
+> generated contract, [`docs/api/openapiv1.json`](../../api/openapiv1.json), those win and this
+> document is wrong. What is current starts at [`docs/README.md`](../../README.md).
+
 # External Transfers Feature Design
 ## AzureBank Account Management System
 
@@ -415,6 +420,12 @@ visibleId: string;               // UUID for frontend reference
 | GET | `/api/recipients/recent` | Get recent transfer recipients |
 | POST | `/api/transfers/external` | Execute external transfer |
 | DELETE | `/api/recipients/{id}` | Remove from recent recipients |
+
+> **None of these four endpoints ever existed.** Checked 2026-09-23 against every controller in the
+> repository's history, on every branch. The feature was built as `GET /api/users/{azureTag}` to
+> find the payee and `POST /api/transfers` to pay, authorised first by a mint at
+> `POST /api/transfers/authorizations` (ADR-0042). The contract,
+> [`docs/api/openapiv1.json`](../../api/openapiv1.json), has the real shapes.
 
 ### 7.2 Endpoint Specifications
 
