@@ -13,8 +13,10 @@ as of January 2026 and are kept as design history; errata are listed per decisio
 > What has changed under the map, each checked against the repository that day:
 >
 > - The contract has **25 paths and 28 operations** — not the 19 paths D3 counts.
-> - The API serves one client, the BFF (ADR-0055), and refuses every operation that arrives
->   without the service key — so D1's "the API works with and without the BFF" no longer holds.
+> - The API serves one client, the BFF (ADR-0055): each of its 28 operations refuses a request
+>   without the service key, and only the health probes answer one — with, in Development, the
+>   OpenAPI document and the Scalar page. So D1's "the API works with and without the BFF" no
+>   longer holds.
 > - The frontend is wired to this contract, and it has MSW handlers (`frontend/src/mocks/`): the
 >   `07` row's "never implemented" and D5's closing note are both out of date.
 > - Of the five known gaps at the bottom, four shipped: idempotency keys (ADR-0009),
