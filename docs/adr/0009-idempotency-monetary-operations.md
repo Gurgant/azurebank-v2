@@ -149,7 +149,13 @@ design — see Notes).
   2026-09-21, ADR-0056: no monetary body carries a PIN any more — the
   withdrawal's moved to its own mint, which is not an idempotent endpoint. The
   threshold is unchanged; what is gone is the secret that made spooling one to
-  disk the sharpest reason for it.)*
+  disk the sharpest reason for it.)* *(Amended 2026-09-24, backlog row 42:
+  refused unread, an oversized body let Kestrel abort the connection under the
+  BFF's proxy — a reset for the sender, or a 502 for the next request on that
+  connection. The middleware now reads and discards a body of up to 1 MiB before
+  the 413, never buffering or hashing it, and for five seconds at most; above
+  that size, or once the five seconds are up, it answers `Connection: close`.
+  `docs/engineering-traps.md` has the measurements.)*
 - The BFF needs no changes: YARP forwards `Idempotency-Key` and
   `Idempotency-Replayed` by default (verified; its transform only adds
   `Authorization`).
