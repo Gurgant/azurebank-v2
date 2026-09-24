@@ -28,7 +28,7 @@ brew install bruno
 | Environment | File | Purpose |
 |-------------|------|---------|
 | `local` | `environments/local.bru` | Local development, against `https://localhost:7215`. `serviceKey` ships EMPTY and **stays** empty: this file is tracked and nothing in `.gitignore` covers it, so a key written here is a key committed. Pass it per run instead (below). |
-| `ci` | `environments/ci.bru` | The manual `Contract tests` workflow, which runs `--env ci`. Self-contained: the throwaway key and the `http://localhost:5068` that workflow starts the API on. Nothing in it is a real secret. |
+| `ci` | `environments/ci.bru` | The `Contract tests` workflow, which runs `--env ci` on every pull request, every push to `main`, and by hand. Self-contained: the throwaway key and the `http://localhost:5068` that workflow starts the API on. Nothing in it is a real secret. |
 
 The API serves only the BFF (ADR-0055), so every request here carries
 `X-AzureBank-Service-Key`, which `collection.bru` reads from `serviceKey`. Supply your own
@@ -235,12 +235,21 @@ tests {
 
 ### GitHub Actions
 
-What the repository actually runs is `.github/workflows/contract-tests.yml`. Its shape, and the
-reason for each part:
+What the repository actually runs is `.github/workflows/contract-tests.yml`, on every pull
+request and every push to `main` since backlog row 35. Until then it ran only by hand, and nothing
+noticed that the collection's withdrawal answered 401 on `main` from #198 until #200. Its shape,
+and the reason for each part:
 
 ```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:                          # and still by hand
+
 - name: Install Bruno CLI
-  run: npm install -g @usebruno/cli
+  run: npm install -g @usebruno/cli@4.1.0     # pinned: an unpinned run proves nothing nameable
 
 - name: Run Bruno tests
   working-directory: tests/api-collection     # bru runs only from the collection root

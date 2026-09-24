@@ -96,8 +96,8 @@ the API's front door, and nothing behind it.
 
 ## Test Options
 
-Each is the Quick Start line with something added, and each was run again on 2026-09-24, with
-every check.
+Every command below was run again on 2026-09-24, after the configuration started running every
+check.
 
 ### What every check found
 
@@ -144,7 +144,7 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
 
 `--report` takes a FORMAT in 4.27.1 — `junit`, `vcr`, `har`, `ndjson`, `json` or `allure`; bare,
 it is rejected. The report lands in `schemathesis-report/`, which `.gitignore` covers, under a
-name carrying the run's timestamp (`junit-20260923T170759Z.xml` in the run measured).
+name carrying the run's timestamp (`junit-20260924T150847Z.xml` in the run measured).
 
 ### CI/CD Mode (JUnit output)
 

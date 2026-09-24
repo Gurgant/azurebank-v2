@@ -143,6 +143,15 @@ one-primary-per-user index refused a single SaveChanges that updated the new row
 `SetPrimarySqlServerTests` pins it, red before the fix. The manual workflow's Schemathesis job and
 the `schemathesis/` hooks folder are gone; Bruno stays manual there._
 
+_Widened 2026-09-24 (backlog rows 40 and 41). The `conformance` job runs every check, not only the
+four, and runs them through `tests/contract/schemathesis.toml` and its hooks — the files a developer
+runs — so a broken configuration is a red job as well. The input-side checks had stayed out because
+the API failed them: it read an empty query value as an absent one and answered 200 (row 40, fixed
+first). The configuration declares what the checks must be told: the two decided 404s (ADR-0056
+D4, ADR-0042) and the transaction list's unknown query parameter. The seeded demo user's token
+reaches the hooks, as the bearer reached the flags before. And Bruno, left manual above, runs on
+every pull request too (row 35)._
+
 ## Consequences
 
 **Falsified before it was trusted, and every case re-run on the final code**, each read for the

@@ -114,3 +114,5 @@ job is a process that did not start, and the readiness step alone would only say
   Schemathesis is the `conformance` job in `ci.yml` now — its own SQL Server rather than a fourth
   step in this job, since it mints users and accounts the three suites here reason about — and it
   blocks a merge; ADR-0053 D6 carries the record. Bruno stays manual in `contract-tests.yml`.)*
+  *(The other half taken 2026-09-24, backlog row 35: `contract-tests.yml` runs Bruno on every pull
+  request and every push to `main`, and still by hand.)*
