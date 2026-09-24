@@ -1,3 +1,8 @@
+> **History.** This document came into the repository with the design history on 2026-07-12 and
+> has not been kept in step with the code since. Where it disagrees with the code or with the
+> generated contract, [`docs/api/openapiv1.json`](../api/openapiv1.json), those win and this
+> document is wrong. What is current starts at [`docs/README.md`](../README.md).
+
 # API Contracts
 ## AzureBank - Bank Account Management System
 
@@ -1148,6 +1153,14 @@ Historical balance:
 ## 6. Error Handling
 
 ### 6.1 Standard Error Response Format
+
+> **Not what the API answers.** Measured 2026-09-23 against the running API: a refusal is an RFC 9457
+> problem document with the keys `type`, `title`, `status`, `detail`, `instance`, `errorCode` and
+> `traceId` — 401 `SERVICE_CREDENTIAL_REQUIRED`, 401 `INVALID_CREDENTIALS` and 404
+> `ACCOUNT_NOT_FOUND` had exactly those — and a validation failure has `type`, `title`, `status`,
+> `errors` and `traceId`. None of `message`, `correlationId`, `statusCode` or `details` below
+> exists, so code written from this section reads fields that are never there. The contract's
+> `ProblemDetails` schema, in [`docs/api/openapiv1.json`](../api/openapiv1.json), is the reference.
 
 All errors follow this structure:
 

@@ -1,3 +1,8 @@
+> **History.** This document came into the repository with the design history on 2026-07-12 and
+> has not been kept in step with the code since. Where it disagrees with the code or with the
+> generated contract, [`docs/api/openapiv1.json`](../api/openapiv1.json), those win and this
+> document is wrong. What is current starts at [`docs/README.md`](../README.md).
+
 # Master Task List - Bank Account Management System
 # Status: [ ] TODO | [->] IN PROGRESS | [x] DONE | [!] BLOCKED
 

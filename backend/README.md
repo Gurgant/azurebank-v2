@@ -36,7 +36,6 @@
 - [Testing](#testing)
 - [Configuration](#configuration)
 - [Contributing](#contributing)
-- [License](#license)
 
 ---
 
@@ -232,7 +231,6 @@ flowchart LR
 | xUnit            | 2.9.3   | Test framework        |
 | Moq              | 4.20.72 | Mocking library       |
 | FluentAssertions | 8.8.0   | Assertion library     |
-| Testcontainers   | 4.3.0   | Real database testing |
 | NetArchTest      | 1.4.5   | Architecture testing  |
 
 ---
@@ -397,8 +395,6 @@ CPM centralizes all NuGet package versions in a single file, ensuring:
 | `coverlet.collector`                     | 6.0.4   | Code coverage        | Measure coverage     | CI/CD integration       |
 | `Microsoft.AspNetCore.Mvc.Testing`       | 10.0.1  | Integration testing  | Test API in-memory   | End-to-end tests        |
 | `Microsoft.EntityFrameworkCore.InMemory` | 10.0.1  | In-memory provider   | Fast unit tests      | No database needed      |
-| `Testcontainers`                         | 4.3.0   | Container library    | Docker test infra    | Real dependencies       |
-| `Testcontainers.MsSql`                   | 4.3.0   | SQL Server container | Real DB testing      | Production parity       |
 | `NetArchTest.eNhancedEdition`            | 1.4.5   | Architecture tests   | Enforce design rules | Actively maintained     |
 
 ---
@@ -548,12 +544,15 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | Category         | Description                          | Database                  |
 | ---------------- | ------------------------------------ | ------------------------- |
 | **Unit**         | Service logic, validators, utilities | In-memory/Mocked          |
-| **Integration**  | End-to-end API tests                 | Testcontainers (real SQL) |
+| **Integration**  | End-to-end API tests                 | In-memory, or SQL Server via `AZUREBANK_TEST_SQLSERVER` (below) |
 | **Architecture** | Design & dependency rules            | N/A                       |
 
 ### Test Infrastructure
 
-- **Testcontainers**: Spins up real SQL Server in Docker for integration tests
+- **`AZUREBANK_TEST_SQLSERVER`**: the tests that need a real database connect to the SQL Server it
+  names — LocalDB locally, a service container in CI — and skip without it. There is no
+  Testcontainers harness: the packages were referenced and never used, and were removed on
+  2026-08-10 (`ac0a2f9`).
 - **CustomWebApplicationFactory**: Creates isolated API instance for each test
 - **Architecture Tests**: Enforces layer dependencies and naming conventions
 

@@ -23,6 +23,7 @@ If you want more after that:
 | [`SECURITY.md`](SECURITY.md) | The security posture in one place. |
 | [ADR-0038](docs/adr/0038-bff-session-is-the-only-credential.md) | Why the BFF accepts its session and nothing else. Measured before it: a bearer sent through the BFF with no session cookie reached the transfer endpoint, so a transfer could have been paid with no PIN. |
 | [`docs/deferred/`](docs/deferred/README.md) | What this deployment deliberately does not do yet — anchoring, sending the notice — and what would have to be true first. |
+| [`docs/`](docs/README.md) | Every document, and which of them are current and which are kept only as history. |
 
 ## Running it
 
