@@ -21,8 +21,8 @@ alternative record is running the same experiment again.
 
 ## If you read four, read these
 
-Fifty decisions is more than anyone reads cold. These four carry the architecture; the rest is
-detail hanging off them.
+Fifty-six decisions is more than anyone reads cold. These four carry the architecture; the rest is
+detail hanging off them. *(It said fifty until 2026-09-24.)*
 
 | | Why this one |
 |---|---|

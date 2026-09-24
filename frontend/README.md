@@ -41,6 +41,17 @@ failed on Windows with `ECONNRESET`. It was not the test: the API answered the 4
 the body and then aborted the connection, which the BFF passed on. The API now reads the body first;
 [`docs/engineering-traps.md`](../docs/engineering-traps.md) has the measurements.
 
+## Accessibility
+
+axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in CI's e2e job over nine pages, the deposit dialog
+and the Change PIN dialog, and fails the job on any serious or critical finding except colour
+contrast, which it reports and leaves to the UI/UX phase: on 2026-09-17 that was 25 nodes on theme
+tokens (muted secondary text, the sidebar avatar, a button group and the danger-zone button) on
+seven pages and the deposit dialog, a count that moves with the data a page shows. Fluent's own
+focus sentinels, which axe flags as `aria-hidden-focus` two per page, are excluded by a selector the
+spec proves matches nothing else. Every page carries its own title, and a route change is announced
+and moves focus to the new page. The per-scan JSON reports are a CI artifact.
+
 ## Screenshots
 
 The README's pictures, the repository's social preview and a LinkedIn card are taken by a script,

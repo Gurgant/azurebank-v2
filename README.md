@@ -1,182 +1,144 @@
 # AzureBank
 
-A personal banking application — accounts, deposits, withdrawals, transfers — built as a portfolio
-and study project. .NET 10 API behind a BFF, React 19 SPA, SQL Server. Both halves are real and
-wired to each other.
+A personal banking app built as a portfolio project: a .NET 10 API behind an ASP.NET Core BFF, a
+React 19 SPA, SQL Server.
+
+[How it works](docs/architecture/overview.md) · [Decisions](docs/adr/README.md) ·
+[Security](SECURITY.md) · [Engineering practices](docs/engineering-practices.md)
+
+[![CI](https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Gurgant/azurebank-v2/actions/workflows/ci.yml)
+[![Contract tests](https://github.com/Gurgant/azurebank-v2/actions/workflows/contract-tests.yml/badge.svg)](https://github.com/Gurgant/azurebank-v2/actions/workflows/contract-tests.yml)
+[![CodeQL](https://github.com/Gurgant/azurebank-v2/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Gurgant/azurebank-v2/actions/workflows/github-code-scanning/codeql)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
+  <img alt="The AzureBank dashboard: the balance across two accounts, this month's money in and out, a transfer shortcut naming recent payees, and the latest movements." src="docs/images/dashboard-light.png">
+</picture>
+
+## What it is
+
+Accounts, deposits, withdrawals and transfers. Both halves are real and wired to each other.
 
 The interesting part is not the CRUD. It is everything that has to be true **because it moves
 money**: an operation that executes exactly once across retries, crashes and concurrent duplicates;
 a browser that never holds a token; a second factor that survives a replayed request byte for byte.
 
-## Read this first
+Designed and built by me, Vladislav Aleshaev, alone.
 
-**→ [How AzureBank works](docs/architecture/overview.md)** — one document, complete on its own.
-Ten minutes, and you will know how the money guarantee works and why the browser has no token.
+## What it demonstrates
 
-If you want more after that:
+![A transfer to @janesmith: the form, the review, the PIN, the receipt, and the dashboard with the new row on top.](docs/images/transfer-flow.gif)
 
-| | |
+- **A payment is applied once.** Every money move carries an idempotency key; the server
+  fingerprints the raw request with a keyed HMAC and claims the key before it acts, and the client
+  knows which of five outcomes may be retried. Held under 24 concurrent duplicates on a real SQL
+  Server. [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
+  [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) ·
+  [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
+- **The browser never holds a token.** The BFF keeps the session server-side and adds the bearer
+  itself, and the API accepts no caller but the BFF. [ADR-0001](docs/adr/0001-bff-pattern.md) ·
+  [ADR-0038](docs/adr/0038-bff-session-is-the-only-credential.md) ·
+  [ADR-0055](docs/adr/0055-the-api-serves-one-client-the-bff.md)
+- **One PIN entry authorises one payment.** The PIN becomes a one-shot authorisation bound to the
+  account, the amount and, for a transfer, the payee; valid two minutes and spent once. Three wrong
+  PINs lock the PIN.
+  [ADR-0042](docs/adr/0042-a-transfer-authorisation-is-bound-and-spent-once.md) ·
+  [ADR-0056](docs/adr/0056-a-withdrawal-is-authorised-like-a-transfer.md) ·
+  [ADR-0010](docs/adr/0010-pin-attempt-limiting.md)
+- **An audit trail that can be checked, with its limits written down.** Security events go to an
+  append-only, hash-chained table with its own verifier, and what it cannot detect is stated.
+  [ADR-0044](docs/adr/0044-the-audit-trail-is-append-only-and-chained.md)
+- **The frontend and the backend cannot drift apart.** The committed OpenAPI contract is what the
+  API generates, one contract suite runs against the mock and the real stack, Schemathesis probes
+  the running API, and Playwright with axe walks the built app under its production CSP.
+  [ADR-0053](docs/adr/0053-the-committed-contract-is-what-the-api-generates.md) ·
+  [ADR-0029](docs/adr/0029-contract-conformance-gate.md) ·
+  [ADR-0054](docs/adr/0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md)
+- **One trace per request.** A request through the BFF is one OpenTelemetry trace down to SQL, every
+  error carries its trace id, and telemetry is PII-safe by design.
+  [ADR-0016](docs/adr/0016-observability-three-pillars.md) ·
+  [ADR-0017](docs/adr/0017-pii-redaction-codeql-barrier.md)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser["Browser<br/>React 19 SPA"]
+    BFF["BFF<br/>ASP.NET Core + YARP"]
+    API["API<br/>ASP.NET Core"]
+    DB[("SQL Server")]
+    Relay["Notice relay<br/>Azure Functions"]
+
+    Browser -->|"HttpOnly session cookie"| BFF
+    BFF -->|"service key + bearer, added server-side"| API
+    API -->|"EF Core"| DB
+    Relay -->|"owed notices"| DB
+```
+
+The BFF serves the built SPA, holds the session and is the API's only client; the API owns the
+money rules. [How AzureBank works](docs/architecture/overview.md) follows one request end to end.
+
+## Stack
+
+| Layer | What it uses |
 |---|---|
-| [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) + [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves. The five-outcome table is the core of the project. |
-| [`docs/adr/`](docs/adr/README.md) | Every decision with its alternatives and residuals. The index names four to start with. |
-| [`docs/engineering-traps.md`](docs/engineering-traps.md) | The things that fail silently — each one cost a debugging session. |
-| [`SECURITY.md`](SECURITY.md) | The security posture in one place. |
-| [ADR-0038](docs/adr/0038-bff-session-is-the-only-credential.md) | Why the BFF accepts its session and nothing else. Measured before it: a bearer sent through the BFF with no session cookie reached the transfer endpoint, so a transfer could have been paid with no PIN. |
-| [`docs/deferred/`](docs/deferred/README.md) | What this deployment deliberately does not do yet — anchoring, sending the notice — and what would have to be true first. |
-| [`docs/`](docs/README.md) | Every document, and which of them are current and which are kept only as history. |
+| Backend | .NET 10, ASP.NET Core, EF Core 10 on SQL Server, YARP, FluentValidation, Serilog, OpenTelemetry, Azure Functions |
+| Frontend | React 19, TypeScript, Vite, Fluent UI 9, Redux Toolkit with RTK Query, React Router, react-hook-form with Zod |
+| Tests | xUnit, FluentAssertions, NetArchTest; Vitest with MSW; Playwright with axe; Schemathesis; Bruno |
+| Delivery | GitHub Actions, CodeQL, an AI reviewer on every pull request |
 
-## Running it
+## Try it
 
-Configuration comes from user-secrets, never a committed file — the API refuses to start without
-them. **The API and the seeder have separate secret stores**, so the pepper has to be set twice and
-must match, or seeded PINs fail verification at login rather than at seeding. **So do the API and
-the BFF**, and they share one value too: the service credential, without which the BFF does not
-start and the API answers 401 to every request but its health probes and, in Development, its own
-API documentation (ADR-0055).
+- **The UI alone**, against a mock that runs in the browser — Node only:
+  `cd frontend && npm ci && npm run dev:mock`, then sign in as `demo@azurebank.dev` / `Password1!`,
+  PIN `123456`.
+- **The whole stack** — .NET 10, Node 24 and SQL Server (LocalDB is enough): the
+  [local setup](docs/engineering-practices.md#local-setup). The seeded demo user is
+  `john@example.com` / `Test123!`, PIN `123456`.
 
-```bash
-API=backend/src/AzureBank.Api
-BFF=backend/src/AzureBank.Bff
-SEEDER=backend/tools/AzureBank.Seeder
-CONN='Server=(localdb)\MSSQLLocalDB;Database=AzureBankDev;Trusted_Connection=True;TrustServerCertificate=True'
-PEPPER="$(openssl rand -base64 48)"
-SERVICE_KEY="$(openssl rand -base64 48)"
+## Tests and CI
 
-dotnet user-secrets --project $API    set "Jwt:Secret" "$(openssl rand -base64 64)"
-dotnet user-secrets --project $API    set "Idempotency:HashKey" "$(openssl rand -base64 32)"
-dotnet user-secrets --project $API    set "StepUp:BindingKey" "$(openssl rand -base64 32)"
-dotnet user-secrets --project $API    set "Audit:ChainKey" "$(openssl rand -base64 32)"
-dotnet user-secrets --project $API    set "Audit:AnchorKey" "$(openssl rand -base64 32)"
-dotnet user-secrets --project $API    set "Security:PinPepper" "$PEPPER"
-dotnet user-secrets --project $API    set "ConnectionStrings:DefaultConnection" "$CONN"
-dotnet user-secrets --project $API    set "ServiceCredential:BffKey" "$SERVICE_KEY"
-dotnet user-secrets --project $BFF    set "ServiceCredential:BffKey" "$SERVICE_KEY"
-dotnet user-secrets --project $SEEDER set "Security:PinPepper" "$PEPPER"
-dotnet user-secrets --project $SEEDER set "ConnectionStrings:DefaultConnection" "$CONN"
-```
+Every pull request runs all of these; the two backend jobs are required checks on `main`.
 
-`Security:PinPepper` is mixed into the Argon2id PIN hash so a stolen database cannot brute-force
-the six-digit PIN space offline. It supports zero-downtime rotation through a keyring
-(`Security:PreviousPinPeppers`) — when rotating, keep the whole ring in one secret provider.
+| Job | What it checks |
+|---|---|
+| Backend build + tests | Formatting, a Release build with warnings as errors, the API's and the BFF's test suites |
+| Backend concurrency proofs | Idempotency, balances and the audit chain under concurrent requests on a real SQL Server — and that the proofs ran rather than skipped |
+| Frontend build | Lint, formatting, the generated types and schemas against the committed contract, the unit tests, the contract suite against the mock, the build |
+| Frontend tests | The unit tests again under two time zones that disagree about "today" |
+| Real-stack layers | The contract suite, the data layer and Playwright with axe, against the real BFF, API and SQL Server |
+| Runtime conformance | Schemathesis against the running API, every check, with a real sign-in |
+| Contract tests | The Bruno collection, request by request, against the running API |
 
-`ServiceCredential:BffKey` is how the API knows a request comes from the BFF: the BFF sends it in
-`X-AzureBank-Service-Key` on every call, and the API refuses anything without it before it looks at
-a token, so the API serves one client (ADR-0055). Exempt: `/health/*` in every environment, and
-`/openapi` and `/scalar` in Development, so a browser can still open the documentation. Calling an
-API OPERATION by hand — curl, Bruno, the Scalar page's "Try it" — needs that header. Bruno reads
-it from `serviceKey`, which ships empty in the tracked `local.bru` and is passed per run instead:
-`cd tests/api-collection && bru run . -r --env local --env-var serviceKey="$SERVICE_KEY"
---insecure`. The `-r` is not optional — without it bru sends no requests at all and still reports
-PASS. In production the API also has no public address; the key is the second line behind that.
+CodeQL analyses the C#, the TypeScript and the workflows on every pull request as well.
 
-`Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
-records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and
-deliberately separate: the anchor constrains whoever holds the database, so it must not be
-forgeable with the key the row chain uses.
+## Read deeper
 
-Then create and seed the database in one command. The three processes each run in **their own
-terminal and stay running** — but on a cold clone, let the API finish building before starting the
-BFF: two first builds in parallel race on a shared assembly and fail with a file lock that looks
-like a corrupted build.
+| Document | What it gives you |
+|---|---|
+| [How AzureBank works](docs/architecture/overview.md) | One document, complete on its own: how the money guarantee works and why the browser has no token |
+| [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) and [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves; the five-outcome table is the core of the project |
+| [Decisions](docs/adr/README.md) | Every decision with its alternatives and what it leaves open; the index names four to start with |
+| [Engineering traps](docs/engineering-traps.md) | The things that fail silently, each one measured |
+| [SECURITY.md](SECURITY.md) | The security posture in one place, including what is not done |
 
-```bash
-DOTNET_ENVIRONMENT=Development dotnet run --project backend/tools/AzureBank.Seeder -- reset --confirm
+## Status and known limits
 
-dotnet run --project backend/src/AzureBank.Api --launch-profile https   # https://localhost:7215
-dotnet run --project backend/src/AzureBank.Bff --launch-profile http    # http://localhost:5000
-cd frontend && npm ci && npm run dev                                     # http://localhost:5173
-```
+- It runs locally and in CI; it is not deployed yet.
+- axe runs over every page in CI and fails on any serious or critical finding except colour
+  contrast on theme colours, which is left to the UI/UX phase; the details are in
+  [frontend/README.md](frontend/README.md).
+- What the project deliberately does not do yet — anchoring the audit trail outside the database,
+  sending the enrolment notice — is in [docs/deferred/](docs/deferred/README.md).
 
-The `DOTNET_ENVIRONMENT` variable is required, and `ASPNETCORE_ENVIRONMENT` will not do — the
-seeder is a console Generic Host and reads the other prefix. The API must run the **https** profile
-because the BFF proxies to 7215.
+## About this repository
 
-Seeded demo login: `john@example.com` / `Test123!`, PIN `123456`.
+Squash-merged: the pull-request title is the commit that lands on `main`, plain and imperative.
+Every change goes through a pull request reviewed by CodeQL and an AI reviewer, and I merge it; the
+rules are in [engineering practices](docs/engineering-practices.md).
 
-## Running the tests
+Built in three phases: design documents first (December 2025 to January 2026), then the backend
+(January 2026), then the monorepo as it is now, from July 2026. This repository consolidates them;
+the earlier history lives in private repositories.
 
-```bash
-dotnet test backend/AzureBank.slnx    # name the solution — see below
-cd frontend && npm run build && npx vitest run
-```
-
-Two commands that look like they work and do not: a filtered `dotnet test` silently drops the
-entire BFF suite while reporting success, and `tsc --noEmit` skips project references under this
-solution-style tsconfig. Both are explained in
-[engineering traps](docs/engineering-traps.md).
-
-The concurrency proofs are gated behind a real SQL Server and skip locally:
-
-```bash
-AZUREBANK_TEST_SQLSERVER="Server=(localdb)\\MSSQLLocalDB;Database=AzureBankProofs;Trusted_Connection=True;TrustServerCertificate=True" \
-  dotnet test backend/AzureBank.slnx --filter "Category=SqlServer"
-```
-
-## Observability
-
-Both services emit traces, metrics and logs over OpenTelemetry, correlated end-to-end. A request
-through the BFF is **one trace** — BFF span, YARP forwarder, HttpClient, API, SQL — and every
-ProblemDetails carries the bare 32-hex `traceId` that pastes straight into Tempo search.
-
-```bash
-docker compose -f observability/docker-compose.yml up -d   # Grafana LGTM on 127.0.0.1:3000
-
-# Export in the terminal that starts each service — a bare assignment stays shell-local
-# and the child process never sees it. Use 127.0.0.1, not localhost: on Windows the name
-# resolves to ::1 first and the collector is listening on IPv4.
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-```
-
-In PowerShell: `$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"`.
-
-Export is opt-in: without the variable, tests and dev runs emit nothing. Telemetry is PII-safe by
-design — emails are masked through the .NET compliance stack, amounts never appear in log lines,
-and user-controlled values pass a central sanitizer whose contract is pinned by tests.
-
-## Status
-
-**Backend** — warnings are errors in a Release build, which is what CI builds. The suite runs in CI
-together with the SQL Server proofs against a real database, and the job fails if those skip.
-Monetary operations are idempotent and concurrency-safe under 24 parallel duplicates.
-
-**Frontend** — fully wired to the real API through the BFF: authentication, accounts, transaction
-history, the four money flows with idempotency keys and step-up PIN, and the dashboard on real
-aggregates. A test that writes to `console.error` fails. Verified
-end-to-end against the running stack, not only against mocks.
-
-**Known gaps**, tracked rather than hidden: colour contrast. axe-core (WCAG 2.0 A/AA, 2.1 AA and
-2.2 AA) runs in the e2e job over nine pages, the deposit dialog and the Change PIN dialog, and fails
-the job on any serious or critical finding except colour contrast, which it reports and leaves to
-the UI/UX phase: on 2026-09-17 that was 25 nodes on theme tokens (muted secondary text, the sidebar
-avatar, a button group and the danger-zone button) on seven pages and the deposit dialog, a count
-that moves with the data a page shows. Fluent's own focus sentinels, which axe flags as
-`aria-hidden-focus` two per page, are excluded by a selector the spec proves matches nothing else.
-Every page carries its own title, and a route change is announced and moves focus to the new page.
-The per-scan JSON reports are a CI artifact. (Until 2026-09-17 this said the sweep ran report-only,
-"measured, not yet fixed".) A UI/UX overhaul is the final planned phase. (The production CSP used to be listed here as unverifiable; the BFF now serves the built SPA
-under it, and CI's e2e run walks that build with no violations — ADR-0054.)
-
-*(This section used to give test counts — 674, 36, 710, 596 — that disagreed with each other and
-with CI, and said "Both auth modes verified live", an observation made once and never re-run.
-Counts written into prose go stale within days; CI's jobs are the source.)*
-
-The end-to-end browser suite that used to be listed here **exists**: Playwright drives a real
-Chromium against the real BFF, API and SQL Server, and CI runs it in the same job as the contract
-and integration layers.
-
-## How this repository is built
-
-Squash-merge: the **pull-request title** is the commit that lands on `main`, so it carries the
-meaning — plain, imperative, naming the concrete outcome, never a `type(scope):` prefix.
-Conventional Commits is deliberately unused; its payoff needs release automation this project does
-not run. Every change ships behind a reviewed pull request with CodeQL and an AI reviewer, and a
-human merges. Full rules in [engineering practices](docs/engineering-practices.md).
-
-## Provenance
-
-A curated fresh-history consolidation of work done in three phases: design-first documentation
-(Dec 2025 – Jan 2026), backend implementation over 27 iterations (Jan 2026), then recovery from
-backups, repair to green, and ongoing evolution as a monorepo (Jul 2026). The full original
-history, including intermediate generations and experiments, lives in the original private
-repositories and backup archives rather than here.
+Released under the [MIT License](LICENSE).

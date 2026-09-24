@@ -6,7 +6,7 @@
     <a href="../docs/architecture/overview.md"><strong>Explore the Architecture »</strong></a>
     <br />
     <br />
-    <a href="https://localhost:7215/scalar/v1">API Documentation</a>
+    <a href="../docs/api/README.md">API Documentation</a>
     ·
     <a href="../docs/adr/">Architecture Decisions</a>
     ·
@@ -41,7 +41,9 @@
 
 ## Overview
 
-**AzureBank** is an enterprise-grade banking backend system implementing a secure **Backend-For-Frontend (BFF)** architecture pattern. The system provides comprehensive account management, transaction processing, and money transfer capabilities with defense-in-depth security.
+The backend of **AzureBank**: a .NET 10 REST API behind a **Backend-For-Frontend (BFF)** — accounts,
+deposits, withdrawals and transfers, with the security controls split between the two hosts as
+[`SECURITY.md`](../SECURITY.md) sets out.
 
 ### What This Project Does
 
@@ -71,7 +73,9 @@ The Backend-For-Frontend pattern provides:
   PINs hashed with Argon2id and peppered (ADR-0011)
 - Step-up authentication with 6-digit PIN for sensitive operations
 - Session management with configurable timeouts
-- Rate limiting (100 requests/minute per client)
+- Rate limiting at the BFF, per client IP: 300 requests a minute overall, 10 a minute on sign-in and
+  registration, 20 a minute on user lookups by handle *(until 2026-09-24 this said 100 a minute per
+  client, which is not what the configuration sets)*
 
 ### Account Management
 
@@ -103,7 +107,7 @@ The Backend-For-Frontend pattern provides:
 ```mermaid
 flowchart TB
     subgraph Client["Client Layer"]
-        Browser["Browser / Mobile App"]
+        Browser["Browser"]
     end
 
     subgraph BFF["BFF Gateway (Port 5001)"]

@@ -34,10 +34,12 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
   A transfer, an account closure and a withdrawal first mint a one-shot authorisation with the PIN,
   bound to exactly that operation and spent once (ADR-0042, ADR-0049, ADR-0056). Only the
   account-number reveal still uses an elevation held in the BFF session (ADR-0008). Through
-  the BFF, none of them is granted by the bearer token alone; presented to the API directly, a
-  bearer token reads the full number with no PIN — measured 2026-09-15, see "Where each guarantee
-  stops without the BFF" below. _(This used to end "None of them is granted by the bearer token
-  alone", which was true of the money rails and not of the reveal.)_
+  the BFF, none of them is granted by the bearer token alone; presented to the API directly
+  together with the BFF's service key, which since ADR-0055 only the BFF's host holds, a bearer
+  token reads the full number with no PIN — measured 2026-09-15, see "Where each guarantee stops
+  without the BFF" below. _(This used to end "None of them is granted by the bearer token alone",
+  which was true of the money rails and not of the reveal; until 2026-09-24 it then said the bearer
+  token alone read the number, which ADR-0055 ended on 2026-09-19.)_
 - **PINs are hashed with Argon2id and peppered first** with a server-side secret held outside the
   database: six digits is a space you can exhaust instantly, so a stolen database must not be
   enough (ADR-0011).
@@ -155,7 +157,10 @@ See ADR-0023 for the reasoning and the CI gates that hold it.
 
 ## Dependencies
 
-We use Central Package Management (ADR-0004) to maintain consistent, auditable dependencies. Security updates are applied promptly.
+Package versions are pinned in one place through Central Package Management (ADR-0004), and CodeQL
+analyses every pull request. Dependabot alerts are not enabled on this repository, so a vulnerable
+dependency is found by reading advisories, not by an alert. _(Until 2026-09-24 this said "Security
+updates are applied promptly", which nothing enforced.)_
 
 ## See Also
 
