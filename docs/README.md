@@ -3,7 +3,8 @@
 What is current here, and what is kept only as history. When two documents disagree, or a document
 disagrees with the code, **the code and the generated contract win**:
 [`api/openapiv1.json`](api/openapiv1.json) is written by the API itself and compared against it by
-the backend test suite (ADR-0053), so it is the one description that cannot drift from the code.
+the backend test suite (ADR-0053), so it is the one description whose drift from the code fails a
+test.
 
 ## Current
 
