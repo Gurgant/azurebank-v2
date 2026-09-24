@@ -50,7 +50,8 @@ public sealed class EmptyQueryValueRejectingBinderProvider(IList<IModelBinderPro
         // object says nothing and binds from its parent's source. Anything else keeps the
         // framework's reading of an empty value, above all the Step-Up-Authorization header: it
         // binds [FromHeader] Guid? so that an empty header is an absent one and answers 401, not
-        // 400 (ADR-0042; AnEmptyHeaderIsAnAbsentOne_NotAMalformedOne pins it). The header binder
+        // 400 (ADR-0042; EmptyQueryValueTests.AnEmptyStepUpHeader_StillBindsAsAbsent pins it, and
+        // the two ABlankHeaderIsAnAbsentOne_NotAMalformedOne tests end to end). The header binder
         // builds its inner binder under BindingSource.ModelBinding, so that is left alone too.
         var source = context.BindingInfo.BindingSource;
         if (source is not null && source != BindingSource.Query)

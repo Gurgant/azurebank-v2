@@ -351,15 +351,19 @@ public class AccountDeletionAuthorizationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task AnEmptyHeaderIsAnAbsentOne_NotAMalformedOne()
+    public async Task ABlankHeaderIsAnAbsentOne_NotAMalformedOne()
     {
         // [FromHeader] Guid? binds an EMPTY value to null (measured on POST /api/transfers,
         // ADR-0042), and on this bodyless DELETE too — measured 2026-09-06T10:44Z: an empty header
         // (D2) and a whitespace one (D3) both answered 401 AUTHORIZATION_REQUIRED.
+        //
+        // Sent as the whitespace one since 2026-09-24: the in-memory test server drops a header
+        // whose only value is empty, so the empty value this test used to send tested no header
+        // at all. Measured; see the test of the same name in StepUpAuthorizationTests.
         var (_, _, _, spare) = await ScenarioAsync();
 
         var request = new HttpRequestMessage(HttpMethod.Delete, $"/api/accounts/{spare}");
-        request.Headers.TryAddWithoutValidation(StepUpConstants.HeaderName, string.Empty);
+        request.Headers.TryAddWithoutValidation(StepUpConstants.HeaderName, " ");
         var response = await Client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);

@@ -465,7 +465,7 @@ public class StepUpAuthorizationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task AnEmptyHeaderIsAnAbsentOne_NotAMalformedOne()
+    public async Task ABlankHeaderIsAnAbsentOne_NotAMalformedOne()
     {
         /*
           MEASURED, and the row that would have been guessed wrong. [FromHeader] Guid? binds an
@@ -476,6 +476,15 @@ public class StepUpAuthorizationTests : IntegrationTestBase
           "> Step-Up-Authorization:" with no value): the API answered 201, i.e. it took the in-band
           PIN path reserved for "no header". A comment in apiSlice.ts asserted the opposite and is
           corrected in this change.
+
+          Sent here as ONE SPACE rather than empty (2026-09-24). The in-memory test server drops a
+          header whose only value is empty before the app sees it -- measured: the client held
+          the header with the value '', and the server's request had no such header, while ' '
+          arrived as ' '. So the empty value this test used to send made it a copy of the
+          no-header test: it stayed green with blank headers refused as malformed, a rule that
+          over HTTP answered 400. A blank value takes model binding's path for an empty one, and
+          it arrives. EmptyQueryValueTests.AnEmptyStepUpHeader_StillBindsAsAbsent pins the empty
+          value itself, at the binder.
         */
         var (token, _, account, recipient) = await ScenarioAsync();
 
@@ -489,13 +498,13 @@ public class StepUpAuthorizationTests : IntegrationTestBase
             }, options: JsonOptions)
         };
         request.Headers.Add(IdempotencyConstants.HeaderName, Guid.NewGuid().ToString());
-        request.Headers.TryAddWithoutValidation(StepUpConstants.HeaderName, string.Empty);
+        request.Headers.TryAddWithoutValidation(StepUpConstants.HeaderName, " ");
 
         SetAuthHeader(token);
         var response = await Client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
-            "an empty header binds to null, exactly like an absent one");
+            "a blank header binds to null, exactly like an absent one");
         (await ErrorCodeOf(response)).Should().Be(ErrorCodes.AuthorizationRequired);
     }
 

@@ -53,7 +53,8 @@ public class EmptyQueryValueTests : IntegrationTestBase
 
     [Theory]
     [MemberData(nameof(Refused))]
-    public async Task AnEmptyValue_IsRefusedLikeAnInvalidOne(string path, string key, string sent, string error)
+    public async Task AnEmptyValue_IsRefusedLikeAnInvalidOne(
+        string path, string key, string sent, string error)
     {
         var (token, _, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
@@ -91,7 +92,8 @@ public class EmptyQueryValueTests : IntegrationTestBase
         var (token, _, accountId) = await RegisterTestUserAsync();
         SetAuthHeader(token);
 
-        var response = await Client.GetAsync($"{path}{query}".Replace("{account}", accountId.ToString()));
+        var response = await Client.GetAsync(
+            $"{path}{query}".Replace("{account}", accountId.ToString()));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
@@ -99,9 +101,9 @@ public class EmptyQueryValueTests : IntegrationTestBase
     /// <summary>
     /// A real date binds as the UTC instant it names, through the binder this app builds for a date
     /// in the query. The fix first wrapped the generic simple-type binder, which reads "...Z" as
-    /// LOCAL time: on a UTC+2 machine every date filter moved by two hours, and the 200s above stayed
-    /// green. On a machine on UTC the instant comes out right by accident and only its Kind, Local,
-    /// gives it away, so the Kind is asserted too.
+    /// LOCAL time: on a UTC+2 machine every date filter moved by two hours, and the 200s above
+    /// stayed green. On a machine on UTC the instant comes out right by accident and only its Kind,
+    /// Local, gives it away, so the Kind is asserted too.
     /// </summary>
     [Fact]
     public async Task ARealDate_BindsAsTheUtcInstantItNames()
@@ -134,8 +136,9 @@ public class EmptyQueryValueTests : IntegrationTestBase
     /// The Step-Up-Authorization header still reads an EMPTY value as absent, as ADR-0042 decided:
     /// it binds [FromHeader] Guid? so that an empty header and a missing one both reach the service
     /// and answer 401, not 400. The rule above is for the query only. This asks the binder the app
-    /// builds for that header, because an integration test could not carry the case: the in-memory
-    /// server never delivered the empty header, so AnEmptyHeaderIsAnAbsentOne_NotAMalformedOne
+    /// builds for that header, because an integration test cannot carry the EMPTY value: the
+    /// in-memory test server drops a header whose only value is empty. The two integration tests
+    /// that sent one, now ABlankHeaderIsAnAbsentOne_NotAMalformedOne and sending a blank value,
     /// stayed green with the rule applied to headers too, while the same withdrawal sent over HTTP
     /// answered 400 {"Step-Up-Authorization":["The value '' is not valid."]} (measured 2026-09-24).
     /// </summary>
