@@ -1,5 +1,13 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { asProblem, call, closeAccount, idempotencyKey, login, withdrawViaMint } from './client';
+import {
+  asProblem,
+  call,
+  closeAccount,
+  firstAccountId,
+  idempotencyKey,
+  login,
+  withdrawViaMint,
+} from './client';
 
 /**
  * The backend has TWO validation envelopes, and which one you get depends on the endpoint.
@@ -411,6 +419,42 @@ describe('contract: validation envelopes', () => {
 
     expect(status).toBe(400);
     expect(keys.sort()).toEqual(['FromDate', 'ToDate']);
+  });
+
+  it.each([
+    ['/api/transactions', 'FromDate', ''],
+    ['/api/transactions', 'ToDate', ' '],
+    ['/api/transactions/summary', 'FromDate', ''],
+    ['/api/transactions/summary', 'ToDate', ''],
+    ['/api/transactions', 'AccountId', ''],
+    ['/api/transactions/summary', 'AccountId', ' '],
+  ])(
+    'refuses an EMPTY value on %s?%s= the way it refuses one that will not parse',
+    async (path, key, value) => {
+      /*
+        A value that was present but empty used to bind as ABSENT on the server: 200, with the
+        filter simply not applied. The mock disagreed in both directions: it refused an empty date
+        all along -- `Date.parse('')` is NaN -- and a blank AccountId, but read an empty AccountId
+        as absent, as the server did. Only the real target could show either. Measured 2026-09-24
+        on all seven nullable query parameters before the server's fix: 200, empty and
+        whitespace-only alike. Since: 400, with the binder's own sentence, the one
+        `?FromDate=notadate` already got.
+      */
+      const { status, body } = await call(`${path}?${key}=${encodeURIComponent(value)}`);
+
+      expect(status).toBe(400);
+      expect(asProblem(body).errors?.[key]).toEqual([
+        `The value '${value}' is not valid for ${key}.`,
+      ]);
+    },
+  );
+
+  it('refuses an EMPTY balance date with the bare sentence: `at` is a parameter', async () => {
+    const id = await firstAccountId();
+    const { status, body } = await call(`/api/accounts/${id}/balance?at=`);
+
+    expect(status).toBe(400);
+    expect(asProblem(body).errors?.at).toEqual(["The value '' is not valid."]);
   });
 });
 

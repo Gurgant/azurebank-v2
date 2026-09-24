@@ -1378,7 +1378,9 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
     FromDate answered 403, where the API answers 400. Ordering was this PR's whole subject and the
     handler it added got it wrong in the same way.
   */
-  const canonicalAccountId = accountId ? parseGuid(accountId) : null;
+  // PRESENT, not truthy: `?AccountId=` is refused like `?AccountId=notaguid`, as the API refuses it
+  // since 2026-09-24. Until then the API read an empty value as absent, and so did this.
+  const canonicalAccountId = accountId !== null ? parseGuid(accountId) : null;
   /*
     ONE pass, all property-level errors together — measured, because the mock used to answer with
     whichever check happened to run first:
@@ -1389,7 +1391,7 @@ const listTransactions = api.get('/api/transactions', ({ request, response }) =>
   */
   const bindingErrors: Record<string, string[]> = {
     ...pageErrors,
-    ...(accountId && !canonicalAccountId ? invalidValueError('AccountId', accountId) : {}),
+    ...(accountId !== null && !canonicalAccountId ? invalidValueError('AccountId', accountId) : {}),
     ...unparseableDateErrors(
       {
         FromDate: queryParam(params, 'FromDate'),
@@ -1505,7 +1507,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
   // level along: the account exists, the id is valid, and the lookup misses — a 403 for an account
   // the caller owns. Caught by the format test the moment it was written.
   const rawSummaryAccountId = queryParam(params, 'AccountId');
-  const summaryAccountId = rawSummaryAccountId ? parseGuid(rawSummaryAccountId) : null;
+  const summaryAccountId = rawSummaryAccountId !== null ? parseGuid(rawSummaryAccountId) : null;
   /*
     Merged like the list, and with one ordering detail that only the real stack could show:
     `IValidatableObject.Validate` (the inverted-pair rule below) runs ONLY when property-level
@@ -1513,7 +1515,7 @@ const transactionSummary = api.get('/api/transactions/summary', ({ request, resp
     AccountId error ALONE, never both.
   */
   const summaryBindingErrors: Record<string, string[]> = {
-    ...(rawSummaryAccountId && !summaryAccountId
+    ...(rawSummaryAccountId !== null && !summaryAccountId
       ? invalidValueError('AccountId', rawSummaryAccountId)
       : {}),
     ...unparseableDateErrors(

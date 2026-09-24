@@ -624,7 +624,14 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddApiControllers(this IServiceCollection services)
     {
-        services.AddControllers()
+        services.AddControllers(options =>
+            {
+                // First, so it is asked before the framework's own binders, and handed their list
+                // so it can wrap whichever of them would have answered: an EMPTY query value is
+                // refused like an invalid one, not read as absent.
+                options.ModelBinderProviders.Insert(
+                    0, new ModelBinding.EmptyQueryValueRejectingBinderProvider(options.ModelBinderProviders));
+            })
             .AddJsonOptions(options =>
             {
                 // Use camelCase for JSON properties (JavaScript convention)
