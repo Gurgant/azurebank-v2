@@ -41,6 +41,20 @@ failed on Windows with `ECONNRESET`. It was not the test: the API answered the 4
 the body and then aborted the connection, which the BFF passed on. The API now reads the body first;
 [`docs/engineering-traps.md`](../docs/engineering-traps.md) has the measurements.
 
+## Screenshots
+
+The README's pictures, the repository's social preview and a LinkedIn card are taken by a script,
+so they can be taken again when the UI changes. It drives the built app through the BFF as the
+seeded user John, like the e2e suite, and is never part of a test run:
+
+```bash
+npm run capture:screenshots   # after a reseed, with the API and the BFF running
+npm run capture:publish       # the pictures the README uses, into ../docs/images/ (ffmpeg, pngquant)
+```
+
+[`playwright.screenshots.config.ts`](playwright.screenshots.config.ts) has the steps in order and why
+the reseed comes first.
+
 ## Generated code
 
 `src/api/schema.d.ts` and `src/api/generated/apiSchemas.ts` are generated from the committed
