@@ -6,7 +6,8 @@
 #   schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json
 #
 # What it adds to that command: the service key and a bearer token on every request (hooks.py),
-# and the four response checks CI's conformance job runs, no others.
+# and the four response checks CI's conformance job runs, no others. At the bottom, three
+# operations carry what `--checks all` has to be told about them.
 #
 # Schemathesis also loads a file with this name BY ITSELF from the working directory and its
 # parents. From tests/contract/ it therefore applies without the flag -- and stops the run there,
@@ -54,3 +55,32 @@ status_code_conformance.enabled = true
 content_type_conformance.enabled = true
 response_headers_conformance.enabled = true
 response_schema_conformance.enabled = true
+
+# Two answers the missing_required_header check calls wrong and the ADRs decided.
+# POST /api/transactions/withdraw and POST /api/transfers without Step-Up-Authorization, for an
+# account that does not exist, answer 404, where the check expects 400, 401, 403, 406, 415 or 422.
+# The account's 404 comes before the missing header's 401 by ADR-0056 (D4) on the withdrawal and
+# ADR-0042 on the transfer, where it keeps a caller without the second factor from asking which
+# payees exist. The check runs only under `--checks all`: this block does not switch it on for the
+# default run (measured 2026-09-24).
+#
+# 4.27.1 REPLACES the check's list with this one rather than adding to it, hence the whole default
+# plus 404. And a list is per operation, not per header: on these two a missing Idempotency-Key
+# could now answer 404 without this check noticing. The backend suite pins that one at 400
+# IDEMPOTENCY_KEY_MISSING (IdempotencyEndpointTests).
+[[operations]]
+include-name = "POST /api/transactions/withdraw"
+checks.missing_required_header.expected-statuses = [400, 401, 403, 404, 406, 415, 422]
+
+[[operations]]
+include-name = "POST /api/transfers"
+checks.missing_required_header.expected-statuses = [400, 401, 403, 404, 406, 415, 422]
+
+# The transaction list ignores a query parameter it does not declare, as ASP.NET Core does, and
+# answers ?x-schemathesis-unknown-property=42 with 200. Schemathesis reads the query as a closed
+# object and reports "API accepted schema-violating request"; the contract does not say the query
+# is closed, and refusing unknown parameters would be a policy of its own, for every caller. So
+# the list is sent none -- the one operation `--checks all` sent one to (measured 2026-09-24).
+[[operations]]
+include-name = "GET /api/transactions"
+generation.allow-extra-parameters = false

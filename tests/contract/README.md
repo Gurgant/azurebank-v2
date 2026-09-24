@@ -91,7 +91,8 @@ the API's front door, and nothing behind it.
 
 ## Test Options
 
-Each is the Quick Start line with something added, and each was run on 2026-09-23.
+Each is the Quick Start line with something added, and each was run on 2026-09-23; the first
+again on 2026-09-24.
 
 ### Every check, not only CI's four
 
@@ -100,18 +101,28 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
   --checks all
 ```
 
-Exit 1, with five failures, all from input-side checks that CI leaves out on purpose:
+Exit 0: all 28 operations tested and every generated case passed, 7,813 of them in the run
+measured on 2026-09-24, with the same warning as the Quick Start.
 
-- three `API accepted schema-violating request`: an EMPTY `at` on
-  `GET /api/accounts/{id}/balance`, and an empty `ToDate` on `GET /api/transactions` and
-  `GET /api/transactions/summary`, each answered 200 where the contract's `date-time` format says
-  reject. A real divergence, recorded for repair rather than changed here;
-- two `Missing header not rejected`: `POST /api/transactions/withdraw` and `POST /api/transfers`
+Until that day it exited 1, with five failures from input-side checks CI leaves out on purpose,
+and three more that showed only once the first were gone:
+
+- `API accepted schema-violating request`, five times: an EMPTY `at` on
+  `GET /api/accounts/{id}/balance`, an empty `ToDate` on `GET /api/transactions` and on
+  `GET /api/transactions/summary`, and, once those were refused, an empty `AccountId` on the same
+  two. Each answered 200 where the contract's `date-time` and `uuid` formats say reject: the API
+  read an empty value as an absent one. It now refuses one with 400, in the words it uses for
+  `garbage`, on all seven nullable query parameters.
+- `Missing header not rejected`, twice: `POST /api/transactions/withdraw` and `POST /api/transfers`
   without `Step-Up-Authorization` answered 404 for an account that does not exist, where the check
   expects 400, 401, 403, 406, 415 or 422. That order is decided, not accidental: the account's
   404 comes before the missing header's 401 by ADR-0056 (D4) on the withdrawal and ADR-0042 on
   the transfer, where it keeps a caller without the second factor from asking which payees
-  exist. The check assumes the opposite order.
+  exist. `schemathesis.toml` tells the check so, for those two operations.
+- `API accepted schema-violating request` once more, on `GET /api/transactions` sent
+  `?x-schemathesis-unknown-property=42`: the list ignores a query parameter it does not declare,
+  as ASP.NET Core does. The contract does not say the query is closed, so `schemathesis.toml`
+  stops sending the list one, rather than the API starting to refuse them.
 
 This heading was "Verbose Output" until 2026-09-23; `--checks all` has nothing to do with
 verbosity.
@@ -158,7 +169,8 @@ schemathesis run docs/api/openapiv1.json \
 
 The hooks load from an environment variable here — 4.27.1 has no `--hooks` flag — and `--url` is
 required whenever the schema is given as a file. 28 operations tested, exit 0. Leave `--checks`
-out and every check runs, with the five failures above.
+out and every check runs: exit 1 on 2026-09-24, with three failures, the three the configuration
+file declares for the operations concerned (*Every check*, above).
 
 ## What Gets Tested
 
