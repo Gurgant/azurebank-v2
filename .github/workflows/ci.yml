@@ -678,7 +678,10 @@ jobs:
       # A bearer token from the REAL login, on the seeded demo user, so the authenticated
       # operations are exercised as themselves and not as 23 identical 401s (that is the run the
       # manual workflow would have produced, had it ever run). Masked, and handed on through the
-      # job environment rather than a step output.
+      # job environment rather than a step output: the hooks take it from there instead of
+      # registering a throwaway user, as a local run does. As the demo user, GET
+      # /api/transactions/{id} answered 200 94 times in one run; as a throwaway user, never
+      # (measured 2026-09-24, every check, seed 42).
       # data.token is an OBJECT, the same TokenResponse registration answers. Read the old way,
       # ["data"]["token"], it prints a Python dict, exits 0, and hands Schemathesis a garbage
       # bearer -- so the value is checked to be a JWT, and anything else fails this step instead
@@ -693,20 +696,21 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "API_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
-      # Response conformance only: does the running server answer with the statuses, media types,
-      # headers and bodies the committed document declares? Positive and negative inputs on every
-      # operation; the input-side checks (negative_data_rejection and friends) are a different
-      # question and stay out. No `|| true`: a finding is a red job (ADR-0053 D6, moved 2026-09-15).
-      - name: Response conformance (Schemathesis)
+      # Every check, through the committed configuration -- the file a developer runs, and with it
+      # the hooks (backlog row 41). Until then this step passed its settings as flags and loaded
+      # neither file, and both sat broken with every run green (rows 38, 39); now if either rots,
+      # this job is red. The configuration carries the shape of the run and what the checks must
+      # be told: the two decided 404s (ADR-0056 D4, ADR-0042) and the list's unknown query
+      # parameter. The input-side checks (negative_data_rejection and friends) stayed out until
+      # the API passed them: it read an empty query value as absent, and answered 200 (row 40).
+      # No `|| true`: a finding is a red job (ADR-0053 D6).
+      - name: Every Schemathesis check (the committed configuration)
+        env:
+          AZUREBANK_SERVICE_KEY: ${{ env.SERVICE_CREDENTIAL_KEY }}
+          AZUREBANK_CONTRACT_TOKEN: ${{ env.API_TOKEN }}
         run: |
-          schemathesis run docs/api/openapiv1.json \
+          schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json \
             --url "${{ env.API_URL }}" \
-            -H "Authorization: Bearer $API_TOKEN" \
-            -H "X-AzureBank-Service-Key: $SERVICE_CREDENTIAL_KEY" \
-            --checks status_code_conformance,content_type_conformance,response_headers_conformance,response_schema_conformance \
-            --max-examples 50 \
-            --workers 1 \
-            --continue-on-failure \
             --report junit \
             --report-junit-path "$RUNNER_TEMP/schemathesis.xml" \
             --no-color

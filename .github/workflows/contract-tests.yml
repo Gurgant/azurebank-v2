@@ -1,6 +1,8 @@
-# The Bruno collection against a live API + SQL Server.
-# Manual trigger only (workflow_dispatch): heavier than CI and not part of the
-# push gate. Adapted from the January 2026 workflow; the API now needs the
+# The Bruno collection against a live API + SQL Server, on every pull request and every push to
+# main, and still by hand (backlog row 35). It was manual-only until then, and the cost showed:
+# the collection's withdrawal answered 401 on main from #198 until #200, and nothing noticed,
+# because nothing ran it. About two minutes, beside CI's jobs rather than after them.
+# Adapted from the January 2026 workflow; the API now needs the
 # Seeder to create/seed the database (no auto-migration at startup) and its six
 # secrets via environment (appsettings.Development.json is not committed). The
 # "Start API" step below spells README.md's recipe with `__`, taking the throwaway
@@ -9,9 +11,13 @@
 # Schemathesis left this file on 2026-09-15: it is the `conformance` job in ci.yml now, per PR
 # and gating, after two months in which the job here ran zero times (its `--junit-xml` option
 # had been renamed in Schemathesis 4.0, and its step ended in `|| true`). ADR-0053 D6.
-name: Contract tests (manual)
+name: Contract tests
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # Least privilege for the GITHUB_TOKEN (CodeQL
@@ -63,6 +69,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -104,8 +112,24 @@ jobs:
           Security__PinPepper: ${{ env.PIN_PEPPER }}
           ASPNETCORE_ENVIRONMENT: Development
         run: |
-          dotnet run --urls "http://localhost:5068" &
-          sleep 20
+          nohup dotnet run --urls "http://localhost:5068" > "$RUNNER_TEMP/api.log" 2>&1 &
+          echo "API starting, log at $RUNNER_TEMP/api.log"
+
+      # Polled, as the conformance job in ci.yml does, rather than slept on: the `sleep 20` this
+      # replaces held on the four manual runs, and on every pull request a slow runner would have
+      # turned it into a red job that says nothing about the collection.
+      - name: Wait for the API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 3 "http://localhost:5068/health/ready" > /dev/null 2>&1; then
+              echo "API ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API never became ready at http://localhost:5068"
+          cat "$RUNNER_TEMP/api.log"
+          exit 1
 
       - name: Run Bruno tests
         working-directory: tests/api-collection
@@ -113,8 +137,8 @@ jobs:
           # -r, and it is not cosmetic. bru turns recursion on ONLY when no path is given, so
           # `bru run .` listed the root folder, found no .bru there (every request is in a
           # subfolder) and exited 0 having sent NOTHING. Measured 2026-09-21 with this exact
-          # command line: "Requests 0 / Tests 0/0 / Status PASS". This job is manual-only and
-          # has never run, so nothing had ever contradicted that green.
+          # command line: "Requests 0 / Tests 0/0 / Status PASS". The job was manual-only then
+          # and had never run, so nothing had ever contradicted that green.
           bru run . -r --env ci \
             --reporter-junit ../../bruno-results.xml
 

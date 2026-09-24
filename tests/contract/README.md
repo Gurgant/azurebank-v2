@@ -43,13 +43,15 @@ What the two files add to that line:
 
 - **`hooks.py`** sends `X-AzureBank-Service-Key` on every request (ADR-0055), and a bearer token
   on every operation the contract does not declare anonymous — register, login and refresh go
-  without — for a throwaway user it registers itself.
+  without — for a throwaway user it registers itself, unless `AZUREBANK_CONTRACT_TOKEN` hands over
+  the token of a user who already exists. CI hands over the seeded demo user's.
 - **`schemathesis.toml`** sets the base URL and the shape of the run (one worker, 100 examples
   per operation, positive and negative inputs, all four phases, seed 42), loads `hooks.py`, and
-  runs the four response checks CI's conformance job runs, and no others.
+  runs every check. CI's conformance job runs this same file (backlog row 41); until then the file
+  ran CI's four response checks and no others, and CI loaded neither file.
 
-**Measured on 2026-09-23**, against a local API on a freshly migrated LocalDB database, with the
-two lines above:
+**Measured on 2026-09-24**, against a local API on a LocalDB database just reset and seeded by
+`AzureBank.Seeder`, as CI's is, with the two lines above:
 
 ```
 =================================== SUMMARY ====================================
@@ -68,19 +70,22 @@ Warnings:
   ⚠️ Schema validation mismatch: 3 operations mostly rejected generated data
 
 Test cases:
-  5362 generated, 5362 passed, 174 skipped
+  7731 generated, 7731 passed, 2357 skipped
 
 Seed: 42
 
-============================= 1 warning in 79.95s ==============================
+============================= 1 warning in 97.07s ==============================
 ```
 
-All 28 operations tested, exit 0. The warning is about what Schemathesis generated, not about a
-response: the API rejected most of its inputs for login, refresh and register. It is not
-stable — a second run the same day named two operations instead of three.
+All 28 operations tested with every check, exit 0. The warning is about what Schemathesis
+generated, not about a response: the API rejected most of its inputs for login, refresh and
+register. It is not stable — runs on 2026-09-23 and 2026-09-24 named two operations as often as
+three.
 
-⚠️ **A run writes to the database it runs against.** That second run added 1 user, 97 accounts
-and 137 audit events. Point it at a database you can throw away.
+⚠️ **A run writes to the database it runs against.** One run on 2026-09-23 added 1 user, 97
+accounts and 137 audit events. Point it at a database you can throw away. Run as the seeded demo
+user, it also locks that user out: after one run on 2026-09-24, its next login answered 429
+`ACCOUNT_LOCKED`. Reset and seed the database before running as it again.
 
 Until 2026-09-23 this Quick Start was
 `schemathesis run docs/api/openapiv1.json --url http://localhost:5068`, with no service key.
@@ -91,21 +96,15 @@ the API's front door, and nothing behind it.
 
 ## Test Options
 
-Each is the Quick Start line with something added, and each was run on 2026-09-23; the first
-again on 2026-09-24.
+Every command below was run again on 2026-09-24, after the configuration started running every
+check.
 
-### Every check, not only CI's four
+### What every check found
 
-```bash
-schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json \
-  --checks all
-```
-
-Exit 0: all 28 operations tested and every generated case passed, 7,813 of them in the run
-measured on 2026-09-24, with the same warning as the Quick Start.
-
-Until that day it exited 1, with five failures from input-side checks CI leaves out on purpose,
-and three more that showed only once the first were gone:
+The Quick Start runs every check since backlog row 41, and CI runs the same file. Until then it ran
+CI's four response checks, and `--checks all` on top of it exited 1: five failures from the
+input-side checks CI left out on purpose, and three more that showed only once the first were
+gone:
 
 - `API accepted schema-violating request`, five times: an EMPTY `at` on
   `GET /api/accounts/{id}/balance`, an empty `ToDate` on `GET /api/transactions` and on
@@ -124,8 +123,8 @@ and three more that showed only once the first were gone:
   as ASP.NET Core does. The contract does not say the query is closed, so `schemathesis.toml`
   stops sending the list one, rather than the API starting to refuse them.
 
-This heading was "Verbose Output" until 2026-09-23; `--checks all` has nothing to do with
-verbosity.
+This section was "Verbose Output" until 2026-09-23, which `--checks all` never had anything to do
+with, and "Every check, not only CI's four" until backlog row 41.
 
 ### Specific Endpoint
 
@@ -145,7 +144,7 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
 
 `--report` takes a FORMAT in 4.27.1 — `junit`, `vcr`, `har`, `ndjson`, `json` or `allure`; bare,
 it is rejected. The report lands in `schemathesis-report/`, which `.gitignore` covers, under a
-name carrying the run's timestamp (`junit-20260923T170759Z.xml` in the run measured).
+name carrying the run's timestamp (`junit-20260924T150847Z.xml` in the run measured).
 
 ### CI/CD Mode (JUnit output)
 
@@ -170,7 +169,7 @@ schemathesis run docs/api/openapiv1.json \
 The hooks load from an environment variable here — 4.27.1 has no `--hooks` flag — and `--url` is
 required whenever the schema is given as a file. 28 operations tested, exit 0. Leave `--checks`
 out and every check runs: exit 1 on 2026-09-24, with three failures, the three the configuration
-file declares for the operations concerned (*Every check*, above).
+file declares for the operations concerned (*What every check found*, above).
 
 ## What Gets Tested
 
@@ -181,14 +180,14 @@ Schemathesis automatically:
 3. **Tests edge cases** - Boundary values, nulls, empty strings
 4. **Fuzz tests** - Malformed data, special characters
 5. **Validates responses** - Schema compliance, status codes
-6. **Finds bugs** - 500 errors, crashes, and with `--checks all`, validation bypasses
+6. **Finds bugs** - 500 errors, crashes, and validation bypasses: every check runs
 
 ## Files
 
 | File | Purpose | State under the pinned 4.27.1 |
 |------|---------|---|
-| `schemathesis.toml` | The Quick Start's configuration: base URL, the shape of the run, the hooks, CI's four checks | ✅ loads — the runs above |
-| `hooks.py` | The service key on every request, and a throwaway user's bearer token on every operation that is not anonymous | ✅ imports — the runs above |
+| `schemathesis.toml` | The Quick Start's configuration, and CI's: base URL, the shape of the run, the hooks, every check | ✅ loads — the runs above |
+| `hooks.py` | The service key on every request, and a bearer token on every operation that is not anonymous: a throwaway user's, or the one `AZUREBANK_CONTRACT_TOKEN` hands over | ✅ imports — the runs above |
 | `README.md` | This documentation | — |
 
 Both were v3-era until 2026-09-23, and 4.27.1 refused them (backlog rows 38 and 39). Measured
@@ -207,8 +206,10 @@ Two files were removed instead of repaired, each measured the same day first:
   `No such option '--hypothesis-seed'`, so it printed `CONTRACT TESTS FAILED (exit code: 2)`.
   The Quick Start is what it was trying to be.
 
-CI depends on none of them: its conformance job logs the seeded demo user in and passes the
-token, the key and the checks as flags.
+CI runs both since backlog row 41: its conformance job loads the configuration, and with it the
+hooks, after logging the seeded demo user in and handing its token over in
+`AZUREBANK_CONTRACT_TOKEN`. Until then it passed the token, the key and the checks as flags, and
+depended on neither file.
 
 ## Expected Output
 
