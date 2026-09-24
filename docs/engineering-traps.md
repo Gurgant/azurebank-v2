@@ -735,3 +735,26 @@ worse but is not the cause: a plain rebuild skipped the project for the same rea
 **Restore by writing, not by moving** — `cp -f f.bak f` gives the file a new mtime, or `touch f`
 after an `mv`. And after any restore, **re-run the baseline and watch it PASS before the next
 falsification**: a baseline that still fails is the stale binary telling you so, and it costs one run.
+
+## An early 413 that leaves the body unread can cost the NEXT request a 502
+
+The idempotent endpoints refuse a body over 32 KB from its `Content-Length`, before reading it
+(ADR-0009: an oversized body is never buffered or hashed). The refusal went out as a keep-alive 413
+with the body still unread; Kestrel then drained it to keep the connection, hit the endpoint's 32 KB
+`MaxRequestBodySize` (applied from `[RequestSizeLimit]` by routing) and aborted the connection.
+Through the BFF that is three different failures, all measured on 2026-09-24 with Kestrel and YARP
+logging at Debug: YARP, still sending the body, gets the abort and answers **502**; or it aborts the
+client's connection as well, and the client sees `ECONNRESET`; or it had finished, pooled the
+connection on the strength of the keep-alive, and the **next request** on it — anyone's — got a 502.
+It looked like a Windows-only flake in one contract test (3 failures in 42 local runs; CI on Linux
+never showed it) until the logs were read.
+
+The in-memory test host could not see it: it offers no `IHttpMaxRequestBodySizeFeature` and copies
+the whole request body itself, so a body the app never touched still arrives complete. What a test
+CAN observe there is whether the app left any of the body unread when it answered —
+`OversizedBodyDrainTests` reads what is left once the response is written.
+
+**Read the body before an early refusal, or close the connection.** `IdempotencyMiddleware` now reads
+and discards up to 1 MiB before the 413 (0 failures in 40 runs, 0 aborts in the log); above that it
+answers `Connection: close`, so no proxy reuses a connection that is about to go. The four mints
+refuse an oversized body elsewhere — MVC reading past the limit — and are not covered yet.

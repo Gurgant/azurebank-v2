@@ -36,9 +36,10 @@ needs the stack.
 [`CONVENTIONS.md`](CONVENTIONS.md) has the details. `npm run build` is the type check that counts:
 `tsc --noEmit` skips the project references this tsconfig is built from.
 
-On Windows, one test in `test:contract:real` — an oversized body refused at 32 KB — sometimes fails
-with `ECONNRESET`: three times in nine local runs on 2026-09-23 and 2026-09-24, main's code
-included, each time passing on the next run. CI, on Linux, has not shown it.
+Until 2026-09-24 one test in `test:contract:real` — an oversized body refused at 32 KB — sometimes
+failed on Windows with `ECONNRESET`. It was not the test: the API answered the 413 without reading
+the body and then aborted the connection, which the BFF passed on. The API now reads the body first;
+[`docs/engineering-traps.md`](../docs/engineering-traps.md) has the measurements.
 
 ## Generated code
 

@@ -36,6 +36,10 @@ public class IdempotencyMiddleware
     // buffering work so an oversized body cannot be used as a DoS amplifier.
     private const int MaxRequestBodyBytes = 32_768;
 
+    // An oversized body up to this size is read and thrown away before the 413, so the refusal
+    // does not close the connection under a sender that is still writing (see DrainOrCloseAsync).
+    private const long DrainCapBytes = 1_048_576;
+
     // A successful response larger than this is NOT stored for replay (a retry
     // then gets 409 IDEMPOTENCY_RESULT_UNKNOWN): bounds the persisted row and
     // the replay buffer. Real monetary responses are a few hundred bytes.
@@ -70,6 +74,7 @@ public class IdempotencyMiddleware
         // amplifier. The claim is NOT INSERTed on this path (no orphan rows).
         if (context.Request.ContentLength > MaxRequestBodyBytes)
         {
+            await DrainOrCloseAsync(context);
             throw IdempotencyException.PayloadTooLarge();
         }
 
@@ -185,6 +190,41 @@ public class IdempotencyMiddleware
         context.Response.ContentLength = capture.Length;
         capture.Position = 0;
         await capture.CopyToAsync(originalBody, context.RequestAborted);
+    }
+
+    /// <summary>
+    /// Makes the early 413 safe for the connection it is answered on. Refused without being read,
+    /// the body was left for Kestrel, which drained it to keep the connection alive, hit the
+    /// endpoint's 32 KB limit and aborted the connection: under a proxy still sending the body
+    /// (YARP in the BFF: a 502, or a reset passed on to the client), or after the proxy had pooled
+    /// it for the next request (a 502 for a request that did nothing wrong). Measured 2026-09-24
+    /// through the BFF: 3 of 42 runs of the contract suite's oversized-body test failed those
+    /// ways; with the body drained first, 0 of 30. It is read and thrown away, never buffered or
+    /// hashed, so ADR-0009's reason for refusing early holds. Where the server enforces a size
+    /// limit (Kestrel: the endpoint's 32 KB) it is raised to the cap first; a server that offers
+    /// none, like the in-memory test host, has none to raise. Above the cap, or with a limit that
+    /// can no longer be raised, the body is not read at all and the 413 says
+    /// <c>Connection: close</c>, so no proxy reuses a connection that is about to go.
+    /// </summary>
+    private static async Task DrainOrCloseAsync(HttpContext context)
+    {
+        var limit = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (context.Request.ContentLength <= DrainCapBytes && limit is not { IsReadOnly: true })
+        {
+            if (limit is not null)
+            {
+                limit.MaxRequestBodySize = DrainCapBytes;
+            }
+
+            await context.Request.Body.CopyToAsync(Stream.Null, context.RequestAborted);
+            return;
+        }
+
+        context.Response.OnStarting(static state =>
+        {
+            ((HttpResponse)state).Headers.Connection = "close";
+            return Task.CompletedTask;
+        }, context.Response);
     }
 
     private static Guid ReadKey(HttpContext context)
