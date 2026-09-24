@@ -38,6 +38,10 @@ frontend/e2e/.auth/
 frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/
+# The screenshot capture (frontend/screenshots): its raw output is regenerated on demand, and its
+# saved sign-in holds a LIVE session, like e2e/.auth. What the README shows lives in docs/images/.
+frontend/screenshots/output/
+frontend/screenshots/.auth/
 
 # The Functions host's local configuration (ADR-0051). local.settings.json is this machine's
 # connection string and pickup directory — the Function's equivalent of the API's user-secrets, and
