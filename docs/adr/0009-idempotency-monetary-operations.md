@@ -153,8 +153,9 @@ design — see Notes).
   refused unread, an oversized body let Kestrel abort the connection under the
   BFF's proxy — a reset for the sender, or a 502 for the next request on that
   connection. The middleware now reads and discards a body of up to 1 MiB before
-  the 413, never buffering or hashing it; above that it answers
-  `Connection: close`. `docs/engineering-traps.md` has the measurements.)*
+  the 413, never buffering or hashing it, and for five seconds at most; above
+  that size, or once the five seconds are up, it answers `Connection: close`.
+  `docs/engineering-traps.md` has the measurements.)*
 - The BFF needs no changes: YARP forwards `Idempotency-Key` and
   `Idempotency-Replayed` by default (verified; its transform only adds
   `Authorization`).
