@@ -36,7 +36,6 @@
 - [Testing](#testing)
 - [Configuration](#configuration)
 - [Contributing](#contributing)
-- [License](#license)
 
 ---
 

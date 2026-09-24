@@ -2,8 +2,8 @@
 
 What is current here, and what is kept only as history. When two documents disagree, or a document
 disagrees with the code, **the code and the generated contract win**:
-[`api/openapiv1.json`](api/openapiv1.json) is written by the API itself and compared against it on
-every build (ADR-0053), so it is the one description that cannot drift from the code.
+[`api/openapiv1.json`](api/openapiv1.json) is written by the API itself and compared against it by
+the backend test suite (ADR-0053), so it is the one description that cannot drift from the code.
 
 ## Current
 
@@ -25,8 +25,9 @@ every build (ADR-0053), so it is the one description that cannot drift from the 
 
 | Where | What |
 |---|---|
-| [`design/`](design/README.md) | The design corpus from before and during the January 2026 build |
+| [`design/`](design/README.md) | The design corpus from before and during the January 2026 build, and a map of it from July |
 | [`architecture/`](architecture/README.md), all but `overview.md` | Plans, research and audits that came in with it |
 
-A history document is kept as it was written, for provenance, and says so in a banner at its top.
-None of it is instruction.
+The two folders' own READMEs are current: they map the history, and are not part of it. A history
+document is kept as it was written, for provenance, and says so in a banner at its top. None of it
+is instruction.

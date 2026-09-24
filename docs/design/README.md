@@ -1,13 +1,13 @@
 # The design corpus — history
 
-Everything in this folder was written before or during the January 2026 build, and came into the
-repository with the design history on 2026-07-12. It is kept as it was, for provenance, and every
-document says so in a banner at its top. **None of it is instruction.** Where a document here
-disagrees with the code or with the generated contract,
+Every document in this folder but this README and one other was written before or during the
+January 2026 build, and came into the repository with the design history on 2026-07-12. Each is
+kept as it was, for provenance, and says so in a banner at its top. **None of them is
+instruction.** Where one disagrees with the code or with the generated contract,
 [`docs/api/openapiv1.json`](../api/openapiv1.json), the code and the contract win.
 
-[`00-DESIGN-SOURCE-OF-TRUTH.md`](00-DESIGN-SOURCE-OF-TRUTH.md) maps the folder as it stood in
-July 2026, with a dated correction of what has changed under it since.
+The other is [`00-DESIGN-SOURCE-OF-TRUTH.md`](00-DESIGN-SOURCE-OF-TRUTH.md), written in July 2026
+to map the folder as it stood then, with a dated correction of what has changed under it since.
 
 ## Where the corpus and the code disagree
 

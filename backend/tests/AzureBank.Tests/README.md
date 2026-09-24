@@ -572,9 +572,8 @@ public static class HttpResponseAssertions
 | `FluentAssertions` | Assertion library |
 | `coverlet.collector` | Code coverage |
 | `Microsoft.AspNetCore.Mvc.Testing` | Integration testing |
+| `Microsoft.Extensions.TimeProvider.Testing` | `FakeTimeProvider`: a clock a test sets and advances |
 | `Microsoft.EntityFrameworkCore.InMemory` | In-memory database |
-| `Testcontainers` | Container orchestration |
-| `Testcontainers.MsSql` | SQL Server container |
 | `NetArchTest.eNhancedEdition` | Architecture testing |
 
 ---
@@ -618,22 +617,6 @@ jobs:
 ---
 
 ## Troubleshooting
-
-### Testcontainers Issues
-
-**"Docker is not running"**
-```bash
-# Start Docker
-docker info
-
-# If using Colima (macOS)
-colima start
-```
-
-**"Container failed to start"**
-- Check Docker has enough resources
-- Ensure port 1433 is not in use
-- Check SQL Server image can be pulled
 
 ### Test Isolation
 

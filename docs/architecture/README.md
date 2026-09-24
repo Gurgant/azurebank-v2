@@ -2,9 +2,10 @@
 
 [`overview.md`](overview.md) is current: how AzureBank works, kept in step with the code.
 
-Everything else here is history: plans, research and audits that came into the repository with the
-design history on 2026-07-12. Each carries a banner saying so. None of it is instruction; where it
-disagrees with the code or with [`docs/api/openapiv1.json`](../api/openapiv1.json), those win.
+Every document in the table below is history: plans, research and audits that came into the
+repository with the design history on 2026-07-12. Each carries a banner saying so. None of it is
+instruction; where it disagrees with the code or with
+[`docs/api/openapiv1.json`](../api/openapiv1.json), those win.
 
 | Document | What it was |
 |---|---|

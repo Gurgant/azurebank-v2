@@ -29,7 +29,10 @@ npm run test:integration    # the data layer against the running stack
 npm run test:e2e            # Playwright; starts vite itself, needs the BFF and the API
 ```
 
-`npm test` leaves the contract and integration suites out, because they need a running stack;
+`npm test` runs neither the contract suite nor the integration suite. The contract suite has two
+targets: against the real one it needs a running stack, while `npm run test:contract:mock` runs it
+against the mock with nothing else running. The integration suite has no mock target, so it always
+needs the stack.
 [`CONVENTIONS.md`](CONVENTIONS.md) has the details. `npm run build` is the type check that counts:
 `tsc --noEmit` skips the project references this tsconfig is built from.
 
