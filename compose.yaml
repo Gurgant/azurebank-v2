@@ -20,7 +20,9 @@ name: azurebank
 
 services:
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # A fixed cumulative update, the one the 24-of-24 run was measured on (16.0.4295.3, digest
+    # sha256:4402d880dd4c…), not 2022-latest, which moves under a fresh install. Move it on purpose.
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?set SQL_SA_PASSWORD}
