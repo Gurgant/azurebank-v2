@@ -15,6 +15,10 @@
 **/obj/
 **/appsettings.Development.json
 **/local.settings.json
+# .env files are local secrets by .gitignore's own rule; `!frontend/` would bring a Vite .env.local back
+# into the SPA stage (measured 2026-09-25 with a canary file: it was there).
+**/.env
+**/.env.*
 backend/src/AzureBank.Functions.NoticeRelay/
 frontend/node_modules/
 frontend/dist/
