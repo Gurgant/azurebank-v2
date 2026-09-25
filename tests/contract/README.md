@@ -30,7 +30,8 @@ dotnet run
 ```bash
 # From the repository ROOT: the configuration names its hooks module from there.
 # AZUREBANK_SERVICE_KEY holds the value of the API's ServiceCredential:BffKey -- $SERVICE_KEY,
-# if you followed the root README's recipe. The hooks read it from the environment, so it is
+# if you followed the local setup's recipe in docs/engineering-practices.md (until 2026-09-25
+# this said the root README's). The hooks read it from the environment, so it is
 # never on a command line.
 export AZUREBANK_SERVICE_KEY="$SERVICE_KEY"
 schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapiv1.json

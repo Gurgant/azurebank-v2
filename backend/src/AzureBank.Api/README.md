@@ -341,15 +341,18 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 |----------|-------------|
 | `ASPNETCORE_ENVIRONMENT` | Runtime environment (Development/Production) |
 | `ConnectionStrings__DefaultConnection` | Database connection string |
-| `Jwt__Secret` | JWT signing key — the root README's recipe; nothing validates its length at startup |
+| `Jwt__Secret` | JWT signing key — the local setup's recipe; nothing validates its length at startup |
 | `Idempotency__HashKey` | Request-fingerprint HMAC key (32+ chars, ADR-0009) |
 | `StepUp__BindingKey` | Step-up binding HMAC key (32+ chars, ADR-0042) |
 | `Audit__ChainKey` | Audit hash-chain HMAC key (32+ chars, ADR-0044) |
 | `Audit__AnchorKey` | Audit anchor-record HMAC key (32+ chars, ADR-0044) |
 | `Security__PinPepper` | PIN-hash pepper (32+ chars, ADR-0011); the Seeder needs the same value |
+| `ServiceCredential__BffKey` | The key the BFF presents in `X-AzureBank-Service-Key` (32+ chars, ADR-0055); the BFF needs the same value |
 
-In development the same six values come from `dotnet user-secrets` (`:` instead of `__`) — see the
-root README's recipe, which is the canonical one.
+In development the same seven values come from `dotnet user-secrets` (`:` instead of `__`) — see
+the [local setup](../../../docs/engineering-practices.md#local-setup), the one copy of the recipe.
+*(Until 2026-09-25 this said six values, and it and the table pointed at the root README's recipe,
+which moved there; the service credential joined the secrets on 2026-09-19.)*
 
 ---
 

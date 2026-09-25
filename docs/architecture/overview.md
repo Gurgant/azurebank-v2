@@ -107,7 +107,8 @@ inside the transfer's transaction under a per-user application lock (ADR-0050).
 Four operations need a PIN — a withdrawal, a transfer, closing an account, and the account-number
 reveal. The API verifies it for the first three; the reveal is gated by the BFF session alone, so a
 caller presenting a bearer token together with the BFF's service key reads the full number without
-one — and since ADR-0055 nobody but the BFF's host holds that key (measured, `SECURITY.md`).
+one — and since ADR-0055 only the BFF presents that key in a deployment; the API keeps the same
+value to check it (`SECURITY.md`).
 *(Until 2026-09-06 this said three; until 2026-09-17, that the API verifies all four; until
 2026-09-24, that a bearer token alone was enough, which ADR-0055 ended on 2026-09-19.)*
 Money moves carry their proof in the request: a withdrawal, like a transfer, first turns the PIN

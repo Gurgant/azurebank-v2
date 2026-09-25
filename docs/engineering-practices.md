@@ -15,14 +15,15 @@ Decisions live in [`adr/`](adr/README.md). Sharp edges that fail silently live i
 
 The one copy of these instructions; the root README links here. *(Until 2026-09-24 the root README
 carried its own copy, and this one had fallen behind it: it never set `ServiceCredential:BffKey`,
-without which the BFF does not start.)*
+without which neither the API nor the BFF starts.)*
 
 Configuration comes from **user-secrets**, never from a committed settings file. The API fails at
 startup without them, by design — `ValidateOnStart` refuses to run a bank with a missing pepper.
 
 **The API, the BFF and the seeder have separate secret stores** (a `UserSecretsId` each), so a value
-two of them share is set once per project — `--project` is not optional. Two values are shared and
-must match: the PIN pepper, API and seeder, and the service credential, API and BFF.
+two of them share is set once per project — `--project` is not optional. Three values are shared
+and must match: the connection string and the PIN pepper, API and seeder, and the service
+credential, API and BFF.
 
 ```bash
 API=backend/src/AzureBank.Api
@@ -54,8 +55,9 @@ the six-digit PIN space offline. It supports zero-downtime rotation through a ke
 
 `ServiceCredential:BffKey` is how the API knows a request comes from the BFF: the BFF sends it in
 `X-AzureBank-Service-Key` on every call, and the API refuses anything without it before it looks at
-a token, so the API serves one client (ADR-0055). Without it the BFF does not start, and the API
-answers 401 to every request but its health probes and, in Development, its own API documentation:
+a token, so the API serves one client (ADR-0055). Neither host starts without it, and the running
+API answers 401 to every request without the header but its health probes and, in Development, its
+own API documentation:
 `/health/*` is exempt in every environment, `/openapi` and `/scalar` in Development, so a browser
 can still open the documentation. Calling an API OPERATION by hand — curl, Bruno, the Scalar page's
 "Try it" — needs that header. Bruno reads it from `serviceKey`, which ships empty in the tracked
@@ -93,6 +95,14 @@ cd frontend && npm ci && npm run dev                                     # http:
 
 The API must run the **https** profile: the BFF's proxy cluster points at 7215, so the http profile
 produces a BFF that starts and then fails every proxied call.
+
+The BFF's proxy reaches the API over https with the SDK's development certificate. The committed
+`appsettings.Development.json.example` tells it to accept that certificate, in Development only;
+the real file is git-ignored, so copy it once:
+
+```bash
+cp backend/src/AzureBank.Bff/appsettings.Development.json.example backend/src/AzureBank.Bff/appsettings.Development.json
+```
 
 **Running the tests:**
 

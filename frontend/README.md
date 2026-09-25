@@ -14,9 +14,10 @@ npm run dev        # http://localhost:5173 — /api and /bff are proxied to the 
 npm run dev:mock   # the same app against MSW in the browser — no BFF, API or database
 ```
 
-`npm run dev` needs the BFF and the API running; the root README has the commands. Under
-`dev:mock`, sign in as `demo@azurebank.dev` / `Password1!`, PIN `123456`. The mock's state resets on
-every page reload.
+`npm run dev` needs the BFF and the API running; the
+[local setup](../docs/engineering-practices.md#local-setup) has the commands _(until 2026-09-25 this
+said the root README had them)_. Under `dev:mock`, sign in as `demo@azurebank.dev` / `Password1!`,
+PIN `123456`. The mock's state resets on every page reload.
 
 ## Check it
 
@@ -45,11 +46,12 @@ the body and then aborted the connection, which the BFF passed on. The API now r
 
 ## Accessibility
 
-axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in CI's e2e job over nine pages, the deposit dialog
-and the Change PIN dialog, and fails the job on any serious or critical finding except colour
-contrast, which it reports and leaves to the UI/UX phase: on 2026-09-17 that was 25 nodes on theme
-tokens (muted secondary text, the sidebar avatar, a button group and the danger-zone button) on
-seven pages and the deposit dialog, a count that moves with the data a page shows. Fluent's own
+axe-core (WCAG 2.0 A/AA, 2.1 AA and 2.2 AA) runs in the e2e step of CI's `real-stack` job over nine
+pages, the deposit dialog and the Change PIN dialog, and fails that job on any serious or critical
+finding except colour contrast, which it reports and leaves to the UI/UX phase: on 2026-09-17 that
+was 25 nodes on theme tokens (muted secondary text, the sidebar avatar, a button group and the
+danger-zone button) on seven pages and the deposit dialog, a count that moves with the data a page
+shows. Fluent's own
 focus sentinels, which axe flags as `aria-hidden-focus` two per page, are excluded by a selector the
 spec proves matches nothing else. Every page carries its own title, and a route change is announced
 and moves focus to the new page. The per-scan JSON reports are a CI artifact.

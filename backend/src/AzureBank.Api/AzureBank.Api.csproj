@@ -11,7 +11,8 @@
   <PropertyGroup Label="Local secrets">
     <!-- Enables `dotnet user-secrets` for Jwt:Secret and the connection string in
          Development (loaded automatically by WebApplication.CreateBuilder).
-         See the root README "Secrets" section. Nothing secret is committed. -->
+         See "Local setup" in docs/engineering-practices.md (until 2026-09-25 this named the
+         root README's "Secrets" section). Nothing secret is committed. -->
     <UserSecretsId>azurebank-api</UserSecretsId>
   </PropertyGroup>
 

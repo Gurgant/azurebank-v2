@@ -31,8 +31,9 @@ Designed and built by me, Vladislav Aleshaev, alone.
 
 - **A payment is applied once.** Every money move carries an idempotency key; the server
   fingerprints the raw request with a keyed HMAC and claims the key before it acts, and the client
-  knows which of five outcomes may be retried. Held under 24 concurrent duplicates on a real SQL
-  Server. [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
+  keeps the key after any failure the server might have seen, spending it only on a definitive
+  answer. Held under 24 concurrent duplicates on a real SQL Server.
+  [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
   [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) ·
   [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
 - **The JWT never reaches the browser.** The BFF keeps it in a server-side session, gives the
@@ -49,8 +50,8 @@ Designed and built by me, Vladislav Aleshaev, alone.
 - **An audit trail that can be checked, with its limits written down.** Security events go to an
   append-only, hash-chained table with its own verifier, and what it cannot detect is stated.
   [ADR-0044](docs/adr/0044-the-audit-trail-is-append-only-and-chained.md)
-- **The frontend and the backend cannot drift apart.** The committed OpenAPI contract is what the
-  API generates, one contract suite runs against the mock and the real stack, Schemathesis probes
+- **The frontend is held to the API's contract.** The committed OpenAPI contract is what the API
+  generates, one contract suite runs against the mock and the real stack, Schemathesis probes
   the running API, and Playwright with axe walks the built app under its production CSP.
   [ADR-0053](docs/adr/0053-the-committed-contract-is-what-the-api-generates.md) ·
   [ADR-0029](docs/adr/0029-contract-conformance-gate.md) ·
@@ -63,7 +64,7 @@ Designed and built by me, Vladislav Aleshaev, alone.
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     Browser["Browser<br/>React 19 SPA"]
     BFF["BFF<br/>ASP.NET Core + YARP"]
     API["API<br/>ASP.NET Core"]
@@ -118,23 +119,23 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
 | Document | What it gives you |
 |---|---|
 | [How AzureBank works](docs/architecture/overview.md) | One document, complete on its own: how the money guarantee works and why the JWT never reaches the browser |
-| [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) and [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves; the five-outcome table is the core of the project |
+| [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) and [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves: when the client keeps the key and when it spends it |
 | [Decisions](docs/adr/README.md) | Every decision with its alternatives and what it leaves open; the index names four to start with |
-| [Engineering traps](docs/engineering-traps.md) | The things that fail silently, each one measured |
+| [Engineering traps](docs/engineering-traps.md) | The things that fail silently; each one cost real time to find |
 | [SECURITY.md](SECURITY.md) | The security posture in one place, including what is not done |
 
 ## Status and known limits
 
 - It runs locally and in CI; it is not deployed yet.
-- axe runs over every page in CI and fails on any serious or critical finding except colour
-  contrast on theme colours, which is left to the UI/UX phase; the details are in
+- axe runs in CI over nine pages and two dialogs and fails on any serious or critical finding
+  except colour contrast, which is left to the UI/UX phase; the details are in
   [frontend/README.md](frontend/README.md).
 - What the project deliberately does not do yet — anchoring the audit trail outside the database,
   sending the enrolment notice — is in [docs/deferred/](docs/deferred/README.md).
 
 ## About this repository
 
-Squash-merged: the pull-request title is the commit that lands on `main`, plain and imperative.
+Squash-merged: each pull request lands on `main` as one commit.
 Every change goes through a pull request reviewed by CodeQL and an AI reviewer, and I merge it; the
 rules are in [engineering practices](docs/engineering-practices.md).
 
