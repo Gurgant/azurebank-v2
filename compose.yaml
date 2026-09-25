@@ -6,7 +6,10 @@
 # generates, spelled as environment variables:
 #   SQL_SA_PASSWORD, JWT_SECRET, IDEMPOTENCY_HASH_KEY, STEPUP_BINDING_KEY, SERVICE_KEY,
 #   AUDIT_CHAIN_KEY, AUDIT_ANCHOR_KEY, PIN_PEPPER
-# The database starts empty; seed it once from the host, against the published port:
+# The database starts empty; seed it once from the host, against the published port. The seed runs
+# in your shell, which does not read .env: with the values there, load them first, or the seeder
+# gets an empty pepper and refuses to start (measured 2026-09-25):
+#   set -a; . ./.env; set +a
 #   ConnectionStrings__DefaultConnection="Server=127.0.0.1,14330;Database=AzureBank;User Id=sa;Password=$SQL_SA_PASSWORD;TrustServerCertificate=true" \
 #   Security__PinPepper="$PIN_PEPPER" DOTNET_ENVIRONMENT=Development \
 #   dotnet run --project backend/tools/AzureBank.Seeder -- reset --confirm
