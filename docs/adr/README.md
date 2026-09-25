@@ -125,7 +125,7 @@ fix — and a pointer an ADR carries with no date is listed as *undated*. The li
 the end of this page are the template's; only Accepted has ever been used.
 
 <details>
-<summary>What changed in each decision after it was accepted — 37 records</summary>
+<summary>What changed in each decision after it was accepted — 38 records</summary>
 
 | ADR | Changed by | What moved |
 |---|---|---|
@@ -166,6 +166,7 @@ the end of this page are the template's; only Accepted has ever been used.
 | [0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) | 2026-09-08 (pre-review) · 2026-09-09, three edits (the quantifier, the review's correction, and a same-day self-correction of it; no PR named) | "Every rule runner-guarded" → four; a missing `Notices:Schedule` no longer fails quiet — `ValidateTheScheduleItIsBoundTo()` runs unconditionally, and the runner-parameterised `ValidateTheScheduleItTicksOn` the correction first named was struck hours later; `UseMonitor` cleared so the timer cannot fire at start. |
 | [0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | 2026-09-11 (residual, measured; no ADR or PR named) | A nulled `AuditEventId` is asked the old question, so for a repeatable kind another row of the same user answers for it. |
 | [0053](0053-the-committed-contract-is-what-the-api-generates.md) | 2026-09-11, twice (no PR named) · 2026-09-14, twice (the XML-generator fix; no PR named) · 2026-09-15, twice (Schemathesis made a gate; no PR named) · 2026-09-21, ADR-0056 | The comma-decimal-locale defect withdrawn as false, measured through the real route; the "either defect fixed" trigger narrowed to the XML generator; the XML-generator defect fixed and "it is why D3's newlines are in the contract" struck, the trigger's prediction wrong: the newlines moved, so D3's normalisation stays; D6 moved: Schemathesis gates runtime conformance on every PR in `ci.yml`'s `conformance` job, and the "Gating Schemathesis" trigger struck as done. The conformance floor moved 27 → 28 with the withdrawal mint; `CommittedOpenApiDocumentTests`' own floor stays at 20, deliberately below the real count so deleting an endpoint does not trip it. |
+| [0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) | 2026-09-25 (no ADR or PR named) | HSTS is no longer left to the edge: the BFF sends it in every environment but Development, over http too, because `UseHsts` skips any request that is not https. |
 
 </details>
 

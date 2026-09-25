@@ -66,7 +66,9 @@ because the wiring above had been written and not run: with the command above, `
 `baseUrl` was `http://localhost:5068` until 2026-09-20 — CI's address, from when CI ran `--env
 local`. The local dev profile also listens on HTTPS, so `UseHttpsRedirection` answered **307** to
 every request there, including the ones this README told you to make. CI has its own environment
-now, so this one names the address a developer actually has.
+now, so this one names the address a developer actually has. *(Since 2026-09-25 the API redirects
+nothing: measured on the `https` profile, `GET http://localhost:5068/health/live` answered 307 to
+`https://localhost:7215/health/live` before and 200 after.)*
 
 ~~One defect is left, older than all of this and not fixed here: `login` posts `{{testEmail}}`
 (`test@example.com`), but `register` creates `test.{{$timestamp}}@example.com` and never writes it

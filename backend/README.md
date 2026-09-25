@@ -61,7 +61,8 @@ The Backend-For-Frontend pattern provides:
 - **Token Security**: JWT tokens stored server-side, never exposed to browser
 - **Session Management**: HTTP-only cookies with automatic timeout
 - **Rate Limiting**: Protection against abuse at the gateway level
-- **Security Headers**: OWASP-recommended headers (CSP, HSTS, etc.)
+- **Security Headers**: OWASP-recommended headers: CSP and five others, and HSTS everywhere but
+  Development. *(Until 2026-09-25 this listed HSTS, which the BFF did not send.)*
 
 ---
 

@@ -153,7 +153,13 @@ try
     // Must be early in pipeline, before routing processes the request
     app.UseInvalidRequestHandling();
 
-    app.UseHttpsRedirection();
+    // No app.UseHttpsRedirection() (removed 2026-09-25). The API's one client is the BFF, which
+    // follows no redirect (ADR-0055), so a redirect here can only turn its call into a failure.
+    // Measured on the two containers with an https port made discoverable (ASPNETCORE_HTTPS_PORT=443
+    // on the API): the BFF reported the API Degraded and a sign-in answered 502. On the development
+    // https profile it answered 307 to every request on the http port (tests/api-collection/
+    // README.md). Without an https port, as the container runs, it redirected nothing and logged a
+    // warning.
 
     // No CORS, by design (ADR-0018): the browser only ever reaches the API through the
     // BFF's same-origin proxy. (Until 2026-09-19 this went on "direct API access is
