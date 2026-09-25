@@ -9,7 +9,11 @@ namespace AzureBank.Shared.Observability;
 /// JSON because a container's output is collected line by line. Measured on the two containers
 /// running as Production (2026-09-25), before this: every line was text, and a refusal at startup
 /// printed its exception as a stack trace over many lines, each one a record of its own to whatever
-/// collects them. Text stays for the development loop and the tests, where a person reads it.
+/// collects them. Text stays for the development loop, where a person reads it, and for every other
+/// name, Staging included: JSON is for the one environment this repository runs its images in
+/// (compose.yaml), unlike HSTS and the __Host- cookie, which cover everything but Development. An
+/// in-process test host's bootstrap lines follow the process's variables, so they are JSON when
+/// none is set; its host lines follow the environment the test gives it.
 /// </remarks>
 public static class ConsoleLogFormat
 {

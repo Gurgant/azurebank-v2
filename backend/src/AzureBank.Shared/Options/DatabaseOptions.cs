@@ -3,7 +3,9 @@ using System.ComponentModel.DataAnnotations;
 namespace AzureBank.Shared.Options;
 
 /// <summary>
-/// The database the API works against. Binds to the "Database" section; the connection string itself
+/// The database settings the hosts that call <c>AddInfrastructure</c> run with: the API, the
+/// Function and the seeder read its retry budget, the verifier runs without retries, and only the
+/// API validates them at startup. Binds to the "Database" section; the connection string itself
 /// stays where every .NET host reads it, <c>ConnectionStrings:DefaultConnection</c>.
 /// </summary>
 /// <remarks>

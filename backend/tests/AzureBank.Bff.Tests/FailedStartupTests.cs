@@ -62,7 +62,7 @@ public sealed class FailedStartupTests
     [Fact]
     public async Task AConsoleNamedInConfiguration_IsTheOnlyConsole()
     {
-        // As a local appsettings.Development.json copied from its example would name one.
+        // As a Serilog:WriteTo in a local appsettings file would name one (the API's example does).
         var (output, _) = await RunRefusingBff("Testing", ("Serilog__WriteTo__0__Name", "Console"));
 
         output.Split("Hosting failed to start").Length.Should().Be(2,

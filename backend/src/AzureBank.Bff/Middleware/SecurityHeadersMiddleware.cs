@@ -12,8 +12,9 @@ public class SecurityHeadersMiddleware
     public SecurityHeadersMiddleware(RequestDelegate next, IHostEnvironment environment)
     {
         _next = next;
-        // Everywhere but Development: the line the session cookie already draws, Secure and
-        // __Host- prefixed outside Development (Program.cs), which already assumes https there.
+        // Everywhere but Development: the line the session cookie already draws -- __Host- prefixed
+        // outside Development (Program.cs) and Secure there (BffAuthController) -- which already
+        // assumes https.
         _sendStrictTransportSecurity = !environment.IsDevelopment();
     }
 
@@ -62,8 +63,9 @@ public class SecurityHeadersMiddleware
         // HSTS, written here rather than by app.UseHsts(): the framework's HstsMiddleware skips any
         // request that is not IsHttps and any host named localhost, 127.0.0.1 or [::1] (read in its
         // source, release/10.0). Behind the edge that terminates TLS the request reaches this host
-        // over http, and X-Forwarded-Proto is not processed (ADR-0013), so UseHsts would send
-        // nothing. Sent on http too, where browsers ignore it (RFC 6797, section 8.1). One year; no
+        // over http, and X-Forwarded-Proto is not processed (Program.cs forwards X-Forwarded-For
+        // only, for ADR-0013's rate-limit partition), so UseHsts would send nothing. Localhost gets
+        // the header too, unlike under UseHsts; over http a browser ignores it. Sent on http too, where browsers ignore it (RFC 6797, section 8.1). One year; no
         // includeSubDomains and no preload, which commit a whole domain and are not this host's to
         // make. (Until 2026-09-25 the BFF sent no HSTS and left it to the edge, ADR-0054.)
         if (_sendStrictTransportSecurity)

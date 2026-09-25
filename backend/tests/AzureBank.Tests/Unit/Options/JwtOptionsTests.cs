@@ -53,7 +53,7 @@ public class JwtOptionsTests
     [InlineData(16, true)]
     public void TheRuleCountsBytes_NotCharacters(int characters, bool starts)
     {
-        // U+00E9 is two bytes in UTF-8, the encoding both signing sites use: sixteen of them are 32
+        // U+00E9 is two bytes in UTF-8, the encoding every site that uses the key applies: sixteen are 32
         // bytes, fifteen are 30. A rule counting characters would refuse both.
         using var root = Root(new string('\u00e9', characters));
 

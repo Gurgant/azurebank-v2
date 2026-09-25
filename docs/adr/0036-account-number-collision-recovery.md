@@ -91,7 +91,7 @@ group — no exception, no failing test. A format change would have to fix the m
 ## Consequences
 
 - **The retry fixes the rarest cause of stranding, not all of them.** Any failure at that INSERT
-  strands the user the same way. `EnableRetryOnFailure(maxRetryCount: 3)` *(`Database:MaxRetryCount`
+  strands the user the same way. ~~`EnableRetryOnFailure(maxRetryCount: 3)`~~ *(`Database:MaxRetryCount`
   since 2026-09-25, 3 unless set)* already retries deadlocks
   (1205) and the throttling numbers, but ADR-0034 deliberately does **not** retry a command timeout
   (`SqlException` −2), so a timeout at that line still leaves an account-less user. Recorded rather

@@ -35,6 +35,8 @@ public class DatabaseOptionsTests
     [InlineData("   ")]
     [InlineData("Server=(localdb)\\MSSQLLocalDB;Conect Timeout=30")] // a mistyped keyword
     [InlineData("Server=(localdb)\\MSSQLLocalDB;Database")] // not key=value
+    [InlineData("Server=(localdb)\\MSSQLLocalDB;Connect Timeout=abc")] // a known keyword, not a number
+    [InlineData("Server=(localdb)\\MSSQLLocalDB;TrustServerCertificate=ture")] // a known keyword, not a boolean
     public void AMissingOrUnparseableConnectionString_StopsTheHostAtStart(string? connectionString)
     {
         using var root = Root(connectionString);

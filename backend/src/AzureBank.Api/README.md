@@ -333,7 +333,8 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 ```
 
 The console is not configured here: the code writes it, one JSON object per line in Production and
-text everywhere else (`ConsoleLogFormat`), and a `WriteTo` in configuration takes its place.
+text everywhere else (`ConsoleLogFormat`), and a `WriteTo` in configuration takes its place: in
+Production such a console should use `RenderedCompactJsonFormatter`, to match the bootstrap lines.
 *(Until 2026-09-25 this sample named the console under `WriteTo`, as `appsettings.json` did, and
 the `WithMachineName` enricher, which no package here provides: measured, a Production line
 carried no `MachineName`.)*

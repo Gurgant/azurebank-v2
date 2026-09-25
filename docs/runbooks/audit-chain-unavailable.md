@@ -420,7 +420,10 @@ over the prose around it, and re-measure before believing either.
 
   A container running as Production prints the same events one JSON object per line: the message
   is `@m`, the level `@l` (absent for Information), and the exception with its whole stack trace
-  is `@x`, inside the one line. Search `@m` for `Hosting failed to start`.
+  is `@x`, inside the one line. Search `@m` for `Hosting failed to start`. In `@m` a string value
+  is quoted -- a request line reads `HTTP "GET" "/bff/auth/me" responded 401` (measured) -- and
+  every value is also a field of its own, so match the field rather than the sentence this page
+  quotes: `"SecurityEvent":"AuditChainUnavailable"`.
 
   No `Now listening on`, no `Application started`: the port never opens, so nothing reaches a login.
   `IAuditChain` is still `AddScoped` and `ValidateOnStart` still covers only the OPTIONS — what

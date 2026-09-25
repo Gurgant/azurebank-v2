@@ -25,7 +25,7 @@ public class ConsoleLogFormatTests
     [InlineData(null, "Development", false)]
     [InlineData("Development", "Production", false)] // DOTNET_ENVIRONMENT decides, as the host's did
     [InlineData("Production", "Development", true)]
-    [InlineData("", "Testing", false)] // an empty variable is not a value
+    [InlineData("", "Production", true)] // an empty variable is not a value: the next one decides
     public void IsJsonBeforeTheHost_ReadsTheVariablesInTheHostsOrder(string? dotnet, string? aspnetcore, bool json)
     {
         var variables = new Dictionary<string, string?>

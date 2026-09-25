@@ -60,8 +60,9 @@ public static class RequestLogRoute
     /// <summary>
     /// The request line's level, for <c>RequestLoggingOptions.GetLevel</c>: Serilog's own rule
     /// (Error for an exception or a status above 499, Information otherwise), except that a
-    /// <c>/health</c> probe that passed is Verbose, below every configured floor, so its line is
-    /// never written. A failing probe keeps Error.
+    /// <c>/health</c> probe that passed -- a status below 400, no exception -- is Verbose, below every
+    /// configured floor, so its line is never written. A failing probe keeps Error, and a 4xx on a
+    /// <c>/health</c> path keeps Information.
     /// </summary>
     /// <remarks>
     /// Measured on the two containers running as Production (2026-09-25), before this: ten
@@ -72,7 +73,7 @@ public static class RequestLogRoute
     public static LogEventLevel LevelFor(HttpContext httpContext, double elapsedMilliseconds, Exception? exception) =>
         exception is not null || httpContext.Response.StatusCode > 499
             ? LogEventLevel.Error
-            : httpContext.Request.Path.StartsWithSegments("/health")
+            : httpContext.Response.StatusCode < 400 && httpContext.Request.Path.StartsWithSegments("/health")
                 ? LogEventLevel.Verbose
                 : LogEventLevel.Information;
 }

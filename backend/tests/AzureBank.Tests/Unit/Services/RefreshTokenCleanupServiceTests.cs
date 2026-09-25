@@ -16,8 +16,9 @@ namespace AzureBank.Tests.Unit.Services;
 /// interval after start, and deletes what has expired by ITS clock (ADR-0021).
 /// </summary>
 /// <remarks>
-/// On InMemory, so this is the sweep's load-and-remove branch; the relational branch did not change.
-/// The clock is a <see cref="FakeTimeProvider"/> set years ahead of the real one, so a token that has
+/// On InMemory, so this is the sweep's load-and-remove branch; the relational branch's statements did
+/// not change, though its cutoff now comes from the same clock, and it is not exercised here.
+/// The clock is a <see cref="FakeTimeProvider"/> set decades ahead of the real one, so a token that has
 /// expired by the fake clock has not by the wall clock: a sweep reading <c>DateTime.UtcNow</c> would
 /// keep it. The loop is run through <see cref="Probe.RunAsync"/> rather than <c>StartAsync</c>, which
 /// since .NET 10 returns before <c>ExecuteAsync</c> has created its timer: a timer created after the
@@ -25,7 +26,7 @@ namespace AzureBank.Tests.Unit.Services;
 /// </remarks>
 public sealed class RefreshTokenCleanupServiceTests : IDisposable
 {
-    private static readonly DateTimeOffset Start = new(2031, 1, 6, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Start = new(2099, 1, 6, 12, 0, 0, TimeSpan.Zero);
     private readonly FakeTimeProvider _clock = new(Start);
     private readonly string _database = Guid.NewGuid().ToString();
     private readonly ServiceProvider _provider;
@@ -82,7 +83,12 @@ public sealed class RefreshTokenCleanupServiceTests : IDisposable
     [Fact]
     public async Task TheSweep_RunsOnTheConfiguredInterval_AndDeletesWhatHasExpiredByItsClock()
     {
-        await Seed(("expires-in-30-minutes", Start.AddMinutes(30)), ("lives-a-week", Start.AddDays(7)));
+        // One token already expired at start: a sweep at start, or any time before the interval, would
+        // take it, so the 59-minute check below can see a sweep that ran too early.
+        await Seed(
+            ("expired-before-start", Start.AddMinutes(-1)),
+            ("expires-in-30-minutes", Start.AddMinutes(30)),
+            ("lives-a-week", Start.AddDays(7)));
         var sweep = new Probe(
             _provider.GetRequiredService<IServiceScopeFactory>(),
             new JwtOptions { RefreshTokenCleanupInterval = TimeSpan.FromHours(1) },
@@ -90,10 +96,10 @@ public sealed class RefreshTokenCleanupServiceTests : IDisposable
         using var stop = new CancellationTokenSource();
         var loop = sweep.RunAsync(stop.Token);
 
-        // A minute short of the first interval: the first token has expired, and nothing has run.
+        // A minute short of the first interval: two tokens have expired, and nothing has run.
         _clock.Advance(TimeSpan.FromMinutes(59));
         await Task.Delay(200);
-        (await Remaining()).Should().Equal(["expires-in-30-minutes", "lives-a-week"]);
+        (await Remaining()).Should().Equal(["expired-before-start", "expires-in-30-minutes", "lives-a-week"]);
 
         // The interval: the sweep runs, and what has expired by the fake clock goes.
         _clock.Advance(TimeSpan.FromMinutes(1));
@@ -105,7 +111,7 @@ public sealed class RefreshTokenCleanupServiceTests : IDisposable
 
         (await Remaining()).Should().Equal(["lives-a-week"],
             "one hour after start the sweep ran, with the configured interval rather than six hours, and "
-            + "judged expiry by its own clock, which the wall clock is years behind");
+            + "judged expiry by its own clock, which the wall clock is decades behind");
 
         await stop.CancelAsync();
         await loop;

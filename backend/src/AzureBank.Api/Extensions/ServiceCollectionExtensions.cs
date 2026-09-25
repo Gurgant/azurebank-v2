@@ -302,8 +302,9 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Counted in BYTES: both signing sites turn the key into UTF-8 bytes, and HMAC-SHA256 needs
-        // 256 bits. The five other keys count characters; this one says bytes in its message.
+        // Counted in BYTES: every site that uses the key (one signs, two validate) turns it into UTF-8
+        // bytes, and HMAC-SHA256 needs 256 bits. The six other keys count characters; this one says
+        // bytes in its message.
         services.AddOptions<JwtOptions>()
             .Bind(configuration.GetSection(JwtOptions.SectionName))
             .Validate(
@@ -355,12 +356,16 @@ public static class ServiceCollectionExtensions
             return false;
         }
 
+        // An unknown keyword throws ArgumentException; a known one with a value of the wrong kind
+        // ("Connect Timeout=abc", "TrustServerCertificate=ture") throws FormatException or
+        // OverflowException, which escaped this check and stopped the host with the parser's own
+        // message instead of this rule's.
         try
         {
             _ = new SqlConnectionStringBuilder(value);
             return true;
         }
-        catch (ArgumentException)
+        catch (Exception e) when (e is ArgumentException or FormatException or OverflowException)
         {
             return false;
         }

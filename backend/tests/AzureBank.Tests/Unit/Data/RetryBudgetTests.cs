@@ -14,16 +14,16 @@ namespace AzureBank.Tests.Unit.Data;
 /// <summary>
 /// The retry budget EF runs with comes from <c>Database:MaxRetryCount</c> and
 /// <c>Database:MaxRetryDelay</c>, through the registration every writer uses
-/// (<c>AddInfrastructure</c>), and without them it is the 3 retries the code always had.
+/// (<c>AddInfrastructure</c>), and without them it is the 3 retries and 30 s the code always had.
 /// </summary>
 /// <remarks>
-/// Counted by running the context's own execution strategy over a delegate that throws a bare
-/// <see cref="TimeoutException"/>, which EF's SQL Server detector treats as transient (ADR-0034).
-/// No connection is ever opened: the delegate never touches the database.
+/// The count is observed by running the context's own execution strategy over a delegate that
+/// throws a bare <see cref="TimeoutException"/>, which EF's SQL Server detector treats as transient
+/// (ADR-0034); no connection is ever opened. The delay cap is read off the same strategy object.
 /// </remarks>
 public class RetryBudgetTests
 {
-    private static int AttemptsUntilItGivesUp(params (string Key, string Value)[] database)
+    private static (int Attempts, TimeSpan MaxRetryDelay) Run(params (string Key, string Value)[] database)
     {
         var values = new Dictionary<string, string?>
         {
@@ -43,30 +43,38 @@ public class RetryBudgetTests
         using var scope = provider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
+        var strategy = context.Database.CreateExecutionStrategy().Should().BeAssignableTo<ExecutionStrategy>().Subject;
+        var maxRetryDelay = strategy.MaxRetryDelay;
+
         var attempts = 0;
-        var act = () => context.Database.CreateExecutionStrategy().Execute(() =>
+        var act = () => strategy.Execute(() =>
         {
             attempts++;
             throw new TimeoutException("transient, as far as the detector is concerned");
         });
 
         act.Should().Throw<RetryLimitExceededException>();
-        return attempts;
+        return (attempts, maxRetryDelay);
     }
 
     [Fact]
-    public void TheConfiguredCount_IsTheOneEfRetriesWith()
+    public void TheConfiguredBudget_IsTheOneEfRetriesWith()
     {
-        AttemptsUntilItGivesUp(("Database:MaxRetryCount", "2"), ("Database:MaxRetryDelay", "00:00:00.001"))
-            .Should().Be(3, "two retries after the first attempt");
+        var (attempts, maxRetryDelay) = Run(("Database:MaxRetryCount", "2"), ("Database:MaxRetryDelay", "00:00:00.001"));
+
+        attempts.Should().Be(3, "two retries after the first attempt");
+        maxRetryDelay.Should().Be(TimeSpan.FromMilliseconds(1));
     }
 
     [Fact]
-    public void NothingConfigured_IsTheThreeRetriesTheCodeAlwaysHad()
+    public void NothingConfigured_IsTheBudgetTheCodeAlwaysHad()
     {
         // Slow on purpose: the three waits are EF's own backoff under the 30-second cap, and this
         // case took 4 to 5 s in the runner over four runs (2026-09-25), building the context
         // included -- today's whole budget, spent waiting.
-        AttemptsUntilItGivesUp().Should().Be(4, "three retries after the first attempt");
+        var (attempts, maxRetryDelay) = Run();
+
+        attempts.Should().Be(4, "three retries after the first attempt");
+        maxRetryDelay.Should().Be(TimeSpan.FromSeconds(30));
     }
 }

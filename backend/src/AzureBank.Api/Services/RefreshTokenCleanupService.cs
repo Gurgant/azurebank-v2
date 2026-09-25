@@ -20,11 +20,15 @@ namespace AzureBank.Api.Services;
 ///   by the holder's own expiry — stays correct even if the token lifetime config is SHRUNK
 ///   (or the clock jumps back), which can leave a still-live predecessor pointing at an
 ///   already-expired successor.
-/// - First sweep runs one full interval after startup (no interference with fast test hosts).
+/// - First sweep runs one full interval after startup on the host's clock: no interference with
+///   fast test hosts, unless a test moves a fake clock past the interval, which runs one sweep.
 /// - The interval is <c>Jwt:RefreshTokenCleanupInterval</c>, six hours unless configured. Until
 ///   2026-09-25 it was a constant here with the same value.
 /// - Clock: <see cref="TimeProvider"/>, defaulting to the system one as <c>NoticeRelayService</c>
 ///   does, for the timer and for what counts as expired, so a test can move time instead of waiting.
+///   RefreshTokenService stamps ExpiresAt, and RefreshToken.IsExpired reads it, on DateTime.UtcNow, so
+///   the sweep and the read path agree while the registered clock is the system one -- every host
+///   outside tests. A fake clock moved seven days or more would sweep tokens the read path still takes.
 /// </summary>
 public class RefreshTokenCleanupService : BackgroundService
 {

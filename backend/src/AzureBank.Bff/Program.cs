@@ -139,9 +139,10 @@ try
             .ReadFrom.Services(services);
 
         // The console is written here rather than in appsettings.json: JSON in Production, text
-        // everywhere else (ConsoleLogFormat, which the bootstrap logger above follows too). Sinks
-        // named in configuration still win -- appsettings.Development.json.example names a console
-        // with its own template -- so a local file copied from it does not print every line twice.
+        // everywhere else (ConsoleLogFormat, which the bootstrap logger above follows too). A
+        // Serilog:WriteTo in configuration replaces this console, so a local file that names one does
+        // not print every line twice. (The BFF's appsettings.Development.json.example names none; the
+        // API's does.)
         if (!context.Configuration.GetSection("Serilog:WriteTo").Exists())
         {
             if (ConsoleLogFormat.IsJson(context.HostingEnvironment.EnvironmentName))

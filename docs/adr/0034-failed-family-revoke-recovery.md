@@ -21,7 +21,7 @@ That amendment deliberately deferred three options: **retry inline**, **a durabl
 
 The amendment named the suspected triggers as "a deadlock victim or a command timeout". Both
 assumed the failure reaches our `catch` at all — but the context is registered with
-`EnableRetryOnFailure(maxRetryCount: 3)` (`ServiceCollectionExtensions.cs`), and EF runs every
+~~`EnableRetryOnFailure(maxRetryCount: 3)`~~ (`ServiceCollectionExtensions.cs`), and EF runs every
 `ExecuteUpdateAsync` through that strategy. So the real question is which of those triggers EF
 already handles. *(2026-09-25: the count is `Database:MaxRetryCount` now and the cap
 `Database:MaxRetryDelay`, still 3 and 30 s unless a deployment sets them.)*

@@ -182,8 +182,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     /// <remarks>
     /// Opt-in rather than always on, because a fake clock does not advance by itself: every
     /// consumer in the host — the context's timestamps, the audit trail's OccurredAt, the day's
-    /// window — would read one frozen instant for the whole class, which is exactly what the
-    /// day-boundary test wants and what nothing else does. What it does NOT move: the step-up
+    /// window, and the refresh-token sweep's timer and expiry cutoff — would read one frozen instant
+    /// for the whole class, which is exactly what the day-boundary test wants and what nothing else
+    /// does. (Moving it past the sweep's six hours runs one sweep, which finds nothing: tokens are
+    /// stamped with the wall clock and live seven days.) What it does NOT move: the step-up
     /// mint and expiry and the JWT still read <c>DateTime.UtcNow</c>, so advancing this clock past
     /// midnight expires no authorisation and no token — ADR-0049's two-clock note, narrowed by
     /// ADR-0050 to the ledger clock and not closed.

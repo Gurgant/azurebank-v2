@@ -611,7 +611,7 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 
 | Variable                               | Description                              | Default     |
 | -------------------------------------- | ---------------------------------------- | ----------- |
-| `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Development |
+| `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Production* |
 | `ConnectionStrings__DefaultConnection` | Database connection (checked at start)   | -           |
 | `Jwt__Secret`                          | JWT signing key (32+ bytes, checked)     | -           |
 | `Idempotency__HashKey`                 | Idempotency HMAC key (32+, ADR-0009)     | -           |
@@ -620,6 +620,11 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | `Audit__AnchorKey`                     | Audit anchor HMAC key (32+, ADR-0044)    | -           |
 | `Security__PinPepper`                  | PIN pepper (32+, ADR-0011) — also Seeder | -           |
 | `ServiceCredential__BffKey`            | The BFF's key (32+, ADR-0055) — also BFF | -           |
+
+\* `dotnet run` sets Development, from `launchSettings.json`; with nothing set a host runs as
+Production. `DOTNET_ENVIRONMENT`, when set, wins over it (measured 2026-09-25). The console format
+(JSON in Production) and HSTS (outside Development) follow the environment. *(Until 2026-09-25
+this default read Development, which is `dotnet run`'s, not the host's.)*
 
 *(Until 2026-09-25 the JWT row said "unchecked", and nothing checked the key or the connection
 string at startup.)*

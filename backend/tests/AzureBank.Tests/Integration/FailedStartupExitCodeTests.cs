@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using AzureBank.Tests.Fixtures;
 using FluentAssertions;
 using Xunit;
@@ -34,8 +35,57 @@ public sealed class FailedStartupExitCodeTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
+    private const string Refusal = "Audit:AnchorKey must be configured with at least 32 characters";
+
     [Fact]
     public async Task AHostThatRefusesToStart_EndsTheProcessWithOne()
+    {
+        var (output, exitCode) = await RunRefusingApi("Testing");
+
+        output.Should().Contain(Refusal, "the exit code is only evidence if the refusal is the one this test set up");
+        output.Should().NotContain("started successfully",
+            "the success line waits for the host to have started, and this one never did");
+        exitCode.Should().Be(1,
+            "a supervisor reads the exit code, and a refusal that exits 0 reads as a clean stop");
+    }
+
+    [Fact]
+    public async Task InProduction_EveryLineIsJson_AndTheRefusalIsOneEvent()
+    {
+        // The console a collector reads, which no sink registered in a test host can see: the
+        // bootstrap logger's lines as well as the host's (ConsoleLogFormat).
+        var (output, exitCode) = await RunRefusingApi("Production");
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        lines.Should().NotBeEmpty();
+        var events = lines.Select(line =>
+        {
+            var parse = () => JsonDocument.Parse(line);
+            parse.Should().NotThrow($"every console line is a JSON object in Production, and this one is not: {line}");
+            return parse().RootElement;
+        }).ToList();
+
+        events.Select(e => e.GetProperty("@m").GetString()).Should().Contain("Starting AzureBank API...");
+        var fatal = events
+            .Where(e => e.TryGetProperty("@l", out var level) && level.GetString() == "Fatal")
+            .ToList();
+        fatal.Should().ContainSingle();
+        fatal[0].GetProperty("@x").GetString().Should().Contain(Refusal, "the stack trace rides inside the one event");
+        exitCode.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AConsoleNamedInConfiguration_IsTheOnlyConsole()
+    {
+        // As a local appsettings.Development.json copied from the API's example would name one.
+        var (output, _) = await RunRefusingApi("Testing", ("Serilog__WriteTo__0__Name", "Console"));
+
+        output.Split("Hosting failed to start").Length.Should().Be(2,
+            "one console writes the host's refusal once; a second would print every line twice");
+    }
+
+    private static async Task<(string Output, int ExitCode)> RunRefusingApi(
+        string environment, params (string Name, string Value)[] extra)
     {
         var start = new ProcessStartInfo(DotnetHost())
         {
@@ -48,8 +98,8 @@ public sealed class FailedStartupExitCodeTests
         start.ArgumentList.Add("--urls");
         start.ArgumentList.Add("http://127.0.0.1:0");
 
-        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Testing";
-        start.Environment["DOTNET_ENVIRONMENT"] = "Testing";
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = environment;
+        start.Environment["DOTNET_ENVIRONMENT"] = environment;
         start.Environment["Jwt__Secret"] = CustomWebApplicationFactory.JwtSecret;
         start.Environment["ConnectionStrings__DefaultConnection"] =
             CustomWebApplicationFactory.PlaceholderConnectionString;
@@ -59,6 +109,10 @@ public sealed class FailedStartupExitCodeTests
         start.Environment["Security__PinPepper"] = CustomWebApplicationFactory.PinPepper;
         start.Environment["Audit__ChainKey"] = CustomWebApplicationFactory.AuditChainKey;
         start.Environment.Remove("Audit__AnchorKey");
+        foreach (var (name, value) in extra)
+        {
+            start.Environment[name] = value;
+        }
 
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
@@ -80,18 +134,11 @@ public sealed class FailedStartupExitCodeTests
         }
 
         var output = await stdout + await stderr;
-
         exited.Should().BeTrue(
             $"a host that refuses to start ends within {Deadline.TotalSeconds}s, and one still " +
             "running STARTED, so the refusal under test never happened. Output:" +
             $"{Environment.NewLine}{output}");
-        output.Should().Contain(
-            "Audit:AnchorKey must be configured with at least 32 characters",
-            "the exit code is only evidence if the refusal is the one this test set up");
-        output.Should().NotContain("started successfully",
-            "the success line waits for the host to have started, and this one never did");
-        process.ExitCode.Should().Be(1,
-            "a supervisor reads the exit code, and a refusal that exits 0 reads as a clean stop");
+        return (output, process.ExitCode);
     }
 
     /// <summary>The dotnet host the SDK exports as DOTNET_HOST_PATH, else the one on PATH.</summary>

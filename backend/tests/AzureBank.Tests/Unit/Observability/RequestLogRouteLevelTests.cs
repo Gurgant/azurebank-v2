@@ -18,6 +18,7 @@ public class RequestLogRouteLevelTests
     [InlineData("/health/ready", 503, false, LogEventLevel.Error)] // a failing probe still speaks
     [InlineData("/health/live", 200, true, LogEventLevel.Error)]
     [InlineData("/healthz", 200, false, LogEventLevel.Information)] // a path segment, not a prefix
+    [InlineData("/health/typo", 404, false, LogEventLevel.Information)] // not a probe that passed
     [InlineData("/api/accounts", 401, false, LogEventLevel.Information)]
     [InlineData("/api/accounts", 500, false, LogEventLevel.Error)]
     public void LevelFor_IsSerilogsRule_ButAPassingProbeIsVerbose(string path, int status, bool threw, LogEventLevel level)
