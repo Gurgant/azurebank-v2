@@ -53,7 +53,10 @@ by default (tests and collector-less dev runs must not spray connection errors).
    **Degraded, not Unhealthy**, when the API blips — a hard readiness failure on a shared
    downstream would evict every BFF instance at once (cascading failure). Probes are excluded
    from the rate limiter, and probe spans (server and client side) are filtered out of tracing:
-   at 100% sampling they would flood Tempo with zero signal.
+   at 100% sampling they would flood Tempo with zero signal. *(Added 2026-09-25: their request
+   log lines are dropped too, unless the probe failed — a status above 499 or an exception keeps
+   Serilog's Error line. Measured on the two containers running as Production: ten probes of each
+   through the BFF wrote 20 request lines in its log and 10 in the API's before, none after.)*
 7. **Domain metrics with strict cardinality discipline**: one application meter
    (`AzureBank.Api`) with `azurebank.logins` / `azurebank.transfers` /
    `azurebank.idempotency.replays`, tagged only with namespaced low-cardinality outcomes

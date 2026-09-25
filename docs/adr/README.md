@@ -125,7 +125,7 @@ fix — and a pointer an ADR carries with no date is listed as *undated*. The li
 the end of this page are the template's; only Accepted has ever been used.
 
 <details>
-<summary>What changed in each decision after it was accepted — 38 records</summary>
+<summary>What changed in each decision after it was accepted — 39 records</summary>
 
 | ADR | Changed by | What moved |
 |---|---|---|
@@ -138,6 +138,7 @@ the end of this page are the template's; only Accepted has ever been used.
 | [0013](0013-registration-user-enumeration.md) | 2026-09-03, ADR-0045 · 2026-09-17, ADR-0037 (naming #94) | "No email infrastructure" narrowed to "no relay"; the conclusion and the deferral of Option 3 stand. Atomic registration's "remains a tracked follow-up" struck as delivered by ADR-0037; the neutral 409 still holds inside its transaction. |
 | [0014](0014-recipient-lookup-enumeration.md) | 2026-09-15 (residual, measured; no ADR named) | The anti-harvest limit is the BFF's and the API has none: 21 lookups sent straight to the API answered 200 ×21 where the BFF answered 429 at the 21st. |
 | [0015](0015-decouple-username-renameable-handle.md) | 2026-08-10 (no ADR or PR named) · 2026-08-10, ADR-0039 · *undated* — ADR-0039 | The stale-handle residual split: the token claim stays open and harmless; the session half closed (the rename is BFF-owned and `/me` reads through); the concurrent-rename clause is no longer permanent, and its two reasons for rejecting a per-session lock were wrong. |
+| [0016](0016-observability-three-pillars.md) | 2026-09-25 (no ADR or PR named) | Health probes leave the request log as well as the traces, except a probe that failed. |
 | [0017](0017-pii-redaction-codeql-barrier.md) | 2026-09-11 and 2026-09-14 (the log-identifier rule, then its review; no PR named) | `HmacRedactor`'s "key in a public repo" reason struck; "no amounts" was false from the day it was written (the deposit and withdrawal lines, now gone); the "what it does not see" gap struck — the request log names the route pattern. |
 | [0019](0019-spa-bff-integration.md) | 2026-09-05 (no PR named; `e4973da` for the 2026-08-17 half) · *undated* — ADR-0023 | The 401 exempt list is `IN_FLOW_401_CODES` and holds ADR-0042's three authorisation codes; Decision 6's hand-written BFF types are `z.infer` of runtime schemas. |
 | [0020](0020-account-number-reveal.md) | 2026-08-13, review of PR #105 · *undated* — ADR-0038 | PSD2 art. 4(32) was overstated (it reaches PISP/AISP activity only); the dual-mode caveat's through-the-BFF bearer bypass was measured and closed. |

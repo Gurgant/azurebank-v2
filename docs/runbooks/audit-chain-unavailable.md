@@ -418,6 +418,10 @@ over the prose around it, and re-measure before believing either.
   [FTL] Application terminated unexpectedly
   ```
 
+  A container running as Production prints the same events one JSON object per line: the message
+  is `@m`, the level `@l` (absent for Information), and the exception with its whole stack trace
+  is `@x`, inside the one line. Search `@m` for `Hosting failed to start`.
+
   No `Now listening on`, no `Application started`: the port never opens, so nothing reaches a login.
   `IAuditChain` is still `AddScoped` and `ValidateOnStart` still covers only the OPTIONS — what
   changed is that one hosted service resolves the chain once during startup, so the constructor

@@ -2,16 +2,23 @@ using AzureBank.Api.Extensions;
 using AzureBank.Api.Middleware;
 using AzureBank.Api.Observability;
 using AzureBank.Infrastructure.Extensions;
+using AzureBank.Shared.Observability;
 using Scalar.AspNetCore;
 using Serilog;
+using Serilog.Formatting.Compact;
 using Serilog.Sinks.OpenTelemetry;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOTSTRAP LOGGER (captures startup errors before config is loaded)
 // ═══════════════════════════════════════════════════════════════════════════
 
-Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
+// JSON in Production from the first line (ConsoleLogFormat). This logger, not the host's, writes
+// "Starting", the success line and a refusal's Fatal, and one container output that mixed text
+// lines into JSON ones would have its collector parse some records and not others.
+var bootstrap = new LoggerConfiguration();
+Log.Logger = (ConsoleLogFormat.IsJsonBeforeTheHost(Environment.GetEnvironmentVariable)
+        ? bootstrap.WriteTo.Console(new RenderedCompactJsonFormatter())
+        : bootstrap.WriteTo.Console())
     .CreateBootstrapLogger();
 
 try
@@ -37,6 +44,23 @@ try
             // RequestPathEnricher must run after it to strip it. RequestLogRouteTests pins this.
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services);
+
+        // The console is written here rather than in appsettings.json: JSON in Production, text
+        // everywhere else (ConsoleLogFormat, which the bootstrap logger above follows too). Sinks
+        // named in configuration still win -- appsettings.Development.json.example names a console
+        // with its own template -- so a local file copied from it does not print every line twice.
+        if (!context.Configuration.GetSection("Serilog:WriteTo").Exists())
+        {
+            if (ConsoleLogFormat.IsJson(context.HostingEnvironment.EnvironmentName))
+            {
+                configuration.WriteTo.Console(new RenderedCompactJsonFormatter());
+            }
+            else
+            {
+                configuration.WriteTo.Console(
+                    outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}");
+            }
+        }
 
         // Export logs over OTLP so the LGTM stack's Loki lights up and every line carries
         // trace_id/span_id (the sink stamps them from Activity.Current) — the Grafana log<->trace
@@ -133,6 +157,8 @@ try
     {
         options.MessageTemplate = "HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms";
         options.GetMessageTemplateProperties = RequestLogRoute.MessageTemplateProperties;
+        // A /health probe that passed writes no line; a failing one still does (RequestLogRoute).
+        options.GetLevel = RequestLogRoute.LevelFor;
         // The HOST logger, not the static one the middleware defaults to: with preserveStaticLogger
         // the static logger is the console-only bootstrap logger, so the request line was the one
         // request-time line outside the configured pipeline -- no enrichers, no exporter, and nothing
@@ -212,8 +238,10 @@ try
     // Audit:FoundingChainKey, the log read "AzureBank API started successfully" and then "Hosting
     // failed to start" four lines later. A false success line is precisely the defect
     // docs/runbooks/audit-chain-unavailable.md exists to prevent, reintroduced by the change meant
-    // to fix it. The BFF has the same premature line at its Program.cs:410 and is deliberately left
-    // alone: nothing in that host can fail startup, so there it is early-but-true, not false.
+    // to fix it. The BFF's line now comes from the same callback. It was left above its app.Run()
+    // until 2026-09-25 on the belief that nothing in that host could fail startup; its ValidateOnStart
+    // checks can, and a short ServiceCredential:BffKey printed "started successfully" there and then
+    // "Hosting failed to start" (measured on the container).
     app.Lifetime.ApplicationStarted.Register(() =>
         Log.Information("AzureBank API started successfully"));
 

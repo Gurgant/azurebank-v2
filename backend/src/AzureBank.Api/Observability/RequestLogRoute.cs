@@ -56,4 +56,23 @@ public static class RequestLogRoute
         new("StatusCode", new ScalarValue(statusCode)),
         new("Elapsed", new ScalarValue(elapsedMilliseconds)),
     ];
+
+    /// <summary>
+    /// The request line's level, for <c>RequestLoggingOptions.GetLevel</c>: Serilog's own rule
+    /// (Error for an exception or a status above 499, Information otherwise), except that a
+    /// <c>/health</c> probe that passed is Verbose, below every configured floor, so its line is
+    /// never written. A failing probe keeps Error.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the two containers running as Production (2026-09-25), before this: ten
+    /// <c>/health/live</c> and ten <c>/health/ready</c> through the BFF wrote 20 request lines in
+    /// the BFF's log and 10 in the API's, since the BFF's readiness asks the API's liveness. The
+    /// traces already leave <c>/health</c> out (ADR-0016); this is the same rule for the log.
+    /// </remarks>
+    public static LogEventLevel LevelFor(HttpContext httpContext, double elapsedMilliseconds, Exception? exception) =>
+        exception is not null || httpContext.Response.StatusCode > 499
+            ? LogEventLevel.Error
+            : httpContext.Request.Path.StartsWithSegments("/health")
+                ? LogEventLevel.Verbose
+                : LogEventLevel.Information;
 }

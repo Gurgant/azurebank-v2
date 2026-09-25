@@ -389,7 +389,7 @@ CPM centralizes all NuGet package versions in a single file, ensuring:
 | Package                 | Version | What               | How Used            | Why Chosen             |
 | ----------------------- | ------- | ------------------ | ------------------- | ---------------------- |
 | `Serilog.AspNetCore`    | 10.0.0  | Structured logging | Log requests/errors | Rich structured logs   |
-| `Serilog.Sinks.Console` | 6.1.1   | Console sink       | Output to terminal  | Development visibility |
+| `Serilog.Sinks.Console` | 6.1.1   | Console sink       | Output to terminal  | Text in development, JSON lines in Production |
 
 #### Testing
 

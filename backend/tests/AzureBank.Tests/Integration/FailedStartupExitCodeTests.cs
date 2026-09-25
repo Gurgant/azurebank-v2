@@ -88,6 +88,8 @@ public sealed class FailedStartupExitCodeTests
         output.Should().Contain(
             "Audit:AnchorKey must be configured with at least 32 characters",
             "the exit code is only evidence if the refusal is the one this test set up");
+        output.Should().NotContain("started successfully",
+            "the success line waits for the host to have started, and this one never did");
         process.ExitCode.Should().Be(1,
             "a supervisor reads the exit code, and a refusal that exits 0 reads as a clean stop");
     }
