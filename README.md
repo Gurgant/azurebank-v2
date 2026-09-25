@@ -87,7 +87,7 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
 | Backend | .NET 10, ASP.NET Core, EF Core 10 on SQL Server, YARP, FluentValidation, Serilog, OpenTelemetry, Azure Functions |
 | Frontend | React 19, TypeScript, Vite, Fluent UI 9, Redux Toolkit with RTK Query, React Router, react-hook-form with Zod |
 | Tests | xUnit, FluentAssertions, NetArchTest; Vitest with MSW; Playwright with axe; Schemathesis; Bruno |
-| Delivery | GitHub Actions, CodeQL, an AI reviewer on every pull request |
+| Delivery | GitHub Actions, CodeQL, AI review on pull requests |
 
 ## Try it
 
