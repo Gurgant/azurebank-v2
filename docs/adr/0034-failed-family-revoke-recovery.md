@@ -21,9 +21,10 @@ That amendment deliberately deferred three options: **retry inline**, **a durabl
 
 The amendment named the suspected triggers as "a deadlock victim or a command timeout". Both
 assumed the failure reaches our `catch` at all — but the context is registered with
-`EnableRetryOnFailure(maxRetryCount: 3)` (`ServiceCollectionExtensions.cs`), and EF runs every
+~~`EnableRetryOnFailure(maxRetryCount: 3)`~~ (`ServiceCollectionExtensions.cs`), and EF runs every
 `ExecuteUpdateAsync` through that strategy. So the real question is which of those triggers EF
-already handles.
+already handles. *(2026-09-25: the count is `Database:MaxRetryCount` now and the cap
+`Database:MaxRetryDelay`, still 3 and 30 s unless a deployment sets them.)*
 
 Probed against the shipped `Microsoft.EntityFrameworkCore.SqlServer` 10.0.1 assembly, asking its own
 `SqlServerTransientExceptionDetector` (2026-08-08):
@@ -43,7 +44,7 @@ Two things follow, and neither was obvious from reading:
 
 1. **A deadlock on the revoke is already retried three times** before the exception could ever reach
    the reuse branch. Any inline retry we add would be a _fourth_ layer for the case it is usually
-   written for.
+   written for. *(2026-09-25: three by default; `Database:MaxRetryCount` sets it.)*
 2. **A command timeout is not retried at all.** EF treats a bare `TimeoutException` as transient,
    but SqlClient does not throw one for a command timeout — it throws `SqlException` with
    `Number == -2`, which is not in the list, and `errorNumbersToAdd` is `null`. The comment at that
@@ -65,7 +66,10 @@ make the write more likely to succeed; it holds the request, and a database conn
 That cost lands on a path **an attacker can trigger at will**: replaying a stolen token is what
 _causes_ the reuse branch to run. A bounded retry there converts a cheap 401 into a request that can
 be made to occupy a connection for a minute or more, on demand. Retrying the one failure mode EF
-declines to retry would be the reflex, not the fix.
+declines to retry would be the reflex, not the fix. *(2026-09-25: EF's own budget is configurable
+now. Raising `Database:MaxRetryCount` or `Database:MaxRetryDelay` lengthens how long a retried
+deadlock can hold this path's connection as well: still bounded, but longer, on the same path an
+attacker triggers at will. Weigh that before raising them.)*
 
 ### Why not a durable work item
 
@@ -78,7 +82,8 @@ It is not _identically_ likely to fail — the marker is a single insert on an u
 where the revoke is a set update on the index concurrent rotations are writing, so it would probably
 survive a blocking timeout. That narrow advantage is the honest case for it. It does not carry a
 table, a migration, sweep scheduling, idempotency on replay, and a convergence window bounded by the
-sweep interval (currently 6 h), for a failure that **has never been observed** — not in CI, and not
+sweep interval (currently 6 h; `Jwt:RefreshTokenCleanupInterval` since 2026-09-25, 6 h unless
+set), for a failure that **has never been observed** — not in CI, and not
 locally under deliberate contention (12 rounds × 17 concurrent requests, `READ_COMMITTED_SNAPSHOT`
 off).
 
@@ -105,7 +110,8 @@ This decision is a function of "never observed". It flips the moment that stops 
 
 - **`SecurityEvent RefreshTokenReuseRevokeFailed` appears in a real sink even once** → implement the
   durable work item. The design is pre-decided above: a marker row written on the failure path, swept
-  by `RefreshTokenCleanupService`, sweep interval dropped to minutes. The reason not to build it is
+  by `RefreshTokenCleanupService`, sweep interval dropped to minutes *(a configuration change since
+  2026-09-25: `Jwt:RefreshTokenCleanupInterval`, down to one minute)*. The reason not to build it is
   the absence of evidence, not a defect in the design.
 - **The exposure ceiling matters more than it does today** — a shorter refresh lifetime than 7 days,
   or a requirement to prove revocation — → prefer a per-user `RefreshTokensRevokedAfter` stamp

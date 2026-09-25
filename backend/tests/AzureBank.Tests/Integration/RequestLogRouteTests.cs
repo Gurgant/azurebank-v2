@@ -135,6 +135,21 @@ public sealed class RequestLogRouteTests : IDisposable
         IsTheRequestLine(line, "(unmatched)", HttpStatusCode.NotFound);
         NothingNamesTheValue("janesmith");
     }
+
+    [Theory]
+    [InlineData("/health/live")]
+    [InlineData("/health/ready")]
+    public async Task AProbeThatPasses_WritesNoRequestLine_WhileTheNextRequestStillDoes(string probe)
+    {
+        // Measured on the two containers as Production before GetLevel was set: ten probes of each
+        // through the BFF wrote 10 request lines in the API's log, one per liveness call.
+        (await _factory.CreateClient().GetAsync(probe)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // The control makes a line due in the same host, capturing from Information, and
+        // RequestLineOf asserts ONE request line in all -- so the probe before it wrote none.
+        var (line, status) = await RequestLineOf("/api/users/nobody");
+        IsTheRequestLine(line, "/api/users/{azureTag}", status);
+    }
 }
 
 /// <summary>

@@ -97,8 +97,13 @@ without the policy. The frontend job also refuses a built `index.html` with an i
   violations, and without the hash on 97 `style-src-elem` violations.
 - **What it does not cover.** The walk and the suite visit what they visit; a page neither reaches
   is unchecked. Only Chromium runs. `img-src 'self' data:` was kept as it was and not re-measured.
-  Nothing reports violations from real browsers — there is no `report-to` — and HSTS is not set
-  by the BFF, which leaves it to whatever terminates TLS in front of it.
+  Nothing reports violations from real browsers — there is no `report-to` ~~— and HSTS is not set
+  by the BFF, which leaves it to whatever terminates TLS in front of it~~.
+  *(Corrected 2026-09-25: the BFF sends `Strict-Transport-Security: max-age=31536000` in every
+  environment but Development, from the same middleware as the CSP. Not through `UseHsts`, which
+  skips any request that is not https, and behind an edge that terminates TLS every request
+  reaches the BFF over http. Measured on the two images running as Production: no header on
+  `/health/live` or `/` before, that value on both after.)*
 - **`dist/` ships `mockServiceWorker.js`** from `public/`, and the BFF now serves it. It is inert:
   the app registers it only in vite's `mock` mode (`main.tsx`). Noticed here, not changed.
 - **The development loop is unchanged**: no `Spa:RootPath`, no pages, vite on 5173.

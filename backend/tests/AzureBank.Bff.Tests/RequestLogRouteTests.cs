@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
+using AzureBank.Bff.Observability;
 using AzureBank.Bff.Options;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Shared.DTOs.Auth;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -199,5 +201,46 @@ public class RequestLogRouteTests : IClassFixture<WebApplicationFactory<Program>
         status.Should().Be(HttpStatusCode.NotFound);
         IsTheRequestLine(line, "(unmatched)", HttpStatusCode.NotFound);
         NothingNamesTheValue(events, "janesmith");
+    }
+
+    [Theory]
+    [InlineData("/health/live")]
+    [InlineData("/health/ready")] // Degraded with no API behind it, and still 200
+    public async Task AProbeThatPasses_WritesNoRequestLine_WhileTheNextRequestStillDoes(string probe)
+    {
+        // Measured on the two containers as Production before GetLevel was set: ten probes of each
+        // wrote 20 request lines in the BFF's log.
+        var events = new ConcurrentQueue<LogEvent>();
+        using var host = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddSingleton<ILogEventSink>(new QueueSink(events))));
+        var client = host.CreateClient();
+
+        (await client.GetAsync(probe)).StatusCode.Should().Be(HttpStatusCode.OK);
+        // The control makes a line due in the same host.
+        var control = await client.GetAsync("/bff/auth/me");
+
+        var lines = events
+            .Where(e => e.MessageTemplate.Text.StartsWith("HTTP {RequestMethod} {RoutePattern} responded", StringComparison.Ordinal))
+            .ToList();
+        lines.Should().ContainSingle("the probe wrote no line, and the control one");
+        IsTheRequestLine(lines[0], "/bff/auth/me", control.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/health/live", 200, false, LogEventLevel.Verbose)] // below every floor: not written
+    [InlineData("/health/ready", 200, false, LogEventLevel.Verbose)]
+    [InlineData("/health/ready", 503, false, LogEventLevel.Error)] // a failing probe still speaks
+    [InlineData("/health/live", 200, true, LogEventLevel.Error)]
+    [InlineData("/healthz", 200, false, LogEventLevel.Information)] // a path segment, not a prefix
+    [InlineData("/health/typo", 404, false, LogEventLevel.Information)] // not a probe that passed
+    [InlineData("/api/accounts", 401, false, LogEventLevel.Information)]
+    [InlineData("/api/accounts", 500, false, LogEventLevel.Error)]
+    public void LevelFor_IsSerilogsRule_ButAPassingProbeIsVerbose(string path, int status, bool threw, LogEventLevel level)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = path;
+        context.Response.StatusCode = status;
+
+        RequestLogRoute.LevelFor(context, 1.0, threw ? new InvalidOperationException() : null).Should().Be(level);
     }
 }

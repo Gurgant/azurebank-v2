@@ -1,5 +1,7 @@
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Options;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Api.Services;
 
@@ -18,28 +20,38 @@ namespace AzureBank.Api.Services;
 ///   by the holder's own expiry — stays correct even if the token lifetime config is SHRUNK
 ///   (or the clock jumps back), which can leave a still-live predecessor pointing at an
 ///   already-expired successor.
-/// - First sweep runs one full interval after startup (no interference with fast test hosts).
+/// - First sweep runs one full interval after startup on the host's clock: no interference with
+///   fast test hosts, unless a test moves a fake clock past the interval, which runs one sweep.
+/// - The interval is <c>Jwt:RefreshTokenCleanupInterval</c>, six hours unless configured. Until
+///   2026-09-25 it was a constant here with the same value.
+/// - Clock: <see cref="TimeProvider"/>, defaulting to the system one as <c>NoticeRelayService</c>
+///   does, for the timer and for what counts as expired, so a test can move time instead of waiting.
+///   RefreshTokenService stamps ExpiresAt, and RefreshToken.IsExpired reads it, on DateTime.UtcNow, so
+///   the sweep and the read path agree while the registered clock is the system one -- every host
+///   outside tests. A fake clock moved seven days or more would sweep tokens the read path still takes.
 /// </summary>
 public class RefreshTokenCleanupService : BackgroundService
 {
-    // Expiry is enforced on read, so the sweep only bounds table growth; every 6 hours is
-    // ample against a 7-day token lifetime.
-    private static readonly TimeSpan SweepInterval = TimeSpan.FromHours(6);
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RefreshTokenCleanupService> _logger;
+    private readonly TimeSpan _interval;
+    private readonly TimeProvider _clock;
 
     public RefreshTokenCleanupService(
         IServiceScopeFactory scopeFactory,
-        ILogger<RefreshTokenCleanupService> logger)
+        ILogger<RefreshTokenCleanupService> logger,
+        IOptions<JwtOptions> options,
+        TimeProvider? clock = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _interval = options.Value.RefreshTokenCleanupInterval;
+        _clock = clock ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(SweepInterval);
+        using var timer = new PeriodicTimer(_interval, _clock);
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
@@ -69,7 +81,7 @@ public class RefreshTokenCleanupService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AzureBankDbContext>();
 
-        var now = DateTime.UtcNow;
+        var now = _clock.GetUtcNow().UtcDateTime;
         int removed;
 
         if (db.Database.IsRelational())

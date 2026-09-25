@@ -61,7 +61,8 @@ The Backend-For-Frontend pattern provides:
 - **Token Security**: JWT tokens stored server-side, never exposed to browser
 - **Session Management**: HTTP-only cookies with automatic timeout
 - **Rate Limiting**: Protection against abuse at the gateway level
-- **Security Headers**: OWASP-recommended headers (CSP, HSTS, etc.)
+- **Security Headers**: OWASP-recommended headers: CSP and five others, and HSTS everywhere but
+  Development. *(Until 2026-09-25 this listed HSTS, which the BFF did not send.)*
 
 ---
 
@@ -388,7 +389,7 @@ CPM centralizes all NuGet package versions in a single file, ensuring:
 | Package                 | Version | What               | How Used            | Why Chosen             |
 | ----------------------- | ------- | ------------------ | ------------------- | ---------------------- |
 | `Serilog.AspNetCore`    | 10.0.0  | Structured logging | Log requests/errors | Rich structured logs   |
-| `Serilog.Sinks.Console` | 6.1.1   | Console sink       | Output to terminal  | Development visibility |
+| `Serilog.Sinks.Console` | 6.1.1   | Console sink       | Output to terminal  | Text in development, JSON lines in Production |
 
 #### Testing
 
@@ -610,15 +611,23 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 
 | Variable                               | Description                              | Default     |
 | -------------------------------------- | ---------------------------------------- | ----------- |
-| `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Development |
-| `ConnectionStrings__DefaultConnection` | Database connection                      | -           |
-| `Jwt__Secret`                          | JWT signing key (local setup; unchecked) | -           |
+| `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Production* |
+| `ConnectionStrings__DefaultConnection` | Database connection (checked at start)   | -           |
+| `Jwt__Secret`                          | JWT signing key (32+ bytes, checked)     | -           |
 | `Idempotency__HashKey`                 | Idempotency HMAC key (32+, ADR-0009)     | -           |
 | `StepUp__BindingKey`                   | Step-up binding HMAC key (32+, ADR-0042) | -           |
 | `Audit__ChainKey`                      | Audit chain HMAC key (32+, ADR-0044)     | -           |
 | `Audit__AnchorKey`                     | Audit anchor HMAC key (32+, ADR-0044)    | -           |
 | `Security__PinPepper`                  | PIN pepper (32+, ADR-0011) — also Seeder | -           |
 | `ServiceCredential__BffKey`            | The BFF's key (32+, ADR-0055) — also BFF | -           |
+
+\* `dotnet run` sets Development, from `launchSettings.json`; with nothing set a host runs as
+Production. `DOTNET_ENVIRONMENT`, when set, wins over it (measured 2026-09-25). The console format
+(JSON in Production) and HSTS (outside Development) follow the environment. *(Until 2026-09-25
+this default read Development, which is `dotnet run`'s, not the host's.)*
+
+*(Until 2026-09-25 the JWT row said "unchecked", and nothing checked the key or the connection
+string at startup.)*
 
 The seven secrets are the [local setup](../docs/engineering-practices.md#local-setup)'s recipe
 spelled with `__` instead of `:` (six until 2026-09-19, when the service credential joined them);

@@ -72,6 +72,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string AuditAnchorKey =
         "test-only-anchor-key-quite-unlike-the-chain-one-9876543210";
 
+    /// <summary>The JWT signing key the test host starts with. Test-only value, NOT a real secret.</summary>
+    public const string JwtSecret =
+        "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef";
+
+    /// <summary>
+    /// A connection string that parses and is never opened: this factory replaces the DbContext
+    /// registration (a real SQL Server comes in through <c>SetConnectionString</c>), but the API
+    /// refuses to start without a usable <c>ConnectionStrings:DefaultConnection</c>.
+    /// </summary>
+    public const string PlaceholderConnectionString =
+        "Server=(localdb)\\MSSQLLocalDB;Database=NeverOpened;Trusted_Connection=True;TrustServerCertificate=True";
+
     /// <summary>
     /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
     /// PasswordHasher when recomputing hashes directly. NOT a real secret.
@@ -170,8 +182,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     /// <remarks>
     /// Opt-in rather than always on, because a fake clock does not advance by itself: every
     /// consumer in the host — the context's timestamps, the audit trail's OccurredAt, the day's
-    /// window — would read one frozen instant for the whole class, which is exactly what the
-    /// day-boundary test wants and what nothing else does. What it does NOT move: the step-up
+    /// window, and the refresh-token sweep's timer and expiry cutoff — would read one frozen instant
+    /// for the whole class, which is exactly what the day-boundary test wants and what nothing else
+    /// does. (Moving it past the sweep's six hours runs one sweep, which finds nothing: tokens are
+    /// stamped with the wall clock and live seven days.) What it does NOT move: the step-up
     /// mint and expiry and the JWT still read <c>DateTime.UtcNow</c>, so advancing this clock past
     /// midnight expires no authorisation and no token — ADR-0049's two-clock note, narrowed by
     /// ADR-0050 to the ledger clock and not closed.
@@ -277,8 +291,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     {
         // The Testing environment has no appsettings.Testing.json, so the required
         // JWT signing secret is supplied here. Test-only value - NOT a real secret.
-        builder.UseSetting("Jwt:Secret",
-            "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef");
+        builder.UseSetting("Jwt:Secret", JwtSecret);
+        builder.UseSetting("ConnectionStrings:DefaultConnection", PlaceholderConnectionString);
 
         // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
         builder.UseSetting("Idempotency:HashKey", IdempotencyHashKey);
@@ -346,10 +360,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                     {
                         if (_enableSqlRetryOnFailure)
                         {
-                            // Mirror production (ServiceCollectionExtensions):
-                            // the retrying strategy re-runs the transfer delegate
-                            // on a transient fault, which is exactly what the
-                            // transient-retry proof needs to exercise.
+                            // A retrying strategy, as production has: it re-runs the
+                            // transfer delegate on a transient fault, which is exactly
+                            // what the transient-retry proof needs to exercise. Not the
+                            // same budget -- a 5-second cap here, production's
+                            // Database:MaxRetryDelay is 30 s unless set. (Until
+                            // 2026-09-25 this said it mirrored production.)
                             sql.EnableRetryOnFailure(
                                 maxRetryCount: 3,
                                 maxRetryDelay: TimeSpan.FromSeconds(5),
