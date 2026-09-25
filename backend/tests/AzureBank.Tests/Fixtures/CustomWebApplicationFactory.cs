@@ -72,6 +72,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string AuditAnchorKey =
         "test-only-anchor-key-quite-unlike-the-chain-one-9876543210";
 
+    /// <summary>The JWT signing key the test host starts with. Test-only value, NOT a real secret.</summary>
+    public const string JwtSecret =
+        "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef";
+
+    /// <summary>
+    /// A connection string that parses and is never opened: this factory replaces the DbContext
+    /// registration (a real SQL Server comes in through <c>SetConnectionString</c>), but the API
+    /// refuses to start without a usable <c>ConnectionStrings:DefaultConnection</c>.
+    /// </summary>
+    public const string PlaceholderConnectionString =
+        "Server=(localdb)\\MSSQLLocalDB;Database=NeverOpened;Trusted_Connection=True;TrustServerCertificate=True";
+
     /// <summary>
     /// Test-only PIN-hash pepper (ADR-0011). Public so tests can build a matching
     /// PasswordHasher when recomputing hashes directly. NOT a real secret.
@@ -277,8 +289,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     {
         // The Testing environment has no appsettings.Testing.json, so the required
         // JWT signing secret is supplied here. Test-only value - NOT a real secret.
-        builder.UseSetting("Jwt:Secret",
-            "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef");
+        builder.UseSetting("Jwt:Secret", JwtSecret);
+        builder.UseSetting("ConnectionStrings:DefaultConnection", PlaceholderConnectionString);
 
         // Idempotency HMAC fingerprinting key (ADR-0009). Test-only value.
         builder.UseSetting("Idempotency:HashKey", IdempotencyHashKey);

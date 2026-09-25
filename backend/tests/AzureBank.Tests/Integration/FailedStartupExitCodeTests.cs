@@ -50,8 +50,10 @@ public sealed class FailedStartupExitCodeTests
 
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Testing";
         start.Environment["DOTNET_ENVIRONMENT"] = "Testing";
-        start.Environment["Jwt__Secret"] =
-            "integration-tests-only-signing-key-0123456789abcdef0123456789abcdef";
+        start.Environment["Jwt__Secret"] = CustomWebApplicationFactory.JwtSecret;
+        start.Environment["ConnectionStrings__DefaultConnection"] =
+            CustomWebApplicationFactory.PlaceholderConnectionString;
+        start.Environment["ServiceCredential__BffKey"] = CustomWebApplicationFactory.ServiceCredentialKey;
         start.Environment["Idempotency__HashKey"] = CustomWebApplicationFactory.IdempotencyHashKey;
         start.Environment["StepUp__BindingKey"] = CustomWebApplicationFactory.StepUpBindingKey;
         start.Environment["Security__PinPepper"] = CustomWebApplicationFactory.PinPepper;

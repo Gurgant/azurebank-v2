@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace AzureBank.Shared.Options;
 
 /// <summary>
@@ -11,9 +13,15 @@ public class JwtOptions
     /// </summary>
     public const string SectionName = "Jwt";
 
+    /// <summary>Fewest bytes of <see cref="Secret"/> the API starts with: HMAC-SHA256's 256 bits.</summary>
+    public const int MinimumSecretBytes = 32;
+
     /// <summary>
-    /// Secret key for signing JWT tokens.
-    /// Must be at least 32 characters for HMAC-SHA256.
+    /// Secret key for signing JWT tokens: at least <see cref="MinimumSecretBytes"/> bytes as UTF-8,
+    /// the encoding both signing sites use, so the rule counts bytes, not characters. The API
+    /// refuses to start without it (<c>ValidateOnStart</c>). <i>(Until 2026-09-25 this said "must be
+    /// at least 32 characters", and nothing enforced it: a 31-byte key started, and the first
+    /// sign-in answered 500.)</i>
     /// </summary>
     public string Secret { get; set; } = string.Empty;
 
@@ -38,4 +46,8 @@ public class JwtOptions
     /// Default: 7 days
     /// </summary>
     public int RefreshTokenExpirationDays { get; set; } = 7;
+
+    /// <summary>True when <paramref name="secret"/> is long enough to sign with.</summary>
+    public static bool IsUsableSecret(string? secret) =>
+        !string.IsNullOrWhiteSpace(secret) && Encoding.UTF8.GetByteCount(secret) >= MinimumSecretBytes;
 }

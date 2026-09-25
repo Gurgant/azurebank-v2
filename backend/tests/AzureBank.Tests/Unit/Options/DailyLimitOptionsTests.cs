@@ -136,6 +136,8 @@ public class DailyLimitOptionsTests
             ["Security:PinPepper"] = CustomWebApplicationFactory.PinPepper,
             ["Audit:ChainKey"] = CustomWebApplicationFactory.AuditChainKey,
             ["Audit:AnchorKey"] = CustomWebApplicationFactory.AuditAnchorKey,
+            ["Jwt:Secret"] = CustomWebApplicationFactory.JwtSecret,
+            ["ConnectionStrings:DefaultConnection"] = CustomWebApplicationFactory.PlaceholderConnectionString,
             ["DailyLimit:Amount"] = amount,
         }).Build();
 

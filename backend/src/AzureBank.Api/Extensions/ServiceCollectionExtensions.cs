@@ -17,6 +17,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -92,8 +93,11 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Configuration options
-        services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
+        // Configuration options. The JWT signing key and the connection string fail fast at
+        // startup, like the keys below: without them the API used to start and answer 500 at the
+        // first sign-in (measured 2026-09-25, as Production in a container).
+        services.AddJwtOptions(configuration);
+        services.AddDatabaseOptions(configuration);
         services.Configure<SeedDataOptions>(
             configuration.GetSection(SeedDataOptions.SectionName));
 
@@ -285,6 +289,71 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<Services.NoticeRelayService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The JWT options, with the signing key checked at startup: at least 32 bytes as UTF-8.
+    /// </summary>
+    /// <remarks>
+    /// Its own method, as <see cref="AddDailyLimit"/> is, so a test drives the rule through
+    /// <c>IStartupValidator</c> without building the whole host.
+    /// </remarks>
+    public static IServiceCollection AddJwtOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // Counted in BYTES: both signing sites turn the key into UTF-8 bytes, and HMAC-SHA256 needs
+        // 256 bits. The five other keys count characters; this one says bytes in its message.
+        services.AddOptions<JwtOptions>()
+            .Bind(configuration.GetSection(JwtOptions.SectionName))
+            .Validate(
+                o => JwtOptions.IsUsableSecret(o.Secret),
+                "Jwt:Secret must be configured with at least 32 bytes as UTF-8 " +
+                "(dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
+            .ValidateOnStart();
+        return services;
+    }
+
+    /// <summary>
+    /// The database options, with <c>ConnectionStrings:DefaultConnection</c> checked at startup: it must
+    /// be there and parse as a SQL Server connection string, so a missing value or a mistyped keyword
+    /// stops the host rather than the first sign-in.
+    /// </summary>
+    /// <remarks>
+    /// In the API root and not in <c>AddInfrastructure</c>, which the Function, the verifier and the
+    /// seeder also call: each of those decides for itself what it validates at start.
+    /// </remarks>
+    public static IServiceCollection AddDatabaseOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddOptions<DatabaseOptions>()
+            .Bind(configuration.GetSection(DatabaseOptions.SectionName))
+            .Validate(
+                _ => IsUsableConnectionString(
+                    configuration.GetConnectionString(DatabaseOptions.ConnectionStringName)),
+                "ConnectionStrings:DefaultConnection must be configured with a SQL Server connection " +
+                "string (dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
+            .ValidateOnStart();
+        return services;
+    }
+
+    private static bool IsUsableConnectionString(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = new SqlConnectionStringBuilder(value);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
