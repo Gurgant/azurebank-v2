@@ -33,7 +33,9 @@ flowchart LR
     API -->|"EF Core"| DB
 ```
 
-The arrow labels are the whole security story: **the browser holds a cookie, never a token.**
+The arrow labels are the whole security story: **the browser holds a cookie, never the JWT.**
+*(Until 2026-09-25 this said "never a token"; "the JWT" is the exact claim, since the browser
+also holds a one-shot PIN authorisation's id between the PIN and the operation it authorises.)*
 
 ## The one decision everything else follows from
 

@@ -2,7 +2,9 @@
 
 The single-page app: React 19, TypeScript, Vite, Fluent UI v9, and Redux Toolkit with RTK Query. It
 never calls the API itself. Every request goes to the BFF, which holds the session server-side, so
-the cookie stays first-party and no token ever reaches the browser (ADR-0038).
+the cookie stays first-party and the JWT never reaches the browser (ADR-0038). _(Until 2026-09-25
+this said "no token"; the browser does hold a one-shot PIN authorisation's id between the PIN
+and the operation it authorises.)_
 
 ## Run it
 

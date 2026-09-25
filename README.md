@@ -21,7 +21,7 @@ Accounts, deposits, withdrawals and transfers. Both halves are real and wired to
 
 The interesting part is not the CRUD. It is everything that has to be true **because it moves
 money**: an operation that executes exactly once across retries, crashes and concurrent duplicates;
-a browser that never holds a token; a second factor that survives a replayed request byte for byte.
+a browser that never sees the JWT; a second factor that survives a replayed request byte for byte.
 
 Designed and built by me, Vladislav Aleshaev, alone.
 
@@ -35,8 +35,9 @@ Designed and built by me, Vladislav Aleshaev, alone.
   Server. [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) ·
   [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) ·
   [the proof](backend/tests/AzureBank.Tests/Integration/IdempotencySqlServerConcurrencyTests.cs)
-- **The browser never holds a token.** The BFF keeps the session server-side and adds the bearer
-  itself, and the API accepts no caller but the BFF. [ADR-0001](docs/adr/0001-bff-pattern.md) ·
+- **The JWT never reaches the browser.** The BFF keeps it in a server-side session, gives the
+  browser an HttpOnly cookie and adds the bearer itself; the API accepts no caller but the BFF.
+  [ADR-0001](docs/adr/0001-bff-pattern.md) ·
   [ADR-0038](docs/adr/0038-bff-session-is-the-only-credential.md) ·
   [ADR-0055](docs/adr/0055-the-api-serves-one-client-the-bff.md)
 - **One PIN entry authorises one payment.** The PIN becomes a one-shot authorisation bound to the
@@ -116,7 +117,7 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
 
 | Document | What it gives you |
 |---|---|
-| [How AzureBank works](docs/architecture/overview.md) | One document, complete on its own: how the money guarantee works and why the browser has no token |
+| [How AzureBank works](docs/architecture/overview.md) | One document, complete on its own: how the money guarantee works and why the JWT never reaches the browser |
 | [ADR-0009](docs/adr/0009-idempotency-monetary-operations.md) and [ADR-0022](docs/adr/0022-client-money-mutation-protocol.md) | The money protocol, server and client halves; the five-outcome table is the core of the project |
 | [Decisions](docs/adr/README.md) | Every decision with its alternatives and what it leaves open; the index names four to start with |
 | [Engineering traps](docs/engineering-traps.md) | The things that fail silently, each one measured |

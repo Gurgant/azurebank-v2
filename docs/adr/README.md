@@ -26,7 +26,7 @@ detail hanging off them. *(It said fifty until 2026-09-24.)*
 
 | | Why this one |
 |---|---|
-| **[ADR-0001](0001-bff-pattern.md) — BFF pattern** | The decision everything else inherits: the browser never holds a token, so the whole auth story follows from here. |
+| **[ADR-0001](0001-bff-pattern.md) — BFF pattern** | The decision everything else inherits: the JWT never reaches the browser, so the whole auth story follows from here. *(It said "the browser never holds a token" until 2026-09-25; the browser does hold an HttpOnly session cookie, and a one-shot PIN authorisation's id between the PIN and the operation it authorises.)* |
 | **[ADR-0009](0009-idempotency-monetary-operations.md) — Idempotent monetary operations** | Where this stops being a CRUD app. A keyed HMAC over raw request bytes, a five-state protocol, and a deliberate correctness-over-availability trade. |
 | **[ADR-0019](0019-spa-bff-integration.md) — SPA/BFF integration** | Cookie auth and one error channel: the contract the entire frontend is written against. |
 | **[ADR-0022](0022-client-money-mutation-protocol.md) — Client money-mutation protocol** | The client half of ADR-0009 — which outcomes keep an idempotency key and which spend it. Every cell in that table is a double-spend if it is wrong. |

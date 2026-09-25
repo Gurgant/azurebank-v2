@@ -157,10 +157,11 @@ See ADR-0023 for the reasoning and the CI gates that hold it.
 
 ## Dependencies
 
-Package versions are pinned in one place through Central Package Management (ADR-0004), and CodeQL
-analyses every pull request. Dependabot alerts are not enabled on this repository, so a vulnerable
-dependency is found by reading advisories, not by an alert. _(Until 2026-09-24 this said "Security
-updates are applied promptly", which nothing enforced.)_
+Package versions are pinned in one place through Central Package Management (ADR-0004), CodeQL
+analyses every pull request, and Dependabot alerts are on (since 2026-09-25): GitHub reports a
+dependency with a published advisory. Nothing updates a package on its own; a fix goes through a
+pull request like any other change. _(Until 2026-09-24 this said "Security updates are applied
+promptly", which nothing enforced.)_
 
 ## See Also
 
