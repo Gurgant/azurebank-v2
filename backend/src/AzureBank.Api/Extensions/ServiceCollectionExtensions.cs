@@ -321,8 +321,8 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// The database options, with <c>ConnectionStrings:DefaultConnection</c> checked at startup: it must
-    /// be there and parse as a SQL Server connection string, so a missing value or a mistyped keyword
-    /// stops the host rather than the first sign-in.
+    /// be there, parse as a SQL Server connection string and name a server, so a missing value, a
+    /// mistyped keyword or a string with no server stops the host rather than the first sign-in.
     /// </summary>
     /// <remarks>
     /// In the API root and not in <c>AddInfrastructure</c>, which the Function, the verifier and the
@@ -340,7 +340,8 @@ public static class ServiceCollectionExtensions
                 _ => IsUsableConnectionString(
                     configuration.GetConnectionString(DatabaseOptions.ConnectionStringName)),
                 "ConnectionStrings:DefaultConnection must be configured with a SQL Server connection " +
-                "string (dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
+                "string that names a server (dotnet user-secrets in development; see Local setup in " +
+                "docs/engineering-practices.md)")
             .ValidateDataAnnotations()
             .Validate(
                 o => o.MaxRetryDelay > TimeSpan.Zero && o.MaxRetryDelay <= DatabaseOptions.LongestRetryDelay,
@@ -360,10 +361,12 @@ public static class ServiceCollectionExtensions
         // ("Connect Timeout=abc", "TrustServerCertificate=ture") throws FormatException or
         // OverflowException, which escaped this check and stopped the host with the parser's own
         // message instead of this rule's.
+        // Parsing is not enough: "Application Name=AzureBank" parses and names no server, and the API
+        // started with it and answered the first sign-in with 500 (measured 2026-09-25, both hosts as
+        // Production in containers).
         try
         {
-            _ = new SqlConnectionStringBuilder(value);
-            return true;
+            return !string.IsNullOrWhiteSpace(new SqlConnectionStringBuilder(value).DataSource);
         }
         catch (Exception e) when (e is ArgumentException or FormatException or OverflowException)
         {

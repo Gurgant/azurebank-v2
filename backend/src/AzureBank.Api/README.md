@@ -344,7 +344,7 @@ carried no `MachineName`.)*
 | Variable | Description |
 |----------|-------------|
 | `ASPNETCORE_ENVIRONMENT` | Runtime environment (Development/Production) |
-| `ConnectionStrings__DefaultConnection` | Database connection string; it must be there and parse, checked at startup |
+| `ConnectionStrings__DefaultConnection` | Database connection string; it must be there, parse and name a server, checked at startup |
 | `Jwt__Secret` | JWT signing key — the local setup's recipe; 32+ bytes as UTF-8, checked at startup |
 | `Idempotency__HashKey` | Request-fingerprint HMAC key (32+ chars, ADR-0009) |
 | `StepUp__BindingKey` | Step-up binding HMAC key (32+ chars, ADR-0042) |

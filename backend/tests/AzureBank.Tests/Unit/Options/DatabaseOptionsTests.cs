@@ -37,7 +37,9 @@ public class DatabaseOptionsTests
     [InlineData("Server=(localdb)\\MSSQLLocalDB;Database")] // not key=value
     [InlineData("Server=(localdb)\\MSSQLLocalDB;Connect Timeout=abc")] // a known keyword, not a number
     [InlineData("Server=(localdb)\\MSSQLLocalDB;TrustServerCertificate=ture")] // a known keyword, not a boolean
-    public void AMissingOrUnparseableConnectionString_StopsTheHostAtStart(string? connectionString)
+    [InlineData("Application Name=AzureBank")] // parses, and names no server
+    [InlineData("Server=  ;Database=AzureBank")] // a server that is only blanks
+    public void AMissingUnparseableOrServerlessConnectionString_StopsTheHostAtStart(string? connectionString)
     {
         using var root = Root(connectionString);
 

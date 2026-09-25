@@ -9,9 +9,10 @@ namespace AzureBank.Shared.Options;
 /// stays where every .NET host reads it, <c>ConnectionStrings:DefaultConnection</c>.
 /// </summary>
 /// <remarks>
-/// The API checks at startup that the connection string is there and parses: without it the host
-/// used to start and answer 500 at the first request that opened the database (measured
-/// 2026-09-25, a sign-in through the BFF, both hosts as Production in containers).
+/// The API checks at startup that the connection string is there, parses and names a server: without
+/// one, or with one naming no server, the host used to start and answer 500 at the first request that
+/// opened the database (measured 2026-09-25, a sign-in through the BFF, both hosts as Production in
+/// containers).
 /// </remarks>
 public class DatabaseOptions
 {
