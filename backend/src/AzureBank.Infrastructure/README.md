@@ -342,13 +342,14 @@ dotnet ef database update 0 \
 The DbContext is configured with:
 
 ```csharp
-services.AddDbContext<AzureBankDbContext>(options =>
+services.AddDbContext<AzureBankDbContext>((serviceProvider, options) =>
 {
+    var database = serviceProvider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
     options.UseSqlServer(connectionString, sqlOptions =>
     {
         sqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 3,
-            maxRetryDelay: TimeSpan.FromSeconds(30),
+            maxRetryCount: database.MaxRetryCount,  // Database:MaxRetryCount, 3 unless set
+            maxRetryDelay: database.MaxRetryDelay,  // Database:MaxRetryDelay, 30 s unless set
             errorNumbersToAdd: null);
 
         sqlOptions.CommandTimeout(30);
@@ -363,6 +364,8 @@ services.AddDbContext<AzureBankDbContext>(options =>
     }
 });
 ```
+
+*(Until 2026-09-25 the sample, like the code, fixed the retry budget at 3 and 30 s.)*
 
 ---
 

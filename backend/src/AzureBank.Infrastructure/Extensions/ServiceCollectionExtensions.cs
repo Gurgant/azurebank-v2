@@ -1,8 +1,10 @@
 using AzureBank.Infrastructure.Data;
+using AzureBank.Shared.Options;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace AzureBank.Infrastructure.Extensions;
 
@@ -35,9 +37,16 @@ public static class ServiceCollectionExtensions
         IHostEnvironment environment,
         bool retryOnTransientFailures = true)
     {
+        // The retry budget below reads Database:MaxRetryCount and Database:MaxRetryDelay, whose
+        // defaults are the constants this used to hard-code (3 and 30 s). Bound here for every host
+        // that calls this; only the API validates them at start (AddDatabaseOptions).
+        services.AddOptions<DatabaseOptions>()
+            .Bind(configuration.GetSection(DatabaseOptions.SectionName));
+
         // DbContext registration
-        services.AddDbContext<AzureBankDbContext>(options =>
+        services.AddDbContext<AzureBankDbContext>((serviceProvider, options) =>
         {
+            var database = serviceProvider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
             options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),
                 sqlOptions =>
@@ -59,8 +68,8 @@ public static class ServiceCollectionExtensions
                     if (retryOnTransientFailures)
                     {
                         sqlOptions.EnableRetryOnFailure(
-                            maxRetryCount: 3,
-                            maxRetryDelay: TimeSpan.FromSeconds(30),
+                            maxRetryCount: database.MaxRetryCount,
+                            maxRetryDelay: database.MaxRetryDelay,
                             errorNumbersToAdd: null);
                     }
 

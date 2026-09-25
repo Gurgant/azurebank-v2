@@ -107,4 +107,47 @@ public class JwtOptionsTests
         act.Should().Throw<OptionsValidationException>()
             .Which.Message.Should().Contain("Jwt:Secret must be configured");
     }
+
+    private static ServiceProvider RootWithInterval(string? interval)
+    {
+        var values = new Dictionary<string, string?> { ["Jwt:Secret"] = CustomWebApplicationFactory.JwtSecret };
+        if (interval is not null)
+        {
+            values["Jwt:RefreshTokenCleanupInterval"] = interval;
+        }
+
+        var services = new ServiceCollection();
+        services.AddJwtOptions(new ConfigurationBuilder().AddInMemoryCollection(values).Build());
+        return services.BuildServiceProvider();
+    }
+
+    [Theory]
+    [InlineData("00:00:00")]
+    [InlineData("-00:01:00")]
+    [InlineData("00:00:59")]
+    [InlineData("7.00:00:01")]
+    public void ASweepIntervalOutOfRange_StopsTheHostAtStart(string interval)
+    {
+        using var root = RootWithInterval(interval);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Message.Should().Contain("Jwt:RefreshTokenCleanupInterval must be between 00:01:00 and 7.00:00:00.");
+    }
+
+    [Theory]
+    [InlineData(null, 6 * 60)] // nothing configured: the six hours the sweep always had
+    [InlineData("00:01:00", 1)]
+    [InlineData("7.00:00:00", 7 * 24 * 60)]
+    public void ASweepIntervalInRange_StartsAndBinds(string? interval, int minutes)
+    {
+        using var root = RootWithInterval(interval);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().NotThrow();
+        root.GetRequiredService<IOptions<JwtOptions>>().Value.RefreshTokenCleanupInterval
+            .Should().Be(TimeSpan.FromMinutes(minutes));
+    }
 }

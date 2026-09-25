@@ -358,10 +358,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                     {
                         if (_enableSqlRetryOnFailure)
                         {
-                            // Mirror production (ServiceCollectionExtensions):
-                            // the retrying strategy re-runs the transfer delegate
-                            // on a transient fault, which is exactly what the
-                            // transient-retry proof needs to exercise.
+                            // A retrying strategy, as production has: it re-runs the
+                            // transfer delegate on a transient fault, which is exactly
+                            // what the transient-retry proof needs to exercise. Not the
+                            // same budget -- a 5-second cap here, production's
+                            // Database:MaxRetryDelay is 30 s unless set. (Until
+                            // 2026-09-25 this said it mirrored production.)
                             sql.EnableRetryOnFailure(
                                 maxRetryCount: 3,
                                 maxRetryDelay: TimeSpan.FromSeconds(5),

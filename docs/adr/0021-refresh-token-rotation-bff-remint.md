@@ -82,7 +82,8 @@ in two PRs so the auth-critical surface stays reviewable:
    but does **not** define a grace window; cf. Connect2id's configurable default). A client that
    loses the rotation response and gets a 401 simply re-authenticates (login) for a fresh pair.
 6. **Logout revokes.** `LogoutAsync` now revokes the user's active refresh tokens.
-7. **Hosted cleanup.** `RefreshTokenCleanupService` sweeps expired rows every 6 h (hygiene —
+7. **Hosted cleanup.** `RefreshTokenCleanupService` sweeps expired rows every 6 h *(every
+   `Jwt:RefreshTokenCleanupInterval` since 2026-09-25, 6 h unless set)* (hygiene —
    reads are already expiry-filtered). Because the table self-references itself
    (`ReplacedByTokenId`, `DeleteBehavior.Restrict`), the sweep first NULLs intra-set links,
    then deletes.
@@ -236,7 +237,8 @@ Until then the failure is at least observable: `SecurityEvent RefreshTokenReuseR
 
 > **Decided in [ADR-0034](0034-failed-family-revoke-recovery.md) (2026-08-08): neither.** Measuring
 > the shipped EF detector changed the question — a deadlock on this write is already retried three
-> times by `EnableRetryOnFailure`, while a command timeout is not retried at all, and retrying *that*
+> times by `EnableRetryOnFailure` *(three by default, `Database:MaxRetryCount` since 2026-09-25)*,
+> while a command timeout is not retried at all, and retrying *that*
 > inline would hold a connection for another `CommandTimeout` on a path an attacker triggers at will.
 > A durable work item was rejected because its own write shares this write's failure mode. The
 > residual below stands, and the detection it relies on is now pinned by tests rather than asserted.

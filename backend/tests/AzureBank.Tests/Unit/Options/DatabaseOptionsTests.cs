@@ -78,4 +78,55 @@ public class DatabaseOptionsTests
         act.Should().Throw<OptionsValidationException>()
             .Which.Message.Should().Contain("ConnectionStrings:DefaultConnection must be configured");
     }
+
+    private static ServiceProvider RootWithRetry(string? count, string? delay)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] = CustomWebApplicationFactory.PlaceholderConnectionString,
+        };
+        if (count is not null)
+        {
+            values["Database:MaxRetryCount"] = count;
+        }
+
+        if (delay is not null)
+        {
+            values["Database:MaxRetryDelay"] = delay;
+        }
+
+        var services = new ServiceCollection();
+        services.AddDatabaseOptions(new ConfigurationBuilder().AddInMemoryCollection(values).Build());
+        return services.BuildServiceProvider();
+    }
+
+    [Theory]
+    [InlineData("-1", null, "Database:MaxRetryCount must be between 0 and 20.")]
+    [InlineData("21", null, "Database:MaxRetryCount must be between 0 and 20.")]
+    [InlineData(null, "00:00:00", "Database:MaxRetryDelay must be above zero and at most 00:01:00.")]
+    [InlineData(null, "00:01:00.001", "Database:MaxRetryDelay must be above zero and at most 00:01:00.")]
+    public void ARetryBudgetOutOfRange_StopsTheHostAtStart(string? count, string? delay, string message)
+    {
+        using var root = RootWithRetry(count, delay);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().Throw<OptionsValidationException>().Which.Message.Should().Contain(message);
+    }
+
+    [Theory]
+    [InlineData(null, null, 3, 30_000)] // nothing configured: the values the code always had
+    [InlineData("0", "00:00:00.001", 0, 1)]
+    [InlineData("20", "00:01:00", 20, 60_000)]
+    public void ARetryBudgetInRange_StartsAndBinds(string? count, string? delay, int retries, int delayMs)
+    {
+        using var root = RootWithRetry(count, delay);
+
+        var act = () => root.GetRequiredService<IStartupValidator>().Validate();
+
+        act.Should().NotThrow();
+        var options = root.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+        options.MaxRetryCount.Should().Be(retries);
+        options.MaxRetryDelay.Should().Be(TimeSpan.FromMilliseconds(delayMs));
+    }
 }

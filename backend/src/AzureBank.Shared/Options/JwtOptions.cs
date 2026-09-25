@@ -47,6 +47,19 @@ public class JwtOptions
     /// </summary>
     public int RefreshTokenExpirationDays { get; set; } = 7;
 
+    /// <summary>Shortest <see cref="RefreshTokenCleanupInterval"/> the API starts with.</summary>
+    public static readonly TimeSpan ShortestCleanupInterval = TimeSpan.FromMinutes(1);
+
+    /// <summary>Longest <see cref="RefreshTokenCleanupInterval"/> the API starts with.</summary>
+    public static readonly TimeSpan LongestCleanupInterval = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// How often expired refresh tokens are deleted, the first time one interval after start. Six
+    /// hours, the value the sweep has always used; the sweep is hygiene, since every read already
+    /// refuses an expired token, so the interval bounds only how many dead rows the table holds.
+    /// </summary>
+    public TimeSpan RefreshTokenCleanupInterval { get; set; } = TimeSpan.FromHours(6);
+
     /// <summary>True when <paramref name="secret"/> is long enough to sign with.</summary>
     public static bool IsUsableSecret(string? secret) =>
         !string.IsNullOrWhiteSpace(secret) && Encoding.UTF8.GetByteCount(secret) >= MinimumSecretBytes;

@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace AzureBank.Shared.Options;
 
 /// <summary>
@@ -16,4 +18,18 @@ public class DatabaseOptions
 
     /// <summary>The name under <c>ConnectionStrings</c> the API opens.</summary>
     public const string ConnectionStringName = "DefaultConnection";
+
+    /// <summary>Longest <see cref="MaxRetryDelay"/> the API starts with.</summary>
+    public static readonly TimeSpan LongestRetryDelay = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// How many times EF retries an operation that failed transiently -- a lost connection, a
+    /// deadlock, a resource limit; not a command timeout (<c>AddInfrastructure</c> says why). 3, the
+    /// value the code has always had; 0 turns retrying off.
+    /// </summary>
+    [Range(0, 20, ErrorMessage = "Database:MaxRetryCount must be between 0 and 20.")]
+    public int MaxRetryCount { get; set; } = 3;
+
+    /// <summary>The longest wait between two retries; EF's backoff grows towards it. 30 seconds.</summary>
+    public TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
 }

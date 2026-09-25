@@ -310,6 +310,10 @@ public static class ServiceCollectionExtensions
                 o => JwtOptions.IsUsableSecret(o.Secret),
                 "Jwt:Secret must be configured with at least 32 bytes as UTF-8 " +
                 "(dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
+            .Validate(
+                o => o.RefreshTokenCleanupInterval >= JwtOptions.ShortestCleanupInterval
+                     && o.RefreshTokenCleanupInterval <= JwtOptions.LongestCleanupInterval,
+                "Jwt:RefreshTokenCleanupInterval must be between 00:01:00 and 7.00:00:00.")
             .ValidateOnStart();
         return services;
     }
@@ -327,6 +331,8 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        // Bound here as well as in AddInfrastructure, so this stands alone; binding one section twice
+        // gives the same values.
         services.AddOptions<DatabaseOptions>()
             .Bind(configuration.GetSection(DatabaseOptions.SectionName))
             .Validate(
@@ -334,6 +340,10 @@ public static class ServiceCollectionExtensions
                     configuration.GetConnectionString(DatabaseOptions.ConnectionStringName)),
                 "ConnectionStrings:DefaultConnection must be configured with a SQL Server connection " +
                 "string (dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
+            .ValidateDataAnnotations()
+            .Validate(
+                o => o.MaxRetryDelay > TimeSpan.Zero && o.MaxRetryDelay <= DatabaseOptions.LongestRetryDelay,
+                "Database:MaxRetryDelay must be above zero and at most 00:01:00.")
             .ValidateOnStart();
         return services;
     }
