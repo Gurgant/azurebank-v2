@@ -94,7 +94,8 @@ try
         .Validate(
             o => ServiceCredentialOptions.IsUsable(o.BffKey),
             "ServiceCredential:BffKey must be configured with at least 32 characters, the same " +
-            "value the API holds (dotnet user-secrets in development; see README)")
+            "value the API holds (dotnet user-secrets in development; see Local setup in " +
+            "docs/engineering-practices.md)")
         // The key is a bearer secret: it goes over TLS or to this machine, never in clear across
         // a network. Checked here for both roads, and again per request on the proxy's, whose
         // configuration can reload.

@@ -33,7 +33,9 @@ flowchart LR
     API -->|"EF Core"| DB
 ```
 
-The arrow labels are the whole security story: **the browser holds a cookie, never a token.**
+The arrow labels are the whole security story: **the browser holds a cookie, never the JWT.**
+*(Until 2026-09-25 this said "never a token"; "the JWT" is the exact claim, since the browser
+also holds a one-shot PIN authorisation's id between the PIN and the operation it authorises.)*
 
 ## The one decision everything else follows from
 
@@ -104,13 +106,17 @@ inside the transfer's transaction under a per-user application lock (ADR-0050).
 
 Four operations need a PIN — a withdrawal, a transfer, closing an account, and the account-number
 reveal. The API verifies it for the first three; the reveal is gated by the BFF session alone, so a
-bearer token sent to the API directly reads the full number without one (measured, `SECURITY.md`).
-*(Until 2026-09-06 this said three; until 2026-09-17, that the API verifies all four.)*
-Money moves carry their proof in the request: a withdrawal sends the PIN *inside* the body (it is
-part of what gets hashed), and a transfer first turns the PIN into a **one-shot authorisation** —
-bound to payer, payee and amount, valid two minutes, spent once — presented in a
-`Step-Up-Authorization` header (ADR-0041, ADR-0042). Nothing in the session authorises a payment;
-one PIN entry authorises one payment.
+caller presenting a bearer token together with the BFF's service key reads the full number without
+one — and since ADR-0055 only the BFF presents that key in a deployment; the API keeps the same
+value to check it (`SECURITY.md`).
+*(Until 2026-09-06 this said three; until 2026-09-17, that the API verifies all four; until
+2026-09-24, that a bearer token alone was enough, which ADR-0055 ended on 2026-09-19.)*
+Money moves carry their proof in the request: a withdrawal, like a transfer, first turns the PIN
+into a **one-shot authorisation** — bound to the account, the amount and, for a transfer, the payee;
+valid two minutes; spent once — presented in a `Step-Up-Authorization` header (ADR-0041, ADR-0042,
+ADR-0056). Nothing in the session authorises a payment; one PIN entry authorises one payment.
+*(Until 2026-09-24 this said a withdrawal sends the PIN inside its body; ADR-0056 moved it onto a
+one-shot authorisation on 2026-09-21.)*
 
 The account-number reveal is the one route that still uses the **session** level, and the elevation
 lives there rather than in the token: hit at level 1 it returns `403` with `X-Auth-Level-Required`;

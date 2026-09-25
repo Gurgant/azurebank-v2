@@ -104,7 +104,7 @@ public static class ServiceCollectionExtensions
             .Validate(
                 o => !string.IsNullOrWhiteSpace(o.HashKey) && o.HashKey.Length >= 32,
                 "Idempotency:HashKey must be configured with at least 32 characters " +
-                "(dotnet user-secrets in development; see README)")
+                "(dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
             .Validate(
                 o => o.Ttl > TimeSpan.Zero
                      && o.ProcessingStaleAfter > TimeSpan.Zero
@@ -121,7 +121,7 @@ public static class ServiceCollectionExtensions
             .Validate(
                 o => !string.IsNullOrWhiteSpace(o.BindingKey) && o.BindingKey.Length >= 32,
                 "StepUp:BindingKey must be configured with at least 32 characters " +
-                "(dotnet user-secrets in development; see README)")
+                "(dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
             .Validate(
                 o => o.Window > TimeSpan.Zero,
                 "StepUp:Window must be positive")
@@ -135,7 +135,8 @@ public static class ServiceCollectionExtensions
             .Validate(
                 o => ServiceCredentialOptions.IsUsable(o.BffKey),
                 "ServiceCredential:BffKey must be configured with at least 32 characters, the same " +
-                "value the BFF holds (dotnet user-secrets in development; see README)")
+                "value the BFF holds (dotnet user-secrets in development; see Local setup in " +
+                "docs/engineering-practices.md)")
             .ValidateOnStart();
 
         services.AddDailyLimit(configuration);
@@ -150,7 +151,7 @@ public static class ServiceCollectionExtensions
             .Validate(
                 o => !string.IsNullOrWhiteSpace(o.ChainKey) && o.ChainKey.Length >= 32,
                 "Audit:ChainKey must be configured with at least 32 characters " +
-                "(dotnet user-secrets in development; see README)")
+                "(dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
 
             // The SIXTH secret, and separate from ChainKey for a reason sharper than the general
             // rule. The anchor exists to constrain somebody who holds the database; the row chain
@@ -160,7 +161,8 @@ public static class ServiceCollectionExtensions
             .Validate(
                 o => !string.IsNullOrWhiteSpace(o.AnchorKey) && o.AnchorKey.Length >= 32,
                 "Audit:AnchorKey must be configured with at least 32 characters " +
-                "(dotnet user-secrets in development; see README). It authenticates the anchor "
+                "(dotnet user-secrets in development; see Local setup in " +
+                "docs/engineering-practices.md). It authenticates the anchor "
                 + "records that say what the chain looked like at an instant; without it an anchor "
                 + "is a row anybody holding the database can write.")
 

@@ -32,7 +32,8 @@ brew install bruno
 
 The API serves only the BFF (ADR-0055), so every request here carries
 `X-AzureBank-Service-Key`, which `collection.bru` reads from `serviceKey`. Supply your own
-`ServiceCredential:BffKey` — the root README's recipe generates it — on the command line:
+`ServiceCredential:BffKey` — the [local setup](../../docs/engineering-practices.md#local-setup)'s
+recipe generates it _(until 2026-09-25 this said the root README's)_ — on the command line:
 
 ```bash
 cd tests/api-collection

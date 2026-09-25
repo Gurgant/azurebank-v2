@@ -6,7 +6,7 @@
     <a href="../docs/architecture/overview.md"><strong>Explore the Architecture »</strong></a>
     <br />
     <br />
-    <a href="https://localhost:7215/scalar/v1">API Documentation</a>
+    <a href="../docs/api/README.md">API Documentation</a>
     ·
     <a href="../docs/adr/">Architecture Decisions</a>
     ·
@@ -41,7 +41,10 @@
 
 ## Overview
 
-**AzureBank** is an enterprise-grade banking backend system implementing a secure **Backend-For-Frontend (BFF)** architecture pattern. The system provides comprehensive account management, transaction processing, and money transfer capabilities with defense-in-depth security.
+The backend of **AzureBank**: a .NET 10 REST API behind a **Backend-For-Frontend (BFF)** — accounts,
+deposits, withdrawals and transfers, with the security controls split between the two hosts as
+[`SECURITY.md`](../SECURITY.md) sets out. *(Until 2026-09-24 this opened by calling the backend
+"enterprise-grade" with "defense-in-depth security".)*
 
 ### What This Project Does
 
@@ -71,7 +74,9 @@ The Backend-For-Frontend pattern provides:
   PINs hashed with Argon2id and peppered (ADR-0011)
 - Step-up authentication with 6-digit PIN for sensitive operations
 - Session management with configurable timeouts
-- Rate limiting (100 requests/minute per client)
+- Rate limiting at the BFF: 300 requests a minute overall and 10 a minute on sign-in and
+  registration, both per client IP; 20 a minute on user lookups by handle, per signed-in user
+  *(until 2026-09-24 this said 100 a minute per client, which is not what the configuration sets)*
 
 ### Account Management
 
@@ -103,7 +108,7 @@ The Backend-For-Frontend pattern provides:
 ```mermaid
 flowchart TB
     subgraph Client["Client Layer"]
-        Browser["Browser / Mobile App"]
+        Browser["Browser"]
     end
 
     subgraph BFF["BFF Gateway (Port 5001)"]
@@ -138,6 +143,8 @@ flowchart TB
     class Data dataStyle
 
 ```
+
+*(Until 2026-09-24 the client layer read "Browser / Mobile App"; there is no mobile app.)*
 
 ### Request Flow
 
@@ -605,7 +612,7 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | -------------------------------------- | ---------------------------------------- | ----------- |
 | `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Development |
 | `ConnectionStrings__DefaultConnection` | Database connection                      | -           |
-| `Jwt__Secret`                          | JWT signing key (README recipe; unchecked) | -         |
+| `Jwt__Secret`                          | JWT signing key (local setup; unchecked) | -           |
 | `Idempotency__HashKey`                 | Idempotency HMAC key (32+, ADR-0009)     | -           |
 | `StepUp__BindingKey`                   | Step-up binding HMAC key (32+, ADR-0042) | -           |
 | `Audit__ChainKey`                      | Audit chain HMAC key (32+, ADR-0044)     | -           |
@@ -613,10 +620,12 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | `Security__PinPepper`                  | PIN pepper (32+, ADR-0011) — also Seeder | -           |
 | `ServiceCredential__BffKey`            | The BFF's key (32+, ADR-0055) — also BFF | -           |
 
-The seven secrets are the root README's recipe spelled with `__` instead of `:` (six until
-2026-09-19, when the service credential joined them); in development they come from
-`dotnet user-secrets`. The Seeder needs only the connection string and the pepper, and the BFF
-only `ServiceCredential__BffKey`, the same value the API holds.
+The seven secrets are the [local setup](../docs/engineering-practices.md#local-setup)'s recipe
+spelled with `__` instead of `:` (six until 2026-09-19, when the service credential joined them);
+in development they come from `dotnet user-secrets`. The Seeder needs only the connection string
+and the pepper, and the BFF only `ServiceCredential__BffKey`, the same value the API holds.
+*(Until 2026-09-25 this paragraph and the table named the root README's recipe, which moved to the
+local setup.)*
 
 ---
 

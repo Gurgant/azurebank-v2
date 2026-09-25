@@ -13,32 +13,63 @@ Decisions live in [`adr/`](adr/README.md). Sharp edges that fail silently live i
 
 ## Local setup
 
+The one copy of these instructions; the root README links here. *(Until 2026-09-24 the root README
+carried its own copy, and this one had fallen behind it: it never set `ServiceCredential:BffKey`,
+without which neither the API nor the BFF starts.)*
+
 Configuration comes from **user-secrets**, never from a committed settings file. The API fails at
 startup without them, by design — `ValidateOnStart` refuses to run a bank with a missing pepper.
 
-The API and the seeder have **separate secret stores** (different `UserSecretsId`), so every value
-has to be set twice — `--project` is not optional here:
+**The API, the BFF and the seeder have separate secret stores** (a `UserSecretsId` each), so a value
+two of them share is set once per project — `--project` is not optional. Three values are shared
+and must match: the connection string and the PIN pepper, API and seeder, and the service
+credential, API and BFF.
 
 ```bash
 API=backend/src/AzureBank.Api
+BFF=backend/src/AzureBank.Bff
 SEEDER=backend/tools/AzureBank.Seeder
 CONN='Server=(localdb)\MSSQLLocalDB;Database=AzureBankDev;Trusted_Connection=True;TrustServerCertificate=True'
-PEPPER='<32+ chars>'   # the SAME value goes to both projects
+PEPPER="$(openssl rand -base64 48)"
+SERVICE_KEY="$(openssl rand -base64 48)"
 
-dotnet user-secrets --project $API    set "Jwt:Secret" "<64+ chars>"
-dotnet user-secrets --project $API    set "Idempotency:HashKey" "<32+ chars>"
-dotnet user-secrets --project $API    set "StepUp:BindingKey" "<32+ chars>"
-dotnet user-secrets --project $API    set "Audit:ChainKey" "<32+ chars>"
-dotnet user-secrets --project $API    set "Audit:AnchorKey" "<32+ chars>"
+dotnet user-secrets --project $API    set "Jwt:Secret" "$(openssl rand -base64 64)"
+dotnet user-secrets --project $API    set "Idempotency:HashKey" "$(openssl rand -base64 32)"
+dotnet user-secrets --project $API    set "StepUp:BindingKey" "$(openssl rand -base64 32)"
+dotnet user-secrets --project $API    set "Audit:ChainKey" "$(openssl rand -base64 32)"
+dotnet user-secrets --project $API    set "Audit:AnchorKey" "$(openssl rand -base64 32)"
 dotnet user-secrets --project $API    set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $API    set "ConnectionStrings:DefaultConnection" "$CONN"
-
+dotnet user-secrets --project $API    set "ServiceCredential:BffKey" "$SERVICE_KEY"
+dotnet user-secrets --project $BFF    set "ServiceCredential:BffKey" "$SERVICE_KEY"
 dotnet user-secrets --project $SEEDER set "Security:PinPepper" "$PEPPER"
 dotnet user-secrets --project $SEEDER set "ConnectionStrings:DefaultConnection" "$CONN"
 ```
 
 If the two peppers differ, seeding succeeds and every seeded PIN then fails verification — the
 failure surfaces at login, far from its cause.
+
+`Security:PinPepper` is mixed into the Argon2id PIN hash so a stolen database cannot brute-force
+the six-digit PIN space offline. It supports zero-downtime rotation through a keyring
+(`Security:PreviousPinPeppers`) — when rotating, keep the whole ring in one secret provider.
+
+`ServiceCredential:BffKey` is how the API knows a request comes from the BFF: the BFF sends it in
+`X-AzureBank-Service-Key` on every call, and the API refuses anything without it before it looks at
+a token, so the API serves one client (ADR-0055). Neither host starts without it, and the running
+API answers 401 to every request without the header but its health probes and, in Development, its
+own API documentation:
+`/health/*` is exempt in every environment, `/openapi` and `/scalar` in Development, so a browser
+can still open the documentation. Calling an API OPERATION by hand — curl, Bruno, the Scalar page's
+"Try it" — needs that header. Bruno reads it from `serviceKey`, which ships empty in the tracked
+`local.bru` and is passed per run instead: `cd tests/api-collection && bru run . -r --env local
+--env-var serviceKey="$SERVICE_KEY" --insecure`. The `-r` is not optional — without it bru sends no
+requests at all and still reports PASS. In production the API also has no public address; the key
+is the second line behind that.
+
+`Audit:ChainKey` keys the audit trail's hash chain and `Audit:AnchorKey` authenticates the anchor
+records that say what the chain looked like at an instant (ADR-0044). Both are 32+ characters and
+deliberately separate: the anchor constrains whoever holds the database, so it must not be
+forgeable with the key the row chain uses.
 
 **Database — one command, not `dotnet ef`:**
 
@@ -47,20 +78,69 @@ DOTNET_ENVIRONMENT=Development dotnet run --project backend/tools/AzureBank.Seed
 ```
 
 That drops, migrates and seeds in one step. The environment variable is required and the `DOTNET_`
-prefix is not interchangeable with `ASPNETCORE_` — see the traps document for why. Seeding also
-creates the Identity roles, without which registration returns a 500.
+prefix is not interchangeable with `ASPNETCORE_` — the seeder is a console Generic Host and reads
+the other prefix; see the traps document. Seeding also creates the Identity roles, without which
+registration returns a 500. The seeded demo user is `john@example.com` / `Test123!`, PIN `123456`,
+with two months of history on two accounts.
 
-**Running it** — start these sequentially the first time, or two parallel first builds race on
-`AzureBank.Shared.dll`:
+**Running it** — the three processes each run in their own terminal and stay running. Start them
+sequentially the first time, or two parallel first builds race on `AzureBank.Shared.dll` and fail
+with a file lock that looks like a corrupted build:
 
 ```bash
 dotnet run --project backend/src/AzureBank.Api --launch-profile https   # https://localhost:7215
 dotnet run --project backend/src/AzureBank.Bff --launch-profile http    # http://localhost:5000
-cd frontend && npm run dev                                              # http://localhost:5173
+cd frontend && npm ci && npm run dev                                     # http://localhost:5173
 ```
 
 The API must run the **https** profile: the BFF's proxy cluster points at 7215, so the http profile
 produces a BFF that starts and then fails every proxied call.
+
+The BFF's proxy reaches the API over https with the SDK's development certificate. The committed
+`appsettings.Development.json.example` tells it to accept any certificate on that hop, in
+Development only; the real file is git-ignored, so copy it once:
+
+```bash
+cp backend/src/AzureBank.Bff/appsettings.Development.json.example backend/src/AzureBank.Bff/appsettings.Development.json
+```
+
+**Running the tests** — stop the API and the BFF first: the solution build rewrites their
+executables, which Windows keeps locked while they run, so after an edit the build `dotnet test`
+starts fails with `MSB3027: Could not copy … apphost.exe` (measured 2026-09-25):
+
+```bash
+dotnet test backend/AzureBank.slnx    # name the solution — see below
+cd frontend && npm run build && npx vitest run
+```
+
+Two commands that look like they work and do not: a filtered `dotnet test` silently drops the
+entire BFF suite while reporting success, and `tsc --noEmit` skips project references under this
+solution-style tsconfig. Both are explained in [engineering traps](engineering-traps.md). The
+concurrency proofs need a real SQL Server and skip without one:
+
+```bash
+AZUREBANK_TEST_SQLSERVER="Server=(localdb)\\MSSQLLocalDB;Database=AzureBankProofs;Trusted_Connection=True;TrustServerCertificate=True" \
+  dotnet test backend/AzureBank.slnx --filter "Category=SqlServer"
+```
+
+**Traces, metrics and logs, locally.** Both services emit them over OpenTelemetry, correlated end to
+end: a request through the BFF is **one trace** — BFF span, YARP forwarder, HttpClient, API, SQL —
+and every ProblemDetails carries the bare 32-hex `traceId` that pastes straight into Tempo search.
+
+```bash
+docker compose -f observability/docker-compose.yml up -d   # Grafana LGTM on 127.0.0.1:3000
+
+# Export in the terminal that starts each service — a bare assignment stays shell-local
+# and the child process never sees it. Use 127.0.0.1, not localhost: on Windows the name
+# resolves to ::1 first and the collector is listening on IPv4.
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+```
+
+In PowerShell: `$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"`. Export is opt-in:
+without the variable, tests and dev runs emit nothing. Telemetry is PII-safe by design — emails are
+masked through the .NET compliance stack, amounts never appear in log lines, and user-controlled
+values pass a central sanitizer whose contract is pinned by tests.
 
 ## Quality gates
 
@@ -167,10 +247,13 @@ because a wrong sentence left looking current is read as current: that is not a 
 it is why `docs/runbooks/audit-chain-unavailable.md` went on repeating a claim ADR-0044 had already
 withdrawn.
 
-**The one exception is text an operator reads under pressure** — runbooks, printed verdicts, error
-strings. There the wrong wording is removed rather than struck, because nobody scrolls past a struck
-line during an incident and a `~~` renders as noise in a terminal. Everything else that describes
-the system AS IT IS rather than as it was decided — `docs/deferred/`, code comments, XML docs — is
+**The first exception is text an operator reads under pressure** — runbooks, printed verdicts,
+error strings. There the wrong wording is removed rather than struck, because nobody scrolls past a
+struck line during an incident and a `~~` renders as noise in a terminal. **The second is the root
+README** (since 2026-09-24): it is the first page a visitor reads, often not an engineer, and a line
+about what it used to claim reads there as noise, or as doubt about everything around it. It is
+corrected in place without that line; git keeps what it said. Everything else that describes the
+system AS IT IS rather than as it was decided — `docs/deferred/`, code comments, XML docs — is
 simply corrected in place, with a line saying what it used to claim.
 
 **What this rule does not ask anybody to decide.** An earlier draft of it split corrections by kind
