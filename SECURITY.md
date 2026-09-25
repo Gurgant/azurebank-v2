@@ -160,11 +160,11 @@ See ADR-0023 for the reasoning and the CI gates that hold it.
 
 Package versions are pinned in one place through Central Package Management (ADR-0004), and CodeQL
 analyses every pull request. Dependabot alerts are on (since 2026-09-25) and reach the frontend's
-npm packages only: GitHub's dependency graph reads no version from
-`backend/Directory.Packages.props` and lists every NuGet package as `>= 0`, so no advisory is
-matched against the backend. Nothing updates a package on its own; a fix goes through a pull
-request like any other change. _(Until 2026-09-24 this said "Security updates are applied
-promptly", which nothing enforced.)_
+npm packages and the GitHub Actions the workflows use, but not the backend: GitHub's dependency
+graph reads no version from `backend/Directory.Packages.props` and lists every NuGet package as
+`>= 0`, so no advisory is matched against the backend. Nothing updates a package on its own; a fix
+goes through a pull request like any other change. _(Until 2026-09-24 this said "Security updates
+are applied promptly", which nothing enforced.)_
 
 ## See Also
 

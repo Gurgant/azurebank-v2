@@ -97,8 +97,8 @@ The API must run the **https** profile: the BFF's proxy cluster points at 7215, 
 produces a BFF that starts and then fails every proxied call.
 
 The BFF's proxy reaches the API over https with the SDK's development certificate. The committed
-`appsettings.Development.json.example` tells it to accept that certificate, in Development only;
-the real file is git-ignored, so copy it once:
+`appsettings.Development.json.example` tells it to accept any certificate on that hop, in
+Development only; the real file is git-ignored, so copy it once:
 
 ```bash
 cp backend/src/AzureBank.Bff/appsettings.Development.json.example backend/src/AzureBank.Bff/appsettings.Development.json

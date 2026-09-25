@@ -349,8 +349,9 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 | `Security__PinPepper` | PIN-hash pepper (32+ chars, ADR-0011); the Seeder needs the same value |
 | `ServiceCredential__BffKey` | The key the BFF presents in `X-AzureBank-Service-Key` (32+ chars, ADR-0055); the BFF needs the same value |
 
-In development the same seven values come from `dotnet user-secrets` (`:` instead of `__`) — see
-the [local setup](../../../docs/engineering-practices.md#local-setup), the one copy of the recipe.
+In development every value above but `ASPNETCORE_ENVIRONMENT` comes from `dotnet user-secrets`
+(`:` instead of `__`) — see the [local setup](../../../docs/engineering-practices.md#local-setup),
+the one copy of the recipe.
 *(Until 2026-09-25 this said six values, and it and the table pointed at the root README's recipe,
 which moved there; the service credential joined the secrets on 2026-09-19.)*
 
