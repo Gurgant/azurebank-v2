@@ -340,8 +340,8 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 | Variable | Description |
 |----------|-------------|
 | `ASPNETCORE_ENVIRONMENT` | Runtime environment (Development/Production) |
-| `ConnectionStrings__DefaultConnection` | Database connection string |
-| `Jwt__Secret` | JWT signing key — the local setup's recipe; nothing validates its length at startup |
+| `ConnectionStrings__DefaultConnection` | Database connection string; it must be there and parse, checked at startup |
+| `Jwt__Secret` | JWT signing key — the local setup's recipe; 32+ bytes as UTF-8, checked at startup |
 | `Idempotency__HashKey` | Request-fingerprint HMAC key (32+ chars, ADR-0009) |
 | `StepUp__BindingKey` | Step-up binding HMAC key (32+ chars, ADR-0042) |
 | `Audit__ChainKey` | Audit hash-chain HMAC key (32+ chars, ADR-0044) |
@@ -353,7 +353,8 @@ In development every value above but `ASPNETCORE_ENVIRONMENT` comes from `dotnet
 (`:` instead of `__`) — see the [local setup](../../../docs/engineering-practices.md#local-setup),
 the one copy of the recipe.
 *(Until 2026-09-25 this said six values, and it and the table pointed at the root README's recipe,
-which moved there; the service credential joined the secrets on 2026-09-19.)*
+which moved there; the service credential joined the secrets on 2026-09-19. Until 2026-09-25 the
+JWT row also said nothing validated its length at startup, and nothing did.)*
 
 ---
 

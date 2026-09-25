@@ -611,14 +611,17 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 | Variable                               | Description                              | Default     |
 | -------------------------------------- | ---------------------------------------- | ----------- |
 | `ASPNETCORE_ENVIRONMENT`               | Runtime environment                      | Development |
-| `ConnectionStrings__DefaultConnection` | Database connection                      | -           |
-| `Jwt__Secret`                          | JWT signing key (local setup; unchecked) | -           |
+| `ConnectionStrings__DefaultConnection` | Database connection (checked at start)   | -           |
+| `Jwt__Secret`                          | JWT signing key (32+ bytes, checked)     | -           |
 | `Idempotency__HashKey`                 | Idempotency HMAC key (32+, ADR-0009)     | -           |
 | `StepUp__BindingKey`                   | Step-up binding HMAC key (32+, ADR-0042) | -           |
 | `Audit__ChainKey`                      | Audit chain HMAC key (32+, ADR-0044)     | -           |
 | `Audit__AnchorKey`                     | Audit anchor HMAC key (32+, ADR-0044)    | -           |
 | `Security__PinPepper`                  | PIN pepper (32+, ADR-0011) — also Seeder | -           |
 | `ServiceCredential__BffKey`            | The BFF's key (32+, ADR-0055) — also BFF | -           |
+
+*(Until 2026-09-25 the JWT row said "unchecked", and nothing checked the key or the connection
+string at startup.)*
 
 The seven secrets are the [local setup](../docs/engineering-practices.md#local-setup)'s recipe
 spelled with `__` instead of `:` (six until 2026-09-19, when the service credential joined them);
