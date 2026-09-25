@@ -33,80 +33,88 @@ detail hanging off them. *(It said fifty until 2026-09-24.)*
 
 ## By theme
 
-**Platform and topology** — [0001](0001-bff-pattern.md) BFF pattern ·
-[0002](0002-yarp-proxy.md) YARP reverse proxy ·
-[0018](0018-bff-origin-hardening.md) BFF origin hardening ·
-[0019](0019-spa-bff-integration.md) SPA/BFF integration ·
-[0039](0039-bff-session-cache-is-a-fallback.md) the BFF session cache is a fallback, never the answer ·
-[0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) the BFF serves the
-built SPA under a CSP measured against it ·
-[0055](0055-the-api-serves-one-client-the-bff.md) the API serves one client, the BFF
+**Platform and topology** — where each part runs, and who may call whom.
 
-**Money** — [0009](0009-idempotency-monetary-operations.md) idempotent monetary operations (server) ·
-[0022](0022-client-money-mutation-protocol.md) client money-mutation protocol ·
-[0024](0024-no-client-facing-optimistic-concurrency.md) no client-facing optimistic concurrency ·
-[0028](0028-data-router-for-blocking-browser-back.md) a data router, bought for one hook ·
-[0035](0035-transaction-number-check-symbol.md) a check symbol on the transaction number ·
-[0036](0036-account-number-collision-recovery.md) recovering from an account-number collision ·
-[0046](0046-one-money-cap-for-every-move-and-the-client-promises-what-the-contract-publishes.md) one
-money cap for every move, and the client promises what the contract publishes ·
-[0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) a
-UTC day bounds a user's external transfers, and the mint says so before the PIN
+- **[ADR-0001](0001-bff-pattern.md) BFF pattern** — one of the four above
+- [ADR-0002](0002-yarp-proxy.md) YARP reverse proxy
+- [ADR-0018](0018-bff-origin-hardening.md) BFF origin hardening
+- **[ADR-0019](0019-spa-bff-integration.md) SPA/BFF integration** — one of the four above
+- [ADR-0039](0039-bff-session-cache-is-a-fallback.md) the BFF session cache is a fallback, never the answer
+- [ADR-0054](0054-the-bff-serves-the-built-spa-under-a-csp-measured-against-it.md) the BFF serves the built SPA under a CSP measured against it
+- [ADR-0055](0055-the-api-serves-one-client-the-bff.md) the API serves one client, the BFF
 
-**Interface** — [0027](0027-dark-mode-through-css-custom-properties.md) dark mode through CSS custom properties ·
-[0033](0033-root-error-boundary.md) a root error boundary, so a render error is not a blank page
+**Money** — how a money move is applied once, bounded and numbered.
 
-**Authentication and account safety** — [0003](0003-argon2id-password-hashing.md) Argon2id, built for PINs only ·
-[0008](0008-step-up-authentication.md) step-up authentication ·
-[0010](0010-pin-attempt-limiting.md) PIN attempt-limiting ·
-[0011](0011-pin-hash-pepper.md) PIN-hash pepper ·
-[0012](0012-login-attempt-limiting.md) login attempt-limiting ·
-[0021](0021-refresh-token-rotation-bff-remint.md) refresh-token rotation with reuse detection ·
-[0026](0026-absolute-session-cap-reauthentication.md) the absolute session cap is re-authenticated, never extended ·
-[0034](0034-failed-family-revoke-recovery.md) recovery for a family revoke that fails ·
-[0037](0037-atomic-registration.md) registration is all-or-nothing ·
-[0038](0038-bff-session-is-the-only-credential.md) the session is the only credential the BFF accepts ·
-[0040](0040-changing-a-credential-requires-the-current-one.md) changing a credential requires proving the current one ·
-[0041](0041-the-api-verifies-the-transfer-pin.md) the API verifies the transfer PIN, not the BFF ·
-[0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md) a transfer authorisation is bound to
-its amount and payee, and spent once ·
-[0049](0049-closing-an-account-is-authorised-like-a-transfer.md) closing an account is authorised
-like a transfer ·
-[0056](0056-a-withdrawal-is-authorised-like-a-transfer.md) a withdrawal is authorised like a
-transfer, and the funds answer comes first
+- **[ADR-0009](0009-idempotency-monetary-operations.md) idempotent monetary operations (server)** — one of the four above
+- **[ADR-0022](0022-client-money-mutation-protocol.md) client money-mutation protocol** — one of the four above
+- [ADR-0024](0024-no-client-facing-optimistic-concurrency.md) no client-facing optimistic concurrency
+- [ADR-0028](0028-data-router-for-blocking-browser-back.md) a data router, bought for one hook
+- [ADR-0035](0035-transaction-number-check-symbol.md) a check symbol on the transaction number
+- [ADR-0036](0036-account-number-collision-recovery.md) recovering from an account-number collision
+- [ADR-0046](0046-one-money-cap-for-every-move-and-the-client-promises-what-the-contract-publishes.md) one money cap for every move, and the client promises what the contract publishes
+- [ADR-0050](0050-a-utc-day-bounds-a-users-external-transfers-and-the-mint-says-so-before-the-pin.md) a UTC day bounds a user's external transfers, and the mint says so before the PIN
 
-**Not leaking who exists** — [0013](0013-registration-user-enumeration.md) registration enumeration ·
-[0014](0014-recipient-lookup-enumeration.md) recipient lookup, exact-match and harvest-resistant ·
-[0015](0015-decouple-username-renameable-handle.md) decoupling the username from a renameable handle ·
-[0020](0020-account-number-reveal.md) on-demand account-number reveal
+**Interface** — what the user sees when the theme changes or a page fails.
 
-**Contract and correctness** — [0007](0007-fluentvalidation.md) FluentValidation ·
-[0023](0023-runtime-response-validation.md) runtime response validation ·
-[0005](0005-scalar-api-documentation.md) Scalar API documentation ·
-[0029](0029-contract-conformance-gate.md) one suite, two backends ·
-[0030](0030-real-backend-integration-layer.md) the app's data layer against the real backend ·
-[0031](0031-e2e-playwright.md) the app in a real browser ·
-[0032](0032-real-stack-layers-in-ci.md) the real-stack layers in CI ·
-[0043](0043-the-document-declares-the-error-body.md) the document declares the error body ·
-[0053](0053-the-committed-contract-is-what-the-api-generates.md) the spec is what the API generates
+- [ADR-0027](0027-dark-mode-through-css-custom-properties.md) dark mode through CSS custom properties
+- [ADR-0033](0033-root-error-boundary.md) a root error boundary, so a render error is not a blank page
 
-**Audit trail and owed notices** — [0044](0044-the-audit-trail-is-append-only-and-chained.md) the
-audit trail is append-only and chained ·
-[0045](0045-the-enrolment-notice-rides-the-enrolment-and-stops-at-a-pickup-directory.md) the
-enrolment notice rides the enrolment, and stops at a pickup directory ·
-[0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md) a PIN change owes the same notice ·
-[0048](0048-the-api-is-the-runner-that-delivers-owed-notices.md) the API is the runner that delivers
-owed notices ·
-[0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) the relay runs as an Azure
-Function, rehearsed locally against Azurite ·
-[0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) a notice names the audit row it belongs to
+**Authentication and account safety** — passwords, sessions, the PIN, and the one-shot authorisation it buys.
 
-**Operations** — [0016](0016-observability-three-pillars.md) observability, three pillars ·
-[0017](0017-pii-redaction-codeql-barrier.md) PII-safe telemetry and the log-forging barrier
+- [ADR-0003](0003-argon2id-password-hashing.md) Argon2id, built for PINs only
+- [ADR-0008](0008-step-up-authentication.md) step-up authentication
+- [ADR-0010](0010-pin-attempt-limiting.md) PIN attempt-limiting
+- [ADR-0011](0011-pin-hash-pepper.md) PIN-hash pepper
+- [ADR-0012](0012-login-attempt-limiting.md) login attempt-limiting
+- [ADR-0021](0021-refresh-token-rotation-bff-remint.md) refresh-token rotation with reuse detection
+- [ADR-0026](0026-absolute-session-cap-reauthentication.md) the absolute session cap is re-authenticated, never extended
+- [ADR-0034](0034-failed-family-revoke-recovery.md) recovery for a family revoke that fails
+- [ADR-0037](0037-atomic-registration.md) registration is all-or-nothing
+- [ADR-0038](0038-bff-session-is-the-only-credential.md) the session is the only credential the BFF accepts
+- [ADR-0040](0040-changing-a-credential-requires-the-current-one.md) changing a credential requires proving the current one
+- [ADR-0041](0041-the-api-verifies-the-transfer-pin.md) the API verifies the transfer PIN, not the BFF
+- [ADR-0042](0042-a-transfer-authorisation-is-bound-and-spent-once.md) a transfer authorisation is bound to its amount and payee, and spent once
+- [ADR-0049](0049-closing-an-account-is-authorised-like-a-transfer.md) closing an account is authorised like a transfer
+- [ADR-0056](0056-a-withdrawal-is-authorised-like-a-transfer.md) a withdrawal is authorised like a transfer, and the funds answer comes first
 
-**Build and tooling** — [0004](0004-central-package-management.md) central package management ·
-[0006](0006-mapperly-object-mapping.md) Mapperly object mapping ·
-[0025](0025-originals-reference-mine.md) the originals are a reference mine
+**Not leaking who exists** — what a stranger can learn about other users.
+
+- [ADR-0013](0013-registration-user-enumeration.md) registration enumeration
+- [ADR-0014](0014-recipient-lookup-enumeration.md) recipient lookup, exact-match and harvest-resistant
+- [ADR-0015](0015-decouple-username-renameable-handle.md) decoupling the username from a renameable handle
+- [ADR-0020](0020-account-number-reveal.md) on-demand account-number reveal
+
+**Contract and correctness** — how the frontend, the backend and the published contract are held together.
+
+- [ADR-0007](0007-fluentvalidation.md) FluentValidation
+- [ADR-0023](0023-runtime-response-validation.md) runtime response validation
+- [ADR-0005](0005-scalar-api-documentation.md) Scalar API documentation
+- [ADR-0029](0029-contract-conformance-gate.md) one suite, two backends
+- [ADR-0030](0030-real-backend-integration-layer.md) the app's data layer against the real backend
+- [ADR-0031](0031-e2e-playwright.md) the app in a real browser
+- [ADR-0032](0032-real-stack-layers-in-ci.md) the real-stack layers in CI
+- [ADR-0043](0043-the-document-declares-the-error-body.md) the document declares the error body
+- [ADR-0053](0053-the-committed-contract-is-what-the-api-generates.md) the spec is what the API generates
+
+**Audit trail and owed notices** — what is recorded, how the record is checked, and what a user is told.
+
+- [ADR-0044](0044-the-audit-trail-is-append-only-and-chained.md) the audit trail is append-only and chained
+- [ADR-0045](0045-the-enrolment-notice-rides-the-enrolment-and-stops-at-a-pickup-directory.md) the enrolment notice rides the enrolment, and stops at a pickup directory
+- [ADR-0047](0047-a-pin-change-owes-the-same-notice-an-enrolment-does.md) a PIN change owes the same notice
+- [ADR-0048](0048-the-api-is-the-runner-that-delivers-owed-notices.md) the API is the runner that delivers owed notices
+- [ADR-0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) the relay runs as an Azure Function, rehearsed locally against Azurite
+- [ADR-0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) a notice names the audit row it belongs to
+
+**Operations** — telemetry, and keeping personal data out of it.
+
+- [ADR-0016](0016-observability-three-pillars.md) observability, three pillars
+- [ADR-0017](0017-pii-redaction-codeql-barrier.md) PII-safe telemetry and the log-forging barrier
+
+**Build and tooling** — packages, mapping, and what the earlier code is for.
+
+- [ADR-0004](0004-central-package-management.md) central package management
+- [ADR-0006](0006-mapperly-object-mapping.md) Mapperly object mapping
+- [ADR-0025](0025-originals-reference-mine.md) the originals are a reference mine
 
 Every decision listed is **Accepted** and shipped — there is no Proposed tier, and a status never
 moves when a record turns out to be wrong: the correction lives in the ADR itself, struck in place
@@ -115,6 +123,9 @@ with a dated note against the clause it corrects, under the rule in
 indexes those notes and nothing else — a row without a matching note in the ADR is the defect to
 fix — and a pointer an ADR carries with no date is listed as *undated*. The lifecycle statuses at
 the end of this page are the template's; only Accepted has ever been used.
+
+<details>
+<summary>What changed in each decision after it was accepted — 37 records</summary>
 
 | ADR | Changed by | What moved |
 |---|---|---|
@@ -155,6 +166,8 @@ the end of this page are the template's; only Accepted has ever been used.
 | [0051](0051-the-relay-runs-as-an-azure-function-against-azurite.md) | 2026-09-08 (pre-review) · 2026-09-09, three edits (the quantifier, the review's correction, and a same-day self-correction of it; no PR named) | "Every rule runner-guarded" → four; a missing `Notices:Schedule` no longer fails quiet — `ValidateTheScheduleItIsBoundTo()` runs unconditionally, and the runner-parameterised `ValidateTheScheduleItTicksOn` the correction first named was struck hours later; `UseMonitor` cleared so the timer cannot fire at start. |
 | [0052](0052-a-notice-names-the-audit-row-it-belongs-to.md) | 2026-09-11 (residual, measured; no ADR or PR named) | A nulled `AuditEventId` is asked the old question, so for a repeatable kind another row of the same user answers for it. |
 | [0053](0053-the-committed-contract-is-what-the-api-generates.md) | 2026-09-11, twice (no PR named) · 2026-09-14, twice (the XML-generator fix; no PR named) · 2026-09-15, twice (Schemathesis made a gate; no PR named) · 2026-09-21, ADR-0056 | The comma-decimal-locale defect withdrawn as false, measured through the real route; the "either defect fixed" trigger narrowed to the XML generator; the XML-generator defect fixed and "it is why D3's newlines are in the contract" struck, the trigger's prediction wrong: the newlines moved, so D3's normalisation stays; D6 moved: Schemathesis gates runtime conformance on every PR in `ci.yml`'s `conformance` job, and the "Gating Schemathesis" trigger struck as done. The conformance floor moved 27 → 28 with the withdrawal mint; `CommittedOpenApiDocumentTests`' own floor stays at 20, deliberately below the real count so deleting an endpoint does not trip it. |
+
+</details>
 
 The next free number is **0057**.
 
