@@ -1,0 +1,25 @@
+# An allowlist: everything stays out of the build context unless it is named below. The working tree
+# holds files git ignores and an image must never carry -- appsettings.Development.json, the Function's
+# local.settings.json, saved Playwright sign-ins (live sessions), local agent notes -- and a denylist
+# would have to know every one of them in advance.
+*
+
+!global.json
+!backend/Directory.Build.props
+!backend/Directory.Packages.props
+!backend/src/
+!frontend/
+
+# Inside what came back in: build output, local configuration and test artefacts stay out.
+**/bin/
+**/obj/
+**/appsettings.Development.json
+**/local.settings.json
+backend/src/AzureBank.Functions.NoticeRelay/
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/.auth/
+frontend/screenshots/.auth/
+frontend/screenshots/output/
