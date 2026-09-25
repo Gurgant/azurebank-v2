@@ -100,7 +100,8 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
 
 ## Tests and CI
 
-Every pull request runs all of these; the two backend jobs are required checks on `main`.
+Every pull request runs all of these, and `main` takes a merge only when every one of them has
+passed and CodeQL reports no error and no security alert rated high or critical.
 
 | Job | What it checks |
 |---|---|
