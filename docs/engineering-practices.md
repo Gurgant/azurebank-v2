@@ -149,7 +149,9 @@ Container Apps sidecar would be. Its header lists the eight secrets it requires 
 default — and the one seed command. The database is published on 127.0.0.1:14330, not 1433: a
 SQL Server installed on the host usually holds 1433, publishing over it does not fail, and the
 seed then reaches the host's instance instead. Measured on 2026-09-25: the e2e suite, 24 of 24,
-against the two containers.
+against the two containers. Sign in from a Chromium browser, as that run does: the `__Host-`
+cookie is Secure, Chromium keeps it on `http://localhost`, and Safari keeps no Secure cookie over
+http even there, which is why the development profile's cookie is neither (the BFF's `Program.cs`).
 
 ```bash
 docker compose up --build -d   # after exporting the eight variables compose.yaml names
