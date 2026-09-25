@@ -142,6 +142,21 @@ without the variable, tests and dev runs emit nothing. Telemetry is PII-safe by 
 masked through the .NET compliance stack, amounts never appear in log lines, and user-controlled
 values pass a central sanitizer whose contract is pinned by tests.
 
+**Running the images as Production.** `compose.yaml` at the root builds the API and BFF images and
+runs them as Production against SQL Server in a container: the `__Host-` session cookie, the SPA
+served under its CSP, and an API with no address of its own, reached by the BFF over loopback as a
+Container Apps sidecar would be. Its header lists the eight secrets it requires — none has a
+default — and the one seed command. The database is published on 127.0.0.1:14330, not 1433: a
+SQL Server installed on the host usually holds 1433, publishing over it does not fail, and the
+seed then reaches the host's instance instead. Measured on 2026-09-25: the e2e suite, 24 of 24,
+against the two containers. Sign in from a Chromium browser, as that run does: the `__Host-`
+cookie is Secure, Chromium keeps it on `http://localhost`, and Safari keeps no Secure cookie over
+http even there, which is why the development profile's cookie is neither (the BFF's `Program.cs`).
+
+```bash
+docker compose up --build -d   # after exporting the eight variables compose.yaml names
+```
+
 ## Quality gates
 
 Run all of these before opening a pull request.

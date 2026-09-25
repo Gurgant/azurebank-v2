@@ -2,3 +2,6 @@
 # docs/notices/ is committed byte for byte as the verb wrote it (ADR-0045). Without this line
 # core.autocrlf would store it as LF and hand a Linux checkout a file the transport never produces.
 *.eml -text
+
+# A Dockerfile runs under Linux shells; a CRLF checkout would hand every RUN line a trailing \r.
+Dockerfile text eol=lf

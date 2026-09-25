@@ -87,7 +87,7 @@ money rules. [How AzureBank works](docs/architecture/overview.md) follows one re
 | Backend | .NET 10, ASP.NET Core, EF Core 10 on SQL Server, YARP, FluentValidation, Serilog, OpenTelemetry, Azure Functions |
 | Frontend | React 19, TypeScript, Vite, Fluent UI 9, Redux Toolkit with RTK Query, React Router, react-hook-form with Zod |
 | Tests | xUnit, FluentAssertions, NetArchTest; Vitest with MSW; Playwright with axe; Schemathesis; Bruno |
-| Delivery | GitHub Actions, CodeQL, an AI reviewer on every pull request |
+| Delivery | GitHub Actions, CodeQL, AI review on pull requests |
 
 ## Try it
 
@@ -136,9 +136,9 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
 
 ## About this repository
 
-Squash-merged: each pull request lands on `main` as one commit.
-Every change goes through a pull request reviewed by CodeQL and an AI reviewer, and I merge it; the
-rules are in [engineering practices](docs/engineering-practices.md).
+Squash-merged: each pull request lands on `main` as one commit. Changes go through pull requests
+gated by CI tests and CodeQL, with AI review, and I merge each one myself; the rules are in
+[engineering practices](docs/engineering-practices.md).
 
 Built in three phases: design documents first (December 2025 to January 2026), then the backend
 (January 2026), then the monorepo as it is now, from July 2026. This repository consolidates them;

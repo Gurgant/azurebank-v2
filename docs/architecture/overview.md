@@ -223,8 +223,11 @@ ends with Playwright against the built SPA under its CSP (ADR-0029, ADR-0032, AD
 - **Architecture tests** that fail the build on a layer-dependency violation.
 - **Schemathesis** on every pull request, driving the running API from the committed document and
   failing on a response the document does not declare (ADR-0053 D6).
-- Every pull request runs the full suite, CodeQL on three languages, and an AI review, and a
-  human merges.
+- Every pull request into `main` runs the full suite and CodeQL on three languages, and `main`
+  takes a merge only when they pass; an AI review is asked for on pull requests, and a human
+  merges. *(Until 2026-09-25 this said every pull request gets an AI review: the review is asked
+  for by hand, so nothing guarantees one on every pull request. It also left out that the checks
+  run on pull requests into `main` only.)*
 
 ## Where to go next
 
