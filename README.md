@@ -136,9 +136,9 @@ CodeQL analyses the C#, the TypeScript and the workflows on every pull request a
 
 ## About this repository
 
-Squash-merged: each pull request lands on `main` as one commit.
-Every change goes through a pull request reviewed by CodeQL and an AI reviewer, and I merge it; the
-rules are in [engineering practices](docs/engineering-practices.md).
+Squash-merged: each pull request lands on `main` as one commit. Changes go through pull requests
+gated by CI tests and CodeQL, with AI review, and I merge each one myself; the rules are in
+[engineering practices](docs/engineering-practices.md).
 
 Built in three phases: design documents first (December 2025 to January 2026), then the backend
 (January 2026), then the monorepo as it is now, from July 2026. This repository consolidates them;
