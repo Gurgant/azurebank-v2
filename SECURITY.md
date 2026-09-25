@@ -79,16 +79,18 @@ operations that documentation describes are not exempt. Measured that day with
 the requests below sent straight to the API: `401 SERVICE_CREDENTIAL_REQUIRED` from the first one,
 register and login included, so no bearer token is issued to begin with. What follows is kept as
 measured on 2026-09-15 because it says what each control would be worth to a caller who ALSO held
-that key, which is the BFF's host and nobody else; in production the API has no public address
-either. The last row's residual is closed by this and not by a PIN check inside the API, which
-ADR-0055 records as decided against.
+that key, which in a deployment only the BFF presents (the API keeps the same value to check it);
+in production the API has no public address either. _(Until 2026-09-25 this said the key was held
+by "the BFF's host and nobody else".)_ The last row's residual is closed by this and not by a PIN
+check inside the API, which ADR-0055 records as decided against.
 
 Two origins answer `/api/*`: the BFF on :5000, which the browser uses, and the API on :7215,
-which accepts a bearer token from anyone holding one — its own login answers with the JWT. Several
-of the controls on this page live in the BFF process, and a caller who presents a token to the API
-directly never meets them. The table says which. Measured on 2026-09-15 with both hosts running
-`main` (f1b3509) and the same requests sent to each origin; the values are what came back, not what
-the code reads as.
+which on 2026-09-15 accepted a bearer token from anyone holding one — its own login answered with
+the JWT. _(Until 2026-09-25 that said "accepts" and "answers": the API now refuses any caller
+without the service key, as above.)_ Several of the controls on this page live in the BFF process,
+and a caller who presents a token to the API directly never meets them. The table says which.
+Measured on 2026-09-15 with both hosts running `main` (f1b3509) and the same requests sent to each
+origin; the values are what came back, not what the code reads as.
 
 | Control | Enforced in | What a bearer caller on the API gets | ADR |
 |---|---|---|---|
@@ -105,11 +107,14 @@ the code reads as.
 The last row is the one to read twice. A browser has no bearer token to present to the API's own
 origin — the JWT never reaches the SPA and the BFF clears any inbound `Authorization` before
 proxying (ADR-0001, ADR-0038, ADR-0041) — so every reveal it can ask for goes through the BFF and
-its level-2 gate. But a bearer token is a credential the API hands to whoever logs in, and a holder
-of one, a leaked access token inside its fifteen minutes or an operator with `curl`, calls the API
-directly and reads the unmasked number with no PIN. That is the shape ADR-0041 closed for transfers
-by moving the check into the API; the reveal is the route it left on the session model on purpose,
-and it now carries this measurement as a residual. Withdrawals, closures, idempotency and the PIN
+its level-2 gate. But a bearer token is a credential the API hands to whoever logs in, and on
+2026-09-15 a holder of one, a leaked access token inside its fifteen minutes or an operator with
+`curl`, could call the API directly and read the unmasked number with no PIN. That is the shape
+ADR-0041 closed for transfers by moving the check into the API; the reveal is the route it left on
+the session model on purpose, and it carried this measurement as a residual until 2026-09-19, when
+the service key closed it: without the key the API answers `401 SERVICE_CREDENTIAL_REQUIRED` before
+it looks at a token (ADR-0055). _(Until 2026-09-25 this paragraph said it in the present tense, as
+if the residual were still open.)_ Withdrawals, closures, idempotency and the PIN
 lockout were not sent in this pass: their checks run inside the API's own services (ADR-0042,
 ADR-0049, ADR-0009, ADR-0010), so the origin does not change them, but that is a reading of the
 code, not a row of this table.

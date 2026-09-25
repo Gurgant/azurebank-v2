@@ -104,7 +104,9 @@ Development only; the real file is git-ignored, so copy it once:
 cp backend/src/AzureBank.Bff/appsettings.Development.json.example backend/src/AzureBank.Bff/appsettings.Development.json
 ```
 
-**Running the tests:**
+**Running the tests** — stop the API and the BFF first: the solution build rewrites their
+executables, which Windows keeps locked while they run, so after an edit the build `dotnet test`
+starts fails with `MSB3027: Could not copy … apphost.exe` (measured 2026-09-25):
 
 ```bash
 dotnet test backend/AzureBank.slnx    # name the solution — see below
