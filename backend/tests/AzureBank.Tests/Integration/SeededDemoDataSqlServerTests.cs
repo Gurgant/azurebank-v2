@@ -329,8 +329,8 @@ public sealed class SeededDemoDataSqlServerTests : IDisposable
         // the seeder runs inside CreateExecutionStrategy(), and without a retrying strategy
         // configured here the retry path this fixture exists to exercise simply does not exist.
         // The first run of the transient test proved it — EF answered "consider enabling transient
-        // error resiliency by adding 'EnableRetryOnFailure'". Same maxRetryCount as
-        // AddInfrastructure uses.
+        // error resiliency by adding 'EnableRetryOnFailure'". The same count as AddInfrastructure's
+        // default, Database:MaxRetryCount (3 unless set; until 2026-09-25 a constant there too).
         var options = new DbContextOptionsBuilder<AzureBankDbContext>()
             .UseSqlServer(cs, sql => sql.EnableRetryOnFailure(maxRetryCount: 3));
         if (interceptor is not null)

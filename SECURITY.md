@@ -49,9 +49,13 @@ as the address. `.example.com` is a domain reserved by RFC 2606, so mail to it r
 
 ### Data Protection
 - **No secrets in source code.** Every key comes from user-secrets locally, and the API refuses to
-  start when one fails its check (`ValidateOnStart`) — except the JWT signing key, which has no
-  check. Measured on 2026-09-11: with `Jwt:Secret` empty, or 12 characters long, the API started
-  and answered its first registration with a 500 when it came to sign the token.
+  start when one fails its check (`ValidateOnStart`), the JWT signing key included: at least 32
+  bytes as UTF-8. So does the connection string, which must be there, parse and name a server.
+  _(Until 2026-09-25 this said the JWT signing key had no check. Measured on 2026-09-11: with
+  `Jwt:Secret` empty, or 12 characters long, the API started and answered its first registration
+  with a 500 when it came to sign the token; measured again on 2026-09-25, both hosts as Production
+  in containers, a 31-byte key and a missing connection string each started, and the first sign-in
+  answered 500.)_
 - **The PIN pepper lives outside the database** (ADR-0011), and the audit trail's chain and anchor
   keys are separate secrets from each other and from everything else (ADR-0044).
 - **Nothing here configures a TLS version or encryption at rest.** The project is not deployed, so
@@ -98,7 +102,7 @@ origin; the values are what came back, not what the code reads as.
 | Login attempt limiter (`auth` policy, 10 per 60 s per IP) | BFF | 11 wrong passwords: BFF 401 ×9 then 429 ×2, because the probe's own BFF sign-in just before them had taken the first of the ten permits the IP shares; API 401 ×11 — the API's own control is the silent lockout, which answered the next correct password with 429 `ACCOUNT_LOCKED` | 0012, 0013 |
 | Cross-site state changes refused on Fetch-Metadata | BFF | `POST /api/accounts` with `Sec-Fetch-Site: cross-site`: BFF 403; API 201, account created — moot there: a bearer is presented, not ambient, so there is no cross-site request to refuse | 0018 |
 | Raw auth entries closed (`/api/auth/login`, `/register` and `/refresh` answer 404 through the proxy) | BFF | login 200 with a bearer for anyone with the password; refresh is live (401 on a bogus token) | 0038 |
-| Security headers: CSP, `nosniff`, `X-Frame-Options: DENY`, Referrer-Policy, Permissions-Policy, `X-XSS-Protection: 0` | BFF | none of them; neither host sends HSTS or COOP on the http development profile | 0018, 0054 |
+| Security headers: CSP, `nosniff`, `X-Frame-Options: DENY`, Referrer-Policy, Permissions-Policy, `X-XSS-Protection: 0`, and `Strict-Transport-Security` in every environment but Development (since 2026-09-25) | BFF | none of them; neither host sends HSTS or COOP on the http development profile | 0018, 0054 |
 | Global limit (300 per 60 s per IP) | BFF | 120 × `GET /api/accounts`: 200 ×120 on both origins; the API registers no rate limiter at all | 0013 |
 | Session inactivity and absolute caps | BFF | not measured; the API's only bound is the token's fifteen minutes and a refresh endpoint it answers directly | 0021, 0026 |
 | PIN on a transfer | API | `POST /api/transfers` without an authorisation: 401 on both origins, the same problem body | 0041, 0042 |

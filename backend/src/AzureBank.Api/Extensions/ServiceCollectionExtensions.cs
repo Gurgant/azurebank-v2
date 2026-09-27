@@ -17,6 +17,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -92,8 +93,11 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Configuration options
-        services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
+        // Configuration options. The JWT signing key and the connection string fail fast at
+        // startup, like the keys below: without them the API used to start and answer 500 at the
+        // first sign-in (measured 2026-09-25, as Production in a container).
+        services.AddJwtOptions(configuration);
+        services.AddDatabaseOptions(configuration);
         services.Configure<SeedDataOptions>(
             configuration.GetSection(SeedDataOptions.SectionName));
 
@@ -285,6 +289,89 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<Services.NoticeRelayService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The JWT options, with the signing key checked at startup: at least 32 bytes as UTF-8.
+    /// </summary>
+    /// <remarks>
+    /// Its own method, as <see cref="AddDailyLimit"/> is, so a test drives the rule through
+    /// <c>IStartupValidator</c> without building the whole host.
+    /// </remarks>
+    public static IServiceCollection AddJwtOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // Counted in BYTES: every site that uses the key (one signs, two validate) turns it into UTF-8
+        // bytes, and HMAC-SHA256 needs 256 bits. The six other keys count characters; this one says
+        // bytes in its message.
+        services.AddOptions<JwtOptions>()
+            .Bind(configuration.GetSection(JwtOptions.SectionName))
+            .Validate(
+                o => JwtOptions.IsUsableSecret(o.Secret),
+                "Jwt:Secret must be configured with at least 32 bytes as UTF-8 " +
+                "(dotnet user-secrets in development; see Local setup in docs/engineering-practices.md)")
+            .Validate(
+                o => o.RefreshTokenCleanupInterval >= JwtOptions.ShortestCleanupInterval
+                     && o.RefreshTokenCleanupInterval <= JwtOptions.LongestCleanupInterval,
+                "Jwt:RefreshTokenCleanupInterval must be between 00:01:00 and 7.00:00:00.")
+            .ValidateOnStart();
+        return services;
+    }
+
+    /// <summary>
+    /// The database options, with <c>ConnectionStrings:DefaultConnection</c> checked at startup: it must
+    /// be there, parse as a SQL Server connection string and name a server, so a missing value, a
+    /// mistyped keyword or a string with no server stops the host rather than the first sign-in.
+    /// </summary>
+    /// <remarks>
+    /// In the API root and not in <c>AddInfrastructure</c>, which the Function, the verifier and the
+    /// seeder also call: each of those decides for itself what it validates at start.
+    /// </remarks>
+    public static IServiceCollection AddDatabaseOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // Bound here as well as in AddInfrastructure, so this stands alone; binding one section twice
+        // gives the same values.
+        services.AddOptions<DatabaseOptions>()
+            .Bind(configuration.GetSection(DatabaseOptions.SectionName))
+            .Validate(
+                _ => IsUsableConnectionString(
+                    configuration.GetConnectionString(DatabaseOptions.ConnectionStringName)),
+                "ConnectionStrings:DefaultConnection must be configured with a SQL Server connection " +
+                "string that names a server (dotnet user-secrets in development; see Local setup in " +
+                "docs/engineering-practices.md)")
+            .ValidateDataAnnotations()
+            .Validate(
+                o => o.MaxRetryDelay > TimeSpan.Zero && o.MaxRetryDelay <= DatabaseOptions.LongestRetryDelay,
+                "Database:MaxRetryDelay must be above zero and at most 00:01:00.")
+            .ValidateOnStart();
+        return services;
+    }
+
+    private static bool IsUsableConnectionString(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        // An unknown keyword throws ArgumentException; a known one with a value of the wrong kind
+        // ("Connect Timeout=abc", "TrustServerCertificate=ture") throws FormatException or
+        // OverflowException, which escaped this check and stopped the host with the parser's own
+        // message instead of this rule's.
+        // Parsing is not enough: "Application Name=AzureBank" parses and names no server, and the API
+        // started with it and answered the first sign-in with 500 (measured 2026-09-25, both hosts as
+        // Production in containers).
+        try
+        {
+            return !string.IsNullOrWhiteSpace(new SqlConnectionStringBuilder(value).DataSource);
+        }
+        catch (Exception e) when (e is ArgumentException or FormatException or OverflowException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

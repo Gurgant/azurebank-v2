@@ -152,6 +152,8 @@ public class ServiceCredentialTests : IntegrationTestBase
             ["Security:PinPepper"] = CustomWebApplicationFactory.PinPepper,
             ["Audit:ChainKey"] = CustomWebApplicationFactory.AuditChainKey,
             ["Audit:AnchorKey"] = CustomWebApplicationFactory.AuditAnchorKey,
+            ["Jwt:Secret"] = CustomWebApplicationFactory.JwtSecret,
+            ["ConnectionStrings:DefaultConnection"] = CustomWebApplicationFactory.PlaceholderConnectionString,
             ["ServiceCredential:BffKey"] = key,
         }).Build();
         var services = new ServiceCollection();

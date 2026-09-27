@@ -228,6 +228,7 @@ Adds OWASP-recommended security headers to all responses:
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Control referrer |
 | `Permissions-Policy` | `accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()` | Disable sensitive browser features |
 | `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';` | Content restrictions, measured against the served SPA; the hash is the empty string's, for Griffel's empty `<style>` elements (ADR-0054) |
+| `Strict-Transport-Security` | `max-age=31536000`, in every environment but Development | Hold the browser to https for a year. Sent over plain http too: behind an edge that terminates TLS every request arrives as http, and `UseHsts` would send nothing (ADR-0054) |
 
 ### The built SPA (`Spa:RootPath`)
 

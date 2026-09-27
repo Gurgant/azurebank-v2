@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace AzureBank.Bff.Tests;
@@ -46,6 +47,34 @@ public class SecurityHeadersTests : IClassFixture<WebApplicationFactory<Program>
         var hash = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData([]));
 
         ContentSecurityPolicy.Should().Contain($"'sha256-{hash}'");
+    }
+
+    [Theory]
+    [InlineData("Production")]
+    [InlineData("Staging")]
+    public async Task OutsideDevelopment_StrictTransportSecurity_IsSent_OverPlainHttpToo(string environment)
+    {
+        // Plain http to localhost: the two things app.UseHsts() would have skipped, and the way the
+        // request reaches the container behind an edge that terminates TLS.
+        var client = _factory.WithWebHostBuilder(builder => builder.UseEnvironment(environment)).CreateClient();
+
+        var response = await client.GetAsync("/health/live");
+
+        client.BaseAddress!.Scheme.Should().Be("http");
+        client.BaseAddress.Host.Should().Be("localhost");
+        string.Join(", ", response.Headers.GetValues("Strict-Transport-Security")).Should().Be("max-age=31536000");
+        AssertTheWholeSet(response);
+    }
+
+    [Fact]
+    public async Task InDevelopment_NoStrictTransportSecurity()
+    {
+        // The factory's default environment. The development loop runs on http://localhost, and a
+        // browser that took the header from an https localhost would hold every port there to https
+        // for a year (RFC 6797 keys the policy on the host, not the port).
+        var response = await _factory.CreateClient().GetAsync("/health/live");
+
+        response.Headers.Contains("Strict-Transport-Security").Should().BeFalse();
     }
 
     internal static void AssertTheWholeSet(HttpResponseMessage response)

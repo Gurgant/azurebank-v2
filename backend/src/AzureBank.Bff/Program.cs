@@ -17,18 +17,26 @@ using AzureBank.Bff.Services.Implementations;
 using AzureBank.Bff.Services.Interfaces;
 using AzureBank.Bff.Transforms;
 using AzureBank.Shared.Constants;
+using AzureBank.Shared.Observability;
 using AzureBank.Shared.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Serilog;
+using Serilog.Formatting.Compact;
 using Serilog.Sinks.OpenTelemetry;
+using Serilog.Sinks.SystemConsole.Themes;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BOOTSTRAP LOGGER (captures startup errors before config is loaded)
 // ═══════════════════════════════════════════════════════════════════════════
 
-Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
+// JSON in Production from the first line (ConsoleLogFormat). This logger, not the host's, writes
+// "Starting", the success line and a refusal's Fatal, and one container output that mixed text
+// lines into JSON ones would have its collector parse some records and not others.
+var bootstrap = new LoggerConfiguration();
+Log.Logger = (ConsoleLogFormat.IsJsonBeforeTheHost(Environment.GetEnvironmentVariable)
+        ? bootstrap.WriteTo.Console(new RenderedCompactJsonFormatter())
+        : bootstrap.WriteTo.Console())
     .CreateBootstrapLogger();
 
 try
@@ -129,6 +137,23 @@ try
             // RequestPathEnricher must run after it to strip it. RequestLogRouteTests pins this.
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services);
+
+        // The console is written here rather than in appsettings.json: JSON in Production, text
+        // everywhere else (ConsoleLogFormat, which the bootstrap logger above follows too). A
+        // Serilog:WriteTo in configuration replaces this console, so a local file that names one does
+        // not print every line twice. (The BFF's appsettings.Development.json.example names none; the
+        // API's does.)
+        if (!context.Configuration.GetSection("Serilog:WriteTo").Exists())
+        {
+            if (ConsoleLogFormat.IsJson(context.HostingEnvironment.EnvironmentName))
+            {
+                configuration.WriteTo.Console(new RenderedCompactJsonFormatter());
+            }
+            else
+            {
+                configuration.WriteTo.Console(theme: AnsiConsoleTheme.Code);
+            }
+        }
 
         // Export logs over OTLP (Loki) with automatic trace_id/span_id correlation. Gated on the
         // same env var as the SDK exporter so tests stay quiet; the sink resolves the /v1/logs
@@ -416,6 +441,8 @@ try
     {
         options.MessageTemplate = "HTTP {RequestMethod} {RoutePattern} responded {StatusCode} in {Elapsed:0.0000}ms";
         options.GetMessageTemplateProperties = RequestLogRoute.MessageTemplateProperties;
+        // A /health probe that passed writes no line; a failing one still does (RequestLogRoute).
+        options.GetLevel = RequestLogRoute.LevelFor;
         // The HOST logger, not the static one the middleware defaults to: with preserveStaticLogger
         // the static logger is the console-only bootstrap logger, so the request line and the
         // rate-limit rejection below were the two request-time lines outside the configured
@@ -465,7 +492,13 @@ try
     // RUN APPLICATION
     // ═══════════════════════════════════════════════════════════════════════════
 
-    Log.Information("AzureBank BFF Gateway started successfully");
+    // From the lifetime callback, as the API's is, so it is written once the host HAS started. It
+    // sat above app.Run() until 2026-09-25, on the belief that nothing in this host could fail
+    // startup: its ValidateOnStart checks can, and with a ServiceCredential:BffKey shorter than 32
+    // characters the container printed "started successfully" and then "Hosting failed to start".
+    app.Lifetime.ApplicationStarted.Register(() =>
+        Log.Information("AzureBank BFF Gateway started successfully"));
+
     app.Run();
 }
 // HostAbortedException is how host-building tooling stops the app on purpose — it is not a
