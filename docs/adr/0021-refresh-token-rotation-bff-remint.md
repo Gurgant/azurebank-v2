@@ -227,7 +227,7 @@ renewal's answer was lost.)*
 - **A dead refresh token is discovered lazily (PR-2).** If a session's refresh token is revoked
   out-of-band (~~reuse-detection from another client, or~~ an admin revoke *(struck 2026-09-28,
   ADR-0057: reuse detection revokes nothing now; `/api/auth/logout` and the runbook's SQL are the
-  out-of-band revokes, and a session learns of them within half its token's life, 7.5 minutes)*),
+  out-of-band revokes~~, and a session learns of them within half its token's life, 7.5 minutes~~)*),
   the BFF learns it only on the next *re-mint attempt* (a proxied `/api/**` call or a verify-pin /
   set-pin ~~/ logout~~ → 401 → session revoked). *(Struck 2026-09-28, ADR-0057 §4.6: "Esci" calls
   no API. It ends the session in the BFF and queues its grant for revocation.)* The no-upstream
@@ -235,7 +235,14 @@ renewal's answer was lost.)*
   authenticated until then, so the SPA may show a logged-in shell whose first real data call
   bounces. Bounded by the 60-min absolute timeout, and **no data is accessible with a dead token**.
   Making `/me` re-mint would close it but conflicts with the deliberately-not-a-keep-alive design
-  (ADR-0018) — left as a known behavior.
+  (ADR-0018) — left as a known behavior. *(Narrowed 2026-09-29, ADR-0057 §5.3: `/api/auth/logout`
+  and the runbooks' SQL also raise the user's session stamp in the same transaction as the revoke,
+  and the BFF refuses those sessions at their first request after its next read of the stamps,
+  within 15 s, with no re-mint: `/bff/auth/me` and `/bff/auth/session-status` read the session
+  through the same check. What this bullet describes is left for a revoke that raises no stamp,
+  and for the time the BFF cannot read the stamps, when a session learns of the revoke at its next
+  renewal, after up to half its token's life, 7.5 minutes. The struck clause above gave those 7.5
+  minutes for both levers.)*
 - **Sender-constraining (DPoP / mTLS) — considered and deliberately rejected.** RFC 9700 §4.14
   makes it *optional* for a confidential client (the BFF authenticates to the AS and never exposes
   tokens to the browser, which is already the boundary DPoP would protect), and DPoP in a BFF is a

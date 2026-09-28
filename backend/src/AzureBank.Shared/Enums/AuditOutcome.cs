@@ -42,7 +42,7 @@ public enum AuditOutcome
     /// A detected compromise was NOT contained — the mitigation itself failed. No site raises it
     /// since PR-1: its one site was <c>RefreshTokenReuseRevokeFailed</c>, logged at Error, and the
     /// tripwire that replaced reuse detection revokes nothing, so no mitigation is left to fail
-    /// (06 F3). Kept for the rows already written, which the audit trail never purges.
+    /// (ADR-0057 F3). Kept for the rows already written, which the audit trail never purges.
     /// </summary>
     MitigationFailed = 3
 }

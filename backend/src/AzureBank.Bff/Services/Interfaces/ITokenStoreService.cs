@@ -23,26 +23,28 @@ public interface ITokenStoreService
 
     /// <summary>
     /// Writes back a session that is still stored (e.g., LastActivity, AuthLevel). A session that was
-    /// removed meanwhile stays removed: a write-back never brings an ended session back (06 §4.6, F2).
+    /// removed meanwhile stays removed: a write-back never brings an ended session back
+    /// (ADR-0057 §4.6, F2).
     /// </summary>
     Task UpdateSessionAsync(UserSession session);
 
     /// <summary>
     /// Ends a session: under its lock, marks it ended, captures the renewal in flight and removes it,
-    /// then queues its grant for revocation at the API (06 §4.6). The one path every ending takes.
-    /// True when this call ended it; false for an unknown id or a session that had already ended.
+    /// then queues its grant for revocation at the API (ADR-0057 §4.6). The one path every ending
+    /// takes. True when this call ended it; false for an unknown id or a session that had already
+    /// ended.
     /// </summary>
     Task<bool> EndSessionAsync(string sessionId);
 
     /// <summary>
     /// Ends every stored session for a graceful stop, and hands back their grants for the drain to
-    /// revoke together instead of queueing each (06 §4.6, F7).
+    /// revoke together instead of queueing each (ADR-0057 §4.6, F7).
     /// </summary>
     IReadOnlyList<GrantRevocation> EndAllSessions();
 
     /// <summary>
     /// The users who hold at least one stored session: whose session stamps the watcher reads
-    /// (06 §5.3). Empty when nobody is signed in.
+    /// (ADR-0057 §5.3). Empty when nobody is signed in.
     /// </summary>
     IReadOnlySet<Guid> SignedInUserIds();
 

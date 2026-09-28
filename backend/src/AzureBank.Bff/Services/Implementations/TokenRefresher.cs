@@ -14,11 +14,11 @@ using AzureBank.Shared.Utilities;
 namespace AzureBank.Bff.Services.Implementations;
 
 /// <summary>
-/// Access-token renewal for the BFF (ADR-0021, 06 §4.5). Every proxied API call, and the BFF's own
-/// calls that carry a token, ask this for one. It hands back the session's token while it is fresh,
-/// and renews it through <c>POST /api/auth/refresh</c> with the session's grant as it runs short. The
-/// grant does not rotate (06 §4.3): a renewal writes nothing at the API, so a lost answer or a
-/// database outage leaves nothing broken, and the same grant simply renews again.
+/// Access-token renewal for the BFF (ADR-0021, ADR-0057 §4.5). Every proxied API call, and the
+/// BFF's own calls that carry a token, ask this for one. It hands back the session's token while it
+/// is fresh, and renews it through <c>POST /api/auth/refresh</c> with the session's grant as it
+/// runs short. The grant does not rotate (ADR-0057 §4.3): a renewal writes nothing at the API, so a
+/// lost answer or a database outage leaves nothing broken, and the same grant simply renews again.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,7 +28,7 @@ namespace AzureBank.Bff.Services.Implementations;
 /// one and waits for it at most 5 s. A renewal still pending then counts as a transient failure
 /// (F15). On a transient failure the old token is used if it has more than 5 s left; otherwise the
 /// caller answers 503 with <c>Retry-After</c>. An expired token is never forwarded: the API answers
-/// it 401 <c>AUTH_TOKEN_EXPIRED</c>, which the SPA reads as a sign-out (06 §1).
+/// it 401 <c>AUTH_TOKEN_EXPIRED</c>, which the SPA reads as a sign-out (ADR-0057 §1).
 /// </para>
 /// <para>
 /// <b>When a renewal may start</b>, in either branch: the session has not ended, none is in flight,
@@ -49,9 +49,9 @@ namespace AzureBank.Bff.Services.Implementations;
 /// </para>
 /// <para>
 /// <b>Only a 401 whose errorCode is <c>REFRESH_TOKEN_INVALID</c> ends the session.</b> A refused
-/// service key (a key rotation applied on one side, 06 §4.7), any other 401, a 5xx, a timeout, a
-/// network error or an unreadable body keeps it: none of them says the grant is dead. Before PR-1
-/// any 401 ended it (measured in O0, item 5).
+/// service key (a key rotation applied on one side, ADR-0057 §4.7), any other 401, a 5xx, a
+/// timeout, a network error or an unreadable body keeps it: none of them says the grant is dead.
+/// Before PR-1 any 401 ended it (measured in O0, item 5).
 /// </para>
 /// </remarks>
 public class TokenRefresher : ITokenRefresher
@@ -70,7 +70,7 @@ public class TokenRefresher : ITokenRefresher
 
     /// <summary>
     /// Each renewal's own timeout, independent of every caller. <see cref="GrantRevoker"/> waits this
-    /// long for a renewal caught in flight before it revokes the grant (06 §4.6, F9c).
+    /// long for a renewal caught in flight before it revokes the grant (ADR-0057 §4.6, F9c).
     /// </summary>
     internal static readonly TimeSpan RenewalTimeout = TimeSpan.FromSeconds(30);
 
@@ -241,7 +241,7 @@ public class TokenRefresher : ITokenRefresher
 
                 if (session.Ended)
                 {
-                    // "Esci" or an expiry came first: the result is dropped (06 §4.5).
+                    // "Esci" or an expiry came first: the result is dropped (ADR-0057 §4.5).
                     _logger.LogDebug("Renewal result dropped: session {SessionId} has ended", SecretPrefix.Of(sessionId));
                 }
                 else
@@ -339,7 +339,7 @@ public class TokenRefresher : ITokenRefresher
                 }
 
                 // A refused service key, or any 401 that does not name the grant: not the session's
-                // fault, and not a reason to sign anybody out (06 §4.5, §4.7).
+                // fault, and not a reason to sign anybody out (ADR-0057 §4.5, §4.7).
                 _logger.LogWarning(
                     "Refresh call to API was refused with {ErrorCode} for session {SessionId}; the session is kept",
                     LogSanitizer.Sanitize(errorCode ?? "none"), SecretPrefix.Of(sessionId));

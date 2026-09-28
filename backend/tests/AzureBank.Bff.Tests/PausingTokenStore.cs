@@ -10,11 +10,11 @@ namespace AzureBank.Bff.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Written for 06 §10 O0-2 item 7 (F2). Every session write in <c>SessionService</c> is a read
-/// (<c>GetSession</c>), a change to the object, then <c>UpdateSessionAsync</c>. If "Esci" removes
-/// the session between the two, a store that writes back unconditionally puts it back, and the
-/// signed-out cookie works again. The gap is microseconds wide in production; this makes it as wide
-/// as the test needs, without touching production code.
+/// Written for ADR-0057 §10 O0-2 item 7 (F2). Every session write in <c>SessionService</c> is a
+/// read (<c>GetSession</c>), a change to the object, then <c>UpdateSessionAsync</c>. If "Esci"
+/// removes the session between the two, a store that writes back unconditionally puts it back, and
+/// the signed-out cookie works again. The gap is microseconds wide in production; this makes it as
+/// wide as the test needs, without touching production code.
 /// </para>
 /// <para>
 /// Register it in place of <c>ITokenStoreService</c>, wrapping the real <c>InMemoryTokenStore</c>,

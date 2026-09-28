@@ -2,8 +2,8 @@ namespace AzureBank.Bff.Services.Interfaces;
 
 /// <summary>
 /// Hands out a usable access token for a session, renewing it through the API with the session's
-/// grant when it runs short (ADR-0021, 06 §4.5). The browser never sees any token; the BFF holds
-/// them server-side and renews them before proxying an API call.
+/// grant when it runs short (ADR-0021, ADR-0057 §4.5). The browser never sees any token; the BFF
+/// holds them server-side and renews them before proxying an API call.
 /// </summary>
 public interface ITokenRefresher
 {
@@ -26,7 +26,7 @@ public enum AccessTokenOutcome
     /// renewal failed, or was still pending after the foreground wait, and the held token has 5 s or
     /// less left. Answer 503 with <see cref="AccessTokenResult.RetryAfterSeconds"/>; the session is
     /// kept. Never forward the expired token instead: the API answers it 401, which the SPA reads as
-    /// a sign-out (06 §1).
+    /// a sign-out (ADR-0057 §1).
     /// </summary>
     Unavailable,
 

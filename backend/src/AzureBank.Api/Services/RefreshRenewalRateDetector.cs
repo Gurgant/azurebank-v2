@@ -5,29 +5,30 @@ using Microsoft.Extensions.Options;
 namespace AzureBank.Api.Services;
 
 /// <summary>
-/// 06 §6, anomaly 2: counts the renewals of each grant that the grant check accepted, over one
-/// access-token lifetime, and raises the security event <c>RefreshRenewalRateHigh</c> when one
+/// ADR-0057 §6, anomaly 2: counts the renewals of each grant that the grant check accepted, over
+/// one access-token lifetime, and raises the security event <c>RefreshRenewalRateHigh</c> when one
 /// grant is renewed more than <see cref="Limit"/> times in it. It never refuses a renewal and never
 /// writes to the database: the count lives in this process's memory and nowhere else.
 /// </summary>
 /// <remarks>
 /// <para>
 /// WHY IT EXISTS. A grant does not rotate (ADR-0057), so a second holder of a LIVE grant renews
-/// unseen until its session ends. 06 §6 reasons, and nothing has measured, that the legitimate BFF
-/// renews at most twice per token lifetime: single flight, the half-life threshold, and the stop
-/// near the cap (06 §4.5). Reasoned too: the token's <c>exp</c> is whole seconds, so two of its
-/// renewals can come a little under half a lifetime apart, and one window can then hold three. A
-/// limit of 3 raises nothing for three. So this catches a copy that renews often, not a patient one.
+/// unseen until its session ends. ADR-0057 §6 reasons, and nothing has measured, that the
+/// legitimate BFF renews at most twice per token lifetime: single flight, the half-life threshold,
+/// and the stop near the cap (ADR-0057 §4.5). Reasoned too: the token's <c>exp</c> is whole
+/// seconds, so two of its renewals can come a little under half a lifetime apart, and one window
+/// can then hold three. A limit of 3 raises nothing for three. So this catches a copy that renews
+/// often, not a patient one.
 /// </para>
 /// <para>
-/// WHY IT WRITES NOTHING. A renewal that writes is what 06 §1 removed: a lost answer, an EF retry of
-/// a commit that did land, a hung database. The event is a Warning in the logs only, so on Azure,
-/// where application logs are off, nobody sees it; locally and in CI they do. Putting it in the
-/// audit trail would need a write.
+/// WHY IT WRITES NOTHING. A renewal that writes is what ADR-0057 §1 removed: a lost answer, an EF
+/// retry of a commit that did land, a hung database. The event is a Warning in the logs only, so on
+/// Azure, where application logs are off, nobody sees it; locally and in CI they do. Putting it in
+/// the audit trail would need a write.
 /// </para>
 /// <para>
-/// WHAT IS COUNTED. The request's <c>ReceivedAt</c> stamp, the process's monotonic clock (06 F10),
-/// over the window (newest − <c>Jwt:ExpirationMinutes</c>, newest]. Only the newest
+/// WHAT IS COUNTED. The request's <c>ReceivedAt</c> stamp, the process's monotonic clock
+/// (ADR-0057 F10), over the window (newest − <c>Jwt:ExpirationMinutes</c>, newest]. Only the newest
 /// <see cref="Limit"/> + 1 stamps of a grant are kept, which is all "more than
 /// <see cref="Limit"/>" needs. A request stamped earlier can reach here later than one stamped
 /// after it, so a stamp is inserted in order rather than appended.
@@ -54,7 +55,7 @@ namespace AzureBank.Api.Services;
 /// </remarks>
 public sealed class RefreshRenewalRateDetector
 {
-    /// <summary>Renewals of one grant in one window that raise no event (06 §6).</summary>
+    /// <summary>Renewals of one grant in one window that raise no event (ADR-0057 §6).</summary>
     public const int Limit = 3;
 
     /// <summary>The most grants tracked at once.</summary>

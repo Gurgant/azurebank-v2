@@ -17,8 +17,8 @@ namespace AzureBank.Bff.Transforms;
 ///
 /// <para>
 /// Two answers never leave here as the API's 401, because the SPA reads a 401 as a sign-out and
-/// neither is one (06 §4.5, §4.7): a renewal that could not be had while the held token has 5 s or
-/// less left, and the API refusing this host's service key. Both become a 503 with
+/// neither is one (ADR-0057 §4.5, §4.7): a renewal that could not be had while the held token has
+/// 5 s or less left, and the API refusing this host's service key. Both become a 503 with
 /// <c>Retry-After</c>, and the session is kept.
 /// </para>
 /// </summary>
@@ -77,12 +77,13 @@ public class BearerTokenTransformProvider : ITransformProvider
             transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.HeaderName);
 
             /*
-              AND THE TOKEN-ROAD MARKER, WHICH IS NEVER SET ON THIS ROAD (06 §4.2). The API's token
-              endpoints answer only a request carrying exactly one, over loopback — and this proxy
-              reaches the API over loopback too, with the key on every browser request. The marker is
-              the one thing that tells the BFF's own client from a browser's request passing through,
-              so a browser's copy goes here, before anything else can see it. AuthLevelMiddleware
-              404s the token paths as well; this holds even if a path slipped past that list.
+              AND THE TOKEN-ROAD MARKER, WHICH IS NEVER SET ON THIS ROAD (ADR-0057 §4.2). The API's
+              token endpoints answer only a request carrying exactly one, over loopback — and this
+              proxy reaches the API over loopback too, with the key on every browser request. The
+              marker is the one thing that tells the BFF's own client from a browser's request
+              passing through, so a browser's copy goes here, before anything else can see it.
+              AuthLevelMiddleware 404s the token paths as well; this holds even if a path slipped
+              past that list.
             */
             transformContext.ProxyRequest.Headers.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
 
@@ -127,8 +128,8 @@ public class BearerTokenTransformProvider : ITransformProvider
             if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
                 && !string.IsNullOrEmpty(sessionId))
             {
-                // The session's access token, renewed first when it runs short (06 §4.5), so the
-                // 15-minute JWT no longer hard-kills an active session.
+                // The session's access token, renewed first when it runs short (ADR-0057 §4.5), so
+                // the 15-minute JWT no longer hard-kills an active session.
                 var refresher = httpContext.RequestServices.GetRequiredService<ITokenRefresher>();
                 var result = await refresher.GetAccessTokenAsync(sessionId, httpContext.RequestAborted);
                 switch (result.Outcome)
@@ -160,12 +161,13 @@ public class BearerTokenTransformProvider : ITransformProvider
         });
 
         /*
-          THE API REFUSING THIS HOST'S KEY IS NOT THE BROWSER'S 401 (06 §4.7, F4). A key rotation
-          applied on one side only makes the API refuse every proxied call with 401
+          THE API REFUSING THIS HOST'S KEY IS NOT THE BROWSER'S 401 (ADR-0057 §4.7, F4). A key
+          rotation applied on one side only makes the API refuse every proxied call with 401
           SERVICE_CREDENTIAL_REQUIRED, and until PR-1 YARP passed it through: measured in O0 (item 6),
           the browser got the API's own body with its 401 and the SPA signed the user out. The API
-          marks that refusal with a header; this turns exactly that response into a 503 the SPA
-          retries, and replaces the body so the API's refusal text goes no further.
+          marks that refusal with a header; this turns exactly that response into a 503, which the
+          SPA retries on a read and reports on a write, never signing anyone out, and replaces the
+          body so the API's refusal text goes no further.
         */
         context.AddResponseTransform(async responseContext =>
         {

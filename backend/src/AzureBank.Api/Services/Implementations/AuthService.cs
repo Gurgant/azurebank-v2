@@ -116,7 +116,7 @@ public class AuthService : IAuthService
 
             // The access token BEFORE the grant, so the grant cannot cap it; the start-up rule that a
             // grant lives at least as long as an access token (JwtOptions) is what keeps it inside
-            // the grant's lifetime anyway (06 F11).
+            // the grant's lifetime anyway (ADR-0057 F11).
             var tokenResult = _jwtService.GenerateToken(user);
             var grant = await _refreshTokenService.IssueAsync(user);
             _logger.LogInformation("User {UserId} logged in successfully", user.Id);
@@ -124,12 +124,12 @@ public class AuthService : IAuthService
             return new LoginResponse
             {
                 /*
-                  The stamp as read at the top, BEFORE the grant was issued (06 §5.3). A sign-out
-                  everywhere that commits after that read raises the stamp above this one, so the BFF
-                  ends this session within one poll even though its grant may have been issued after
-                  the revoke. Read after the grant instead, the same race could leave a session whose
-                  stamp is current and whose grant was revoked: alive for up to half an access
-                  token's life. This way the race errs toward signing out.
+                  The stamp as read at the top, BEFORE the grant was issued (ADR-0057 §5.3). A
+                  sign-out everywhere that commits after that read raises the stamp above this one,
+                  so the BFF ends this session within one poll even though its grant may have been
+                  issued after the revoke. Read after the grant instead, the same race could leave a
+                  session whose stamp is current and whose grant was revoked: alive for up to half
+                  an access token's life. This way the race errs toward signing out.
                 */
                 Token = ToTokenResponse(tokenResult, grant, user.SessionStamp),
                 User = _userMapper.ToLoginInfo(user)
@@ -498,8 +498,8 @@ public class AuthService : IAuthService
     /// whole seconds, so it reads a second or two under the lifetime: 899 on a login and 898 on a
     /// registration, which writes to the database in between, for the 900-second token (measured
     /// 2026-09-23). <c>RefreshTokenExpiresAt</c> is the grant's fixed expiry, which the BFF caps the
-    /// session at (06 §4.1); both grant fields are null when a registration's grant failed.
-    /// <c>SessionStamp</c> is the user's, which the BFF keeps on the session (06 §5.3).
+    /// session at (ADR-0057 §4.1); both grant fields are null when a registration's grant failed.
+    /// <c>SessionStamp</c> is the user's, which the BFF keeps on the session (ADR-0057 §5.3).
     /// </summary>
     private static TokenResponse ToTokenResponse(TokenResult tokenResult, IssuedGrant? grant, int sessionStamp) => new()
     {
@@ -528,9 +528,9 @@ public class AuthService : IAuthService
     /// <inheritdoc />
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, DateTime receivedAt)
     {
-        // A read: the grant is checked, not consumed, and nothing is written (06 §4.3). The user it
-        // returns lets us mint the access token without a second lookup; its expiry caps that token,
-        // so nothing from one sign-in outlives the grant (06 §4.1).
+        // A read: the grant is checked, not consumed, and nothing is written (ADR-0057 §4.3). The
+        // user it returns lets us mint the access token without a second lookup; its expiry caps
+        // that token, so nothing from one sign-in outlives the grant (ADR-0057 §4.1).
         var renewal = await _refreshTokenService.RenewAsync(request.RefreshToken, receivedAt);
         var tokenResult = _jwtService.GenerateToken(renewal.User, notAfter: renewal.GrantExpiresAt);
 
@@ -551,9 +551,10 @@ public class AuthService : IAuthService
     public async Task LogoutAsync(Guid userId, DateTime receivedAt)
     {
         // EVERY grant of the user, on every device: sign out everywhere. The BFF's "Esci" ends one
-        // session through /api/auth/revoke instead (06 §4.4); this has no caller in the UI today and
-        // stays the per-user lever of 06 §5. The same transaction raises the user's session stamp,
-        // which is what ends those sessions at the BFF within one poll (06 §5.3).
+        // session through /api/auth/revoke instead (ADR-0057 §4.4); this has no caller in the UI
+        // today and stays the per-user lever of ADR-0057 §5. The same transaction raises the user's
+        // session stamp, which is what ends those sessions at the BFF within one poll
+        // (ADR-0057 §5.3).
         await _refreshTokenService.RevokeAllForUserAsync(
             userId, RefreshTokenRevokedReason.SignOutEverywhere, receivedAt);
         _logger.LogInformation("User {UserId} logged out", userId);
@@ -564,7 +565,7 @@ public class AuthService : IAuthService
         IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken = default)
     {
         // One read by primary key, nothing tracked. The BFF sends it every 15 s while anyone holds a
-        // session, and never otherwise (06 §5.3).
+        // session, and never otherwise (ADR-0057 §5.3).
         var ids = userIds.Distinct().ToList();
         return await _context.Users
             .AsNoTracking()

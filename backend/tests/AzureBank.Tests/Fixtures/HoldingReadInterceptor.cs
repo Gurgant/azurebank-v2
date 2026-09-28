@@ -9,10 +9,10 @@ namespace AzureBank.Tests.Fixtures;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Written for 06 §10 O2b, "a renewal in flight is not theft": the renewal is received, stamped and
-/// then held BEFORE its read of the grant, a revoke of that grant commits in the gap, and the
-/// renewal then reads a grant revoked after it arrived. That order cannot be produced by timing two
-/// requests; it has to be made.
+/// Written for ADR-0057 §10 O2b, "a renewal in flight is not theft": the renewal is received,
+/// stamped and then held BEFORE its read of the grant, a revoke of that grant commits in the gap,
+/// and the renewal then reads a grant revoked after it arrived. That order cannot be produced by
+/// timing two requests; it has to be made.
 /// </para>
 /// <para>
 /// Held before the command is sent, so the read sees whatever committed while it waited — the

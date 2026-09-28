@@ -100,6 +100,14 @@ in production the API has no public address either. _(Until 2026-09-25 this said
 by "the BFF's host and nobody else".)_ The last row's residual is closed by this and not by a PIN
 check inside the API, which ADR-0055 records as decided against.
 
+Since 2026-09-28 (ADR-0057 §4.2) the key alone is not enough on the token endpoints. Login,
+register, refresh, revoke, logout and the session-stamp feed answer 404 unless the request also
+comes over loopback and carries exactly one `X-AzureBank-Token-Road` header whose value is `bff`.
+A caller holding only the key gets that 404 from any address, so it can neither sign in nor renew,
+and the API issues it no bearer token. The marker is not a secret — its value is in this
+repository — and the API listens on loopback only, so a caller that can reach the API at all and
+holds the key can add it; the table below is what the controls are worth to that caller.
+
 Two origins answer `/api/*`: the BFF on :5000, which the browser uses, and the API on :7215,
 which on 2026-09-15 accepted a bearer token from anyone holding one — its own login answered with
 the JWT. _(Until 2026-09-25 that said "accepts" and "answers": the API now refuses any caller
@@ -113,10 +121,10 @@ origin; the values are what came back, not what the code reads as.
 | Anti-harvest limit on the handle lookup (`lookup` policy, 20 per 60 s per user) | BFF | 21 × `GET /api/users/{handle}`: BFF 200 ×20 then 429; API 200 ×21 | 0014 |
 | Login attempt limiter (`auth` policy, 10 per 60 s per IP) | BFF | 11 wrong passwords: BFF 401 ×9 then 429 ×2, because the probe's own BFF sign-in just before them had taken the first of the ten permits the IP shares; API 401 ×11 — the API's own control is the silent lockout, which answered the next correct password with 429 `ACCOUNT_LOCKED` | 0012, 0013 |
 | Cross-site state changes refused on Fetch-Metadata | BFF | `POST /api/accounts` with `Sec-Fetch-Site: cross-site`: BFF 403; API 201, account created — moot there: a bearer is presented, not ambient, so there is no cross-site request to refuse | 0018 |
-| Raw auth entries closed (`/api/auth/login`, `/register` and `/refresh` answer 404 through the proxy) | BFF | login 200 with a bearer for anyone with the password; refresh is live (401 on a bogus token) | 0038 |
+| Raw auth entries closed (`/api/auth/login`, `/register` and `/refresh` answer 404 through the proxy) | BFF | login 200 with a bearer for anyone with the password; refresh is live (401 on a bogus token). _Since 2026-09-28 (ADR-0057), with the key and no marker, or off loopback: 404 on both, and on revoke, logout and session-stamps_ | 0038 |
 | Security headers: CSP, `nosniff`, `X-Frame-Options: DENY`, Referrer-Policy, Permissions-Policy, `X-XSS-Protection: 0`, and `Strict-Transport-Security` in every environment but Development (since 2026-09-25) | BFF | none of them; neither host sends HSTS or COOP on the http development profile | 0018, 0054 |
 | Global limit (300 per 60 s per IP) | BFF | 120 × `GET /api/accounts`: 200 ×120 on both origins; the API registers no rate limiter at all | 0013 |
-| Session inactivity and absolute caps | BFF | not measured; the API's only bound is the token's fifteen minutes and a refresh endpoint it answers directly | 0021, 0026 |
+| Session inactivity and absolute caps | BFF | not measured; the API's only bound is the token's fifteen minutes and a refresh endpoint it answers directly. _Since 2026-09-28 (ADR-0057) the API bounds the session too: the grant lives 60 minutes from sign-in, fixed and never extended, no access token minted from it outlives it, and refresh answers only the BFF's own client over loopback_ | 0021, 0026 |
 | PIN on a transfer | API | `POST /api/transfers` without an authorisation: 401 on both origins, the same problem body | 0041, 0042 |
 | **PIN on the account-number reveal** | **BFF only** | `GET /api/accounts/{id}/full-number` with no PIN ever entered: **API 200 with the full number**; BFF 403 with `X-Auth-Level-Required: 2` | 0008, 0020, 0041 |
 

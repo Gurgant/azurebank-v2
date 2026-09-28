@@ -10,9 +10,9 @@ namespace AzureBank.Tests.Fixtures;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Written for the token road (06 §4.2, O2d): "from loopback" and "from anywhere else" are the two
-/// cases the API must tell apart, and with a null address the test host can show neither. The BFF's
-/// suite has the same seam for its rate limiter (<c>FakeRemoteIpStartupFilter</c>).
+/// Written for the token road (ADR-0057 §4.2, O2d): "from loopback" and "from anywhere else" are
+/// the two cases the API must tell apart, and with a null address the test host can show neither.
+/// The BFF's suite has the same seam for its rate limiter (<c>FakeRemoteIpStartupFilter</c>).
 /// </para>
 /// <para>
 /// An <see cref="IStartupFilter"/>, so it runs ahead of the application's whole pipeline, the

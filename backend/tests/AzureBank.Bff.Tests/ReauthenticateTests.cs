@@ -232,8 +232,9 @@ public class ReauthenticateTests : IClassFixture<WebApplicationFactory<Program>>
         // The API's /api/auth/logout runs RevokeAllForUserAsync — EVERY grant this user holds,
         // including the one minted moments earlier. "Re-auth = logout + login" would therefore
         // produce a session that dies silently at its first renewal. Since PR-1 the old session
-        // ends through the same path as "Esci" (06 §4.6, ADR-0026's order): its grant, and only its
-        // grant, is revoked with /api/auth/revoke. Until then the old grant was left to expire.
+        // ends through the same path as "Esci" (ADR-0057 §4.6, ADR-0026's order): its grant, and
+        // only its grant, is revoked with /api/auth/revoke. Until then the old grant was left to
+        // expire.
         var (host, upstream) = NewHost();
         var client = host.CreateClient();
 

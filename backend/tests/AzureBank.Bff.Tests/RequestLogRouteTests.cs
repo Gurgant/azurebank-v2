@@ -124,10 +124,10 @@ public class RequestLogRouteTests : IClassFixture<WebApplicationFactory<Program>
                 services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(new StubUpstream()));
 
                 // The BFF's OWN client as well. These hosts hold a session with a grant, and since
-                // PR-1 a host that stops revokes the grants it held (GrantRevoker's drain, 06 §4.6):
-                // without this the drain sent /api/auth/revoke to the configured API address, a live
-                // call on a machine where the API runs. Measured before: "0 grants revoked, 1 left"
-                // at each of these hosts' teardown.
+                // PR-1 a host that stops revokes the grants it held (GrantRevoker's drain,
+                // ADR-0057 §4.6): without this the drain sent /api/auth/revoke to the configured
+                // API address, a live call on a machine where the API runs. Measured before:
+                // "0 grants revoked, 1 left" at each of these hosts' teardown.
                 services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
                     new FakeBackendApiHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
                     {

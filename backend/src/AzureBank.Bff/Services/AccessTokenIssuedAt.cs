@@ -5,7 +5,7 @@ namespace AzureBank.Bff.Services;
 
 /// <summary>
 /// Reads when an access token was issued, so the BFF can take its renewal thresholds from the
-/// token's own lifetime, L = exp - iat (06 §4.5, F6).
+/// token's own lifetime, L = exp - iat (ADR-0057 §4.5, F6).
 /// </summary>
 /// <remarks>
 /// <para>

@@ -58,14 +58,15 @@ copy once, in its constructor, so a rotation is a deployment event on both sides
 applied the answer is the API's 401 — loud and closed, rather than quiet and open.
 
 *(Extended 2026-09-28, [ADR-0057](0057-the-bffs-refresh-token-is-one-reusable-grant-per-session.md)
-§4.2 and §4.7. On the five token endpoints — login, register, refresh, revoke and logout — the key
-is not enough: the API answers them 404 unless the request comes over loopback and carries exactly
-one `X-AzureBank-Token-Road` header. The BFF's own client adds that marker, and the YARP transform
-strips any copy a browser sends, next to where it strips the key, because the proxy also reaches
-the API over loopback and adds the key to every browser request. And a half-applied rotation no
-longer reaches the browser as the API's 401: the API marks that refusal with
-`X-AzureBank-Refusal: service-credential`, and the BFF turns it into a 503 with `Retry-After`, so
-the SPA stays signed in. At the API the answer is still the 401.)*
+§4.2 and §4.7. On the five token endpoints — login, register, refresh, revoke and logout — and on
+the session-stamp feed the BFF polls, `POST /api/auth/session-stamps` (ADR-0057 §5.3), the key is
+not enough: the API answers them 404 unless the request comes over loopback and carries exactly one
+`X-AzureBank-Token-Road` header whose value is the BFF's marker, compared exactly. The BFF's own
+client adds that marker, and the YARP transform strips any copy a browser sends, next to where it
+strips the key, because the proxy also reaches the API over loopback and adds the key to every
+browser request. And a half-applied rotation no longer reaches the browser as the API's 401: the
+API marks that refusal with `X-AzureBank-Refusal: service-credential`, and the BFF turns it into a
+503 with `Retry-After`, so the SPA stays signed in. At the API the answer is still the 401.)*
 
 **D5 — The key travels over TLS, or to this machine, and nothing is forwarded anywhere else.** It
 is a bearer secret, so `http://api.internal` would put it on the network in clear. The BFF refuses

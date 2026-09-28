@@ -23,10 +23,11 @@ using Serilog.Events;
 namespace AzureBank.Bff.Tests;
 
 /// <summary>
-/// Every way a session ends goes through one path, which revokes its grant at the API (06 §4.6):
-/// idle expiry, the cap, a new sign-in over an old cookie and a graceful stop, beside "Esci" and
-/// re-authentication (TokenRefreshTests, ReauthenticateTests). And the cap is the grant's expiry when
-/// that comes first, in the store and in what the SPA is told (06 §4.1, F5).
+/// Every way a session ends goes through one path, which revokes its grant at the API
+/// (ADR-0057 §4.6): idle expiry, the cap, a new sign-in over an old cookie and a graceful stop,
+/// beside "Esci" and re-authentication (TokenRefreshTests, ReauthenticateTests). And the cap is the
+/// grant's expiry when that comes first, in the store and in what the SPA is told (ADR-0057 §4.1,
+/// F5).
 /// </summary>
 /// <remarks>
 /// Until PR-1 an expired session was only dropped from the BFF's memory: its refresh token stayed
@@ -360,7 +361,7 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [Fact]
     public async Task AnIdleSession_IsEndedThroughTheRevokePath_OnARead_AndByTheSweep()
     {
-        // 06 §4.6: idle expiry ends the session the way "Esci" does, so its grant is revoked.
+        // ADR-0057 §4.6: idle expiry ends the session the way "Esci" does, so its grant is revoked.
         var (host, upstream) = NewHost();
         var sessions = host.Services.GetRequiredService<ISessionService>();
         var inactivity = host.Services.GetRequiredService<IOptions<BffSessionOptions>>().Value.InactivityTimeoutMinutes;
@@ -381,9 +382,9 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [Fact]
     public async Task TheCap_IsTheGrantsExpiryWhenItComesFirst_InTheStoreAndInWhatTheSpaIsTold()
     {
-        // 06 §4.1 (F5): AbsoluteExpiresAt = min(SessionCreated + AbsoluteTimeoutMinutes, grant expiry),
-        // one field for the store, /me and session-status. A 15-minute grant here, under the 60-minute
-        // cap, so the two rules give different answers.
+        // ADR-0057 §4.1 (F5): AbsoluteExpiresAt = min(SessionCreated + AbsoluteTimeoutMinutes,
+        // grant expiry), one field for the store, /me and session-status. A 15-minute grant here,
+        // under the 60-minute cap, so the two rules give different answers.
         var (host, _) = NewHost();
         var grantExpiresAt = DateTime.UtcNow.AddMinutes(15);
         var sessionId = NewSession(host, "rt-cap", grantExpiresAt);
@@ -420,8 +421,8 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [Fact]
     public async Task ANewSignInCarryingAnOldCookie_EndsTheOldSession_AndAFailedOneLeavesIt()
     {
-        // 06 §4.6 (F13). The browser's old session is replaced by the new sign-in's; before PR-1 it
-        // lived on beside it, holding a live grant no cookie named any more.
+        // ADR-0057 §4.6 (F13). The browser's old session is replaced by the new sign-in's; before
+        // PR-1 it lived on beside it, holding a live grant no cookie named any more.
         var (host, upstream) = NewHost();
         var sessions = host.Services.GetRequiredService<ISessionService>();
         var client = host.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
@@ -447,8 +448,9 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [Fact]
     public async Task AGracefulStop_RevokesEveryHeldGrantInOneCall_AndSaysHowMany()
     {
-        // 06 §4.6 (F7). The replica scales to zero minutes after its last request, long before the
-        // idle sweep would have ended these sessions; the drain revokes their grants on the way out.
+        // ADR-0057 §4.6 (F7). The replica scales to zero minutes after its last request, long
+        // before the idle sweep would have ended these sessions; the drain revokes their grants on
+        // the way out.
         var log = new ConcurrentQueue<LogEvent>();
         var (host, upstream) = NewHost(log, disposeWithTheClass: false);
         NewSession(host, "rt-held-1");
@@ -466,7 +468,7 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
             summary.Single().Properties["Revoked"].ToString().Should().Be("2");
             summary.Single().Properties["Left"].ToString().Should().Be("0");
 
-            // 06 O2h: no grant in any log line, rendered or as a property.
+            // ADR-0057 §10 O2h: no grant in any log line, rendered or as a property.
             log.Should().NotContain(e =>
                 e.RenderMessage(CultureInfo.InvariantCulture).Contains("rt-held")
                 || e.Properties.Values.Any(v => v.ToString().Contains("rt-held")));
@@ -476,8 +478,9 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [Fact]
     public async Task AGracefulStop_WithNoGrantToRevoke_StillSaysSo_AndCallsNothing()
     {
-        // F7's count is how an operator tells "the drain ran" from "the drain never ran" (06 §11).
-        // With nothing held it must still be written, as 0 and 0; the test above is its control.
+        // F7's count is how an operator tells "the drain ran" from "the drain never ran"
+        // (ADR-0057 §11). With nothing held it must still be written, as 0 and 0; the test above is
+        // its control.
         var log = new ConcurrentQueue<LogEvent>();
         var (host, upstream) = NewHost(log, disposeWithTheClass: false);
         host.CreateClient();
@@ -498,11 +501,12 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     public async Task AGracefulStop_SendsTheHeldGrantsBeforeAnyServiceIsAskedToStop()
     {
         /*
-          06 F7, as the pre-review found it. The API is a sidecar that stops with the BFF: on Azure
-          both containers get the stop signal at once. A drain sent only once the BFF's own services
-          had stopped reached an API already gone, and revoked nothing. It starts now when the host
-          BEGINS to stop, before any service is asked to. The stand-in below is stopped before
-          GrantRevoker, and takes the API away when it is: what the drain has not sent by then is left.
+          ADR-0057 F7, as the pre-review found it. The API is a sidecar that stops with the BFF: on
+          Azure both containers get the stop signal at once. A drain sent only once the BFF's own
+          services had stopped reached an API already gone, and revoked nothing. It starts now when
+          the host BEGINS to stop, before any service is asked to. The stand-in below is stopped
+          before GrantRevoker, and takes the API away when it is: what the drain has not sent by
+          then is left.
         */
         var log = new ConcurrentQueue<LogEvent>();
         var stopper = new StoppedBeforeTheRevoker((upstream, _) => upstream.Gone = true);
@@ -529,10 +533,11 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     public async Task AGracefulStop_SendsTheGrantsWithNoRenewalInFlightAtOnce_AndTheOthersWithin5s()
     {
         /*
-          06 §4.6 and F2, at the stop. A revoke that overtook a renewal sent before it would make that
-          renewal the tripwire at the API, so the grant of a session renewing when the host stops
-          waits for its renewal: 5 s at most, the drain's share of the grace period. Nothing else
-          waits for it. The renewal here is one the API sits on past the stop, so the 5 s run out.
+          ADR-0057 §4.6 and F2, at the stop. A revoke that overtook a renewal sent before it would
+          make that renewal the tripwire at the API, so the grant of a session renewing when the
+          host stops waits for its renewal: 5 s at most, the drain's share of the grace period.
+          Nothing else waits for it. The renewal here is one the API sits on past the stop, so the
+          5 s run out.
         */
         var log = new ConcurrentQueue<LogEvent>();
         var (host, upstream) = NewHost(log, disposeWithTheClass: false);
@@ -596,10 +601,10 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     public async Task WhenTheRevokeQueueIsFull_AnEndingIsDropped_SaysSo_AndDoesNotWait()
     {
         /*
-          06 F12. Every worker is on a revoke the API sits on, and the queue holds Capacity more, so
-          the next ending finds no room. It must not wait for any — "Esci" answers at once — and must
-          log GrantRevokeDropped, naming the session and never the grant. Once the API answers, every
-          grant that found room is revoked, and the dropped one is not.
+          ADR-0057 F12. Every worker is on a revoke the API sits on, and the queue holds Capacity
+          more, so the next ending finds no room. It must not wait for any — "Esci" answers at once
+          — and must log GrantRevokeDropped, naming the session and never the grant. Once the API
+          answers, every grant that found room is revoked, and the dropped one is not.
         */
         var log = new ConcurrentQueue<LogEvent>();
         var hold = new RevokeHold();
@@ -645,7 +650,7 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
             log.Should().NotContain(e => grants.Any(g =>
                     e.RenderMessage(CultureInfo.InvariantCulture).Contains(g)
                     || e.Properties.Values.Any(v => v.ToString().Contains(g))),
-                "no grant in any log line (06 O2h)");
+                "no grant in any log line (ADR-0057 §10 O2h)");
         }
     }
 
@@ -655,11 +660,11 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [InlineData("/bff/auth/reauthenticate")]
     public async Task EveryDoorThatCreatesASession_CapsItAtTheGrantsExpiry_AndEndsTheSessionItsCookieNamed(string door)
     {
-        // 06 §4.1 (F5) at the three places a session is created from the API's answer: each must pass
-        // the grant's expiry on. The API reports a 15-minute grant here, so a door that dropped it
-        // would report sign-in + 60 and fail. Every other cap test builds its session directly.
-        // And 06 §4.6 (F13, ADR-0026): the session the request's cookie named ends through the revoke
-        // path, and only its grant is revoked.
+        // ADR-0057 §4.1 (F5) at the three places a session is created from the API's answer: each
+        // must pass the grant's expiry on. The API reports a 15-minute grant here, so a door that
+        // dropped it would report sign-in + 60 and fail. Every other cap test builds its session
+        // directly. And ADR-0057 §4.6 (F13, ADR-0026): the session the request's cookie named ends
+        // through the revoke path, and only its grant is revoked.
         var (host, upstream) = NewHost();
         var sessions = host.Services.GetRequiredService<ISessionService>();
         var cap = host.Services.GetRequiredService<IOptions<BffSessionOptions>>().Value.AbsoluteTimeoutMinutes;
@@ -709,9 +714,9 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
     [Fact]
     public async Task ARevokeTheApiRefusesForGood_IsAbandonedAtOnce_AndSaysSo()
     {
-        // 06 §4.6 (F12): only a 5xx, a timeout, a network error or a refused key is retried. Any other
-        // refusal is final, and GrantRevokeAbandoned names the status. The first retry would come after
-        // 1 s, so the 1.5 s wait below makes it due.
+        // ADR-0057 §4.6 (F12): only a 5xx, a timeout, a network error or a refused key is retried.
+        // Any other refusal is final, and GrantRevokeAbandoned names the status. The first retry
+        // would come after 1 s, so the 1.5 s wait below makes it due.
         var log = new ConcurrentQueue<LogEvent>();
         var (host, upstream) = NewHost(log);
         upstream.OnRevoke = () => new HttpResponseMessage(HttpStatusCode.BadRequest);
@@ -728,16 +733,16 @@ public class SessionEndingTests : IClassFixture<WebApplicationFactory<Program>>,
             abandoned.Should().ContainSingle();
             abandoned.Single().Properties["StatusCode"].ToString().Should().Be("400");
             log.Should().NotContain(e => e.RenderMessage(CultureInfo.InvariantCulture).Contains("rt-refused"),
-                "no grant in any log line (06 O2h)");
+                "no grant in any log line (ADR-0057 §10 O2h)");
         }
     }
 
     [Fact]
     public async Task ARevokeThatKeepsFailing_IsRetriedUntilTheGrantExpires_ThenAbandoned()
     {
-        // 06 §4.6 (F12): a 5xx is retried with backoff until the grant expires on its own, then
-        // GrantRevokeAbandoned. A grant with 3 s left: the first call, a retry after 1 s, and then
-        // the next wait (2 s) would pass its expiry, so it stops there.
+        // ADR-0057 §4.6 (F12): a 5xx is retried with backoff until the grant expires on its own,
+        // then GrantRevokeAbandoned. A grant with 3 s left: the first call, a retry after 1 s, and
+        // then the next wait (2 s) would pass its expiry, so it stops there.
         var log = new ConcurrentQueue<LogEvent>();
         var (host, upstream) = NewHost(log);
         upstream.OnRevoke = () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);

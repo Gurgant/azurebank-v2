@@ -103,9 +103,9 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
                 services.Replace(ServiceDescriptor.Singleton<IForwarderHttpClientFactory>(recorder));
 
                 // The BFF's OWN client, not the proxy road recorded above. Since PR-1 a host that
-                // stops revokes the grants of the sessions it held (GrantRevoker's drain, 06 §4.6),
-                // and without this the drain dialled the default API address and waited for the
-                // refusal: measured 0.03 s -> 4.1 s per test that made a session.
+                // stops revokes the grants of the sessions it held (GrantRevoker's drain,
+                // ADR-0057 §4.6), and without this the drain dialled the default API address and
+                // waited for the refusal: measured 0.03 s -> 4.1 s per test that made a session.
                 services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>
                     new FakeBackendApiHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
                     {
@@ -647,12 +647,12 @@ public partial class AuthLevelMiddlewareTests : IClassFixture<WebApplicationFact
     [Theory]
     [InlineData("/api/auth/login")]
     [InlineData("/api/auth/register")]
-    // Token endpoints since PR-1 (06 §4.2): the proxy reaches the API over loopback with the key on
-    // every browser request, so these must stop here too. /api/auth/logout used to be proxied, and
-    // it revokes every grant of the user.
+    // Token endpoints since PR-1 (ADR-0057 §4.2): the proxy reaches the API over loopback with the
+    // key on every browser request, so these must stop here too. /api/auth/logout used to be
+    // proxied, and it revokes every grant of the user.
     [InlineData("/api/auth/revoke")]
     [InlineData("/api/auth/logout")]
-    // The stamp feed since the stamp (06 §5.3): only the BFF's own watcher reads it.
+    // The stamp feed since the stamp (ADR-0057 §5.3): only the BFF's own watcher reads it.
     [InlineData("/api/auth/session-stamps")]
     public async Task TheProxiedAuthPair_NeverReachesTheApi_AndHandsOutNothing(string path)
     {

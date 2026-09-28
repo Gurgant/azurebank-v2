@@ -5,7 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace AzureBank.Infrastructure.Migrations
 {
     /// <summary>
-    /// Gives every user a <c>SessionStamp</c>, a counter every per-user sign-out raises by 1 (06 §5.3).
+    /// Gives every user a <c>SessionStamp</c>, a counter every per-user sign-out raises by 1
+    /// (ADR-0057 §5.3).
     /// </summary>
     /// <remarks>
     /// Its own column, not Identity's <c>SecurityStamp</c>: Identity rewrites that one on a password

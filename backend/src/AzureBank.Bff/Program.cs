@@ -114,8 +114,8 @@ try
             "http on loopback. Check BackendApi:BaseUrl and ReverseProxy:Clusters:*:Destinations:*:Address")
         .ValidateOnStart();
 
-    // The BFF's own client to the API: how long a call may take (06 §8). 100 s, HttpClient's own
-    // default, so naming it changed no behaviour; PR-2 sets its value.
+    // The BFF's own client to the API: how long a call may take (ADR-0057 §8). 100 s, HttpClient's
+    // own default, so naming it changed no behaviour; PR-2 sets its value.
     builder.Services.AddOptions<BackendApiOptions>()
         .Bind(builder.Configuration.GetSection(BackendApiOptions.SectionName))
         .Validate(
@@ -207,18 +207,18 @@ try
     // Session services (singleton - shared across requests)
     builder.Services.AddSingleton<ITokenStoreService, InMemoryTokenStore>();
     builder.Services.AddSingleton<ISessionService, SessionService>();
-    // Access-token renewal (ADR-0021, 06 §4.5). Singleton, and stateless between calls: the single
-    // flight lives on each session, under the session's own lock.
+    // Access-token renewal (ADR-0021, ADR-0057 §4.5). Singleton, and stateless between calls: the
+    // single flight lives on each session, under the session's own lock.
     builder.Services.AddSingleton<ITokenRefresher, TokenRefresher>();
 
     // Background services
     builder.Services.AddHostedService<SessionCleanupService>();
     // Revokes the grants of ended sessions at the API, and drains them on a graceful stop
-    // (06 §4.6). One instance: the store queues into it, and the host starts and stops it.
+    // (ADR-0057 §4.6). One instance: the store queues into it, and the host starts and stops it.
     builder.Services.AddSingleton<GrantRevoker>();
     builder.Services.AddHostedService(services => services.GetRequiredService<GrantRevoker>());
     // The latest session stamp known per signed-in user, which the store's validity check reads, and
-    // the watcher that reads the stamps every 15 s while anyone holds a session (06 §5.3).
+    // the watcher that reads the stamps every 15 s while anyone holds a session (ADR-0057 §5.3).
     builder.Services.AddSingleton<SessionStamps>();
     builder.Services.TryAddSingleton(TimeProvider.System);
     builder.Services.AddHostedService<SessionStampWatcher>();

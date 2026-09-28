@@ -15,9 +15,9 @@ public class ServiceCredentialOptions
 
     /// <summary>
     /// The marker the BFF's OWN client puts on its calls, and its proxy strips from the browser's
-    /// (06 §4.2). The API's token endpoints answer 404 without exactly one, because the key alone
-    /// cannot tell the two roads apart: the proxy adds the key to every browser request, and it
-    /// reaches the API over the same loopback interface.
+    /// (ADR-0057 §4.2). The API's token endpoints answer 404 without exactly one, because the key
+    /// alone cannot tell the two roads apart: the proxy adds the key to every browser request, and
+    /// it reaches the API over the same loopback interface.
     /// </summary>
     public const string TokenRoadHeaderName = "X-AzureBank-Token-Road";
 
@@ -29,9 +29,9 @@ public class ServiceCredentialOptions
     public const string TokenRoadMarker = "bff";
 
     /// <summary>
-    /// The response header the API adds to its refusal of a missing or wrong key (06 §4.7), so the BFF
-    /// can tell "the API does not know my key" from a session that ended — the first is a half-applied
-    /// key rotation, and must not sign anybody out.
+    /// The response header the API adds to its refusal of a missing or wrong key (ADR-0057 §4.7),
+    /// so the BFF can tell "the API does not know my key" from a session that ended — the first is
+    /// a half-applied key rotation, and must not sign anybody out.
     /// </summary>
     public const string RefusalHeaderName = "X-AzureBank-Refusal";
 

@@ -96,7 +96,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     /// Whether this host accepts a request with no remote address on the token endpoints, as every
     /// test host does by default: TestServer has no socket, so it gives every request a null
     /// address. False leaves <c>TokenRoadOptions</c> exactly as the API registers it, which is how
-    /// <c>TokenRoadTests</c> shows the production value (06 F1).
+    /// <c>TokenRoadTests</c> shows the production value (ADR-0057 F1).
     /// </summary>
     public bool AcceptMissingRemoteAddress { get; init; } = true;
 
@@ -286,9 +286,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
     /// <summary>
     /// Every client this factory hands out speaks as the BFF's own client does: the service
-    /// credential (ADR-0055) and the token-road marker (06 §4.2), one of each. These tests are about
-    /// what the API answers its one client. The tests about what it answers anyone else take the
-    /// headers off again: <c>ServiceCredentialTests</c> the key, <c>TokenRoadTests</c> the marker.
+    /// credential (ADR-0055) and the token-road marker (ADR-0057 §4.2), one of each. These tests
+    /// are about what the API answers its one client. The tests about what it answers anyone else
+    /// take the headers off again: <c>ServiceCredentialTests</c> the key, <c>TokenRoadTests</c> the
+    /// marker.
     /// </summary>
     /// <remarks>
     /// The marker goes on every request, not only the token endpoints', because the BFF's own client
@@ -350,9 +351,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         {
             /*
               TestServer has no socket, so every request it carries has a null RemoteIpAddress, and
-              the token endpoints refuse a null address unless code says otherwise (06 F1). This is
-              that code, and the only place it exists. TokenRoadTests builds a host without it
-              (AcceptMissingRemoteAddress = false), and sets real addresses through
+              the token endpoints refuse a null address unless code says otherwise (ADR-0057 F1).
+              This is that code, and the only place it exists. TokenRoadTests builds a host without
+              it (AcceptMissingRemoteAddress = false), and sets real addresses through
               FakeRemoteAddressStartupFilter, to show the refusals.
             */
             if (AcceptMissingRemoteAddress)

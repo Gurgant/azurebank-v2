@@ -17,15 +17,16 @@ using Xunit;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// The token endpoints answer only the BFF's own client over loopback (06 §4.2, O2d): 404 to an
-/// address that is not loopback, to a request without exactly one token-road marker whose value is
-/// the BFF's, and to a null address unless the test host says otherwise — the key and a live grant
-/// notwithstanding.
+/// The token endpoints answer only the BFF's own client over loopback (ADR-0057 §4.2, O2d): 404 to
+/// an address that is not loopback, to a request without exactly one token-road marker whose value
+/// is the BFF's, and to a null address unless the test host says otherwise — the key and a live
+/// grant notwithstanding.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Why it matters (06 §3): the grant no longer rotates because presenting one takes the grant, the
-/// service key AND a socket on the API's loopback interface. Each refusal below is one of those legs.
+/// Why it matters (ADR-0057 §3): the grant no longer rotates because presenting one takes the
+/// grant, the service key AND a socket on the API's loopback interface. Each refusal below is one
+/// of those legs.
 /// </para>
 /// <para>
 /// Addresses come from <see cref="FakeRemoteAddressStartupFilter"/>; without its header a request has
@@ -38,8 +39,8 @@ public class TokenRoadTests : IntegrationTestBase
     public TokenRoadTests(CustomWebApplicationFactory factory) : base(factory) { }
 
     /// <summary>
-    /// The five token endpoints and the stamp feed (06 §5.3), each with a body it would otherwise
-    /// accept.
+    /// The five token endpoints and the stamp feed (ADR-0057 §5.3), each with a body it would
+    /// otherwise accept.
     /// </summary>
     public static TheoryData<string> TokenEndpoints() =>
     [
@@ -116,7 +117,7 @@ public class TokenRoadTests : IntegrationTestBase
 
         var response = await Client.SendAsync(Post(path, grant, access, from: "10.0.0.7"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound, "06 F1: only loopback reaches a token endpoint");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound, "ADR-0057 F1: only loopback reaches a token endpoint");
 
         // And nothing happened behind the 404: the grant still renews (from loopback).
         (await Client.SendAsync(Post("/api/auth/refresh", grant, access, from: "127.0.0.1")))
@@ -163,7 +164,7 @@ public class TokenRoadTests : IntegrationTestBase
     {
         // Loopback alone is not the road: the BFF's proxy reaches the API over loopback too, with the
         // key on every browser request. Two markers are refused like two keys: picking one of them is
-        // how a smuggled header gets believed (06 F15).
+        // how a smuggled header gets believed (ADR-0057 F15).
         var (access, grant) = await SignInAsync();
         using var client = Factory.CreateClient();
         client.DefaultRequestHeaders.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
@@ -208,9 +209,9 @@ public class TokenRoadTests : IntegrationTestBase
     [InlineData(2, HttpStatusCode.NotFound)]
     public async Task TheStampFeed_FromLoopback_AnswersOnlyExactlyOneMarker(int markers, HttpStatusCode expected)
     {
-        // The stamp feed gets the token endpoints' rule (06 §5.3): it tells whoever reads it which
-        // users were signed out, and only the BFF's own watcher has a reason to. The 200 is the
-        // control that the 404s are the road's and not the body's.
+        // The stamp feed gets the token endpoints' rule (ADR-0057 §5.3): it tells whoever reads it
+        // which users were signed out, and only the BFF's own watcher has a reason to. The 200 is
+        // the control that the 404s are the road's and not the body's.
         var (access, grant) = await SignInAsync();
         using var client = Factory.CreateClient();
         client.DefaultRequestHeaders.Remove(ServiceCredentialOptions.TokenRoadHeaderName);
@@ -229,11 +230,11 @@ public class TokenRoadTests : IntegrationTestBase
     public async Task ANullAddress_IsRefused_ByTheOptionsTheApiRegisters_WhateverTheConfigurationSays()
     {
         /*
-          06 F1: a null address is accepted only when code sets the option, and only the test host
-          does. This host leaves the API's own registration as it is, and is given settings that
-          would turn the option on if anything bound it to configuration. The value the host resolves
-          must still be false, nothing may be registered to configure it, and a request with no
-          address — TestServer's — is refused while the same grant renews over loopback.
+          ADR-0057 F1: a null address is accepted only when code sets the option, and only the test
+          host does. This host leaves the API's own registration as it is, and is given settings
+          that would turn the option on if anything bound it to configuration. The value the host
+          resolves must still be false, nothing may be registered to configure it, and a request
+          with no address — TestServer's — is refused while the same grant renews over loopback.
         */
         using var production = new CustomWebApplicationFactory { AcceptMissingRemoteAddress = false };
         using var host = production.WithWebHostBuilder(builder =>

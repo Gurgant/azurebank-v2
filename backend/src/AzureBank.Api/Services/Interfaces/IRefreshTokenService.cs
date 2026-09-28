@@ -4,9 +4,9 @@ using AzureBank.Shared.Enums;
 namespace AzureBank.Api.Services.Interfaces;
 
 /// <summary>
-/// Owns the grant: one reusable refresh token per BFF session (06 §3). Issue, renew (a read), and
-/// revoke. Grants are stored ONLY as a SHA-256 hash; the plaintext is returned to the caller exactly
-/// once, at issue, and never persisted.
+/// Owns the grant: one reusable refresh token per BFF session (ADR-0057 §3). Issue, renew (a read),
+/// and revoke. Grants are stored ONLY as a SHA-256 hash; the plaintext is returned to the caller
+/// exactly once, at issue, and never persisted.
 /// </summary>
 public interface IRefreshTokenService
 {
@@ -20,7 +20,7 @@ public interface IRefreshTokenService
     /// <summary>
     /// Checks a presented grant and, when it is active, returns its user and expiry. WRITES NOTHING
     /// for an active grant; the only writes are the audit rows of two refusals, the unknown grant and
-    /// the tripwire (06 §4.3). Throws
+    /// the tripwire (ADR-0057 §4.3). Throws
     /// <see cref="Shared.Exceptions.AuthenticationException"/> (the uniform 401) for an unknown,
     /// revoked or expired grant. A grant whose session ended, presented in a request received after
     /// that revoke, is the tripwire: logged, audited, and refused — and nothing is revoked. If that
@@ -37,7 +37,8 @@ public interface IRefreshTokenService
     /// <paramref name="receivedAt"/> as their <c>RevokedAt</c>: <c>UPDATE … WHERE TokenHash IN (…) AND
     /// RevokedAt IS NULL</c>. Unknown and already-revoked grants are left alone, so repeating the call
     /// changes nothing. Returns how many rows it revoked. A failed write surfaces as
-    /// <see cref="Shared.Exceptions.ServiceUnavailableException"/>, so the caller retries (06 §4.4).
+    /// <see cref="Shared.Exceptions.ServiceUnavailableException"/>, so the caller retries
+    /// (ADR-0057 §4.4).
     /// </summary>
     Task<int> RevokeAsync(
         IReadOnlyCollection<string> presentedTokens, DateTime receivedAt, CancellationToken cancellationToken = default);
@@ -46,7 +47,7 @@ public interface IRefreshTokenService
     /// Signs the user out of every session: revokes every active grant of the user with
     /// <paramref name="reason"/>, stamping <paramref name="revokedAt"/>, and adds 1 to the user's
     /// <c>SessionStamp</c> in the same transaction, so the BFF ends those sessions within one poll
-    /// (06 §5.3). Returns how many grants it revoked.
+    /// (ADR-0057 §5.3). Returns how many grants it revoked.
     /// </summary>
     Task<int> RevokeAllForUserAsync(
         Guid userId,

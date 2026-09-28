@@ -40,7 +40,9 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
         /// credential is not the only secret a wrong destination would be handed.</summary>
         public List<string?> Authorization { get; } = [];
 
-        /// <summary>The token-road marker (06 §4.2), every value that arrived, per request.</summary>
+        /// <summary>
+        /// The token-road marker (ADR-0057 §4.2), every value that arrived, per request.
+        /// </summary>
         public List<string[]> Markers { get; } = [];
 
         public HttpResponseMessage Respond(HttpRequestMessage request)
@@ -149,9 +151,9 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
     [Fact]
     public async Task TheBffsOwnClient_MarksEveryCallAsItsOwn_WithExactlyOneMarker()
     {
-        // 06 §4.2: the API's token endpoints answer 404 without exactly one marker. The key alone
-        // cannot tell this road from the proxy's, which carries it too and reaches the API over the
-        // same loopback interface.
+        // ADR-0057 §4.2: the API's token endpoints answer 404 without exactly one marker. The key
+        // alone cannot tell this road from the proxy's, which carries it too and reaches the API
+        // over the same loopback interface.
         var (host, api) = NewHost();
         using var client = host.CreateClient();
 
@@ -165,8 +167,8 @@ public sealed class ServiceCredentialTests : IClassFixture<WebApplicationFactory
     [Fact]
     public async Task TheProxy_DropsAMarkerTheBrowserSent_AndSendsNone()
     {
-        // The other half of 06 §4.2 (O2d): a browser's copy of the marker never reaches the API, so
-        // a request passing through the proxy can never pass for the BFF's own.
+        // The other half of ADR-0057 §4.2 (O2d): a browser's copy of the marker never reaches the
+        // API, so a request passing through the proxy can never pass for the BFF's own.
         var (host, api) = NewHost();
         using var client = host.CreateClient();
         using var request = ProxiedRead(host);

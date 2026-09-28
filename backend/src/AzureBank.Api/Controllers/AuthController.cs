@@ -17,7 +17,8 @@ namespace AzureBank.Api.Controllers;
 /// <remarks>
 /// The five token endpoints — login, register, refresh, revoke and logout — and the stamp feed,
 /// session-stamps, carry <see cref="TokenEndpointAttribute"/>: they answer only the BFF's own client
-/// over loopback, and 404 to anything else (06 §4.2, §5.3, <see cref="TokenRoadMiddleware"/>).
+/// over loopback, and 404 to anything else (ADR-0057 §4.2, §5.3,
+/// <see cref="TokenRoadMiddleware"/>).
 /// </remarks>
 [ApiController]
 [Route("api/auth")]
@@ -110,7 +111,7 @@ public class AuthController : ControllerBase
     {
         // No cancellation: a renewal of an active grant only reads, and the audit rows two refusals
         // write — the unknown grant's and the tripwire's — must not be taken back by a caller that
-        // hangs up (06 §4.3).
+        // hangs up (ADR-0057 §4.3).
         var result = await _authService.RefreshAsync(request, HttpContext.ReceivedAt());
         return Ok(ApiResponse<RefreshResponse>.Success(result, "Token refreshed"));
     }

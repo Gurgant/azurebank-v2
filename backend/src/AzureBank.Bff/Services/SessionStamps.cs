@@ -3,8 +3,8 @@ using System.Collections.Concurrent;
 namespace AzureBank.Bff.Services;
 
 /// <summary>
-/// The latest session stamp the BFF knows for each user who holds a session (06 §5.3): the map the
-/// store's validity check reads and <see cref="SessionStampWatcher"/> fills.
+/// The latest session stamp the BFF knows for each user who holds a session (ADR-0057 §5.3): the
+/// map the store's validity check reads and <see cref="SessionStampWatcher"/> fills.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,7 +17,7 @@ namespace AzureBank.Bff.Services;
 /// <b>Fed from two places.</b> The watcher's poll, every 15 s while anyone holds a session, and
 /// every new session: a sign-in answers the user's current stamp, which can already be above what
 /// the last poll read. No sign-out of all a user's sessions starts inside the BFF today ("Esci" ends
-/// one session, 06 §4.6), so the poll and the sign-ins are the only sources.
+/// one session, ADR-0057 §4.6), so the poll and the sign-ins are the only sources.
 /// </para>
 /// <para>
 /// <b>A failed poll changes nothing here</b>: the map keeps its last values. The lever that raised a

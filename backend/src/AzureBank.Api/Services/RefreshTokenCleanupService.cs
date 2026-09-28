@@ -12,7 +12,7 @@ namespace AzureBank.Api.Services;
 /// - Cleanup is HYGIENE, not correctness: every read path already filters on expiry and
 ///   revocation (RenewAsync treats an expired/absent grant as invalid), so an un-swept row
 ///   is inert. This sweep just stops the table growing unbounded — each sign-in writes a row.
-///   A grant presented after its row is swept is an unknown one (06 §6, anomaly 3).
+///   A grant presented after its row is swept is an unknown one (ADR-0057 §6, anomaly 3).
 /// - The RefreshTokens table self-references itself (ReplacedByTokenId, DeleteBehavior.Restrict)
 ///   in the LEGACY rotation chain, which nothing writes since PR-1 but rows written before still
 ///   carry, so a single set-based DELETE can trip the FK when a surviving row still points at a

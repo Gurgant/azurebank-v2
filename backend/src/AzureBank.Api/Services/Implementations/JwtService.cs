@@ -32,9 +32,9 @@ public class JwtService : IJwtService
     /// <param name="user">Whom the token is for.</param>
     /// <param name="notAfter">
     /// When given, the token expires then if that is sooner than its normal lifetime: a renewal
-    /// passes its grant's expiry, so no access token outlives the grant it came from (06 §4.1). The
-    /// <c>exp</c> claim is whole seconds, truncated, so the token never ends even a fraction of a
-    /// second after <paramref name="notAfter"/>.
+    /// passes its grant's expiry, so no access token outlives the grant it came from
+    /// (ADR-0057 §4.1). The <c>exp</c> claim is whole seconds, truncated, so the token never ends
+    /// even a fraction of a second after <paramref name="notAfter"/>.
     /// </param>
     public TokenResult GenerateToken(ApplicationUser user, DateTime? notAfter = null)
     {

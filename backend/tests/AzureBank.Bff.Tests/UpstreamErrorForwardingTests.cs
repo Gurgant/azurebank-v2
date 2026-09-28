@@ -59,10 +59,10 @@ public class UpstreamErrorForwardingTests : IClassFixture<WebApplicationFactory<
     [Fact]
     public async Task TheApiRefusingThisHostsKey_Becomes503WithRetryAfter_NotTheSignOut401()
     {
-        // 06 §4.7 (F4). The API marks its refusal of the service key with a header; a key rotation
-        // applied on one side is the service failing, and forwarded as its 401 it would sign the user
-        // out. JsonUpstreamError_IsForwardedVerbatim_WithItsStatus is the control: a 401 WITHOUT the
-        // header still passes through untouched.
+        // ADR-0057 §4.7 (F4). The API marks its refusal of the service key with a header; a key
+        // rotation applied on one side is the service failing, and forwarded as its 401 it would
+        // sign the user out. JsonUpstreamError_IsForwardedVerbatim_WithItsStatus is the control: a
+        // 401 WITHOUT the header still passes through untouched.
         var client = _factory.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
                 services.AddHttpClient("BackendApi").ConfigurePrimaryHttpMessageHandler(() =>

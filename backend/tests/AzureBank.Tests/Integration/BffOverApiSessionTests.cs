@@ -46,10 +46,11 @@ public sealed class BffOverApiSessionTests
     [Fact]
     public async Task SigningOutOneSession_LeavesTheUsersOtherSessionRenewing_AndRecordsNoReuse()
     {
-        // 06 §10 O0-2 item 3 (F9e). "Esci" ends ONE session (06 §4.6): the other session of the same
-        // user keeps renewing, and nobody is accused of theft. Red on main, where "Esci" revokes
-        // every grant of the user (BffAuthController.Logout -> /api/auth/logout) and the other
-        // session's next renewal is then read as reuse: a 401 and one false RefreshTokenReuse.
+        // ADR-0057 §10 O0-2 item 3 (F9e). "Esci" ends ONE session (ADR-0057 §4.6): the other
+        // session of the same user keeps renewing, and nobody is accused of theft. Red on main,
+        // where "Esci" revokes every grant of the user (BffAuthController.Logout ->
+        // /api/auth/logout) and the other session's next renewal is then read as reuse: a 401 and
+        // one false RefreshTokenReuse.
         using var api = new CustomWebApplicationFactory();
         api.CaptureLog(LogEventLevel.Warning);
         var apiClient = api.CreateClient();
@@ -74,7 +75,8 @@ public sealed class BffOverApiSessionTests
         esci.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // The false event must be DUE before its absence can count: B renews only once the API holds
-        // A's grant as revoked. On main that is at once; with 06 §4.6 the revoke is queued, so wait.
+        // A's grant as revoked. On main that is at once; with ADR-0057 §4.6 the revoke is queued,
+        // so wait.
         (await WaitUntilRevokedAsync(api, grantA!, TimeSpan.FromSeconds(10))).Should().BeTrue(
             "\"Esci\" on A must revoke A's grant at the API, or B's renewal below tests nothing");
 
@@ -100,10 +102,10 @@ public sealed class BffOverApiSessionTests
     [Fact]
     public async Task WhenTheBffKeyIsNotTheApiKey_AProxiedReadReachesTheBrowserAs503()
     {
-        // 06 §10 O0-2 item 6 (F4, 06 §4.7). A key rotation applied on one side only is an outage of
-        // the service, not a verdict on the user: the browser must see a 503 it retries, never the
-        // 401 it reads as "signed out". Red on main, where YARP hands the API's 401
-        // SERVICE_CREDENTIAL_REQUIRED straight to the browser.
+        // ADR-0057 §10 O0-2 item 6 (F4, ADR-0057 §4.7). A key rotation applied on one side only is
+        // an outage of the service, not a verdict on the user: the browser must see a 503 it
+        // retries, never the 401 it reads as "signed out". Red on main, where YARP hands the API's
+        // 401 SERVICE_CREDENTIAL_REQUIRED straight to the browser.
         using var api = new CustomWebApplicationFactory();
         var apiClient = api.CreateClient();
 
@@ -141,8 +143,8 @@ public sealed class BffOverApiSessionTests
     /// <summary>
     /// A client that keeps no cookies of its own, so every request carries exactly the session the
     /// test names. With the default cookie handling, the second sign-in would carry the first
-    /// session's cookie, and a BFF that ends the old session on a new sign-in (06 §4.6, F13) would
-    /// end A before the test signs A out.
+    /// session's cookie, and a BFF that ends the old session on a new sign-in (ADR-0057 §4.6, F13)
+    /// would end A before the test signs A out.
     /// </summary>
     private static HttpClient Browser(BffOverApiFactory bffHost) =>
         bffHost.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });

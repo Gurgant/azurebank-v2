@@ -15,9 +15,9 @@ public sealed class TokenRoadOptions
     /// <summary>
     /// Accept a request whose <c>Connection.RemoteIpAddress</c> is null, as if it were loopback.
     /// False unless code sets it, and only the test host does: <c>TestServer</c> has no socket, so
-    /// every request it carries has no address (06 F1). In a deployment a null address means a
-    /// transport with no IP at all (a Unix socket, a named pipe), which is not the road 06 §3 argues
-    /// from, so it is refused like any other address.
+    /// every request it carries has no address (ADR-0057 F1). In a deployment a null address means
+    /// a transport with no IP at all (a Unix socket, a named pipe), which is not the road
+    /// ADR-0057 §3 argues from, so it is refused like any other address.
     /// </summary>
     public bool AcceptMissingRemoteAddress { get; set; }
 }
@@ -25,20 +25,21 @@ public sealed class TokenRoadOptions
 /// <summary>
 /// Answers 404 to a token endpoint (<see cref="TokenEndpointAttribute"/>) unless the request came
 /// over loopback AND carries exactly one <see cref="ServiceCredentialOptions.TokenRoadHeaderName"/>
-/// whose value is <see cref="ServiceCredentialOptions.TokenRoadMarker"/> (06 §4.2).
+/// whose value is <see cref="ServiceCredentialOptions.TokenRoadMarker"/> (ADR-0057 §4.2).
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why both.</b> The argument that lets a grant stop rotating (06 §3) is that presenting one
-/// takes the grant, the service key AND a socket on the API's loopback interface, which only code
-/// inside the replica has. Loopback alone does not hold that line: the BFF's proxy also reaches the
-/// API over loopback, and adds the key to every browser request. So the BFF's own client adds the
-/// marker, its proxy strips any copy a browser sends, and this refuses a request without exactly one:
-/// picking one of two is how a smuggled header gets believed — the rule the key follows in
-/// <see cref="ServiceCredentialMiddleware"/>. Two can arrive as two values, or, over a real socket,
-/// as ONE value: SocketsHttpHandler writes two values of a header on one line, "bff, bff", and
-/// Kestrel hands the line over whole (measured by the pre-review of PR-1). The key's rule holds
-/// either way because its value is compared; so the marker's value is compared too, exactly.
+/// <b>Why both.</b> The argument that lets a grant stop rotating (ADR-0057 §3) is that presenting
+/// one takes the grant, the service key AND a socket on the API's loopback interface, which only
+/// code inside the replica has. Loopback alone does not hold that line: the BFF's proxy also
+/// reaches the API over loopback, and adds the key to every browser request. So the BFF's own
+/// client adds the marker, its proxy strips any copy a browser sends, and this refuses a request
+/// without exactly one: picking one of two is how a smuggled header gets believed — the rule the
+/// key follows in <see cref="ServiceCredentialMiddleware"/>. Two can arrive as two values, or, over
+/// a real socket, as ONE value: SocketsHttpHandler writes two values of a header on one line,
+/// "bff, bff", and Kestrel hands the line over whole (measured by the pre-review of PR-1). The
+/// key's rule holds either way because its value is compared; so the marker's value is compared
+/// too, exactly.
 /// </para>
 /// <para>
 /// <b>404, not 401 or 403,</b> so a caller off the road is told only what an unknown path tells it.

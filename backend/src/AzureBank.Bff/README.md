@@ -126,14 +126,14 @@ AzureBank.Bff/
 ├── 📁 Services/
 │   ├── 📁 Interfaces/
 │   │   ├── ISessionService.cs          # Session operations
-│   │   ├── ITokenRefresher.cs          # Access-token renewal (ADR-0021, 06 §4.5)
+│   │   ├── ITokenRefresher.cs          # Access-token renewal (ADR-0021, ADR-0057 §4.5)
 │   │   └── ITokenStoreService.cs       # Token storage
 │   ├── 📁 Implementations/
 │   │   ├── SessionService.cs           # Session management logic
 │   │   ├── TokenRefresher.cs           # Renewal with a non-rotating grant, single flight per session
 │   │   └── InMemoryTokenStore.cs       # In-memory token storage; every session ending goes through it
 │   ├── GrantRevoker.cs                 # Revokes ended sessions' grants; drains them on a graceful stop
-│   ├── SessionStamps.cs                # Latest session stamp known per signed-in user (06 §5.3)
+│   ├── SessionStamps.cs                # Latest session stamp known per signed-in user (ADR-0057 §5.3)
 │   ├── SessionStampWatcher.cs          # Reads those stamps every 15 s while anyone is signed in
 │   └── SessionCleanupService.cs        # Background cleanup (every 5 min)
 │
@@ -322,7 +322,7 @@ public class UserSession
 4. **Activity**: Update `LastActivity` on each request
 5. **Timeout**: Inactivity (15 min; 10 in Development) or absolute (60 min; 20 in Development)
    expiration — `Session` section of `appsettings.json` / `appsettings.Development.json`. The
-   absolute limit is also never later than the grant's own expiry (06 §4.1)
+   absolute limit is also never later than the grant's own expiry (ADR-0057 §4.1)
 6. **Cleanup**: Background service ends expired sessions every 5 min
 7. **Logout**: Immediately end this session and clear the cookie; the user's other sessions are
    untouched. Every ending — logout, expiry, re-authentication, a new sign-in over an old cookie, a
@@ -333,7 +333,7 @@ public class UserSession
    goes up; `SessionStampWatcher` reads the stamps of the signed-in users every 15 s through
    `POST /api/auth/session-stamps` (and makes no call when nobody is signed in), and a session whose
    stamp is below the one read is refused at its next request. A failed read keeps the last values
-   (06 §5.3)
+   (ADR-0057 §5.3)
 
 ### Session Security
 
@@ -382,7 +382,7 @@ The `BearerTokenTransformProvider` first clears any inbound `Authorization` head
 session's JWT (renewed through `ITokenRefresher` when it runs short). A renewal that cannot be had while
 the token has 5 s or less left is answered here with a 503 and `Retry-After`, never forwarded; the
 source also strips the token-road marker and turns the API's refusal of the service key into a 503
-(06 §4.2, §4.7). Abridged:
+(ADR-0057 §4.2, §4.7). Abridged:
 
 ```csharp
 public void Apply(TransformBuilderContext context)
@@ -401,8 +401,8 @@ public void Apply(TransformBuilderContext context)
         if (httpContext.Request.Cookies.TryGetValue(cookieName, out var sessionId)
             && !string.IsNullOrEmpty(sessionId))
         {
-            // Renewed first when it runs short (06 §4.5). SessionEnded = inject nothing, the API
-            // 401s and the SPA's session-expired path fires; Unavailable = answer 503 here.
+            // Renewed first when it runs short (ADR-0057 §4.5). SessionEnded = inject nothing, the
+            // API 401s and the SPA's session-expired path fires; Unavailable = answer 503 here.
             var refresher = httpContext.RequestServices.GetRequiredService<ITokenRefresher>();
             var result = await refresher.GetAccessTokenAsync(sessionId, httpContext.RequestAborted);
             if (result.Outcome == AccessTokenOutcome.Token)

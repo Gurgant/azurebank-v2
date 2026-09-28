@@ -26,8 +26,8 @@ namespace AzureBank.Bff.Http;
 /// </para>
 /// <para>
 /// <b>It also marks the call as the BFF's own</b>, with <see cref="ServiceCredentialOptions.TokenRoadHeaderName"/>
-/// (06 §4.2). The API's token endpoints — login, register, refresh, revoke, logout — and the
-/// session-stamp feed <see cref="Services.SessionStampWatcher"/> reads (06 §5.3) answer 404
+/// (ADR-0057 §4.2). The API's token endpoints — login, register, refresh, revoke, logout — and the
+/// session-stamp feed <see cref="Services.SessionStampWatcher"/> reads (ADR-0057 §5.3) answer 404
 /// without exactly one, because the key cannot tell this road from the proxy's: both carry it, and
 /// both reach the API over loopback. The proxy strips the marker from every browser request, so
 /// only code in this process can send it. On every call, not only the token endpoints', as the key

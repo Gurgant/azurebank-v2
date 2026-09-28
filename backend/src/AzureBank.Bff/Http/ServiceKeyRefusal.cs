@@ -4,7 +4,7 @@ using AzureBank.Shared.Options;
 namespace AzureBank.Bff.Http;
 
 /// <summary>
-/// Tells the API's refusal of this host's service key from every other 401 (06 §4.7, F4).
+/// Tells the API's refusal of this host's service key from every other 401 (ADR-0057 §4.7, F4).
 /// </summary>
 /// <remarks>
 /// <para>

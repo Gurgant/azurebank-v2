@@ -47,15 +47,16 @@ public class AuthLevelMiddleware
       while this branch stands in front, and keeps the fallback no worse than today.
     */
     /*
-      REVOKE AND LOGOUT JOINED THE SET IN PR-1 (06 §4.2). They are token endpoints too: the API
-      answers them only over loopback with the BFF's own marker, and this proxy reaches the API over
-      loopback with the service key on every browser request. /api/auth/logout was simply proxied
-      before, so a browser holding a session could revoke every grant of its user on every device;
-      the SPA never called it. /api/auth/revoke is new and has no browser caller either. Neither has a
-      dedicated YARP route, so the note above does not apply to them: the catch-all would carry them,
-      which is why they are named here rather than left to the transform's marker strip alone.
-      /api/auth/session-stamps joined for the same reason with the stamp (06 §5.3): the API answers
-      it only to the BFF's own watcher, and no browser has a reason to read who holds a session.
+      REVOKE AND LOGOUT JOINED THE SET IN PR-1 (ADR-0057 §4.2). They are token endpoints too: the
+      API answers them only over loopback with the BFF's own marker, and this proxy reaches the API
+      over loopback with the service key on every browser request. /api/auth/logout was simply
+      proxied before, so a browser holding a session could revoke every grant of its user on every
+      device; the SPA never called it. /api/auth/revoke is new and has no browser caller either.
+      Neither has a dedicated YARP route, so the note above does not apply to them: the catch-all
+      would carry them, which is why they are named here rather than left to the transform's marker
+      strip alone. /api/auth/session-stamps joined for the same reason with the stamp
+      (ADR-0057 §5.3): the API answers it only to the BFF's own watcher, and no browser has a reason
+      to read who holds a session.
     */
     private static readonly HashSet<string> BlockedProxiedAuthPaths =
         new(StringComparer.OrdinalIgnoreCase)
@@ -138,7 +139,7 @@ public class AuthLevelMiddleware
         var safeMethod = LogSanitizer.Sanitize(method);
 
         // The browser must NEVER renew a grant: only the BFF holds grants (server-side) and renews
-        // access tokens itself via the YARP transform (ADR-0021, 06 §4.5).
+        // access tokens itself via the YARP transform (ADR-0021, ADR-0057 §4.5).
         // A raw proxied /api/auth/refresh has no legitimate caller here, so short-circuit it to
         // 404 — as if the route did not exist (don't leak why). Trailing slash is normalized the
         // same way the PIN gate is, since endpoint routing tolerates it.

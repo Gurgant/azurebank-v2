@@ -21,11 +21,11 @@ using Serilog.Events;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// The grant of 06 §4 against REAL SQL Server: renewal sends no write, eight concurrent renewals all
-/// succeed and change nothing, a revoke racing a renewal's read is not theft, the tripwire fires on a
-/// real replay, a revoke whose write fails answers 503, the renewal-rate detector's event costs no
-/// write, and the lifetime and the access-token cap hold for rows SQL Server hands back.
-/// <i>(Until PR-1 this class proved rotation: the self-referencing
+/// The grant of ADR-0057 §4 against REAL SQL Server: renewal sends no write, eight concurrent
+/// renewals all succeed and change nothing, a revoke racing a renewal's read is not theft, the
+/// tripwire fires on a real replay, a revoke whose write fails answers 503, the renewal-rate
+/// detector's event costs no write, and the lifetime and the access-token cap hold for rows SQL
+/// Server hands back. <i>(Until PR-1 this class proved rotation: the self-referencing
 /// successor write, the rowversion guard against a forked chain, and reuse revoking the family.)</i>
 /// </summary>
 [Trait("Category", "SqlServer")]
@@ -42,9 +42,10 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
     public async Task EightConcurrentRenewalsOfOneGrant_AllSucceed_AndChangeNothing()
     {
         /*
-          06 §10 O2g, replacing the two rotation proofs. Under rotation, eight renewals of one token
-          raced a rowversion guard: one won, seven got 401 — and a BFF whose answer was lost was one of
-          the seven. Now each is a read: 8 × 200, one row, the same rowversion before and after.
+          ADR-0057 §10 O2g, replacing the two rotation proofs. Under rotation, eight renewals of one
+          token raced a rowversion guard: one won, seven got 401 — and a BFF whose answer was lost
+          was one of the seven. Now each is a read: 8 × 200, one row, the same rowversion before and
+          after.
         */
         var client = CreateSqlClient();
         var (userId, _, grant) = await RegisterAsync(client);
@@ -68,10 +69,11 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
     public async Task ARevokeCommittedWhileARenewalWaitsToRead_IsNotTheTripwire()
     {
         /*
-          06 §10 O2b, replacing the "reuse revoke racing rotations" proof. The renewal ARRIVES first
-          (and is stamped), is then held before its read of the grant, the grant is revoked through
-          /revoke in the gap, and the renewal reads a grant revoked after it arrived. That is a
-          renewal in flight when the session ended: 401, an Info line, and no RefreshTokenReuse.
+          ADR-0057 §10 O2b, replacing the "reuse revoke racing rotations" proof. The renewal ARRIVES
+          first (and is stamped), is then held before its read of the grant, the grant is revoked
+          through /revoke in the gap, and the renewal reads a grant revoked after it arrived. That
+          is a renewal in flight when the session ended: 401, an Info line, and no
+          RefreshTokenReuse.
         */
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
@@ -95,7 +97,7 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
         renewed.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the grant it read was revoked");
         (await ReadGrantsAsync(userId)).Single().RevokedReason.Should().Be(RefreshTokenRevokedReason.SessionEnded);
         _factory.CapturedLog.Should().ContainSingle(l => l.Contains("while its renewal was in flight"),
-            "the renewal arrived before the revoke, so it was in flight (06 §4.3 row 3)");
+            "the renewal arrived before the revoke, so it was in flight (ADR-0057 §4.3 row 3)");
         _factory.CapturedLog.Should().NotContain(l => l.Contains(SecurityEvents.RefreshTokenReuse));
         (await CountAuditAsync(userId, SecurityEvents.RefreshTokenReuse)).Should().Be(0);
     }
@@ -104,10 +106,10 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
     public async Task AnEndedSessionsGrantPresentedAgain_TripsTheTripwire_AndTheOtherSessionStillRenews()
     {
         /*
-          06 §10 O2a, the positive control the zeros elsewhere rest on. Two sessions of one user; A
-          ends through /revoke; A's grant presented again is the tripwire: 401, one RefreshTokenReuse
-          log line and audit row — and B's grant still active and renewing, because the tripwire
-          revokes nothing (F3).
+          ADR-0057 §10 O2a, the positive control the zeros elsewhere rest on. Two sessions of one
+          user; A ends through /revoke; A's grant presented again is the tripwire: 401, one
+          RefreshTokenReuse log line and audit row — and B's grant still active and renewing,
+          because the tripwire revokes nothing (F3).
         */
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
@@ -139,9 +141,9 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
     [SqlServerFact]
     public async Task ARevokeWhoseWriteFails_Answers503WithRetryAfter_AndTheRetryRevokes()
     {
-        // 06 §4.4, F12: the database failing is a 503 the BFF retries, never a 500. The fault is a
-        // one-shot TimeoutException on the revoke's own UPDATE, on the relational path the unit
-        // tests cannot reach.
+        // ADR-0057 §4.4, F12: the database failing is a 503 the BFF retries, never a 500. The fault
+        // is a one-shot TimeoutException on the revoke's own UPDATE, on the relational path the
+        // unit tests cannot reach.
         var client = CreateSqlClient();
         var (userId, _, grant) = await RegisterAsync(client);
         var fault = new TransientFailureInterceptor("UPDATE [r]");
@@ -166,11 +168,11 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
     public async Task TheGrantLivesSixtyMinutesFromSignIn_AndCapsTheAccessTokensMintedFromIt()
     {
         /*
-          PR-1's lifetime oracle and 06 §10 O2e, on the rows SQL Server hands back. The grant's
-          expiry in SQL is its sign-in plus 60 minutes, and login answers that same instant. Then the
-          row is backdated to two minutes from now — the option refuses a lifetime that short (F11) —
-          and a renewal's access token must expire no later than it, although SQL Server returns the
-          expiry as DateTimeKind.Unspecified.
+          PR-1's lifetime oracle and ADR-0057 §10 O2e, on the rows SQL Server hands back. The
+          grant's expiry in SQL is its sign-in plus 60 minutes, and login answers that same instant.
+          Then the row is backdated to two minutes from now — the option refuses a lifetime that
+          short (F11) — and a renewal's access token must expire no later than it, although SQL
+          Server returns the expiry as DateTimeKind.Unspecified.
         */
         var client = CreateSqlClient();
         var (userId, email, _) = await RegisterAsync(client);
@@ -181,7 +183,7 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
         var loginGrant = (await ReadGrantsAsync(userId)).OrderBy(g => g.CreatedAt).Last();
         (loginGrant.ExpiresAt - loginGrant.CreatedAt).Should().Be(TimeSpan.FromMinutes(60));
         DateTime.SpecifyKind(loginGrant.ExpiresAt, DateTimeKind.Utc).Should().Be(token.RefreshTokenExpiresAt!.Value,
-            "login answers the stored expiry (refreshTokenExpiresAt, 06 §4.1)");
+            "login answers the stored expiry (refreshTokenExpiresAt, ADR-0057 §4.1)");
 
         var cap = DateTime.UtcNow.AddMinutes(2);
         using (var scope = _factory!.Services.CreateScope())
@@ -226,10 +228,10 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
     [SqlServerFact]
     public async Task ARenewal_SendsNoWriteCommand_OnSqlServer()
     {
-        // 06 §10 O0-2 item 2. A renewal that writes nothing cannot lose a write: no answer lost
-        // after a commit, no commit EF retries as if it had rolled back, nothing for a hung database
-        // to hold (06 §1). Red on main, where every renewal rotates: an INSERT of the successor and
-        // an UPDATE of the presented row.
+        // ADR-0057 §10 O0-2 item 2. A renewal that writes nothing cannot lose a write: no answer
+        // lost after a commit, no commit EF retries as if it had rolled back, nothing for a hung
+        // database to hold (ADR-0057 §1). Red on main, where every renewal rotates: an INSERT of
+        // the successor and an UPDATE of the presented row.
         var client = CreateSqlClient();
         var (_, _, refresh) = await RegisterAsync(client);
 
@@ -248,17 +250,18 @@ public sealed class RefreshTokenRotationSqlServerTests : IDisposable
         commands.Selects.Should().NotBeEmpty(
             "the recorder must have seen the renewal's own read of the grant, or the zero below proves nothing");
         commands.Writes.Should().BeEmpty(
-            "a renewal only reads the grant and mints an access token in memory (06 §4.3: Writes = none)");
+            "a renewal only reads the grant and mints an access token in memory (ADR-0057 §4.3: Writes = none)");
     }
 
     [SqlServerFact]
     public async Task FourRenewalsThatRaiseTheRateEvent_SendNoWriteCommand_AndWriteNoAuditRow()
     {
         /*
-          06 §6, anomaly 2: the detector counts in memory and writes nothing. Four renewals of one
-          grant within one token lifetime, recorded on the wire: all 200, one RefreshRenewalRateHigh
-          log line, and not one command that is not a SELECT. The event line is what makes the zero
-          mean something: the recorder was listening across the very renewal that raised it.
+          ADR-0057 §6, anomaly 2: the detector counts in memory and writes nothing. Four renewals of
+          one grant within one token lifetime, recorded on the wire: all 200, one
+          RefreshRenewalRateHigh log line, and not one command that is not a SELECT. The event line
+          is what makes the zero mean something: the recorder was listening across the very renewal
+          that raised it.
         */
         _factory = new CustomWebApplicationFactory();
         _factory.SetConnectionString(SqlServerFactAttribute.ConnectionString!);

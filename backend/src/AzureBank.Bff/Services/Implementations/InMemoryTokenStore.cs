@@ -21,10 +21,11 @@ namespace AzureBank.Bff.Services.Implementations;
 /// <para>
 /// <b>Every ending goes through <see cref="End"/></b>: "Esci", idle expiry and the cap found on a
 /// read or by the sweep, re-authentication, a new sign-in over an old cookie, a dead grant, a stamp
-/// below the latest known (06 §5.3), and a graceful stop (06 §4.6). It marks the session ended and
-/// removes it under the session's own lock, then hands its grant to <see cref="GrantRevoker"/> with
-/// the renewal it caught in flight. Before PR-1 an expired session was only dropped from this
-/// dictionary, and its refresh token lived on at the API for days with no holder.
+/// below the latest known (ADR-0057 §5.3), and a graceful stop (ADR-0057 §4.6). It marks the
+/// session ended and removes it under the session's own lock, then hands its grant to
+/// <see cref="GrantRevoker"/> with the renewal it caught in flight. Before PR-1 an expired session
+/// was only dropped from this dictionary, and its refresh token lived on at the API for days with
+/// no holder.
 /// </para>
 /// </remarks>
 public class InMemoryTokenStore : ITokenStoreService
@@ -78,11 +79,12 @@ public class InMemoryTokenStore : ITokenStoreService
     public Task UpdateSessionAsync(UserSession session)
     {
         /*
-          TryUpdate, NEVER the indexer (06 §4.6, F2). Every write in SessionService reads the session,
-          changes it, then writes it back. The indexer re-added a session that "Esci" removed between
-          the read and the write, and the signed-out cookie worked again: measured on main, the next
-          request with it answered 200 (06 §10 O0-2 item 7). TryUpdate replaces only an entry that is
-          still there, and only with the same object, so a removed session stays removed.
+          TryUpdate, NEVER the indexer (ADR-0057 §4.6, F2). Every write in SessionService reads the
+          session, changes it, then writes it back. The indexer re-added a session that "Esci"
+          removed between the read and the write, and the signed-out cookie worked again: measured
+          on main, the next request with it answered 200 (ADR-0057 §10 O0-2 item 7). TryUpdate
+          replaces only an entry that is still there, and only with the same object, so a removed
+          session stays removed.
         */
         _sessions.TryUpdate(session.SessionId, session, session);
         return Task.CompletedTask;
@@ -149,9 +151,9 @@ public class InMemoryTokenStore : ITokenStoreService
 
     /// <summary>
     /// Under the session's lock: marks it ended, captures the renewal in flight and removes it
-    /// (06 §4.6 step 1). Returns whether this call ended it, and the grant to revoke — null when the
-    /// session had already ended or never held one. The removal names the object as well as the id,
-    /// so it can never take out a different session stored under the same id.
+    /// (ADR-0057 §4.6 step 1). Returns whether this call ended it, and the grant to revoke — null
+    /// when the session had already ended or never held one. The removal names the object as well
+    /// as the id, so it can never take out a different session stored under the same id.
     /// </summary>
     private (bool EndedNow, GrantRevocation? Grant) EndUnderLock(UserSession session)
     {
@@ -187,7 +189,8 @@ public class InMemoryTokenStore : ITokenStoreService
             return false;
         }
 
-        // Absolute timeout: the configured cap or the grant's expiry, whichever comes first (06 §4.1).
+        // Absolute timeout: the configured cap or the grant's expiry, whichever comes first
+        // (ADR-0057 §4.1).
         if (now >= session.AbsoluteExpiresAt)
         {
             return false;
@@ -200,7 +203,7 @@ public class InMemoryTokenStore : ITokenStoreService
         }
 
         // A sign-out of every session of this user happened after this session's sign-in: the API
-        // raised the user's stamp, and the watcher or a newer sign-in told us (06 §5.3).
+        // raised the user's stamp, and the watcher or a newer sign-in told us (ADR-0057 §5.3).
         if (!_stamps.IsCurrent(session.UserId, session.SessionStamp))
         {
             return false;
@@ -210,7 +213,7 @@ public class InMemoryTokenStore : ITokenStoreService
         // slides within the inactivity/absolute budgets above, and its JWT is renewed before the next
         // proxied call. A session that can NEVER renew again keeps the old hard stop instead of
         // becoming a zombie that 401s on every request: the tokenless one (registration's best-effort
-        // issuance failed, 06 F15), and one whose token already reaches its grant's expiry.
+        // issuance failed, ADR-0057 F15), and one whose token already reaches its grant's expiry.
         if (session.IsTokenExpired && !session.CanStillRenew)
         {
             return false;

@@ -48,8 +48,8 @@ public class ServiceCredentialTests : IntegrationTestBase
         problem.GetProperty("errorCode").GetString().Should().Be(ErrorCodes.ServiceCredentialRequired);
         problem.GetProperty("status").GetInt32().Should().Be(401);
 
-        // 06 §4.7: the refusal names itself in a header, so the BFF can keep a session through a
-        // half-applied key rotation instead of reading this 401 as a session that ended.
+        // ADR-0057 §4.7: the refusal names itself in a header, so the BFF can keep a session
+        // through a half-applied key rotation instead of reading this 401 as a session that ended.
         response.Headers.GetValues(ServiceCredentialOptions.RefusalHeaderName)
             .Should().Equal(ServiceCredentialOptions.ServiceCredentialRefusal);
     }

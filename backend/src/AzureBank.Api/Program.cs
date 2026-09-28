@@ -140,9 +140,9 @@ try
     // MIDDLEWARE PIPELINE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // The instant each request ARRIVED, first of all (06 §4.3): a revoke writes it as RevokedAt and
-    // a renewal carries it, and the tripwire compares the two. Taken before anything else here can
-    // delay it, on a clock a wall-clock step cannot reorder (ReceivedAtClock).
+    // The instant each request ARRIVED, first of all (ADR-0057 §4.3): a revoke writes it as
+    // RevokedAt and a renewal carries it, and the tripwire compares the two. Taken before anything
+    // else here can delay it, on a clock a wall-clock step cannot reorder (ReceivedAtClock).
     app.UseReceivedAtStamp();
 
     // Correlation ID for request tracing. Outermost but for the stamp above, so that the request
@@ -204,9 +204,9 @@ try
     // correlation id like any other request. Health probes pass without the credential.
     app.UseServiceCredential();
 
-    // The token endpoints answer only the BFF's own client over loopback (06 §4.2): 404 otherwise.
-    // After the key, so a caller without it still gets that refusal; before authentication, so an
-    // access token proves nothing off the road either.
+    // The token endpoints answer only the BFF's own client over loopback (ADR-0057 §4.2): 404
+    // otherwise. After the key, so a caller without it still gets that refusal; before
+    // authentication, so an access token proves nothing off the road either.
     app.UseTokenRoad();
 
     // Authentication & Authorization (order matters!)

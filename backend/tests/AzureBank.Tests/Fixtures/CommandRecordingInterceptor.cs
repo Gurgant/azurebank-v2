@@ -10,10 +10,10 @@ namespace AzureBank.Tests.Fixtures;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Written for 06 §10 O0-2 item 2: "renewal writes nothing" is a claim about the wire, and the
-/// only instrument that sees the wire from inside the test host is a command interceptor. It sees
-/// commands only, and only those sent through the <c>AzureBankDbContext</c> this factory builds:
-/// on the InMemory provider there are none, so the claim is tested on SQL Server.
+/// Written for ADR-0057 §10 O0-2 item 2: "renewal writes nothing" is a claim about the wire, and
+/// the only instrument that sees the wire from inside the test host is a command interceptor. It
+/// sees commands only, and only those sent through the <c>AzureBankDbContext</c> this factory
+/// builds: on the InMemory provider there are none, so the claim is tested on SQL Server.
 /// </para>
 /// <para>
 /// <see cref="Selects"/> is the half that makes an empty <see cref="Writes"/> mean something. A

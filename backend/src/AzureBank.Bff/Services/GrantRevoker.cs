@@ -14,7 +14,7 @@ namespace AzureBank.Bff.Services;
 /// </summary>
 /// <remarks>
 /// A class and not a record on purpose: a record's generated <c>ToString</c> prints every member,
-/// and one of these is a live grant. Nothing may put a grant in a log line (06 O2h).
+/// and one of these is a live grant. Nothing may put a grant in a log line (ADR-0057 §10 O2h).
 /// </remarks>
 public sealed class GrantRevocation(string sessionId, string grant, DateTime retryUntil, Task? inFlightRenewal)
 {
@@ -27,13 +27,15 @@ public sealed class GrantRevocation(string sessionId, string grant, DateTime ret
     /// <summary>When the grant expires on its own: retrying past it would revoke nothing.</summary>
     public DateTime RetryUntil { get; } = retryUntil;
 
-    /// <summary>The renewal the session had in flight when it ended, or null (06 §4.6, F2).</summary>
+    /// <summary>
+    /// The renewal the session had in flight when it ended, or null (ADR-0057 §4.6, F2).
+    /// </summary>
     public Task? InFlightRenewal { get; } = inFlightRenewal;
 }
 
 /// <summary>
 /// Revokes the grants of ended sessions at the API, one session at a time, through
-/// <c>POST /api/auth/revoke</c> (06 §4.6, F12).
+/// <c>POST /api/auth/revoke</c> (ADR-0057 §4.6, F12).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -42,23 +44,24 @@ public sealed class GrantRevocation(string sessionId, string grant, DateTime ret
 /// nothing left to present. What remains is a grant with no holder, and revoking it is this
 /// worker's job — waiting for a database outage to end if it has to. Before PR-1 "Esci" called the
 /// API's logout inline, which revoked EVERY grant the user held on every device, and the user's
-/// other sessions were then read as token theft at their next renewal (06 §1, measured in O0).
+/// other sessions were then read as token theft at their next renewal (ADR-0057 §1, measured in
+/// O0).
 /// </para>
 /// <para>
 /// <b>It waits for the renewal the session had in flight</b> (30 s at most, the renewal's own
 /// timeout). A revoke that overtook a renewal sent before it would be stamped first at the API, and
-/// that renewal would arrive after the revoke: the tripwire (06 §4.3). Waiting closes that window
-/// for everything but a renewal the API itself sits on for more than 30 s (06 F9c).
+/// that renewal would arrive after the revoke: the tripwire (ADR-0057 §4.3). Waiting closes that
+/// window for everything but a renewal the API itself sits on for more than 30 s (ADR-0057 F9c).
 /// </para>
 /// <para>
 /// <b>Bounded</b>: a channel of <see cref="Capacity"/> items, worked by <see cref="Parallelism"/>
 /// workers. Each call has a 5 s timeout, and a 5xx, a timeout, a network error or a refused service
-/// key (a key rotation applied on one side, 06 §4.7) is retried with backoff until the grant expires
-/// on its own. Any other refusal is final. Both ends are logged under a name an operator can search
-/// for: <c>GrantRevokeAbandoned</c>, and <c>GrantRevokeDropped</c> when the channel is full. A grant
-/// in either state works until its own expiry, <c>Jwt:RefreshTokenLifetimeMinutes</c> after its
-/// sign-in (60 by default, 15 to 1440 allowed, 06 §4.1) — but only from inside the replica, with
-/// the service key, over loopback (06 §3).
+/// key (a key rotation applied on one side, ADR-0057 §4.7) is retried with backoff until the grant
+/// expires on its own. Any other refusal is final. Both ends are logged under a name an operator
+/// can search for: <c>GrantRevokeAbandoned</c>, and <c>GrantRevokeDropped</c> when the channel is
+/// full. A grant in either state works until its own expiry, <c>Jwt:RefreshTokenLifetimeMinutes</c>
+/// after its sign-in (60 by default, 15 to 1440 allowed, ADR-0057 §4.1) — but only from inside the
+/// replica, with the service key, over loopback (ADR-0057 §3).
 /// </para>
 /// <para>
 /// <b>Graceful stop (F7).</b> The replica scales to zero minutes after its last request, long before
@@ -80,13 +83,16 @@ public sealed class GrantRevoker : BackgroundService
 {
     /// <summary>The most revocations waiting at once; beyond it they are dropped and logged.</summary>
     /// <remarks>
-    /// A choice (06 §4.6 leaves it open), far above the sessions one replica holds. Its own number on
-    /// purpose, not <c>RevokeRequest.MaxRefreshTokens</c>: that one is the API's limit per call, and
-    /// the drain already splits a larger batch into calls of that size, so neither needs the other.
+    /// A choice (ADR-0057 §4.6 leaves it open), far above the sessions one replica holds. Its own
+    /// number on purpose, not <c>RevokeRequest.MaxRefreshTokens</c>: that one is the API's limit
+    /// per call, and the drain already splits a larger batch into calls of that size, so neither
+    /// needs the other.
     /// </remarks>
     internal const int Capacity = 1000;
 
-    /// <summary>How many revocations run at once (06 §4.6, a choice, not a measurement).</summary>
+    /// <summary>
+    /// How many revocations run at once (ADR-0057 §4.6, a choice, not a measurement).
+    /// </summary>
     internal const int Parallelism = 4;
 
     /// <summary>Longest wait for a captured renewal: the renewal's own timeout.</summary>
@@ -177,7 +183,7 @@ public sealed class GrantRevoker : BackgroundService
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         // ApplicationStopping fires before any hosted service is asked to stop, so from here on
-        // nothing renews a session and no renewal can race the drain (06 F7).
+        // nothing renews a session and no renewal can race the drain (ADR-0057 F7).
         _onStopping = _lifetime.ApplicationStopping.Register(BeginDrain);
         return base.StartAsync(cancellationToken);
     }
@@ -189,7 +195,7 @@ public sealed class GrantRevoker : BackgroundService
     /// <summary>
     /// The host has begun to stop, and nothing has been asked to stop yet — on Azure the API sidecar
     /// has just been sent its own stop signal. Ends every session held and starts revoking their
-    /// grants now rather than after this process's services have stopped (06 F7).
+    /// grants now rather than after this process's services have stopped (ADR-0057 F7).
     /// </summary>
     private void BeginDrain()
     {
@@ -261,7 +267,7 @@ public sealed class GrantRevoker : BackgroundService
             await DrainAsync(rest);
 
             // Said even when there was nothing to send, so "the drain ran and found no grant" reads
-            // differently from "the drain never ran" (06 F7, §11 rely on this count).
+            // differently from "the drain never ran" (ADR-0057 F7, §11 rely on this count).
             var revoked = Volatile.Read(ref _drainRevoked);
             var left = Volatile.Read(ref _drainTaken) - revoked;
             if (left == 0)
@@ -289,8 +295,8 @@ public sealed class GrantRevoker : BackgroundService
     /// <summary>
     /// Revokes <paramref name="grants"/> on a graceful stop, on a budget of its own: those whose
     /// session had no renewal in flight in one call at once, the others in one call once their
-    /// renewals settle, <see cref="DrainRenewalWait"/> at most (06 §4.6, F7). Not retried: the host
-    /// is going away, and a grant this misses dies at its cap with nobody holding it.
+    /// renewals settle, <see cref="DrainRenewalWait"/> at most (ADR-0057 §4.6, F7). Not retried:
+    /// the host is going away, and a grant this misses dies at its cap with nobody holding it.
     /// </summary>
     private async Task DrainAsync(IReadOnlyList<GrantRevocation> grants)
     {
@@ -324,7 +330,7 @@ public sealed class GrantRevoker : BackgroundService
     /// <summary>
     /// Waits for the renewals the sessions had in flight, <see cref="DrainRenewalWait"/> at most, then
     /// sends their grants: a revoke that overtook a renewal sent before it would make that renewal
-    /// the tripwire at the API (06 §4.6, F2).
+    /// the tripwire at the API (ADR-0057 §4.6, F2).
     /// </summary>
     private async Task SendAfterRenewalsAsync(
         List<(GrantRevocation Grant, Task Renewal)> pending, CancellationToken budget)

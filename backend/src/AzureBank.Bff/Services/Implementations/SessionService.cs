@@ -39,10 +39,10 @@ public class SessionService : ISessionService
         var sessionId = GenerateSecureSessionId();
         var now = DateTime.UtcNow;
 
-        // The earlier of the configured cap and the grant's own expiry (06 §4.1, F5). A grant that
-        // expired first would leave a session that looks alive and can no longer renew. Without a
-        // grant (registration's best-effort issuance failed) the configured cap stands alone, and
-        // the store keeps the hard stop at the access token's expiry (F15).
+        // The earlier of the configured cap and the grant's own expiry (ADR-0057 §4.1, F5). A grant
+        // that expired first would leave a session that looks alive and can no longer renew.
+        // Without a grant (registration's best-effort issuance failed) the configured cap stands
+        // alone, and the store keeps the hard stop at the access token's expiry (F15).
         var cap = now.AddMinutes(_sessionOptions.AbsoluteTimeoutMinutes);
         var grantExpiresAt = refreshToken is null ? null : refreshTokenExpiresAt;
 
@@ -112,8 +112,9 @@ public class SessionService : ISessionService
     /// <inheritdoc />
     public void EndSession(string sessionId)
     {
-        // Logged only when this call ended it. A sign-in that carries a stale cookie (06 §4.6, F13)
-        // asks to end a session that is long gone, and saying "ended" there would be a false line.
+        // Logged only when this call ended it. A sign-in that carries a stale cookie
+        // (ADR-0057 §4.6, F13) asks to end a session that is long gone, and saying "ended" there
+        // would be a false line.
         if (_tokenStore.EndSessionAsync(sessionId).GetAwaiter().GetResult())
         {
             _logger.LogInformation("Session ended: {SessionId}", SecretPrefix.Of(sessionId));
@@ -174,7 +175,8 @@ public class SessionService : ISessionService
     {
         // The object, not a lookup by id: a lookup runs the store's validity check, which can END the
         // session, and ending takes the session's lock the caller already holds. Only a later expiry
-        // is stored (06 §4.5), so a late answer can never swap a fresher token for an older one.
+        // is stored (ADR-0057 §4.5), so a late answer can never swap a fresher token for an older
+        // one.
         if (session.Ended || expiresAt <= session.TokenExpiry)
         {
             return false;

@@ -217,9 +217,9 @@ public class JwtServiceTests
     [Fact]
     public void GenerateToken_WithANotAfterSoonerThanItsLifetime_ExpiresNoLaterThanIt()
     {
-        // 06 §4.1: a renewal passes its grant's expiry, and no access token outlives the grant.
-        // The exp claim is whole seconds, truncated, so it may end up to a second BEFORE the cap,
-        // never after it.
+        // ADR-0057 §4.1: a renewal passes its grant's expiry, and no access token outlives the
+        // grant. The exp claim is whole seconds, truncated, so it may end up to a second BEFORE the
+        // cap, never after it.
         var user = CreateTestUser();
         var grantExpiresAt = DateTime.UtcNow.AddMinutes(4).AddMilliseconds(700);
 
@@ -506,9 +506,9 @@ public class JwtServiceLocalTimeZoneTests
         /*
           SQL Server hands a datetime2 back as DateTimeKind.Unspecified, and the token library
           converts an Unspecified value AS LOCAL TIME. West of UTC that makes the token outlive its
-          grant by hours, the one thing 06 §4.1 forbids; east of UTC it ends hours early. In UTC the
-          conversion changes nothing, so this test used to be green there with the guard deleted:
-          it now puts the process seven hours west of UTC itself.
+          grant by hours, the one thing ADR-0057 §4.1 forbids; east of UTC it ends hours early. In
+          UTC the conversion changes nothing, so this test used to be green there with the guard
+          deleted: it now puts the process seven hours west of UTC itself.
         */
         var sut = new JwtService(
             Options.Create(new JwtOptions

@@ -24,7 +24,7 @@ using Yarp.ReverseProxy.Forwarder;
 namespace AzureBank.Bff.Tests;
 
 /// <summary>
-/// Access-token renewal (ADR-0021, 06 §4.5). The API is faked at the "BackendApi" named
+/// Access-token renewal (ADR-0021, ADR-0057 §4.5). The API is faked at the "BackendApi" named
 /// client (so /api/auth/refresh and /api/auth/revoke are scripted), YARP's forwarder is a
 /// capturing fake (so the Authorization header the proxy WOULD carry is asserted, never
 /// assumed), and sessions are constructed directly through the singleton ISessionService with a
@@ -313,7 +313,7 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
         forwarder.Forwarded.Should().ContainSingle()
             .Which.Auth.Should().Be("Bearer jwt-1", "the proxied call must carry the freshly re-minted token");
         Session(factory, sessionId).Value!.RefreshToken.Should().Be("rt-0",
-            "the grant does not rotate (06 §4.3): whatever the answer carries, the stored grant stays");
+            "the grant does not rotate (ADR-0057 §4.3): whatever the answer carries, the stored grant stays");
     }
 
     // ── T2 ─────────────────────────────────────────────────────────────────────
@@ -364,7 +364,7 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task ARefreshTokenInvalid401_EndsTheSession()
     {
-        // The one refusal that says the grant is dead (06 §4.5): unknown, revoked or expired.
+        // The one refusal that says the grant is dead (ADR-0057 §4.5): unknown, revoked or expired.
         var api = new FakeApi
         {
             OnRefresh = request => ApiRefusal(ErrorCodes.RefreshTokenInvalid, request.RequestUri!.AbsolutePath)
@@ -387,7 +387,7 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     {
         // Until PR-1 ANY 401 from the refresh call ended the session, a bare one included (this was
         // T3's claim). Only REFRESH_TOKEN_INVALID says the grant is dead now; a 401 with no errorCode
-        // is not a verdict on it, and the user must not be signed out for it (06 §4.5).
+        // is not a verdict on it, and the user must not be signed out for it (ADR-0057 §4.5).
         var api = new FakeApi { OnRefresh = _ => new HttpResponseMessage(HttpStatusCode.Unauthorized) };
         var (factory, forwarder) = Build(api);
         var (sessionId, cookieName) = NewSession(factory, Expired, "rt-0");
@@ -408,8 +408,8 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
         // 5xx and a thrown HttpRequestException are both "transient": keep the session. The held
         // token has 30 s of a 15-minute life left, inside the foreground window (min(60 s, L/4)), so
         // the caller waits for the renewal; when it fails, the token still has more than 5 s and is
-        // sent (06 §4.5). Until PR-1 this test said the CURRENT token was forwarded whatever was left
-        // of it, an expired one included: T10 is the half of that which had to change.
+        // sent (ADR-0057 §4.5). Until PR-1 this test said the CURRENT token was forwarded whatever
+        // was left of it, an expired one included: T10 is the half of that which had to change.
         foreach (var onRefresh in new Func<HttpRequestMessage, HttpResponseMessage>[]
         {
             _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
@@ -440,12 +440,12 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [InlineData(15, true)] // more than 5 s left: the held token is sent
     public async Task AfterAFailedRenewal_TheHeldTokenIsSentOnlyWithMoreThan5sLeft(int leftSeconds, bool forwarded)
     {
-        // 06 §4.5 (critique #15): after a failed renewal the held token goes out only with MORE than
+        // ADR-0057 §4.5: after a failed renewal the held token goes out only with MORE than
         // 5 s left. With less it could expire on its way, and the API, which checks expiry with no
-        // clock skew, would answer 401 AUTH_TOKEN_EXPIRED: the sign-out this PR closes (06 §1). Both
-        // rows are inside the foreground window (min(60 s, L/4)), so the caller waits for the
-        // renewal, which the API answers 500 at once; T4 is the far side of the margin, T10 an
-        // expired token.
+        // clock skew, would answer 401 AUTH_TOKEN_EXPIRED: the sign-out this PR closes
+        // (ADR-0057 §1). Both rows are inside the foreground window (min(60 s, L/4)), so the caller
+        // waits for the renewal, which the API answers 500 at once; T4 is the far side of the
+        // margin, T10 an expired token.
         var api = new FakeApi { OnRefresh = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
         var (factory, forwarder) = Build(api);
         var (sessionId, cookieName, held) = NewJwtSession(factory, lifetimeSeconds: 900, leftSeconds: leftSeconds);
@@ -503,9 +503,10 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Logout_EndsOnlyThisSession_RevokesItsGrantAlone_AndNeverCallsTheApiLogout()
     {
-        // 06 §4.6. "Esci" answers at once, and the grant is revoked afterwards by GrantRevoker — one
-        // grant, this session's. Until PR-1 it renewed the token and called the API's logout, which
-        // revoked every grant of the user on every device (T7 asserted that call).
+        // ADR-0057 §4.6. "Esci" answers at once, and the grant is revoked afterwards by
+        // GrantRevoker — one grant, this session's. Until PR-1 it renewed the token and called the
+        // API's logout, which revoked every grant of the user on every device (T7 asserted that
+        // call).
         var api = new FakeApi();
         var (factory, _) = Build(api);
         var (sessionA, cookieName) = NewSession(factory, Fresh, "rt-A");
@@ -531,7 +532,8 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task Logout_WhileTheApiFails_StillSignsOutAtOnce_AndTheRevokeIsRetriedUntilItLands()
     {
-        // 06 §4.6 (F12): a 5xx is retried with backoff. The sign-out itself never waits for the API.
+        // ADR-0057 §4.6 (F12): a 5xx is retried with backoff. The sign-out itself never waits for
+        // the API.
         var api = new FakeApi
         {
             OnRevoke = call => call < 3
@@ -595,7 +597,8 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task VerifyPin_WhenTheRenewalFailsAndTheTokenHasExpired_Is503_AndKeepsTheSession()
     {
-        // 06 §4.5 on the paths that bypass the transform: the same 503, never the 401 that signs out.
+        // ADR-0057 §4.5 on the paths that bypass the transform: the same 503, never the 401 that
+        // signs out.
         var api = new FakeApi { OnRefresh = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
         var (factory, _) = Build(api);
         var (sessionId, cookieName) = NewSession(factory, Expired, "rt-0");
@@ -615,10 +618,11 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task ExpiredToken_WithTheRenewalAnswered5xx_Is503_ForwardsNothing_AndKeepsTheSession()
     {
-        // 06 §10 O0-2 item 4 (06 §4.5). When the renewal fails for a transient reason and the token
-        // has expired, the BFF answers the browser 503 itself: an expired token is never forwarded.
-        // Red on main, which forwards the expired token (TokenRefresher.RefreshAsync
-        // returns the current token on a 5xx) and so hands the browser the API's 401.
+        // ADR-0057 §10 O0-2 item 4 (ADR-0057 §4.5). When the renewal fails for a transient reason
+        // and the token has expired, the BFF answers the browser 503 itself: an expired token is
+        // never forwarded. Red on main, which forwards the expired token
+        // (TokenRefresher.RefreshAsync returns the current token on a 5xx) and so hands the browser
+        // the API's 401.
         var api = new FakeApi { OnRefresh = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
 
         // Stands in for the API behind the proxy, and answers what it answers: an expired bearer
@@ -646,8 +650,8 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task TheUnavailableAnswer_IsTheApisOwn503Shape_WithRetryAfter_AndTheCooldownHolds()
     {
-        // What T10's 503 carries (06 §4.5 names Retry-After; T10 does not assert it), and that a
-        // retry inside the 15 s cooldown gets the same answer without another renewal.
+        // What T10's 503 carries (ADR-0057 §4.5 names Retry-After; T10 does not assert it), and
+        // that a retry inside the 15 s cooldown gets the same answer without another renewal.
         var api = new FakeApi { OnRefresh = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError) };
         var (factory, forwarder) = Build(api);
         var (sessionId, cookieName) = NewSession(factory, Expired, "rt-0", accessToken: "jwt-expired");
@@ -677,10 +681,11 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task RenewalRefusedForTheServiceKey_KeepsTheSession()
     {
-        // 06 §10 O0-2 item 5 (06 §4.5). Only a 401 whose errorCode is REFRESH_TOKEN_INVALID says the
-        // grant is dead. SERVICE_CREDENTIAL_REQUIRED says the API refused the BFF's KEY, as in a key
-        // rotation applied on one side only; the grant is fine and the session must survive it.
-        // Red on main, which ends the session on any 401 from the refresh call.
+        // ADR-0057 §10 O0-2 item 5 (ADR-0057 §4.5). Only a 401 whose errorCode is
+        // REFRESH_TOKEN_INVALID says the grant is dead. SERVICE_CREDENTIAL_REQUIRED says the API
+        // refused the BFF's KEY, as in a key rotation applied on one side only; the grant is fine
+        // and the session must survive it. Red on main, which ends the session on any 401 from the
+        // refresh call.
         var api = new FakeApi
         {
             OnRefresh = request => ApiRefusal(ErrorCodes.ServiceCredentialRequired, request.RequestUri!.AbsolutePath)
@@ -698,10 +703,11 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task AProxiedCallRefusedForTheServiceKey_Is503_WithRetryAfter_AndNothingOfTheApisRefusal()
     {
-        // 06 §4.7 (F4) on the proxy road, beyond the status: O0 item 6 (BffOverApiSessionTests) sees
-        // the 503 through the real API, and nothing else. The response transform must also drop the
-        // API's body and its refusal header. Without SuppressResponseBody YARP would copy the API's
-        // body after the 503's own, and the status alone would still pass.
+        // ADR-0057 §4.7 (F4) on the proxy road, beyond the status: O0 item 6
+        // (BffOverApiSessionTests) sees the 503 through the real API, and nothing else. The
+        // response transform must also drop the API's body and its refusal header. Without
+        // SuppressResponseBody YARP would copy the API's body after the 503's own, and the status
+        // alone would still pass.
         var forwarder = new CapturingForwarder(request =>
         {
             // What ServiceCredentialMiddleware writes: its problem body, and the header naming it.
@@ -749,11 +755,11 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task EsciInTheGapBetweenARequestsReadAndItsWriteBack_TheSessionStaysGone()
     {
-        // 06 §10 O0-2 item 7 (F2, 06 §4.6). A request reads its session, "Esci" removes it, then the
-        // request writes the session back. The store must not bring it back: the signed-out cookie
-        // gets 401 AUTH_TOKEN_MISSING, and nothing renews the ended session's grant. Red on main,
-        // whose UpdateSessionAsync re-adds a removed session (`_sessions[id] = session`), so the
-        // next request with the same cookie gets 200.
+        // ADR-0057 §10 O0-2 item 7 (F2, ADR-0057 §4.6). A request reads its session, "Esci" removes
+        // it, then the request writes the session back. The store must not bring it back: the
+        // signed-out cookie gets 401 AUTH_TOKEN_MISSING, and nothing renews the ended session's
+        // grant. Red on main, whose UpdateSessionAsync re-adds a removed session
+        // (`_sessions[id] = session`), so the next request with the same cookie gets 200.
         var api = new FakeApi();
         var forwarder = new CapturingForwarder();
         var (factory, _) = Build(api, forwarder, services =>
@@ -807,7 +813,7 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
         }
     }
 
-    // ── 06 §4.5: thresholds, background renewal, the foreground wait ───────────
+    // ── ADR-0057 §4.5: thresholds, background renewal, the foreground wait ─────
 
     [Theory]
     // 15-minute token: 7.5 min and 60 s.
@@ -820,8 +826,9 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     public async Task TheThresholdsComeFromTheTokensOwnLifetime(
         int lifetimeSeconds, int leftSeconds, bool forwardsTheRenewedToken, bool renews)
     {
-        // 06 §4.5 (F6): L = exp - iat, read from the token. More than L/2 left: use it. Between
-        // min(60 s, L/4) and L/2: use it and renew in the background. Less: wait for the renewal.
+        // ADR-0057 §4.5 (F6): L = exp - iat, read from the token. More than L/2 left: use it.
+        // Between min(60 s, L/4) and L/2: use it and renew in the background. Less: wait for the
+        // renewal.
         var api = new FakeApi();
         var (factory, forwarder) = Build(api);
         var (sessionId, cookieName, held) = NewJwtSession(factory, lifetimeSeconds, leftSeconds);
@@ -851,7 +858,8 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task ABackgroundRenewal_NeverHoldsTheRequest()
     {
-        // The API sits on the renewal; the request goes on with the held token regardless (06 §4.5).
+        // The API sits on the renewal; the request goes on with the held token regardless
+        // (ADR-0057 §4.5).
         using var hold = new ManualResetEventSlim(false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var api = new FakeApi
@@ -982,7 +990,7 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     public async Task ARenewalThatGainsNothing_StopsTheSessionRenewingForGood()
     {
         // The API clamps a token to its grant's expiry. Once a renewal brings back an expiry no later
-        // than the one held, the session stops renewing (06 §4.5).
+        // than the one held, the session stops renewing (ADR-0057 §4.5).
         var api = new FakeApi();
         var (factory, _) = Build(api);
         var (sessionId, cookieName, held) = NewJwtSession(factory, lifetimeSeconds: 900, leftSeconds: 300);
@@ -1007,8 +1015,9 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task NoRenewalStarts_WhenTheGrantDoesNotOutliveTheToken()
     {
-        // 06 §4.5: GrantExpiresAt - TokenExpiry must be at least 1 s. TheThresholdsComeFromTheTokens-
-        // OwnLifetime's (900, 300) row is the control: the same token with a later grant renews.
+        // ADR-0057 §4.5: GrantExpiresAt - TokenExpiry must be at least 1 s.
+        // TheThresholdsComeFromTheTokensOwnLifetime's (900, 300) row is the control: the same token
+        // with a later grant renews.
         var api = new FakeApi();
         var (factory, forwarder) = Build(api);
         var expiresAt = DateTime.UtcNow.AddSeconds(300);
@@ -1025,9 +1034,9 @@ public class TokenRefreshTests : IClassFixture<WebApplicationFactory<Program>>, 
     [Fact]
     public async Task EsciDuringARenewal_TheRevokeWaitsForIt_AndItsResultIsDropped()
     {
-        // 06 §4.6 (F2): "Esci" captures the renewal in flight, and GrantRevoker revokes the grant only
-        // after it settles — a revoke that overtook it would make it the tripwire at the API. The
-        // result of a renewal for an ended session is never stored.
+        // ADR-0057 §4.6 (F2): "Esci" captures the renewal in flight, and GrantRevoker revokes the
+        // grant only after it settles — a revoke that overtook it would make it the tripwire at the
+        // API. The result of a renewal for an ended session is never stored.
         using var hold = new ManualResetEventSlim(false);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var api = new FakeApi

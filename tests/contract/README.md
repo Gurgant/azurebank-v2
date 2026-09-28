@@ -157,8 +157,8 @@ schemathesis --config-file tests/contract/schemathesis.toml run docs/api/openapi
   --include-path-regex "/api/auth/.*"
 ```
 
-7 operations tested, exit 0. Not run again since revoke joined the contract, which puts 8
-operations under `/api/auth/` in the document.
+7 operations tested, exit 0. Not run again since revoke and session-stamps joined the contract,
+which puts 9 operations under `/api/auth/` in the document.
 
 ### Generate Report
 

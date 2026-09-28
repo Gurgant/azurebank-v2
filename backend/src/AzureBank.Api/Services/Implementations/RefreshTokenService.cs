@@ -13,31 +13,32 @@ using Microsoft.Extensions.Options;
 namespace AzureBank.Api.Services.Implementations;
 
 /// <summary>
-/// The grant: one reusable refresh token per BFF session, which does not rotate (06 §3, §4).
+/// The grant: one reusable refresh token per BFF session, which does not rotate (ADR-0057 §3, §4).
 ///
 /// - Grants are 256 bits of CSPRNG entropy, stored ONLY as a SHA-256 hash — a database leak
 ///   yields useless hashes, never a usable grant.
 /// - A grant lives <c>Jwt:RefreshTokenLifetimeMinutes</c> from issue (60 by default), fixed then
 ///   and never extended, and every access token minted from it is capped at that instant.
-/// - A renewal READS the grant and writes nothing. That is the whole fix for 06 §1: a renewal whose
-///   answer is lost, whose commit EF retries as if it had rolled back, or which a hung database
-///   holds, has nothing to lose, so the BFF can simply send it again with the same grant.
+/// - A renewal READS the grant and writes nothing. That is the whole fix for ADR-0057 §1: a renewal
+///   whose answer is lost, whose commit EF retries as if it had rolled back, or which a hung
+///   database holds, has nothing to lose, so the BFF can simply send it again with the same grant.
 /// - Revocation is per session (<see cref="RevokeAsync"/>, reason SessionEnded) or per user
 ///   (<see cref="RevokeAllForUserAsync"/>, which also raises the user's session stamp in the same
-///   transaction, 06 §5.3). A grant whose session ENDED, presented in a request the
+///   transaction, ADR-0057 §5.3). A grant whose session ENDED, presented in a request the
 ///   API received after that revoke, is the tripwire: it is logged and audited, and it revokes
-///   nothing (06 F3).
+///   nothing (ADR-0057 F3).
 /// - Every accepted renewal is counted in memory by <see cref="RefreshRenewalRateDetector"/>, which
 ///   logs <c>RefreshRenewalRateHigh</c> when one grant renews more than three times in one
-///   access-token lifetime (06 §6, anomaly 2). It refuses nothing and writes nothing.
+///   access-token lifetime (ADR-0057 §6, anomaly 2). It refuses nothing and writes nothing.
 ///
 /// <i>Until PR-1 this rotated the token on every renewal and treated a revoked token presented again
-/// as theft, revoking every token of the user. Measured (06 §1): a renewal that met a 10 s
+/// as theft, revoking every token of the user. Measured (ADR-0057 §1): a renewal that met a 10 s
 /// database hang signed someone out in 8 runs of 8, and in 4 of them signed out every session of the
 /// user and wrote a false reuse event. FAPI 2.0 §5.3.2.1 item 9 reads "shall not use refresh token
-/// rotation except in extraordinary circumstances"; 06 §3 argues why that holds here without FAPI's
-/// client authentication: presenting a grant takes the grant, the service key and a socket on the
-/// API's loopback interface.</i>
+/// rotation except in extraordinary
+/// circumstances"; ADR-0057 §3 argues why that holds here without FAPI's client authentication:
+/// presenting a grant takes the grant, the service key and a socket on the API's loopback
+/// interface.</i>
 /// </summary>
 public class RefreshTokenService : IRefreshTokenService
 {
@@ -142,8 +143,9 @@ public class RefreshTokenService : IRefreshTokenService
             throw InvalidRefreshToken();
         }
 
-        // 06 §6, anomaly 2: count this accepted renewal in memory. It refuses nothing and writes
-        // nothing; more than three in one access-token lifetime raises RefreshRenewalRateHigh.
+        // ADR-0057 §6, anomaly 2: count this accepted renewal in memory. It refuses nothing and
+        // writes nothing; more than three in one access-token lifetime raises
+        // RefreshRenewalRateHigh.
         _renewalRate.Record(grant.Id, grant.UserId, receivedAt);
 
         // Non-null: loaded via Include, and the non-nullable UserId FK (Cascade) admits no orphan.
@@ -151,8 +153,8 @@ public class RefreshTokenService : IRefreshTokenService
     }
 
     /// <summary>
-    /// The revoked rows of 06 §4.3's table. Every one ends in the same 401; they differ only in what
-    /// is written about it.
+    /// The revoked rows of ADR-0057 §4.3's table. Every one ends in the same 401; they differ only
+    /// in what is written about it.
     /// </summary>
     private async Task RefuseRevokedAsync(RefreshToken grant, DateTime revokedAt, DateTime receivedAt)
     {
@@ -170,11 +172,11 @@ public class RefreshTokenService : IRefreshTokenService
                     SecurityEvents.RefreshTokenReuse, grant.Id, grant.UserId);
 
                 /*
-                  RECORD, DO NOT REVOKE (06 F3). Until PR-1 this branch revoked every token of the
-                  user. Only code inside the replica can present a grant (06 §3), and revoking one
-                  user's tokens does not contain that code; the incident runbook does. What the
-                  containment did do was sign out every session of a user whenever an innocent path
-                  got here — a lost answer, a stall, "Esci" on another device.
+                  RECORD, DO NOT REVOKE (ADR-0057 F3). Until PR-1 this branch revoked every token of
+                  the user. Only code inside the replica can present a grant (ADR-0057 §3), and
+                  revoking one user's tokens does not contain that code; the incident runbook does.
+                  What the containment did do was sign out every session of a user whenever an
+                  innocent path got here — a lost answer, a stall, "Esci" on another device.
 
                   CancellationToken.None: the row is the evidence, and a caller that hangs up must
                   not be able to take it back. If the write FAILS, the exception surfaces and the
@@ -243,11 +245,11 @@ public class RefreshTokenService : IRefreshTokenService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             /*
-              503, NOT 500 (06 §4.4, F12; RFC 7009 §2.2.1). The only work here is one idempotent
-              UPDATE, so a failure is the database's, and the answer that helps is "try again": the
-              BFF keeps the grant queued and retries with backoff until the grant expires. A 500 would
-              read as a verdict on the request. Error, with the exception, so a failure that is not
-              the database's is still loud here.
+              503, NOT 500 (ADR-0057 §4.4, F12; RFC 7009 §2.2.1). The only work here is one
+              idempotent UPDATE, so a failure is the database's, and the answer that helps is
+              "try again": the BFF keeps the grant queued and retries with backoff until the grant
+              expires. A 500 would read as a verdict on the request. Error, with the exception, so a
+              failure that is not the database's is still loud here.
             */
             _logger.LogError(ex, "Revoking {Count} grants failed; answering 503", hashes.Count);
             throw new ServiceUnavailableException(
@@ -278,10 +280,10 @@ public class RefreshTokenService : IRefreshTokenService
         if (_context.Database.IsRelational())
         {
             /*
-              THE REVOKE AND THE STAMP COMMIT TOGETHER (06 §5.3). The stamp is what ends the user's
-              BFF sessions within one 15-second poll; the revoke is what ends them at their next
-              renewal if the BFF never reads the stamp. One without the other would leave a lever
-              that looks pulled and is half pulled.
+              THE REVOKE AND THE STAMP COMMIT TOGETHER (ADR-0057 §5.3). The stamp is what ends the
+              user's BFF sessions within one 15-second poll; the revoke is what ends them at their
+              next renewal if the BFF never reads the stamp. One without the other would leave a
+              lever that looks pulled and is half pulled.
 
               Through the execution strategy, because production retries (EnableRetryOnFailure) and
               EF refuses a user-initiated transaction under a retrying strategy otherwise. A retry
@@ -388,7 +390,8 @@ public class RefreshTokenService : IRefreshTokenService
             // issuance safe regardless of the principal's tracking state.
             TokenHash = ComputeHash(plaintext),
             CreatedAt = now,                                       // not a BaseEntity → set here
-            // Fixed here and never extended: nothing from one sign-in outlives this (06 §4.1).
+            // Fixed here and never extended: nothing from one sign-in outlives this
+            // (ADR-0057 §4.1).
             ExpiresAt = now.AddMinutes(_jwtOptions.RefreshTokenLifetimeMinutes),
             IpAddress = ip,
             UserAgent = userAgent

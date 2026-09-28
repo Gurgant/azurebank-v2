@@ -33,11 +33,12 @@ public class ApplicationUser : IdentityUser<Guid>
     public DateTimeOffset? PinLockoutEnd { get; set; }
 
     /// <summary>
-    /// How many times every session of this user has been signed out at once (06 §5.3). Sign-in,
-    /// registration and re-authentication hand the value to the BFF, which keeps it on the session;
-    /// every per-user sign-out — <c>POST /api/auth/logout</c>, or a runbook's SQL — adds 1 in the same
-    /// transaction as its grant revoke. The BFF then refuses every session whose value is below the
-    /// one it last read (<c>POST /api/auth/session-stamps</c>), within one 15-second poll.
+    /// How many times every session of this user has been signed out at once (ADR-0057 §5.3).
+    /// Sign-in, registration and re-authentication hand the value to the BFF, which keeps it on the
+    /// session; every per-user sign-out — <c>POST /api/auth/logout</c>, or a runbook's SQL — adds 1
+    /// in the same transaction as its grant revoke. The BFF then refuses every session whose value
+    /// is below the one it last read (<c>POST /api/auth/session-stamps</c>), within one 15-second
+    /// poll.
     /// </summary>
     /// <remarks>
     /// Not Identity's <c>SecurityStamp</c>, which has been in this table since InitialCreate and keeps

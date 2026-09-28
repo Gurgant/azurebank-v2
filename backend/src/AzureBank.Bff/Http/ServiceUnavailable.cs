@@ -6,10 +6,11 @@ using Microsoft.AspNetCore.Mvc;
 namespace AzureBank.Bff.Http;
 
 /// <summary>
-/// The 503 the BFF answers when the service, not the session, is failing (06 §4.5, §4.7): a renewal
-/// that could not be had while the held token has 5 s or less left, or the API refusing this host's
-/// service key. The SPA retries a 503 and stays signed in. Without it, either case would reach the
-/// browser as a 401, which the SPA reads as a sign-out.
+/// The 503 the BFF answers when the service, not the session, is failing (ADR-0057 §4.5, §4.7): a
+/// renewal that could not be had while the held token has 5 s or less left, or the API refusing
+/// this host's service key. The SPA stays signed in: it retries a read's 503, and shows a write's
+/// as an error without retrying it. Without it, either case would reach the browser as a 401, which
+/// the SPA reads as a sign-out.
 /// </summary>
 /// <remarks>
 /// The API's own shape for a 503 (<c>AppExceptionHandler</c> over <c>ServiceUnavailableException</c>):

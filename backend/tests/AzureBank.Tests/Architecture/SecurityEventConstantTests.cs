@@ -414,9 +414,9 @@ public class SecurityEventConstantTests
         ];
 
         // 17 until PR-1, which removed RefreshTokenReuseRevokeFailed's one site: the tripwire that
-        // replaced reuse detection revokes nothing, so there is no failed revoke left to report (06 F3).
-        // And 17 again with PR-1's renewal-rate detector, whose RefreshRenewalRateHigh is a log line
-        // and nothing else (06 §6, anomaly 2).
+        // replaced reuse detection revokes nothing, so there is no failed revoke left to report
+        // (ADR-0057 F3). And 17 again with PR-1's renewal-rate detector, whose
+        // RefreshRenewalRateHigh is a log line and nothing else (ADR-0057 §6, anomaly 2).
         const int apiSites = 17;
         const int bffSites = 8;
 
@@ -513,7 +513,7 @@ public class SecurityEventConstantTests
             + "itself, and the mint's single site already covers both for every operation — two "
             + "out, one in. Insufficient funds is NOT among them, on purpose, and neither are the "
             + "closure's two 422 guards. WENT DOWN TO SEVEN with PR-1: RefreshTokenReuseRevokeFailed's "
-            + "MitigationFailed row went with the family revoke it reported on (06 F3), so the token "
+            + "MitigationFailed row went with the family revoke it reported on (ADR-0057 F3), so the token "
             + "paths hold two — the unknown grant and the tripwire. Moving this means moving "
             + "ADR-0044's \"What is wired\" section too");
 

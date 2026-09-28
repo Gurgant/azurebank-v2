@@ -10,7 +10,7 @@ namespace AzureBank.Shared.Exceptions;
 /// <remarks>
 /// Raised where the caller's retry is the recovery and a 500 would read as "stop": today
 /// <c>POST /api/auth/revoke</c> when its database write fails, so the BFF's revoker keeps the grant
-/// queued and tries again (06 §4.4, RFC 7009 §2.2.1).
+/// queued and tries again (ADR-0057 §4.4, RFC 7009 §2.2.1).
 /// </remarks>
 public class ServiceUnavailableException : AppException
 {

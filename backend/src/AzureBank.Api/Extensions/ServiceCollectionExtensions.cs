@@ -200,15 +200,16 @@ public static class ServiceCollectionExtensions
             new Shared.Services.Implementations.PasswordHasher(
                 sp.GetRequiredService<IOptions<PinHashingOptions>>().Value));
         services.AddScoped<IJwtService, JwtService>();
-        // The grant (06 §4): issue, renew (a read), revoke, and the tripwire. Reads client IP/UA
-        // for forensics, so it needs the request's HttpContext.
+        // The grant (ADR-0057 §4): issue, renew (a read), revoke, and the tripwire. Reads client
+        // IP/UA for forensics, so it needs the request's HttpContext.
         services.AddHttpContextAccessor();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
-        // Its renewal-rate count (06 §6, anomaly 2): a singleton, because the count must outlive the
-        // request, and it lives only in this process's memory; it writes nothing.
+        // Its renewal-rate count (ADR-0057 §6, anomaly 2): a singleton, because the count must
+        // outlive the request, and it lives only in this process's memory; it writes nothing.
         services.AddSingleton<Services.RefreshRenewalRateDetector>();
-        // One clock per process for the ReceivedAt stamp (06 §4.3, F10), and the token road's
-        // options, which nothing in configuration binds: only code can widen the road (06 F1).
+        // One clock per process for the ReceivedAt stamp (ADR-0057 §4.3, F10), and the token road's
+        // options, which nothing in configuration binds: only code can widen the road
+        // (ADR-0057 F1).
         services.AddSingleton(ReceivedAtClock.ForThisProcess);
         services.AddOptions<TokenRoadOptions>();
         // Login-timing equalizer (ADR-0012): scoped, so it takes the request's own
@@ -323,8 +324,9 @@ public static class ServiceCollectionExtensions
                 o => o.RefreshTokenCleanupInterval >= JwtOptions.ShortestCleanupInterval
                      && o.RefreshTokenCleanupInterval <= JwtOptions.LongestCleanupInterval,
                 "Jwt:RefreshTokenCleanupInterval must be between 00:01:00 and 7.00:00:00.")
-            // 06 F11: in range, and never shorter than an access token, since the sign-in's access
-            // token is minted before its grant and only this keeps it inside the grant's life.
+            // ADR-0057 F11: in range, and never shorter than an access token, since the sign-in's
+            // access token is minted before its grant and only this keeps it inside the grant's
+            // life.
             .Validate(
                 o => JwtOptions.IsUsableRefreshTokenLifetime(o.RefreshTokenLifetimeMinutes, o.ExpirationMinutes),
                 $"Jwt:RefreshTokenLifetimeMinutes must be between {JwtOptions.ShortestRefreshTokenLifetimeMinutes} "

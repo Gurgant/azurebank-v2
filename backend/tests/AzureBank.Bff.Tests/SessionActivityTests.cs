@@ -29,9 +29,9 @@ public class SessionActivityTests : IClassFixture<SessionActivityTests.ApiStubbe
 
     /// <summary>
     /// The BFF with its OWN client to the API stubbed. The sessions here hold grants, and since PR-1
-    /// a host that stops revokes the grants it held (GrantRevoker's drain, 06 §4.6): on the plain
-    /// factory that drain sent /api/auth/revoke to the configured API address, a live call on a
-    /// machine where the API runs. Measured before: "0 grants revoked, 5 left" at this class's
+    /// a host that stops revokes the grants it held (GrantRevoker's drain, ADR-0057 §4.6): on the
+    /// plain factory that drain sent /api/auth/revoke to the configured API address, a live call on
+    /// a machine where the API runs. Measured before: "0 grants revoked, 5 left" at this class's
     /// teardown. /me's read-through meets the stub too, whose body carries no user, so /me serves its
     /// cached copy exactly as it did with no API to reach.
     /// </summary>

@@ -8,7 +8,7 @@ namespace AzureBank.Bff.Services;
 
 /// <summary>
 /// Reads the session stamps of the users who hold sessions, every 15 seconds, through
-/// <c>POST /api/auth/session-stamps</c>, into <see cref="SessionStamps"/> (06 §5.3).
+/// <c>POST /api/auth/session-stamps</c>, into <see cref="SessionStamps"/> (ADR-0057 §5.3).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,7 +31,9 @@ namespace AzureBank.Bff.Services;
 /// </remarks>
 public sealed class SessionStampWatcher : BackgroundService
 {
-    /// <summary>How often the stamps are read while anyone holds a session (06 §5.3, a choice).</summary>
+    /// <summary>
+    /// How often the stamps are read while anyone holds a session (ADR-0057 §5.3, a choice).
+    /// </summary>
     public static readonly TimeSpan Period = TimeSpan.FromSeconds(15);
 
     /// <summary>Each call, independent of the client's own timeout; shorter than a period.</summary>

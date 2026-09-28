@@ -127,7 +127,7 @@ public class JwtOptionsTests
     }
 
     [Theory]
-    [InlineData("14", null)]   // under the floor (06 F11)
+    [InlineData("14", null)]   // under the floor (ADR-0057 F11)
     [InlineData("1441", null)] // over a day
     [InlineData("0", null)]
     [InlineData("-60", null)]

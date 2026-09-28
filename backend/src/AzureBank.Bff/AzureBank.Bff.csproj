@@ -50,8 +50,8 @@
   <ItemGroup>
     <!--
       GrantRevoker's Capacity and Parallelism are internal: a choice of this process, not an API.
-      The test that fills the revoke queue to its last place, to see GrantRevokeDropped (06 F12),
-      reads them rather than repeating the two numbers.
+      The test that fills the revoke queue to its last place, to see GrantRevokeDropped
+      (ADR-0057 F12), reads them rather than repeating the two numbers.
     -->
     <InternalsVisibleTo Include="AzureBank.Bff.Tests" />
   </ItemGroup>

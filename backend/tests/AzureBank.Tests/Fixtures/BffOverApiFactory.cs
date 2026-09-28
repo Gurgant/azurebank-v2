@@ -19,9 +19,9 @@ namespace AzureBank.Tests.Fixtures;
 /// <para>
 /// Nothing on either side is scripted. The BFF's own handlers still run (the service key is added
 /// by its <c>ServiceCredentialHandler</c> and by its proxy transform), and the API answers with its
-/// own middleware, controllers and database. Written for 06 §10 O0-2 items 3 and 6, whose claims
-/// each span both hosts: what the browser's "Esci" makes the BFF send, and what the API then writes;
-/// what the API answers a key it does not hold, and what the BFF hands the browser.
+/// own middleware, controllers and database. Written for ADR-0057 §10 O0-2 items 3 and 6, whose
+/// claims each span both hosts: what the browser's "Esci" makes the BFF send, and what the API then
+/// writes; what the API answers a key it does not hold, and what the BFF hands the browser.
 /// </para>
 /// <para>
 /// <b>Testing, not Development.</b> <c>WebApplicationFactory</c> defaults to Development, which
@@ -43,8 +43,9 @@ public sealed class BffOverApiFactory(CustomWebApplicationFactory api, string se
     /// Gives the BFF a <see cref="FakeTimeProvider"/> and returns it. Call before the host starts.
     /// </summary>
     /// <remarks>
-    /// In the BFF's own code only the session-stamp watcher reads <see cref="TimeProvider"/> (06 §5.3),
-    /// so this moves its 15 s period: sessions, the revoker and the sweep read the wall clock.
+    /// In the BFF's own code only the session-stamp watcher reads <see cref="TimeProvider"/>
+    /// (ADR-0057 §5.3), so this moves its 15 s period: sessions, the revoker and the sweep read the
+    /// wall clock.
     /// </remarks>
     public FakeTimeProvider UseFakeClock()
     {

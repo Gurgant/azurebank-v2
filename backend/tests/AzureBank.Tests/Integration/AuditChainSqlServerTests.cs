@@ -500,14 +500,14 @@ public sealed class AuditChainSqlServerTests : IDisposable
     public async Task WhenTheTripwiresAuditRowCannotBeWritten_TheAnswerIs500_AndTheOtherSessionStaysActive()
     {
         /*
-          THE TRIPWIRE'S LOUD FAILURE (06 §4.3, §9). This test used to pin the one exception to D1:
-          the reuse branch revoked the user's whole token family FIRST and wrote its row after, so a
-          failed audit write could not leave a stolen family alive. PR-1 removed that containment
-          (06 F3) — only code inside the replica can present a grant, and revoking one user's tokens
-          does not contain it — so the exception went with it, and the rewrite asserts the opposite
-          half: when the tripwire's row cannot be written, the failure surfaces as a 500, as the
-          unknown-grant refusal's always did, and NOTHING is revoked, so the user's other session
-          still renews.
+          THE TRIPWIRE'S LOUD FAILURE (ADR-0057 §4.3). This test used to pin the one exception to
+          D1: the reuse branch revoked the user's whole token family FIRST and wrote its row after,
+          so a failed audit write could not leave a stolen family alive. PR-1 removed that
+          containment (ADR-0057 F3) — only code inside the replica can present a grant, and revoking
+          one user's tokens does not contain it — so the exception went with it, and the rewrite
+          asserts the opposite half: when the tripwire's row cannot be written, the failure surfaces
+          as a 500, as the unknown-grant refusal's always did, and NOTHING is revoked, so the user's
+          other session still renews.
 
           Two sessions of one user. A's grant is revoked through /revoke, as the BFF does when A
           ends; through /logout the replay would be only an Info event, because that revokes as
@@ -557,7 +557,7 @@ public sealed class AuditChainSqlServerTests : IDisposable
         var active = await context.RefreshTokens.AsNoTracking()
             .Where(t => t.UserId == user.Id && t.RevokedAt == null)
             .CountAsync();
-        active.Should().Be(1, "the tripwire revokes nothing: session B's grant is still active (06 F3)");
+        active.Should().Be(1, "the tripwire revokes nothing: session B's grant is still active (ADR-0057 F3)");
 
         (await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = sessionB }))
             .StatusCode.Should().Be(System.Net.HttpStatusCode.OK, "and session B still renews");

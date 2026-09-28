@@ -29,7 +29,7 @@ using SessionStampWatcher = bff::AzureBank.Bff.Services.SessionStampWatcher;
 
 namespace AzureBank.Tests.Integration;
 
-/// <summary>How the stamp is raised in a proof of 06 §10 O2j.</summary>
+/// <summary>How the stamp is raised in a proof of ADR-0057 §10 O2j.</summary>
 public enum StampLever
 {
     /// <summary><c>POST /api/auth/logout</c>, with the user's own access token, straight to the API.</summary>
@@ -40,10 +40,10 @@ public enum StampLever
 }
 
 /// <summary>
-/// 06 §10 O2j on the EF InMemory database: the stamp raised through <c>/api/auth/logout</c> ends both
-/// sessions of that user within one 15 s poll, and not the other user's, and no whole-row write of
-/// the user loaded before it lowers the stamp again. The same proofs on SQL Server, with the
-/// runbook's SQL as well, are <see cref="SessionStampLeverSqlServerTests"/>.
+/// ADR-0057 §10 O2j on the EF InMemory database: the stamp raised through <c>/api/auth/logout</c>
+/// ends both sessions of that user within one 15 s poll, and not the other user's, and no whole-row
+/// write of the user loaded before it lowers the stamp again. The same proofs on SQL Server, with
+/// the runbook's SQL as well, are <see cref="SessionStampLeverSqlServerTests"/>.
 /// </summary>
 public sealed class SessionStampLeverTests
 {
@@ -57,8 +57,8 @@ public sealed class SessionStampLeverTests
 }
 
 /// <summary>
-/// 06 §10 O2j on real SQL Server, through both levers; no whole-row write of a user loaded before a
-/// lever lowers the stamp; and a sign-out's revoke and its stamp raise commit together.
+/// ADR-0057 §10 O2j on real SQL Server, through both levers; no whole-row write of a user loaded
+/// before a lever lowers the stamp; and a sign-out's revoke and its stamp raise commit together.
 /// </summary>
 [Trait("Category", "SqlServer")]
 [Collection(SqlServerProofsCollection.Name)]
@@ -80,10 +80,10 @@ public sealed class SessionStampLeverSqlServerTests
     public async Task ASignOutWhoseStampRaiseFails_RevokesNothing()
     {
         /*
-          "In the same transaction" (06 §5.3), shown by breaking the second half. The revoke's UPDATE
-          runs and reports its rows; then the stamp's UPDATE throws. If the two were separate commits
-          the grants would stay revoked with the stamp unraised: a lever that looks pulled and ends
-          nobody within the poll. They must be back as they were.
+          "In the same transaction" (ADR-0057 §5.3), shown by breaking the second half. The revoke's
+          UPDATE runs and reports its rows; then the stamp's UPDATE throws. If the two were separate
+          commits the grants would stay revoked with the stamp unraised: a lever that looks pulled
+          and ends nobody within the poll. They must be back as they were.
         */
         using var api = new CustomWebApplicationFactory();
         api.SetConnectionString(SqlServerFactAttribute.ConnectionString!);
@@ -143,8 +143,9 @@ public sealed class SessionStampLeverSqlServerTests
 }
 
 /// <summary>
-/// The proof itself (06 §10 O2j): the real BFF in front of the real API (<see cref="BffOverApiFactory"/>),
-/// the BFF's watcher on a fake clock so one period is one <c>Advance</c>.
+/// The proof itself (ADR-0057 §10 O2j): the real BFF in front of the real API
+/// (<see cref="BffOverApiFactory"/>), the BFF's watcher on a fake clock so one period is one
+/// <c>Advance</c>.
 /// </summary>
 internal static class SessionStampLever
 {

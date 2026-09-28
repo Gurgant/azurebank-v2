@@ -351,7 +351,7 @@ public class AuthServiceTests : IDisposable
         result.Token.AccessToken.Should().Be("test-jwt-token");
         result.Token.RefreshToken.Should().Be("refresh-token-plaintext");
         result.Token.RefreshTokenExpiresAt.Should().Be(GrantExpiresAt,
-            "the grant's own fixed expiry, which the BFF caps the session at (06 §4.1)");
+            "the grant's own fixed expiry, which the BFF caps the session at (ADR-0057 §4.1)");
         result.Token.ExpiresAt.Should().Be(expiresAt, "the token's own exp, never recomputed");
         result.Token.TokenType.Should().Be("Bearer");
         result.Token.ExpiresIn.Should().BeInRange(890, 900, "what is left of a 15-minute token");
@@ -656,8 +656,8 @@ public class AuthServiceTests : IDisposable
           The registration's grant is best-effort: it is issued after the transaction commits, and a
           failure there still answers the registration. TokenResponse promises RefreshTokenExpiresAt
           is null exactly when RefreshToken is, and the BFF relies on the pair: a session with no
-          grant keeps SessionCreated + 60 and the hard stop at token expiry (06 §4.1, F15), so an
-          expiry without a grant, or the reverse, would describe a grant that is not there. Both
+          grant keeps SessionCreated + 60 and the hard stop at token expiry (ADR-0057 §4.1, F15), so
+          an expiry without a grant, or the reverse, would describe a grant that is not there. Both
           halves, so the null below is the failure's and not the path's.
         */
         var request = new RegisterRequest
@@ -1058,7 +1058,8 @@ public class AuthServiceTests : IDisposable
     public async Task LogoutAsync_RevokesEveryGrantOfTheUser_AsSignOutEverywhere_AtItsReceivedAt()
     {
         // /api/auth/logout keeps its effect — every session of the user — with the reason that says
-        // so, and the request's ReceivedAt as RevokedAt (06 §4.4). One session ends through revoke.
+        // so, and the request's ReceivedAt as RevokedAt (ADR-0057 §4.4). One session ends through
+        // revoke.
         var userId = Guid.NewGuid();
         var receivedAt = DateTime.UtcNow.AddSeconds(-2);
 
@@ -1112,7 +1113,8 @@ public class AuthServiceTests : IDisposable
         var result = await _sut.RefreshAsync(new RefreshRequest { RefreshToken = "the-grant" }, receivedAt);
 
         // Assert - the access token is minted for the grant's user, capped at the grant's expiry
-        // (06 §4.1), and the answer carries only it: the grant is not rotated (06 §4.3).
+        // (ADR-0057 §4.1), and the answer carries only it: the grant is not rotated
+        // (ADR-0057 §4.3).
         result.AccessToken.Should().Be("new-access");
         result.ExpiresAt.Should().Be(grantExpiresAt);
         typeof(RefreshResponse).GetProperties().Select(p => p.Name)

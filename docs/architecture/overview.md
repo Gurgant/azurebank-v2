@@ -139,14 +139,18 @@ parallel guesses cannot race past the limit.
 
 ## A tamper-evident record of what happened
 
-Fifteen security events — nine successes and six on the refusal path — each write a row to one
+Fourteen security events — nine successes and five on the refusal path — each write a row to one
 `AuditEvents` table, each carrying a keyed HMAC over its own fields and the previous row's hash
 (ADR-0044). A success rides the act's own transaction, so a row that cannot be written stops the
-act; a refusal commits on its own connection at once, or its rollback would take the record with it,
-and a reused refresh token is contained before its row is written. Rows hold ids and no amounts; the
-table is never purged, and `backend/tools/AzureBank.AuditVerifier` verifies it. The claim is narrow:
-a rewrite by whoever holds the database but not that epoch's key is caught; truncating the tail past
-the last anchor needs no key and is not, and nothing verifies the chain on a schedule.
+act; a refusal commits on its own connection at once, or its rollback would take the record with it.
+A refresh token presented after its session ended is recorded and revokes nothing: containment is
+the operator's, through the incident runbook (ADR-0057). Rows hold ids and no amounts; the table is
+never purged, and `backend/tools/AzureBank.AuditVerifier` verifies it. The claim is narrow: a
+rewrite by whoever holds the database but not that epoch's key is caught; truncating the tail past
+the last anchor needs no key and is not, and nothing verifies the chain on a schedule. *(Until
+2026-09-29 this said fifteen events, six on the refusal path, and that a reused refresh token was
+contained before its row was written. ADR-0057 removed that containment, and with it
+`RefreshTokenReuseRevokeFailed`, the event that reported its failure.)*
 
 ## Not telling attackers who exists
 

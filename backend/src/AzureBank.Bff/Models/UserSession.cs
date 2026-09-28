@@ -30,16 +30,17 @@ public class UserSession
     /// <summary>
     /// When the access token was issued: its own <c>iat</c>, or the moment the BFF received it when
     /// the token carries none. <see cref="TokenExpiry"/> minus this is the token's lifetime L, from
-    /// which the renewal thresholds are taken (06 §4.5, F6): a 15-minute token renews in the
+    /// which the renewal thresholds are taken (ADR-0057 §4.5, F6): a 15-minute token renews in the
     /// background from 7.5 minutes left, a 2-minute one from 60 seconds.
     /// </summary>
     public required DateTime TokenIssuedAt { get; set; }
 
     /// <summary>
     /// The session's grant: the refresh token presented for every new access token. It does not
-    /// rotate (06 §4.3), so it is set once, at sign-in, and never overwritten — init-only says so.
-    /// Never reaches the browser. Null when registration's best-effort issuance failed: such a
-    /// session cannot renew and ends with its access token (see InMemoryTokenStore.IsSessionValid).
+    /// rotate (ADR-0057 §4.3), so it is set once, at sign-in, and never overwritten — init-only
+    /// says so. Never reaches the browser. Null when registration's best-effort issuance failed:
+    /// such a session cannot renew and ends with its access token (see
+    /// InMemoryTokenStore.IsSessionValid).
     /// </summary>
     public string? RefreshToken { get; init; }
 
@@ -56,17 +57,19 @@ public class UserSession
 
     /// <summary>
     /// The session's hard end: the earlier of <see cref="SessionCreated"/> plus the absolute timeout
-    /// and <see cref="GrantExpiresAt"/> (06 §4.1, F5). One field, so the store's validity check,
-    /// <c>/me</c> and <c>session-status</c> cannot disagree about it. The grant is minted before the
-    /// session, so when it sets the cap the cap is earlier by at most the sign-in's own duration.
+    /// and <see cref="GrantExpiresAt"/> (ADR-0057 §4.1, F5). One field, so the store's validity
+    /// check, <c>/me</c> and <c>session-status</c> cannot disagree about it. The grant is minted
+    /// before the session, so when it sets the cap the cap is earlier by at most the sign-in's own
+    /// duration.
     /// </summary>
     public required DateTime AbsoluteExpiresAt { get; init; }
 
     /// <summary>
-    /// The user's session stamp as the API answered it at sign-in (06 §5.3). Every sign-out of all
-    /// the user's sessions raises the stamp at the API; once <see cref="Services.SessionStamps"/>
-    /// knows a higher value, the store's validity check refuses this session and it ends by the one
-    /// path every ending takes (06 §4.6). Fixed for the session's life.
+    /// The user's session stamp as the API answered it at sign-in (ADR-0057 §5.3). Every sign-out
+    /// of all the user's sessions raises the stamp at the API; once
+    /// <see cref="Services.SessionStamps"/> knows a higher value, the store's validity check
+    /// refuses this session and it ends by the one path every ending takes (ADR-0057 §4.6). Fixed
+    /// for the session's life.
     /// </summary>
     public int SessionStamp { get; init; }
 
@@ -106,7 +109,7 @@ public class UserSession
     public required UserSessionInfo UserInfo { get; init; }
 
     /*
-      RENEWAL AND ENDING, under ONE lock on the session (06 §4.5-4.6, F2).
+      RENEWAL AND ENDING, under ONE lock on the session (ADR-0057 §4.5-4.6, F2).
 
       Before PR-1 the single flight lived in a map of semaphores beside the store, and the map dropped
       a session's semaphore whenever it saw the session gone, so a caller still holding the old one
@@ -132,15 +135,15 @@ public class UserSession
 
     /// <summary>
     /// No renewal starts before this instant: set 15 seconds after a renewal failed for a transient
-    /// reason (06 §4.5), so a database outage costs the API one renewal per session every 15 seconds
-    /// rather than one per request.
+    /// reason (ADR-0057 §4.5), so a database outage costs the API one renewal per session every 15
+    /// seconds rather than one per request.
     /// </summary>
     public DateTime? RenewalRetryAfter { get; set; }
 
     /// <summary>
     /// True once a renewal came back with an expiry no later than the one already held — the API
     /// clamps access tokens to the grant's expiry, so there is nothing more to gain — or the grant
-    /// was refused. The session stops renewing for good (06 §4.5).
+    /// was refused. The session stops renewing for good (ADR-0057 §4.5).
     /// </summary>
     public bool RenewalStopped { get; set; }
 
@@ -149,7 +152,7 @@ public class UserSession
 
     /// <summary>
     /// A renewal starts only if it can gain at least this much: the grant must outlive the access
-    /// token already held by one second or more (06 §4.5, F6).
+    /// token already held by one second or more (ADR-0057 §4.5, F6).
     /// </summary>
     public static readonly TimeSpan MinimumRenewalGain = TimeSpan.FromSeconds(1);
 

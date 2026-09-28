@@ -24,8 +24,8 @@ using Xunit;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// 06 §10 O2h on the EF InMemory database: "a capture sink finds no grant in any log line or audit
-/// row". The same walk on SQL Server, where a renewal in flight can be made as well, is
+/// ADR-0057 §10 O2h on the EF InMemory database: "a capture sink finds no grant in any log line or
+/// audit row". The same walk on SQL Server, where a renewal in flight can be made as well, is
 /// <see cref="GrantSweepSqlServerTests"/>.
 /// </summary>
 public sealed class GrantSweepTests
@@ -35,7 +35,7 @@ public sealed class GrantSweepTests
         GrantSweep.ProveAsync(connectionString: null);
 }
 
-/// <summary>06 §10 O2h on real SQL Server; see <see cref="GrantSweepTests"/>.</summary>
+/// <summary>ADR-0057 §10 O2h on real SQL Server; see <see cref="GrantSweepTests"/>.</summary>
 [Trait("Category", "SqlServer")]
 [Collection(SqlServerProofsCollection.Name)]
 public sealed class GrantSweepSqlServerTests
@@ -187,8 +187,8 @@ internal static class GrantSweep
             .ToList();
         using (new AssertionScope())
         {
-            lineHits.Should().BeEmpty($"no grant in any of the {lines.Length} log lines captured (06 O2h)");
-            rowHits.Should().BeEmpty($"no grant in any of the {rows.Count} audit rows written (06 O2h)");
+            lineHits.Should().BeEmpty($"no grant in any of the {lines.Length} log lines captured (ADR-0057 §10 O2h)");
+            rowHits.Should().BeEmpty($"no grant in any of the {rows.Count} audit rows written (ADR-0057 §10 O2h)");
         }
     }
 

@@ -22,10 +22,10 @@ using Serilog.Events;
 namespace AzureBank.Bff.Tests;
 
 /// <summary>
-/// The session stamp at the BFF (06 §5.3): <see cref="SessionStampWatcher"/> reads the stamps of the
-/// users who hold sessions every 15 s and never when nobody does; a failed read keeps the last values;
-/// the store refuses a session whose stamp is below the latest known and ends it the way every session
-/// ends; and each sign-in hands the API's stamp to the session it creates.
+/// The session stamp at the BFF (ADR-0057 §5.3): <see cref="SessionStampWatcher"/> reads the stamps
+/// of the users who hold sessions every 15 s and never when nobody does; a failed read keeps the
+/// last values; the store refuses a session whose stamp is below the latest known and ends it the
+/// way every session ends; and each sign-in hands the API's stamp to the session it creates.
 /// </summary>
 /// <remarks>
 /// The watcher's clock is a <see cref="FakeTimeProvider"/>, so a period is one <c>Advance</c> and no
@@ -316,7 +316,8 @@ public class SessionStampWatcherTests : IClassFixture<WebApplicationFactory<Prog
                 .Should().Be(HttpStatusCode.OK, "another user's stamp did not move");
         }
 
-        // Ended by the one path (06 §4.6): gone from the store, and its grant, only its, revoked.
+        // Ended by the one path (ADR-0057 §4.6): gone from the store, and its grant, only its,
+        // revoked.
         host.Services.GetRequiredService<ISessionService>().GetSession(older).Should().BeNull();
         (await Eventually(() => upstream.RevokedGrants.Contains("rt-older"))).Should().BeTrue();
         await Task.Delay(200);
@@ -408,8 +409,9 @@ public class SessionStampWatcherTests : IClassFixture<WebApplicationFactory<Prog
     [Fact]
     public async Task ASignInAnsweringAHigherStamp_EndsTheUsersOlderSessions_WithoutWaitingForAPoll()
     {
-        // The sign-in's stamp is the API's current one (06 §5.3): the map learns it with the session,
-        // so a session of the same user given a lower one is refused at once. No tick runs here.
+        // The sign-in's stamp is the API's current one (ADR-0057 §5.3): the map learns it with the
+        // session, so a session of the same user given a lower one is refused at once. No tick runs
+        // here.
         var (host, upstream, _, _) = NewHost();
         var sessions = host.Services.GetRequiredService<ISessionService>();
         var client = host.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });

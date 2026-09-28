@@ -22,10 +22,10 @@ using Moq;
 namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
-/// Unit tests for RefreshTokenService, the grant of 06 §4: issuance (hash-at-rest, a fixed 60-minute
-/// life), renewal that writes nothing, every row of 06 §4.3's state table, and the two revokes. Runs
-/// on the EF InMemory provider (exercises the non-relational fallbacks); what reaches SQL Server is
-/// proved in RefreshTokenRotationSqlServerTests.
+/// Unit tests for RefreshTokenService, the grant of ADR-0057 §4: issuance (hash-at-rest, a fixed
+/// 60-minute life), renewal that writes nothing, every row of ADR-0057 §4.3's state table, and the
+/// two revokes. Runs on the EF InMemory provider (exercises the non-relational fallbacks); what
+/// reaches SQL Server is proved in RefreshTokenRotationSqlServerTests.
 /// </summary>
 public class RefreshTokenServiceTests : IDisposable
 {
@@ -34,7 +34,7 @@ public class RefreshTokenServiceTests : IDisposable
     private readonly Mock<IAuditService> _audit = new();
     private readonly Mock<ILogger<RefreshTokenService>> _logger = new();
 
-    // What every detector built below logs (06 §6, anomaly 2), readable as lines.
+    // What every detector built below logs (ADR-0057 §6, anomaly 2), readable as lines.
     private readonly RecordingLoggerProvider _detectorLogs = new();
     private readonly LoggerFactory _detectorLoggerFactory;
 
@@ -168,7 +168,7 @@ public class RefreshTokenServiceTests : IDisposable
         stored.RevokedReason.Should().BeNull();
         stored.IsActive.Should().BeTrue();
         stored.ExpiresAt.Should().Be(stored.CreatedAt.AddMinutes(60),
-            "the default grant lives 60 minutes from issue, the BFF's absolute cap (06 §4.1)");
+            "the default grant lives 60 minutes from issue, the BFF's absolute cap (ADR-0057 §4.1)");
         issued.ExpiresAt.Should().Be(stored.ExpiresAt, "login and register hand back the stored expiry, not a recomputed one");
     }
 
@@ -190,9 +190,10 @@ public class RefreshTokenServiceTests : IDisposable
     public async Task RenewAsync_AnActiveGrant_ReturnsItsUserAndExpiry_AndWritesNothing()
     {
         /*
-          06 §4.3's last row: "Active — 200 — Writes: none". Proved by running the renewal on a
-          context whose every SaveChanges throws: it could not have succeeded had it tried to write.
-          The row itself is then read back unchanged, and the same grant renews a second time.
+          ADR-0057 §4.3's last row: "Active — 200 — Writes: none". Proved by running the renewal on
+          a context whose every SaveChanges throws: it could not have succeeded had it tried to
+          write. The row itself is then read back unchanged, and the same grant renews a second
+          time.
         */
         var user = SeedUser();
         var issued = await _sut.IssueAsync(user);
@@ -223,10 +224,10 @@ public class RefreshTokenServiceTests : IDisposable
     public async Task RenewAsync_FourRenewalsOfOneGrantWithinOneTokenLifetime_AllSucceed_RaiseOneRateEvent_AndWriteNothing()
     {
         /*
-          06 §10 O2k through the service, on a context whose every SaveChanges throws: four renewals
-          of one grant within one access-token lifetime all succeed, and the fourth raises one
-          RefreshRenewalRateHigh (06 §6, anomaly 2). None could have written, and no audit row is
-          asked for: the event is a log line only.
+          ADR-0057 §10 O2k through the service, on a context whose every SaveChanges throws: four
+          renewals of one grant within one access-token lifetime all succeed, and the fourth raises
+          one RefreshRenewalRateHigh (ADR-0057 §6, anomaly 2). None could have written, and no audit
+          row is asked for: the event is a log line only.
         */
         var user = SeedUser();
         var issued = await _sut.IssueAsync(user);
@@ -250,15 +251,16 @@ public class RefreshTokenServiceTests : IDisposable
 
         RateEvents().Should().ContainSingle().Which.Should().Contain(grantId.ToString(),
             "the line names the grant's row id, never the grant");
-        RateEvents()[0].Should().NotContain(issued.RefreshToken, "a grant is never logged (06 O2h)");
+        RateEvents()[0].Should().NotContain(issued.RefreshToken, "a grant is never logged (ADR-0057 §10 O2h)");
         _audit.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task RenewAsync_AnEndedSessionsGrantPresentedFourTimes_IsNotCounted()
     {
-        // 06 §6 counts 200 answers only. Four tripwire refusals of one grant, within one token
-        // lifetime, are four 401s: the tripwire writes its rows, and the detector counts none of them.
+        // ADR-0057 §6 counts 200 answers only. Four tripwire refusals of one grant, within one
+        // token lifetime, are four 401s: the tripwire writes its rows, and the detector counts none
+        // of them.
         var user = SeedUser();
         var ended = await _sut.IssueAsync(user);
         var revokedAt = DateTime.UtcNow;
@@ -271,14 +273,14 @@ public class RefreshTokenServiceTests : IDisposable
         }
 
         VerifyTheTripwireRowWritten(Times.Exactly(4));
-        RateEvents().Should().BeEmpty("only a renewal the grant check accepted is counted (06 §6)");
+        RateEvents().Should().BeEmpty("only a renewal the grant check accepted is counted (ADR-0057 §6)");
     }
 
     [Fact]
     public async Task RenewAsync_AnExpiredGrantPresentedFourTimes_IsNotCounted()
     {
         // The expiry check comes after the revoked one, so counting between the two would count
-        // these; 06 F11's floor on the lifetime means the row is backdated instead.
+        // these; ADR-0057 F11's floor on the lifetime means the row is backdated instead.
         var user = SeedUser();
         var issued = await _sut.IssueAsync(user);
         _context.ChangeTracker.Clear();
@@ -294,7 +296,7 @@ public class RefreshTokenServiceTests : IDisposable
                 .Should().ThrowAsync<AuthenticationException>();
         }
 
-        RateEvents().Should().BeEmpty("only a renewal the grant check accepted is counted (06 §6)");
+        RateEvents().Should().BeEmpty("only a renewal the grant check accepted is counted (ADR-0057 §6)");
     }
 
     private List<string> RateEvents() =>
@@ -351,10 +353,10 @@ public class RefreshTokenServiceTests : IDisposable
     public async Task RenewAsync_AnEndedSessionsGrant_ReceivedAfterTheRevoke_IsTheTripwire_AndRevokesNothing()
     {
         /*
-          06 §4.3 row 2, and F3. The grant of an ENDED session, presented in a request received
-          after the revoke: 401, one RefreshTokenReuse log line and audit row — and nothing else.
-          Until PR-1 this revoked every token of the user; the second session below is what shows it
-          no longer does.
+          ADR-0057 §4.3 row 2, and F3. The grant of an ENDED session, presented in a request
+          received after the revoke: 401, one RefreshTokenReuse log line and audit row — and nothing
+          else. Until PR-1 this revoked every token of the user; the second session below is what
+          shows it no longer does.
         */
         var user = SeedUser();
         var ended = await _sut.IssueAsync(user);
@@ -371,7 +373,7 @@ public class RefreshTokenServiceTests : IDisposable
 
         _context.ChangeTracker.Clear();
         (await _context.RefreshTokens.CountAsync(t => t.UserId == user.Id && t.RevokedAt == null))
-            .Should().Be(1, "the tripwire records; it revokes nothing (06 F3)");
+            .Should().Be(1, "the tripwire records; it revokes nothing (ADR-0057 F3)");
         (await _sut.RenewAsync(otherSession.RefreshToken, DateTime.UtcNow)).User.Id
             .Should().Be(user.Id, "the user's other session keeps renewing");
     }
@@ -381,8 +383,9 @@ public class RefreshTokenServiceTests : IDisposable
     {
         /*
           Replaces the old disconnect case. The row is the evidence, so the tripwire writes it with
-          CancellationToken.None: a caller that hangs up must not be able to take it back (06 §4.3).
-          The caller's token here is live and cancellable; the write must not have been given it.
+          CancellationToken.None: a caller that hangs up must not be able to take it back
+          (ADR-0057 §4.3). The caller's token here is live and cancellable; the write must not have
+          been given it.
         */
         var user = SeedUser();
         var ended = await _sut.IssueAsync(user);
@@ -403,8 +406,8 @@ public class RefreshTokenServiceTests : IDisposable
     public async Task RenewAsync_WhenTheTripwiresAuditWriteFails_TheFailureSurfaces_AndNothingIsRevoked()
     {
         /*
-          06 §4.3: a failed tripwire audit write answers as the unknown-grant refusal does — the
-          exception surfaces and GlobalExceptionHandler turns it into a 500 (ADR-0044's loud
+          ADR-0057 §4.3: a failed tripwire audit write answers as the unknown-grant refusal does —
+          the exception surfaces and GlobalExceptionHandler turns it into a 500 (ADR-0044's loud
           failure). Here: the exception is the audit's own, not the uniform 401; the log line was
           written before it; and the user's other grant is still active.
         */
@@ -457,7 +460,8 @@ public class RefreshTokenServiceTests : IDisposable
         RefreshTokenRevokedReason? reason, LogLevel level)
     {
         // A lever pulled from outside the session: a live session can learn of it late, innocently,
-        // so even a request received long after the revoke is not the tripwire (06 §4.3 row 4).
+        // so even a request received long after the revoke is not the tripwire
+        // (ADR-0057 §4.3 row 4).
         var user = SeedUser();
         var issued = await _sut.IssueAsync(user);
         var revokedAt = DateTime.UtcNow.AddMinutes(-5);
@@ -474,7 +478,8 @@ public class RefreshTokenServiceTests : IDisposable
     [Fact]
     public async Task RenewAsync_ExpiredGrant_ThrowsInvalid_AndWritesNothing()
     {
-        // 06 F11: the option refuses a lifetime under 15 minutes, so the row is backdated instead.
+        // ADR-0057 F11: the option refuses a lifetime under 15 minutes, so the row is backdated
+        // instead.
         var user = SeedUser();
         var issued = await _sut.IssueAsync(user);
         _context.ChangeTracker.Clear();
@@ -605,7 +610,8 @@ public class RefreshTokenServiceTests : IDisposable
     [Fact]
     public async Task RevokeAsync_WhenTheWriteFails_AnswersServiceUnavailable_SoTheCallerRetries()
     {
-        // 06 §4.4, F12: 503, never 500, so the BFF's revoker keeps the grant queued and tries again.
+        // ADR-0057 §4.4, F12: 503, never 500, so the BFF's revoker keeps the grant queued and tries
+        // again.
         var user = SeedUser();
         var a = await _sut.IssueAsync(user);
         var faulty = SutOverAContextThatCannotSave(out var faultyContext);
@@ -648,9 +654,10 @@ public class RefreshTokenServiceTests : IDisposable
     [Fact]
     public async Task RevokeAllForUserAsync_RaisesThatUsersSessionStampBy1_AndNoOneElses()
     {
-        // 06 §5.3: a per-user sign-out raises the stamp with its revoke, which is what ends the user's
-        // BFF sessions within one poll. Each sign-out raises it again, even with no grant left to
-        // revoke: the stamp, not the revoke, is what reaches a session that has not renewed yet.
+        // ADR-0057 §5.3: a per-user sign-out raises the stamp with its revoke, which is what ends
+        // the user's BFF sessions within one poll. Each sign-out raises it again, even with no
+        // grant left to revoke: the stamp, not the revoke, is what reaches a session that has not
+        // renewed yet.
         var user = SeedUser();
         var other = SeedUser();
         await _sut.IssueAsync(user);
@@ -666,7 +673,8 @@ public class RefreshTokenServiceTests : IDisposable
     [Fact]
     public async Task RevokeAsync_OfOneSessionsGrant_LeavesTheSessionStampAlone()
     {
-        // "Esci" ends one session (06 §4.6). A raised stamp would end every other session of the user.
+        // "Esci" ends one session (ADR-0057 §4.6). A raised stamp would end every other session of
+        // the user.
         var user = SeedUser();
         var grant = await _sut.IssueAsync(user);
 

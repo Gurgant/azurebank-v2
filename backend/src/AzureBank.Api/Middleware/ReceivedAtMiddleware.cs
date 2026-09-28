@@ -4,7 +4,7 @@ namespace AzureBank.Api.Middleware;
 
 /// <summary>
 /// The instant the API received a request, on ONE clock for the whole process: the UTC time when
-/// the clock was created plus a <see cref="Stopwatch"/> since then (06 §4.3, F10).
+/// the clock was created plus a <see cref="Stopwatch"/> since then (ADR-0057 §4.3, F10).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -40,7 +40,7 @@ public sealed record ReceivedAtFeature(DateTime Value);
 
 /// <summary>
 /// Stamps every request with <see cref="ReceivedAtClock"/> before anything else can delay it
-/// (06 §4.3): the FIRST middleware in the pipeline.
+/// (ADR-0057 §4.3): the FIRST middleware in the pipeline.
 /// </summary>
 /// <remarks>
 /// First, because the stamp orders a renewal against a revoke of the same grant, and a stamp taken

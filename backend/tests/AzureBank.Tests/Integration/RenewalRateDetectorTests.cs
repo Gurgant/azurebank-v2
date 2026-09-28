@@ -12,7 +12,7 @@ using Serilog.Events;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// 06 §10 O2k through the real API host: four renewals of one grant within one access-token
+/// ADR-0057 §10 O2k through the real API host: four renewals of one grant within one access-token
 /// lifetime all get 200 and raise one <c>RefreshRenewalRateHigh</c>; two raise nothing. The detector
 /// is the host's own singleton, fed the <c>ReceivedAt</c> stamp of each request.
 /// </summary>
@@ -51,7 +51,7 @@ public sealed class RenewalRateDetectorTests : IDisposable
         if (events == 1)
         {
             raised[0].Should().StartWith("[Warning]").And.Contain(userId.ToString());
-            raised[0].Should().NotContain(grant, "a grant is never logged (06 O2h)");
+            raised[0].Should().NotContain(grant, "a grant is never logged (ADR-0057 §10 O2h)");
         }
     }
 

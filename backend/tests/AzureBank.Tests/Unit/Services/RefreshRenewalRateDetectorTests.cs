@@ -9,10 +9,10 @@ using Microsoft.Extensions.Options;
 namespace AzureBank.Tests.Unit.Services;
 
 /// <summary>
-/// The renewal-rate detector of 06 §6, anomaly 2, on its own: more than three accepted renewals of
-/// one grant within one access-token lifetime raise one <c>RefreshRenewalRateHigh</c>, three or fewer
-/// raise nothing, a grant raises at most once per lifetime, and its memory is bounded: entries
-/// expire, and the map has a capacity.
+/// The renewal-rate detector of ADR-0057 §6, anomaly 2, on its own: more than three accepted
+/// renewals of one grant within one access-token lifetime raise one <c>RefreshRenewalRateHigh</c>,
+/// three or fewer raise nothing, a grant raises at most once per lifetime, and its memory is
+/// bounded: entries expire, and the map has a capacity.
 /// </summary>
 /// <remarks>
 /// The stamps are the requests' <c>ReceivedAt</c> values, which the detector counts on, so these
@@ -56,7 +56,8 @@ public sealed class RefreshRenewalRateDetectorTests : IDisposable
     [InlineData(4, 1)]
     public void RenewalsOfOneGrantWithinOneTokenLifetime_RaiseTheEventOnlyAboveThree(int renewals, int expected)
     {
-        // 06 §10 O2k: 4 renewals raise one event, 2 raise none; 3 is the limit itself, so none.
+        // ADR-0057 §10 O2k: 4 renewals raise one event, 2 raise none; 3 is the limit itself, so
+        // none.
         var detector = Build();
         var grant = Guid.NewGuid();
         var user = Guid.NewGuid();
@@ -81,10 +82,11 @@ public sealed class RefreshRenewalRateDetectorTests : IDisposable
     public void TheLegitimateBffsCadence_RaisesNothing_OverTheGrantsWholeLife(int secondsApart)
     {
         /*
-          The BFF renews when less than half the token's life is left (06 §4.5): every 7.5 minutes
-          for 15-minute tokens, 9 renewals over a 60-minute grant. The token's exp is whole seconds,
-          so a renewal can come a little under 7.5 minutes after the last (reasoned, not measured on
-          the BFF); at 449 s one window holds three renewals, which the limit of 3 allows.
+          The BFF renews when less than half the token's life is left (ADR-0057 §4.5): every 7.5
+          minutes for 15-minute tokens, 9 renewals over a 60-minute grant. The token's exp is whole
+          seconds, so a renewal can come a little under 7.5 minutes after the last (reasoned, not
+          measured on the BFF); at 449 s one window holds three renewals, which the limit of 3
+          allows.
         */
         var detector = Build();
         var grant = Guid.NewGuid();

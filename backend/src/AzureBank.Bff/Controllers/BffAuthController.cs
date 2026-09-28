@@ -39,8 +39,9 @@ public class BffAuthController : ControllerBase
 
     /// <summary>
     /// Ceiling on the /me read-through, for the token and the GET together — the budget is for the
-    /// whole read, not per hop. It equals the renewal's foreground wait (06 §4.5), so a renewal that
-    /// has not come back by then leaves the whole budget spent and the cached block is served.
+    /// whole read, not per hop. It equals the renewal's foreground wait (ADR-0057 §4.5), so a
+    /// renewal that has not come back by then leaves the whole budget spent and the cached block is
+    /// served.
     /// </summary>
     private static readonly TimeSpan ReadThroughTimeout = TimeSpan.FromSeconds(5);
 
@@ -95,8 +96,8 @@ public class BffAuthController : ControllerBase
             var loginResponse = apiResponse!.Data!;
 
             // Create server-side session with the JWT, its grant (for renewals), the grant's expiry
-            // (the session's cap, 06 §4.1), user info and the user's session stamp (06 §5.3). The
-            // same token object registration answers, read the same way.
+            // (the session's cap, ADR-0057 §4.1), user info and the user's session stamp
+            // (ADR-0057 §5.3). The same token object registration answers, read the same way.
             var sessionId = _sessionService.CreateSession(
                 loginResponse.Token.AccessToken,
                 loginResponse.Token.ExpiresAt,
@@ -224,8 +225,8 @@ public class BffAuthController : ControllerBase
     /// and an unsound sole credential for creating one.
     /// </para>
     /// <para>
-    /// <b>The old session ends, and only its grant is revoked at the API</b> (06 §4.6). Until PR-1
-    /// the API offered no single-grant revoke, only <c>/api/auth/logout</c>, which revokes
+    /// <b>The old session ends, and only its grant is revoked at the API</b> (ADR-0057 §4.6). Until
+    /// PR-1 the API offered no single-grant revoke, only <c>/api/auth/logout</c>, which revokes
     /// <i>every</i> grant the user holds — the new one included, so the replacement session would
     /// have died silently at its first renewal. The old grant was therefore left to expire, for up
     /// to seven days. Now the old session ends through the same path as "Esci": its grant goes to
@@ -430,7 +431,7 @@ public class BffAuthController : ControllerBase
               on a read costs nothing but freshness, and freshness is exactly what we are prepared
               to trade.
 
-              Five seconds, the renewal's foreground wait (06 §4.5): the renewal itself runs
+              Five seconds, the renewal's foreground wait (ADR-0057 §4.5): the renewal itself runs
               detached on its own 30 s, so giving up here abandons only this read of it. (Until
               PR-1 this matched a 5 s renewal call.) NOT covered by a test, and it is worth saying why
               rather than implying coverage: FakeBackendApiHandler builds its response synchronously
@@ -444,7 +445,8 @@ public class BffAuthController : ControllerBase
 
             // Same renewal as every other out-of-band call here: this path bypasses the YARP
             // transform, so nothing else would attach a token. No token for any reason — the
-            // session ended, or the renewal is unavailable (06 §4.5) — serves the cached block.
+            // session ended, or the renewal is unavailable (ADR-0057 §4.5) — serves the cached
+            // block.
             var result = await _tokenRefresher.GetAccessTokenAsync(session.SessionId, deadline.Token);
             if (result.Outcome != AccessTokenOutcome.Token || string.IsNullOrEmpty(result.AccessToken))
             {
@@ -516,9 +518,10 @@ public class BffAuthController : ControllerBase
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Ends the session here and answers at once</b> (06 §4.6). Under the session's lock it is
-    /// marked ended, its renewal in flight is captured, and it is removed; the grant is then queued
-    /// on <c>GrantRevoker</c>, which revokes that one grant at the API after the renewal settles.
+    /// <b>Ends the session here and answers at once</b> (ADR-0057 §4.6). Under the session's lock
+    /// it is marked ended, its renewal in flight is captured, and it is removed; the grant is then
+    /// queued on <c>GrantRevoker</c>, which revokes that one grant at the API after the renewal
+    /// settles.
     /// </para>
     /// <para>
     /// <b>What it no longer does, and why.</b> It used to renew the access token and call the API's
@@ -585,7 +588,7 @@ public class BffAuthController : ControllerBase
     /// (so the stored token may need renewing first). Returns the token, or a ready-to-return refusal
     /// — the single place each is shaped: 401 when the session has ended or its grant is dead, and
     /// 503 with <c>Retry-After</c> when a renewal could not be had and the held token has 5 s or less
-    /// left (06 §4.5). The 503 keeps the session; the 401 is the SPA's sign-out.
+    /// left (ADR-0057 §4.5). The 503 keeps the session; the 401 is the SPA's sign-out.
     /// </summary>
     private async Task<(string? AccessToken, IActionResult? Unauthorized)> ReMintOrUnauthorizedAsync(
         string sessionId)
@@ -632,7 +635,7 @@ public class BffAuthController : ControllerBase
         }
 
         // These paths bypass the YARP transform, so the token is fetched here too: it may need
-        // renewing first (06 §4.5).
+        // renewing first (ADR-0057 §4.5).
         var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
         if (unauthorized is not null)
         {
@@ -721,7 +724,7 @@ public class BffAuthController : ControllerBase
         }
 
         // These paths bypass the YARP transform, so the token is fetched here too: it may need
-        // renewing first (06 §4.5).
+        // renewing first (ADR-0057 §4.5).
         var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
         if (unauthorized is not null)
         {
@@ -807,7 +810,7 @@ public class BffAuthController : ControllerBase
         }
 
         // Same reason as set-pin: this path bypasses the YARP transform, so the token is fetched
-        // here too, renewed first if it needs it (06 §4.5).
+        // here too, renewed first if it needs it (ADR-0057 §4.5).
         var (accessToken, unauthorized) = await ReMintOrUnauthorizedAsync(session.SessionId);
         if (unauthorized is not null)
         {
@@ -858,9 +861,9 @@ public class BffAuthController : ControllerBase
                   reference (InMemoryTokenStore hands back the live object) so a lock inside it would
                   guard a single reference assignment that is already atomic. And "disproportionate"
                   was contradicted sixty lines away: the renewal already ships a per-session single
-                  flight (a lock on each session since PR-1, 06 §4.5; before it, a gate TokenRefresher
-                  kept as a singleton). The lock was rejected for bad reasons; it is now unnecessary
-                  for a real one.
+                  flight (a lock on each session since PR-1, ADR-0057 §4.5; before it, a gate
+                  TokenRefresher kept as a singleton). The lock was rejected for bad reasons; it is
+                  now unnecessary for a real one.
                 */
                 _sessionService.UpdateUserInfo(session.SessionId, userInfo => userInfo.AzureTag = renamed);
             }
@@ -908,7 +911,8 @@ public class BffAuthController : ControllerBase
     }
 
     /// <summary>
-    /// A new sign-in or registration ends the session whose cookie came with it (06 §4.6, F13).
+    /// A new sign-in or registration ends the session whose cookie came with it (ADR-0057 §4.6,
+    /// F13).
     /// </summary>
     /// <remarks>
     /// Called after the new session exists and its cookie is set, the order re-authentication keeps
@@ -958,9 +962,10 @@ public class BffAuthController : ControllerBase
     /// </summary>
     /// <remarks>
     /// One exception to "verbatim": the API refusing this host's service key becomes a 503 with
-    /// <c>Retry-After</c> (06 §4.7, F4). It is a key rotation applied on one side, not a verdict on
-    /// the user, and forwarded as the 401 it is it would sign the user out of the SPA. Every call
-    /// site gets it here: sign-in, registration, re-authentication, verify-pin, set-pin and rename.
+    /// <c>Retry-After</c> (ADR-0057 §4.7, F4). It is a key rotation applied on one side, not a
+    /// verdict on the user, and forwarded as the 401 it is it would sign the user out of the SPA.
+    /// Every call site gets it here: sign-in, registration, re-authentication, verify-pin, set-pin
+    /// and rename.
     /// </remarks>
     private IActionResult ForwardUpstreamError(HttpResponseMessage response, string content)
     {

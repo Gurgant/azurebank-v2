@@ -9,13 +9,14 @@ no longer holds, struck in place there) and the decision in
 [ADR-0044](0044-the-audit-trail-is-append-only-and-chained.md), and
 [ADR-0055](0055-the-api-serves-one-client-the-bff.md) D4 and D7
 
-**Where the code's citations point.** This design was ratified on 2026-09-28 as a plan in the
-working-state repository, `azurebank-work/plans/2026-09-27-stage-c/06-SESSION-DESIGN.md`, and the
-code and tests cite it by that plan's numbering: "06 §4.5", "06 F3", "06 §10 O2h". This record keeps
-the numbering, so each of those citations lands here. §1 to §11 below are the plan's sections of the
-same number; §8 and §9, which listed the code and the tests to change, are summaries, and the pull
-request holds the rest. §5.4, which points to the incident runbook, is this record's own. F1 to
-F15 are the red team's findings, listed at the end. O0 to O2 are the oracles in §10.
+**Where the code's citations point.** The code and tests cite this record by section, as in
+"ADR-0057 §4.5", "ADR-0057 F3" and "ADR-0057 §10 O2h". F1 to F15 are the red team's findings,
+listed at the end; O0 to O2 are the oracles in §10. The design was ratified on 2026-09-28 as a plan
+kept outside this repository, and §1 to §11 keep that plan's section numbers; §8 and §9, which
+listed the code and the tests to change, are summaries, and the pull request holds the rest. §5.4,
+which points to the incident runbook, is this record's own. *(Until 2026-09-29 the code cited that
+plan by its own number, 06, which this repository already gives to
+`docs/design/06-api-contracts.md`, and this paragraph pointed those citations here.)*
 
 ## Preconditions
 
@@ -36,10 +37,11 @@ breaks the argument in §3.
 
 ## 1. The problem
 
-**Measured** with the outage harness (`azurebank-work/plans/2026-09-27-stage-c/05-DB-OUTAGE.md`): in
-8 of 8 runs where a renewal met a 10 s database hang, someone was signed out. In 4 of those 8 every
-session of the user was signed out, and a false `RefreshTokenReuse` was written. A larger retry
-budget changed nothing. Money was safe: 3 of 3 transfers were debited once.
+**Measured** with the outage harness, scripts kept outside this repository that pause the compose
+stack's SQL Server container for N seconds (HANG N) or stop it (REFUSED N): in 8 of 8 runs where a
+renewal met a 10 s database hang, someone was signed out. In 4 of those 8 every session of the user
+was signed out, and a false `RefreshTokenReuse` was written. A larger retry budget changed nothing.
+Money was safe: 3 of 3 transfers were debited once.
 
 How it happened, read in the code at main `f949b18`:
 
@@ -189,7 +191,10 @@ a profile this system meets.
 - Loopback alone is not enough, because the BFF's proxy also reaches the API over loopback. So:
   - the BFF's own client (`ServiceCredentialHandler`) adds `X-AzureBank-Token-Road`;
   - the YARP transform strips any copy a browser sends, next to where it strips the service key;
-  - the API requires exactly one value, as it does for the key (F15).
+  - the API requires exactly one value, as it does for the key (F15), and that value must be the
+    BFF's marker, `bff`, compared exactly: two copies of the header sent over a real socket arrive
+    as ONE value, `bff, bff`, which a count of values alone takes for one (measured by the
+    pre-review of this pull request).
 - `/api/auth/revoke` and `/api/auth/logout` also join the BFF's blocked proxied paths, beside login,
   register and refresh, and so does `/api/auth/session-stamps`.
 - The check is a middleware on endpoint metadata (`TokenEndpointAttribute`, `TokenRoadMiddleware`).
@@ -313,14 +318,20 @@ a profile this system meets.
     platform's 300 s scale-down wait), before the 15-minute idle expiry would end those sessions.
   - A kill (SIGKILL) leaves those grants alive, with no holder, until their cap. That is a residual.
   - **The drain needs an API that is still up, and that is not in its hands.** On compose the API
-    lives in the BFF's network namespace, so it depends on the BFF, and Compose stops a service
-    before the services it depends on: the API has stopped before the BFF gets its stop signal. There
-    the drain revokes nothing and logs every grant as left. The pre-review saw this on a probe with
-    the same topology on 2026-09-29: the API was sent its stop signal first, and a connect from the
-    BFF at its own stop signal was refused. On Azure both containers of the replica get the stop
-    signal at once, so the drain races the sidecar's own stop. Which one wins is to be measured at
-    the first deployment (the plan's step C2), from the "left" count (§11). A grant the drain misses
-    is the kill's residual above.
+    lives in the BFF's network namespace, so it depends on the BFF.
+    - **Stopping the whole project** (`docker compose stop` or `down`) stops a service before the
+      services it depends on: the API has stopped before the BFF gets its stop signal. The
+      pre-review saw this on a probe with the same topology on 2026-09-29: the API was sent its stop
+      signal first, and a connect from the BFF at its own stop signal was refused. Read in the code
+      from there, the drain revokes nothing and logs every grant as left; that stop was not run on
+      the real stack.
+    - **Stopping the BFF alone** (`docker compose stop bff`) leaves the API up. Measured in the O1
+      run (§10), with 6 live sessions: one `/api/auth/revoke` call, "Revoked 6 of 6 presented
+      grants" at the API, "Graceful stop: 6 grants revoked, 0 left" at the BFF, and 6 active grants
+      down to 0, all `SessionEnded`. That run was before the drain moved to `ApplicationStopping`.
+    - **On Azure** both containers of the replica get the stop signal at once, so the drain races
+      the sidecar's own stop. Which one wins is to be measured at the first deployment (the plan's
+      step C2), from the "left" count (§11). A grant the drain misses is the kill's residual above.
 
 ### 4.7 Key refusals on proxied calls (F4)
 
@@ -352,7 +363,7 @@ The BFF's inactivity timeout is 15 minutes (it was 30). The absolute limit stays
 |---|---|---|---|
 | **One session now: "Esci"** | Under the session lock, the BFF marks the session `Ended`, removes it, deletes the cookie and answers 200. `GrantRevoker` then revokes that grant (`SessionEnded`), after any renewal in flight | Signed out at once: the next request with that cookie, from any tab, gets 401. Its access token lived only in that session and goes with it | The core of PR-1 (§4.6) |
 | **One user everywhere now** | `POST /api/auth/logout` (no button yet), or the runbook's SQL for one user (§5.4). In one transaction, all the user's grants are revoked (`SignOutEverywhere`, or `ReuseContainment` when it answers a tripwire) and the user's stamp goes up by 1 | Signed out at the first request after the BFF's next read of the stamps: within 15 s (§5.3). While the BFF cannot read them, at each session's next successful renewal, after up to half the token's life (7.5 minutes) of continued use | The stamp, its own commit of PR-1 (§5.3): the revoke and the raise in `RevokeAllForUserAsync`, `POST /api/auth/session-stamps`, `SessionStampWatcher` and the store's check |
-| **Everyone now** | Restart the revision: the portal's Restart, or `az containerapp revision restart` (<https://learn.microsoft.com/en-us/cli/azure/containerapp/revision#az-containerapp-revision-restart>). Stopping and starting the app also works, with downtime | Signed out at the next request, after a cold start, because no session exists any more (§5.2). The access tokens die with the process memory | None. On a graceful stop the drain of §4.6 also revokes the grants if the API still answers: not on compose, and on Azure not yet measured |
+| **Everyone now** | Restart the revision: the portal's Restart, or `az containerapp revision restart` (<https://learn.microsoft.com/en-us/cli/azure/containerapp/revision#az-containerapp-revision-restart>). Stopping and starting the app also works, with downtime | Signed out at the next request, after a cold start, because no session exists any more (§5.2). The access tokens die with the process memory | None. On a graceful stop the drain of §4.6 also revokes the grants if the API still answers: on compose, yes when the BFF stops alone (measured) and no when the whole project stops; on Azure, not yet measured |
 | **Nuclear** | One revision rotates `Jwt:Secret` and `ServiceCredential:BffKey` together (a key rotation is already "a deployment event on both sides", ADR-0055 D4). Then SQL sets `Incident` on every live grant created before that revision | Signed out at the next request, since a new revision is a restart. Every access token ever minted fails its signature check. Every grant is useless without the new key, and is revoked | None: the runbook in §5.4 |
 
 ### 5.1 How fast: the BFF session against the access token
@@ -532,7 +543,7 @@ nobody checks. What that runbook rests on is decided here.
 | An **ended** grant presented again | Detected, not contained automatically | The tripwire: 401, an audit row, a security event (F3). The operator reads the audit trail and pulls a lever (§5.4) |
 | A lost answer, a database outage, an uncertain EF commit | Eliminated | A renewal writes nothing. An expired token during an outage gives 503, never 401 |
 | A half-applied key rotation | Bounded | 503 on renewal and on proxied calls (F4). The session is kept and the SPA stays signed in |
-| A false tripwire | Residual, to measure | The revoke waits for the renewal in flight (at most 30 s), so a false tripwire needs the API to stamp an abandoned renewal more than 30 s after it was sent (F9c, measured by O1). The road by which a removed session came back is closed (F2). The cost is one audit row, and nobody is signed out |
+| A false tripwire | Residual | The revoke waits for the renewal in flight (at most 30 s), so a false tripwire needs the API to stamp an abandoned renewal more than 30 s after it was sent (F9c). O1 measured the largest gap between a renewal's send and the API's request start at 10.7 ms, over 52 renewals (§10). The road by which a removed session came back is closed (F2). The cost is one audit row, and nobody is signed out |
 | An access token after its session ends | Accepted, bounded | At most 15 minutes, and only code inside the replica could present it (§5.1) |
 | A revoke lost (an outage, then a kill) | Bounded | Nobody holds the grant, and it dies at its cap. The revoker retries (F12); a graceful stop drains while the API still answers (F7, §4.6) |
 | An insider replays ended grants | Accepted | One audit row each; they are already inside |
@@ -557,8 +568,10 @@ nobody checks. What that runbook rests on is decided here.
   stamp's commit adds `UserSession.SessionStamp`, `SessionStamps`, `SessionStampWatcher` and the
   store's check.
 - **Contract:** the OpenAPI document, the frontend's generated types, the Bruno collection and the
-  Schemathesis hooks follow; the direct callers send the marker. No SPA application code changes: a
-  503 is already retried.
+  Schemathesis hooks follow; the direct callers send the marker. No SPA application code changes:
+  the SPA retries a 503 only on a read, up to 3 attempts in all on RTK's own backoff, without
+  reading `Retry-After` (`problemBaseQuery`); a write that gets one is shown as an error and never
+  retried automatically (ADR-0022). Either way it is not a 401, so nobody is signed out.
 
 ## 9. Records and plans affected
 
@@ -589,13 +602,12 @@ The rule is the repository's: make the failure happen first, then show it gone.
 
 1. The outage harness with `Jwt__ExpirationMinutes=2`: two HANG 10 runs with no extra delay, two
    with 15 s, and two new REFUSED 10 runs (extra 0 s and 3 s) on a 4 × 10 s retry budget.
-   **Measured 2026-09-28** (`azurebank-work/plans/2026-09-27-stage-c/pr1/o0-harness.md`): 6 of 6
-   runs failed as expected. HANG 10 without delay signed out one session in 2 of 2; with 15 s it
-   signed out both, logged `RefreshTokenReuse` twice and left 0 active tokens, in 2 of 2; and
-   REFUSED 10 committed its renewal 21.2 and 20.5 s after the BFF gave up, and signed a session
-   out, in 2 of 2. The plan also named both p7 HANG runs; they were not run again.
-2. Seven CI tests, **7 of 7 red on main, measured**
-   (`azurebank-work/plans/2026-09-27-stage-c/pr1/o0-ci.md`):
+   **Measured 2026-09-28**: 6 of 6 runs failed as expected. HANG 10 without delay signed out one
+   session in 2 of 2; with 15 s it signed out both, logged `RefreshTokenReuse` twice and left 0
+   active tokens, in 2 of 2; and REFUSED 10 committed its renewal 21.2 and 20.5 s after the BFF
+   gave up, and signed a session out, in 2 of 2. The plan also named both p7 HANG runs; they were
+   not run again.
+2. Seven CI tests, **7 of 7 red on main, measured**:
    1. the same grant renewed twice: the second renewal got 401 (`AuthEndpointTests`,
       `Refresh_TheSameGrantTwice_AnswersOkBothTimes`);
    2. a command recorder saw 1 write command in one renewal (F9d;
@@ -629,8 +641,36 @@ The rule is the repository's: make the failure happen first, then show it gone.
 - For every renewal, log the BFF's send time next to the API's `ReceivedAt`, on the same host clock,
   and report the largest gap. A false tripwire needs a gap over 30 s (F9c).
 
-The evidence recorded for this record is O0 on main and the CI tests on the branch. The real-stack
-replays of O1 are not among it.
+**Measured 2026-09-28/29** on the compose stack, with 2-minute tokens and the O0 harness, at
+3535b90: the branch before the pre-review's fixes.
+
+- **Nobody was signed out.** In all 7 runs (HANG 10 twice with no extra delay and twice with 15 s,
+  REFUSED 10 twice on 4 × 10 s, HANG 150 once) both sessions answered 200 right after the outage
+  and again 75 s later: 70 of 70 checks. The API log, the `AuditEvents` table and the BFF log held
+  0 `RefreshRejected`, 0 `RefreshTokenReuse` and 0 audit refusals. Each run's two grants kept their
+  `RowVersion` and a null `RevokedAt` at all four snapshots; the active-grant count moved in two
+  runs, both times because the idle sweep ended sessions that earlier runs had left.
+- **The log lines named before the run:** the BFF's renewal timeout is the Warning "Refresh call to
+  API failed transiently for session {SessionId}", at the renewal's own 30 s; the API's is
+  "Refreshed access token for user {UserId}". Main's `TaskCanceledException` at about 5 s appeared
+  in no run.
+- **REFUSED 10:** the renewal was answered 200 after 25.85 s and 23.21 s, inside the BFF's own 30 s
+  renewal timeout, and stored.
+- **The 5 s wait.** At the listed timing (56.5 s left) the branch renews in the background, so no
+  request waited. Two extra HANG 10 runs with 26.5 s left did: the BFF stopped waiting at 5.0 s and
+  forwarded the held token, the API answered the renewal 200 about 4.2 s later, the answer was
+  stored, and all 20 checks stayed signed in.
+- **HANG 150 (F9b):** 34 answers during the outage and no 401. `/api/accounts` got 4 × 500 while
+  the tokens were valid, then 14 × 503 `SERVICE_UNAVAILABLE` with `Retry-After` once they had
+  expired; `/bff/auth/me` got 16 × 200. No session ended, and the same sessions answered 200
+  afterwards. Those 503s are the proxy's request transform answering for itself, which until then
+  had been seen only through `TestServer`.
+- **The gap (F9c):** all 52 renewals of the run were paired by trace id. The largest gap between the
+  BFF's send line and the API's request start was 10.7 ms, in HANG 150; every other run stayed at
+  or under 4.2 ms (§11 says what that start is).
+- **The CI half** is the seven tests of O0 item 2, which pass on the branch.
+
+The evidence recorded for this record is O0 on main, the CI tests on the branch, and these replays.
 
 **O2. Positive controls, with the same queries, so the zeros in O1 count only if these fire.**
 
@@ -639,28 +679,71 @@ replays of O1 are not among it.
   audit row, B's grant still active, and B renewing with 200. Deleting the audit write, or flipping
   the arrival-order comparison, must turn it red
   (`RefreshTokenRotationSqlServerTests.AnEndedSessionsGrantPresentedAgain_TripsTheTripwire_AndTheOtherSessionStillRenews`).
+  **Ran** on SQL Server. On the real stack the API has no port on the host, so O1's positive
+  control marked a live session's grant `SessionEnded` in SQL instead: its next renewal got 401,
+  and the API's `RefreshTokenReuse` line, one audit row, the refusal count and the BFF's
+  `RefreshRejected` each fired once, while the user's other session kept renewing with 200.
 - **b. A renewal in flight is not theft.** Hold A's read while `/api/auth/revoke` commits: 401 and
   no event
   (`RefreshTokenRotationSqlServerTests.ARevokeCommittedWhileARenewalWaitsToRead_IsNotTheTripwire`).
+  **Ran** on SQL Server; not on the real stack.
 - **c.** The audit row still commits when the tripwire's request drops its connection. The unit
   test checks that the write is not handed the caller's cancellation
   (`RefreshTokenServiceTests.RenewAsync_TheTripwiresRow_IsWrittenEvenWhenTheCallerHangsUp`).
+  **Ran** in the unit tests; not on the real stack. The unknown grant's row has the same guard
+  since the pre-review (`RefreshTokenServiceTests.RenewAsync_TheUnknownGrantsRow_IsWrittenEvenWhenTheCallerHangsUpDuringIt`,
+  and on SQL Server
+  `RefreshTokenRotationSqlServerTests.AnUnknownGrantsAuditRow_IsWrittenEvenWhenTheCallerHangsUpDuringIt`).
 - **d. Sender constraint.** With the path block disabled, `/api/auth/refresh` through the proxy
   still gets 404, and a marker sent by the browser is stripped. Key, marker and a live grant from an
-  address that is not loopback get 404 (`TokenRoadTests`).
+  address that is not loopback get 404 (`TokenRoadTests`). **Ran** in-process, with the remote
+  address set by a startup filter; not on the real stack.
 - **e. Caps.** The option refuses values under 15 minutes, so these backdate the row or use a fake
   clock. An expired grant gets 401 and no event; an access token minted near the cap expires no later
   than the grant; with a 15-minute grant, `/bff/auth/me` reports the grant's expiry and the session
   ends then (F5); the validator refuses 14, 1441 and any value below `Jwt:ExpirationMinutes` (F11).
+  **Ran** in-process: `RefreshTokenServiceTests.RenewAsync_ExpiredGrant_ThrowsInvalid_AndWritesNothing`,
+  `JwtServiceTests.GenerateToken_WithANotAfterSoonerThanItsLifetime_ExpiresNoLaterThanIt` and, on
+  SQL Server,
+  `RefreshTokenRotationSqlServerTests.TheGrantLivesSixtyMinutesFromSignIn_AndCapsTheAccessTokensMintedFromIt`;
+  `SessionEndingTests.TheCap_IsTheGrantsExpiryWhenItComesFirst_InTheStoreAndInWhatTheSpaIsTold` and
+  `PastTheGrantsExpiry_TheSessionEnds_AndItsGrantIsRevoked`;
+  `JwtOptionsTests.AGrantLifetimeOutOfRange_OrBelowTheAccessToken_StopsTheHostAtStart`. Not on the
+  real stack, whose O1 run saw only that every grant's `ExpiresAt − CreatedAt` was 60 minutes.
 - **f. Scope.** "Esci" on A marks only A's row `SessionEnded`, and B still renews; re-authentication
   and a new sign-in carrying an old cookie (F13) mark the old grant `SessionEnded`; idle expiry
   revokes the grant within one 5-minute sweep; an "Esci" during a paused SQL is revoked after SQL
   returns; a graceful stop with 2 sessions revokes both grants and logs "left 0" (F7), and sends
-  them before any of the BFF's services is asked to stop (`SessionEndingTests`).
+  them before any of the BFF's services is asked to stop (`SessionEndingTests`). **Ran** in-process:
+  `BffOverApiSessionTests.SigningOutOneSession_LeavesTheUsersOtherSessionRenewing_AndRecordsNoReuse`,
+  `AuthEndpointTests.Revoke_EndsOnlyThePresentedGrant_AndTheUsersOtherSessionStillRenews`,
+  `ReauthenticateTests.ItRevokesOnlyTheOldGrant_AndNeverCallsTheApiLogout`, `SessionEndingTests`
+  (the new sign-in, idle expiry and graceful-stop tests),
+  `TokenRefreshTests.Logout_WhileTheApiFails_StillSignsOutAtOnce_AndTheRevokeIsRetriedUntilItLands`
+  and, on SQL Server,
+  `RefreshTokenRotationSqlServerTests.ARevokeWhoseWriteFails_Answers503WithRetryAfter_AndTheRetryRevokes`.
+  **And on the real stack** (O1): "Esci" on A changed exactly 1 of the user's 18 grant rows, A's, to
+  `SessionEnded`, and B renewed with 200 twice with no event; an idle session was ended by the
+  5-minute sweep 18.5 minutes after its last use, its grant `SessionEnded`; a stop of the BFF alone
+  revoked all 6 grants it held (§4.6). The paused-SQL case ran for the sweep's revokes, which take
+  the same path as "Esci": sent during a HANG, they committed once SQL Server answered; during a
+  REFUSED 10 they timed out at the BFF's 5 s and were retried, and each of the 6 grants was revoked
+  once. Re-authentication and a new sign-in over an old cookie were not run on the real stack.
 - **g.** 8 concurrent renewals give 8 × 200 with `RowVersion` unchanged
   (`RefreshTokenRotationSqlServerTests.EightConcurrentRenewalsOfOneGrant_AllSucceed_AndChangeNothing`).
-- **h.** A capture sink finds no grant in any log line or audit row.
-- **i.** A transfer during the outage is still debited once.
+  **Ran** on SQL Server. On the real stack, each O1 run's two grants kept their `RowVersion` at
+  all four snapshots, across the run's renewals.
+- **h.** A capture sink finds no grant in any log line or audit row. **Ran** for the API, added by
+  the pre-review: `GrantSweepTests` (EF InMemory) and `GrantSweepSqlServerTests` capture every API
+  line down to Verbose, and every column of every audit row written, across sign-in, four renewals,
+  a revoke, the tripwire, an unknown grant, a refusal off the token road, an expired grant and
+  logout, and on SQL Server a renewal in flight too. **Not run for the BFF host:** of its lines,
+  only the drain's, the abandon's and the drop's are checked for a grant (`SessionEndingTests`).
+- **i.** A transfer during the outage is still debited once. **Ran once, on the real stack only**
+  (O1, during a HANG 10); there is no CI test. The transfer, sent 1 s into the hang, answered 201
+  after 9.68 s; its retry after the outage, with the same `Idempotency-Key`, answered 201 with a
+  byte-identical body. The balance went down by 7.31 once, with one `TransferOut` and one
+  `TransferIn` row, one idempotency record and one `MoneyTransferred` audit row.
 - **j. Stamp.** Sessions A and B of one user and C of another, signed in through the real BFF;
   raise the stamp through `/api/auth/logout`, and separately through the runbook's SQL as printed;
   advance the watcher's clock one 15 s period; A and B get 401 at their first request, C keeps
@@ -670,7 +753,7 @@ replays of O1 are not among it.
   user loaded before either lever and written back whole after it, as a PIN change does, fails as
   `ConcurrencyFailure` with the stamp still 1; with the `ConcurrencyStamp` rotation removed from the
   API's raise and from the runbook's SQL, all three runs went red, the write succeeding and the
-  stamp back at 0.
+  stamp back at 0. **Ran** in-process and on SQL Server; not on the real stack.
 - **k. Detector.** 4 renewals of one grant within one token lifetime all get 200 and raise one
   `RefreshRenewalRateHigh`; 2 renewals raise nothing (`RenewalRateDetectorTests`, through the API
   host). On SQL Server the 4 renewals send no command that is not a `SELECT` and add no audit row
@@ -685,17 +768,24 @@ replays of O1 are not among it.
   refused-renewal tests went red, each finding the event; moved between the revoked and the expiry
   checks, the expired one did. In the detector, raising at 3 renewals, never running the periodic
   sweep, dropping the once-per-lifetime gate and dropping the capacity check each turned its own
-  tests red (4, 1, 2 and 1 of them).
+  tests red (4, 1, 2 and 1 of them). **Ran** in-process and on SQL Server; not on the real stack.
 
 ## 11. Not verified
 
-- The O1 replays on the real stack (see §10).
-- YARP short-circuiting to 503 from a request transform is seen in tests, through `TestServer`, and
-  not yet on the wire.
-- The delay before the `ReceivedAt` stamp under a hang is not measured (O1).
+- The O1 replays ran once per case, on a host busy with a build and test run, at 3535b90. The
+  pre-review's fixes came after it: the drain at `ApplicationStopping`, the marker's value compared,
+  and the unknown grant's audit row kept when the caller hangs up were not on that stack.
+- `ReceivedAt` is not logged for a renewal. O1 took the API's side of the gap from the request log,
+  its end time minus its elapsed time, which the pipeline reaches after the stamp: the 10.7 ms
+  bounds the stamp's delay from above rather than reading it.
+- O2a, O2i and part of O2f on the real stack: the tripwire's control there marked the grant in SQL,
+  since the API has no port on the host; the transfer ran once, and has no CI test;
+  re-authentication and a new sign-in over an old cookie did not run there (§10).
+- O2h for the BFF host: no sweep of its lines, only the drain's, the abandon's and the drop's.
 - Whether the API sidecar still answers the drain on Azure, where the stop signal reaches both
   containers of the replica at once and the drain races the sidecar's own stop. The drain's "left"
-  count at the first deployment will show it. On compose it does not: the API stops first (§4.6).
+  count at the first deployment will show it. On compose it does when the BFF stops alone
+  (measured) and does not when the whole project stops (read in the code, §4.6).
 - The 15 s watcher period, the detector's limit of 3 and its 10 000 grants, and the revoker's 4 in
   parallel and 1000 in the queue are choices.
 - The watcher's period is exercised on a fake clock in the tests; a 15 s poll against the real stack
@@ -710,7 +800,8 @@ replays of O1 are not among it.
 **Positive**
 
 - A renewal writes nothing, so no outage, lost answer or uncertain commit can turn one into a
-  sign-out. An expired token during an outage becomes a 503 the SPA retries, never a 401.
+  sign-out. An expired token during an outage becomes a 503, never a 401: the SPA retries it on
+  a read and reports it on a write (§8).
 - "Esci" ends one session, and nothing else is signed out as a side effect.
 - Nothing from one sign-in outlives its grant, at the BFF or at the API: sign-in plus
   `Jwt:RefreshTokenLifetimeMinutes`, 60 minutes by default.
@@ -753,7 +844,7 @@ replays of O1 are not among it.
 - **F6:** the thresholds come from the token's own lifetime; the grant guard applies in both
   branches, and renewal stops when it gains nothing.
 - **F7:** a drain when the host begins to stop, with counts. SIGKILL, and an API that has stopped
-  first (compose), are stated as residuals.
+  first (a whole compose project's stop), are stated as residuals.
 - **F8:** the trade-off against rotation is stated in §3 and §7, and the write-free rate detector is
   recommended (§6).
 - **F9:** (a) the log lines are named before the run; (b) HANG 150 allows 5xx; (c) the send time is
@@ -768,7 +859,7 @@ replays of O1 are not among it.
 - **F14:** "PR-1 before the first Azure deployment" is written into this record (Preconditions).
 - **F15:** a renewal still pending at 5 s counts as a transient failure; every renewal is detached,
   with a 30 s timeout; a registration without a grant keeps the old rule; the marker needs exactly
-  one value.
+  one value, and it must be the BFF's.
 
 ## Related
 

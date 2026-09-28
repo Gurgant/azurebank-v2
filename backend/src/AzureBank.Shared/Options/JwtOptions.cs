@@ -49,8 +49,8 @@ public class JwtOptions
 
     /// <summary>
     /// How long a grant (the BFF session's refresh token) lives, in minutes from issue: fixed then and
-    /// never extended, since a renewal writes nothing (06 §4.1). Sixty by default, the BFF's absolute
-    /// session cap, so nothing from one sign-in outlives it. Checked at start: between
+    /// never extended, since a renewal writes nothing (ADR-0057 §4.1). Sixty by default, the BFF's
+    /// absolute session cap, so nothing from one sign-in outlives it. Checked at start: between
     /// <see cref="ShortestRefreshTokenLifetimeMinutes"/> and <see cref="LongestRefreshTokenLifetimeMinutes"/>,
     /// and never below <see cref="ExpirationMinutes"/>, because the sign-in's access token is minted
     /// just before its grant and is not capped by it (see <see cref="IsUsableRefreshTokenLifetime"/>).
@@ -78,10 +78,10 @@ public class JwtOptions
 
     /// <summary>
     /// True when <see cref="RefreshTokenLifetimeMinutes"/> is in range and not below
-    /// <see cref="ExpirationMinutes"/> (06 F11). The second half is what keeps "nothing from one
-    /// sign-in lasts past the grant" true for the sign-in's own access token: a renewal clamps its
-    /// token to the grant, but the sign-in mints its token BEFORE the grant exists, so only this rule
-    /// stops a 30-minute access token outliving a 15-minute grant.
+    /// <see cref="ExpirationMinutes"/> (ADR-0057 F11). The second half is what keeps
+    /// "nothing from one sign-in lasts past the grant" true for the sign-in's own access token: a
+    /// renewal clamps its token to the grant, but the sign-in mints its token BEFORE the grant
+    /// exists, so only this rule stops a 30-minute access token outliving a 15-minute grant.
     /// </summary>
     public static bool IsUsableRefreshTokenLifetime(int lifetimeMinutes, int accessTokenMinutes) =>
         lifetimeMinutes is >= ShortestRefreshTokenLifetimeMinutes and <= LongestRefreshTokenLifetimeMinutes

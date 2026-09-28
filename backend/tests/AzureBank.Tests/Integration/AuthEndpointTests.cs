@@ -608,7 +608,7 @@ public class AuthEndpointTests : IntegrationTestBase
 
     #endregion
 
-    #region Refresh Tests (ADR-0021, 06 §4)
+    #region Refresh Tests (ADR-0021, ADR-0057 §4)
 
     /// <summary>Registers a fresh user and returns its access token, grant and user id.</summary>
     private async Task<(string Access, string Refresh)> RegisterAndGetTokensAsync() =>
@@ -659,7 +659,7 @@ public class AuthEndpointTests : IntegrationTestBase
         var registered = (await register.Content.ReadFromJsonAsync<ApiResponse<RegisterResponse>>(JsonOptions))!.Data!.Token;
         registered.RefreshToken.Should().NotBeNullOrEmpty("registration must issue a refresh token");
         registered.RefreshTokenExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(60), TimeSpan.FromMinutes(1),
-            "the grant lives 60 minutes from sign-in, and the answer says when (06 §4.1)");
+            "the grant lives 60 minutes from sign-in, and the answer says when (ADR-0057 §4.1)");
 
         // A subsequent login issues its own (distinct) grant, with its own expiry.
         var login = await Client.PostAsJsonAsync("/api/auth/login",
@@ -670,7 +670,7 @@ public class AuthEndpointTests : IntegrationTestBase
             .And.NotBe(registered.RefreshToken);
         loginToken.RefreshTokenExpiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(60), TimeSpan.FromMinutes(1));
         loginToken.ExpiresAt.Should().BeOnOrBefore(loginToken.RefreshTokenExpiresAt!.Value,
-            "the sign-in's access token ends inside its grant's life (06 F11)");
+            "the sign-in's access token ends inside its grant's life (ADR-0057 F11)");
     }
 
     [Fact]
@@ -685,7 +685,7 @@ public class AuthEndpointTests : IntegrationTestBase
         var data = body.RootElement.GetProperty("data");
         data.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(
             ["accessToken", "expiresAt"],
-            "the grant is not rotated, so the answer carries no refresh token (06 §4.3)");
+            "the grant is not rotated, so the answer carries no refresh token (ADR-0057 §4.3)");
         data.GetProperty("accessToken").GetString().Should().NotBeNullOrEmpty();
         // ExpiresAt tracks the access token's own exp (JwtOptions.ExpirationMinutes = 15).
         data.GetProperty("expiresAt").GetDateTime().Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
@@ -694,9 +694,10 @@ public class AuthEndpointTests : IntegrationTestBase
     [Fact]
     public async Task Refresh_TheSameGrantTwice_AnswersOkBothTimes()
     {
-        // 06 §10 O0-2 item 1. The grant is one reusable credential per session (06 §3, §4.3): a
-        // renewal whose answer was lost is simply sent again, with the same grant, and must work.
-        // Red on main, where the first renewal rotates the grant away and the second is refused.
+        // ADR-0057 §10 O0-2 item 1. The grant is one reusable credential per session (ADR-0057 §3,
+        // §4.3): a renewal whose answer was lost is simply sent again, with the same grant, and
+        // must work. Red on main, where the first renewal rotates the grant away and the second is
+        // refused.
         var (_, grant) = await RegisterAndGetTokensAsync();
 
         var first = await Client.PostAsJsonAsync("/api/auth/refresh",
@@ -724,7 +725,7 @@ public class AuthEndpointTests : IntegrationTestBase
     [Fact]
     public async Task Revoke_EndsOnlyThePresentedGrant_AndTheUsersOtherSessionStillRenews()
     {
-        // "Esci" on session A, as the BFF sends it (06 §4.4): only A's grant ends.
+        // "Esci" on session A, as the BFF sends it (ADR-0057 §4.4): only A's grant ends.
         var email = $"rv{Guid.NewGuid():N}@example.com";
         var (_, sessionA) = await RegisterAndGetTokensAsync(email);
         var sessionB = await LoginAndGetGrantAsync(email);
@@ -788,8 +789,8 @@ public class AuthEndpointTests : IntegrationTestBase
     [Fact]
     public async Task Logout_RevokesEveryGrantOfTheUser_AsSignOutEverywhere()
     {
-        // /api/auth/logout keeps its effect: every session of the user (06 §4.4), with the reason
-        // that says so — which is why presenting one of them later is not the tripwire.
+        // /api/auth/logout keeps its effect: every session of the user (ADR-0057 §4.4), with the
+        // reason that says so — which is why presenting one of them later is not the tripwire.
         var email = $"lo{Guid.NewGuid():N}@example.com";
         var (access, sessionA) = await RegisterAndGetTokensAsync(email);
         var sessionB = await LoginAndGetGrantAsync(email);
@@ -825,7 +826,7 @@ public class AuthEndpointTests : IntegrationTestBase
 
     #endregion
 
-    #region Session stamps (06 §5.3)
+    #region Session stamps (ADR-0057 §5.3)
 
     /// <summary>Registers a fresh user: its email, access token, grant, id and session stamp.</summary>
     private async Task<(string Email, string Access, Guid UserId, int Stamp)> RegisterForStampAsync()
@@ -882,8 +883,9 @@ public class AuthEndpointTests : IntegrationTestBase
     [Fact]
     public async Task Revoke_EndsOneSession_AndDoesNotRaiseTheStamp()
     {
-        // "Esci" ends ONE session through /revoke (06 §4.6). Raising the stamp there would end every
-        // other session of the user within 15 s: the sign-out-everywhere PR-1 removed from "Esci".
+        // "Esci" ends ONE session through /revoke (ADR-0057 §4.6). Raising the stamp there would
+        // end every other session of the user within 15 s: the sign-out-everywhere PR-1 removed
+        // from "Esci".
         var unique = Guid.NewGuid().ToString("N")[..8];
         var (_, grant) = await RegisterAndGetTokensAsync($"rv{unique}@example.com");
         var userId = await UserIdOfAsync($"rv{unique}@example.com");

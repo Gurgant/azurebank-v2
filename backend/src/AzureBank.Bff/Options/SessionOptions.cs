@@ -19,7 +19,7 @@ public class BffSessionOptions
     /// Production: 15 min, Development: 10 min
     /// </summary>
     /// <remarks>
-    /// 15 since PR-1 (R19, 06 §4.8; 30 before). PSD2's RTS art. 4(3)(d) allows a bank at most 5
+    /// 15 since PR-1 (ADR-0057 §4.8; 30 before). PSD2's RTS art. 4(3)(d) allows a bank at most 5
     /// minutes, and OWASP says 2-5 for high-value applications; a demo's visitors read code between
     /// clicks, so 5 would sign them out mid-page. 15 halves the time an unattended browser stays signed
     /// in, and ADR-0057 records the gap to PSD2 as a demo deviation. The SPA reads the window from

@@ -16,13 +16,13 @@ public interface ISessionService
     /// <param name="tokenExpiry">Token expiration time</param>
     /// <param name="refreshToken">The session's grant, for renewals (null if none was issued)</param>
     /// <param name="refreshTokenExpiresAt">
-    /// When the grant expires, as the API answered it; the session ends no later (06 §4.1, F5).
-    /// Null when there is no grant.
+    /// When the grant expires, as the API answered it; the session ends no later (ADR-0057 §4.1,
+    /// F5). Null when there is no grant.
     /// </param>
     /// <param name="userInfo">User information to cache in session</param>
     /// <param name="sessionStamp">
-    /// The user's session stamp as the API answered this sign-in (06 §5.3). The session ends once a
-    /// higher one is known. 0, every user's first value, when a caller has none to give.
+    /// The user's session stamp as the API answered this sign-in (ADR-0057 §5.3). The session ends
+    /// once a higher one is known. 0, every user's first value, when a caller has none to give.
     /// </param>
     /// <returns>A secure session ID to be stored in a cookie</returns>
     string CreateSession(
@@ -54,8 +54,8 @@ public interface ISessionService
 
     /// <summary>
     /// Ends a session: marks it ended and removes it, then queues its grant for revocation at the API,
-    /// after any renewal in flight (06 §4.6). Only this session; the user's others are untouched.
-    /// Ending an unknown or already-ended session does nothing.
+    /// after any renewal in flight (ADR-0057 §4.6). Only this session; the user's others are
+    /// untouched. Ending an unknown or already-ended session does nothing.
     /// </summary>
     void EndSession(string sessionId);
 
@@ -82,8 +82,8 @@ public interface ISessionService
 
     /// <summary>
     /// Stores a renewed access token on <paramref name="session"/>, and only if it expires later than
-    /// the one held. The grant is never touched: it does not rotate (06 §4.5). Call it holding the
-    /// session's <see cref="UserSession.SyncRoot"/>, as the renewal does.
+    /// the one held. The grant is never touched: it does not rotate (ADR-0057 §4.5). Call it
+    /// holding the session's <see cref="UserSession.SyncRoot"/>, as the renewal does.
     /// </summary>
     /// <returns>
     /// False when nothing was stored: the session has ended, or the new token expires no later.

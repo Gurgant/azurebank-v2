@@ -9,8 +9,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace AzureBank.Tests.Integration;
 
 /// <summary>
-/// The data half of <c>AddRefreshTokenRevokedReason</c> on real SQL Server (06 §4.1): every ACTIVE
-/// legacy grant is revoked as <c>Deployment</c>, and nothing else is touched.
+/// The data half of <c>AddRefreshTokenRevokedReason</c> on real SQL Server (ADR-0057 §4.1): every
+/// ACTIVE legacy grant is revoked as <c>Deployment</c>, and nothing else is touched.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -82,8 +82,8 @@ public sealed class RevokedReasonMigrationSqlServerTests
             rows[revoked].RevokedAt.Should().Be(legacyRevokedAt, "a revoked row keeps the instant it was revoked");
             rows[revoked].RevokedReason.Should().BeNull("a revoked legacy row keeps no reason: that is what marks it legacy");
 
-            // The CHECK constraint the runbook's hand-written SQL meets (06 §5): a misspelt reason is
-            // refused by the database, since EF could not read it back.
+            // The CHECK constraint the runbook's hand-written SQL meets (ADR-0057 §5): a misspelt
+            // reason is refused by the database, since EF could not read it back.
             var typo = () => context.Database.ExecuteSqlRawAsync(
                 "UPDATE [RefreshTokens] SET [RevokedReason] = N'Incidnet' WHERE [TokenHash] = N'hash-expired';");
             (await typo.Should().ThrowAsync<SqlException>()).Which.Number.Should().Be(547);

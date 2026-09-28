@@ -8,8 +8,8 @@ namespace AzureBank.Tests.Fixtures;
 /// <para>
 /// Two uses in <c>RefreshTokenServiceTests</c>, one in each direction. A renewal run on a context
 /// carrying this must still succeed, which is the unit-level proof that renewal writes nothing
-/// (06 §4.3): had it tried, it would have thrown. A revoke run on one must answer 503, which pins
-/// 06 §4.4's "the database failed, so retry".
+/// (ADR-0057 §4.3): had it tried, it would have thrown. A revoke run on one must answer 503, which
+/// pins ADR-0057 §4.4's "the database failed, so retry".
 /// </para>
 /// <para>
 /// <b>Why a SaveChanges interceptor reaches a revoke at all.</b> The revokes use
@@ -21,7 +21,7 @@ namespace AzureBank.Tests.Fixtures;
 /// </para>
 /// <para>
 /// <i>Until PR-1 this pinned the reuse branch's guarded family revoke (ADR-0034), which the
-/// tripwire replaced (06 F3); the caller-chosen-exception constructor went with it.</i>
+/// tripwire replaced (ADR-0057 F3); the caller-chosen-exception constructor went with it.</i>
 /// </para>
 /// </summary>
 public sealed class ThrowingSaveChangesInterceptor : SaveChangesInterceptor
